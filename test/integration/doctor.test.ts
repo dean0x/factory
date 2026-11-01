@@ -86,6 +86,7 @@ describe('factory doctor (built binary)', () => {
     await writeFile(path, `${await box.read(path)}\nnote: ${secret}\n`);
     const result = await box.run(['doctor', '--home', box.node]);
     expect(result.code).toBe(1);
+    expect(result.stdout).toContain('note in factory.yaml looks like a token');
     expect(result.stdout + result.stderr).not.toContain(secret);
   });
 

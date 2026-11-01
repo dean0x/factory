@@ -32,7 +32,8 @@ const exec = (
 ): Promise<RunResult> =>
   new Promise((resolve) => {
     execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: 60_000 }, (error, stdout, stderr) => {
-      const code = error === null ? 0 : typeof error.code === 'number' ? error.code : 1;
+      // A spawn error, a timeout or a signal has no numeric exit code. -1 is a value that no test expects.
+      const code = error === null ? 0 : typeof error.code === 'number' ? error.code : -1;
       resolve({ code, stdout, stderr });
     });
   });

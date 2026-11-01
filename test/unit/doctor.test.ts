@@ -567,8 +567,12 @@ describe('doctor: the command', () => {
   it('fails when the home is not a folder', async () => {
     const deps = makeDeps();
     deps.seed('/w/file', 'x');
-    expect(await runDoctor(deps, { home: '/w/file' })).toMatchObject({ ok: false });
-    expect(await runDoctor(deps, { home: '/w/none' })).toMatchObject({ ok: false });
+    const file = await runDoctor(deps, { home: '/w/file' });
+    expect(file).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!file.ok) expect(file.error.message).toContain('/w/file is not a folder');
+    const none = await runDoctor(deps, { home: '/w/none' });
+    expect(none).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!none.ok) expect(none.error.message).toContain('/w/none is not a folder');
   });
 
   it('reports a failing run of git as a warning, not as a crash', async () => {

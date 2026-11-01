@@ -172,7 +172,9 @@ describe('init: refusals', () => {
   it('refuses a home that is a file', async () => {
     const { deps } = setup();
     deps.seed(HOME, 'x');
-    expect((await runInit(deps, options())).ok).toBe(false);
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain(`${HOME} is not a folder`);
   });
 
   it('refuses a CLAUDE.md that already holds a block of the same name', async () => {
@@ -353,9 +355,10 @@ describe('init: projects', () => {
   });
 
   it('refuses two projects with the same id', async () => {
-    const { deps } = setup({ repos: { '/w/web': {}, '/other/web': {} } });
-    const result = await runInit(deps, options({ projects: ['/w/web', '/other/web'] }));
+    const { deps } = setup({ repos: { '/w/web': {}, '/w/other/web': {} } });
+    const result = await runInit(deps, options({ projects: ['/w/web', '/w/other/web'] }));
     expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain('projects.1.id: duplicate id');
   });
 
   it('stores a project inside the home as a path below the home', async () => {

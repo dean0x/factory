@@ -98,5 +98,6 @@ describe('factory upgrade (built binary)', () => {
   it('exits 1 when there is no config file above the folder', async () => {
     const result = await box.run(['upgrade'], { cwd: box.root });
     expect(result.code).toBe(1);
+    expect(result.stderr).toContain('--home DIR');
   });
 });
