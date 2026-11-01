@@ -7,7 +7,7 @@ import type { Deps } from '../../src/core/deps.js';
 import { loadState } from '../../src/state/load.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { denyMatches } from '../helpers/deny-list.js';
-import { createFakeDeps, withFailingWrites, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, withFailingWrites, type FakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 
 const HOME = '/w/node';
@@ -520,6 +520,41 @@ describe('init: rollback', () => {
     const message = messageOf(result);
     expect(message).not.toContain('nothing was changed');
     expect(message).toContain(`cannot remove ${HOME}/.factory: EBUSY`);
+  });
+
+  it('leaves the folder as it was and says so when the staging folder cannot be renamed', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    const before = snapshot(deps);
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const failing: Deps = {
+      ...deps,
+      fs: { ...deps.fs, rename: async (from) => failure(`cannot rename ${from}: EXDEV`) },
+    };
+    const result = await applyInit(failing, plan.value);
+    expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain(`cannot rename ${HOME}/.factory.tmp-4242: EXDEV`);
+    expect(messageOf(result)).toContain('nothing was changed');
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('leaves the folder as it was and says so when the first commit fails', async () => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: '/w', run: (call) => (call.args.includes('commit') ? exited(1) : handler(call)) });
+    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    const before = snapshot(deps);
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const result = await applyInit(deps, plan.value);
+    expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain('cannot commit the state files');
+    expect(messageOf(result)).toContain('nothing was changed');
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.atomicWrites).toEqual([]);
   });
 
   it('leaves no node when git cannot create the repository', async () => {
