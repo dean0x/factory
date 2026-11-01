@@ -14,6 +14,8 @@ export const stateRel = {
   briefsKeep: join(dirs.briefs, files.briefsKeep),
   gitignore: files.gitignore,
   backups: dirs.backups,
+  runtime: dirs.runtime,
+  locks: dirs.locks,
 } as const;
 
 export interface Layout {
@@ -24,6 +26,9 @@ export interface Layout {
   readonly nodeJson: string;
   readonly protocolMd: string;
   readonly backupsDir: string;
+  /** The run-time folders. Their files are not part of the state repository. */
+  readonly runtimeDir: string;
+  readonly locksDir: string;
 }
 
 /** Every path inside a node home comes from here. */
@@ -37,6 +42,8 @@ export const layoutOf = (home: string): Layout => {
     nodeJson: join(stateDir, stateRel.nodeJson),
     protocolMd: join(stateDir, stateRel.protocol),
     backupsDir: join(stateDir, stateRel.backups),
+    runtimeDir: join(stateDir, stateRel.runtime),
+    locksDir: join(stateDir, stateRel.locks),
   };
 };
 

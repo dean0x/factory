@@ -72,12 +72,11 @@ export const backup = async (deps: Deps, home: string): Promise<CliResult<string
   if (exists.value !== null) return failure(`the backup folder ${relative(home, target)} exists already`);
   const made = await deps.fs.mkdir(target);
   if (!made.ok) return made;
-  const runtimeDirs = [dirs.runtime, dirs.locks].map((name) => join(layout.stateDir, name));
 
   const copies: readonly (readonly [string, string, readonly string[]])[] = [
     [layout.configFile, join(target, files.config), []],
     [layout.claudeMd, join(target, files.claudeMd), []],
-    [layout.stateDir, join(target, dirs.state), [layout.backupsDir, ...runtimeDirs]],
+    [layout.stateDir, join(target, dirs.state), [layout.backupsDir, layout.runtimeDir, layout.locksDir]],
   ];
   for (const [from, to, skip] of copies) {
     const kind = await deps.fs.stat(from);

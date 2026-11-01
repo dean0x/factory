@@ -111,6 +111,8 @@ describe('layout', () => {
       nodeJson: '/h/node/.factory/node.json',
       protocolMd: '/h/node/.factory/protocol.md',
       backupsDir: '/h/node/.factory/backups',
+      runtimeDir: '/h/node/.factory/state',
+      locksDir: '/h/node/.factory/locks',
     });
   });
 
