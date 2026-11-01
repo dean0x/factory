@@ -1,8 +1,9 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
+import { runInit } from '../commands/init.js';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, flags, flagShorts, flagText, program } from '../names.js';
+import { commands, commandText, flags, flagShorts, flagText, program, roles } from '../names.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import type { CommandOutput } from './output.js';
@@ -38,6 +39,49 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
 };
 
 export const commandTable: readonly Command[] = [
+  {
+    name: commands.init,
+    summary: `Create a ${roles.node} in a folder.`,
+    usage:
+      `${commandText(commands.init)} [${flagText(flags.home)} DIR] [${flagText(flags.name)} ID] ` +
+      `[${flagText(flags.ownerName)} NAME] [${flagText(flags.ownerGithub)} LOGIN] [${flagText(flags.project)} PATH]...`,
+    options: {
+      [flags.home]: {
+        type: 'string',
+        placeholder: 'DIR',
+        description: `The ${roles.node} folder. Default: the current folder.`,
+      },
+      [flags.name]: {
+        type: 'string',
+        placeholder: 'ID',
+        description: `The id of the ${roles.node}. Default: the folder name.`,
+      },
+      [flags.ownerName]: {
+        type: 'string',
+        placeholder: 'NAME',
+        description: `The display name of the ${roles.owner}. Default: git config user.name.`,
+      },
+      [flags.ownerGithub]: {
+        type: 'string',
+        placeholder: 'LOGIN',
+        description: `The GitHub login of the ${roles.owner}. Default: the login of gh.`,
+      },
+      [flags.project]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'PATH',
+        description: 'A git work tree to manage. Repeat the flag for more projects.',
+      },
+    },
+    run: (given, deps) =>
+      runInit(deps, {
+        home: given.string(flags.home),
+        name: given.string(flags.name),
+        ownerName: given.string(flags.ownerName),
+        ownerGithub: given.string(flags.ownerGithub),
+        projects: given.strings(flags.project),
+      }),
+  },
   {
     name: commands.version,
     summary: 'Print the version.',

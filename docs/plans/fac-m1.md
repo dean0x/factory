@@ -75,7 +75,7 @@ Rules for the code (Dean's engineering rules):
 
 | Command | Flags | Result |
 |---|---|---|
-| `factory init` | `--home DIR` (default cwd), `--name ID`, `--owner-name N`, `--owner-github LOGIN`, `--project PATH` (repeatable) | Writes a node (§6). Refuses when `factory.yaml` exists in the home or in a parent folder. |
+| `factory init` | `--home DIR` (default cwd), `--name ID`, `--owner-name N`, `--owner-github LOGIN`, `--project PATH` (repeatable) | Writes a node (§6). Refuses only when `factory.yaml` exists in the home itself. When a parent folder has a `factory.yaml`, it succeeds and prints a warning that names that file (a child node can live inside the folder tree of its parent). It writes no parent link into the config or the state; that comes in FAC-M7. |
 | `factory doctor` | `--home DIR` | Runs the checks of §7. Exit 0 when no check fails (warnings allowed), else 1. |
 | `factory upgrade` | `--home DIR`, `--dry-run`, `--overwrite NAME` (repeatable) | Migrates config and state, and refreshes managed blocks (§5). |
 | `factory version` / `--version` | — | Prints the version. |
@@ -182,9 +182,10 @@ The health check sends one GET with a 3-second limit (`AbortSignal.timeout`), an
 - Until the repo exists, I run the same steps locally. The full test run goes under the heavy-test lock.
 
 ## 9. Tests
-- **Unit** (fake `Deps`): config schema (valid, each invalid key, strictness, cross checks, the proxy URL rules); state schema; migration runner (chain, gap, failure, newer); managed blocks (render and parse round trip, edit detection, keep owner text); secret scan (true and false matches); proxy redaction and health check (a local `node:http` server: up, 500, no answer); home walk-up; init plan; each doctor check; the template deny list.
+- **Unit** (fake `Deps`): config schema (valid, each invalid key, strictness, cross checks, the proxy URL rules); state schema; migration runner (chain, gap, failure, newer); managed blocks (render and parse round trip, edit detection, keep owner text); secret scan (true and false matches); proxy redaction and health check (a local `node:http` server: up, 500, no answer); home walk-up; init plan (including a parent folder with a `factory.yaml`: init succeeds, the warning names the parent file, and no parent link is written); each doctor check; the template deny list.
 - **Integration** (built `dist/factory.js`, temp folders, `HOME` set to a temp folder):
-  - `init` then `doctor` exit 0, and `init` twice refuses;
+  - `init` then `doctor` exit 0, and `init` twice in the same home refuses;
+  - `init` in a folder below a parent that has a `factory.yaml` exits 0 and warns;
   - `doctor --json` has the schema field;
   - an edited block gives a warning, and `upgrade` refuses it without `--overwrite`;
   - a bad config gives exit 1 with the key name;

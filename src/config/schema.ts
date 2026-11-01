@@ -9,6 +9,9 @@ const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const SLUG_RULE = 'must be a slug: a-z, 0-9 and hyphen, at most 40 characters, no leading hyphen';
 const MAX_SLUG_LENGTH = 40;
 const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
+const GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
+
+export const isGithubLogin = (text: string): boolean => GITHUB_LOGIN_PATTERN.test(text);
 
 export const isSlug = (text: string): boolean => SLUG_PATTERN.test(text);
 
@@ -43,7 +46,7 @@ const ownerSchema = z.strictObject({
   [keys.owner.display]: z.string().min(1).max(80),
   [keys.owner.github]: z
     .string()
-    .regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/, 'must be a GitHub login')
+    .regex(GITHUB_LOGIN_PATTERN, 'must be a GitHub login')
     .optional(),
   [keys.owner.prefix]: z
     .string()
