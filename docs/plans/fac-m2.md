@@ -16,7 +16,7 @@ The criteria of roadmap-v2 FAC-M2 are the acceptance list. §12 maps each one to
 
 ## Scope
 In: the renames (F-1); the home rules, `init` and `factory up` (F-3); the role templates, `node.layer` and the `node` child commands (F-4); the native Windows refusal (F-5); config schema 2 with the recipe split (F-10); the schema 1 → 2 migration; `file://` addresses only (F-13).
-Out (later milestones): tracker adapters, `item`, `andon`, `decide`, `staging`, `watch` (FAC-M3); cells, `layout`, the board in the view slot, the heartbeat hook, the inbox and the doorbell (FAC-M4); `inspect`, `pr`, `ship`, `clean` (FAC-M5); the devflow variant (FAC-M6); `report`, `deliver`, `node tree` (FAC-M8). `init --project URL` (a clone) also waits; FAC-M2 takes paths only.
+Out (later milestones, in the build order of D-56): cells, `layout`, the board in the view slot, the heartbeat hook, the doorbell inbox (FAC-M4); the `local` tracker, `item`, `andon`, `decide`, `staging`, `inspect`, `pr`, `ship`, `checkout` (FAC-M5); the devflow variant (FAC-M6); `adopt` (FAC-M7); the `github` adapter and `watch` (FAC-M3); `report`, `deliver`, `node tree` (FAC-M8). `init --project URL` (a clone) also waits; FAC-M2 takes paths only.
 
 One PR (roadmap rule). There is no split: the renames and the schema change touch every module, and the roadmap keeps them in one PR so that the names test sees all of them at once.
 

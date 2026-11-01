@@ -16,18 +16,20 @@ A team member installs factory on a new macOS or Linux machine. `factory init` a
 
 ## Milestones
 
-| Id | Name | Depends on | Design changes (F-n) |
-|---|---|---|---|
-| FAC-M2 | Names, home, roles and schema 2 | FAC-M1 | F-1, F-3, F-4, F-5, F-10, F-13 |
-| FAC-M3 | Tracker connector (GitHub) and decisions | FAC-M2 | F-2 |
-| FAC-M4 | Cell control | FAC-M2 | F-7, F-8, F-9 |
-| FAC-M5 | Gate and ship commands | FAC-M3 | F-6 |
-| FAC-M6 | devflow variant | FAC-M5 | F-10 |
-| FAC-M7 | This workspace adopted | FAC-M4, FAC-M6 | F-2, F-3, F-8 |
-| FAC-M8 | Layers and team | FAC-M7 | F-4 |
-| FAC-M9 | Jira and Linear adapters | FAC-M3 | F-2 |
+The build order is FAC-M2, M4, M5, M6, M7, then M3, M8, M9 (D-56). This workspace moves to factory first, with the `local` tracker. The GitHub tracker comes right after the move. The sections below are in build order.
 
-FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time after FAC-M3.
+| Order | Id | Name | Depends on | Design changes (F-n) |
+|---|---|---|---|---|
+| 1 | FAC-M2 | Names, home, roles and schema 2 | FAC-M1 | F-1, F-3, F-4, F-5, F-10, F-13 |
+| 2 | FAC-M4 | Cell control | FAC-M2 | F-7, F-8, F-9 |
+| 3 | FAC-M5 | Local tracker, gate and ship commands | FAC-M4 | F-2, F-6 |
+| 4 | FAC-M6 | devflow variant | FAC-M5 | F-10 |
+| 5 | FAC-M7 | This workspace adopted (local tracker) | FAC-M4, FAC-M6 | F-3, F-8 |
+| 6 | FAC-M3 | GitHub tracker, and the move to it | FAC-M7 | F-2 |
+| 7 | FAC-M8 | Layers and team | FAC-M7 | F-4 |
+| 8 | FAC-M9 | Jira and Linear adapters | FAC-M3 | F-2 |
+
+No milestone before FAC-M3 needs a network tracker: FAC-M5 and FAC-M7 use the `local` tracker. FAC-M8 can run in parallel with FAC-M3. FAC-M9 can run at any time after FAC-M3.
 
 ### FAC-M2: Names, home, roles and schema 2
 
@@ -51,21 +53,6 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 - [ ] Unit test with a fake platform `win32`: every command exits 4 and prints the WSL hint.
 - [ ] Unit tests: the config refuses an `ssh://`, `https://` or relative address in `parent` and in `children`, and names the key.
 - [ ] `npm run exit-check` passes with the v2 flow: `init`, `up --dry-run`, `doctor`, deny list.
-
-### FAC-M3: Tracker connector (GitHub) and decisions
-
-**Goal.** The board, the andon items and the decisions live in GitHub. A script reads the owner's answers.
-
-**Scope.** The adapter contract of design §4.10, the `local` adapter (files in `.factory/`, the test double) and the `github` adapter (issues plus a Projects board, through `gh`). The commands `item`, `andon`, `decide ask|read`, `decide <D-n> <option>` (for `local`), `staging`, `watch`. The decision log and the decision profile tools. `item import` from the `local` files into a team tracker.
-
-**Exit criteria.**
-- [ ] One set of connector contract tests runs against `local` and against `github`. For `github` it uses a fake `gh` with recorded responses. No test needs the network.
-- [ ] With `local`: `comments read` returns nothing, `factory watch` exits at once with a note, and `factory decide <D-n> <option>` records `by: owner`. `factory decide` refuses (exit 4) with no TTY, and when `FACTORY_SESSION` is set.
-- [ ] `decide read` records an answer `/choose B` or a label `choose:B` from the owner's account. It ignores the same answer from another account. Tests cover both cases.
-- [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
-- [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
-- [ ] `item import` moves the `local` files (fixture `board.json` and `waiting.json`) into `github` items, and a second run creates no duplicates.
-- [ ] No command needs `python3`, `jq` or `glow` (a test runs the commands with a PATH that does not contain them).
 
 ### FAC-M4: Cell control
 
@@ -92,17 +79,20 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 - [ ] Every launch test asserts auto mode, and a proxy only from the config with the check before the launch.
 - [ ] Integration test: the hook writes the heartbeat line on each event (fake hook input).
 - [ ] Static test: no source file opens a path under `~/.claude`, and no template contains such a path.
-- [ ] `cell relay` types the owner prefix only for a decision with `by: owner` in the log; a test covers the refusal.
+- [ ] `cell relay` types the owner prefix only for a decision with `by: owner` in the log; a test covers the refusal. The test uses a fixture decision log, because `factory decide` comes in FAC-M5.
 - [ ] Inbox tests: `cell send` writes a numbered record and types only the constant line (a capture shows no message text); two sends give two records in order; a record moved to `handled/` stops the rings; `cell watch` rings again for a waiting record and stops at its bound; the relay line names the record number and its hash.
 - [ ] A test with a fake session: after a clear or a restart, the cell finds its waiting records in the inbox.
 - [ ] Static test: no module outside `src/comms/` reads or writes inbox files.
 - [ ] `cell new` refuses a checkout that another cell uses, and refuses when a resource limit fails (fake machine facts).
 
-### FAC-M5: Gate and ship commands
+### FAC-M5: Local tracker, gate and ship commands
 
-**Goal.** The merge gate, the merge and the release checks are one command each, with a short verdict.
+**Goal.** The board, the andon items and the decisions work with the `local` tracker. The merge gate, the merge and the release checks are one command each, with a short verdict.
 
-**Scope.** `inspect`, `pr merge` (with both `approval.land` rules, F-6), `pr watch`, `issues audit`, `ship check|verify`, and `checkout list|status|sync|clean` (D-55).
+**Scope.**
+1. **Local tracker (F-2).** The adapter contract of design §4.10 and the `local` adapter (files in `.factory/`; also the test double of later adapters). The commands `item`, `andon`, `decide <D-n> <option>` (for `local`) and `staging`. The decision log and the decision profile tools.
+2. **Gate and ship (F-6).** `inspect`, `pr merge` (with both `approval.land` rules), `pr watch`, `issues audit`, `ship check|verify`.
+3. **`factory checkout list|status|sync|clean` (D-55).**
 
 **`factory checkout` (D-55).** The coordinator's repeated git work across checkouts becomes four commands. Cells keep doing git on their own branch.
 - `list`: one row per checkout: project, path, cell, branch, short HEAD.
@@ -113,6 +103,10 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 - The commands extend `src/core/git.ts`; there is no second git module.
 
 **Exit criteria.**
+- [ ] Connector contract tests run against `local`. FAC-M3 runs the same set against `github`.
+- [ ] With `local`: `comments read` returns nothing, and `factory decide <D-n> <option>` records `by: owner`. `factory decide` refuses (exit 4) with no TTY, and when `FACTORY_SESSION` is set.
+- [ ] `item`, `andon` and `staging` change only the `local` files, and every change is one commit in the state repo (test).
+- [ ] No command needs `python3`, `jq` or `glow` (a test runs the commands with a PATH that does not contain them).
 - [ ] `inspect` gives the same verdict as the manual gate on 3 merged PRs, from recorded fixtures.
 - [ ] `pr merge` tests: with `approval.land: each` it refuses with no owner decision for that PR and head; with `approved-work` it refuses with no decision that approved and assigned the work; in both cases it refuses when the head changed after `inspect`.
 - [ ] `ship check|verify` only reads; a test asserts that they run no publish command.
@@ -132,18 +126,34 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 - [ ] `inspect` finds devflow's review and resolution markers on a recorded real devflow PR.
 - [ ] The core source and the default templates contain no devflow word (the deny list test).
 
-### FAC-M7: This workspace adopted
+### FAC-M7: This workspace adopted (local tracker)
 
-**Goal.** This workspace runs on factory, and the old scripts are retired.
+**Goal.** This workspace runs on factory with the `local` tracker, and the old scripts are retired.
 
-**Scope.** `factory adopt` (design §8): a node home next to the projects, the import into GitHub issues with a private decision store, `approval.land: approved-work`, the devflow variant for the devflow projects, cells on the bench.
+**Scope.** `factory adopt` (design §8): a node home next to the projects; the import of the board and the items that wait on the owner into the `local` tracker files; `approval.land: approved-work`; the devflow variant for the devflow projects; cells on the bench. The import into GitHub issues is not here: it is FAC-M3.
 
 **Exit criteria.**
 - [ ] `factory adopt --dry-run` prints the plan, and a test checks it against a fixture copy of the workspace.
+- [ ] The adopt imports the fixture board and the fixture owner items into the `local` files with no loss: a test compares the item ids and titles before and after.
 - [ ] After the adopt, `factory doctor` exits 0 in the new home, and the coordinator runs there.
 - [ ] A check script shows that no cell checkout has the coordinator CLAUDE.md on its path to the root.
 - [ ] The coordinator merges 5 PRs through `factory inspect` and `factory pr merge`.
 - [ ] The old render and board scripts are not called by any process (a search of the tmux hooks and the cron list finds none).
+
+### FAC-M3: GitHub tracker, and the move to it
+
+**Goal.** The board, the andon items and the decisions of this workspace move from the `local` tracker to GitHub. A script reads the owner's answers.
+
+**Scope.** The `github` adapter (issues plus a Projects board, through `gh`) behind the FAC-M5 contract. The commands `decide ask|read` and `watch`. `item import` from the `local` files into a team tracker, and the move of this workspace's items into GitHub issues with a private decision store.
+
+**Exit criteria.**
+- [ ] The FAC-M5 connector contract tests pass against `github`, with a fake `gh` and recorded responses. No test needs the network.
+- [ ] With `local`, `factory watch` exits at once with a note.
+- [ ] `decide read` records an answer `/choose B` or a label `choose:B` from the owner's account. It ignores the same answer from another account. Tests cover both cases.
+- [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
+- [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
+- [ ] `item import` moves the `local` files (fixture `board.json` and `waiting.json`) into `github` items, and a second run creates no duplicates.
+- [ ] This workspace: after `item import`, a check script finds each `local` item id in exactly one GitHub issue, and `factory doctor` exits 0 with `tracker.kind: github`.
 
 ### FAC-M8: Layers and team
 
@@ -163,7 +173,7 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 **Goal.** A team that uses Jira or Linear gets the same tracker features.
 
 **Exit criteria.**
-- [ ] The FAC-M3 connector contract tests pass for `jira` and `linear` with recorded responses, as they do for `local` and `github`.
+- [ ] The connector contract tests (FAC-M5) pass for `jira` and `linear` with recorded responses, as they do for `local` and `github`.
 - [ ] `doctor` checks the decision store privacy for each adapter.
 
 ## Later (no milestone yet)
@@ -174,7 +184,7 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 ## Decisions needed
 
 - None blocks FAC-M2.
-- Before FAC-M3: which private repo holds the decision store of this workspace.
+- Before FAC-M3 (after the workspace move in FAC-M7): which private repo holds the decision store of this workspace.
 - Before FAC-M8: whether the repo goes public.
 
 ## Risks
