@@ -63,6 +63,28 @@ describe('node deps: fs', () => {
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
   });
 
+  it('copies a tree into a folder inside the tree, and leaves out the skipped folder', async () => {
+    const source = join(dir, 'self');
+    await deps.fs.mkdir(join(source, 'old'));
+    await deps.fs.writeText(join(source, 'a.txt'), 'a');
+    await deps.fs.writeText(join(source, 'old', 'b.txt'), 'b');
+    const target = join(source, 'old', 'copy');
+
+    expect((await deps.fs.copyTree(source, target, [join(source, 'old')])).ok).toBe(true);
+    expect(await deps.fs.list(target)).toEqual({ ok: true, value: ['a.txt'] });
+    expect(await deps.fs.readText(join(target, 'a.txt'))).toEqual({ ok: true, value: 'a' });
+
+    const again = await deps.fs.copyTree(source, target, [join(source, 'old')]);
+    expect(again.ok).toBe(false);
+  });
+
+  it('copies one file', async () => {
+    const file = join(dir, 'one.txt');
+    await deps.fs.writeText(file, 'one');
+    expect((await deps.fs.copyTree(file, join(dir, 'two.txt'), [])).ok).toBe(true);
+    expect(await deps.fs.readText(join(dir, 'two.txt'))).toEqual({ ok: true, value: 'one' });
+  });
+
   it('renames, copies with a skip list, and removes a tree', async () => {
     const source = join(dir, 'tree');
     await deps.fs.mkdir(join(source, 'keep'));

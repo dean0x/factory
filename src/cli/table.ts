@@ -1,6 +1,7 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
 import { runInit } from '../commands/init.js';
+import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
@@ -37,6 +38,12 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
   [flags.quiet]: { type: 'boolean', description: 'Print only warnings and failures.' },
   [flags.noColor]: { type: 'boolean', description: 'Do not use color.' },
   [flags.help]: { type: 'boolean', short: flagShorts.help, description: 'Show help.' },
+};
+
+const foundHomeOption: FlagOption = {
+  type: 'string',
+  placeholder: 'DIR',
+  description: `The ${roles.node} folder. Default: the folder of the nearest config file above the current folder.`,
 };
 
 export const commandTable: readonly Command[] = [
@@ -87,14 +94,31 @@ export const commandTable: readonly Command[] = [
     name: commands.doctor,
     summary: `Check the ${roles.node}, its config and its state.`,
     usage: `${commandText(commands.doctor)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }),
+  },
+  {
+    name: commands.upgrade,
+    summary: `Migrate the config and the state, and refresh the managed blocks.`,
+    usage:
+      `${commandText(commands.upgrade)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}] ` +
+      `[${flagText(flags.overwrite)} NAME]...`,
     options: {
-      [flags.home]: {
+      [flags.home]: foundHomeOption,
+      [flags.dryRun]: { type: 'boolean', description: 'Show what would change. Change no file.' },
+      [flags.overwrite]: {
         type: 'string',
-        placeholder: 'DIR',
-        description: `The ${roles.node} folder. Default: the folder of the nearest config file above the current folder.`,
+        multiple: true,
+        placeholder: 'NAME',
+        description: 'Replace the managed block NAME, also when it was edited or is missing. Repeat the flag for more blocks.',
       },
     },
-    run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }),
+    run: (given, deps) =>
+      runUpgrade(deps, {
+        home: given.string(flags.home),
+        dryRun: given.bool(flags.dryRun),
+        overwrite: given.strings(flags.overwrite),
+      }),
   },
   {
     name: commands.version,

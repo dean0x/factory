@@ -70,3 +70,7 @@ export const commitAll = async (deps: Deps, dir: string, message: string): Promi
   if (!staged.ok) return staged;
   return gitStep(deps, dir, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', message], 'commit the state files');
 };
+
+/** Remove the staged changes from the index. The files keep their text. */
+export const unstageAll = (deps: Deps, dir: string): Promise<CliResult<void>> =>
+  gitStep(deps, dir, ['reset', '-q'], 'clear the staged files');

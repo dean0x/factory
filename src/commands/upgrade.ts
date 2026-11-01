@@ -1,0 +1,136 @@
+import { join, relative } from 'node:path';
+import { inspectBlocks } from '../blocks/status.js';
+import { failure, usageError, type CliResult } from '../cli/errors.js';
+import type { CommandOutput, OutLine } from '../cli/output.js';
+import type { Deps } from '../core/deps.js';
+import { commitAll, hasIdentity, unstageAll } from '../core/git.js';
+import { resolveHome } from '../core/home.js';
+import { ok } from '../core/result.js';
+import { commands, commandText, dirs, flags, flagText, schemaIds } from '../names.js';
+import { layoutOf } from '../state/layout.js';
+import {
+  backup,
+  blockFileTexts,
+  configFileText,
+  restore,
+  stateFileText,
+  writeAll,
+  type NewFile,
+  type Written,
+} from '../upgrade/apply.js';
+import { isChange, planBlock, planFile, planLines, refusalOf } from '../upgrade/plan.js';
+import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
+
+export interface UpgradeOptions {
+  readonly home: string | undefined;
+  readonly dryRun: boolean;
+  readonly overwrite: readonly string[];
+}
+
+const COMMIT_MESSAGE = 'chore: upgrade the state';
+
+export const runUpgrade = async (
+  deps: Deps,
+  options: UpgradeOptions,
+  upgrade: UpgradeSpec = currentSpec,
+): Promise<CliResult<CommandOutput>> => {
+  const known = upgrade.blocks.map((template) => template.name);
+  const unknown = options.overwrite.filter((name) => !known.includes(name));
+  if (unknown.length > 0) {
+    return usageError(`${flagText(flags.overwrite)}: unknown block ${unknown.join(', ')}`, `The blocks are: ${known.join(', ')}.`);
+  }
+
+  const resolved = await resolveHome(deps, options.home);
+  if (!resolved.ok) return resolved;
+  const home = resolved.value;
+  const folder = await deps.fs.stat(home);
+  if (!folder.ok) return folder;
+  if (folder.value !== 'dir') return failure(`${home} is not a folder`);
+  const layout = layoutOf(home);
+
+  const config = await planFile(deps, layout.configFile, upgrade.config);
+  if (!config.ok) return config;
+  const state = await planFile(deps, layout.nodeJson, upgrade.state);
+  if (!state.ok) return state;
+  const blocks = (await inspectBlocks(deps, home, upgrade.blocks)).map((status) =>
+    planBlock(status, options.overwrite.includes(status.template.name)),
+  );
+
+  const refused = refusalOf(blocks);
+  if (!refused.ok) return refused;
+
+  const lines = planLines(config.value, state.value, blocks, upgrade);
+  const changes = blocks.filter(isChange);
+  const changed = config.value.kind === 'migrate' || state.value.kind === 'migrate' || changes.length > 0;
+  const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
+  const summary = {
+    config: { from: config.value.kind === 'current' ? config.value.version : config.value.from, to: upgrade.config.spec.supported },
+    state: { from: state.value.kind === 'current' ? state.value.version : state.value.from, to: upgrade.state.spec.supported },
+    blocks: blocks.map((plan) => ({ name: plan.template.name, action: plan.action, from: plan.from, to: plan.template.version })),
+  };
+  const done = (extra: readonly OutLine[], backupPath: string | null, committed: boolean): CliResult<CommandOutput> =>
+    ok({
+      lines: [...lines, ...extra],
+      json: { schema: schemaIds.upgrade, home, dryRun: options.dryRun, changed, ...summary, backup: backupPath, committed },
+      warnings,
+      failed: false,
+    });
+
+  if (!changed) return done([{ level: 'text', text: 'Nothing to upgrade.' }], null, false);
+  if (options.dryRun) return done([{ level: 'text', text: 'Dry run: no file was changed.' }], null, false);
+
+  const touchesState = state.value.kind === 'migrate' || changes.length > 0;
+  if (touchesState) {
+    const repo = await deps.fs.stat(join(layout.stateDir, '.git'));
+    if (!repo.ok) return repo;
+    if (repo.value === null) {
+      return failure(`${dirs.state} is not a git repository`, `Run "${commandText(commands.doctor)}".`);
+    }
+    if (!(await hasIdentity(deps, layout.stateDir))) {
+      return failure('git has no user.name and user.email', 'Set both with "git config --global", then run the command again.');
+    }
+  }
+
+  const backupDir = await backup(deps, home);
+  if (!backupDir.ok) return backupDir;
+  const backupPath = relative(home, backupDir.value);
+
+  const written: Written[] = [];
+  const abort = async (error: string): Promise<CliResult<never>> => {
+    const problems = await restore(deps, written);
+    if (touchesState) await unstageAll(deps, layout.stateDir);
+    return failure(
+      problems.length === 0
+        ? `${error}. The files are as they were. The backup is in ${backupPath}.`
+        : `${error}. ${problems.length} files could not be restored: ${problems.join('; ')}. Restore them from ${backupPath}.`,
+    );
+  };
+
+  const stateText = stateFileText(state.value, upgrade, changes);
+  if (!stateText.ok) return abort(stateText.error.message);
+  const configText = configFileText(config.value, upgrade);
+  if (!configText.ok) return abort(configText.error.message);
+  const blockTexts = await blockFileTexts(deps, home, changes);
+  if (!blockTexts.ok) return abort(blockTexts.error.message);
+
+  const newFiles: NewFile[] = [
+    ...blockTexts.value,
+    ...(stateText.value === null ? [] : [{ path: layout.nodeJson, text: stateText.value }]),
+    ...(configText.value === null ? [] : [{ path: layout.configFile, text: configText.value }]),
+  ];
+  const wrote = await writeAll(deps, newFiles, written);
+  if (!wrote.ok) return abort(wrote.error.message);
+
+  const stateChanged = written.some((entry) => !relative(layout.stateDir, entry.path).startsWith('..'));
+  if (stateChanged) {
+    const committed = await commitAll(deps, layout.stateDir, COMMIT_MESSAGE);
+    if (!committed.ok) return abort(committed.error.message);
+  }
+
+  const count = written.length;
+  return done(
+    [{ level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` }],
+    backupPath,
+    stateChanged,
+  );
+};

@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
-import { cp, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from './result.js';
 import type { Deps, Fs, PathKind } from './deps.js';
@@ -22,6 +24,28 @@ const guard = async <T>(action: string, path: string, work: () => Promise<T>): P
   }
 };
 
+const MAX_COPY_DEPTH = 64;
+
+const unsupported = (code: string): Error => Object.assign(new Error(code), { code });
+
+/**
+ * Copy a file or a folder tree. The target may be inside the source: the paths in `skip`
+ * are left out, and fs.cp would refuse this case. The tree must hold only files and folders.
+ */
+const copyEntry = async (from: string, to: string, skip: readonly string[], depth: number): Promise<void> => {
+  if (skip.includes(from)) return;
+  if (depth > MAX_COPY_DEPTH) throw unsupported('ETOODEEP');
+  const info = await lstat(from);
+  if (info.isDirectory()) {
+    await mkdir(to, { recursive: true });
+    for (const name of await readdir(from)) await copyEntry(join(from, name), join(to, name), skip, depth + 1);
+  } else if (info.isFile()) {
+    await copyFile(from, to, constants.COPYFILE_EXCL);
+  } else {
+    throw unsupported('ENOTSUP');
+  }
+};
+
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
@@ -38,10 +62,7 @@ const nodeFs: Fs = {
   list: (path) => guard('list', path, async () => (await readdir(path)).sort()),
   rename: (from, to) => guard('rename', from, () => rename(from, to)),
   remove: (path) => guard('remove', path, () => rm(path, { recursive: true, force: true })),
-  copyTree: (from, to, skip) =>
-    guard('copy', from, () =>
-      cp(from, to, { recursive: true, errorOnExist: true, filter: (source) => !skip.includes(source) }),
-    ),
+  copyTree: (from, to, skip) => guard('copy', from, () => copyEntry(from, to, skip, 0)),
 };
 
 export const createNodeDeps = (): Deps => ({

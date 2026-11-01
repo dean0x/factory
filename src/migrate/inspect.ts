@@ -1,8 +1,9 @@
 import type { z } from 'zod';
-import { failure, type CliResult } from '../cli/errors.js';
+import { failure, type CliError, type CliResult } from '../cli/errors.js';
+import type { Deps } from '../core/deps.js';
+import { ok, type Err, type Result } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { commands, commandText, program } from '../names.js';
-import { ok } from '../core/result.js';
 
 /** What a versioned file holds, after the version check and the schema check. */
 export type DocState<T> =
@@ -59,10 +60,31 @@ export const inspectParsed = <T>(raw: unknown, spec: VersionSpec<T>): DocState<T
     : { kind: 'invalid', raw, message: describeIssues(parsed.error) };
 };
 
-export const requireValid = <T>(state: DocState<T>, file: string): CliResult<T> => {
+/** Turns the text of a file into a value. The error never repeats the text. */
+export type TextParser = (text: string) => Result<unknown, string>;
+
+/** Read a file, parse its text, and check its version and its schema. */
+export const inspectFile = async <T>(
+  deps: Deps,
+  path: string,
+  parse: TextParser,
+  spec: VersionSpec<T>,
+): Promise<DocState<T>> => {
+  const kind = await deps.fs.stat(path);
+  if (!kind.ok) return { kind: 'unparsable', message: kind.error.message };
+  if (kind.value !== 'file') return { kind: 'missing' };
+
+  const text = await deps.fs.readText(path);
+  if (!text.ok) return { kind: 'unparsable', message: text.error.message };
+  const raw = parse(text.value);
+  if (!raw.ok) return { kind: 'unparsable', message: raw.error };
+
+  return inspectParsed(raw.value, spec);
+};
+
+/** A file that cannot be used as it is. The error says why. */
+export const refuse = (state: Exclude<DocState<unknown>, { kind: 'valid' }>, file: string): Err<CliError> => {
   switch (state.kind) {
-    case 'valid':
-      return ok(state.value);
     case 'missing':
       return failure(`${file} not found`);
     case 'unparsable':
@@ -78,3 +100,6 @@ export const requireValid = <T>(state: DocState<T>, file: string): CliResult<T> 
     }
   }
 };
+
+export const requireValid = <T>(state: DocState<T>, file: string): CliResult<T> =>
+  state.kind === 'valid' ? ok(state.value) : refuse(state, file);
