@@ -98,11 +98,22 @@ export const runUpgrade = async (
   const written: Written[] = [];
   const abort = async (error: string): Promise<CliResult<never>> => {
     const problems = await restore(deps, written);
-    if (touchesState) await unstageAll(deps, layout.stateDir);
+    const unstaged = touchesState ? await unstageAll(deps, layout.stateDir) : ok(undefined);
+    const notes: string[] = [];
+    if (problems.length > 0) {
+      const many = problems.length > 1;
+      notes.push(
+        `${problems.length} ${many ? 'files' : 'file'} could not be restored: ${problems.join('; ')}. ` +
+          `Restore ${many ? 'them' : 'it'} from ${backupPath}.`,
+      );
+    }
+    if (!unstaged.ok) {
+      notes.push(`${unstaged.error.message}. Run "git reset" in ${dirs.state} to clear the staged files.`);
+    }
     return failure(
-      problems.length === 0
+      notes.length === 0
         ? `${error}. The files are as they were. The backup is in ${backupPath}.`
-        : `${error}. ${problems.length} files could not be restored: ${problems.join('; ')}. Restore them from ${backupPath}.`,
+        : `${error}. ${notes.join(' ')}`,
     );
   };
 

@@ -7,7 +7,7 @@ import type { Deps } from '../../src/core/deps.js';
 import { loadState } from '../../src/state/load.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { denyMatches } from '../helpers/deny-list.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, withFailingWrites, type FakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 
 const HOME = '/w/node';
@@ -30,13 +30,7 @@ const setup = (fixture: GitFixture = {}) => {
 const snapshot = (deps: FakeDeps): string =>
   JSON.stringify([[...deps.files.entries()].sort(), [...deps.dirs].sort()]);
 
-const failingWrite = (deps: FakeDeps, suffix: string): Deps => ({
-  ...deps,
-  fs: {
-    ...deps.fs,
-    writeText: async (path, text) => (path.endsWith(suffix) ? failure('disk full') : deps.fs.writeText(path, text)),
-  },
-});
+const failingWrite = (deps: Deps, suffix: string): Deps => withFailingWrites(deps, (path) => path.endsWith(suffix));
 
 const messageOf = (result: { ok: boolean; error?: { message: string; hint?: string } }): string =>
   `${result.error?.message ?? ''} ${result.error?.hint ?? ''}`;
@@ -443,6 +437,89 @@ describe('init: rollback', () => {
     const result = await applyInit(failingWrite(deps, '/CLAUDE.md'), plan.value);
     expect(result.ok).toBe(false);
     expect(snapshot(deps)).toBe(before);
+  });
+
+  it('removes the new folders when the config file cannot be written', async () => {
+    const { deps } = setup();
+    const before = snapshot(deps);
+    const plan = await planInit(deps, options({ home: '/w/fresh/home' }));
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const result = await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
+    expect(messageOf(result)).toContain('nothing was changed');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('keeps a file that another writer put in the new home folder, and names the folders that stay', async () => {
+    const { deps } = setup();
+    const plan = await planInit(deps, options({ home: '/w/fresh/home' }));
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    deps.seed('/w/fresh/home/other.txt', 'not from this run');
+    const result = await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
+    expect(result.ok).toBe(false);
+    expect(deps.files.get('/w/fresh/home/other.txt')).toBe('not from this run');
+    expect([...deps.files.keys()].some((path) => path.includes('.factory'))).toBe(false);
+    const message = messageOf(result);
+    expect(message).not.toContain('nothing was changed');
+    expect(message).toContain('/w/fresh/home: ENOTEMPTY');
+    expect(message).toContain('/w/fresh: ENOTEMPTY');
+  });
+
+  it('writes CLAUDE.md and then the config file with the atomic write', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.atomicWrites).toEqual([`${HOME}/CLAUDE.md`, `${HOME}/factory.yaml`]);
+  });
+
+  it('puts the old CLAUDE.md back with the atomic write', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
+    expect(deps.atomicWrites).toEqual([`${HOME}/CLAUDE.md`, `${HOME}/CLAUDE.md`]);
+    expect(deps.files.get(`${HOME}/CLAUDE.md`)).toBe('Owner text.\n');
+  });
+
+  it('names the file that it cannot put back, and does not say that nothing was changed', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const failing = withFailingWrites(
+      deps,
+      (path, attempt) => path.endsWith('/factory.yaml') || (path.endsWith('/CLAUDE.md') && attempt === 2),
+    );
+    const result = await applyInit(failing, plan.value);
+    expect(result.ok).toBe(false);
+    const message = messageOf(result);
+    expect(message).not.toContain('nothing was changed');
+    expect(message).toContain(`cannot write ${HOME}/factory.yaml`);
+    expect(message).toContain(`cannot write ${HOME}/CLAUDE.md`);
+    expect(deps.files.get(`${HOME}/CLAUDE.md`)).not.toBe('Owner text.\n');
+  });
+
+  it('names the folder that it cannot remove, and does not say that nothing was changed', async () => {
+    const { deps } = setup();
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const stuck: Deps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        remove: async (path) => (path === `${HOME}/.factory` ? failure(`cannot remove ${path}: EBUSY`) : deps.fs.remove(path)),
+      },
+    };
+    const result = await applyInit(failingWrite(stuck, '/factory.yaml'), plan.value);
+    expect(result.ok).toBe(false);
+    const message = messageOf(result);
+    expect(message).not.toContain('nothing was changed');
+    expect(message).toContain(`cannot remove ${HOME}/.factory: EBUSY`);
   });
 
   it('leaves no node when git cannot create the repository', async () => {

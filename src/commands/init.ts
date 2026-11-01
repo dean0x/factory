@@ -302,22 +302,51 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
   });
 };
 
+/** The folders that init creates, from the home up to the topmost one, so the deepest folder comes first. */
+const createdFolders = (home: string, createdRoot: string | null): readonly string[] => {
+  const folders: string[] = [];
+  if (createdRoot === null) return folders;
+  let current = home;
+  for (let level = 0; level < MAX_PARENT_LEVELS; level += 1) {
+    folders.push(current);
+    const parent = dirname(current);
+    if (current === createdRoot || parent === current) break;
+    current = parent;
+  }
+  return folders;
+};
+
 /** Write the node: first into a staging folder, then the state folder, then CLAUDE.md, and the config file last. */
 export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<InitResult>> => {
   const layout = layoutOf(plan.home);
   const staging = stagingDirOf(plan.home, deps.pid);
   const touched = { state: false, claude: false, config: false };
 
+  /** Undo only what this run made. A step that fails is named in the message. */
   const rollback = async (cause: CliError): Promise<CliResult<InitResult>> => {
-    await deps.fs.remove(staging);
-    if (touched.state) await deps.fs.remove(layout.stateDir);
+    const problems: string[] = [];
+    const undo = async (step: Promise<CliResult<void>>): Promise<void> => {
+      const result = await step;
+      if (!result.ok) problems.push(result.error.message);
+    };
+    await undo(deps.fs.remove(staging));
+    if (touched.state) await undo(deps.fs.remove(layout.stateDir));
     if (touched.claude) {
-      if (plan.claudeOriginal === null) await deps.fs.remove(layout.claudeMd);
-      else await deps.fs.writeText(layout.claudeMd, plan.claudeOriginal);
+      await undo(
+        plan.claudeOriginal === null
+          ? deps.fs.remove(layout.claudeMd)
+          : deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeOriginal),
+      );
     }
-    if (touched.config) await deps.fs.remove(layout.configFile);
-    if (plan.createdRoot !== null) await deps.fs.remove(plan.createdRoot);
-    return err({ ...cause, message: `${cause.message} (nothing was changed)` });
+    if (touched.config) await undo(deps.fs.remove(layout.configFile));
+    for (const folder of createdFolders(plan.home, plan.createdRoot)) await undo(deps.fs.removeEmptyDir(folder));
+    return err({
+      ...cause,
+      message:
+        problems.length === 0
+          ? `${cause.message} (nothing was changed)`
+          : `${cause.message}. These steps of the undo failed, so some changes stay: ${problems.join('; ')}.`,
+    });
   };
 
   const cleared = await deps.fs.remove(staging);
@@ -342,13 +371,13 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   if (!moved.ok) return rollback(moved.error);
   touched.state = true;
 
-  const claude = await deps.fs.writeText(layout.claudeMd, plan.claudeText);
-  touched.claude = true;
+  const claude = await deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeText);
   if (!claude.ok) return rollback(claude.error);
+  touched.claude = true;
 
-  const config = await deps.fs.writeText(layout.configFile, plan.configText);
-  touched.config = true;
+  const config = await deps.fs.writeTextAtomic(layout.configFile, plan.configText);
   if (!config.ok) return rollback(config.error);
+  touched.config = true;
 
   return ok({
     committed: identity,

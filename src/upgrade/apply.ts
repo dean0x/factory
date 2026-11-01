@@ -85,7 +85,7 @@ export const restore = async (deps: Deps, written: readonly Written[]): Promise<
   const problems: string[] = [];
   for (const entry of [...written].reverse()) {
     const result =
-      entry.previous === null ? await deps.fs.remove(entry.path) : await deps.fs.writeText(entry.path, entry.previous);
+      entry.previous === null ? await deps.fs.remove(entry.path) : await deps.fs.writeTextAtomic(entry.path, entry.previous);
     if (!result.ok) problems.push(result.error.message);
   }
   return problems;
@@ -103,7 +103,7 @@ export const writeAll = async (deps: Deps, newFiles: readonly NewFile[], written
     if (!previous.ok) return previous;
     if (previous.value === file.text) continue;
     written.push({ path: file.path, previous: previous.value });
-    const result = await deps.fs.writeText(file.path, file.text);
+    const result = await deps.fs.writeTextAtomic(file.path, file.text);
     if (!result.ok) return result;
   }
   return ok(undefined);

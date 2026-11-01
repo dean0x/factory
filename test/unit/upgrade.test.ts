@@ -13,7 +13,7 @@ import { jsonText } from '../../src/state/files.js';
 import { parseJsonText } from '../../src/state/load.js';
 import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
 import { blockTemplates, type BlockTemplate } from '../../src/templates/index.js';
-import { createFakeDeps, exited, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 
 const HOME = '/w/node';
@@ -333,24 +333,14 @@ describe('upgrade: migrations', () => {
 
   it('writes the config last', async () => {
     const { deps } = await makeNode();
-    const writes: string[] = [];
-    const recording: FakeDeps = {
-      ...deps,
-      fs: {
-        ...deps.fs,
-        writeText: async (path, body) => {
-          writes.push(path);
-          return deps.fs.writeText(path, body);
-        },
-      },
-    };
+    const first = deps.atomicWrites.length;
     const spec: UpgradeSpec = {
       config: configAt(2, [step('schema', 1)]),
       state: stateAt(2, [step('schema_version', 1)]),
       blocks: withBlock('coordinator', 2, 'New coordinator text.'),
     };
-    success(await upgrade(recording, spec));
-    expect(writes).toEqual([CLAUDE, NODE_JSON, CONFIG]);
+    success(await upgrade(deps, spec));
+    expect(deps.atomicWrites.slice(first)).toEqual([CLAUDE, NODE_JSON, CONFIG]);
   });
 
   it('fails on a gap in the chain, before it makes a backup', async () => {
@@ -403,18 +393,7 @@ describe('upgrade: when a step fails after the backup', () => {
   it('puts back every file that it wrote when a write fails', async () => {
     const { deps } = await makeNode();
     const before = snapshot(deps);
-    let failedOnce = false;
-    const failing: FakeDeps = {
-      ...deps,
-      fs: {
-        ...deps.fs,
-        writeText: async (path, body) => {
-          if (path !== NODE_JSON || failedOnce) return deps.fs.writeText(path, body);
-          failedOnce = true;
-          return failure('disk full');
-        },
-      },
-    };
+    const failing = withFailingWrites(deps, (path, attempt) => path === NODE_JSON && attempt === 1);
     const error = refusal(await upgrade(failing, newer));
     expect(error.message).toContain('disk full');
     expect(error.message).toContain('The files are as they were.');
@@ -432,6 +411,58 @@ describe('upgrade: when a step fails after the backup', () => {
     expect(text(deps, CLAUDE)).toBe(before.get(CLAUDE));
     expect(text(deps, NODE_JSON)).toBe(before.get(NODE_JSON));
     expect(gitSince()).toEqual(expect.arrayContaining(['add -A', 'reset -q']));
+  });
+
+  it('writes each changed file and puts it back with the atomic write', async () => {
+    const { deps } = await makeNode({
+      run: (inner) => (call) => (call.args.includes('commit') ? exited(1) : inner(call)),
+    });
+    const first = deps.atomicWrites.length;
+    refusal(await upgrade(deps, newer));
+    expect(deps.atomicWrites.slice(first)).toEqual([CLAUDE, NODE_JSON, NODE_JSON, CLAUDE]);
+  });
+
+  it('names the number of files and the backup folder when a file cannot be put back', async () => {
+    const { deps } = await makeNode();
+    const before = snapshot(deps);
+    const failing = withFailingWrites(
+      deps,
+      (path, attempt) => (path === NODE_JSON && attempt === 1) || (path === CLAUDE && attempt === 2),
+    );
+    const error = refusal(await upgrade(failing, newer));
+    expect(error.message).toContain('disk full');
+    expect(error.message).not.toContain('The files are as they were');
+    expect(error.message).toContain('1 file could not be restored');
+    expect(error.message).toContain(`cannot write ${CLAUDE}`);
+    expect(error.message).toContain('Restore it from .factory/backups/2030-01-02T03-04-05-678Z');
+    expect(text(deps, NODE_JSON)).toBe(before.get(NODE_JSON));
+    expect(text(deps, CLAUDE)).not.toBe(before.get(CLAUDE));
+    expect(text(deps, `${BACKUP}/CLAUDE.md`)).toBe(before.get(CLAUDE));
+  });
+
+  it('says that the files could not be put back when two files fail', async () => {
+    const { deps } = await makeNode();
+    const failing = withFailingWrites(
+      deps,
+      (path, attempt) => (path === NODE_JSON && attempt >= 1) || (path === CLAUDE && attempt === 2),
+    );
+    const error = refusal(await upgrade(failing, newer));
+    expect(error.message).toContain('2 files could not be restored');
+    expect(error.message).toContain('Restore them from .factory/backups/');
+  });
+
+  it('does not say that the files are as they were when the index cannot be cleared', async () => {
+    const { deps, gitSince } = await makeNode({
+      run: (inner) => (call) => (call.args.includes('commit') || call.args.includes('reset') ? exited(1) : inner(call)),
+    });
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, newer));
+    expect(gitSince()).toEqual(expect.arrayContaining(['add -A', 'reset -q']));
+    expect(error.message).toContain('cannot commit the state files');
+    expect(error.message).not.toContain('The files are as they were');
+    expect(error.message).toContain('cannot clear the staged files');
+    expect(error.message).toContain('git reset');
+    expect(text(deps, CLAUDE)).toBe(before.get(CLAUDE));
   });
 
   it('removes a file that it created when it restores', async () => {
