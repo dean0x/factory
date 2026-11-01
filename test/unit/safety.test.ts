@@ -4,21 +4,22 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { checkProxyHealth, healthUrl, parseProxyUrl, proxyLabel } from '../../src/safety/proxy.js';
 import { findTokenPaths, looksLikeToken } from '../../src/safety/secrets.js';
-import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
+import { FAKE_GITHUB_OAUTH_TOKEN, FAKE_GITHUB_TOKEN, FAKE_GOOGLE_API_KEY } from '../helpers/fake-secret.js';
 
 describe('looksLikeToken', () => {
   it.each([
     ['an Anthropic key', 'sk-ant-api03-abcdefghijklmnop'],
-    ['a GitHub personal token', 'ghp_abcdefghijklmnopqrstuvwxyz0123456789'],
-    ['a GitHub OAuth token', 'gho_abcdefghijklmnopqrstuvwxyz0123456789'],
+    ['a GitHub personal token', FAKE_GITHUB_TOKEN],
+    ['a GitHub OAuth token', FAKE_GITHUB_OAUTH_TOKEN],
     ['a GitHub fine-grained token', 'github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuv'],
     ['a Slack bot token', 'xoxb-1234567890-abcdefghij'],
     ['a Slack app token', 'xoxa-1234567890-abcdefghij'],
     ['a Slack user token', 'xoxp-1234567890-abcdefghij'],
     ['an AWS access key id', 'AKIAIOSFODNN7EXAMPLE'],
+    ['a Google API key', FAKE_GOOGLE_API_KEY],
     ['a 40 character hex string', 'da39a3ee5e6b4b0d3255bfef95601890afd80709'],
     ['a long base64 string', 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY12'],
-    ['a token inside a URL', 'http://127.0.0.1:8787/ghp_abcdefghijklmnopqrstuvwxyz0123456789'],
+    ['a token inside a URL', `http://127.0.0.1:8787/${FAKE_GITHUB_TOKEN}`],
     ['a base64url string', 'Zm9vYmFyQmF6X3F1eC1URVNUMDEyMzQ1Njc4OWFiY2RlZg'],
   ])('is true for %s', (_name, text) => {
     expect(looksLikeToken(text)).toBe(true);
@@ -28,6 +29,8 @@ describe('looksLikeToken', () => {
     ['a slug', 'acme-web'],
     ['a prefix alone', 'sk-ant-'],
     ['AKIA alone', 'AKIA'],
+    ['AIza alone', 'AIza'],
+    ['a Google key prefix with 34 characters', FAKE_GOOGLE_API_KEY.slice(0, -1)],
     ['a plain URL', 'http://127.0.0.1:8787/health'],
     ['a relative path', '../some/long/folder/name/with/many/parts/of/a/path'],
     ['a long lower case branch name with digits', 'fix-the-thing-that-broke-in-release-2024-10-04-again-and-again'],

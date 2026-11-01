@@ -4,6 +4,7 @@ const TOKEN_PREFIXES: readonly RegExp[] = [
   /github_pat_[A-Za-z0-9_]{8,}/,
   /xox[abp]-[A-Za-z0-9-]{8,}/,
   /AKIA[A-Z0-9]{8,}/,
+  /AIza[A-Za-z0-9_-]{35}/,
 ];
 
 const HEX_RUN = /[0-9a-fA-F]{40,}/;
