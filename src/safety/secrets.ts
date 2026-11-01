@@ -11,7 +11,7 @@ const HEX_RUN = /[0-9a-fA-F]{40,}/;
 const BASE64_RUN = /[A-Za-z0-9+/_-]{40,}/g;
 const MAX_DEPTH = 16;
 const MAX_NODES = 5000;
-export const HIDDEN_KEY = '<key>';
+const HIDDEN_KEY = '<key>';
 
 /** A long run that mixes lower case, upper case and digits looks like random data. */
 const isRandomLooking = (run: string): boolean => /[a-z]/.test(run) && /[A-Z]/.test(run) && /[0-9]/.test(run);
