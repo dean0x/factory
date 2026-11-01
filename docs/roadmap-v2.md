@@ -46,7 +46,7 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 - [ ] Integration tests: `init` exits 4 for a home inside a git work tree, inside another node home, and above one of its projects.
 - [ ] Integration test on a separate tmux server (`tmux -L <test>`) with a fake `claude` on PATH: `factory up` makes the session with the windows `view` and `bench`. The fake records `--permission-mode auto`, no inherited `ANTHROPIC_BASE_URL`, and one `--add-dir` per project. A second `factory up` starts no second coordinator.
 - [ ] Unit tests: each role template passes the deny list and has its required sections. `factory node add-child` exits 4 for a child from another layer.
-- [ ] Migration test: a node that the FAC-M1 0.1.0 tarball wrote upgrades to schema 2. After the upgrade, `factory doctor` exits 0 and shows the warning "decision store not set".
+- [ ] Migration test: a node that the FAC-M1 0.1.0 tarball wrote upgrades to schema 2, with `tracker.kind: local`. After the upgrade, `factory doctor` exits 0.
 - [ ] Unit test with a fake platform `win32`: every command exits 4 and prints the WSL hint.
 - [ ] `npm run exit-check` passes with the v2 flow: `init`, `up --dry-run`, `doctor`, deny list.
 
@@ -54,14 +54,15 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 
 **Goal.** The board, the andon items and the decisions live in GitHub. A script reads the owner's answers.
 
-**Scope.** The adapter contract of design §4.10 and the `github` adapter (issues plus a Projects board, through `gh`). The commands `item`, `andon`, `decide ask|read`, `staging`, `watch`. The decision log and the decision profile tools. `item import` for the old board and waiting files.
+**Scope.** The adapter contract of design §4.10, the `local` adapter (files in `.factory/`, the test double) and the `github` adapter (issues plus a Projects board, through `gh`). The commands `item`, `andon`, `decide ask|read`, `decide <D-n> <option>` (for `local`), `staging`, `watch`. The decision log and the decision profile tools. `item import` from the `local` files into a team tracker.
 
 **Exit criteria.**
-- [ ] Contract tests run each adapter operation against a fake `gh` with recorded responses. No test needs the network.
+- [ ] One set of connector contract tests runs against `local` and against `github`. For `github` it uses a fake `gh` with recorded responses. No test needs the network.
+- [ ] With `local`: `comments read` returns nothing, `factory watch` exits at once with a note, and `factory decide <D-n> <option>` records `by: owner`. `factory decide` refuses (exit 4) with no TTY, and when `FACTORY_SESSION` is set.
 - [ ] `decide read` records an answer `/choose B` or a label `choose:B` from the owner's account. It ignores the same answer from another account. Tests cover both cases.
 - [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
 - [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
-- [ ] `item import` moves a fixture `board.json` and `waiting.json` into tracker items, and a second run creates no duplicates.
+- [ ] `item import` moves the `local` files (fixture `board.json` and `waiting.json`) into `github` items, and a second run creates no duplicates.
 - [ ] No command needs `python3`, `jq` or `glow` (a test runs the commands with a PATH that does not contain them).
 
 ### FAC-M4: Cell control
@@ -138,7 +139,7 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 **Goal.** A team that uses Jira or Linear gets the same tracker features.
 
 **Exit criteria.**
-- [ ] The FAC-M3 contract tests pass for `jira` and `linear` with recorded responses.
+- [ ] The FAC-M3 connector contract tests pass for `jira` and `linear` with recorded responses, as they do for `local` and `github`.
 - [ ] `doctor` checks the decision store privacy for each adapter.
 
 ## Later (no milestone yet)

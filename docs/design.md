@@ -7,7 +7,7 @@ Roadmap: `docs/roadmap-v2.md` (proposal). It replaces FAC-M2 to FAC-M7 of the v1
 
 Dean gave the feedback F-1 to F-10 on v1, and accepted the proposals as a set (D-53). v2 makes these changes:
 1. **Names from a real factory (F-1).** A lane is now a **cell**. A workflow pack is now a **recipe**. node, owner and project stay. New factory words where they are clearer: `factory inspect` (merge gate), `factory ship` (release check), **andon** (an item that waits on the owner), **work order** (a brief or a decision that goes down), **changeover** (a clear or compact between phases), **staging** (the merge order). See §4.1 and §7.
-2. **The team's tracker holds the board (F-2).** factory gets one tracker connector: GitHub (the default), Jira or Linear. The artifact review desk is optional. A decision is a labelled tracker item, and a script reads the answer. The decision store is private by default. See §4.10.
+2. **The team's tracker holds the board (F-2).** factory gets one tracker connector: GitHub (the default), Jira or Linear. A `local` connector keeps the items in files, for a node with no network or no tracker account, and it is the test double of the connector. The artifact review desk is optional. A decision is a labelled tracker item, and a script reads the answer. The decision store is private by default. See §4.10.
 3. **The coordinator runs in its own home folder (F-3).** The node home is next to the projects, never inside a repo and never above the checkouts. `factory up` starts the coordinator. See §4.3.
 4. **Same mechanics, one role per layer (F-4).** Layers count from the bottom: cells are layer 0. factory sets the role of a node from its layer. All children of a node are on one layer. See §5.
 5. **macOS and Linux only (F-5).** See §4.7.
@@ -230,10 +230,11 @@ factory cell summon <cell> [--for 15m]
 factory cell watch | recover | adopt <name>
 factory layout                              # build the view and bench windows again
 
-factory item add|update|move|close|import ...   # tracker items: the board
+factory item add|update|move|close|list|import ...   # tracker items: the board
 factory andon add|list|close ...            # items that wait on the owner
 factory decide ask <D-n> --options FILE     # a decision item in the decision store
 factory decide read [<D-n>] [--principle ID]   # read answers by script; record them in the log and profile
+factory decide <D-n> <option> [--note T]    # the owner answers in the CLI (the `local` tracker, §4.10)
 factory staging set|show                    # the merge order
 factory watch                               # bounded reads of new tracker comments; wakes the coordinator
 factory desk render                         # optional artifact desk (§4.10)
@@ -274,6 +275,7 @@ The node home is a folder of its own, next to the project folders. It is never i
       roles/worker.md           # the worker role template that every cell reads
       decision-log.json         # decisions read from the tracker, with the answer and its author
       staging.json              # the merge order
+      board.json  waiting.json  # the items, only with the `local` tracker (§4.10)
       decision-profile/         # format, index, principles, decisions
       roadmaps/  orders/  resume/
       cells/<id>/inbox/         # work orders and records for each cell
@@ -326,7 +328,7 @@ limits:
 approval:
   land: each                 # each (every merge waits for the owner) | approved-work (§6)
 tracker:
-  kind: github               # github | jira | linear | desk
+  kind: github               # github | jira | linear | local | desk
   items: acme/web            # where work items live (a repo, a project key, a team)
   decisions: acme/decisions  # the decision store; private by default (§4.10)
   watch_interval: 5m         # `factory watch` read interval
@@ -345,6 +347,7 @@ recipe:
 children: []                 # nodes this node manages (§5)
 ```
 
+- `tracker.kind: local` takes no other tracker key: the items and the decisions stay in `.factory/` (§4.10). The schema refuses `items`, `decisions` or `watch_interval` with `local`. Every other kind needs `items` and `decisions`.
 - `approval.land` names the step that makes a finished output final. In the `software` recipe, that step is the merge. Shipping (a release) always waits for the owner's go; no config value changes that.
 - The config holds no secrets. `factory doctor` refuses a config with a value that looks like a token. The schema is checked at load with a fixed schema (Zod). An unknown key or a bad value stops the command and names the key. It never falls back to a looser default (from firstmate's fail-closed parse).
 
@@ -364,15 +367,15 @@ children: []                 # nodes this node manages (§5)
 | `lanes.<id>` | `cells.<id>` |
 | `projects[]` | `recipe.projects[]`, with `recipe.id: software` |
 | `projects[].pack: plain` | `recipe.variant: plain` (a per-project `variant` only when it differs) |
-| (none) | `tracker.kind: github`, `tracker.items` from the first project's `repo`; `tracker.decisions` unset, so `doctor` warns |
+| (none) | `tracker.kind: local`. The owner moves to a team tracker later with `factory item import` |
 | (none) | `approval.land: each` |
 | `.factory/protocol.md` (block `protocol`) | `.factory/roles/worker.md` (block `worker`) |
 | `.factory/briefs/` | `.factory/orders/` |
-| `.factory/board.json`, `waiting.json` | removed when empty; else moved to `.factory/legacy/`, and `doctor` warns until the owner imports them with `factory item import` |
+| `.factory/board.json`, `waiting.json` | kept in place: they are the files of the `local` tracker |
 
 ### 4.6 Claude Code integration
 
-- factory starts a cell with `env -u ANTHROPIC_BASE_URL [ANTHROPIC_BASE_URL=<proxy base_url>] FACTORY_HOME=<home> claude --permission-mode auto --effort <e> --add-dir <home>/.factory`, in the cell's checkout. It starts the coordinator the same way in the home, with one `--add-dir` for each project path.
+- factory starts a cell with `env -u ANTHROPIC_BASE_URL [ANTHROPIC_BASE_URL=<proxy base_url>] FACTORY_HOME=<home> FACTORY_SESSION=<id> claude --permission-mode auto --effort <e> --add-dir <home>/.factory`, in the cell's checkout. It starts the coordinator the same way in the home, with one `--add-dir` for each project path.
 - **Proxy.** A session uses a proxy only when the config names one: the cell's override in `cells.<id>.proxy`, else `session.proxy` of the node. The launch always clears a stray `ANTHROPIC_BASE_URL` from the shell, then sets it only from the config. So a proxy is always a choice that the config shows, never an accident of the shell.
 - **Proxy check.** Before each launch, factory sends one bounded request to the proxy's `health` path. If the proxy does not answer, `on_fail` decides:
   - `stop` (the default): factory does not start the session. It prints the proxy id, the failed check and the fix, for example "start the proxy, or set `proxy: none` for this cell".
@@ -474,17 +477,19 @@ factory does not build its own review desk. The board, the andon items and the d
 **Adapters.**
 - `github` (the default): issues plus a Projects board, through `gh`. factory already needs `gh` for the `software` recipe.
 - `jira` and `linear`: the same contract, through their CLI or API.
+- `local`: files in `.factory/` (`board.json` and `waiting.json`, as in the setup of today), for a node with no network or no tracker account. It has no comments and no watch: `comments read` returns nothing, and `factory watch` exits at once with a note. `factory item list` and `factory andon list` show the items; there is no other UI. The owner answers a decision in the CLI with `factory decide <D-n> <option>`. `local` is also the test double of the connector: the contract tests run against `local` and against each real adapter.
 - `desk` (optional): the artifact review page of today, for an owner who wants it. It renders with `factory desk render`. The coordinator session publishes it and reads the answers, because the CLI has no Artifact tool.
 
 **Decisions.**
 - A decision is an item with the `decision` label. Its body has the question, the options and a recommendation.
 - The owner answers with a comment `/choose <option>`, or with a label `choose:<option>`.
 - `factory decide read` reads the answer with a script, not with model tokens. An answer counts only when its author is the owner's tracker account (`owner.github` for GitHub). The script records the decision in `decision-log.json`, with the comment link and the author.
+- With `local`, `factory decide <D-n> <option>` records the answer with `by: owner`. It needs a TTY, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). This guard stops a session from answering by accident. The owner's permission settings are the second guard.
 - Designs and plans: the item links the repo file (GitHub shows Markdown), or the adapter attaches it.
 
 **Comments and wake-up.** There is no live push to a local session without a webhook server. So `factory watch` reads new comments with the tracker CLI at a fixed interval (`tracker.watch_interval`), with a bound on the number of reads per run. It wakes the coordinator only when a new answer or a mention arrives.
 
-**Privacy.** An issue in a public repo is public. Decision items can hold private facts. So the default decision store is a private repo, or private draft items in a private Project. `factory doctor` fails when the decision store is public, and warns when it is not set.
+**Privacy.** An issue in a public repo is public. Decision items can hold private facts. So the default decision store is a private repo, or private draft items in a private Project. `factory doctor` fails when the decision store is public, and warns when it is not set. The `local` store is private: it is the node's own state repo, with no remote.
 
 ### 4.11 Sessions in tmux: bench, view and stop
 
@@ -588,7 +593,7 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 | A proxy only by explicit config, and only when it answers | yes | Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the config (§4.6). A health check runs before each launch and in `doctor` and `status`. On failure the default is `stop` with the fix in the message; `direct` is an explicit choice. `doctor` sends the check only when the config comes from `--home` or from the current folder. For a config in a parent folder, `doctor` sends no request and warns to run with `--home DIR`. `doctor` warns when the variable is set in the shell. |
 | No proxy keys or tokens in output | yes | `proxies` holds no keys; `doctor` refuses token-like values there. Output shows only the proxy id and its host and port, never user info, query strings or headers of the base URL. |
 | A denial is final; no laundering through another session | yes | `cell send` and `cell relay` refuse a text that asks a cell to run a command that the node recorded as denied (a `denied` list in state). |
-| Never invent the owner's consent | yes | `cell relay` types the owner prefix only for a decision record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only for an answer from the owner's tracker account. |
+| Never invent the owner's consent | yes | `cell relay` types the owner prefix only for a decision record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only for an answer from the owner's tracker account. With `local`, `factory decide` needs a TTY and refuses inside a session that factory started. |
 | Decisions stay private | yes | `doctor` fails when the decision store is public, and warns when it is not set (§4.10). |
 | No secrets in output | yes | No command prints env values. `doctor` refuses token-like values in `factory.yaml`. Process lists show only pid, elapsed time and command name. |
 | Peers never ask the owner directly | yes (role templates) | none (model behavior) |
