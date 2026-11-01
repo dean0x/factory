@@ -2,10 +2,11 @@ import type { CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { err, ok, type Result } from '../core/result.js';
 import { inspectParsed, requireValid, type DocState } from '../migrate/inspect.js';
-import { layoutOf, STATE_DIR_NAME, stateRel } from './layout.js';
+import { dirs, files, stateKeys } from '../names.js';
+import { layoutOf } from './layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION, type NodeState } from './schema.js';
 
-export const STATE_LABEL = `${STATE_DIR_NAME}/${stateRel.nodeJson}`;
+export const STATE_LABEL = `${dirs.state}/${files.nodeState}`;
 
 /** Parse JSON text. The error never repeats the text. */
 export const parseJsonText = (text: string): Result<unknown, string> => {
@@ -29,7 +30,7 @@ export const inspectState = async (deps: Deps, home: string): Promise<DocState<N
 
   return inspectParsed(raw.value, {
     file: STATE_LABEL,
-    key: 'schema_version',
+    key: stateKeys.schemaVersion,
     supported: STATE_SCHEMA_VERSION,
     schema: nodeStateSchema,
   });

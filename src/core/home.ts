@@ -1,0 +1,36 @@
+import { dirname, join, resolve } from 'node:path';
+import { failure, type CliResult } from '../cli/errors.js';
+import { commands, commandText, files, flags, flagText } from '../names.js';
+import type { Deps } from './deps.js';
+import { ok } from './result.js';
+
+const MAX_WALK_LEVELS = 64;
+
+/** The nearest config file from `startDir` up to the file-system root, or null. */
+export const findNearestConfig = async (deps: Deps, startDir: string): Promise<CliResult<string | null>> => {
+  let dir = startDir;
+  for (let level = 0; level < MAX_WALK_LEVELS; level += 1) {
+    const candidate = join(dir, files.config);
+    const kind = await deps.fs.stat(candidate);
+    if (!kind.ok) return kind;
+    if (kind.value === 'file') return ok(candidate);
+    const parent = dirname(dir);
+    if (parent === dir) return ok(null);
+    dir = parent;
+  }
+  return ok(null);
+};
+
+/** The node home: the home flag, else the folder of the nearest config file above the current folder. */
+export const resolveHome = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<string>> => {
+  if (homeFlag !== undefined) return ok(resolve(deps.cwd, homeFlag));
+  const found = await findNearestConfig(deps, deps.cwd);
+  if (!found.ok) return found;
+  if (found.value === null) {
+    return failure(
+      `no ${files.config} found in this folder or in a parent folder`,
+      `Use ${flagText(flags.home)} DIR, or run "${commandText(commands.init)}".`,
+    );
+  }
+  return ok(dirname(found.value));
+};

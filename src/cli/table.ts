@@ -2,6 +2,7 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { commands, commandText, flags, flagShorts, flagText, program } from '../names.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import type { CommandOutput } from './output.js';
@@ -14,7 +15,8 @@ export interface FlagOption {
   readonly description: string;
 }
 
-export interface Flags {
+/** The flags that a person gave on the command line. */
+export interface Given {
   string(name: string): string | undefined;
   strings(name: string): readonly string[];
   bool(name: string): boolean;
@@ -25,21 +27,21 @@ export interface Command {
   readonly summary: string;
   readonly usage: string;
   readonly options: Readonly<Record<string, FlagOption>>;
-  run(flags: Flags, deps: Deps): Promise<CliResult<CommandOutput>>;
+  run(given: Given, deps: Deps): Promise<CliResult<CommandOutput>>;
 }
 
 export const globalOptions: Readonly<Record<string, FlagOption>> = {
-  json: { type: 'boolean', description: 'Print one JSON document.' },
-  quiet: { type: 'boolean', description: 'Print only warnings and failures.' },
-  'no-color': { type: 'boolean', description: 'Do not use color.' },
-  help: { type: 'boolean', short: 'h', description: 'Show help.' },
+  [flags.json]: { type: 'boolean', description: 'Print one JSON document.' },
+  [flags.quiet]: { type: 'boolean', description: 'Print only warnings and failures.' },
+  [flags.noColor]: { type: 'boolean', description: 'Do not use color.' },
+  [flags.help]: { type: 'boolean', short: flagShorts.help, description: 'Show help.' },
 };
 
 export const commandTable: readonly Command[] = [
   {
-    name: 'version',
+    name: commands.version,
     summary: 'Print the version.',
-    usage: 'factory version',
+    usage: commandText(commands.version),
     options: {},
     run: async () => ok(runVersion(FACTORY_VERSION)),
   },
@@ -53,7 +55,7 @@ const toDescriptor = (option: FlagOption): NonNullable<ParseArgsConfig['options'
   ...(option.short === undefined ? {} : { short: option.short }),
 });
 
-const toFlags = (values: Readonly<Record<string, ParsedValue>>): Flags => ({
+const toGiven = (values: Readonly<Record<string, ParsedValue>>): Given => ({
   string: (name) => {
     const value = values[name];
     return typeof value === 'string' ? value : undefined;
@@ -69,13 +71,13 @@ const toFlags = (values: Readonly<Record<string, ParsedValue>>): Flags => ({
 export const parseFlags = (
   args: readonly string[],
   options: Readonly<Record<string, FlagOption>>,
-): CliResult<Flags> => {
+): CliResult<Given> => {
   const descriptors = Object.fromEntries(
     Object.entries(options).map(([name, option]) => [name, toDescriptor(option)]),
   );
   try {
     const parsed = parseArgs({ args: [...args], options: descriptors, strict: true, allowPositionals: false });
-    return ok(toFlags(parsed.values));
+    return ok(toGiven(parsed.values));
   } catch (cause) {
     return usageError(cause instanceof Error ? cause.message : 'cannot read the flags');
   }
@@ -84,7 +86,7 @@ export const parseFlags = (
 const flagLine = (name: string, option: FlagOption): string => {
   const placeholder = option.placeholder === undefined ? '' : ` ${option.placeholder}`;
   const short = option.short === undefined ? '' : `-${option.short}, `;
-  return `  ${`${short}--${name}${placeholder}`.padEnd(26)}${option.description}`;
+  return `  ${`${short}${flagText(name)}${placeholder}`.padEnd(26)}${option.description}`;
 };
 
 const flagBlock = (title: string, options: Readonly<Record<string, FlagOption>>): string[] => [
@@ -94,17 +96,17 @@ const flagBlock = (title: string, options: Readonly<Record<string, FlagOption>>)
 
 export const renderHelp = (): string =>
   [
-    `factory ${FACTORY_VERSION}`,
+    `${program} ${FACTORY_VERSION}`,
     '',
-    'Usage: factory <command> [flags]',
+    `Usage: ${program} <command> [flags]`,
     '',
     'Commands:',
     ...commandTable.map((command) => `  ${command.name.padEnd(10)}${command.summary}`),
-    '  help      Show this help.',
+    `  ${commands.help.padEnd(10)}Show this help.`,
     '',
     ...flagBlock('Flags for all commands:', globalOptions),
     '',
-    'Run "factory <command> --help" to see the flags of one command.',
+    `Run "${program} <command> ${flagText(flags.help)}" to see the flags of one command.`,
     '',
   ].join('\n');
 

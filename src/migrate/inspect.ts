@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import { failure, type CliResult } from '../cli/errors.js';
 import { describeIssues } from '../core/zod.js';
+import { commands, commandText, program } from '../names.js';
 import { ok } from '../core/result.js';
 
 /** What a versioned file holds, after the version check and the schema check. */
@@ -41,7 +42,7 @@ export const inspectParsed = <T>(raw: unknown, spec: VersionSpec<T>): DocState<T
       kind: 'newer',
       raw,
       version,
-      message: `${spec.file} has ${spec.key} ${version}, but this factory reads up to ${spec.supported}. Upgrade factory.`,
+      message: `${spec.file} has ${spec.key} ${version}, but this ${program} reads up to ${spec.supported}. Upgrade ${program}.`,
     };
   }
   if (version < spec.supported) {
@@ -49,7 +50,7 @@ export const inspectParsed = <T>(raw: unknown, spec: VersionSpec<T>): DocState<T
       kind: 'older',
       raw,
       version,
-      message: `${spec.file} has ${spec.key} ${version}, but this factory needs ${spec.supported}. Run "factory upgrade".`,
+      message: `${spec.file} has ${spec.key} ${version}, but this ${program} needs ${spec.supported}. Run "${commandText(commands.upgrade)}".`,
     };
   }
   const parsed = spec.schema.safeParse(raw);

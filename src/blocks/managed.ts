@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from '../core/result.js';
+import { marker } from '../names.js';
 import { BLOCK_NAME_PATTERN } from '../state/schema.js';
 
 export interface BlockSpec {
@@ -20,18 +21,22 @@ export interface ParsedBlock extends BlockSpec {
 
 export type BlockIntegrity = 'intact' | 'edited';
 
-const MARKER_PREFIX = '<!-- factory:';
-const BEGIN_PATTERN = /^<!-- factory:begin ([a-z][a-z0-9-]{0,31}) v([1-9][0-9]{0,5}) sha256=([0-9a-f]{64}) -->\r?$/;
-const END_PATTERN = /^<!-- factory:end ([a-z][a-z0-9-]{0,31}) -->\r?$/;
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const MARKER_PREFIX = `<!-- ${marker.prefix}`;
+const BEGIN_PATTERN = new RegExp(
+  `^${escapeRegex(MARKER_PREFIX)}${marker.begin} ([a-z][a-z0-9-]{0,31}) v([1-9][0-9]{0,5}) ${marker.hash}=([0-9a-f]{64}) -->\\r?$`,
+);
+const END_PATTERN = new RegExp(`^${escapeRegex(MARKER_PREFIX)}${marker.end} ([a-z][a-z0-9-]{0,31}) -->\\r?$`);
 
 export const sha256Hex = (text: string): string => createHash('sha256').update(text).digest('hex');
 
 export const renderBlock = ({ name, version, body }: BlockSpec): CliResult<string> => {
   if (!BLOCK_NAME_PATTERN.test(name)) return failure(`"${name}" is not a block name`);
   if (!Number.isInteger(version) || version < 1) return failure(`block ${name} needs a version of 1 or more`);
-  if (body.includes(MARKER_PREFIX)) return failure(`the body of block ${name} holds a factory marker`);
+  if (body.includes(MARKER_PREFIX)) return failure(`the body of block ${name} holds a managed-block marker`);
   return ok(
-    `${MARKER_PREFIX}begin ${name} v${version} sha256=${sha256Hex(body)} -->\n${body}\n${MARKER_PREFIX}end ${name} -->`,
+    `${MARKER_PREFIX}${marker.begin} ${name} v${version} ${marker.hash}=${sha256Hex(body)} -->\n${body}\n${MARKER_PREFIX}${marker.end} ${name} -->`,
   );
 };
 
@@ -77,7 +82,7 @@ export const parseBlocks = (text: string): CliResult<readonly ParsedBlock[]> => 
       });
       open = null;
     } else if (line.startsWith(MARKER_PREFIX)) {
-      return failure(`line ${lineNumber}: a factory marker is malformed`);
+      return failure(`line ${lineNumber}: a managed-block marker is malformed`);
     }
     offset += line.length + 1;
   }

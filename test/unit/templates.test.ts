@@ -55,9 +55,9 @@ describe.each(texts)('template %s', (_name, text) => {
 describe('block templates', () => {
   it('has the three blocks with version 1 and the right target', () => {
     expect(blockTemplates.map(({ name, version, target }) => [name, version, target])).toEqual([
-      ['coordinator', 1, 'claude-md'],
-      ['safety', 1, 'claude-md'],
-      ['protocol', 1, 'protocol'],
+      ['coordinator', 1, 'claudeFile'],
+      ['safety', 1, 'claudeFile'],
+      ['protocol', 1, 'protocolFile'],
     ]);
   });
 

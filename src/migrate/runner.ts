@@ -1,5 +1,6 @@
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from '../core/result.js';
+import { program } from '../names.js';
 
 /** One pure step from schema version `from` to `from + 1`. */
 export interface Migration {
@@ -15,7 +16,9 @@ export const planMigrations = (
   list: readonly Migration[],
 ): CliResult<readonly Migration[]> => {
   if (current > target) {
-    return failure(`version ${current} is newer than the version ${target} that this factory reads. Upgrade factory.`);
+    return failure(
+      `version ${current} is newer than the version ${target} that this ${program} reads. Upgrade ${program}.`,
+    );
   }
   const steps: Migration[] = [];
   for (let version = current; version < target; version += 1) {

@@ -1,25 +1,27 @@
 import type { BlockSpec } from '../blocks/managed.js';
-import { COORDINATOR_BODY } from './coordinator.js';
-import { PROFILE_INDEX, PROFILE_README_FORMAT } from './decision-profile.js';
-import { PROTOCOL_BODY } from './protocol.js';
-import { ROADMAPS_README } from './roadmaps.js';
-import { SAFETY_BODY } from './safety.js';
+import { blockNames } from '../names.js';
+import { COORDINATOR_LINES } from './coordinator.js';
+import { PROFILE_INDEX_LINES, PROFILE_README_LINES } from './decision-profile.js';
+import { fillTemplate } from './fill.js';
+import { PROTOCOL_LINES } from './protocol.js';
+import { ROADMAPS_README_LINES } from './roadmaps.js';
+import { SAFETY_LINES } from './safety.js';
 
 /** The file that holds a managed block. */
-export type BlockTarget = 'claude-md' | 'protocol';
+export type BlockTarget = 'claudeFile' | 'protocolFile';
 
 export interface BlockTemplate extends BlockSpec {
   readonly target: BlockTarget;
 }
 
 export const blockTemplates: readonly BlockTemplate[] = [
-  { name: 'coordinator', version: 1, target: 'claude-md', body: COORDINATOR_BODY },
-  { name: 'safety', version: 1, target: 'claude-md', body: SAFETY_BODY },
-  { name: 'protocol', version: 1, target: 'protocol', body: PROTOCOL_BODY },
+  { name: blockNames.coordinator, version: 1, target: 'claudeFile', body: fillTemplate(COORDINATOR_LINES) },
+  { name: blockNames.safety, version: 1, target: 'claudeFile', body: fillTemplate(SAFETY_LINES) },
+  { name: blockNames.protocol, version: 1, target: 'protocolFile', body: fillTemplate(PROTOCOL_LINES) },
 ];
 
 export const fileTemplates = {
-  profileReadme: PROFILE_README_FORMAT,
-  profileIndex: PROFILE_INDEX,
-  roadmapsReadme: ROADMAPS_README,
+  profileReadme: fillTemplate(PROFILE_README_LINES),
+  profileIndex: fillTemplate(PROFILE_INDEX_LINES),
+  roadmapsReadme: fillTemplate(ROADMAPS_README_LINES),
 } as const;

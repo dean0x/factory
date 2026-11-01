@@ -1,4 +1,5 @@
 import type { Deps } from '../core/deps.js';
+import { commands, commandText, flags, flagShorts, flagText, schemaIds } from '../names.js';
 import { exitCodeOf, type CliError } from './errors.js';
 import { detectStyle, renderJson, renderText, renderWarnings } from './output.js';
 import {
@@ -15,7 +16,7 @@ export interface Sink {
   readonly isTTY: boolean;
 }
 
-const HELP_WORDS: readonly string[] = ['help', '--help', '-h'];
+const HELP_WORDS: readonly string[] = [commands.help, flagText(flags.help), `-${flagShorts.help}`];
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
 const EXIT_USAGE = 2;
@@ -29,12 +30,12 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
   const [first, ...rest] = argv;
 
   if (first === undefined || HELP_WORDS.includes(first)) {
-    const topic = first === 'help' ? findCommand(rest[0] ?? '') : undefined;
+    const topic = first === commands.help ? findCommand(rest[0] ?? '') : undefined;
     await sink.stdout(topic === undefined ? renderHelp() : renderCommandHelp(topic));
     return EXIT_OK;
   }
 
-  const command = findCommand(first === '--version' ? 'version' : first);
+  const command = findCommand(first === flagText(flags.version) ? commands.version : first);
   if (command === undefined) {
     await sink.stderr(`error: unknown command "${first}"\n\n${renderHelp()}`);
     return EXIT_USAGE;
@@ -42,22 +43,24 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
 
   const parsed = parseFlags(rest, { ...globalOptions, ...command.options });
   if (!parsed.ok) {
-    await sink.stderr(renderError({ ...parsed.error, hint: `Run "factory ${command.name} --help".` }));
+    await sink.stderr(
+      renderError({ ...parsed.error, hint: `Run "${commandText(command.name)} ${flagText(flags.help)}".` }),
+    );
     return exitCodeOf[parsed.error.kind];
   }
-  const flags = parsed.value;
+  const given = parsed.value;
 
-  if (flags.bool('help')) {
+  if (given.bool(flags.help)) {
     await sink.stdout(renderCommandHelp(command));
     return EXIT_OK;
   }
 
-  const json = flags.bool('json');
-  const result = await command.run(flags, deps);
+  const json = given.bool(flags.json);
+  const result = await command.run(given, deps);
 
   if (!result.ok) {
     if (json) {
-      await sink.stdout(renderJson({ schema: 'factory.error/v1', error: result.error }));
+      await sink.stdout(renderJson({ schema: schemaIds.error, error: result.error }));
     }
     await sink.stderr(renderError(result.error));
     return exitCodeOf[result.error.kind];
@@ -66,8 +69,8 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
   if (json) {
     await sink.stdout(renderJson(result.value.json));
   } else {
-    const style = detectStyle(deps.env, sink.isTTY, flags.bool('no-color'));
-    await sink.stdout(renderText(result.value, style, flags.bool('quiet')));
+    const style = detectStyle(deps.env, sink.isTTY, given.bool(flags.noColor));
+    await sink.stdout(renderText(result.value, style, given.bool(flags.quiet)));
     await sink.stderr(renderWarnings(result.value.warnings));
   }
   return result.value.failed ? EXIT_FAILURE : EXIT_OK;

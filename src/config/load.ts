@@ -3,10 +3,11 @@ import type { CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { err, ok, type Result } from '../core/result.js';
 import { inspectParsed, requireValid, type DocState } from '../migrate/inspect.js';
+import { files, keys } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { CONFIG_SCHEMA_VERSION, configSchema, type FactoryConfig } from './schema.js';
 
-export const CONFIG_LABEL = 'factory.yaml';
+export const CONFIG_LABEL = files.config;
 
 /** Parse YAML text. Aliases are not allowed, and duplicate keys are errors. */
 export const parseYamlText = (text: string): Result<unknown, string> => {
@@ -36,7 +37,7 @@ export const inspectConfig = async (deps: Deps, home: string): Promise<DocState<
 
   return inspectParsed(raw.value, {
     file: CONFIG_LABEL,
-    key: 'schema',
+    key: keys.root.schema,
     supported: CONFIG_SCHEMA_VERSION,
     schema: configSchema,
   });

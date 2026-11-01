@@ -1,21 +1,19 @@
 import { join } from 'node:path';
-
-export const CONFIG_FILE = 'factory.yaml';
-export const STATE_DIR_NAME = '.factory';
+import { dirs, files } from '../names.js';
 
 /** Paths inside the state folder. */
 export const stateRel = {
-  nodeJson: 'node.json',
-  protocol: 'protocol.md',
-  board: 'board.json',
-  waiting: 'waiting.json',
-  decisionLog: 'decision-log.json',
-  profileReadme: 'decision-profile/README-format.md',
-  profileIndex: 'decision-profile/index.md',
-  roadmapsReadme: 'roadmaps/README.md',
-  briefsKeep: 'briefs/.gitkeep',
-  gitignore: '.gitignore',
-  backups: 'backups',
+  nodeJson: files.nodeState,
+  protocol: files.protocol,
+  board: files.board,
+  waiting: files.waiting,
+  decisionLog: files.decisionLog,
+  profileReadme: join(dirs.profile, files.profileReadme),
+  profileIndex: join(dirs.profile, files.profileIndex),
+  roadmapsReadme: join(dirs.roadmaps, files.roadmapsReadme),
+  briefsKeep: join(dirs.briefs, files.briefsKeep),
+  gitignore: files.gitignore,
+  backups: dirs.backups,
 } as const;
 
 export interface Layout {
@@ -30,11 +28,11 @@ export interface Layout {
 
 /** Every path inside a node home comes from here. */
 export const layoutOf = (home: string): Layout => {
-  const stateDir = join(home, STATE_DIR_NAME);
+  const stateDir = join(home, dirs.state);
   return {
     home,
-    configFile: join(home, CONFIG_FILE),
-    claudeMd: join(home, 'CLAUDE.md'),
+    configFile: join(home, files.config),
+    claudeMd: join(home, files.claudeMd),
     stateDir,
     nodeJson: join(stateDir, stateRel.nodeJson),
     protocolMd: join(stateDir, stateRel.protocol),
@@ -42,4 +40,4 @@ export const layoutOf = (home: string): Layout => {
   };
 };
 
-export const stagingDirOf = (home: string, pid: number): string => join(home, `${STATE_DIR_NAME}.tmp-${pid}`);
+export const stagingDirOf = (home: string, pid: number): string => join(home, `${dirs.state}.tmp-${pid}`);
