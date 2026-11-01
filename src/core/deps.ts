@@ -5,6 +5,11 @@ export type PathKind = 'file' | 'dir' | 'other';
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
   writeText(path: string, text: string): Promise<CliResult<void>>;
+  /**
+   * Write the text to a temporary file in the same folder, then rename it over the target.
+   * A reader sees the old text or the new text, never a part. A failure leaves the target as it was.
+   */
+  writeTextAtomic(path: string, text: string): Promise<CliResult<void>>;
   /** The kind of the path, or null when it does not exist. */
   stat(path: string): Promise<CliResult<PathKind | null>>;
   /** Create the folder and its parents. */
@@ -14,6 +19,8 @@ export interface Fs {
   rename(from: string, to: string): Promise<CliResult<void>>;
   /** Remove a file or a folder tree. A missing path is not an error. */
   remove(path: string): Promise<CliResult<void>>;
+  /** Remove a folder that holds nothing. A folder with content is an error. A missing path is not an error. */
+  removeEmptyDir(path: string): Promise<CliResult<void>>;
   /** Copy a file or a folder tree. Paths in `skip` are not copied. */
   copyTree(from: string, to: string, skip: readonly string[]): Promise<CliResult<void>>;
 }

@@ -1,6 +1,6 @@
 import { posix } from 'node:path';
 import { failure, type CliResult } from '../../src/cli/errors.js';
-import type { Deps, FetchStatus, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
+import type { Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 
 export interface RunCall {
@@ -27,6 +27,8 @@ export interface FakeDeps extends Deps {
   readonly dirs: Set<string>;
   readonly calls: RunCall[];
   readonly fetched: string[];
+  /** The paths of the atomic writes, in order. */
+  readonly atomicWrites: string[];
   seed(path: string, text: string): void;
   seedDir(path: string): void;
 }
@@ -45,6 +47,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const dirs = new Set<string>(['/']);
   const calls: RunCall[] = [];
   const fetched: string[] = [];
+  const atomicWrites: string[] = [];
 
   const ancestors = (path: string): string[] => {
     const found: string[] = [];
@@ -69,6 +72,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     dirs,
     calls,
     fetched,
+    atomicWrites,
     seed: (path, text) => {
       addDir(posix.dirname(path));
       files.set(path, text);
@@ -81,6 +85,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       },
       writeText: async (path, text) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
+        files.set(path, text);
+        return ok(undefined);
+      },
+      writeTextAtomic: async (path, text) => {
+        if (!dirs.has(posix.dirname(path))) return enoent('write', path);
+        atomicWrites.push(path);
         files.set(path, text);
         return ok(undefined);
       },
@@ -118,6 +128,14 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         for (const key of tree.dirs) dirs.delete(key);
         return ok(undefined);
       },
+      removeEmptyDir: async (path) => {
+        if (kindOf(path) === null) return ok(undefined);
+        if (files.has(path)) return failure(`cannot remove ${path}: ENOTDIR`);
+        const tree = treeKeys(path);
+        if (tree.files.length > 0 || tree.dirs.length > 1) return failure(`cannot remove ${path}: ENOTEMPTY`);
+        dirs.delete(path);
+        return ok(undefined);
+      },
       copyTree: async (from, to, skip) => {
         if (kindOf(from) === null) return enoent('copy', from);
         const skipped = (key: string): boolean => skip.some((root) => under(root, key));
@@ -147,4 +165,27 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   };
   fake.seedDir(fake.cwd);
   return fake;
+};
+
+/**
+ * A copy of the deps whose writes fail. `fails` gets the path and the number of the write to that path, from 1.
+ * The plain write and the atomic write fail in the same way.
+ */
+export const withFailingWrites = <T extends Deps>(
+  deps: T,
+  fails: (path: string, attempt: number) => boolean,
+  message = 'disk full',
+): T => {
+  const attempts = new Map<string, number>();
+  const guarded =
+    (write: Fs['writeText']): Fs['writeText'] =>
+    async (path, text) => {
+      const attempt = (attempts.get(path) ?? 0) + 1;
+      attempts.set(path, attempt);
+      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text);
+    };
+  return {
+    ...deps,
+    fs: { ...deps.fs, writeText: guarded(deps.fs.writeText), writeTextAtomic: guarded(deps.fs.writeTextAtomic) },
+  };
 };

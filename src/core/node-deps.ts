@@ -1,6 +1,19 @@
 import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  copyFile,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from './result.js';
@@ -21,6 +34,24 @@ const guard = async <T>(action: string, path: string, work: () => Promise<T>): P
     return ok(await work());
   } catch (cause) {
     return failure(`cannot ${action} ${path}: ${errorCode(cause)}`);
+  }
+};
+
+/** Write beside the target, then rename. A link is followed, so the link stays and its target changes. */
+const writeAtomic = async (path: string, text: string): Promise<void> => {
+  const target = await realpath(path).catch((cause: unknown) => {
+    if (errorCode(cause) === 'ENOENT') return path;
+    throw cause;
+  });
+  const temporary = `${target}.tmp-${process.pid}`;
+  try {
+    const info = await stat(target).catch(() => null);
+    await writeFile(temporary, text, 'utf8');
+    if (info?.isFile() === true) await chmod(temporary, info.mode & 0o777);
+    await rename(temporary, target);
+  } catch (cause) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw cause;
   }
 };
 
@@ -49,6 +80,7 @@ const copyEntry = async (from: string, to: string, skip: readonly string[], dept
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
+  writeTextAtomic: (path, text) => guard('write', path, () => writeAtomic(path, text)),
   stat: async (path) => {
     try {
       const info = await stat(path);
@@ -62,6 +94,14 @@ const nodeFs: Fs = {
   list: (path) => guard('list', path, async () => (await readdir(path)).sort()),
   rename: (from, to) => guard('rename', from, () => rename(from, to)),
   remove: (path) => guard('remove', path, () => rm(path, { recursive: true, force: true })),
+  removeEmptyDir: async (path) => {
+    try {
+      await rmdir(path);
+      return ok(undefined);
+    } catch (cause) {
+      return errorCode(cause) === 'ENOENT' ? ok(undefined) : failure(`cannot remove ${path}: ${errorCode(cause)}`);
+    }
+  },
   copyTree: (from, to, skip) => guard('copy', from, () => copyEntry(from, to, skip, 0)),
 };
 
