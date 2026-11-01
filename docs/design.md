@@ -19,6 +19,8 @@ Dean gave the feedback F-1 to F-10 on v1, and accepted the proposals as a set (D
 
 Other changes: D-49 put the code in the private repo `dean0x/factory`. D-51 A: no second review of FAC-M1; the review of the v2 code covers the setup and upgrade code.
 
+After v2, F-13 (2026-11-02): **one machine only for now.** The `ssh://` transport, the remote readiness check and the remote child are out. The transport interface stays, with `file://` only, and the config refuses any other address. A remote transport can come later with no redesign. See §5.3.
+
 ## Summary for Dean (one page)
 
 **What factory is.** `factory` is a CLI. It creates and runs the orchestration setup of this workspace on any machine, for any person. `factory init` writes a node: the coordinator instructions, the role templates, the decision profile and the config. `factory up` starts the tmux layout and the coordinator session. Other commands do the multi-step jobs that the Orchestrator does by hand today. The CLI never contains a name, an account or a path. It reads them from the person who runs `init`.
@@ -210,7 +212,7 @@ A single-project setup is a node with one project. A multi-project setup is a no
 ### 4.2 Commands
 
 ```
-factory init [--home DIR] [--name N] [--project PATH|URL]... [--recipe software] [--variant plain|devflow] [--yes]
+factory init [--home DIR] [--name N] [--project PATH|URL]... [--recipe software] [--variant plain|devflow] [--layer N] [--yes]
 factory up [--home DIR]                     # start or attach: tmux session, view and bench, coordinator (§4.11)
 factory doctor [--fix]                      # tools, versions, platform, safety posture, hooks, tracker
 factory upgrade [--dry-run]                 # migrate state and managed blocks (§4.5)
@@ -344,7 +346,8 @@ recipe:
       variant: devflow       # optional per-project override
       gate: { checks: [] }   # extra repo checks for `factory inspect`
       heavy_test: "npm test" # runs under `factory lock run`
-children: []                 # nodes this node manages (§5)
+parent: null                 # or { id, address }; the address is file:// only (§5.3)
+children: []                 # nodes this node manages, each { id, address } (§5)
 ```
 
 - `tracker.kind: local` takes no other tracker key: the items and the decisions stay in `.factory/` (§4.10). The schema refuses `items`, `decisions` or `watch_interval` with `local`. Every other kind needs `items` and `decisions`.
@@ -369,6 +372,8 @@ children: []                 # nodes this node manages (§5)
 | `projects[].pack: plain` | `recipe.variant: plain` (a per-project `variant` only when it differs) |
 | (none) | `tracker.kind: local`. The owner moves to a team tracker later with `factory item import` |
 | (none) | `approval.land: each` |
+| (none) | `parent: null` |
+| `children[].address` (any text) | the same value, only when it is a valid `file://` address. Else the migration stops and names the child (F-13) |
 | `.factory/protocol.md` (block `protocol`) | `.factory/roles/worker.md` (block `worker`) |
 | `.factory/briefs/` | `.factory/orders/` |
 | `.factory/board.json`, `waiting.json` | kept in place: they are the files of the `local` tracker |
@@ -414,7 +419,7 @@ From **firstmate** (github.com/kunchenguid/firstmate, MIT, read as untrusted dat
 3. Node identity markers and a one-line registry entry for each child (`.agents/skills/secondmate-provisioning/SKILL.md` L16–40).
 4. An explicit list of config items that a parent passes down, and items that it never passes (`bin/fm-config-inherit-lib.sh`).
 5. A script-written upward channel, so a report does not depend on the model's memory (`docs/secondmate-parent-channel.md`).
-6. A readiness check before the first use of a remote host. An unreachable host is "unknown", never "dead", and never replaced by a local copy (`docs/remote-secondmates.md`).
+6. Skipped for now (F-13: one machine only): a readiness check before the first use of a remote host (`docs/remote-secondmates.md`). factory keeps one part of it: a child home that factory cannot read is "unknown", never "dead".
 7. A fail-closed config parse (`docs/configuration.md` L1376–1378).
 8. Upgrades by fast-forward only. A dirty home is reported and not touched (`bin/fm-update.sh`).
 
@@ -517,7 +522,7 @@ Every node has the same mechanics: `factory.yaml` and `node.json`, the report di
 ```json
 { "id": "acme-web", "layer": 1,
   "owner": { "display": "Ana", "github": "ana-x" },
-  "parent": { "address": "ssh://hub.local/~/factory/acme", "id": "acme" },
+  "parent": { "address": "file:///home/ana/work/acme-factory", "id": "acme" },
   "children": [
     { "kind": "cell", "id": "web-checkout", "pane": "@lane=web-checkout" },
     { "kind": "cell", "id": "web-search", "pane": "@lane=web-search" }
@@ -540,7 +545,7 @@ Every node has the same mechanics: `factory.yaml` and `node.json`, the report di
 ### 5.3 Addresses
 
 - A child is named by a relative path from its parent: `acme/acme-web/web-checkout`. A path is unique because each id is unique among its siblings.
-- A transport says how to reach a node: `file://<home>` (same machine) or `ssh://<host>/<home>` (another machine). Each transport has the same three calls: `report`, `deliver` and `ping`. The remote side runs `factory --home <home> report --json` over SSH, so no extra server is necessary. Other transports can come later behind the same three calls.
+- A transport says how to reach a node. factory has one transport: `file://<absolute home path>`, on the same machine (F-13). It has three calls: `report`, `deliver` and `ping`. The config refuses any other address, for example `ssh://` or `https://`. A remote transport can come later behind the same three calls, with no redesign.
 - A parent reaches a cell only through the cell's own parent node. It never types into a grandchild's pane.
 
 ### 5.4 What goes up
@@ -574,10 +579,10 @@ Each node keeps its state in its own home (§4.3). A parent never reads or write
 - `factory status` is a view of `factory report`. There is one code path, not two.
 - The tmux session name is the node id, not a fixed `orchestrator`. Two nodes on one machine do not collide.
 - The heavy-test lock is per machine and is shared by every node on it.
+- Every parent and child address goes through the transport interface, also with `file://` only. So a remote transport later changes no caller.
 
 What the CLI must not assume:
 - a fixed top layer, or a fixed depth;
-- one machine;
 - one owner for the whole tree;
 - that a parent is a Claude session (a person with only the CLI can be a parent);
 - that a parent and its child run the same factory version.
@@ -663,7 +668,7 @@ Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the
 | 6 | Where a single-project node lives | (a) always a separate node folder; (b) also inside the repo | **(a).** v2 makes it a rule: the home is never inside a repo (F-3). |
 | 7 | Heartbeat hook | (a) factory writes a hook in each checkout's `.claude/settings.local.json`; (b) keep the reads of Claude Code's private files | **(a).** v2: it replaces every read under `~/.claude` (F-9). |
 | 8 | Conflicts of §1.3 | my proposals in §1.3 | **Accept them.** v2 updates the answers (§1.3). |
-| 9 | Remote transport | (a) SSH only at first; (b) a small server | **(a).** No new service and no new port. |
+| 9 | Remote transport | (a) SSH only at first; (b) a small server | **Replaced by F-13 (2026-11-02):** one machine only for now, with `file://` addresses only. |
 | 10 | Python and glow | (a) port the Python scripts and the viewer into factory; (b) keep them as external tools | **(a).** Fewer tools on a new machine and one test suite. The tracker removes most of the render scripts (F-2). |
 | 11 | Team defaults | (a) each member owns a root; a lead's node sends requests (§5.5); (b) one shared owner | **(a).** No name or account is fixed, and nobody acts on another person's authority. |
 | 12 | Where the Subswitch settings live | (a) factory core has only a generic `proxies` entry; a preset ships in the devflow variant; (b) the preset is in factory core | **(a).** The default setup then names no devflow tool. |
@@ -676,6 +681,7 @@ Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the
 | D-51 A | No second review of FAC-M1 now. The review of the v2 code covers the setup and upgrade code. |
 | D-52 | This workspace: approved and assigned work merges when the gates pass. Releases still wait for the owner's go. factory offers the rule as an owner choice. |
 | D-53 | Dean accepted the proposals F-1 to F-10 as a set ("Changes from v1" above). |
+| F-13 | One machine only for now. No `ssh://` transport, no remote readiness check and no remote child. The config refuses any address but `file://`. |
 
 Open point, not decided: F-6 asked whether "a-z" includes releases. D-52 says no. factory keeps releases behind the owner's go, with no config value to change it.
 

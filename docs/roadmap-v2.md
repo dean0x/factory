@@ -18,7 +18,7 @@ A team member installs factory on a new macOS or Linux machine. `factory init` a
 
 | Id | Name | Depends on | Design changes (F-n) |
 |---|---|---|---|
-| FAC-M2 | Names, home, roles and schema 2 | FAC-M1 | F-1, F-3, F-4, F-5, F-10 |
+| FAC-M2 | Names, home, roles and schema 2 | FAC-M1 | F-1, F-3, F-4, F-5, F-10, F-13 |
 | FAC-M3 | Tracker connector (GitHub) and decisions | FAC-M2 | F-2 |
 | FAC-M4 | Cell control | FAC-M2 | F-7, F-8, F-9 |
 | FAC-M5 | Gate and ship commands | FAC-M3 | F-6 |
@@ -39,15 +39,17 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 3. **Role templates (F-4).** `node.layer` replaces `node.role`. Three templates in the `software` recipe: worker (layer 0), coordinator (layer 1), manager (layer 2 and up). `factory node add-child` with the same-layer rule.
 4. **Recipe split in the config schema (F-10).** Schema 2 of design §4.4: the `recipe` block, `cells`, `approval`, `tracker`. The schema 1 → 2 migration of design §4.5. The recipe parses its own block.
 5. **Platforms (F-5).** Every command refuses on native Windows with the WSL hint.
+6. **One machine only (F-13).** `parent` and `children[].address` accept only `file://` addresses. The transport interface has the `file://` transport with `ping`. The design and this roadmap lose the `ssh://` parts.
 
 **Exit criteria.**
 - [ ] `npm test` passes. The names test fails on a stray literal, and it finds no user-visible `lane`, `pack` or `brief` in the `--help` output or in the files that `init` writes.
 - [ ] Integration test: `init --yes` inside a git work tree makes `../<repo>-factory` and lists the repo as the first project.
 - [ ] Integration tests: `init` exits 4 for a home inside a git work tree, inside another node home, and above one of its projects.
-- [ ] Integration test on a separate tmux server (`tmux -L <test>`) with a fake `claude` on PATH: `factory up` makes the session with the windows `view` and `bench`. The fake records `--permission-mode auto`, no inherited `ANTHROPIC_BASE_URL`, and one `--add-dir` per project. A second `factory up` starts no second coordinator.
+- [ ] Integration test on a separate tmux server (`TMUX_TMPDIR` in a temp folder, the same effect as `tmux -L`) with a fake `claude` on PATH: `factory up` makes the session with the windows `view` and `bench`. The fake records `--permission-mode auto`, no inherited `ANTHROPIC_BASE_URL`, and one `--add-dir` per project. A second `factory up` starts no second coordinator.
 - [ ] Unit tests: each role template passes the deny list and has its required sections. `factory node add-child` exits 4 for a child from another layer.
 - [ ] Migration test: a node that the FAC-M1 0.1.0 tarball wrote upgrades to schema 2, with `tracker.kind: local`. After the upgrade, `factory doctor` exits 0.
 - [ ] Unit test with a fake platform `win32`: every command exits 4 and prints the WSL hint.
+- [ ] Unit tests: the config refuses an `ssh://`, `https://` or relative address in `parent` and in `children`, and names the key.
 - [ ] `npm run exit-check` passes with the v2 flow: `init`, `up --dry-run`, `doctor`, deny list.
 
 ### FAC-M3: Tracker connector (GitHub) and decisions
@@ -125,11 +127,11 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 
 **Goal.** A node on layer 2 manages layer-1 nodes, and a second person uses factory with no shared owner.
 
-**Scope.** `factory report` rollup, the `ssh://` transport, `deliver` and `ping`, requests from a node with a different owner, the manager role template in use.
+**Scope.** `factory report` rollup, `deliver` and `report` on the `file://` transport, requests from a node with a different owner, the manager role template in use. All nodes are on one machine (F-13).
 
 **Exit criteria.**
 - [ ] Integration test: a layer-2 node reads a rollup over 2 layers with `file://` children.
-- [ ] Integration test: one child over `ssh://` (a local SSH test server). An unreachable child shows "unknown".
+- [ ] Integration test: a child home that factory cannot read shows "unknown" in the rollup, never "dead".
 - [ ] A record from a parent with a different owner arrives as a request, and carries no authority (test).
 - [ ] A team member installs on a new machine with `npm i -g` from a packed tarball and edits no file (a script in a clean container or VM).
 - [ ] The repo goes public only after Dean's yes. This is a decision, not a test.
