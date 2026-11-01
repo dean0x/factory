@@ -45,7 +45,16 @@ const makeNode = async (
   const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin' }, run: options.run?.(handler) ?? handler });
   const init = await runInit(
     { ...deps, run: async (command, args, runOptions) => handler({ command, args, cwd: runOptions?.cwd }) },
-    { home: HOME, name: 'demo', ownerName: 'Test Owner', ownerGithub: undefined, projects: [] },
+    {
+      home: HOME,
+      name: 'demo',
+      ownerName: 'Test Owner',
+      ownerGithub: undefined,
+      projects: [],
+      yes: false,
+      recipe: undefined,
+      layer: undefined,
+    },
   );
   expect(init.ok).toBe(true);
   if (options.repo !== false) deps.seedDir(`${HOME}/.factory/.git`);

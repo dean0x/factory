@@ -33,6 +33,12 @@ export const isWorkTreeRoot = async (deps: Deps, dir: string): Promise<boolean> 
   return inside === 'true' && (prefix ?? '') === '';
 };
 
+/** The top folder of the git work tree that holds `dir`, or null when `dir` is in none. Git resolves links. */
+export const workTreeTop = async (deps: Deps, dir: string): Promise<string | null> => {
+  const top = await gitOutput(deps, dir, ['rev-parse', '--show-toplevel']);
+  return top === null || top === '' ? null : top;
+};
+
 export const hasIdentity = async (deps: Deps, dir: string): Promise<boolean> => {
   const [name, email] = await Promise.all([configValue(deps, dir, 'user.name'), configValue(deps, dir, 'user.email')]);
   return name !== null && name !== '' && email !== null && email !== '';

@@ -4,7 +4,13 @@ import { failure, usageError, type CliError, type CliResult } from '../cli/error
 import type { CommandOutput } from '../cli/output.js';
 import { isGithubLogin, slugify } from '../config/primitives.js';
 import { renderConfig } from '../config/render.js';
-import { CONFIG_SCHEMA_VERSION, COORDINATOR_LAYER, configSchema, type FactoryConfig } from '../config/schema.js';
+import {
+  CONFIG_SCHEMA_VERSION,
+  COORDINATOR_LAYER,
+  MAX_LAYER,
+  configSchema,
+  type FactoryConfig,
+} from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import {
   commitAll,
@@ -15,7 +21,6 @@ import {
   hasIdentity,
   isWorkTreeRoot,
 } from '../core/git.js';
-import { findNearestConfig } from '../core/home.js';
 import { err, ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import {
@@ -44,6 +49,7 @@ import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
 import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
+import { chooseHome, checkHomeApart, checkHomeLocation, realPathOf } from './init-home.js';
 
 export interface InitOptions {
   readonly home: string | undefined;
@@ -51,6 +57,12 @@ export interface InitOptions {
   readonly ownerName: string | undefined;
   readonly ownerGithub: string | undefined;
   readonly projects: readonly string[];
+  /** Use the proposed home without a question. */
+  readonly yes: boolean;
+  /** The id of the recipe, as typed. */
+  readonly recipe: string | undefined;
+  /** The layer of the node, as typed. */
+  readonly layer: string | undefined;
 }
 
 interface StateFile {
@@ -68,7 +80,6 @@ export interface InitPlan {
   readonly claudeOriginal: string | null;
   readonly claudeText: string;
   readonly stateFiles: readonly StateFile[];
-  readonly warnings: readonly string[];
 }
 
 export interface InitResult {
@@ -90,6 +101,20 @@ const DEFAULT_LIMITS = {
   [keys.limits.contextMaxPct]: 40,
 };
 
+const parseLayer = (text: string | undefined): CliResult<number> => {
+  if (text === undefined) return ok(COORDINATOR_LAYER);
+  const layer = /^\d{1,3}$/.test(text) ? Number(text) : Number.NaN;
+  if (layer >= COORDINATOR_LAYER && layer <= MAX_LAYER) return ok(layer);
+  return usageError(`${flagText(flags.layer)}: must be a whole number from ${COORDINATOR_LAYER} to ${MAX_LAYER}`);
+};
+
+const parseRecipe = (text: string | undefined): CliResult<(typeof values.recipes)[number]> => {
+  if (text === undefined) return ok(values.recipes[0]);
+  const recipe = values.recipes.find((id) => id === text);
+  if (recipe !== undefined) return ok(recipe);
+  return usageError(`${flagText(flags.recipe)}: the ${roles.recipe} must be one of: ${values.recipes.join(', ')}`);
+};
+
 const detectGithubLogin = async (deps: Deps): Promise<string | undefined> => {
   const result = await deps.run('gh', ['api', 'user', '--jq', '.login'], { timeoutMs: GH_TIMEOUT_MS });
   if (!result.ok || result.value.exitCode !== 0) return undefined;
@@ -97,19 +122,22 @@ const detectGithubLogin = async (deps: Deps): Promise<string | undefined> => {
   return isGithubLogin(login) ? login : undefined;
 };
 
-const describeProject = async (deps: Deps, home: string, argument: string): Promise<CliResult<unknown>> => {
+/** The project path is relative to the home. Both paths have their links resolved, as git gives the work tree. */
+const describeProject = async (deps: Deps, realHome: string, argument: string): Promise<CliResult<unknown>> => {
   const absolute = resolve(deps.cwd, argument);
   if (!(await isWorkTreeRoot(deps, absolute))) {
     return usageError(`${argument} is not the top folder of a git work tree`);
   }
   const id = slugify(basename(absolute));
   if (id === null) return usageError(`cannot make a project id from the folder name of ${argument}`);
+  const real = await realPathOf(deps, absolute);
+  if (!real.ok) return real;
   const repo = await githubRepoOf(deps, absolute);
   const branch = (await defaultBranchOf(deps, absolute)) ?? DEFAULT_BRANCH;
   return ok({
     [keys.project.id]: id,
     ...(repo === null ? {} : { [keys.project.repo]: repo }),
-    [keys.project.path]: relative(home, absolute) || '.',
+    [keys.project.path]: relative(realHome, real.value) || '.',
     [keys.project.defaultBranch]: branch,
     [keys.project.mergeMethod]: values.mergeMethods[0],
     [keys.project.gate]: { [keys.gate.checks]: [] },
@@ -122,9 +150,11 @@ const describeProjects = async (
   arguments_: readonly string[],
 ): Promise<CliResult<readonly unknown[]>> => {
   if (arguments_.length > MAX_PROJECTS) return usageError(`at most ${MAX_PROJECTS} projects are allowed`);
+  const realHome = await realPathOf(deps, home);
+  if (!realHome.ok) return realHome;
   const projects: unknown[] = [];
   for (const argument of arguments_) {
-    const project = await describeProject(deps, home, argument);
+    const project = await describeProject(deps, realHome.value, argument);
     if (!project.ok) return project;
     projects.push(project.value);
   }
@@ -209,7 +239,11 @@ const blockTexts = async (
 
 /** Read the system and decide what init writes. This function writes nothing. */
 export const planInit = async (deps: Deps, options: InitOptions): Promise<CliResult<InitPlan>> => {
-  const layer = COORDINATOR_LAYER;
+  const layerFlag = parseLayer(options.layer);
+  if (!layerFlag.ok) return layerFlag;
+  const layer = layerFlag.value;
+  const recipe = parseRecipe(options.recipe);
+  if (!recipe.ok) return recipe;
   const home = resolve(deps.cwd, options.home ?? '.');
   const layout = layoutOf(home);
 
@@ -232,15 +266,8 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
   const createdRoot = homeKind.value === null ? await topMissingFolder(deps, home) : ok(null);
   if (!createdRoot.ok) return createdRoot;
 
-  const parentConfig = await findNearestConfig(deps, dirname(home));
-  if (!parentConfig.ok) return parentConfig;
-  const warnings =
-    parentConfig.value === null
-      ? []
-      : [
-          `A parent folder has a ${files.config}: ${parentConfig.value}. ` +
-            `This ${roles.node} is a separate ${roles.node}, and no parent link is written.`,
-        ];
+  const location = await checkHomeLocation(deps, home);
+  if (!location.ok) return location;
 
   const id = options.name ?? slugify(basename(home));
   if (id === null) {
@@ -257,6 +284,12 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
 
   const projects = await describeProjects(deps, home, options.projects);
   if (!projects.ok) return projects;
+  const apart = await checkHomeApart(
+    deps,
+    home,
+    options.projects.map((argument) => resolve(deps.cwd, argument)),
+  );
+  if (!apart.ok) return apart;
 
   const parsed = configSchema.safeParse({
     [keys.root.schema]: CONFIG_SCHEMA_VERSION,
@@ -278,7 +311,7 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
     [keys.root.approval]: { [keys.approval.land]: values.landModes[0] },
     [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },
     [keys.root.recipe]: {
-      [keys.recipe.id]: values.recipes[0],
+      [keys.recipe.id]: recipe.value,
       [keys.recipe.variant]: values.variants[0],
       [keys.recipe.projects]: projects.value,
     },
@@ -303,7 +336,6 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
     claudeOriginal: blocks.value.original,
     claudeText: blocks.value.claudeText,
     stateFiles: stateFiles.value,
-    warnings,
   });
 };
 
@@ -387,17 +419,28 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   return ok({
     committed: identity,
     warnings: identity
-      ? plan.warnings
+      ? []
       : [
-          ...plan.warnings,
           `No git identity: the first commit of ${dirs.state} was not made. ` +
             'Set user.name and user.email, then commit there.',
         ],
   });
 };
 
+/** The projects of the command: the git work tree that the command runs in comes first, when the home is proposed. */
+const projectsOf = (deps: Deps, options: InitOptions, firstProject: string | null): readonly string[] =>
+  firstProject === null
+    ? options.projects
+    : [firstProject, ...options.projects.filter((argument) => resolve(deps.cwd, argument) !== firstProject)];
+
 export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResult<CommandOutput>> => {
-  const plan = await planInit(deps, options);
+  const chosen = await chooseHome(deps, options);
+  if (!chosen.ok) return chosen;
+  const plan = await planInit(deps, {
+    ...options,
+    home: chosen.value.home,
+    projects: projectsOf(deps, options, chosen.value.firstProject),
+  });
   if (!plan.ok) return plan;
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return applied;

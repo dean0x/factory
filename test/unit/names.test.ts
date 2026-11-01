@@ -101,6 +101,7 @@ const TEXT_NAMES = [
   dirs.claude,
   claudeSettings.suffix,
   env.proxyBaseUrl,
+  env.home,
   marker.prefix,
   address.scheme,
 ];
@@ -194,6 +195,9 @@ describe('words of the old names', () => {
       ownerName: 'Test Owner',
       ownerGithub: undefined,
       projects: [],
+      yes: false,
+      recipe: undefined,
+      layer: undefined,
     });
     expect(result.ok).toBe(true);
     expect(deps.files.size).toBeGreaterThan(10);

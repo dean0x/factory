@@ -3,11 +3,12 @@ import type { RecipeConfig } from '../recipes/index.js';
 import type { ProjectConfig } from '../recipes/software/config.js';
 import type { FactoryConfig, LinkConfig, ProxyConfig, TrackerConfig } from './schema.js';
 
-const YAML_WORDS: readonly string[] = ['true', 'false', 'null', 'yes', 'no', 'on', 'off', 'y', 'n'];
+/** The words that a YAML reader takes for a boolean or a null. */
+const YAML_WORDS = /^(?:true|false|null|yes|no|on|off|y|n)$/;
 
 /** A plain scalar when it is safe, else a double-quoted one (JSON strings are valid YAML). */
 const scalar = (value: string): string =>
-  /^[a-z][a-z0-9-]*$/.test(value) && !YAML_WORDS.includes(value) ? value : JSON.stringify(value);
+  /^[a-z][a-z0-9-]*$/.test(value) && !YAML_WORDS.test(value) ? value : JSON.stringify(value);
 
 const quoted = (value: string): string => JSON.stringify(value);
 

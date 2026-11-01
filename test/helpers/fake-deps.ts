@@ -12,6 +12,9 @@ export interface RunCall {
 export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
 export type FetchHandler = (url: string) => CliResult<FetchStatus>;
 
+export type PromptHandler = (question: string) => CliResult<string>;
+export type AttachedHandler = (call: RunCall) => CliResult<number>;
+
 export interface FakeOptions {
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -20,12 +23,26 @@ export interface FakeOptions {
   readonly fetch?: FetchHandler;
   readonly now?: Date;
   readonly pid?: number;
+  /** A person types at the process. Default: false. */
+  readonly stdinIsTTY?: boolean;
+  /** A person reads the output on a terminal. Default: false. */
+  readonly stdoutIsTTY?: boolean;
+  /** The answer to a question. Default: no answer. */
+  readonly prompt?: PromptHandler;
+  /** The result of a program that uses the terminal. Default: exit code 0. */
+  readonly runAttached?: AttachedHandler;
+  /** Links: a path under a key resolves to the same path under the value. */
+  readonly links?: Readonly<Record<string, string>>;
 }
 
 export interface FakeDeps extends Deps {
   readonly files: Map<string, string>;
   readonly dirs: Set<string>;
   readonly calls: RunCall[];
+  /** The programs that ran with the terminal, in order. */
+  readonly attached: RunCall[];
+  /** The questions that were asked, in order. */
+  readonly prompts: string[];
   readonly fetched: string[];
   /** The paths of the atomic writes, in order. */
   readonly atomicWrites: string[];
@@ -46,6 +63,8 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const files = new Map<string, string>();
   const dirs = new Set<string>(['/']);
   const calls: RunCall[] = [];
+  const attached: RunCall[] = [];
+  const prompts: string[] = [];
   const fetched: string[] = [];
   const atomicWrites: string[] = [];
 
@@ -71,6 +90,8 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     files,
     dirs,
     calls,
+    attached,
+    prompts,
     fetched,
     atomicWrites,
     seed: (path, text) => {
@@ -95,6 +116,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         return ok(undefined);
       },
       stat: async (path) => ok(kindOf(path)),
+      realpath: async (path) => {
+        if (kindOf(path) === null) return enoent('resolve', path);
+        const link = Object.entries(options.links ?? {}).find(([from]) => under(from, path));
+        return ok(link === undefined ? path : link[1] + path.slice(link[0].length));
+      },
       mkdir: async (path) => {
         addDir(path);
         return ok(undefined);
@@ -152,6 +178,17 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       const call: RunCall = { command, args, cwd: runOptions?.cwd };
       calls.push(call);
       return (options.run ?? (() => missingProgram(command)))(call);
+    },
+    runAttached: async (command: string, args: readonly string[]) => {
+      const call: RunCall = { command, args, cwd: undefined };
+      attached.push(call);
+      return (options.runAttached ?? (() => ok(0)))(call);
+    },
+    stdinIsTTY: options.stdinIsTTY ?? false,
+    stdoutIsTTY: options.stdoutIsTTY ?? false,
+    prompt: async (question: string) => {
+      prompts.push(question);
+      return (options.prompt ?? (() => failure('no answer was given')))(question);
     },
     env: options.env ?? {},
     fetch: async (url) => {

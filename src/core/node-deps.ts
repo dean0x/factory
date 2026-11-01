@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { constants } from 'node:fs';
 import {
   chmod,
@@ -15,9 +15,10 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from './result.js';
-import type { Deps, Fs, PathKind } from './deps.js';
+import { MAX_ANSWER_CHARS, type Deps, type Fs, type PathKind } from './deps.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 30_000;
 const MAX_RUN_OUTPUT_BYTES = 1_048_576;
@@ -90,6 +91,7 @@ const nodeFs: Fs = {
       return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
     }
   },
+  realpath: (path) => guard('resolve', path, () => realpath(path)),
   mkdir: (path) => guard('create', path, async () => void (await mkdir(path, { recursive: true }))),
   list: (path) => guard('list', path, async () => (await readdir(path)).sort()),
   rename: (from, to) => guard('rename', from, () => rename(from, to)),
@@ -130,6 +132,29 @@ export const createNodeDeps = (): Deps => ({
           }
         },
       );
+    }),
+  runAttached: (command, args) =>
+    new Promise((resolve) => {
+      const child = spawn(command, [...args], { stdio: 'inherit', windowsHide: true });
+      child.once('error', (error) => resolve(failure(`cannot run ${command}: ${errorCode(error)}`)));
+      child.once('close', (code, signal) =>
+        resolve(code === null ? failure(`${command} was stopped by ${String(signal)}`) : ok(code)),
+      );
+    }),
+  stdinIsTTY: process.stdin.isTTY === true,
+  stdoutIsTTY: process.stdout.isTTY === true,
+  prompt: (question) =>
+    new Promise((resolve) => {
+      const lines = createInterface({ input: process.stdin, output: process.stderr });
+      let answered = false;
+      lines.once('close', () => {
+        if (!answered) resolve(failure('no answer was given'));
+      });
+      lines.question(question, (answer) => {
+        answered = true;
+        lines.close();
+        resolve(ok(answer.slice(0, MAX_ANSWER_CHARS)));
+      });
     }),
   env: process.env,
   fetch: async (url, timeoutMs) => {

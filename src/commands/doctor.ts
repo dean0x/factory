@@ -227,7 +227,8 @@ export const checkProxies = async (
     return [
       notChecked(
         checkIds.proxy,
-        `${files.config} was found in a parent folder. Run with ${flagText(flags.home)} DIR to check the proxy.`,
+        `the ${roles.node} home does not come from ${flagText(flags.home)} and is not the current folder. ` +
+          `Run with ${flagText(flags.home)} DIR to check the proxy.`,
       ),
     ];
   }
@@ -310,7 +311,7 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
   const [blocks, permission, proxies, tools, stateRepo, projects] = await Promise.all([
     checkNodeBlocks(deps, home, config),
     checkPermissionMode(deps, home),
-    checkProxies(deps, config, source !== 'ancestor'),
+    checkProxies(deps, config, source === 'flag' || source === 'cwd'),
     checkTools(deps),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),

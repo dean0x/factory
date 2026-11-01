@@ -39,6 +39,9 @@ export const flags = {
   ownerName: 'owner-name',
   ownerGithub: 'owner-github',
   project: 'project',
+  recipe: 'recipe',
+  layer: 'layer',
+  yes: 'yes',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -84,7 +87,7 @@ export const dirs = {
 /** The settings files of Claude Code in a project: `<prefix>*<suffix>` inside the `.claude` folder. */
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
 
-export const env = { proxyBaseUrl: 'ANTHROPIC_BASE_URL' } as const;
+export const env = { proxyBaseUrl: 'ANTHROPIC_BASE_URL', home: 'FACTORY_HOME' } as const;
 
 /** The keys of the config file. */
 export const keys = {

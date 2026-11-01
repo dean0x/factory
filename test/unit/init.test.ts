@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
+import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import { applyInit, planInit, runInit, type InitOptions } from '../../src/commands/init.js';
 import { loadConfig } from '../../src/config/load.js';
 import type { Deps } from '../../src/core/deps.js';
+import { ok } from '../../src/core/result.js';
 import { loadState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { FACTORY_VERSION } from '../../src/version.js';
+import { layer2Blocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
-import { createFakeDeps, exited, withFailingWrites, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 
 const HOME = '/w/node';
@@ -19,12 +22,15 @@ const options = (extra: Partial<InitOptions> = {}): InitOptions => ({
   ownerName: 'Test Owner',
   ownerGithub: undefined,
   projects: [],
+  yes: false,
+  recipe: undefined,
+  layer: undefined,
   ...extra,
 });
 
-const setup = (fixture: GitFixture = {}) => {
+const setup = (fixture: GitFixture = {}, extra: FakeOptions = {}) => {
   const { handler, log } = gitHandler(fixture);
-  const deps = createFakeDeps({ cwd: '/w', run: handler });
+  const deps = createFakeDeps({ cwd: '/w', run: handler, ...extra });
   return { deps, log };
 };
 
@@ -218,36 +224,257 @@ describe('init: refusals', () => {
   });
 });
 
-describe('init: a parent folder with a config file', () => {
-  it('succeeds, warns with the path of the parent file, and writes no parent link', async () => {
+describe('init: the refusals of the home rules', () => {
+  const refused = (result: { ok: boolean; error?: { kind: string } }): string | undefined => result.error?.kind;
+
+  it('refuses a home inside another node home, names the rule and the path, and changes nothing', async () => {
     const { deps } = setup();
     deps.seed('/w/factory.yaml', 'schema: 1\n');
+    const before = snapshot(deps);
     const result = await runInit(deps, options());
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.value.failed).toBe(false);
-    expect(result.value.warnings.join('\n')).toContain('/w/factory.yaml');
-    expect(result.value.json['warnings']).toEqual(result.value.warnings);
-
-    expect(deps.files.get('/w/factory.yaml')).toBe('schema: 1\n');
-    const config = deps.files.get(`${HOME}/factory.yaml`) ?? '';
-    expect(config).toContain('\nparent: null\n');
-    expect(config).not.toContain('/w/factory.yaml');
-    const state = JSON.parse(deps.files.get(`${HOME}/.factory/node.json`) ?? '{}') as Record<string, unknown>;
-    expect(Object.keys(state).sort()).toEqual(['blocks', 'created_with', 'schema_version']);
+    expect(refused(result)).toBe('safety');
+    expect(messageOf(result)).toContain(`${HOME} is inside another node home: /w/factory.yaml exists`);
+    expect(snapshot(deps)).toBe(before);
   });
 
-  it('finds a config file several levels up', async () => {
+  it('finds the other node home several levels up', async () => {
     const { deps } = setup();
     deps.seed('/factory.yaml', 'schema: 1\n');
     const result = await planInit(deps, options({ home: '/w/a/b/c' }));
-    expect(result.ok && result.value.warnings.join('\n')).toContain('/factory.yaml');
+    expect(refused(result)).toBe('safety');
+    expect(messageOf(result)).toContain('/factory.yaml exists');
   });
 
-  it('gives no warning when no parent has a config file', async () => {
+  it('refuses a home inside a git work tree, from the nearest folder that exists', async () => {
+    const { deps } = setup({ repos: { '/w/web': {} } });
+    deps.seedDir('/w/web/src');
+    const before = snapshot(deps);
+    for (const home of ['/w/web', '/w/web/src', '/w/web/src/deep/node']) {
+      const result = await runInit(deps, options({ home }));
+      expect(refused(result)).toBe('safety');
+      expect(messageOf(result)).toContain(`${home} is inside the git work tree /w/web`);
+      expect(messageOf(result)).toContain('outside every git work tree');
+    }
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('refuses a home that holds a project, and names the project', async () => {
+    const { deps } = setup({ repos: { '/w/node/app': {} } });
+    deps.seedDir('/w/node/app');
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ projects: ['/w/node/app'] }));
+    expect(refused(result)).toBe('safety');
+    expect(messageOf(result)).toContain(`${HOME} is the project folder /w/node/app, or holds it`);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('compares real paths: a home that is a link to the parent of a project is refused', async () => {
+    const { deps } = setup({ repos: { '/w/real/app': {} } }, { links: { '/w/via': '/w/real' } });
+    deps.seedDir('/w/real/app');
+    deps.seedDir('/w/via');
+    const result = await runInit(deps, options({ home: '/w/via', projects: ['/w/real/app'] }));
+    expect(refused(result)).toBe('safety');
+    expect(messageOf(result)).toContain('/w/via is the project folder /w/real/app, or holds it');
+  });
+
+  it('accepts a home beside its projects and outside every node home', async () => {
+    const { deps } = setup({ repos: { '/w/web': {} } });
+    const result = await runInit(deps, options({ projects: ['/w/web'] }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('still refuses with exit 1 when the home has a config file already', async () => {
     const { deps } = setup();
+    deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
     const result = await runInit(deps, options());
-    expect(result.ok && result.value.warnings).toEqual([]);
+    expect(refused(result)).toBe('failure');
+    expect(messageOf(result)).toContain('already exists');
+  });
+});
+
+describe('init: the proposed home in a git work tree', () => {
+  const REPO = '/w/web';
+  const PROPOSAL = '/w/web-factory';
+  const repos = { [REPO]: { origin: 'git@github.com:acme/web.git' } };
+
+  /** The command runs in a folder below the top of the work tree. */
+  const inRepo = (extra: FakeOptions = {}, fixture: GitFixture = { repos }) => {
+    const { handler } = gitHandler(fixture);
+    const deps = createFakeDeps({ cwd: `${REPO}/src`, run: handler, ...extra });
+    deps.seedDir(`${REPO}/src`);
+    return deps;
+  };
+
+  const withHome = (extra: Partial<InitOptions> = {}): InitOptions => options({ home: undefined, ...extra });
+  const terminal = { stdinIsTTY: true, stdoutIsTTY: true };
+  const answers = (answer: string): FakeOptions => ({ ...terminal, prompt: () => ok(answer) });
+  const projectsOf = async (deps: FakeDeps) => {
+    const config = await loadConfig(deps, PROPOSAL);
+    return config.ok ? config.value.recipe.projects.map((project) => [project.id, project.path]) : null;
+  };
+
+  it('uses the folder beside the work tree for --yes, with the work tree as the first project', async () => {
+    const deps = inRepo();
+    const result = await runInit(deps, withHome({ yes: true }));
+    expect(result.ok && result.value.json['home']).toBe(PROPOSAL);
+    expect(result.ok && result.value.json['nodeId']).toBe('web-factory');
+    expect(await projectsOf(deps)).toEqual([['web', '../web']]);
+    expect(deps.prompts).toEqual([]);
+    const config = await loadConfig(deps, PROPOSAL);
+    expect(config.ok && config.value.recipe.projects[0]?.repo).toBe('acme/web');
+  });
+
+  it('puts the work tree before every --project, and does not repeat it', async () => {
+    const deps = inRepo({}, { repos: { ...repos, '/w/api': {} } });
+    const result = await runInit(deps, withHome({ yes: true, projects: ['/w/api', '..', '/w/web'] }));
+    expect(result.ok).toBe(true);
+    expect(await projectsOf(deps)).toEqual([
+      ['web', '../web'],
+      ['api', '../api'],
+    ]);
+  });
+
+  it('asks on a terminal and goes on for y and for yes in any case', async () => {
+    for (const answer of ['y', 'yes', ' Y ', 'YES\n']) {
+      const deps = inRepo(answers(answer));
+      const result = await runInit(deps, withHome());
+      expect({ answer, ok: result.ok }).toEqual({ answer, ok: true });
+      expect(deps.prompts).toHaveLength(1);
+      expect(deps.prompts[0]).toContain(`The proposed node home is ${PROPOSAL}`);
+      expect(deps.prompts[0]).toContain('Create the node home here? [y/N]');
+      expect(await projectsOf(deps)).toEqual([['web', '../web']]);
+    }
+  });
+
+  it.each(['n', 'no', '', 'maybe', 'yess', 'y y'])('stops with exit 2 and writes nothing for the answer "%s"', async (answer) => {
+    const deps = inRepo(answers(answer));
+    const before = snapshot(deps);
+    const result = await runInit(deps, withHome());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain(`${PROPOSAL} was not accepted`);
+    expect(messageOf(result)).toContain('--home DIR');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('does not ask when --yes is given, also on a terminal', async () => {
+    const deps = inRepo(answers('n'));
+    expect((await runInit(deps, withHome({ yes: true }))).ok).toBe(true);
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it.each([
+    ['no terminal at all', {}],
+    ['a terminal for the input only', { stdinIsTTY: true }],
+    ['a terminal for the output only', { stdoutIsTTY: true }],
+  ])('prints the proposal and exits 2 with %s and no --yes', async (_name, extra) => {
+    const deps = inRepo({ ...extra, prompt: () => ok('y') });
+    const before = snapshot(deps);
+    const result = await runInit(deps, withHome());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain(`The proposed node home is ${PROPOSAL}`);
+    expect(messageOf(result)).toContain('--yes');
+    expect(deps.prompts).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('fails when the question gets no answer', async () => {
+    const deps = inRepo(terminal);
+    const result = await runInit(deps, withHome());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(deps.prompts).toHaveLength(1);
+  });
+
+  it('makes no proposal when the home is given, and adds no first project', async () => {
+    const deps = inRepo(answers('y'));
+    const result = await runInit(deps, withHome({ home: HOME }));
+    expect(result.ok).toBe(true);
+    expect(deps.prompts).toEqual([]);
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.recipe.projects).toEqual([]);
+  });
+
+  it('uses the current folder, and asks nothing, when the folder is in no work tree', async () => {
+    const { deps } = setup();
+    const result = await runInit(deps, withHome());
+    expect(result.ok && result.value.json['home']).toBe('/w');
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it('refuses the proposal with exit 4 when it is inside another work tree', async () => {
+    const deps = inRepo({}, { repos: { [REPO]: {}, '/w': {} } });
+    const before = snapshot(deps);
+    const result = await runInit(deps, withHome({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain(`${PROPOSAL} is inside the git work tree /w`);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('fails with exit 1 when the proposed folder holds a node already', async () => {
+    const deps = inRepo();
+    deps.seed(`${PROPOSAL}/factory.yaml`, 'schema: 2\n');
+    const result = await runInit(deps, withHome({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain('already exists');
+  });
+});
+
+describe('init: the layer and the recipe', () => {
+  const files = (deps: FakeDeps): string[] => [...deps.files.keys()].map((path) => path.slice(HOME.length + 1)).sort();
+  const claudeBlocks = (deps: FakeDeps): string[] => {
+    const parsed = parseBlocks(deps.files.get(`${HOME}/CLAUDE.md`) ?? '');
+    return parsed.ok ? parsed.value.map((block) => block.name) : [];
+  };
+
+  it('makes a node on layer 1 by default, with the coordinator, safety and worker blocks', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.core.node.layer).toBe(1);
+    expect(config.ok && config.value.recipe.id).toBe('software');
+    expect(claudeBlocks(deps)).toEqual(['coordinator', 'safety']);
+    expect(files(deps)).toContain('.factory/roles/worker.md');
+  });
+
+  it('makes a node on layer 2 with the manager and safety blocks and no worker file', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options({ layer: '2' }))).ok).toBe(true);
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.core.node.layer).toBe(2);
+    expect(claudeBlocks(deps)).toEqual(['manager', 'safety']);
+    expect(files(deps)).not.toContain('.factory/roles/worker.md');
+    expect(files(deps)).toContain('.factory/node.json');
+    const state = await loadState(deps, HOME);
+    expect(state.ok && state.value.blocks).toEqual({ manager: 1, safety: 2 });
+    const statuses = await inspectBlocks(deps, HOME, layer2Blocks);
+    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact']);
+  });
+
+  it('makes a node on the highest layer', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options({ layer: '16' }))).ok).toBe(true);
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.core.node.layer).toBe(16);
+  });
+
+  it.each(['0', '17', '-1', '1.5', 'x', '', ' 2', '2 ', '0x2', '00020', '1000'])(
+    'rejects the layer "%s" with exit 2 and names the flag',
+    async (layer) => {
+      const { deps } = setup();
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ layer }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(messageOf(result)).toContain('--layer: must be a whole number from 1 to 16');
+      expect(snapshot(deps)).toBe(before);
+    },
+  );
+
+  it('accepts --recipe software and rejects any other recipe with exit 2', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options({ recipe: 'software' }))).ok).toBe(true);
+    const other = setup();
+    const result = await runInit(other.deps, options({ recipe: 'research' }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('--recipe: the recipe must be one of: software');
   });
 });
 
@@ -372,22 +599,21 @@ describe('init: projects', () => {
     expect(messageOf(result)).toContain('projects.0.path');
   });
 
+  it('stores the path of a project relative to the home after the links are resolved', async () => {
+    const { deps } = setup({ repos: { '/w/via/proj': {} } }, { links: { '/w/via': '/w/real' } });
+    deps.seedDir('/w/via/proj');
+    deps.seedDir('/w/real');
+    const result = await runInit(deps, options({ home: '/w/real/node', projects: ['/w/via/proj'] }));
+    expect(result.ok).toBe(true);
+    const config = await loadConfig(deps, '/w/real/node');
+    expect(config.ok && config.value.recipe.projects.map((project) => project.path)).toEqual(['../proj']);
+  });
+
   it('refuses two projects with the same id', async () => {
     const { deps } = setup({ repos: { '/w/web': {}, '/w/other/web': {} } });
     const result = await runInit(deps, options({ projects: ['/w/web', '/w/other/web'] }));
     expect(result.ok).toBe(false);
     expect(messageOf(result)).toContain('projects.1.id: duplicate id');
-  });
-
-  it('stores a project inside the home as a path below the home', async () => {
-    const { deps } = setup({ repos: { '/w/node/app': {}, '/w/node': {} } });
-    const result = await runInit(deps, options({ projects: ['/w/node/app', '/w/node'] }));
-    expect(result.ok).toBe(true);
-    const config = await loadConfig(deps, HOME);
-    expect(config.ok && config.value.recipe.projects.map((project) => [project.id, project.path])).toEqual([
-      ['app', 'app'],
-      ['node', '.'],
-    ]);
   });
 });
 

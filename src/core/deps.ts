@@ -12,6 +12,8 @@ export interface Fs {
   writeTextAtomic(path: string, text: string): Promise<CliResult<void>>;
   /** The kind of the path, or null when it does not exist. */
   stat(path: string): Promise<CliResult<PathKind | null>>;
+  /** The path with every link resolved. The path must exist. */
+  realpath(path: string): Promise<CliResult<string>>;
   /** Create the folder and its parents. */
   mkdir(path: string): Promise<CliResult<void>>;
   /** The sorted names inside a folder. */
@@ -45,10 +47,24 @@ export interface FetchStatus {
   readonly status: number;
 }
 
+/** The longest answer that `prompt` returns. A longer line is cut. */
+export const MAX_ANSWER_CHARS = 200;
+
 export interface Deps {
   readonly fs: Fs;
   /** Run a program. It never uses a shell. A non-zero exit code is not an error. */
   run(command: string, args: readonly string[], options?: RunOptions): Promise<CliResult<RunOutput>>;
+  /**
+   * Run a program with the terminal of this process: it reads the keys and draws on the screen.
+   * It never uses a shell. The result is the exit code of the program.
+   */
+  runAttached(command: string, args: readonly string[]): Promise<CliResult<number>>;
+  /** True when a person types at this process. */
+  readonly stdinIsTTY: boolean;
+  /** True when a person reads the output of this process on a terminal. */
+  readonly stdoutIsTTY: boolean;
+  /** Ask one question and read one line of the answer, at most `MAX_ANSWER_CHARS` characters. The question goes to stderr. */
+  prompt(question: string): Promise<CliResult<string>>;
   readonly env: Readonly<Record<string, string | undefined>>;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;

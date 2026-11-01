@@ -63,6 +63,9 @@ const initialized = async (setup: Setup = {}): Promise<FakeDeps> => {
     ownerName: 'Test Owner',
     ownerGithub: undefined,
     projects: [],
+    yes: false,
+    recipe: undefined,
+    layer: undefined,
   });
   expect(result.ok).toBe(true);
   return deps;
@@ -435,9 +438,10 @@ describe('doctor: proxies', () => {
   describe('in the doctor command, by where the config comes from', () => {
     const PROXY_URL = 'http://127.0.0.1:8787/v1/health';
 
-    const nodeWithProxy = async (cwd: string): Promise<FakeDeps> => {
+    const nodeWithProxy = async (cwd: string, env: Setup['env'] = {}): Promise<FakeDeps> => {
       const deps = await initialized({
         cwd,
+        env,
         fetch: () => ok({ status: 200 }),
         git: { committed: [`${HOME}/.factory`] },
       });
@@ -479,6 +483,29 @@ describe('doctor: proxies', () => {
       expect(output.lines.some((line) => line.level === 'warn' && line.text.includes('--home DIR'))).toBe(true);
       expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
       expect(output.failed).toBe(false);
+    });
+
+    it('sends no request when only FACTORY_HOME names the home, and warns', async () => {
+      const deps = await nodeWithProxy('/elsewhere', { FACTORY_HOME: HOME });
+      const output = await run(deps, undefined);
+      expect(deps.fetched).toEqual([]);
+      const proxy = (output.json['checks'] as CheckResult[]).find((result) => result.id === 'proxy');
+      expect(proxy?.level).toBe('warn');
+      expect(proxy?.text).toContain('--home DIR');
+      expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
+    });
+
+    it('sends the request when FACTORY_HOME names the current folder', async () => {
+      const deps = await nodeWithProxy(HOME, { FACTORY_HOME: HOME });
+      await run(deps, undefined);
+      expect(deps.fetched).toEqual([PROXY_URL]);
+    });
+
+    it('takes --home before FACTORY_HOME, and sends the request', async () => {
+      const deps = await nodeWithProxy('/elsewhere', { FACTORY_HOME: '/not/a/node' });
+      const output = await run(deps, HOME);
+      expect(deps.fetched).toEqual([PROXY_URL]);
+      expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
     });
   });
 });

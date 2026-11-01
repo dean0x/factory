@@ -1,6 +1,6 @@
 import { dirname, join, resolve } from 'node:path';
 import { failure, type CliResult } from '../cli/errors.js';
-import { commands, commandText, files, flags, flagText } from '../names.js';
+import { commands, commandText, env, files, flags, flagText } from '../names.js';
 import type { Deps } from './deps.js';
 import { ok } from './result.js';
 
@@ -21,17 +21,28 @@ export const findNearestConfig = async (deps: Deps, startDir: string): Promise<C
   return ok(null);
 };
 
-/** How the node home was found: from the home flag, in the current folder, or in a parent folder. */
-export type HomeSource = 'flag' | 'cwd' | 'ancestor';
+/**
+ * How the node home was found: from the home flag, from the environment, in the current folder,
+ * or in a parent folder. A home from the environment that is the current folder counts as the current folder.
+ */
+export type HomeSource = 'flag' | 'env' | 'cwd' | 'ancestor';
 
 export interface LocatedHome {
   readonly home: string;
   readonly source: HomeSource;
 }
 
-/** The node home and how it was found: the home flag, else the folder of the nearest config file above the current folder. */
+/**
+ * The node home and how it was found: the home flag, else the home variable of the environment,
+ * else the folder of the nearest config file above the current folder.
+ */
 export const locateHome = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<LocatedHome>> => {
   if (homeFlag !== undefined) return ok({ home: resolve(deps.cwd, homeFlag), source: 'flag' });
+  const fromEnv = deps.env[env.home];
+  if (fromEnv !== undefined && fromEnv !== '') {
+    const home = resolve(deps.cwd, fromEnv);
+    return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'env' });
+  }
   const found = await findNearestConfig(deps, deps.cwd);
   if (!found.ok) return found;
   if (found.value === null) {
@@ -44,7 +55,7 @@ export const locateHome = async (deps: Deps, homeFlag: string | undefined): Prom
   return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'ancestor' });
 };
 
-/** The node home: the home flag, else the folder of the nearest config file above the current folder. */
+/** The node home, in the order of `locateHome`. */
 export const resolveHome = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<string>> => {
   const located = await locateHome(deps, homeFlag);
   return located.ok ? ok(located.value.home) : located;

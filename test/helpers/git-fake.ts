@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { exited, missingProgram, type RunCall, type RunHandler } from './fake-deps.js';
 
 export interface FakeRepo {
@@ -27,6 +28,18 @@ export interface GitLog {
   commands(): string[];
 }
 
+/**
+ * The top folder of the work tree that holds `dir`: the nearest folder above `dir`, or `dir` itself, that is a work tree.
+ * A fixture repo with `topLevel: false` is a folder inside a work tree, so its top is its parent folder.
+ */
+const workTreeTopOf = (fixture: GitFixture, dir: string): string | null => {
+  for (let current = dir; ; current = posix.dirname(current)) {
+    const repo = fixture.repos?.[current];
+    if (repo !== undefined) return repo.topLevel === false ? posix.dirname(current) : current;
+    if (current === '/' || current === '.') return null;
+  }
+};
+
 export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log: GitLog } => {
   const calls: RunCall[] = [];
   const identity = fixture.identity ?? true;
@@ -43,6 +56,10 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     switch (rest) {
       case 'rev-parse --is-inside-work-tree --show-prefix':
         return repo === undefined ? exited(128) : exited(0, repo.topLevel === false ? 'true\nsub/\n' : 'true\n\n');
+      case 'rev-parse --show-toplevel': {
+        const top = workTreeTopOf(fixture, dir);
+        return top === null ? exited(128) : exited(0, `${top}\n`);
+      }
       case 'config user.name':
         return identity ? exited(0, `${fixture.userName ?? 'Git User'}\n`) : exited(1);
       case 'config user.email':

@@ -1,9 +1,10 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmod, lstat, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PassThrough } from 'node:stream';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 
 const deps = createNodeDeps();
@@ -45,6 +46,96 @@ describe('node deps: run', () => {
   it('runs in the folder that the caller names', async () => {
     const result = await deps.run('pwd', [], { cwd: dir });
     expect(result.ok && result.value.stdout.trim().endsWith(dir.split('/').pop() ?? '?')).toBe(true);
+  });
+});
+
+describe('node deps: run with the terminal', () => {
+  it('gives the exit code of the program as a value', async () => {
+    expect(await deps.runAttached('node', ['-e', 'process.exit(0)'])).toEqual({ ok: true, value: 0 });
+    expect(await deps.runAttached('node', ['-e', 'process.exit(3)'])).toEqual({ ok: true, value: 3 });
+  });
+
+  it('passes arguments without a shell', async () => {
+    const result = await deps.runAttached('node', ['-e', 'process.exit(process.argv[1] === "a; exit 9" ? 0 : 1)', 'a; exit 9']);
+    expect(result).toEqual({ ok: true, value: 0 });
+  });
+
+  it('returns an error when the program does not exist', async () => {
+    const result = await deps.runAttached('factory-no-such-program', []);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('cannot run factory-no-such-program');
+  });
+
+  it('returns an error when a signal ends the program', async () => {
+    const result = await deps.runAttached('node', ['-e', 'process.kill(process.pid, "SIGTERM")']);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('SIGTERM');
+  });
+});
+
+describe('node deps: the terminal', () => {
+  it('tells whether a person types and reads', () => {
+    expect(typeof deps.stdinIsTTY).toBe('boolean');
+    expect(typeof deps.stdoutIsTTY).toBe('boolean');
+  });
+
+  describe('prompt', () => {
+    const realStdin = process.stdin;
+    let input = new PassThrough();
+    let written = '';
+
+    beforeEach(() => {
+      input = new PassThrough();
+      written = '';
+      Object.defineProperty(process, 'stdin', { value: input, configurable: true });
+      vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+        written += String(chunk);
+        return true;
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      Object.defineProperty(process, 'stdin', { value: realStdin, configurable: true });
+    });
+
+    it('writes the question to stderr and returns the line without its line break', async () => {
+      const answer = createNodeDeps().prompt('Go on? [y/N] ');
+      input.write('yes\nsecond line\n');
+      expect(await answer).toEqual({ ok: true, value: 'yes' });
+      expect(written).toContain('Go on? [y/N] ');
+    });
+
+    it('cuts a long answer to 200 characters', async () => {
+      const answer = createNodeDeps().prompt('?');
+      input.write(`${'a'.repeat(500)}\n`);
+      expect(await answer).toEqual({ ok: true, value: 'a'.repeat(200) });
+    });
+
+    it('returns an error when the input ends with no answer', async () => {
+      const answer = createNodeDeps().prompt('?');
+      input.end();
+      const result = await answer;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toBe('no answer was given');
+    });
+  });
+});
+
+describe('node deps: realpath', () => {
+  it('resolves a link', async () => {
+    const target = fresh('target');
+    const link = fresh('link');
+    await writeFile(target, 'x');
+    await symlink(target, link);
+    const result = await deps.fs.realpath(link);
+    expect(result).toEqual({ ok: true, value: await realpath(target) });
+  });
+
+  it('returns an error with the code for a path that does not exist', async () => {
+    const result = await deps.fs.realpath(fresh('missing'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('ENOENT');
   });
 });
 

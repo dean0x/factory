@@ -5,7 +5,7 @@ import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, flags, flagShorts, flagText, program, roles } from '../names.js';
+import { commands, commandText, env, flags, flagShorts, flagText, program, roles, values } from '../names.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import type { CommandOutput } from './output.js';
@@ -43,7 +43,9 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
 const foundHomeOption: FlagOption = {
   type: 'string',
   placeholder: 'DIR',
-  description: `The ${roles.node} folder. Default: the folder of the nearest config file above the current folder.`,
+  description:
+    `The ${roles.node} folder. Default: ${env.home}, else the folder of the nearest config file ` +
+    'above the current folder.',
 };
 
 export const commandTable: readonly Command[] = [
@@ -51,13 +53,20 @@ export const commandTable: readonly Command[] = [
     name: commands.init,
     summary: `Create a ${roles.node} in a folder.`,
     usage:
-      `${commandText(commands.init)} [${flagText(flags.home)} DIR] [${flagText(flags.name)} ID] ` +
-      `[${flagText(flags.ownerName)} NAME] [${flagText(flags.ownerGithub)} LOGIN] [${flagText(flags.project)} PATH]...`,
+      `${commandText(commands.init)} [${flagText(flags.home)} DIR] [${flagText(flags.yes)}] ` +
+      `[${flagText(flags.name)} ID] [${flagText(flags.ownerName)} NAME] [${flagText(flags.ownerGithub)} LOGIN] ` +
+      `[${flagText(flags.project)} PATH]... [${flagText(flags.layer)} N] [${flagText(flags.recipe)} ID]`,
     options: {
       [flags.home]: {
         type: 'string',
         placeholder: 'DIR',
-        description: `The ${roles.node} folder. Default: the current folder.`,
+        description:
+          `The ${roles.node} folder. Default: in a git work tree, a folder beside it, after you confirm; ` +
+          'else the current folder.',
+      },
+      [flags.yes]: {
+        type: 'boolean',
+        description: `Use the proposed ${roles.node} folder. Ask no question.`,
       },
       [flags.name]: {
         type: 'string',
@@ -80,6 +89,16 @@ export const commandTable: readonly Command[] = [
         placeholder: 'PATH',
         description: 'A git work tree to manage. Repeat the flag for more projects.',
       },
+      [flags.layer]: {
+        type: 'string',
+        placeholder: 'N',
+        description: `The layer of the ${roles.node}, from 1 to 16. Layer 1 manages ${roles.cell}s. Default: 1.`,
+      },
+      [flags.recipe]: {
+        type: 'string',
+        placeholder: 'ID',
+        description: `The ${roles.recipe} for the kind of work. One of: ${values.recipes.join(', ')}. Default: ${values.recipes[0]}.`,
+      },
     },
     run: (given, deps) =>
       runInit(deps, {
@@ -88,6 +107,9 @@ export const commandTable: readonly Command[] = [
         ownerName: given.string(flags.ownerName),
         ownerGithub: given.string(flags.ownerGithub),
         projects: given.strings(flags.project),
+        yes: given.bool(flags.yes),
+        recipe: given.string(flags.recipe),
+        layer: given.string(flags.layer),
       }),
   },
   {
