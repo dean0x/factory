@@ -1,0 +1,39 @@
+{
+  "name": "@dean0x/factory",
+  "version": "0.1.0",
+  "description": "Set up and run a node of Claude Code lanes with safe defaults.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "factory": "dist/factory.js"
+  },
+  "files": [
+    "dist/factory.js",
+    "LICENSE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "exit-check": "bash scripts/exit-check.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  }
+}
