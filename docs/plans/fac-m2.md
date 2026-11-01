@@ -258,6 +258,9 @@ Dean accepted both, and roadmap-v2 now has their scope and exit criteria.
 - The non-`local` tracker kinds parse now, and `doctor` warns that their connector comes later. So FAC-M3 needs no schema bump.
 
 ## Resume here (updated 2026-11-02)
-- This plan is on branch `fac-m2-plan` from main f9c0dec, with the F-13 edits in `docs/design.md` and `docs/roadmap-v2.md`.
-- PR #3 (research) waits for Dean's merge. If it merges first, rebase this branch and fix the conflict at design §4.8.
-- Next, after the plan PR merges: branch `fac-m2` from main, then follow §13.
+- The plan PR #4 is merged (f2aa733). PR #3 is merged (1935011). D-55 (doorbell inbox in FAC-M4, `factory checkout` in FAC-M5) and D-56 (build order M2, M4, M5, M6, M7, M3, M8, M9) are in `docs/roadmap-v2.md`.
+- The build runs on branch `fac-m2` (pushed). Main is merged in (6404109); the rule is merge, never rebase or force push. The PR of `fac-m2` targets `main`; it is not open yet.
+- Done: §13 steps 1–3 (db64340 renames, f474cf4 schema 2, b9d24ad migrations and fixture). Typecheck is clean; the touched test files pass; Snyk: 0 issues in `src`. The step notes are in the local handoff file `.devflow/docs/handoff-fac-m2.md` (not committed).
+- Step deviations, accepted: the fixture script uses `git archive` of 4849465, not a tarball; a file move with no source is skipped; `--overwrite` takes `protocol` or `worker`; the upgrade JSON has a new `moves` field.
+- Next: §13 steps 4–5 (role templates, `roleForLayer`, block list from the layer; `init` home rules, `--yes`, `--layer`, `--recipe`, new `Deps` parts), then 6–8 (`up`; `comms` and `node`; platform and doctor), then 9 (exit check, CI with tmux, README, CHANGELOG). Then the devflow implement gates at level lean: Harden, Evaluate (one pass), Validate under the lock, Test, PR, CI. The test plan is in `.devflow/docs/evidence-fac-m2.md`.
+- Brief every Code agent: no `python3` in any form, no `/tmp` (use the scratchpad), single test files only, Node 24 on PATH.
