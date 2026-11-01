@@ -260,7 +260,7 @@ export const checkProjects = async (
     : check(checkIds.projects, 'fail', `not a git work tree: ${bad.join(', ')}`);
 };
 
-export const runChecks = async (deps: Deps, home: string): Promise<readonly CheckResult[]> => {
+const runChecks = async (deps: Deps, home: string): Promise<readonly CheckResult[]> => {
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
   const blocks = await inspectBlocks(deps, home, blockTemplates);

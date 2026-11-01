@@ -7,7 +7,7 @@ import { files, keys } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { CONFIG_SCHEMA_VERSION, configSchema, type FactoryConfig } from './schema.js';
 
-export const CONFIG_LABEL = files.config;
+const CONFIG_LABEL = files.config;
 
 /** Parse YAML text. Aliases are not allowed, and duplicate keys are errors. */
 export const parseYamlText = (text: string): Result<unknown, string> => {

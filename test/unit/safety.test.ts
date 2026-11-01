@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { checkProxyHealth, healthUrl, parseProxyUrl, proxyLabel } from '../../src/safety/proxy.js';
 import { findTokenPaths, looksLikeToken } from '../../src/safety/secrets.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 
 describe('looksLikeToken', () => {
   it.each([
@@ -42,7 +43,7 @@ describe('looksLikeToken', () => {
 
 describe('findTokenPaths', () => {
   it('returns the key paths and never a value', () => {
-    const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+    const secret = FAKE_GITHUB_TOKEN;
     const paths = findTokenPaths({
       a: { b: [{ c: secret }, { c: 'fine' }] },
       d: secret,
@@ -54,7 +55,7 @@ describe('findTokenPaths', () => {
   });
 
   it('hides a key that looks like a token', () => {
-    const key = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+    const key = FAKE_GITHUB_TOKEN;
     expect(findTokenPaths({ lanes: { [key]: 'sk-ant-api03-abcdefgh' } })).toEqual(['lanes.<key>']);
   });
 

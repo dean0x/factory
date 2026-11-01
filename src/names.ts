@@ -185,7 +185,7 @@ export const flagText = (name: string): string => `--${name}`;
 export const commandText = (command: string): string => `${program} ${command}`;
 
 /** The path of a key inside the config, for example `limits.disk_free_min_gb`. */
-export const keyPath = (...parts: readonly string[]): string => parts.join('.');
+const keyPath = (...parts: readonly string[]): string => parts.join('.');
 
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');

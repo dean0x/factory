@@ -25,6 +25,7 @@ import { inspectState } from '../../src/state/load.js';
 import { blockTemplates } from '../../src/templates/index.js';
 import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
 const HOME = '/w/node';
@@ -170,7 +171,7 @@ describe('doctor: blocks', () => {
 });
 
 describe('doctor: secrets', () => {
-  const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+  const secret = FAKE_GITHUB_TOKEN;
 
   it('is ok for a clean config', async () => {
     const deps = await initialized();

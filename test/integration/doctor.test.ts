@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { makeSandbox, type Sandbox } from './harness.js';
 
 let box: Sandbox;
@@ -81,7 +82,7 @@ describe('factory doctor (built binary)', () => {
   it('exits 1 for a secret in the config, and never prints the value', async () => {
     await initNode();
     const path = join(box.node, 'factory.yaml');
-    const secret = 'ghp_abcdefghijklmnopqrstuvwxyz0123456789';
+    const secret = FAKE_GITHUB_TOKEN;
     await writeFile(path, `${await box.read(path)}\nnote: ${secret}\n`);
     const result = await box.run(['doctor', '--home', box.node]);
     expect(result.code).toBe(1);

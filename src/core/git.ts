@@ -9,7 +9,7 @@ const GITHUB_URL =
   /^(?:https?:\/\/(?:[^@/\s]+@)?github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,99}?)(?:\.git)?\/?$/;
 
 /** `owner/name` of a GitHub remote URL, or null. Only the owner and the name are kept. */
-export const parseGithubRepo = (url: string): string | null => {
+const parseGithubRepo = (url: string): string | null => {
   const match = GITHUB_URL.exec(url.trim());
   return match === null ? null : `${match[1]}/${match[2]}`;
 };
