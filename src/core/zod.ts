@@ -1,14 +1,7 @@
 import type { z } from 'zod';
-import { looksLikeToken } from '../safety/secrets.js';
+import { hideTokenKey } from '../safety/secrets.js';
 
 const MAX_ISSUES_SHOWN = 5;
-const HIDDEN_KEY = '<key>';
-
-/** A key that looks like a token is replaced, so the error text never repeats it. */
-const hideTokenKey = (segment: PropertyKey): string => {
-  const text = String(segment);
-  return looksLikeToken(text) ? HIDDEN_KEY : text;
-};
 
 const joinPath = (path: readonly PropertyKey[]): string => path.map(hideTokenKey).join('.');
 
