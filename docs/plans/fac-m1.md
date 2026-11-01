@@ -209,11 +209,12 @@ The health check sends one GET with a 3-second limit (`AbortSignal.timeout`), an
 - **`npm i -g` with a temp HOME writes outside the temp folder.** Set `npm_config_prefix`, `npm_config_cache` and `npm_config_userconfig` to temp paths. Check that nothing changes in the real HOME, by an mtime list of `~/.npm` and the global prefix before and after.
 - **The macOS runner has a different `git` default branch or no `tmux`.** The tests set `init.defaultBranch`, and a missing tool is only a warning.
 
-## Resume here (updated 2026-11-01)
-- Phase: step 10 done (review cycle 1 and resolve). Review head bd73d29; validated head 140c0bf. Summaries: `docs/reviews/fac-m1-review-summary.md`, `docs/reviews/fac-m1-resolution-summary.md`. Next: the Orchestrator decides on a second review cycle or the merge.
-- Branch `fac-m1-skeleton`, head = the commit that adds this block. Nothing pushed; no GitHub repo (waits for Dean's go); no tag, no publish.
+## Resume here (updated 2026-11-02)
+- FAC-M1 is merged: PR dean0x/factory#1, merge commit 4849465 on `main`. The repo dean0x/factory is private (D-49). No tag, no publish.
+- Now: branch `design-v2` from 4849465, docs PR dean0x/factory#2: `docs/design.md` v2 and `docs/roadmap-v2.md` (D-53, F-1 to F-10). The Orchestrator reviews it. Next code milestone: FAC-M2 in roadmap-v2.
+- History of FAC-M1: review head bd73d29; validated head 140c0bf. Summaries: `docs/reviews/fac-m1-review-summary.md`, `docs/reviews/fac-m1-resolution-summary.md`.
 - Verified at 140c0bf: build and `tsc --noEmit` pass; `npm test` 16 files, 430 tests pass; `npm run exit-check` passes (doctor "11 ok, 0 warnings, 0 failures", deny list clean). Snyk: the same 2 low findings in tests (local `node:http` servers); accepted.
 - Decisions in this cycle: SEC-S2 option A (Dean): `doctor` sends network checks only for a config from `--home` or the current folder. Lane: keep the last 5 backups; a block rewrite in a CRLF file writes LF lines.
 - Deferred (local, in the resolution summary): 7 test or robustness items, for example a lock against two concurrent runs, and the user's global git hooks in state commits.
-- Reviewer changes already in: `init` refuses only when the home has `factory.yaml`; a parent `factory.yaml` gives a warning (no parent link). Every user-visible name is in `src/names.ts`; a test fails on a stray literal. Do not rename until the Orchestrator sends Dean's naming decision set (feedback file: `/Users/dean/Sandbox/.devflow/docs/orchestration/briefs/factory-design-feedback-2026-11-01.md`).
-- Open: untracked `.schema.tmp` in the repo root (a build agent's temp file; its delete was denied; not committed). The working `.gitignore` has an uncommitted devflow block added by a tool; do not commit it. LICENSE holder is "Dean Sharon" (from git config). CI uses `actions/*@v4` tags.
+- Reviewer changes already in: `init` refuses only when the home has `factory.yaml`; a parent `factory.yaml` gives a warning (no parent link). Every user-visible name is in `src/names.ts`; a test fails on a stray literal. The naming decision set came with D-53; the renames are FAC-M2 scope (roadmap-v2).
+- Open: untracked `.schema.tmp` in the repo root (a build agent's temp file; its delete was denied; not committed). The working `.gitignore` has an uncommitted devflow block added by a tool; do not commit it. LICENSE holder is "Dean Sharon" (from git config). CI pins `actions/*` to commit SHAs (v4.4.0).
