@@ -76,12 +76,18 @@ export const detectStyle = (
   });
 };
 
+/** C0 controls (not tab or newline), DEL and C1 controls. The escape character is among them. */
+const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+
+/** Values from config reach the terminal as text. Control characters never go through as they are. */
+const printable = (text: string): string => text.replace(CONTROL_CHARACTERS, '?');
+
 export const renderText = (output: CommandOutput, style: Style, quiet: boolean): string => {
   const shown = output.lines.filter((line) => !quiet || line.level === 'warn' || line.level === 'fail');
-  return shown.map((line) => `${style.paint(line.level, line.text)}\n`).join('');
+  return shown.map((line) => `${style.paint(line.level, printable(line.text))}\n`).join('');
 };
 
 export const renderWarnings = (warnings: readonly string[]): string =>
-  warnings.map((warning) => `warning: ${warning}\n`).join('');
+  warnings.map((warning) => `warning: ${printable(warning)}\n`).join('');
 
 export const renderJson = (doc: JsonDoc): string => `${JSON.stringify(doc, null, 2)}\n`;

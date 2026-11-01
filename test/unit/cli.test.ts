@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createStyle, detectStyle, renderText } from '../../src/cli/output.js';
+import { createStyle, detectStyle, renderJson, renderText, renderWarnings } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { parseFlags } from '../../src/cli/table.js';
 import { FACTORY_VERSION } from '../../src/version.js';
@@ -142,5 +142,40 @@ describe('output style', () => {
   it('prints only warnings and failures with --quiet', () => {
     const style = createStyle({ color: false, unicode: false });
     expect(renderText(output, style, true)).toBe('[warn] careful\n[FAIL] broken\n');
+  });
+});
+
+describe('control characters in text output', () => {
+  const plain = createStyle({ color: false, unicode: false });
+  const withLine = (text: string) => ({
+    lines: [{ level: 'ok', text }],
+    json: { schema: 'x/v1' },
+    warnings: [],
+    failed: false,
+  }) as const;
+
+  it('replaces the escape character of a terminal sequence in a line', () => {
+    const text = renderText(withLine('path \u001b[2J\u001b]0;title\u0007 end'), plain, false);
+    expect(text).toBe('[ok] path ?[2J?]0;title? end\n');
+  });
+
+  it('replaces C0, DEL and C1 control characters but keeps tab and the line end', () => {
+    const text = renderText(withLine('a\u0000b\rc\u007fd\u009be\tf'), plain, false);
+    expect(text).toBe('[ok] a?b?c?d?e\tf\n');
+  });
+
+  it('keeps the color codes that the style adds', () => {
+    const color = createStyle({ color: true, unicode: false });
+    expect(renderText(withLine('fine'), color, false)).toBe('\u001b[32m[ok] fine\u001b[0m\n');
+  });
+
+  it('replaces control characters in a warning', () => {
+    expect(renderWarnings(['bad \u001b[31m value\u0085'])).toBe('warning: bad ?[31m value?\n');
+  });
+
+  it('leaves the JSON document as it is', () => {
+    const doc = { schema: 'x/v1', path: 'a\u001bb' };
+    expect(JSON.parse(renderJson(doc))).toEqual(doc);
+    expect(renderJson(doc)).not.toContain('\u001b');
   });
 });
