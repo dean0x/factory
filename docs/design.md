@@ -174,7 +174,7 @@ Costs are rough, per use, for the new tokens that enter the coordinator context.
 | Release pre-check and post-check (§7) | Version, changelog, package contents, registry; after: registry, clean install, smoke | 6–10 calls, 10–20k | `factory ship check <project>` / `factory ship verify <project> <version>` | 1 call each, 2–3k |
 | Issue audit and labels (§8) | List issues, classify, apply labels | 5–10 calls, 30–100k | `factory issues audit` (finds unlabeled or conflicting issues; the model classifies only those) | 1 call plus the classification of new issues only |
 | Decision record and profile update (§1) | Record file, log line, principle, decision-log row, commit | 4–6 calls, 8–15k | `factory decide read` records it; `--principle <id>` links a principle | 1 call, 1–2k (the principle wording stays a model job) |
-| Worktree cleanup (§4) | List, check tip on remote, search board and resume files, remove | 5–8 calls, 5–10k | `factory clean` (dry run by default) | 1 call, 1k |
+| Worktree cleanup (§4) | List, check tip on remote, search board and resume files, remove | 5–8 calls, 5–10k | `factory checkout clean` (dry run by default) | 1 call, 1k |
 | Typed founder-authority input (§12) | Map, capture, Escape/C-u, type, Enter, verify | 4–6 calls, 4–6k | `factory cell relay <cell> --decision <D-n>` | 1 call, <1k |
 | CI watch (§10) | Monitor or loop on `gh pr checks`, then read | 2–4 calls, 3–8k | `factory pr watch <pr>` (exits when CI ends; for a background task) | 1 call, <1k |
 | Stopped-lane watch and limit recovery (§11, §12) | Loop on `lanes-stopped.txt`; capture each lane; answer the dialog; nudge | 5–15k | `factory cell watch` (exits on a change); `factory cell recover` | <1k plus |
@@ -246,7 +246,7 @@ factory pr merge <pr>                       # pinned merge, then the bookkeeping
 factory pr watch <pr>
 factory issues audit [--project P]
 factory ship check|verify <project> [<version>]
-factory clean [--apply]
+factory checkout list | status | sync <pr|branch> | clean [--apply]   # git across checkouts (D-55)
 factory lock run -- <command>               # the shared heavy-test lock
 
 factory status [--json]                     # digest for the owner
@@ -255,7 +255,7 @@ factory node tree | children | add-child | remove-child
 factory self changeover
 ```
 
-The `software` recipe adds `inspect`, `pr`, `issues`, `ship` and `clean`. Another recipe adds its own gate and output commands. The core commands are the same for every recipe.
+The `software` recipe adds `inspect`, `pr`, `issues`, `ship` and `checkout`. Another recipe adds its own gate and output commands. The core commands are the same for every recipe.
 
 Global flags: `--home PATH`, `--json`, `--quiet`, `--no-color`. A command finds the home in this order: `--home`; else `FACTORY_HOME`, which factory sets in every session that it starts; else a walk up from the current folder to `factory.yaml`.
 Exit codes: `0` success, `1` failure, `2` usage error, `3` "not ready" (a gate verdict), `4` safety refusal. A gate verdict is not an error, so scripts can tell them apart.
@@ -607,7 +607,7 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 | Merges follow the owner's merge rule (F-6) | yes | `approval.land: each`: `pr merge` needs a recorded owner decision for that PR and head SHA. `approval.land: approved-work`: `pr merge` needs a recorded owner decision that approved the work and assigned it to a cell or track. In both cases it passes `--match-head-commit <full SHA>` only after `inspect` passed at that SHA, and refuses when the head changed. `--admin` only by the node, at the pinned head. |
 | Releases need the owner's go | yes | `ship` commands only check; they do not publish. No config value changes this. |
 | Never bypass the state hook | yes | `init` sets `core.hooksPath`; every state write commits through the helper, which refuses when the hook is off. |
-| Never delete another cell's files; look before removing | yes | `clean` is a dry run by default and refuses a worktree with unpushed work or a path that a cell or resume file names. |
+| Never delete another cell's files; look before removing | yes | `checkout clean` is a dry run by default and refuses a worktree with unpushed work or a path that a cell or resume file names. |
 | Resource limits; one heavy suite at a time | yes | `cell new` checks the limits; `lock run` takes the machine lock. |
 | Look before typing; target by pane id | yes | Every typed input captures the pane first, refuses an open dialog, clears the input, and checks that the text arrived. |
 | Supported platforms only | no | Every command refuses on native Windows, with the WSL hint (§4.7). |
