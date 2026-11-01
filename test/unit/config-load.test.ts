@@ -3,6 +3,7 @@ import { inspectConfig, loadConfig, parseYamlText } from '../../src/config/load.
 import { renderConfig } from '../../src/config/render.js';
 import { configSchema, type FactoryConfig } from '../../src/config/schema.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
 const HOME = '/node';
@@ -31,6 +32,21 @@ describe('parseYamlText', () => {
 
   it('rejects aliases', () => {
     expect(parseYamlText('a: &x 1\nb: *x\n')).toEqual({ ok: false, error: 'aliases are not allowed' });
+  });
+
+  it('reports only the line and the error code, never the source text', () => {
+    const parsed = parseYamlText(`a: |${FAKE_GITHUB_TOKEN}\n  body\n`);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) {
+      expect(parsed.error).toMatch(/^line 1: [A-Z_]+$/);
+      expect(parsed.error).not.toContain(FAKE_GITHUB_TOKEN);
+    }
+  });
+
+  it('does not repeat a duplicate key in the error', () => {
+    const parsed = parseYamlText(`${FAKE_GITHUB_TOKEN}: 1\n${FAKE_GITHUB_TOKEN}: 2\n`);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).not.toContain(FAKE_GITHUB_TOKEN);
   });
 });
 
@@ -88,6 +104,22 @@ describe('inspectConfig and loadConfig', () => {
     if (!loaded.ok) {
       expect(loaded.error.message).toContain('factory.yaml is invalid');
       expect(loaded.error.message).toContain('session.effort');
+    }
+  });
+
+  it('hides a key that looks like a token in the error', async () => {
+    const unknownKey = await loadConfig(withFile(`${renderConfig(sampleConfig())}${FAKE_GITHUB_TOKEN}: 1\n`), HOME);
+    const lane = await loadConfig(
+      withFile(renderConfig({ ...sampleConfig(), lanes: { [FAKE_GITHUB_TOKEN]: { proxy: 'none' } } })),
+      HOME,
+    );
+    for (const loaded of [unknownKey, lane]) {
+      expect(loaded.ok).toBe(false);
+      if (!loaded.ok) {
+        expect(loaded.error.message).toContain('factory.yaml is invalid');
+        expect(loaded.error.message).toContain('<key>');
+        expect(loaded.error.message).not.toContain(FAKE_GITHUB_TOKEN);
+      }
     }
   });
 

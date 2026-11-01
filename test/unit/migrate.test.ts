@@ -4,6 +4,7 @@ import { failure } from '../../src/cli/errors.js';
 import { inspectParsed, requireValid } from '../../src/migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../../src/migrate/runner.js';
 import { ok } from '../../src/core/result.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 
 const bump = (from: number, extra: string): Migration => ({
   from,
@@ -117,6 +118,11 @@ describe('inspectParsed with a newer supported version', () => {
 
   it('is invalid when the schema rejects the document', () => {
     expect(inspectParsed({ v: 2 }, spec)).toMatchObject({ kind: 'invalid' });
+  });
+
+  it('does not repeat a key that looks like a token in the invalid message', () => {
+    const state = inspectParsed({ v: 2, name: 'a', [FAKE_GITHUB_TOKEN]: 1 }, spec);
+    expect(state).toMatchObject({ kind: 'invalid', message: '<key>: unknown key' });
   });
 
   it('gives each state its own error text from requireValid', () => {

@@ -10,6 +10,7 @@ import { layoutOf, stagingDirOf } from '../../src/state/layout.js';
 import { inspectState, loadState, parseJsonText } from '../../src/state/load.js';
 import { nodeStateSchema } from '../../src/state/schema.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 
 const valid = { schema_version: 1, created_with: '0.1.0', blocks: { coordinator: 1, safety: 1, protocol: 1 } };
 
@@ -71,6 +72,17 @@ describe('inspectState and loadState', () => {
   it('reports an invalid document', async () => {
     const state = await inspectState(withState(jsonText({ ...valid, extra: true })), HOME);
     expect(state).toMatchObject({ kind: 'invalid' });
+  });
+
+  it('hides a key that looks like a token in the error', async () => {
+    const state = await inspectState(withState(jsonText({ ...valid, [FAKE_GITHUB_TOKEN]: true })), HOME);
+    expect(state).toMatchObject({ kind: 'invalid', message: '<key>: unknown key' });
+    const blocks = await inspectState(
+      withState(jsonText({ ...valid, blocks: { ...valid.blocks, [FAKE_GITHUB_TOKEN]: 1 } })),
+      HOME,
+    );
+    expect(blocks.kind).toBe('invalid');
+    if (blocks.kind === 'invalid') expect(blocks.message).not.toContain(FAKE_GITHUB_TOKEN);
   });
 });
 

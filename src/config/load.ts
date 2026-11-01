@@ -9,13 +9,16 @@ import { CONFIG_SCHEMA_VERSION, configSchema, type FactoryConfig } from './schem
 
 const CONFIG_LABEL = files.config;
 
-/** Parse YAML text. Aliases are not allowed, and duplicate keys are errors. */
+/**
+ * Parse YAML text. Aliases are not allowed, and duplicate keys are errors.
+ * An error holds the line and the error code only, because the YAML message can repeat the source text.
+ */
 export const parseYamlText = (text: string): Result<unknown, string> => {
   const lineCounter = new LineCounter();
   const doc = parseDocument(text, { uniqueKeys: true, prettyErrors: false, lineCounter });
   const first = doc.errors[0];
   if (first !== undefined) {
-    return err(`line ${lineCounter.linePos(first.pos[0]).line}: ${first.message}`);
+    return err(`line ${lineCounter.linePos(first.pos[0]).line}: ${first.code}`);
   }
   try {
     return ok(doc.toJS({ maxAliasCount: 0 }));

@@ -60,7 +60,7 @@ export const inspectParsed = <T>(raw: unknown, spec: VersionSpec<T>): DocState<T
     : { kind: 'invalid', raw, message: describeIssues(parsed.error) };
 };
 
-/** Turns the text of a file into a value. The error never repeats the text. */
+/** Turns the text of a file into a value. The error must not repeat the text: it names a position or a code. */
 export type TextParser = (text: string) => Result<unknown, string>;
 
 /** Read a file, parse its text, and check its version and its schema. */
