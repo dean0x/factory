@@ -279,6 +279,8 @@ factory status [--json]                     # digest for the owner
 factory report [--json] [--since CURSOR]    # digest for the parent (§5)
 factory node tree | children | add-child | remove-child
 factory self changeover
+factory adopt <path> [--dry-run]            # import the setup of today into a node (§8)
+factory hook <event> | statusline           # called by Claude Code; not for people (§4.6)
 ```
 
 The `software` recipe adds `inspect`, `pr`, `issues`, `ship` and `checkout`. Another recipe adds its own gate and output commands. The core commands are the same for every recipe.
@@ -476,7 +478,7 @@ From **firstmate** (github.com/kunchenguid/firstmate, MIT, read as untrusted dat
 **Where each idea lands (D-55).** Dean accepted the analysis, so each idea has a milestone:
 - Idea 1: FAC-M1 and FAC-M2 (`--home`, the walk up, the home index of §4.3).
 - Idea 2: FAC-M4 (the doorbell inbox, `inbox next`, `inbox ack`; §4.12).
-- Idea 3: FAC-M8. `node add-child` writes an identity marker, `.factory/parent.json`, into the child home, and `node tree` prints one line for each child from `children[]` with no folder scan.
+- Idea 3: FAC-M8. The marker is `.factory/node.json`. `ping` returns the id and layer from it. `node tree` prints one line for each child from `children[]` with no folder scan. A folder whose marker names another id shows `mismatch` and receives nothing.
 - Idea 4: FAC-M8. One constant lists the config items that a parent passes down (§5.5). A test shows that owner, accounts and session settings never pass.
 - Idea 5: FAC-M5 (the report core, with events that scripts write at merge, release and decision) and FAC-M8 (the rollup over children).
 - Idea 6: skipped (F-13).
@@ -778,7 +780,7 @@ Dean found 11 words for the physical layout of a factory. The list ends with the
 
 ### 8.1 Parity table
 
-Each part of the setup of today (§1.1) has an owner in factory: a command, a milestone, or "retired, because X". The column Status is `planned` until the milestone ends. Then it is `done` or `retired`. At the end of FAC-M7, every row must be `done` or `retired`; a script reads this table and fails on any other value.
+Each part of the setup of today (§1.1) has an owner in factory: a command, a milestone, or "retired, because X". The column Status is `planned` until the milestone ends. Then it is `done` or `retired`. A row is due at the last milestone that it names, in build order. `scripts/check-parity.sh <milestone>` reads this table and fails on any due row whose Status is not `done` or `retired`. At the end of FAC-M7 it must pass for FAC-M7. At the end of FAC-M3 it must pass for all rows.
 
 | Part (§1.1) | In factory | Milestone | Status |
 |---|---|---|---|
