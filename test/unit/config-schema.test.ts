@@ -17,22 +17,22 @@ describe('config schema', () => {
   it('accepts the sample config and fills the defaults', () => {
     const raw = sampleObject();
     delete raw['proxies'];
-    delete raw['lanes'];
+    delete raw['cells'];
     delete raw['children'];
     const parsed = configSchema.safeParse(raw);
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.proxies).toEqual([]);
-      expect(parsed.data.lanes).toEqual({});
+      expect(parsed.data.cells).toEqual({});
       expect(parsed.data.children).toEqual([]);
     }
   });
 
-  it('accepts a full config with proxies, lanes, children and a numeric load', () => {
+  it('accepts a full config with proxies, cells, children and a numeric load', () => {
     const message = check((raw) => {
       raw['proxies'] = [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health' }];
       raw['session'].proxy = 'local';
-      raw['lanes'] = { 'web-lane': { proxy: 'none' } };
+      raw['cells'] = { 'web-cell': { proxy: 'none' } };
       raw['limits'].load_max = 6;
       raw['children'] = [{ id: 'acme', address: 'acme/node' }];
       raw['owner'].github = 'some-login';
@@ -62,7 +62,7 @@ describe('config schema', () => {
       expect(check(mutate)).toContain(expected);
     });
 
-    it('rejects an unknown key in a proxy, a lane and a child', () => {
+    it('rejects an unknown key in a proxy, a cell and a child', () => {
       expect(
         check((raw) => {
           raw['proxies'] = [{ id: 'p', base_url: 'http://127.0.0.1:1', health: '/h', key: 'x' }];
@@ -70,9 +70,9 @@ describe('config schema', () => {
       ).toContain('proxies.0.key: unknown key');
       expect(
         check((raw) => {
-          raw['lanes'] = { l: { proxy: 'none', extra: true } };
+          raw['cells'] = { l: { proxy: 'none', extra: true } };
         }),
-      ).toContain('lanes.l.extra: unknown key');
+      ).toContain('cells.l.extra: unknown key');
       expect(
         check((raw) => {
           raw['children'] = [{ id: 'c', address: 'a', extra: 1 }];
@@ -85,7 +85,9 @@ describe('config schema', () => {
     it.each([
       ['schema', (raw: Record<string, any>) => (raw['schema'] = 2), 'schema:'],
       ['node.id', (raw: Record<string, any>) => (raw['node'].id = 'Bad Id'), 'node.id:'],
-      ['node.role', (raw: Record<string, any>) => (raw['node'].role = 'worker'), 'node.role:'],
+      ['node.layer 0', (raw: Record<string, any>) => (raw['node'].layer = 0), 'node.layer:'],
+      ['node.layer 17', (raw: Record<string, any>) => (raw['node'].layer = 17), 'node.layer:'],
+      ['node.layer text', (raw: Record<string, any>) => (raw['node'].layer = 'coordinator'), 'node.layer:'],
       ['owner.display empty', (raw: Record<string, any>) => (raw['owner'].display = ''), 'owner.display:'],
       ['owner.display long', (raw: Record<string, any>) => (raw['owner'].display = 'x'.repeat(81)), 'owner.display:'],
       ['owner.github', (raw: Record<string, any>) => (raw['owner'].github = '-bad'), 'owner.github:'],
@@ -107,7 +109,7 @@ describe('config schema', () => {
       ['project path tilde', (raw: Record<string, any>) => (raw['projects'][0].path = '~/web'), 'projects.0.path:'],
       ['project branch', (raw: Record<string, any>) => (raw['projects'][0].default_branch = '-x'), 'projects.0.default_branch:'],
       ['merge_method', (raw: Record<string, any>) => (raw['projects'][0].merge_method = 'fast'), 'projects.0.merge_method:'],
-      ['pack', (raw: Record<string, any>) => (raw['projects'][0].pack = 'devflow'), 'projects.0.pack:'],
+      ['variant', (raw: Record<string, any>) => (raw['projects'][0].variant = 'devflow'), 'projects.0.variant:'],
       ['gate.checks', (raw: Record<string, any>) => (raw['projects'][0].gate.checks = [1]), 'projects.0.gate.checks.0:'],
       ['heavy_test', (raw: Record<string, any>) => (raw['projects'][0].heavy_test = ''), 'projects.0.heavy_test:'],
       ['missing key', (raw: Record<string, any>) => delete raw['limits'], 'limits:'],
@@ -151,8 +153,8 @@ describe('config schema', () => {
       expect(check((raw) => (raw['session'].proxy = 'ghost'))).toContain('session.proxy: names a proxy');
     });
 
-    it('rejects a lane proxy that is not defined', () => {
-      expect(check((raw) => (raw['lanes'] = { l: { proxy: 'ghost' } }))).toContain('lanes.l.proxy: names a proxy');
+    it('rejects a cell proxy that is not defined', () => {
+      expect(check((raw) => (raw['cells'] = { l: { proxy: 'ghost' } }))).toContain('cells.l.proxy: names a proxy');
     });
 
     it('reserves the id none', () => {

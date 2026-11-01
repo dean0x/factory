@@ -2,14 +2,14 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 
 export const sampleConfig = (): FactoryConfig => ({
   schema: 1,
-  node: { id: 'demo', role: 'coordinator' },
+  node: { id: 'demo', layer: 1 },
   owner: {
     display: 'Test Owner',
     prefix: "[From {owner}, typed by {node} at the owner's explicit instruction, {date}]",
   },
   session: { permission_mode: 'auto', effort: 'high', model: 'default', proxy: 'none' },
   proxies: [],
-  lanes: {},
+  cells: {},
   limits: {
     memory_free_min_pct: 20,
     disk_free_min_gb: 20,
@@ -23,7 +23,7 @@ export const sampleConfig = (): FactoryConfig => ({
       path: '../web',
       default_branch: 'main',
       merge_method: 'squash',
-      pack: 'plain',
+      variant: 'plain',
       gate: { checks: [] },
     },
   ],

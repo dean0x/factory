@@ -45,14 +45,14 @@ describe('init: the files', () => {
       'factory.yaml',
       'CLAUDE.md',
       '.factory/node.json',
-      '.factory/protocol.md',
+      '.factory/roles/worker.md',
       '.factory/board.json',
       '.factory/waiting.json',
       '.factory/decision-log.json',
       '.factory/decision-profile/README-format.md',
       '.factory/decision-profile/index.md',
       '.factory/roadmaps/README.md',
-      '.factory/briefs/.gitkeep',
+      '.factory/orders/.gitkeep',
       '.factory/.gitignore',
     ];
     expect([...deps.files.keys()].sort()).toEqual(expected.map((name) => `${HOME}/${name}`).sort());
@@ -81,22 +81,22 @@ describe('init: the files', () => {
       value: {
         schema_version: 1,
         created_with: FACTORY_VERSION,
-        blocks: { coordinator: 1, safety: 1, protocol: 1 },
+        blocks: { coordinator: 2, safety: 2, worker: 1 },
       },
     });
   });
 
-  it('writes the managed blocks: coordinator and safety in CLAUDE.md, protocol in protocol.md', async () => {
+  it('writes the managed blocks: coordinator and safety in CLAUDE.md, worker in roles/worker.md', async () => {
     const { deps } = setup();
     await runInit(deps, options());
     const claude = parseBlocks(deps.files.get(`${HOME}/CLAUDE.md`) ?? '');
-    const protocol = parseBlocks(deps.files.get(`${HOME}/.factory/protocol.md`) ?? '');
+    const worker = parseBlocks(deps.files.get(`${HOME}/.factory/roles/worker.md`) ?? '');
     expect(claude.ok && claude.value.map((block) => [block.name, verifyBlock(block)])).toEqual([
       ['coordinator', 'intact'],
       ['safety', 'intact'],
     ]);
-    expect(protocol.ok && protocol.value.map((block) => [block.name, verifyBlock(block)])).toEqual([
-      ['protocol', 'intact'],
+    expect(worker.ok && worker.value.map((block) => [block.name, verifyBlock(block)])).toEqual([
+      ['worker', 'intact'],
     ]);
   });
 
@@ -108,7 +108,7 @@ describe('init: the files', () => {
     expect(read('waiting.json')).toEqual({ intro: '', groups: [], items: [] });
     expect(read('decision-log.json')).toEqual({ rows: [] });
     expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\n');
-    expect(deps.files.get(`${HOME}/.factory/briefs/.gitkeep`)).toBe('');
+    expect(deps.files.get(`${HOME}/.factory/orders/.gitkeep`)).toBe('');
   });
 
   it('holds none of the denied words in any generated file', async () => {
@@ -311,7 +311,7 @@ describe('init: projects', () => {
         path: '../web',
         default_branch: 'trunk',
         merge_method: 'squash',
-        pack: 'plain',
+        variant: 'plain',
         gate: { checks: [] },
       },
       {
@@ -320,7 +320,7 @@ describe('init: projects', () => {
         path: '../api',
         default_branch: 'develop',
         merge_method: 'squash',
-        pack: 'plain',
+        variant: 'plain',
         gate: { checks: [] },
       },
     ]);

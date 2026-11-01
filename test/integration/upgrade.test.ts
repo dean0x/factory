@@ -69,7 +69,7 @@ describe('factory upgrade (built binary)', () => {
     await mkdir(join(stateDir, 'state'), { recursive: true });
     await writeFile(join(stateDir, 'state', 'run.json'), '{}');
     await mkdir(join(stateDir, 'locks'), { recursive: true });
-    await writeFile(join(stateDir, 'locks', 'lane.lock'), '1');
+    await writeFile(join(stateDir, 'locks', 'cell.lock'), '1');
     for (let day = 1; day <= 6; day += 1) {
       await mkdir(join(stateDir, 'backups', `2020-01-0${day}T00-00-00-000Z`), { recursive: true });
     }

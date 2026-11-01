@@ -59,7 +59,7 @@ describe('findTokenPaths', () => {
 
   it('hides a key that looks like a token', () => {
     const key = FAKE_GITHUB_TOKEN;
-    expect(findTokenPaths({ lanes: { [key]: 'sk-ant-api03-abcdefgh' } })).toEqual(['lanes.<key>']);
+    expect(findTokenPaths({ cells: { [key]: 'sk-ant-api03-abcdefgh' } })).toEqual(['cells.<key>']);
   });
 
   it('finds nothing in clean data and in a value that is not an object', () => {

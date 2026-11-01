@@ -5,6 +5,9 @@ import { parseProxyUrl } from '../safety/proxy.js';
 
 export const CONFIG_SCHEMA_VERSION = 1;
 
+/** The highest layer of a node. A cell is layer 0 and has no node home. */
+export const MAX_LAYER = 16;
+
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const SLUG_RULE = 'must be a slug: a-z, 0-9 and hyphen, at most 40 characters, no leading hyphen';
 const MAX_SLUG_LENGTH = 40;
@@ -39,7 +42,7 @@ const isProjectPath = (value: string): boolean => {
 
 const nodeSchema = z.strictObject({
   [keys.node.id]: slug,
-  [keys.node.role]: z.literal(values.role),
+  [keys.node.layer]: z.number().int().min(1).max(MAX_LAYER),
 });
 
 const ownerSchema = z.strictObject({
@@ -111,7 +114,7 @@ const projectSchema = z.strictObject({
   [keys.project.mergeMethod]: z.enum(values.mergeMethods, {
     error: `must be one of: ${values.mergeMethods.join(', ')}`,
   }),
-  [keys.project.pack]: z.literal(values.pack, { error: `must be ${values.pack}` }),
+  [keys.project.variant]: z.enum(values.variants, { error: `must be one of: ${values.variants.join(', ')}` }),
   [keys.project.gate]: z.strictObject({ [keys.gate.checks]: z.array(z.string().min(1).max(500)).max(50) }),
   [keys.project.heavyTest]: z.string().min(1).max(500).optional(),
 });
@@ -143,9 +146,9 @@ export const configSchema = z
     [keys.root.owner]: ownerSchema,
     [keys.root.session]: sessionSchema,
     [keys.root.proxies]: z.array(proxySchema).max(20).default([]),
-    [keys.root.lanes]: z
-      .record(slug, z.strictObject({ [keys.lane.proxy]: slug }))
-      .refine((lanes) => Object.keys(lanes).length <= 200, { error: 'has too many entries' })
+    [keys.root.cells]: z
+      .record(slug, z.strictObject({ [keys.cell.proxy]: slug }))
+      .refine((cells) => Object.keys(cells).length <= 200, { error: 'has too many entries' })
       .default({}),
     [keys.root.limits]: limitsSchema,
     [keys.root.projects]: z.array(projectSchema).max(100),
@@ -176,8 +179,8 @@ export const configSchema = z
       }
     };
     checkRef(config.session.proxy, [keys.root.session, keys.session.proxy]);
-    for (const [lane, override] of Object.entries(config.lanes)) {
-      checkRef(override.proxy, [keys.root.lanes, lane, keys.lane.proxy]);
+    for (const [cell, override] of Object.entries(config.cells)) {
+      checkRef(override.proxy, [keys.root.cells, cell, keys.cell.proxy]);
     }
   });
 

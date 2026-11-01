@@ -152,10 +152,10 @@ describe('doctor: blocks', () => {
 
   it('warns when a block or its file is missing, and when the markers are broken', async () => {
     const deps = await initialized();
-    deps.files.delete(`${HOME}/.factory/protocol.md`);
+    deps.files.delete(`${HOME}/.factory/roles/worker.md`);
     const missing = checkBlocks(await inspectBlocks(deps, HOME, blockTemplates));
     expect(missing.level).toBe('warn');
-    expect(missing.text).toContain('protocol (missing');
+    expect(missing.text).toContain('worker (missing');
 
     deps.files.set(`${HOME}/CLAUDE.md`, '<!-- factory:begin x v1 sha256=zz -->\n');
     const broken = checkBlocks(await inspectBlocks(deps, HOME, blockTemplates));
@@ -298,14 +298,14 @@ describe('doctor: proxy variable in the shell', () => {
 });
 
 describe('doctor: proxies', () => {
-  const withProxies = (onFail: 'stop' | 'direct', lanes: FactoryConfig['lanes'] = {}): FactoryConfig => ({
+  const withProxies = (onFail: 'stop' | 'direct', cells: FactoryConfig['cells'] = {}): FactoryConfig => ({
     ...sampleConfig(),
     session: { ...sampleConfig().session, proxy: 'local' },
     proxies: [
       { id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: onFail },
       { id: 'spare', base_url: 'http://127.0.0.1:9999', health: '/health', on_fail: 'stop' },
     ],
-    lanes,
+    cells,
   });
 
   const stateOf = async (deps: FakeDeps, config: FactoryConfig) => {
@@ -340,9 +340,9 @@ describe('doctor: proxies', () => {
     expect(result?.text).toContain('on_fail is direct');
   });
 
-  it('checks a proxy that only a lane uses, and skips a proxy that nothing uses', async () => {
+  it('checks a proxy that only a cell uses, and skips a proxy that nothing uses', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
-    const config = { ...withProxies('stop', { 'web-lane': { proxy: 'spare' } }), session: { ...sampleConfig().session } };
+    const config = { ...withProxies('stop', { 'web-cell': { proxy: 'spare' } }), session: { ...sampleConfig().session } };
     const results = await checkProxies(deps, await stateOf(deps, config), true);
     expect(results.map((result) => result.id)).toEqual(['proxy:spare']);
   });
@@ -435,7 +435,7 @@ describe('doctor: tools', () => {
   it('warns for a missing program and names the commands that need it', async () => {
     const result = await checkTools(makeDeps({ tools: ['git', 'claude'] }));
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('tmux (the lane commands)');
+    expect(result.text).toContain('tmux (the cell commands)');
     expect(result.text).toContain('gh (the GitHub commands)');
     expect(result.text).not.toContain('git (');
   });

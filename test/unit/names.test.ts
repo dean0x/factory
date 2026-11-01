@@ -16,9 +16,13 @@ import {
   stateKeys,
   templateValues,
 } from '../../src/names.js';
+import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
+import { runInit } from '../../src/commands/init.js';
 import { fillTemplate } from '../../src/templates/fill.js';
 import { blockTemplates, fileTemplates } from '../../src/templates/index.js';
 import { denyMatches } from '../helpers/deny-list.js';
+import { createFakeDeps } from '../helpers/fake-deps.js';
+import { gitHandler } from '../helpers/git-fake.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
@@ -59,7 +63,7 @@ const EXACT_NAMES = new Set([
     keys.owner,
     keys.session,
     keys.proxy,
-    keys.lane,
+    keys.cell,
     keys.limits,
     keys.project,
     keys.gate,
@@ -69,7 +73,7 @@ const EXACT_NAMES = new Set([
 ]);
 
 /** Names that a string literal must never hold as a part, matched as whole words. */
-const WORD_NAMES = [program, ...flat(roles), dirs.profile, dirs.roadmaps, dirs.briefs, dirs.backups];
+const WORD_NAMES = [program, ...flat(roles), dirs.profile, dirs.roadmaps, dirs.orders, dirs.backups];
 
 /**
  * Names that a string literal must never hold as a part, matched as plain text.
@@ -130,8 +134,48 @@ describe('names', () => {
   it('finds a name literal in a file that is not names.ts', () => {
     const sample = (text: string): string[] => literalsOf(text);
     expect(sample("const a = 'factory.yaml';")).toEqual(['factory.yaml']);
-    expect(sample('const a = `x ${y} {{lane}} z`;')).toEqual(['x     z']);
+    expect(sample('const a = `x ${y} {{cell}} z`;')).toEqual(['x     z']);
     expect(sample("// a 'comment'\nconst a = 1;")).toEqual([]);
+  });
+});
+
+/** The words of FAC-M1 that v2 replaced: lane, pack and brief, also as a verb or in a plural. */
+const OLD_WORDS = /\b(?:lane|pack|brief)(?:s|ed)?\b/i;
+
+const oldWordsIn = (text: string): string[] => text.match(new RegExp(OLD_WORDS, 'gi')) ?? [];
+
+describe('words of the old names', () => {
+  it('finds an old word in a text, in any case and in a plural', () => {
+    expect(oldWordsIn('A Lane, two packs and a brief.')).toEqual(['Lane', 'packs', 'brief']);
+    expect(oldWordsIn('Brief the cell. It was briefed.')).toEqual(['Brief', 'briefed']);
+    expect(oldWordsIn('A package of plain words and a cell.')).toEqual([]);
+  });
+
+  it('keeps the old words out of the help of every command', () => {
+    const texts = [renderHelp(), ...commandTable.map(renderCommandHelp)];
+    expect(texts.flatMap(oldWordsIn)).toEqual([]);
+  });
+
+  it('keeps the old words out of every template', () => {
+    const texts = [...blockTemplates.map((template) => template.body), ...Object.values(fileTemplates)];
+    expect(texts.flatMap(oldWordsIn)).toEqual([]);
+  });
+
+  it('keeps the old words out of the files that init writes', async () => {
+    const { handler } = gitHandler({ gh: 'some-login' });
+    const deps = createFakeDeps({ cwd: '/w', run: handler });
+    const result = await runInit(deps, {
+      home: '/w/node',
+      name: undefined,
+      ownerName: 'Test Owner',
+      ownerGithub: undefined,
+      projects: [],
+    });
+    expect(result.ok).toBe(true);
+    expect(deps.files.size).toBeGreaterThan(10);
+    for (const [path, text] of deps.files) {
+      expect({ path, found: oldWordsIn(text) }).toEqual({ path, found: [] });
+    }
   });
 });
 
@@ -154,7 +198,7 @@ describe('template placeholders', () => {
   });
 
   it('fills a placeholder and its capitalized form', () => {
-    expect(fillTemplate(['The {{lane}} and the {{Lane}}.'], { lane: 'worker' })).toBe('The worker and the Worker.');
+    expect(fillTemplate(['The {{cell}} and the {{Cell}}.'], { cell: 'worker' })).toBe('The worker and the Worker.');
   });
 
   it('leaves an unknown placeholder in the text', () => {

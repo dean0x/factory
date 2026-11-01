@@ -18,7 +18,7 @@ import { gitHandler } from '../helpers/git-fake.js';
 
 const HOME = '/w/node';
 const CLAUDE = `${HOME}/CLAUDE.md`;
-const PROTOCOL = `${HOME}/.factory/protocol.md`;
+const WORKER = `${HOME}/.factory/roles/worker.md`;
 const NODE_JSON = `${HOME}/.factory/node.json`;
 const CONFIG = `${HOME}/factory.yaml`;
 const BACKUP = `${HOME}/.factory/backups/2030-01-02T03-04-05-678Z`;
@@ -73,8 +73,11 @@ const edit = (deps: FakeDeps, path: string, from: string, to: string): void => {
   deps.files.set(path, before.replace(from, to));
 };
 
-const withBlock = (name: string, version: number, body: string): readonly BlockTemplate[] =>
-  blockTemplates.map((template) => (template.name === name ? { ...template, version, body } : template));
+const versionOf = (name: string): number => blockTemplates.find((template) => template.name === name)?.version ?? 0;
+
+/** The templates, with one block at its next version and a new text. */
+const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
+  blockTemplates.map((template) => (template.name === name ? { ...template, version: template.version + 1, body } : template));
 
 const blocksSpec = (blocks: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, blocks });
 
@@ -130,16 +133,16 @@ describe('upgrade: when nothing changes', () => {
 
   it('skips a missing block with a warning, and does not create it', async () => {
     const { deps } = await makeNode();
-    deps.files.delete(PROTOCOL);
+    deps.files.delete(WORKER);
     const output = success(await upgrade(deps));
-    expect(output.warnings).toEqual(['block protocol is missing. Use --overwrite protocol to add it.']);
+    expect(output.warnings).toEqual(['block worker is missing. Use --overwrite worker to add it.']);
     expect(output.json).toMatchObject({ changed: false });
-    expect(deps.files.has(PROTOCOL)).toBe(false);
+    expect(deps.files.has(WORKER)).toBe(false);
   });
 });
 
 describe('upgrade: managed blocks', () => {
-  const newer = blocksSpec(withBlock('coordinator', 2, 'New coordinator text.'));
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
 
   it('shows the plan in a dry run and changes no file', async () => {
     const { deps } = await makeNode();
@@ -149,8 +152,8 @@ describe('upgrade: managed blocks', () => {
       expect.arrayContaining([
         'factory.yaml: schema 1 is current',
         '.factory/node.json: schema_version 1 is current',
-        'block coordinator: version 1 to 2',
-        'block safety: version 1 is current',
+        `block coordinator: version ${versionOf('coordinator')} to ${versionOf('coordinator') + 1}`,
+        `block safety: version ${versionOf('safety')} is current`,
         'Dry run: no file was changed.',
       ]),
     );
@@ -168,12 +171,14 @@ describe('upgrade: managed blocks', () => {
     const claude = text(deps, CLAUDE);
     expect(claude.startsWith('My own rules.\n')).toBe(true);
     expect(claude.endsWith('\nMore of my rules.\n')).toBe(true);
-    expect(claude).toContain('<!-- factory:begin coordinator v2 sha256=');
+    expect(claude).toContain(`<!-- factory:begin coordinator v${versionOf('coordinator') + 1} sha256=`);
     expect(claude).toContain('New coordinator text.');
     expect(claude).not.toContain(COORDINATOR_LINE);
-    expect(claude).toContain('<!-- factory:begin safety v1 sha256=');
+    expect(claude).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
     const state = parseJsonText(text(deps, NODE_JSON));
-    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 2, safety: 1, protocol: 1 } });
+    expect(state.ok && state.value).toMatchObject({
+      blocks: { coordinator: versionOf('coordinator') + 1, safety: versionOf('safety'), worker: versionOf('worker') },
+    });
     expect(output.lines.at(-1)?.text).toBe('Changed 2 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ changed: true, committed: true, backup: '.factory/backups/2030-01-02T03-04-05-678Z' });
     expect(gitSince()).toEqual(expect.arrayContaining(['add -A']));
@@ -197,21 +202,21 @@ describe('upgrade: managed blocks', () => {
   it('leaves the run-time folders out of the backup, because upgrade never writes into them', async () => {
     const { deps } = await makeNode();
     deps.seed(`${HOME}/.factory/state/run.json`, '{}');
-    deps.seed(`${HOME}/.factory/locks/lane.lock`, '1');
+    deps.seed(`${HOME}/.factory/locks/cell.lock`, '1');
     success(await upgrade(deps, newer));
     const saved = [...deps.files.keys()].filter((path) => path.startsWith(`${BACKUP}/`));
     expect(saved).toContain(`${BACKUP}/.factory/node.json`);
     expect(saved.some((path) => path.startsWith(`${BACKUP}/.factory/state/`))).toBe(false);
     expect(saved.some((path) => path.startsWith(`${BACKUP}/.factory/locks/`))).toBe(false);
     expect(text(deps, `${HOME}/.factory/state/run.json`)).toBe('{}');
-    expect(text(deps, `${HOME}/.factory/locks/lane.lock`)).toBe('1');
+    expect(text(deps, `${HOME}/.factory/locks/cell.lock`)).toBe('1');
   });
 
-  it('updates a block in the protocol file', async () => {
+  it('updates a block in the worker file', async () => {
     const { deps } = await makeNode();
-    success(await upgrade(deps, blocksSpec(withBlock('protocol', 2, 'New protocol text.'))));
-    expect(text(deps, PROTOCOL)).toContain('<!-- factory:begin protocol v2 sha256=');
-    expect(text(deps, PROTOCOL)).toContain('New protocol text.');
+    success(await upgrade(deps, blocksSpec(withBlock('worker', 'New worker text.'))));
+    expect(text(deps, WORKER)).toContain(`<!-- factory:begin worker v${versionOf('worker') + 1} sha256=`);
+    expect(text(deps, WORKER)).toContain('New worker text.');
   });
 
   it('refuses an edited block with a short diff, and changes nothing', async () => {
@@ -268,14 +273,14 @@ describe('upgrade: managed blocks', () => {
     const after = text(deps, CLAUDE);
     expect(after.startsWith('Owner text.\n')).toBe(true);
     expect(after.trimEnd().endsWith('<!-- factory:end safety -->')).toBe(true);
-    expect(lineTexts(output)).toContain('block safety: add version 1');
+    expect(lineTexts(output)).toContain(`block safety: add version ${versionOf('safety')}`);
   });
 
-  it('creates a missing protocol file when the block is named', async () => {
+  it('creates a missing worker file when the block is named', async () => {
     const { deps } = await makeNode();
-    deps.files.delete(PROTOCOL);
-    const output = success(await upgrade(deps, currentSpec, { overwrite: ['protocol'] }));
-    expect(text(deps, PROTOCOL)).toContain('<!-- factory:begin protocol v1 sha256=');
+    deps.files.delete(WORKER);
+    const output = success(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
+    expect(text(deps, WORKER)).toContain(`<!-- factory:begin worker v${versionOf('worker')} sha256=`);
     expect(output.json).toMatchObject({ committed: true });
   });
 
@@ -284,12 +289,12 @@ describe('upgrade: managed blocks', () => {
     const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['nope'] }));
     expect(error.kind).toBe('usage');
     expect(error.message).toContain('unknown block nope');
-    expect(error.hint).toBe('The blocks are: coordinator, safety, protocol.');
+    expect(error.hint).toBe('The blocks are: coordinator, safety, worker.');
   });
 
   it('fails when a block has a newer version than the template', async () => {
     const { deps } = await makeNode();
-    const rendered = renderBlock({ name: 'coordinator', version: 3, body: 'From the future.' });
+    const rendered = renderBlock({ name: 'coordinator', version: versionOf('coordinator') + 2, body: 'From the future.' });
     expect(rendered.ok).toBe(true);
     const claude = text(deps, CLAUDE);
     const start = claude.indexOf('<!-- factory:begin coordinator');
@@ -297,7 +302,7 @@ describe('upgrade: managed blocks', () => {
     deps.files.set(CLAUDE, `${claude.slice(0, start)}${rendered.ok ? rendered.value : ''}${claude.slice(end)}`);
     const error = refusal(await upgrade(deps, newer));
     expect(error.kind).toBe('failure');
-    expect(error.message).toContain('block coordinator has version 3');
+    expect(error.message).toContain(`block coordinator has version ${versionOf('coordinator') + 2}`);
     expect(error.message).toContain('Upgrade factory.');
   });
 
@@ -332,14 +337,14 @@ describe('upgrade: migrations', () => {
     const spec: UpgradeSpec = {
       config: currentSpec.config,
       state: stateAt(2, [step('schema_version', 1, { note: 'x' })]),
-      blocks: withBlock('safety', 2, 'New safety text.'),
+      blocks: withBlock('safety', 'New safety text.'),
     };
     const output = success(await upgrade(deps, spec));
     const state = parseJsonText(text(deps, NODE_JSON));
     expect(state.ok && state.value).toMatchObject({
       schema_version: 2,
       note: 'x',
-      blocks: { coordinator: 1, safety: 2, protocol: 1 },
+      blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety') + 1, worker: versionOf('worker') },
     });
     expect(output.json).toMatchObject({ committed: true, state: { from: 1, to: 2 } });
   });
@@ -350,7 +355,7 @@ describe('upgrade: migrations', () => {
     const spec: UpgradeSpec = {
       config: configAt(2, [step('schema', 1)]),
       state: stateAt(2, [step('schema_version', 1)]),
-      blocks: withBlock('coordinator', 2, 'New coordinator text.'),
+      blocks: withBlock('coordinator', 'New coordinator text.'),
     };
     success(await upgrade(deps, spec));
     expect(deps.atomicWrites.slice(first)).toEqual([CLAUDE, NODE_JSON, CONFIG]);
@@ -401,7 +406,7 @@ describe('upgrade: migrations', () => {
 });
 
 describe('upgrade: when a step fails after the backup', () => {
-  const newer = blocksSpec(withBlock('coordinator', 2, 'New coordinator text.'));
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
 
   it('puts back every file that it wrote when a write fails', async () => {
     const { deps } = await makeNode();
@@ -482,14 +487,14 @@ describe('upgrade: when a step fails after the backup', () => {
     const { deps } = await makeNode({
       run: (inner) => (call) => (call.args.includes('commit') ? exited(1) : inner(call)),
     });
-    deps.files.delete(PROTOCOL);
-    refusal(await upgrade(deps, currentSpec, { overwrite: ['protocol'] }));
-    expect(deps.files.has(PROTOCOL)).toBe(false);
+    deps.files.delete(WORKER);
+    refusal(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
+    expect(deps.files.has(WORKER)).toBe(false);
   });
 });
 
 describe('upgrade: the number of backups', () => {
-  const newer = blocksSpec(withBlock('coordinator', 2, 'New coordinator text.'));
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
   const BACKUPS = `${HOME}/.factory/backups`;
   const stamp = (day: number): string => `2029-01-${String(day).padStart(2, '0')}T00-00-00-000Z`;
   const kept = (deps: FakeDeps): string[] => {
@@ -551,7 +556,7 @@ describe('upgrade: the number of backups', () => {
 });
 
 describe('upgrade: before it changes anything', () => {
-  const newer = blocksSpec(withBlock('coordinator', 2, 'New coordinator text.'));
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
 
   it('needs a git repository in the state folder', async () => {
     const { deps } = await makeNode({ repo: false });

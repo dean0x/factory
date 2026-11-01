@@ -31,7 +31,7 @@ describe('factory init (built binary)', () => {
     const result = await box.run(initArgs(['--project', web]));
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Created the node "demo"');
-    for (const name of ['factory.yaml', 'CLAUDE.md', '.factory/node.json', '.factory/protocol.md']) {
+    for (const name of ['factory.yaml', 'CLAUDE.md', '.factory/node.json', '.factory/roles/worker.md']) {
       expect(existsSync(join(box.node, name))).toBe(true);
     }
     const config = await box.read(join(box.node, 'factory.yaml'));
@@ -88,7 +88,7 @@ describe('factory init (built binary)', () => {
       'factory.yaml',
       'CLAUDE.md',
       '.factory/node.json',
-      '.factory/protocol.md',
+      '.factory/roles/worker.md',
       '.factory/decision-profile/README-format.md',
       '.factory/decision-profile/index.md',
       '.factory/roadmaps/README.md',

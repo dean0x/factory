@@ -50,7 +50,7 @@ const MAX_PATH_ENTRIES = 256;
 /** Programs that later commands need. The text says which. */
 const TOOLS: readonly { readonly name: string; readonly neededFor: string }[] = [
   { name: 'git', neededFor: 'the state repository and the project checks' },
-  { name: 'tmux', neededFor: `the ${roles.lane} commands` },
+  { name: 'tmux', neededFor: `the ${roles.cell} commands` },
   { name: 'gh', neededFor: 'the GitHub commands' },
   { name: 'claude', neededFor: 'the launch of sessions' },
 ];
@@ -200,7 +200,7 @@ export const checkProxies = async (
 ): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
   const config = state.value;
-  const inUse = new Set([config.session.proxy, ...Object.values(config.lanes).map((lane) => lane.proxy)]);
+  const inUse = new Set([config.session.proxy, ...Object.values(config.cells).map((cell) => cell.proxy)]);
   inUse.delete(values.noProxy);
   const used = config.proxies.filter((proxy) => inUse.has(proxy.id));
   if (used.length === 0) return [check(checkIds.proxy, 'ok', 'no proxy is in use')];

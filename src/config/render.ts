@@ -38,7 +38,7 @@ const projectLines = (project: ProjectConfig): string[] => [
   entry(2, keys.project.path, quoted(project.path)),
   entry(2, keys.project.defaultBranch, quoted(project.default_branch)),
   entry(2, keys.project.mergeMethod, project.merge_method),
-  entry(2, keys.project.pack, project.pack),
+  entry(2, keys.project.variant, project.variant),
   ...gateLines(project.gate.checks),
   ...(project.heavy_test === undefined ? [] : [entry(2, keys.project.heavyTest, quoted(project.heavy_test))]),
 ];
@@ -48,7 +48,7 @@ const section = (name: string, items: readonly string[][]): string[] =>
 
 /** The text of the config file, with comments, for a typed config. */
 export const renderConfig = (config: FactoryConfig): string => {
-  const lanes = Object.entries(config.lanes);
+  const cells = Object.entries(config.cells);
   const lines: string[] = [
     `# ${files.config}: the configuration of this ${roles.node}.`,
     '# People edit this file. Do not put keys, tokens or passwords here.',
@@ -56,7 +56,7 @@ export const renderConfig = (config: FactoryConfig): string => {
     '',
     `${keys.root.node}:`,
     entry(1, keys.node.id, scalar(config.node.id), 'also the name of the tmux session'),
-    entry(1, keys.node.role, config.node.role),
+    entry(1, keys.node.layer, config.node.layer),
     '',
     `${keys.root.owner}:`,
     entry(1, keys.owner.display, quoted(config.owner.display)),
@@ -78,13 +78,13 @@ export const renderConfig = (config: FactoryConfig): string => {
     `# A session uses a proxy only when the config names it. ${capitalize(program)} checks the proxy before each launch.`,
     ...section(keys.root.proxies, config.proxies.map(proxyLines)),
     '',
-    `# Overrides for single ${roles.lane}s: <${roles.lane} id>: { ${keys.lane.proxy}: ${values.noProxy} }`,
-    ...(lanes.length === 0
-      ? [`${keys.root.lanes}: {}`]
+    `# Overrides for single ${roles.cell}s: <${roles.cell} id>: { ${keys.cell.proxy}: ${values.noProxy} }`,
+    ...(cells.length === 0
+      ? [`${keys.root.cells}: {}`]
       : [
-          `${keys.root.lanes}:`,
-          ...lanes.map(
-            ([lane, override]) => `${pad(1)}${scalar(lane)}: { ${keys.lane.proxy}: ${scalar(override.proxy)} }`,
+          `${keys.root.cells}:`,
+          ...cells.map(
+            ([cell, override]) => `${pad(1)}${scalar(cell)}: { ${keys.cell.proxy}: ${scalar(override.proxy)} }`,
           ),
         ]),
     '',

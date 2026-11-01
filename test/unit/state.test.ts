@@ -12,7 +12,7 @@ import { nodeStateSchema } from '../../src/state/schema.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 
-const valid = { schema_version: 1, created_with: '0.1.0', blocks: { coordinator: 1, safety: 1, protocol: 1 } };
+const valid = { schema_version: 1, created_with: '0.1.0', blocks: { coordinator: 1, safety: 1, worker: 1 } };
 
 const issues = (value: unknown): string | null => {
   const parsed = nodeStateSchema.safeParse(value);
@@ -109,7 +109,7 @@ describe('layout', () => {
       claudeMd: '/h/node/CLAUDE.md',
       stateDir: '/h/node/.factory',
       nodeJson: '/h/node/.factory/node.json',
-      protocolMd: '/h/node/.factory/protocol.md',
+      workerMd: '/h/node/.factory/roles/worker.md',
       backupsDir: '/h/node/.factory/backups',
       runtimeDir: '/h/node/.factory/state',
       locksDir: '/h/node/.factory/locks',

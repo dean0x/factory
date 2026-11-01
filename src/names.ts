@@ -7,7 +7,7 @@
  *
  * A change of a config key, of a state key, of a file name or of a folder name
  * needs a migration (src/migrate), so that existing nodes keep working.
- * Text templates use placeholders such as {{lane}}. The placeholders are filled
+ * Text templates use placeholders such as {{cell}}. The placeholders are filled
  * from `templateValues` below.
  */
 
@@ -16,10 +16,12 @@ export const program = 'factory';
 /** The role words of help and template text. */
 export const roles = {
   node: 'node',
-  lane: 'lane',
+  cell: 'cell',
   coordinator: 'coordinator',
+  worker: 'worker',
   owner: 'owner',
-  pack: 'pack',
+  recipe: 'recipe',
+  variant: 'variant',
 } as const;
 
 export const commands = {
@@ -51,12 +53,12 @@ export const files = {
   config: 'factory.yaml',
   claudeMd: 'CLAUDE.md',
   nodeState: 'node.json',
-  protocol: 'protocol.md',
+  worker: 'worker.md',
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',
   gitignore: '.gitignore',
-  briefsKeep: '.gitkeep',
+  ordersKeep: '.gitkeep',
   profileReadme: 'README-format.md',
   profileIndex: 'index.md',
   profileLog: 'log.md',
@@ -70,7 +72,8 @@ export const dirs = {
   principles: 'principles',
   decisions: 'decisions',
   roadmaps: 'roadmaps',
-  briefs: 'briefs',
+  roles: 'roles',
+  orders: 'orders',
   backups: 'backups',
   runtime: 'state',
   locks: 'locks',
@@ -90,16 +93,16 @@ export const keys = {
     owner: 'owner',
     session: 'session',
     proxies: 'proxies',
-    lanes: 'lanes',
+    cells: 'cells',
     limits: 'limits',
     projects: 'projects',
     children: 'children',
   },
-  node: { id: 'id', role: 'role' },
+  node: { id: 'id', layer: 'layer' },
   owner: { display: 'display', github: 'github', prefix: 'prefix' },
   session: { permissionMode: 'permission_mode', effort: 'effort', model: 'model', proxy: 'proxy' },
   proxy: { id: 'id', baseUrl: 'base_url', health: 'health', onFail: 'on_fail' },
-  lane: { proxy: 'proxy' },
+  cell: { proxy: 'proxy' },
   limits: {
     memoryFreeMinPct: 'memory_free_min_pct',
     diskFreeMinGb: 'disk_free_min_gb',
@@ -113,7 +116,7 @@ export const keys = {
     path: 'path',
     defaultBranch: 'default_branch',
     mergeMethod: 'merge_method',
-    pack: 'pack',
+    variant: 'variant',
     gate: 'gate',
     heavyTest: 'heavy_test',
   },
@@ -130,14 +133,13 @@ export const stateKeys = {
 
 /** The words that a config value can take. */
 export const values = {
-  role: roles.coordinator,
   permissionMode: 'auto',
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   noProxy: 'none',
   onFail: ['stop', 'direct'],
   loadCpuCount: 'cpu_count',
   mergeMethods: ['squash', 'merge', 'rebase'],
-  pack: 'plain',
+  variants: ['plain'],
 } as const;
 
 /** The ids of the checks that the doctor command runs. */
@@ -155,7 +157,7 @@ export const checkIds = {
   projects: 'projects',
 } as const;
 
-export const blockNames = { coordinator: 'coordinator', safety: 'safety', protocol: 'protocol' } as const;
+export const blockNames = { coordinator: 'coordinator', safety: 'safety', worker: 'worker' } as const;
 
 /** Markers of managed blocks: `<!-- factory:begin <name> v<n> sha256=<hex> -->` and `<!-- factory:end <name> -->`. */
 export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash: 'sha256' } as const;
@@ -190,24 +192,25 @@ const keyPath = (...parts: readonly string[]): string => parts.join('.');
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');
 
-/** The values for the placeholders of the templates, for example {{lane}} and {{Lane}}. */
+/** The values for the placeholders of the templates, for example {{cell}} and {{Cell}}. */
 export const templateValues: Readonly<Record<string, string>> = {
   program,
   node: roles.node,
-  lane: roles.lane,
+  cell: roles.cell,
   coordinator: roles.coordinator,
+  worker: roles.worker,
   owner: roles.owner,
-  pack: roles.pack,
+  recipe: roles.recipe,
   configFile: files.config,
   stateDir: dirs.state,
   nodeFile: inState(files.nodeState),
-  protocolFile: inState(files.protocol),
+  workerFile: inState(dirs.roles, files.worker),
   boardFile: inState(files.board),
   waitingFile: inState(files.waiting),
   decisionLogFile: inState(files.decisionLog),
   profileDir: `${inState(dirs.profile)}/`,
   roadmapsDir: `${inState(dirs.roadmaps)}/`,
-  briefsDir: `${inState(dirs.briefs)}/`,
+  ordersDir: `${inState(dirs.orders)}/`,
   profileIndex: files.profileIndex,
   profileReadme: files.profileReadme,
   profileLog: files.profileLog,

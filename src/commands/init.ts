@@ -84,6 +84,7 @@ const GH_TIMEOUT_MS = 10_000;
 const MAX_PROJECTS = 100;
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_MODEL = 'default';
+const FIRST_LAYER = 1;
 const FIRST_COMMIT_MESSAGE = 'chore: initialize the state';
 
 const DEFAULT_LIMITS = {
@@ -116,7 +117,7 @@ const describeProject = async (deps: Deps, home: string, argument: string): Prom
     [keys.project.path]: relative(home, absolute) || '.',
     [keys.project.defaultBranch]: branch,
     [keys.project.mergeMethod]: values.mergeMethods[0],
-    [keys.project.pack]: values.pack,
+    [keys.project.variant]: values.variants[0],
     [keys.project.gate]: { [keys.gate.checks]: [] },
   });
 };
@@ -156,7 +157,7 @@ const topMissingFolder = async (deps: Deps, dir: string): Promise<CliResult<stri
 
 const withNewline = (text: string): string => (text.endsWith('\n') ? text : `${text}\n`);
 
-const stateFilesOf = (protocolText: string): CliResult<readonly StateFile[]> => {
+const stateFilesOf = (workerText: string): CliResult<readonly StateFile[]> => {
   const state = nodeStateSchema.safeParse({
     [stateKeys.schemaVersion]: STATE_SCHEMA_VERSION,
     [stateKeys.createdWith]: FACTORY_VERSION,
@@ -165,14 +166,14 @@ const stateFilesOf = (protocolText: string): CliResult<readonly StateFile[]> => 
   if (!state.success) return failure(`the ${roles.node} state is invalid: ${describeIssues(state.error)}`);
   return ok([
     { rel: stateRel.nodeJson, text: jsonText(state.data) },
-    { rel: stateRel.protocol, text: protocolText },
+    { rel: stateRel.worker, text: workerText },
     { rel: stateRel.board, text: initialBoardText() },
     { rel: stateRel.waiting, text: initialWaitingText() },
     { rel: stateRel.decisionLog, text: initialDecisionLogText() },
     { rel: stateRel.profileReadme, text: withNewline(fileTemplates.profileReadme) },
     { rel: stateRel.profileIndex, text: fileTemplates.profileIndex },
     { rel: stateRel.roadmapsReadme, text: fileTemplates.roadmapsReadme },
-    { rel: stateRel.briefsKeep, text: '' },
+    { rel: stateRel.ordersKeep, text: '' },
     { rel: stateRel.gitignore, text: STATE_GITIGNORE },
   ]);
 };
@@ -181,7 +182,7 @@ const stateFilesOf = (protocolText: string): CliResult<readonly StateFile[]> => 
 const blockTexts = async (
   deps: Deps,
   claudePath: string,
-): Promise<CliResult<{ original: string | null; claudeText: string; protocolText: string }>> => {
+): Promise<CliResult<{ original: string | null; claudeText: string; workerText: string }>> => {
   const kind = await deps.fs.stat(claudePath);
   if (!kind.ok) return kind;
   if (kind.value !== null && kind.value !== 'file') return failure(`${files.claudeMd} is not a file`);
@@ -197,17 +198,17 @@ const blockTexts = async (
   }
 
   const claudeBlocks: string[] = [];
-  let protocolBlock = '';
+  let workerBlock = '';
   for (const template of blockTemplates) {
     const rendered = renderBlock(template);
     if (!rendered.ok) return rendered;
     if (template.target === 'claudeFile') claudeBlocks.push(rendered.value);
-    else protocolBlock = rendered.value;
+    else workerBlock = rendered.value;
   }
   return ok({
     original,
     claudeText: appendBlocks(original ?? '', claudeBlocks),
-    protocolText: appendBlocks('', [protocolBlock]),
+    workerText: appendBlocks('', [workerBlock]),
   });
 };
 
@@ -263,7 +264,7 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
 
   const parsed = configSchema.safeParse({
     [keys.root.schema]: CONFIG_SCHEMA_VERSION,
-    [keys.root.node]: { [keys.node.id]: id, [keys.node.role]: values.role },
+    [keys.root.node]: { [keys.node.id]: id, [keys.node.layer]: FIRST_LAYER },
     [keys.root.owner]: {
       [keys.owner.display]: ownerName,
       ...(github === undefined ? {} : { [keys.owner.github]: github }),
@@ -276,7 +277,7 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
       [keys.session.proxy]: values.noProxy,
     },
     [keys.root.proxies]: [],
-    [keys.root.lanes]: {},
+    [keys.root.cells]: {},
     [keys.root.limits]: DEFAULT_LIMITS,
     [keys.root.projects]: projects.value,
     [keys.root.children]: [],
@@ -287,7 +288,7 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
 
   const blocks = await blockTexts(deps, layout.claudeMd);
   if (!blocks.ok) return blocks;
-  const stateFiles = stateFilesOf(blocks.value.protocolText);
+  const stateFiles = stateFilesOf(blocks.value.workerText);
   if (!stateFiles.ok) return stateFiles;
 
   return ok({

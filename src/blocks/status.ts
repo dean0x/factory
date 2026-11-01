@@ -15,7 +15,7 @@ export type BlockStatus =
   | { readonly kind: 'malformed'; readonly template: BlockTemplate; readonly file: string; readonly message: string };
 
 export const fileOfTarget = (layout: Layout, target: BlockTarget): string =>
-  target === 'claudeFile' ? layout.claudeMd : layout.protocolMd;
+  target === 'claudeFile' ? layout.claudeMd : layout.workerMd;
 
 type FileState =
   | { readonly kind: 'absent' }

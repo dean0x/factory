@@ -109,11 +109,11 @@ describe('inspectConfig and loadConfig', () => {
 
   it('hides a key that looks like a token in the error', async () => {
     const unknownKey = await loadConfig(withFile(`${renderConfig(sampleConfig())}${FAKE_GITHUB_TOKEN}: 1\n`), HOME);
-    const lane = await loadConfig(
-      withFile(renderConfig({ ...sampleConfig(), lanes: { [FAKE_GITHUB_TOKEN]: { proxy: 'none' } } })),
+    const cell = await loadConfig(
+      withFile(renderConfig({ ...sampleConfig(), cells: { [FAKE_GITHUB_TOKEN]: { proxy: 'none' } } })),
       HOME,
     );
-    for (const loaded of [unknownKey, lane]) {
+    for (const loaded of [unknownKey, cell]) {
       expect(loaded.ok).toBe(false);
       if (!loaded.ok) {
         expect(loaded.error.message).toContain('factory.yaml is invalid');
@@ -147,7 +147,7 @@ describe('renderConfig', () => {
       owner: { ...sampleConfig().owner, display: 'Name: "quoted" # not a comment', github: 'some-login' },
       session: { permission_mode: 'auto', effort: 'max', model: 'a model', proxy: 'local' },
       proxies: [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: 'direct' }],
-      lanes: { 'web-lane': { proxy: 'none' }, no: { proxy: 'local' } },
+      cells: { 'web-cell': { proxy: 'none' }, no: { proxy: 'local' } },
       limits: { ...sampleConfig().limits, load_max: 7.5 },
       projects: [
         {
@@ -156,7 +156,7 @@ describe('renderConfig', () => {
           path: 'sub/web',
           default_branch: 'release/1.x',
           merge_method: 'rebase',
-          pack: 'plain',
+          variant: 'plain',
           gate: { checks: ['npm run lint', 'say "hi"'] },
           heavy_test: 'npm test',
         },
@@ -171,7 +171,7 @@ describe('renderConfig', () => {
     const text = renderConfig(sampleConfig());
     expect(text).toContain('# factory.yaml: the configuration of this node.');
     expect(text).toContain('proxies: []');
-    expect(text).toContain('lanes: {}');
+    expect(text).toContain('cells: {}');
     expect(text).toContain('children: []');
     expect(text.endsWith('\n')).toBe(true);
   });

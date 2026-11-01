@@ -62,7 +62,7 @@ export const BACKUPS_KEPT = 5;
 
 /**
  * Copy the files that upgrade can change. The run-time folders `state/` and `locks/` are left out:
- * upgrade writes only the config file, CLAUDE.md, the protocol file and the state file, and it never writes into them.
+ * upgrade writes only the config file, CLAUDE.md, the worker file and the state file, and it never writes into them.
  */
 export const backup = async (deps: Deps, home: string): Promise<CliResult<string>> => {
   const layout = layoutOf(home);
