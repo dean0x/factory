@@ -211,7 +211,9 @@ The health check sends one GET with a 3-second limit (`AbortSignal.timeout`), an
 
 ## Resume here (updated 2026-11-02)
 - FAC-M1 is merged: PR dean0x/factory#1, merge commit 4849465 on `main`. The repo dean0x/factory is private (D-49). No tag, no publish.
-- Now: branch `design-v2` from 4849465, docs PR dean0x/factory#2: `docs/design.md` v2 and `docs/roadmap-v2.md` (D-53, F-1 to F-10). The Orchestrator reviews it. Next code milestone: FAC-M2 in roadmap-v2.
+- Design v2 and roadmap-v2 are merged: PR dean0x/factory#2, f9c0dec (D-53, F-1 to F-10, plus the `local` tracker).
+- Now: docs PR dean0x/factory#3 (branch `research-firstmate-mars` from f9c0dec): `docs/research/firstmate-and-mars.md` (F-11, F-12). The Orchestrator reviews it.
+- Next: write `docs/plans/fac-m2.md` on a new branch from main. Scope: roadmap-v2 FAC-M2, plus the removal of the remote-host parts (F-13: config refuses any address but `file://`). Remote mentions to remove, at f9c0dec: design §4.8 firstmate idea 6 (remote readiness check; mark it skipped), §5.1 JSON `parent.address` `ssh://`, §5.3 transport `ssh://` and "over SSH", §5.7 "one machine" in the must-not-assume list, §9 v1 row 9 (remote transport); roadmap-v2 FAC-M8 scope (`ssh://` transport) and its `ssh://` exit criterion. Consider also the research recommendations (doorbell inbox, `factory checkout`) for later milestones, not FAC-M2.
 - History of FAC-M1: review head bd73d29; validated head 140c0bf. Summaries: `docs/reviews/fac-m1-review-summary.md`, `docs/reviews/fac-m1-resolution-summary.md`.
 - Verified at 140c0bf: build and `tsc --noEmit` pass; `npm test` 16 files, 430 tests pass; `npm run exit-check` passes (doctor "11 ok, 0 warnings, 0 failures", deny list clean). Snyk: the same 2 low findings in tests (local `node:http` servers); accepted.
 - Decisions in this cycle: SEC-S2 option A (Dean): `doctor` sends network checks only for a config from `--home` or the current folder. Lane: keep the last 5 backups; a block rewrite in a CRLF file writes LF lines.
