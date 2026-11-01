@@ -242,10 +242,10 @@ Test runs: a single test file runs without the lock. The full suite runs under t
 - **`yaml` Document edits can change the layout of the file.** A test checks that the owner's comments and the key order stay after `add-child` and `remove-child`.
 - **A user starts two nodes with the same id on one machine.** `up` refuses through the `@factory_home` check (exit 4).
 
-## 15. Later milestones: research recommendations (proposals, not FAC-M2)
-These depend on PR #3. The roadmap changes only after Dean accepts them.
-- **Doorbell inbox** goes into FAC-M4, which already names "the inbox with a one-line doorbell". It lives in `src/comms/` with the `file://` transport.
-- **`factory checkout list|status|sync|clean`** for the coordinator goes into FAC-M5. `factory clean` becomes `factory checkout clean`, so one command has the job.
+## 15. Later milestones: research recommendations (accepted, D-55; not FAC-M2)
+Dean accepted both, and roadmap-v2 now has their scope and exit criteria.
+- **Doorbell inbox** goes into FAC-M4. It lives in `src/comms/`, next to the `file://` transport of FAC-M2.
+- **`factory checkout list|status|sync|clean`** for the coordinator goes into FAC-M5. `factory clean` becomes `factory checkout clean`, so one command has the job. The design §3, §4.2 and §6 use the new name.
 
 ## Decisions taken in this plan (for the Orchestrator to check)
 - The F-13 doc removals are in this plan PR, so the design is true before the code. Cost: a small rebase conflict with PR #3 at design §4.8.

@@ -71,12 +71,20 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 
 **Goal.** factory starts, talks to, changes over, stops and restores cells, with no read under `~/.claude`.
 
-**Scope.** `cell new|list|send|relay|changeover|stop|resume|restart|summon|watch|recover|adopt` and `layout`. The bench and view windows (F-8). The heartbeat hook (F-9). The inbox with a one-line doorbell.
+**Scope.** `cell new|list|send|relay|changeover|stop|resume|restart|summon|watch|recover|adopt` and `layout`. The bench and view windows (F-8). The heartbeat hook (F-9). The doorbell inbox (D-55).
+
+**The doorbell inbox (D-55).** It is the default way to send any text to a cell:
+- `cell send` writes one numbered record per message into `.factory/cells/<id>/inbox/`, then rings one constant short line in the cell. The line has no message text.
+- The cell acknowledges a record when it moves the record to `handled/`. `cell watch` rings again for a record that waits too long, with a fixed bound on the rings.
+- `cell relay` keeps owner authority in the typed line. The line names the record number and a short hash of the record. A record alone never carries authority.
+- All of it lives in the comms module (`src/comms/`) with one interface (`send`, `deliver`, `report`, `ping`) and a versioned record format.
 
 **Tasks.**
 1. **Session-stop test (F-7).** In a throw-away session, try `/exit`, `/quit` (if it exists), `/restart`, `kill -TERM`, `kill -INT`, and the delete in the agent view. For each way, record the five facts of design §4.11. Write the results table into `docs/session-stop.md`. Then `factory cell stop` uses the safe way that the table shows. Until then, the rule is: stop only an idle session, then `kill -TERM`. This task does not run before FAC-M4 starts.
 2. The heartbeat hook and the heartbeat reader.
-3. The cell commands and the layout.
+3. **Inbox access test.** Before the inbox build, check that a cell in auto mode can read and move files in its inbox under the node home with no permission prompt. The cell gets its inbox folder through `--add-dir`. Record the result in `docs/session-stop.md` or a short note next to it.
+4. The doorbell inbox.
+5. The cell commands and the layout.
 
 **Exit criteria.**
 - [ ] `docs/session-stop.md` has one row per way, with the five facts. `factory cell stop` uses the way that the table marks safe, and a test with a fake session checks it.
@@ -85,19 +93,33 @@ FAC-M3 and FAC-M4 can run in parallel after FAC-M2. FAC-M9 can run at any time a
 - [ ] Integration test: the hook writes the heartbeat line on each event (fake hook input).
 - [ ] Static test: no source file opens a path under `~/.claude`, and no template contains such a path.
 - [ ] `cell relay` types the owner prefix only for a decision with `by: owner` in the log; a test covers the refusal.
+- [ ] Inbox tests: `cell send` writes a numbered record and types only the constant line (a capture shows no message text); two sends give two records in order; a record moved to `handled/` stops the rings; `cell watch` rings again for a waiting record and stops at its bound; the relay line names the record number and its hash.
+- [ ] A test with a fake session: after a clear or a restart, the cell finds its waiting records in the inbox.
+- [ ] Static test: no module outside `src/comms/` reads or writes inbox files.
 - [ ] `cell new` refuses a checkout that another cell uses, and refuses when a resource limit fails (fake machine facts).
 
 ### FAC-M5: Gate and ship commands
 
 **Goal.** The merge gate, the merge and the release checks are one command each, with a short verdict.
 
-**Scope.** `inspect`, `pr merge` (with both `approval.land` rules, F-6), `pr watch`, `issues audit`, `ship check|verify`, `clean`.
+**Scope.** `inspect`, `pr merge` (with both `approval.land` rules, F-6), `pr watch`, `issues audit`, `ship check|verify`, and `checkout list|status|sync|clean` (D-55).
+
+**`factory checkout` (D-55).** The coordinator's repeated git work across checkouts becomes four commands. Cells keep doing git on their own branch.
+- `list`: one row per checkout: project, path, cell, branch, short HEAD.
+- `status`: for each checkout, the dirty files, ahead and behind, unpushed commits, and whether the branch is on the remote. One verdict line with counts.
+- `sync <pr|branch>`: a base update of a waiting PR. It merges `origin/<default>` into the branch in a short-lived worktree under `.factory/state/`, pushes with no force, and removes the worktree. On a conflict it stops and names the files.
+- `clean [--apply]`: it takes over `factory clean`. It removes a checkout only when no cell holds it, no item or resume file names it, the tip is on the remote, the tree is clean and the PR is merged.
+- Safety rules from firstmate: a default branch moves only by fast-forward. A dirty, diverged or off-default checkout is reported as `STUCK:` and left untouched. Batch commands continue after a failure and give a count at the end (from mars).
+- The commands extend `src/core/git.ts`; there is no second git module.
 
 **Exit criteria.**
 - [ ] `inspect` gives the same verdict as the manual gate on 3 merged PRs, from recorded fixtures.
 - [ ] `pr merge` tests: with `approval.land: each` it refuses with no owner decision for that PR and head; with `approved-work` it refuses with no decision that approved and assigned the work; in both cases it refuses when the head changed after `inspect`.
 - [ ] `ship check|verify` only reads; a test asserts that they run no publish command.
-- [ ] `clean` is a dry run by default, and refuses a worktree with unpushed work or a path that a cell or resume file names.
+- [ ] `checkout clean` is a dry run by default, and refuses a worktree with unpushed work or a path that a cell or resume file names. `factory clean` does not exist as a second command.
+- [ ] `checkout list` and `checkout status` give the right rows and counts on fixture repos with linked worktrees: clean, dirty, unpushed, branch not on the remote. They ask git, never a `.git` folder test.
+- [ ] `checkout sync` tests on fixture repos: a clean merge pushes with no force and removes its worktree; a conflict stops, names the files and leaves no worktree; the cell's own checkout does not change.
+- [ ] A dirty, diverged or off-default checkout shows `STUCK:`, and no command changes it (test).
 
 ### FAC-M6: devflow variant
 
