@@ -104,7 +104,7 @@ describe('doctor: config, version and state', () => {
 
   it('fails the version check for a schema that is newer, and warns when it cannot check', async () => {
     const deps = await initialized();
-    deps.files.set(`${HOME}/factory.yaml`, 'schema: 2\n');
+    deps.files.set(`${HOME}/factory.yaml`, 'schema: 3\n');
     const newer = await inspectConfig(deps, HOME);
     expect(checkConfig(newer).level).toBe('ok');
     expect(checkConfigVersion(newer)).toMatchObject({ level: 'fail' });
@@ -112,6 +112,14 @@ describe('doctor: config, version and state', () => {
 
     deps.files.set(`${HOME}/factory.yaml`, 'a: [1\n');
     expect(checkConfigVersion(await inspectConfig(deps, HOME)).level).toBe('warn');
+  });
+
+  it('fails the version check for a schema 1 file and points to the upgrade command', async () => {
+    const deps = await initialized();
+    deps.files.set(`${HOME}/factory.yaml`, 'schema: 1\n');
+    const older = await inspectConfig(deps, HOME);
+    expect(checkConfigVersion(older)).toMatchObject({ level: 'fail' });
+    expect(checkConfigVersion(older).text).toContain('factory upgrade');
   });
 
   it('fails the state check for a missing, broken or newer node.json', async () => {
@@ -181,10 +189,12 @@ describe('doctor: secrets', () => {
 
   it('fails and names the key, never the value', async () => {
     const deps = await initialized();
-    writeConfig(deps, { ...sampleConfig(), projects: [{ ...sampleConfig().projects[0]!, heavy_test: `curl -H ${secret}` }] });
+    const sample = sampleConfig();
+    const project = { ...sample.recipe.projects[0]!, heavy_test: `curl -H ${secret}` };
+    writeConfig(deps, { ...sample, recipe: { ...sample.recipe, projects: [project] } });
     const result = checkSecrets(await inspectConfig(deps, HOME));
     expect(result.level).toBe('fail');
-    expect(result.text).toContain('projects.0.heavy_test');
+    expect(result.text).toContain('recipe.projects.0.heavy_test');
     expect(result.text).not.toContain('ghp_');
   });
 
@@ -298,15 +308,21 @@ describe('doctor: proxy variable in the shell', () => {
 });
 
 describe('doctor: proxies', () => {
-  const withProxies = (onFail: 'stop' | 'direct', cells: FactoryConfig['cells'] = {}): FactoryConfig => ({
-    ...sampleConfig(),
-    session: { ...sampleConfig().session, proxy: 'local' },
-    proxies: [
-      { id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: onFail },
-      { id: 'spare', base_url: 'http://127.0.0.1:9999', health: '/health', on_fail: 'stop' },
-    ],
-    cells,
-  });
+  const withProxies = (onFail: 'stop' | 'direct', cells: FactoryConfig['core']['cells'] = {}): FactoryConfig => {
+    const sample = sampleConfig();
+    return {
+      ...sample,
+      core: {
+        ...sample.core,
+        session: { ...sample.core.session, proxy: 'local' },
+        proxies: [
+          { id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: onFail },
+          { id: 'spare', base_url: 'http://127.0.0.1:9999', health: '/health', on_fail: 'stop' },
+        ],
+        cells,
+      },
+    };
+  };
 
   const stateOf = async (deps: FakeDeps, config: FactoryConfig) => {
     writeConfig(deps, config);
@@ -342,7 +358,8 @@ describe('doctor: proxies', () => {
 
   it('checks a proxy that only a cell uses, and skips a proxy that nothing uses', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
-    const config = { ...withProxies('stop', { 'web-cell': { proxy: 'spare' } }), session: { ...sampleConfig().session } };
+    const used = withProxies('stop', { 'web-cell': { proxy: 'spare' } });
+    const config = { ...used, core: { ...used.core, session: { ...sampleConfig().core.session } } };
     const results = await checkProxies(deps, await stateOf(deps, config), true);
     expect(results.map((result) => result.id)).toEqual(['proxy:spare']);
   });
@@ -381,7 +398,8 @@ describe('doctor: proxies', () => {
         git: { committed: [`${HOME}/.factory`] },
       });
       deps.seedDir(`${HOME}/.factory/.git`);
-      writeConfig(deps, { ...withProxies('stop'), projects: [] });
+      const proxied = withProxies('stop');
+      writeConfig(deps, { ...proxied, recipe: { ...proxied.recipe, projects: [] } });
       return deps;
     };
 
@@ -533,7 +551,7 @@ describe('doctor: the command', () => {
     expect(warnedOutput.failed).toBe(false);
 
     const broken = await initialized();
-    broken.files.set(`${HOME}/factory.yaml`, 'schema: 1\n');
+    broken.files.set(`${HOME}/factory.yaml`, 'schema: 2\n');
     const output = await doctor(broken);
     expect(output.failed).toBe(true);
     expect(levelOf(output.json['checks'] as CheckResult[], 'config')).toBe('fail');

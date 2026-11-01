@@ -22,7 +22,7 @@ export const findNearestConfig = async (deps: Deps, startDir: string): Promise<C
 };
 
 /** How the node home was found: from the home flag, in the current folder, or in a parent folder. */
-export type HomeSource = 'flag' | 'cwd' | 'parent';
+export type HomeSource = 'flag' | 'cwd' | 'ancestor';
 
 export interface LocatedHome {
   readonly home: string;
@@ -41,7 +41,7 @@ export const locateHome = async (deps: Deps, homeFlag: string | undefined): Prom
     );
   }
   const home = dirname(found.value);
-  return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'parent' });
+  return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'ancestor' });
 };
 
 /** The node home: the home flag, else the folder of the nearest config file above the current folder. */

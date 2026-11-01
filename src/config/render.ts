@@ -1,5 +1,7 @@
-import { capitalize, files, keys, program, roles, values } from '../names.js';
-import type { FactoryConfig, ProjectConfig, ProxyConfig } from './schema.js';
+import { address, capitalize, files, keys, program, roles, values } from '../names.js';
+import type { RecipeConfig } from '../recipes/index.js';
+import type { ProjectConfig } from '../recipes/software/config.js';
+import type { FactoryConfig, LinkConfig, ProxyConfig, TrackerConfig } from './schema.js';
 
 const YAML_WORDS: readonly string[] = ['true', 'false', 'null', 'yes', 'no', 'on', 'off', 'y', 'n'];
 
@@ -23,60 +25,95 @@ const proxyLines = (proxy: ProxyConfig): string[] => [
   entry(2, keys.proxy.onFail, proxy.on_fail),
 ];
 
-const gateLines = (checks: readonly string[]): string[] =>
+const gateLines = (depth: number, checks: readonly string[]): string[] =>
   checks.length === 0
-    ? [`${pad(2)}${keys.project.gate}: { ${keys.gate.checks}: [] }`]
+    ? [`${pad(depth)}${keys.project.gate}: { ${keys.gate.checks}: [] }`]
     : [
-        `${pad(2)}${keys.project.gate}:`,
-        `${pad(3)}${keys.gate.checks}:`,
-        ...checks.map((check) => `${pad(4)}- ${quoted(check)}`),
+        `${pad(depth)}${keys.project.gate}:`,
+        `${pad(depth + 1)}${keys.gate.checks}:`,
+        ...checks.map((check) => `${pad(depth + 2)}- ${quoted(check)}`),
       ];
 
-const projectLines = (project: ProjectConfig): string[] => [
-  itemEntry(1, keys.project.id, scalar(project.id)),
-  ...(project.repo === undefined ? [] : [entry(2, keys.project.repo, quoted(project.repo))]),
-  entry(2, keys.project.path, quoted(project.path)),
-  entry(2, keys.project.defaultBranch, quoted(project.default_branch)),
-  entry(2, keys.project.mergeMethod, project.merge_method),
-  entry(2, keys.project.variant, project.variant),
-  ...gateLines(project.gate.checks),
-  ...(project.heavy_test === undefined ? [] : [entry(2, keys.project.heavyTest, quoted(project.heavy_test))]),
+/** The lines of one project. `depth` is the depth of the list item. */
+const projectLines = (project: ProjectConfig, depth: number): string[] => [
+  itemEntry(depth, keys.project.id, scalar(project.id)),
+  ...(project.repo === undefined ? [] : [entry(depth + 1, keys.project.repo, quoted(project.repo))]),
+  entry(depth + 1, keys.project.path, quoted(project.path)),
+  entry(depth + 1, keys.project.defaultBranch, quoted(project.default_branch)),
+  entry(depth + 1, keys.project.mergeMethod, project.merge_method),
+  ...(project.variant === undefined ? [] : [entry(depth + 1, keys.project.variant, project.variant)]),
+  ...gateLines(depth + 1, project.gate.checks),
+  ...(project.heavy_test === undefined ? [] : [entry(depth + 1, keys.project.heavyTest, quoted(project.heavy_test))]),
 ];
 
-const section = (name: string, items: readonly string[][]): string[] =>
-  items.length === 0 ? [`${name}: []`] : [`${name}:`, ...items.flat()];
+const section = (depth: number, name: string, items: readonly string[][]): string[] =>
+  items.length === 0 ? [`${pad(depth)}${name}: []`] : [`${pad(depth)}${name}:`, ...items.flat()];
+
+const trackerLines = (tracker: TrackerConfig): string[] =>
+  tracker.kind === values.trackerLocal
+    ? [entry(1, keys.tracker.kind, tracker.kind, 'the items and the decisions stay in the state folder')]
+    : [
+        entry(1, keys.tracker.kind, tracker.kind),
+        entry(1, keys.tracker.items, quoted(tracker.items), 'where the work items live'),
+        entry(1, keys.tracker.decisions, quoted(tracker.decisions), `where the decisions of the ${roles.owner} live`),
+        entry(1, keys.tracker.watchInterval, tracker.watch_interval),
+      ];
+
+/** The `recipe` block. A recipe renders its own keys. */
+const recipeLines = (recipe: RecipeConfig): string[] => [
+  `${keys.root.recipe}:`,
+  entry(1, keys.recipe.id, recipe.id),
+  entry(1, keys.recipe.variant, recipe.variant, `the default ${roles.variant} for every project`),
+  `${pad(1)}# Each project path is relative to this folder.`,
+  ...section(1, keys.recipe.projects, recipe.projects.map((project) => projectLines(project, 2))),
+];
+
+const childLines = (link: LinkConfig): string[] => [
+  itemEntry(1, keys.link.id, scalar(link.id)),
+  entry(2, keys.link.address, quoted(link.address)),
+];
+
+const parentLines = (link: LinkConfig | null): string[] =>
+  link === null
+    ? [`${keys.root.parent}: null`]
+    : [
+        `${keys.root.parent}:`,
+        entry(1, keys.link.id, scalar(link.id)),
+        entry(1, keys.link.address, quoted(link.address)),
+      ];
 
 /** The text of the config file, with comments, for a typed config. */
 export const renderConfig = (config: FactoryConfig): string => {
-  const cells = Object.entries(config.cells);
+  const { core, recipe } = config;
+  const cells = Object.entries(core.cells);
   const lines: string[] = [
     `# ${files.config}: the configuration of this ${roles.node}.`,
     '# People edit this file. Do not put keys, tokens or passwords here.',
-    entry(0, keys.root.schema, config.schema),
+    entry(0, keys.root.schema, core.schema),
     '',
     `${keys.root.node}:`,
-    entry(1, keys.node.id, scalar(config.node.id), 'also the name of the tmux session'),
-    entry(1, keys.node.layer, config.node.layer),
+    entry(1, keys.node.id, scalar(core.node.id), 'also the name of the tmux session'),
+    entry(1, keys.node.layer, core.node.layer, `the layer sets the role: layer 1 is the ${roles.coordinator} of the ${roles.cell}s`),
     '',
     `${keys.root.owner}:`,
-    entry(1, keys.owner.display, quoted(config.owner.display)),
-    ...(config.owner.github === undefined ? [] : [entry(1, keys.owner.github, quoted(config.owner.github))]),
+    entry(1, keys.owner.display, quoted(core.owner.display)),
+    ...(core.owner.github === undefined ? [] : [entry(1, keys.owner.github, quoted(core.owner.github))]),
     `${pad(1)}# Input that starts with this prefix carries the authority of the ${roles.owner}.`,
-    entry(1, keys.owner.prefix, quoted(config.owner.prefix)),
+    entry(1, keys.owner.prefix, quoted(core.owner.prefix)),
     '',
     `${keys.root.session}:`,
-    entry(1, keys.session.permissionMode, config.session.permission_mode, 'the only accepted value'),
-    entry(1, keys.session.effort, config.session.effort),
-    entry(1, keys.session.model, scalar(config.session.model)),
+    entry(1, keys.session.permissionMode, core.session.permission_mode, 'the only accepted value'),
+    entry(1, keys.session.effort, core.session.effort),
+    entry(1, keys.session.model, scalar(core.session.model)),
     entry(
       1,
       keys.session.proxy,
-      scalar(config.session.proxy),
+      scalar(core.session.proxy),
       `${values.noProxy}, or the id of an entry in ${keys.root.proxies}`,
     ),
     '',
     `# A session uses a proxy only when the config names it. ${capitalize(program)} checks the proxy before each launch.`,
-    ...section(keys.root.proxies, config.proxies.map(proxyLines)),
+    ...section(0, keys.root.proxies, core.proxies.map(proxyLines)),
     '',
     `# Overrides for single ${roles.cell}s: <${roles.cell} id>: { ${keys.cell.proxy}: ${values.noProxy} }`,
     ...(cells.length === 0
@@ -89,26 +126,33 @@ export const renderConfig = (config: FactoryConfig): string => {
         ]),
     '',
     `${keys.root.limits}:`,
-    entry(1, keys.limits.memoryFreeMinPct, config.limits.memory_free_min_pct),
-    entry(1, keys.limits.diskFreeMinGb, config.limits.disk_free_min_gb),
+    entry(1, keys.limits.memoryFreeMinPct, core.limits.memory_free_min_pct),
+    entry(1, keys.limits.diskFreeMinGb, core.limits.disk_free_min_gb),
     entry(
       1,
       keys.limits.loadMax,
-      typeof config.limits.load_max === 'number' ? config.limits.load_max : values.loadCpuCount,
+      typeof core.limits.load_max === 'number' ? core.limits.load_max : values.loadCpuCount,
     ),
-    entry(1, keys.limits.contextPreparePct, config.limits.context_prepare_pct),
-    entry(1, keys.limits.contextMaxPct, config.limits.context_max_pct),
+    entry(1, keys.limits.contextPreparePct, core.limits.context_prepare_pct),
+    entry(1, keys.limits.contextMaxPct, core.limits.context_max_pct),
     '',
-    '# Each project path is relative to this folder.',
-    ...section(keys.root.projects, config.projects.map(projectLines)),
-    '',
-    ...section(
-      keys.root.children,
-      config.children.map((child) => [
-        itemEntry(1, keys.child.id, scalar(child.id)),
-        entry(2, keys.child.address, quoted(child.address)),
-      ]),
+    `${keys.root.approval}:`,
+    entry(
+      1,
+      keys.approval.land,
+      core.approval.land,
+      `${values.landModes.join(' or ')}: with ${values.landModes[0]}, every merge waits for the ${roles.owner}`,
     ),
+    '',
+    `${keys.root.tracker}:`,
+    ...trackerLines(core.tracker),
+    '',
+    ...recipeLines(recipe),
+    '',
+    `# The ${roles.node} above this one, or null. The address is a ${address.scheme} address on this machine.`,
+    ...parentLines(core.parent),
+    '',
+    ...section(0, keys.root.children, core.children.map(childLines)),
   ];
   return `${lines.join('\n')}\n`;
 };

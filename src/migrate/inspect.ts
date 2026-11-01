@@ -18,13 +18,18 @@ export type DocState<T> =
     }
   | { readonly kind: 'invalid'; readonly raw: unknown; readonly message: string };
 
+/** What a versioned file needs from its schema: the value, or an error with the key paths. A Zod schema fits. */
+export interface SchemaParser<T> {
+  safeParse(raw: unknown): { readonly success: true; readonly data: T } | { readonly success: false; readonly error: z.ZodError };
+}
+
 export interface VersionSpec<T> {
   readonly file: string;
   /** The key that holds the schema version, for example `schema`. */
   readonly key: string;
   /** The schema version that this factory reads and writes. */
   readonly supported: number;
-  readonly schema: z.ZodType<T>;
+  readonly schema: SchemaParser<T>;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

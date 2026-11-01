@@ -1,44 +1,22 @@
-import { posix } from 'node:path';
 import { z } from 'zod';
-import { keys, prefixPlaceholders, roles, values } from '../names.js';
+import { checkFileAddress } from '../comms/address.js';
+import type { SchemaParser } from '../migrate/inspect.js';
+import { keys, prefixPlaceholders, values } from '../names.js';
+import { recipeSchemas, type RecipeConfig } from '../recipes/index.js';
 import { parseProxyUrl } from '../safety/proxy.js';
+import { githubLogin, slug, uniqueIds } from './primitives.js';
 
-export const CONFIG_SCHEMA_VERSION = 1;
+export const CONFIG_SCHEMA_VERSION = 2;
 
 /** The highest layer of a node. A cell is layer 0 and has no node home. */
 export const MAX_LAYER = 16;
 
-const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
-const SLUG_RULE = 'must be a slug: a-z, 0-9 and hyphen, at most 40 characters, no leading hyphen';
-const MAX_SLUG_LENGTH = 40;
-const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
-const GITHUB_LOGIN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
-
-export const isGithubLogin = (text: string): boolean => GITHUB_LOGIN_PATTERN.test(text);
-
-export const isSlug = (text: string): boolean => SLUG_PATTERN.test(text);
-
-export const isBranchName = (text: string): boolean => BRANCH_PATTERN.test(text);
-
-/** Make a slug from free text, or null when nothing is left. */
-export const slugify = (text: string): string | null => {
-  const slug = text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+/, '')
-    .slice(0, MAX_SLUG_LENGTH)
-    .replace(/-+$/, '');
-  return slug === '' ? null : slug;
-};
-
-const slug = z.string().regex(SLUG_PATTERN, SLUG_RULE);
-
-const isProjectPath = (value: string): boolean => {
-  if (value.includes('\0') || value.includes('\\') || value.startsWith('~') || posix.isAbsolute(value)) {
-    return false;
-  }
-  return posix.normalize(value).split('/').filter((part) => part === '..').length <= 1;
-};
+const MAX_CELLS = 200;
+const MAX_CHILDREN = 200;
+const MAX_TRACKER_TEXT = 200;
+const MAX_INTERVAL_DIGITS = 6;
+const MAX_INTERVAL_MINUTES = 24 * 60;
+const MAX_INTERVAL_HOURS = 24;
 
 const nodeSchema = z.strictObject({
   [keys.node.id]: slug,
@@ -47,10 +25,7 @@ const nodeSchema = z.strictObject({
 
 const ownerSchema = z.strictObject({
   [keys.owner.display]: z.string().min(1).max(80),
-  [keys.owner.github]: z
-    .string()
-    .regex(GITHUB_LOGIN_PATTERN, 'must be a GitHub login')
-    .optional(),
+  [keys.owner.github]: githubLogin.optional(),
   [keys.owner.prefix]: z
     .string()
     .min(1)
@@ -97,49 +72,57 @@ const limitsSchema = z
     path: [keys.limits.contextPreparePct],
   });
 
-const projectSchema = z.strictObject({
-  [keys.project.id]: slug,
-  [keys.project.repo]: z
-    .string()
-    .regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$/, `must look like ${roles.owner}/name`)
-    .optional(),
-  [keys.project.path]: z
-    .string()
-    .min(1)
-    .max(4096)
-    .refine(isProjectPath, {
-      error: `must be a relative path that does not leave the parent folder of the ${roles.node} home`,
-    }),
-  [keys.project.defaultBranch]: z.string().regex(BRANCH_PATTERN, 'must be a branch name'),
-  [keys.project.mergeMethod]: z.enum(values.mergeMethods, {
-    error: `must be one of: ${values.mergeMethods.join(', ')}`,
-  }),
-  [keys.project.variant]: z.enum(values.variants, { error: `must be one of: ${values.variants.join(', ')}` }),
-  [keys.project.gate]: z.strictObject({ [keys.gate.checks]: z.array(z.string().min(1).max(500)).max(50) }),
-  [keys.project.heavyTest]: z.string().min(1).max(500).optional(),
-});
+const approvalSchema = z
+  .strictObject({
+    [keys.approval.land]: z
+      .enum(values.landModes, { error: `must be one of: ${values.landModes.join(', ')}` })
+      .default(values.landModes[0]),
+  })
+  .default({ [keys.approval.land]: values.landModes[0] });
 
-const childSchema = z.strictObject({
-  [keys.child.id]: slug,
-  [keys.child.address]: z.string().min(1).max(500),
-});
+/** `<n>m` or `<n>h`, from 1m to 24h. */
+const WATCH_INTERVAL_PATTERN = new RegExp(`^([1-9][0-9]{0,${MAX_INTERVAL_DIGITS - 1}})([mh])$`);
 
-const uniqueIds = (
-  ctx: z.RefinementCtx,
-  key: string,
-  idKey: string,
-  items: readonly { readonly id: string }[],
-): void => {
-  const seen = new Set<string>();
-  items.forEach((item, index) => {
-    if (seen.has(item.id)) {
-      ctx.addIssue({ code: 'custom', message: 'duplicate id', path: [key, index, idKey] });
-    }
-    seen.add(item.id);
-  });
+const isWatchInterval = (text: string): boolean => {
+  const match = WATCH_INTERVAL_PATTERN.exec(text);
+  if (match === null) return false;
+  const amount = Number(match[1]);
+  return match[2] === 'h' ? amount <= MAX_INTERVAL_HOURS : amount <= MAX_INTERVAL_MINUTES;
 };
 
-export const configSchema = z
+const trackerText = z.string().min(1).max(MAX_TRACKER_TEXT);
+
+/** The local tracker keeps its items in the state folder, so it takes no other key. */
+const localTrackerSchema = z.strictObject({ [keys.tracker.kind]: z.literal(values.trackerLocal) });
+
+const hostedTrackerSchema = z.strictObject({
+  [keys.tracker.kind]: z.enum(values.trackerHosted),
+  [keys.tracker.items]: trackerText,
+  [keys.tracker.decisions]: trackerText,
+  [keys.tracker.watchInterval]: z
+    .string()
+    .refine(isWatchInterval, { error: 'must be <n>m or <n>h, from 1m to 24h' })
+    .default(values.defaultWatchInterval),
+});
+
+const trackerSchema = z.discriminatedUnion(keys.tracker.kind, [localTrackerSchema, hostedTrackerSchema], {
+  error: `must be one of: ${[values.trackerLocal, ...values.trackerHosted].join(', ')}`,
+});
+
+/** The address of another node. Only a file address on this machine is valid (F-13). */
+const addressSchema = z.string().superRefine((value, ctx) => {
+  const checked = checkFileAddress(value);
+  if (!checked.ok) ctx.addIssue({ code: 'custom', message: checked.error });
+});
+
+const linkSchema = z.strictObject({ [keys.link.id]: slug, [keys.link.address]: addressSchema });
+
+/** The core reads only the id of the recipe block. The recipe parser reads the rest. */
+const recipeBlockSchema = z.looseObject({
+  [keys.recipe.id]: z.enum(values.recipes, { error: `must be one of: ${values.recipes.join(', ')}` }),
+});
+
+const coreSchema = z
   .strictObject({
     [keys.root.schema]: z.literal(CONFIG_SCHEMA_VERSION),
     [keys.root.node]: nodeSchema,
@@ -148,16 +131,18 @@ export const configSchema = z
     [keys.root.proxies]: z.array(proxySchema).max(20).default([]),
     [keys.root.cells]: z
       .record(slug, z.strictObject({ [keys.cell.proxy]: slug }))
-      .refine((cells) => Object.keys(cells).length <= 200, { error: 'has too many entries' })
+      .refine((cells) => Object.keys(cells).length <= MAX_CELLS, { error: 'has too many entries' })
       .default({}),
     [keys.root.limits]: limitsSchema,
-    [keys.root.projects]: z.array(projectSchema).max(100),
-    [keys.root.children]: z.array(childSchema).max(100).default([]),
+    [keys.root.approval]: approvalSchema,
+    [keys.root.tracker]: trackerSchema,
+    [keys.root.recipe]: recipeBlockSchema,
+    [keys.root.parent]: linkSchema.nullable().default(null),
+    [keys.root.children]: z.array(linkSchema).max(MAX_CHILDREN).default([]),
   })
   .superRefine((config, ctx) => {
-    uniqueIds(ctx, keys.root.proxies, keys.proxy.id, config.proxies);
-    uniqueIds(ctx, keys.root.projects, keys.project.id, config.projects);
-    uniqueIds(ctx, keys.root.children, keys.child.id, config.children);
+    uniqueIds(ctx, [keys.root.proxies], keys.proxy.id, config.proxies);
+    uniqueIds(ctx, [keys.root.children], keys.link.id, config.children);
 
     const proxyIds = new Set(config.proxies.map((proxy) => proxy.id));
     config.proxies.forEach((proxy, index) => {
@@ -184,6 +169,36 @@ export const configSchema = z
     }
   });
 
-export type FactoryConfig = z.infer<typeof configSchema>;
-export type ProjectConfig = z.infer<typeof projectSchema>;
+type ParsedCore = z.infer<typeof coreSchema>;
+
+/** Every key of the config file except the inside of the `recipe` block. */
+export type CoreConfig = Omit<ParsedCore, typeof keys.root.recipe>;
+
+/** The config as the commands use it: the core, and the parsed block of the recipe. */
+export interface FactoryConfig {
+  readonly core: CoreConfig;
+  readonly recipe: RecipeConfig;
+}
+
 export type ProxyConfig = z.infer<typeof proxySchema>;
+export type TrackerConfig = z.infer<typeof trackerSchema>;
+export type LinkConfig = z.infer<typeof linkSchema>;
+
+/**
+ * The schema of the whole config file, in two steps that each fail closed. The core parses every key
+ * except the inside of the `recipe` block. Then the parser of the recipe that the core named parses the block.
+ * An issue of the recipe has the path of the block in front, so it names the key in the file.
+ */
+export const configSchema: SchemaParser<FactoryConfig> = {
+  safeParse: (raw) => {
+    const core = coreSchema.safeParse(raw);
+    if (!core.success) return { success: false, error: core.error };
+    const { [keys.root.recipe]: block, ...rest } = core.data;
+    const recipe = recipeSchemas[block.id].safeParse(block);
+    if (!recipe.success) {
+      const issues = recipe.error.issues.map((issue) => ({ ...issue, path: [keys.root.recipe, ...issue.path] }));
+      return { success: false, error: new z.ZodError(issues) };
+    }
+    return { success: true, data: { core: rest, recipe: recipe.data } };
+  },
+};

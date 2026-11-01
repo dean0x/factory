@@ -65,12 +65,31 @@ describe('init: the files', () => {
     const config = await loadConfig(deps, HOME);
     expect(config.ok).toBe(true);
     if (!config.ok) return;
-    expect(config.value.node.id).toBe('node');
-    expect(config.value.owner.display).toBe('Test Owner');
-    expect(config.value.owner.github).toBeUndefined();
-    expect(config.value.session.permission_mode).toBe('auto');
-    expect(config.value.session.proxy).toBe('none');
-    expect(config.value.projects).toEqual([]);
+    expect(config.value.core.node.id).toBe('node');
+    expect(config.value.core.owner.display).toBe('Test Owner');
+    expect(config.value.core.owner.github).toBeUndefined();
+    expect(config.value.core.session.permission_mode).toBe('auto');
+    expect(config.value.core.session.proxy).toBe('none');
+    expect(config.value.recipe.projects).toEqual([]);
+  });
+
+  it('writes a schema 2 config: layer 1, a local tracker, the software recipe and no parent', async () => {
+    const { deps } = setup();
+    await runInit(deps, options());
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok).toBe(true);
+    if (!config.ok) return;
+    expect(config.value.core.schema).toBe(2);
+    expect(config.value.core.node.layer).toBe(1);
+    expect(config.value.core.tracker).toEqual({ kind: 'local' });
+    expect(config.value.core.approval).toEqual({ land: 'each' });
+    expect(config.value.core.parent).toBeNull();
+    expect(config.value.core.children).toEqual([]);
+    expect(config.value.core.cells).toEqual({});
+    expect(config.value.recipe).toMatchObject({ id: 'software', variant: 'plain' });
+    const text = deps.files.get(`${HOME}/factory.yaml`) ?? '';
+    expect(text).toContain('schema: 2');
+    expect(text).toContain('recipe:\n  id: software');
   });
 
   it('writes node.json with the version, the creator and the block versions', async () => {
@@ -211,7 +230,7 @@ describe('init: a parent folder with a config file', () => {
 
     expect(deps.files.get('/w/factory.yaml')).toBe('schema: 1\n');
     const config = deps.files.get(`${HOME}/factory.yaml`) ?? '';
-    expect(config).not.toMatch(/parent/i);
+    expect(config).toContain('\nparent: null\n');
     expect(config).not.toContain('/w/factory.yaml');
     const state = JSON.parse(deps.files.get(`${HOME}/.factory/node.json`) ?? '{}') as Record<string, unknown>;
     expect(Object.keys(state).sort()).toEqual(['blocks', 'created_with', 'schema_version']);
@@ -236,7 +255,7 @@ describe('init: defaults from the system', () => {
     const { deps } = setup({ userName: 'From Git' });
     await runInit(deps, options({ ownerName: undefined }));
     const config = await loadConfig(deps, HOME);
-    expect(config.ok && config.value.owner.display).toBe('From Git');
+    expect(config.ok && config.value.core.owner.display).toBe('From Git');
   });
 
   it('fails and names the flag when there is no owner name', async () => {
@@ -251,15 +270,15 @@ describe('init: defaults from the system', () => {
   it('takes the GitHub login from gh, and ignores a login that is not valid', async () => {
     const good = setup({ gh: 'some-login' });
     await runInit(good.deps, options());
-    expect((await loadConfig(good.deps, HOME)).ok && (await loadConfig(good.deps, HOME))).toMatchObject({
-      value: { owner: { github: 'some-login' } },
+    expect(await loadConfig(good.deps, HOME)).toMatchObject({
+      value: { core: { owner: { github: 'some-login' } } },
     });
 
     for (const gh of [null, 'not a login!', undefined]) {
       const other = setup(gh === undefined ? {} : { gh });
       await runInit(other.deps, options());
       const config = await loadConfig(other.deps, HOME);
-      expect(config.ok && config.value.owner.github).toBeUndefined();
+      expect(config.ok && config.value.core.owner.github).toBeUndefined();
     }
   });
 
@@ -267,7 +286,7 @@ describe('init: defaults from the system', () => {
     const { deps, log } = setup({ gh: 'from-gh' });
     await runInit(deps, options({ ownerGithub: 'from-flag' }));
     const config = await loadConfig(deps, HOME);
-    expect(config.ok && config.value.owner.github).toBe('from-flag');
+    expect(config.ok && config.value.core.owner.github).toBe('from-flag');
     expect(log.calls.some((call) => call.command === 'gh')).toBe(false);
   });
 
@@ -275,7 +294,7 @@ describe('init: defaults from the system', () => {
     const named = setup();
     await runInit(named.deps, options({ home: '/w/My Project_2' }));
     const config = await loadConfig(named.deps, '/w/My Project_2');
-    expect(config.ok && config.value.node.id).toBe('my-project-2');
+    expect(config.ok && config.value.core.node.id).toBe('my-project-2');
 
     const empty = setup();
     const result = await runInit(empty.deps, options({ home: '/w/***' }));
@@ -304,14 +323,13 @@ describe('init: projects', () => {
     const { deps } = setup({ repos });
     await runInit(deps, options({ projects: ['/w/web', 'api'] }));
     const config = await loadConfig(deps, HOME);
-    expect(config.ok && config.value.projects).toEqual([
+    expect(config.ok && config.value.recipe.projects).toEqual([
       {
         id: 'web',
         repo: 'acme/web',
         path: '../web',
         default_branch: 'trunk',
         merge_method: 'squash',
-        variant: 'plain',
         gate: { checks: [] },
       },
       {
@@ -320,7 +338,6 @@ describe('init: projects', () => {
         path: '../api',
         default_branch: 'develop',
         merge_method: 'squash',
-        variant: 'plain',
         gate: { checks: [] },
       },
     ]);
@@ -330,7 +347,7 @@ describe('init: projects', () => {
     const { deps } = setup({ repos });
     await runInit(deps, options({ projects: ['/w/My Tool', '/w/lib'] }));
     const config = await loadConfig(deps, HOME);
-    expect(config.ok && config.value.projects.map((p) => [p.id, p.repo, p.default_branch])).toEqual([
+    expect(config.ok && config.value.recipe.projects.map((p) => [p.id, p.repo, p.default_branch])).toEqual([
       ['my-tool', undefined, 'main'],
       ['lib', undefined, 'main'],
     ]);
@@ -366,7 +383,7 @@ describe('init: projects', () => {
     const result = await runInit(deps, options({ projects: ['/w/node/app', '/w/node'] }));
     expect(result.ok).toBe(true);
     const config = await loadConfig(deps, HOME);
-    expect(config.ok && config.value.projects.map((project) => [project.id, project.path])).toEqual([
+    expect(config.ok && config.value.recipe.projects.map((project) => [project.id, project.path])).toEqual([
       ['app', 'app'],
       ['node', '.'],
     ]);

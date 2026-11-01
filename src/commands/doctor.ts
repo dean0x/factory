@@ -199,10 +199,10 @@ export const checkProxies = async (
   mayRequest: boolean,
 ): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
-  const config = state.value;
-  const inUse = new Set([config.session.proxy, ...Object.values(config.cells).map((cell) => cell.proxy)]);
+  const { core } = state.value;
+  const inUse = new Set([core.session.proxy, ...Object.values(core.cells).map((cell) => cell.proxy)]);
   inUse.delete(values.noProxy);
-  const used = config.proxies.filter((proxy) => inUse.has(proxy.id));
+  const used = core.proxies.filter((proxy) => inUse.has(proxy.id));
   if (used.length === 0) return [check(checkIds.proxy, 'ok', 'no proxy is in use')];
   if (!mayRequest) {
     return [
@@ -273,7 +273,7 @@ export const checkProjects = async (
   state: DocState<FactoryConfig>,
 ): Promise<CheckResult> => {
   if (state.kind !== 'valid') return notChecked(checkIds.projects, `${files.config} is not valid`);
-  const projects = state.value.projects;
+  const projects = state.value.recipe.projects;
   const bad: string[] = [];
   for (const project of projects) {
     if (!(await isWorkTreeRoot(deps, resolve(home, project.path)))) bad.push(`${project.id} (${project.path})`);
@@ -291,7 +291,7 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
   const blocks = await inspectBlocks(deps, home, blockTemplates);
   const [permission, proxies, tools, stateRepo, projects] = await Promise.all([
     checkPermissionMode(deps, home),
-    checkProxies(deps, config, source !== 'parent'),
+    checkProxies(deps, config, source !== 'ancestor'),
     checkTools(deps),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),

@@ -1,4 +1,3 @@
-import type { z } from 'zod';
 import { failure, type CliResult } from '../cli/errors.js';
 import { CONFIG_SPEC, parseYamlText } from '../config/load.js';
 import { renderConfig } from '../config/render.js';
@@ -6,7 +5,7 @@ import { configSchema } from '../config/schema.js';
 import { ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
-import type { TextParser, VersionSpec } from '../migrate/inspect.js';
+import type { SchemaParser, TextParser, VersionSpec } from '../migrate/inspect.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
 import { jsonText } from '../state/files.js';
@@ -30,7 +29,7 @@ export interface UpgradeSpec {
 }
 
 export const finisher =
-  <T>(schema: z.ZodType<T>, render: (value: T) => string) =>
+  <T>(schema: SchemaParser<T>, render: (value: T) => string) =>
   (raw: unknown): CliResult<string> => {
     const parsed = schema.safeParse(raw);
     return parsed.success ? ok(render(parsed.data)) : failure(describeIssues(parsed.error));

@@ -7,14 +7,20 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { runInit } from '../../src/commands/init.js';
 import { runUpgrade } from '../../src/commands/upgrade.js';
 import { parseYamlText } from '../../src/config/load.js';
+import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
 import { jsonText } from '../../src/state/files.js';
 import { parseJsonText } from '../../src/state/load.js';
+import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
 import { blockTemplates, type BlockTemplate } from '../../src/templates/index.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
+
+/** The schema versions that this factory reads. A test migration starts from them. */
+const C = CONFIG_SCHEMA_VERSION;
+const S = STATE_SCHEMA_VERSION;
 
 const HOME = '/w/node';
 const CLAUDE = `${HOME}/CLAUDE.md`;
@@ -123,8 +129,8 @@ describe('upgrade: when nothing changes', () => {
       dryRun: false,
       backup: null,
       committed: false,
-      config: { from: 1, to: 1 },
-      state: { from: 1, to: 1 },
+      config: { from: C, to: C },
+      state: { from: S, to: S },
     });
     expect(output.failed).toBe(false);
     expect(snapshot(deps)).toEqual(before);
@@ -150,8 +156,8 @@ describe('upgrade: managed blocks', () => {
     const output = success(await upgrade(deps, newer, { dryRun: true }));
     expect(lineTexts(output)).toEqual(
       expect.arrayContaining([
-        'factory.yaml: schema 1 is current',
-        '.factory/node.json: schema_version 1 is current',
+        `factory.yaml: schema ${C} is current`,
+        `.factory/node.json: schema_version ${S} is current`,
         `block coordinator: version ${versionOf('coordinator')} to ${versionOf('coordinator') + 1}`,
         `block safety: version ${versionOf('safety')} is current`,
         'Dry run: no file was changed.',
@@ -316,18 +322,18 @@ describe('upgrade: managed blocks', () => {
 });
 
 describe('upgrade: migrations', () => {
-  it('runs the chain 1 to 2 to 3, writes the config and keeps the other keys', async () => {
+  it('runs a chain of two steps, writes the config and keeps the other keys', async () => {
     const { deps, gitSince } = await makeNode();
     const original = text(deps, CONFIG);
     const spec: UpgradeSpec = {
       ...currentSpec,
-      config: configAt(3, [step('schema', 1, { two: true }), step('schema', 2, { three: true })]),
+      config: configAt(C + 2, [step('schema', C, { two: true }), step('schema', C + 1, { three: true })]),
     };
     const output = success(await upgrade(deps, spec));
     const written = parseJsonText(text(deps, CONFIG));
-    expect(written.ok && written.value).toMatchObject({ schema: 3, two: true, three: true, node: { id: 'demo' } });
-    expect(lineTexts(output)).toContain('factory.yaml: schema 1 to 3 (2 steps)');
-    expect(output.json).toMatchObject({ config: { from: 1, to: 3 }, committed: false });
+    expect(written.ok && written.value).toMatchObject({ schema: C + 2, two: true, three: true, node: { id: 'demo' } });
+    expect(lineTexts(output)).toContain(`factory.yaml: schema ${C} to ${C + 2} (2 steps)`);
+    expect(output.json).toMatchObject({ config: { from: C, to: C + 2 }, committed: false });
     expect(text(deps, `${BACKUP}/factory.yaml`)).toBe(original);
     expect(gitSince()).toEqual([]);
   });
@@ -336,25 +342,25 @@ describe('upgrade: migrations', () => {
     const { deps } = await makeNode();
     const spec: UpgradeSpec = {
       config: currentSpec.config,
-      state: stateAt(2, [step('schema_version', 1, { note: 'x' })]),
+      state: stateAt(S + 1, [step('schema_version', S, { note: 'x' })]),
       blocks: withBlock('safety', 'New safety text.'),
     };
     const output = success(await upgrade(deps, spec));
     const state = parseJsonText(text(deps, NODE_JSON));
     expect(state.ok && state.value).toMatchObject({
-      schema_version: 2,
+      schema_version: S + 1,
       note: 'x',
       blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety') + 1, worker: versionOf('worker') },
     });
-    expect(output.json).toMatchObject({ committed: true, state: { from: 1, to: 2 } });
+    expect(output.json).toMatchObject({ committed: true, state: { from: S, to: S + 1 } });
   });
 
   it('writes the config last', async () => {
     const { deps } = await makeNode();
     const first = deps.atomicWrites.length;
     const spec: UpgradeSpec = {
-      config: configAt(2, [step('schema', 1)]),
-      state: stateAt(2, [step('schema_version', 1)]),
+      config: configAt(C + 1, [step('schema', C)]),
+      state: stateAt(S + 1, [step('schema_version', S)]),
       blocks: withBlock('coordinator', 'New coordinator text.'),
     };
     success(await upgrade(deps, spec));
@@ -364,20 +370,20 @@ describe('upgrade: migrations', () => {
   it('fails on a gap in the chain, before it makes a backup', async () => {
     const { deps } = await makeNode();
     const before = snapshot(deps);
-    const spec: UpgradeSpec = { ...currentSpec, config: configAt(3, [step('schema', 1)]) };
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 2, [step('schema', C)]) };
     const error = refusal(await upgrade(deps, spec));
     expect(error.kind).toBe('failure');
-    expect(error.message).toBe('factory.yaml: no migration from version 2');
+    expect(error.message).toBe(`factory.yaml: no migration from version ${C + 1}`);
     expect(snapshot(deps)).toEqual(before);
   });
 
   it('stops at a failing step, changes no file and keeps the backup', async () => {
     const { deps, gitSince } = await makeNode();
     const original = text(deps, CONFIG);
-    const spec: UpgradeSpec = { ...currentSpec, config: configAt(3, [step('schema', 1), brokenStep(2)]) };
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 2, [step('schema', C), brokenStep(C + 1)]) };
     const error = refusal(await upgrade(deps, spec));
     expect(error.kind).toBe('failure');
-    expect(error.message).toContain('factory.yaml: migration from version 2 to 3 failed: boom');
+    expect(error.message).toContain(`factory.yaml: migration from version ${C + 1} to ${C + 2} failed: boom`);
     expect(error.message).toContain('The files are as they were.');
     expect(error.message).toContain('.factory/backups/2030-01-02T03-04-05-678Z');
     expect(text(deps, CONFIG)).toBe(original);
@@ -388,8 +394,8 @@ describe('upgrade: migrations', () => {
   it('fails when the migrated value does not pass the schema, and names the key', async () => {
     const { deps } = await makeNode();
     const original = text(deps, CONFIG);
-    const sloppy: Migration = { from: 2, to: 3, apply: (raw) => ok(raw) };
-    const spec: UpgradeSpec = { ...currentSpec, config: configAt(3, [step('schema', 1), sloppy]) };
+    const sloppy: Migration = { from: C + 1, to: C + 2, apply: (raw) => ok(raw) };
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 2, [step('schema', C), sloppy]) };
     const error = refusal(await upgrade(deps, spec));
     expect(error.message).toContain('factory.yaml: schema:');
     expect(text(deps, CONFIG)).toBe(original);
@@ -575,7 +581,7 @@ describe('upgrade: before it changes anything', () => {
 
   it('does not need the repository for a change of the config only', async () => {
     const { deps } = await makeNode({ repo: false });
-    const spec: UpgradeSpec = { ...currentSpec, config: configAt(2, [step('schema', 1)]) };
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]) };
     expect(success(await upgrade(deps, spec)).json).toMatchObject({ changed: true, committed: false });
   });
 

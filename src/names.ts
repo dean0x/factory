@@ -95,7 +95,10 @@ export const keys = {
     proxies: 'proxies',
     cells: 'cells',
     limits: 'limits',
-    projects: 'projects',
+    approval: 'approval',
+    tracker: 'tracker',
+    recipe: 'recipe',
+    parent: 'parent',
     children: 'children',
   },
   node: { id: 'id', layer: 'layer' },
@@ -121,7 +124,11 @@ export const keys = {
     heavyTest: 'heavy_test',
   },
   gate: { checks: 'checks' },
-  child: { id: 'id', address: 'address' },
+  approval: { land: 'land' },
+  tracker: { kind: 'kind', items: 'items', decisions: 'decisions', watchInterval: 'watch_interval' },
+  recipe: { id: 'id', variant: 'variant', projects: 'projects' },
+  /** A link to another node: the parent or one child. */
+  link: { id: 'id', address: 'address' },
 } as const;
 
 /** The keys of the state file. */
@@ -140,7 +147,15 @@ export const values = {
   loadCpuCount: 'cpu_count',
   mergeMethods: ['squash', 'merge', 'rebase'],
   variants: ['plain'],
+  recipes: ['software'],
+  landModes: ['each', 'approved-work'],
+  trackerLocal: 'local',
+  trackerHosted: ['github', 'jira', 'linear', 'desk'],
+  defaultWatchInterval: '5m',
 } as const;
+
+/** The scheme of the only address that a node link accepts. */
+export const address = { scheme: 'file://' } as const;
 
 /** The ids of the checks that the doctor command runs. */
 export const checkIds = {

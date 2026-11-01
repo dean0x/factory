@@ -1,5 +1,5 @@
 import { failure, type CliResult } from '../cli/errors.js';
-import { isBranchName } from '../config/schema.js';
+import { isBranchName } from '../config/primitives.js';
 import type { Deps } from './deps.js';
 import { ok } from './result.js';
 

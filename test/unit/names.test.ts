@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  address,
   claudeSettings,
   commands,
   dirs,
@@ -67,7 +68,10 @@ const EXACT_NAMES = new Set([
     keys.limits,
     keys.project,
     keys.gate,
-    keys.child,
+    keys.approval,
+    keys.tracker,
+    keys.recipe,
+    keys.link,
     stateKeys,
   ),
 ]);
@@ -79,7 +83,15 @@ const WORD_NAMES = [program, ...flat(roles), dirs.profile, dirs.roadmaps, dirs.o
  * Names that a string literal must never hold as a part, matched as plain text.
  * The word "settings" (claudeSettings.prefix) is also plain prose, so it is not scanned.
  */
-const TEXT_NAMES = [...flat(files), dirs.state, dirs.claude, claudeSettings.suffix, env.proxyBaseUrl, marker.prefix];
+const TEXT_NAMES = [
+  ...flat(files),
+  dirs.state,
+  dirs.claude,
+  claudeSettings.suffix,
+  env.proxyBaseUrl,
+  marker.prefix,
+  address.scheme,
+];
 
 /** These files call git, so they hold the words of git, for example its init command and its --quiet flag. */
 const GIT_VOCABULARY_FILES = new Set([join(SRC, 'core', 'git.ts')]);

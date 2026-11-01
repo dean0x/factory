@@ -2,14 +2,9 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { appendBlocks, parseBlocks, renderBlock } from '../blocks/managed.js';
 import { failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput } from '../cli/output.js';
+import { isGithubLogin, slugify } from '../config/primitives.js';
 import { renderConfig } from '../config/render.js';
-import {
-  CONFIG_SCHEMA_VERSION,
-  configSchema,
-  isGithubLogin,
-  slugify,
-  type FactoryConfig,
-} from '../config/schema.js';
+import { CONFIG_SCHEMA_VERSION, configSchema, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import {
   commitAll,
@@ -117,7 +112,6 @@ const describeProject = async (deps: Deps, home: string, argument: string): Prom
     [keys.project.path]: relative(home, absolute) || '.',
     [keys.project.defaultBranch]: branch,
     [keys.project.mergeMethod]: values.mergeMethods[0],
-    [keys.project.variant]: values.variants[0],
     [keys.project.gate]: { [keys.gate.checks]: [] },
   });
 };
@@ -279,7 +273,14 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
     [keys.root.proxies]: [],
     [keys.root.cells]: {},
     [keys.root.limits]: DEFAULT_LIMITS,
-    [keys.root.projects]: projects.value,
+    [keys.root.approval]: { [keys.approval.land]: values.landModes[0] },
+    [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },
+    [keys.root.recipe]: {
+      [keys.recipe.id]: values.recipes[0],
+      [keys.recipe.variant]: values.variants[0],
+      [keys.recipe.projects]: projects.value,
+    },
+    [keys.root.parent]: null,
     [keys.root.children]: [],
   });
   if (!parsed.success) {
@@ -401,7 +402,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   const written = [files.config, files.claudeMd, `${dirs.state}/`];
   return ok({
     lines: [
-      { level: 'text', text: `Created the ${roles.node} "${plan.value.config.node.id}" in ${plan.value.home}.` },
+      { level: 'text', text: `Created the ${roles.node} "${plan.value.config.core.node.id}" in ${plan.value.home}.` },
       ...written.map((name) => ({ level: 'text' as const, text: `  ${name}` })),
       {
         level: 'text',
@@ -411,7 +412,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
     json: {
       schema: schemaIds.init,
       home: plan.value.home,
-      nodeId: plan.value.config.node.id,
+      nodeId: plan.value.config.core.node.id,
       files: written,
       committed: applied.value.committed,
       warnings: applied.value.warnings,
