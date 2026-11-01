@@ -90,7 +90,8 @@ const violationsIn = (path: string): string[] => {
       }
     }
     for (const word of WORD_NAMES) {
-      if (new RegExp(`(?<![A-Za-z0-9_-])${word}s?(?![A-Za-z0-9_-])`, 'i').test(literal)) {
+      // "Node.js" is the runtime, not the node of this tool.
+      if (new RegExp(`(?<![A-Za-z0-9_-])${word}s?(?![A-Za-z0-9_-])(?!\\.js)`, 'i').test(literal)) {
         found.push(`"${literal}" holds the name ${word}`);
       }
     }

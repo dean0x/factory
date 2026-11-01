@@ -10,7 +10,14 @@ await build({
   platform: 'node',
   target: 'node22',
   format: 'esm',
-  banner: { js: '#!/usr/bin/env node' },
+  // The yaml package is CommonJS and calls require() for Node modules. An ES module has no require().
+  banner: {
+    js: [
+      '#!/usr/bin/env node',
+      "import { createRequire as createRequireForBundle } from 'node:module';",
+      'const require = createRequireForBundle(import.meta.url);',
+    ].join('\n'),
+  },
   define: { __FACTORY_VERSION__: JSON.stringify(pkg.version) },
   legalComments: 'none',
   logLevel: 'warning',

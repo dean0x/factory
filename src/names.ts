@@ -140,6 +140,21 @@ export const values = {
   pack: 'plain',
 } as const;
 
+/** The ids of the checks that the doctor command runs. */
+export const checkIds = {
+  config: 'config',
+  configVersion: 'config-version',
+  state: 'state',
+  blocks: 'blocks',
+  secrets: 'secrets',
+  permissionMode: 'permission-mode',
+  proxyEnv: 'proxy-env',
+  proxy: 'proxy',
+  tools: 'tools',
+  stateRepo: 'state-repo',
+  projects: 'projects',
+} as const;
+
 export const blockNames = { coordinator: 'coordinator', safety: 'safety', protocol: 'protocol' } as const;
 
 /** Markers of managed blocks: `<!-- factory:begin <name> v<n> sha256=<hex> -->` and `<!-- factory:end <name> -->`. */

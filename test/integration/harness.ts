@@ -17,7 +17,7 @@ export interface Sandbox {
   readonly root: string;
   readonly node: string;
   readonly env: Readonly<Record<string, string>>;
-  run(args: readonly string[], options?: { cwd?: string }): Promise<RunResult>;
+  run(args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<RunResult>;
   git(cwd: string, args: readonly string[]): Promise<RunResult>;
   makeProject(name: string, origin?: string): Promise<string>;
   read(path: string): Promise<string>;
@@ -62,7 +62,7 @@ export const makeSandbox = async (): Promise<Sandbox> => {
     root,
     node: join(root, 'node'),
     env,
-    run: (args, options) => exec('node', [DIST, ...args], options?.cwd ?? root, env),
+    run: (args, options) => exec('node', [DIST, ...args], options?.cwd ?? root, { ...env, ...options?.env }),
     git: (cwd, args) => exec('git', args, cwd, env),
     makeProject: async (name, origin) => {
       const path = join(root, name);

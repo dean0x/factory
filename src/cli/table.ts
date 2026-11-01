@@ -1,4 +1,5 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
+import { runDoctor } from '../commands/doctor.js';
 import { runInit } from '../commands/init.js';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
@@ -81,6 +82,19 @@ export const commandTable: readonly Command[] = [
         ownerGithub: given.string(flags.ownerGithub),
         projects: given.strings(flags.project),
       }),
+  },
+  {
+    name: commands.doctor,
+    summary: `Check the ${roles.node}, its config and its state.`,
+    usage: `${commandText(commands.doctor)} [${flagText(flags.home)} DIR]`,
+    options: {
+      [flags.home]: {
+        type: 'string',
+        placeholder: 'DIR',
+        description: `The ${roles.node} folder. Default: the folder of the nearest config file above the current folder.`,
+      },
+    },
+    run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }),
   },
   {
     name: commands.version,
