@@ -14,7 +14,8 @@ import { jsonText } from '../../src/state/files.js';
 import { parseJsonText } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
-import { blockTemplates, type BlockTemplate } from '../../src/templates/index.js';
+import type { BlockTemplate } from '../../src/templates/types.js';
+import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { schema1Doc, schema1Paths, seedSchema1Node } from '../helpers/schema1.js';
@@ -80,13 +81,18 @@ const edit = (deps: FakeDeps, path: string, from: string, to: string): void => {
   deps.files.set(path, before.replace(from, to));
 };
 
-const versionOf = (name: string): number => blockTemplates.find((template) => template.name === name)?.version ?? 0;
+const versionOf = (name: string): number => layer1Blocks.find((template) => template.name === name)?.version ?? 0;
 
-/** The templates, with one block at its next version and a new text. */
+/** The templates of layer 1, with one block at its next version and a new text. */
 const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
-  blockTemplates.map((template) => (template.name === name ? { ...template, version: template.version + 1, body } : template));
+  layer1Blocks.map((template) => (template.name === name ? { ...template, version: template.version + 1, body } : template));
 
-const blocksSpec = (blocks: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, blocks });
+/** The blocks that the spec gives for every config, whatever its layer. */
+const fixedBlocks = (templates: readonly BlockTemplate[]): Pick<UpgradeSpec, 'blocksOf'> => ({
+  blocksOf: () => ok({ templates, renames: [] }),
+});
+
+const blocksSpec = (templates: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, ...fixedBlocks(templates) });
 
 /** A migration that sets the version key and adds the fields in `extra`. */
 const step = (key: string, from: number, extra: Record<string, unknown> = {}): Migration => ({
@@ -191,7 +197,7 @@ describe('upgrade: managed blocks', () => {
     expect(gitSince()).toEqual(expect.arrayContaining(['add -A']));
     expect(gitSince().some((command) => command.endsWith('chore: upgrade the state'))).toBe(true);
 
-    const statuses = await inspectBlocks(deps, HOME, newer.blocks);
+    const statuses = await inspectBlocks(deps, HOME, withBlock('coordinator', 'New coordinator text.'));
     expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
   });
 
@@ -255,7 +261,7 @@ describe('upgrade: managed blocks', () => {
     expect(output.lines.at(-1)?.text).toMatch(/^Changed 1 file\./);
     expect(output.json).toMatchObject({ committed: false });
     expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
-    expect((await inspectBlocks(deps, HOME, blockTemplates)).every((status) => status.kind === 'intact')).toBe(true);
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
   });
 
   it('still refuses another edited block that is not named', async () => {
@@ -345,7 +351,7 @@ describe('upgrade: migrations', () => {
       config: currentSpec.config,
       state: stateAt(S + 1, [step('schema_version', S, { note: 'x' })]),
       files: currentSpec.files,
-      blocks: withBlock('safety', 'New safety text.'),
+      ...fixedBlocks(withBlock('safety', 'New safety text.')),
     };
     const output = success(await upgrade(deps, spec));
     const state = parseJsonText(text(deps, NODE_JSON));
@@ -364,7 +370,7 @@ describe('upgrade: migrations', () => {
       config: configAt(C + 1, [step('schema', C)]),
       state: stateAt(S + 1, [step('schema_version', S)]),
       files: currentSpec.files,
-      blocks: withBlock('coordinator', 'New coordinator text.'),
+      ...fixedBlocks(withBlock('coordinator', 'New coordinator text.')),
     };
     success(await upgrade(deps, spec));
     expect(deps.atomicWrites.slice(first)).toEqual([CLAUDE, NODE_JSON, CONFIG]);
@@ -380,18 +386,31 @@ describe('upgrade: migrations', () => {
     expect(snapshot(deps)).toEqual(before);
   });
 
-  it('stops at a failing step, changes no file and keeps the backup', async () => {
+  it('stops at a failing step of the config, in the plan, before it makes a backup', async () => {
     const { deps, gitSince } = await makeNode();
-    const original = text(deps, CONFIG);
+    const before = snapshot(deps);
     const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 2, [step('schema', C), brokenStep(C + 1)]) };
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, spec, { dryRun }));
+      expect(error.kind).toBe('failure');
+      expect(error.message).toBe(`factory.yaml: migration from version ${C + 1} to ${C + 2} failed: boom`);
+    }
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitSince()).toEqual([]);
+  });
+
+  it('stops at a failing step of the state, changes no file and keeps the backup', async () => {
+    const { deps, gitSince } = await makeNode();
+    const original = text(deps, NODE_JSON);
+    const spec: UpgradeSpec = { ...currentSpec, state: stateAt(S + 2, [step('schema_version', S), brokenStep(S + 1)]) };
     const error = refusal(await upgrade(deps, spec));
     expect(error.kind).toBe('failure');
-    expect(error.message).toContain(`factory.yaml: migration from version ${C + 1} to ${C + 2} failed: boom`);
+    expect(error.message).toContain(`.factory/node.json: migration from version ${S + 1} to ${S + 2} failed: boom`);
     expect(error.message).toContain('The files are as they were.');
     expect(error.message).toContain('.factory/backups/2030-01-02T03-04-05-678Z');
-    expect(text(deps, CONFIG)).toBe(original);
-    expect(text(deps, `${BACKUP}/factory.yaml`)).toBe(original);
-    expect(gitSince()).toEqual([]);
+    expect(text(deps, NODE_JSON)).toBe(original);
+    expect(text(deps, `${BACKUP}/.factory/node.json`)).toBe(original);
+    expect(gitSince().some((command) => command.includes('commit'))).toBe(false);
   });
 
   it('fails when the migrated value does not pass the schema, and names the key', async () => {
@@ -411,6 +430,123 @@ describe('upgrade: migrations', () => {
     expect(error.kind).toBe('failure');
     expect(error.message).toContain('Upgrade factory.');
     expect(text(deps, CONFIG)).toBe('schema: 9\n');
+  });
+});
+
+describe('upgrade: the blocks of a layer', () => {
+  /** The owner changes the layer by hand. */
+  const setLayer = (deps: FakeDeps, layer: number): void => {
+    const before = text(deps, CONFIG);
+    expect(before).toContain('layer: 1');
+    deps.files.set(CONFIG, before.replace('layer: 1', `layer: ${layer}`));
+  };
+
+  const blocksOfState = (deps: FakeDeps): unknown => {
+    const state = parseJsonText(text(deps, NODE_JSON));
+    return state.ok ? (state.value as { blocks: unknown }).blocks : undefined;
+  };
+
+  it('keeps the coordinator, safety and worker blocks of layer 1', async () => {
+    const { deps } = await makeNode();
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output).filter((line) => line.startsWith('block '))).toEqual([
+      `block coordinator: version ${versionOf('coordinator')} is current`,
+      `block safety: version ${versionOf('safety')} is current`,
+      `block worker: version ${versionOf('worker')} is current`,
+    ]);
+  });
+
+  it('swaps an intact coordinator block for the manager block when the layer is 2, and keeps the owner text', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(CLAUDE, `My own rules.\n\n${text(deps, CLAUDE)}`);
+    setLayer(deps, 2);
+
+    const output = success(await upgrade(deps));
+
+    const claude = text(deps, CLAUDE);
+    expect(claude.startsWith('My own rules.\n')).toBe(true);
+    expect(claude).toContain('<!-- factory:begin manager v1 sha256=');
+    expect(claude).not.toContain('factory:begin coordinator');
+    expect(claude).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
+    expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 1');
+    expect(blocksOfState(deps)).toEqual({ manager: 1, safety: versionOf('safety'), worker: versionOf('worker') });
+    expect(output.json).toMatchObject({ committed: true });
+    expect(gitSince().some((command) => command.endsWith('chore: upgrade the state'))).toBe(true);
+    expect((await inspectBlocks(deps, HOME, layer2Blocks)).map((status) => status.kind)).toEqual(['intact', 'intact']);
+  });
+
+  it('swaps an intact manager block for the coordinator block when the layer is 1', async () => {
+    const { deps } = await makeNode();
+    setLayer(deps, 2);
+    success(await upgrade(deps));
+    // The fake clock stands still, so the second backup needs a free folder name.
+    await deps.fs.remove(`${HOME}/.factory/backups`);
+    deps.files.set(CONFIG, text(deps, CONFIG).replace('layer: 2', 'layer: 1'));
+    const output = success(await upgrade(deps));
+    expect(text(deps, CLAUDE)).toContain(`<!-- factory:begin coordinator v${versionOf('coordinator')} sha256=`);
+    expect(text(deps, CLAUDE)).not.toContain('factory:begin manager');
+    expect(lineTexts(output)).toContain(`block manager: becomes block coordinator, version ${versionOf('coordinator')}`);
+    expect(blocksOfState(deps)).toEqual({
+      coordinator: versionOf('coordinator'),
+      safety: versionOf('safety'),
+      worker: versionOf('worker'),
+    });
+  });
+
+  it('shows the swap in a dry run and changes no file', async () => {
+    const { deps } = await makeNode();
+    setLayer(deps, 2);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 1');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('refuses an edited coordinator block on layer 2, and replaces it with the manager block when it is named', async () => {
+    const { deps } = await makeNode();
+    setLayer(deps, 2);
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    const before = snapshot(deps);
+
+    const error = refusal(await upgrade(deps));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain('block coordinator was edited');
+    expect(error.hint).toContain('--overwrite coordinator');
+    expect(snapshot(deps)).toEqual(before);
+
+    success(await upgrade(deps, currentSpec, { overwrite: ['manager'] }));
+    expect(text(deps, CLAUDE)).toContain('factory:begin manager v1');
+    expect(text(deps, CLAUDE)).not.toContain('Do as you like.');
+    expect(blocksOfState(deps)).toMatchObject({ manager: 1 });
+    expect(blocksOfState(deps)).not.toHaveProperty('coordinator');
+  });
+
+  it('knows the blocks of the layer: it rejects the worker block on layer 2 and lists the others', async () => {
+    const { deps } = await makeNode();
+    setLayer(deps, 2);
+    const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
+    expect(error.kind).toBe('usage');
+    expect(error.hint).toBe('The blocks are: manager, safety.');
+  });
+
+  it('fails and names the key when the layer of the config is not valid', async () => {
+    const { deps } = await makeNode();
+    setLayer(deps, 99);
+    const error = refusal(await upgrade(deps));
+    expect(error.message).toContain('factory.yaml is invalid');
+    expect(error.message).toContain('node.layer');
+  });
+
+  it('fails in the plan, before a backup, when a migration leaves a layer that no node has', async () => {
+    const { deps } = await makeNode();
+    const before = snapshot(deps);
+    const spec: UpgradeSpec = {
+      ...currentSpec,
+      config: configAt(C + 1, [step('schema', C, { node: { id: 'demo', layer: 0 } })]),
+    };
+    const error = refusal(await upgrade(deps, spec));
+    expect(error.message).toMatch(/^factory\.yaml: .*node\.layer/);
+    expect(snapshot(deps)).toEqual(before);
   });
 });
 
@@ -616,7 +752,7 @@ describe('upgrade: a node of schema 1', () => {
   const ROLES = `${HOME}/.factory/roles`;
   const ORDERS_KEEP = `${HOME}/.factory/orders/.gitkeep`;
   const BACKUPS_DIR = `${HOME}/.factory/backups/`;
-  const workerBody = blockTemplates.find((template) => template.name === 'worker')?.body ?? '';
+  const workerBody = layer1Blocks.find((template) => template.name === 'worker')?.body ?? '';
   const workerLine = workerBody.split('\n').find((line) => line.length > 20 && !line.startsWith('#')) ?? '';
 
   const makeOldNode = (
@@ -674,7 +810,7 @@ describe('upgrade: a node of schema 1', () => {
     const worker = text(deps, WORKER);
     expect(worker).toContain(`<!-- factory:begin worker v${versionOf('worker')} sha256=`);
     expect(worker).not.toContain('factory:begin protocol');
-    expect((await inspectBlocks(deps, HOME, blockTemplates)).map((status) => status.kind)).toEqual([
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).map((status) => status.kind)).toEqual([
       'intact',
       'intact',
       'intact',
@@ -733,7 +869,7 @@ describe('upgrade: a node of schema 1', () => {
     expect(text(deps, WORKER)).toContain(workerLine);
     expect(text(deps, WORKER)).not.toContain('My own rule for the workers.');
     expect(deps.files.has(OLD.protocol)).toBe(false);
-    expect((await inspectBlocks(deps, HOME, blockTemplates)).every((status) => status.kind === 'intact')).toBe(true);
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
   });
 
   it('keeps the text around the protocol block', async () => {

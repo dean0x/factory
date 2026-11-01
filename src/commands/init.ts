@@ -4,7 +4,7 @@ import { failure, usageError, type CliError, type CliResult } from '../cli/error
 import type { CommandOutput } from '../cli/output.js';
 import { isGithubLogin, slugify } from '../config/primitives.js';
 import { renderConfig } from '../config/render.js';
-import { CONFIG_SCHEMA_VERSION, configSchema, type FactoryConfig } from '../config/schema.js';
+import { CONFIG_SCHEMA_VERSION, COORDINATOR_LAYER, configSchema, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import {
   commitAll,
@@ -41,7 +41,8 @@ import {
 } from '../state/files.js';
 import { layoutOf, stagingDirOf, stateRel } from '../state/layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
-import { blockTemplates, fileTemplates } from '../templates/index.js';
+import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
+import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
 
 export interface InitOptions {
@@ -79,7 +80,6 @@ const GH_TIMEOUT_MS = 10_000;
 const MAX_PROJECTS = 100;
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_MODEL = 'default';
-const FIRST_LAYER = 1;
 const FIRST_COMMIT_MESSAGE = 'chore: initialize the state';
 
 const DEFAULT_LIMITS = {
@@ -151,16 +151,17 @@ const topMissingFolder = async (deps: Deps, dir: string): Promise<CliResult<stri
 
 const withNewline = (text: string): string => (text.endsWith('\n') ? text : `${text}\n`);
 
-const stateFilesOf = (workerText: string): CliResult<readonly StateFile[]> => {
+/** The state files. The worker file exists only when the layer has a worker block. */
+const stateFilesOf = (templates: readonly BlockTemplate[], workerText: string | null): CliResult<readonly StateFile[]> => {
   const state = nodeStateSchema.safeParse({
     [stateKeys.schemaVersion]: STATE_SCHEMA_VERSION,
     [stateKeys.createdWith]: FACTORY_VERSION,
-    [stateKeys.blocks]: Object.fromEntries(blockTemplates.map((template) => [template.name, template.version])),
+    [stateKeys.blocks]: Object.fromEntries(templates.map((template) => [template.name, template.version])),
   });
   if (!state.success) return failure(`the ${roles.node} state is invalid: ${describeIssues(state.error)}`);
   return ok([
     { rel: stateRel.nodeJson, text: jsonText(state.data) },
-    { rel: stateRel.worker, text: workerText },
+    ...(workerText === null ? [] : [{ rel: stateRel.worker, text: workerText }]),
     { rel: stateRel.board, text: initialBoardText() },
     { rel: stateRel.waiting, text: initialWaitingText() },
     { rel: stateRel.decisionLog, text: initialDecisionLogText() },
@@ -176,7 +177,8 @@ const stateFilesOf = (workerText: string): CliResult<readonly StateFile[]> => {
 const blockTexts = async (
   deps: Deps,
   claudePath: string,
-): Promise<CliResult<{ original: string | null; claudeText: string; workerText: string }>> => {
+  templates: readonly BlockTemplate[],
+): Promise<CliResult<{ original: string | null; claudeText: string; workerText: string | null }>> => {
   const kind = await deps.fs.stat(claudePath);
   if (!kind.ok) return kind;
   if (kind.value !== null && kind.value !== 'file') return failure(`${files.claudeMd} is not a file`);
@@ -187,27 +189,27 @@ const blockTexts = async (
     original = read.value;
     const existing = parseBlocks(original);
     if (!existing.ok) return failure(`${files.claudeMd}: ${existing.error.message}`);
-    const taken = existing.value.find((block) => blockTemplates.some((template) => template.name === block.name));
+    const taken = existing.value.find((block) => templates.some((template) => template.name === block.name));
     if (taken !== undefined) return failure(`${files.claudeMd} already holds the block ${taken.name}`);
   }
 
   const claudeBlocks: string[] = [];
-  let workerBlock = '';
-  for (const template of blockTemplates) {
+  const workerBlocks: string[] = [];
+  for (const template of templates) {
     const rendered = renderBlock(template);
     if (!rendered.ok) return rendered;
-    if (template.target === 'claudeFile') claudeBlocks.push(rendered.value);
-    else workerBlock = rendered.value;
+    (template.target === 'claudeFile' ? claudeBlocks : workerBlocks).push(rendered.value);
   }
   return ok({
     original,
     claudeText: appendBlocks(original ?? '', claudeBlocks),
-    workerText: appendBlocks('', [workerBlock]),
+    workerText: workerBlocks.length === 0 ? null : appendBlocks('', workerBlocks),
   });
 };
 
 /** Read the system and decide what init writes. This function writes nothing. */
 export const planInit = async (deps: Deps, options: InitOptions): Promise<CliResult<InitPlan>> => {
+  const layer = COORDINATOR_LAYER;
   const home = resolve(deps.cwd, options.home ?? '.');
   const layout = layoutOf(home);
 
@@ -258,7 +260,7 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
 
   const parsed = configSchema.safeParse({
     [keys.root.schema]: CONFIG_SCHEMA_VERSION,
-    [keys.root.node]: { [keys.node.id]: id, [keys.node.layer]: FIRST_LAYER },
+    [keys.root.node]: { [keys.node.id]: id, [keys.node.layer]: layer },
     [keys.root.owner]: {
       [keys.owner.display]: ownerName,
       ...(github === undefined ? {} : { [keys.owner.github]: github }),
@@ -287,9 +289,10 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
     return usageError(`invalid settings: ${describeIssues(parsed.error)}`, 'Check the flags.');
   }
 
-  const blocks = await blockTexts(deps, layout.claudeMd);
+  const templates = blockTemplatesFor(layer);
+  const blocks = await blockTexts(deps, layout.claudeMd, templates);
   if (!blocks.ok) return blocks;
-  const stateFiles = stateFilesOf(blocks.value.workerText);
+  const stateFiles = stateFilesOf(templates, blocks.value.workerText);
   if (!stateFiles.ok) return stateFiles;
 
   return ok({

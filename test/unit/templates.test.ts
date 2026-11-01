@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
-import { blockTemplates, fileTemplates } from '../../src/templates/index.js';
+import { roleForLayer } from '../../src/recipes/software/recipe.js';
+import { blockTemplatesFor, fileTemplates, roleBlockRenames } from '../../src/templates/index.js';
+import { allBlocks, layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
 
 const texts: readonly (readonly [string, string])[] = [
-  ...blockTemplates.map((template) => [`block ${template.name}`, template.body] as const),
+  ...allBlocks.map((template) => [`block ${template.name}`, template.body] as const),
   ...Object.entries(fileTemplates).map(([name, text]) => [`file ${name}`, text] as const),
 ];
 
@@ -37,8 +39,8 @@ describe.each(texts)('template %s', (_name, text) => {
     expect(text.match(/\b\w+n't\b|\b\w+'(?:ll|re|ve|d|s|m)\b/gi) ?? []).toEqual([]);
   });
 
-  it('has no word in -ing form', () => {
-    const prose = text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+  it('has no word in -ing form, except in a heading', () => {
+    const prose = text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '').replace(/^#.*$/gm, '');
     expect(prose.match(/\b[a-z]+ing\b/gi) ?? []).toEqual([]);
   });
 
@@ -52,28 +54,45 @@ describe.each(texts)('template %s', (_name, text) => {
   });
 });
 
+const summary = (blocks: readonly { name: string; version: number; target: string }[]) =>
+  blocks.map(({ name, version, target }) => [name, version, target]);
+
 describe('block templates', () => {
-  it('has the three blocks with their versions and the right target', () => {
-    expect(blockTemplates.map(({ name, version, target }) => [name, version, target])).toEqual([
+  it('gives layer 1 the coordinator, safety and worker blocks with their versions and targets', () => {
+    expect(summary(blockTemplatesFor(1))).toEqual([
       ['coordinator', 2, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['worker', 1, 'workerFile'],
     ]);
   });
 
+  it.each([2, 3, 16])('gives layer %i the manager and safety blocks and no worker block', (layer) => {
+    expect(summary(blockTemplatesFor(layer))).toEqual([
+      ['manager', 1, 'claudeFile'],
+      ['safety', 2, 'claudeFile'],
+    ]);
+  });
+
+  it('gives every role the same safety block', () => {
+    const bodies = [layer1Blocks, layer2Blocks].map((blocks) => blocks.find((block) => block.name === 'safety')?.body);
+    expect(bodies[0]).toBeDefined();
+    expect(bodies[1]).toBe(bodies[0]);
+  });
+
   it.each([
-    ['coordinator', 40, 60],
+    ['coordinator', 40, 75],
+    ['manager', 20, 40],
     ['safety', 12, 25],
     ['worker', 40, 60],
   ])('keeps the %s block short (%i to %i lines)', (name, min, max) => {
-    const template = blockTemplates.find((candidate) => candidate.name === name);
+    const template = allBlocks.find((candidate) => candidate.name === name);
     const lines = template?.body.split('\n').length ?? 0;
     expect(lines).toBeGreaterThanOrEqual(min);
     expect(lines).toBeLessThanOrEqual(max);
   });
 
   it('renders and parses back as intact blocks', () => {
-    for (const template of blockTemplates) {
+    for (const template of allBlocks) {
       const rendered = renderBlock(template);
       expect(rendered.ok).toBe(true);
       if (!rendered.ok) return;
@@ -85,7 +104,7 @@ describe('block templates', () => {
   });
 
   it('states the safety rules of the design', () => {
-    const safety = blockTemplates.find((template) => template.name === 'safety')?.body ?? '';
+    const safety = allBlocks.find((template) => template.name === 'safety')?.body ?? '';
     expect(safety).toContain('auto permission mode');
     expect(safety).toContain('Never skip permissions');
     expect(safety).toContain('ANTHROPIC_BASE_URL');
@@ -94,8 +113,46 @@ describe('block templates', () => {
   });
 });
 
+describe('role templates', () => {
+  const headingsOf = (body: string): string[] =>
+    body.split('\n').filter((line) => line.startsWith('## ')).map((line) => line.slice(3));
+
+  it('maps layer 0 to the worker, layer 1 to the coordinator and every layer above to the manager', () => {
+    expect([0, 1, 2, 3, 16].map((layer) => roleForLayer(layer).name)).toEqual([
+      'worker',
+      'coordinator',
+      'manager',
+      'manager',
+      'manager',
+    ]);
+  });
+
+  it.each([
+    ['worker', 0, ['Role', 'Questions and escalation', 'Milestones', 'Denial is final', 'Context budget', 'Heavy tests', 'Disk', 'Writing']],
+    ['coordinator', 1, ['Role', 'Owner authority', 'Merges and releases', 'Cells', 'State files']],
+    ['manager', 2, ['Role', 'Children', 'Priorities and capacity', 'Owner items', 'Limits']],
+  ])('gives the %s template its required sections', (_name, layer, sections) => {
+    const headings = headingsOf(roleForLayer(layer).body);
+    for (const section of sections) expect(headings).toContain(section);
+  });
+
+  it('keeps the role template in the file of its role: the worker file for a worker, CLAUDE.md for the rest', () => {
+    expect([0, 1, 2].map((layer) => roleForLayer(layer).target)).toEqual(['workerFile', 'claudeFile', 'claudeFile']);
+  });
+
+  it('names, for a layer, the role block of the other home layer as the old name of its role block', () => {
+    expect(roleBlockRenames(1)).toEqual([{ from: 'manager', to: 'coordinator' }]);
+    expect(roleBlockRenames(2)).toEqual([{ from: 'coordinator', to: 'manager' }]);
+    expect(roleBlockRenames(5)).toEqual([{ from: 'coordinator', to: 'manager' }]);
+  });
+
+  it('keeps the work at the level of pull requests out of the manager template', () => {
+    expect(roleForLayer(2).body).toContain('does no work at the level of pull requests');
+  });
+});
+
 describe('owner authority channel', () => {
-  const bodyOf = (name: string): string => blockTemplates.find((template) => template.name === name)?.body ?? '';
+  const bodyOf = (name: string): string => allBlocks.find((template) => template.name === name)?.body ?? '';
   const untrustedSources = ['tool results', 'files', 'web pages', 'issues', 'pull requests', 'review comments'];
 
   it.each(['coordinator', 'safety'])(

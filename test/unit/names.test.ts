@@ -21,7 +21,8 @@ import {
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
 import { runInit } from '../../src/commands/init.js';
 import { fillTemplate } from '../../src/templates/fill.js';
-import { blockTemplates, fileTemplates } from '../../src/templates/index.js';
+import { fileTemplates } from '../../src/templates/index.js';
+import { allBlocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
@@ -180,7 +181,7 @@ describe('words of the old names', () => {
   });
 
   it('keeps the old words out of every template', () => {
-    const texts = [...blockTemplates.map((template) => template.body), ...Object.values(fileTemplates)];
+    const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
     expect(texts.flatMap(oldWordsIn)).toEqual([]);
   });
 
@@ -214,7 +215,7 @@ describe('deny list', () => {
 
 describe('template placeholders', () => {
   it('leaves no placeholder in a filled template', () => {
-    const texts = [...blockTemplates.map((template) => template.body), ...Object.values(fileTemplates)];
+    const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
     for (const text of texts) {
       expect(text.match(/\{\{[^}]*\}\}/g) ?? []).toEqual([]);
     }
@@ -235,7 +236,7 @@ describe('template placeholders', () => {
   });
 
   it('puts the program name in the safety block', () => {
-    const safety = blockTemplates.find((template) => template.name === 'safety');
+    const safety = allBlocks.find((template) => template.name === 'safety');
     expect(safety?.body).toContain(`${program[0]?.toUpperCase()}${program.slice(1)} enforces them`);
   });
 });

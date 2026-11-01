@@ -8,7 +8,13 @@ import { githubLogin, slug, uniqueIds } from './primitives.js';
 
 export const CONFIG_SCHEMA_VERSION = 2;
 
-/** The highest layer of a node. A cell is layer 0 and has no node home. */
+/** A cell is layer 0 and has no node home. */
+export const CELL_LAYER = 0;
+
+/** The layer of the node that manages cells. */
+export const COORDINATOR_LAYER = 1;
+
+/** The highest layer of a node. */
 export const MAX_LAYER = 16;
 
 const MAX_CELLS = 200;
@@ -18,9 +24,9 @@ const MAX_INTERVAL_DIGITS = 6;
 const MAX_INTERVAL_MINUTES = 24 * 60;
 const MAX_INTERVAL_HOURS = 24;
 
-const nodeSchema = z.strictObject({
+export const nodeSchema = z.strictObject({
   [keys.node.id]: slug,
-  [keys.node.layer]: z.number().int().min(1).max(MAX_LAYER),
+  [keys.node.layer]: z.number().int().min(COORDINATOR_LAYER).max(MAX_LAYER),
 });
 
 const ownerSchema = z.strictObject({

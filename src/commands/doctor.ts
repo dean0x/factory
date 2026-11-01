@@ -1,5 +1,5 @@
 import { delimiter, join, resolve } from 'node:path';
-import { inspectBlocks, type BlockStatus } from '../blocks/status.js';
+import { inspectBlocks, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { inspectConfig } from '../config/load.js';
@@ -30,7 +30,7 @@ import { findTokenPaths } from '../safety/secrets.js';
 import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
-import { blockTemplates } from '../templates/index.js';
+import { blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 
@@ -125,10 +125,17 @@ export const checkState = (state: DocState<NodeState>): CheckResult => {
   }
 };
 
+/** A block that is not as the layer needs it. A block under the name of another layer is a role block that does not match. */
+const describeBlockProblem = (status: BlockStatus): string[] => {
+  const old = renamedFromOf(status);
+  if (old !== undefined) {
+    return [`${old} (${status.kind}, in ${status.file}): the layer of this ${roles.node} needs the block ${status.template.name}`];
+  }
+  return status.kind === 'intact' ? [] : [`${status.template.name} (${status.kind}, in ${status.file})`];
+};
+
 export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
-  const problems = statuses.flatMap((status) =>
-    status.kind === 'intact' ? [] : [`${status.template.name} (${status.kind}, in ${status.file})`],
-  );
+  const problems = statuses.flatMap(describeBlockProblem);
   return problems.length === 0
     ? check(checkIds.blocks, 'ok', `${statuses.length} managed blocks are intact`)
     : check(
@@ -180,6 +187,18 @@ export const checkPermissionMode = async (deps: Deps, home: string): Promise<Che
   return unreadable.length === 0
     ? check(checkIds.permissionMode, 'ok', 'no settings file skips the permission checks')
     : notChecked(checkIds.permissionMode, `cannot read ${unreadable.join(', ')}`);
+};
+
+/** The blocks come from the layer of the node, so a config that is not valid gives no block list. */
+export const checkNodeBlocks = async (
+  deps: Deps,
+  home: string,
+  state: DocState<FactoryConfig>,
+): Promise<CheckResult> => {
+  if (state.kind !== 'valid') return notChecked(checkIds.blocks, `${files.config} is not valid`);
+  const { layer } = state.value.core.node;
+  const pending = { ...NO_PENDING_FILES, renames: roleBlockRenames(layer) };
+  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(layer), pending));
 };
 
 export const checkProxyEnv = (deps: Deps): CheckResult => {
@@ -288,8 +307,8 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
   const { home, source } = located;
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
-  const blocks = await inspectBlocks(deps, home, blockTemplates);
-  const [permission, proxies, tools, stateRepo, projects] = await Promise.all([
+  const [blocks, permission, proxies, tools, stateRepo, projects] = await Promise.all([
+    checkNodeBlocks(deps, home, config),
     checkPermissionMode(deps, home),
     checkProxies(deps, config, source !== 'ancestor'),
     checkTools(deps),
@@ -300,7 +319,7 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
     checkConfig(config),
     checkConfigVersion(config),
     checkState(state),
-    checkBlocks(blocks),
+    blocks,
     checkSecrets(config),
     permission,
     checkProxyEnv(deps),

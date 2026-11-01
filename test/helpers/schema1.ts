@@ -1,7 +1,7 @@
 import { stringify } from 'yaml';
 import { renderBlock } from '../../src/blocks/managed.js';
 import { jsonText } from '../../src/state/files.js';
-import { blockTemplates } from '../../src/templates/index.js';
+import { layer1Blocks } from './blocks.js';
 import type { FakeDeps } from './fake-deps.js';
 import { sampleObject } from './sample-config.js';
 
@@ -27,7 +27,7 @@ const block = (name: string, version: number, body: string): string => {
   return rendered.value;
 };
 
-const bodyOf = (name: string): string => blockTemplates.find((template) => template.name === name)?.body ?? '';
+const bodyOf = (name: string): string => layer1Blocks.find((template) => template.name === name)?.body ?? '';
 
 export const OLD_PROTOCOL = 'protocol.md';
 export const OLD_BRIEFS = 'briefs';

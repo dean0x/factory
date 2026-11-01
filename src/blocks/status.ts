@@ -1,7 +1,7 @@
 import type { Deps } from '../core/deps.js';
 import type { BlockRename } from '../migrate/files.js';
 import { layoutOf, type Layout } from '../state/layout.js';
-import type { BlockTemplate, BlockTarget } from '../templates/index.js';
+import type { BlockTemplate, BlockTarget } from '../templates/types.js';
 import { parseBlocks, verifyBlock, type ParsedBlock } from './managed.js';
 
 /** What one managed block looks like in its file. */

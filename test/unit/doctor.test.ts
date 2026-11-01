@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { renderBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import {
   checkBlocks,
   checkConfig,
   checkConfigVersion,
+  checkNodeBlocks,
   checkPermissionMode,
   checkProjects,
   checkProxies,
@@ -22,7 +24,7 @@ import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import { inspectState } from '../../src/state/load.js';
-import { blockTemplates } from '../../src/templates/index.js';
+import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
@@ -141,7 +143,7 @@ describe('doctor: config, version and state', () => {
 describe('doctor: blocks', () => {
   it('is ok when all managed blocks are intact', async () => {
     const deps = await initialized();
-    expect(checkBlocks(await inspectBlocks(deps, HOME, blockTemplates))).toMatchObject({
+    expect(checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks))).toMatchObject({
       id: 'blocks',
       level: 'ok',
       text: '3 managed blocks are intact',
@@ -152,7 +154,7 @@ describe('doctor: blocks', () => {
     const deps = await initialized();
     const path = `${HOME}/CLAUDE.md`;
     deps.files.set(path, (deps.files.get(path) ?? '').replace('Coordinate. Do not produce.', 'Do as you like.'));
-    const result = checkBlocks(await inspectBlocks(deps, HOME, blockTemplates));
+    const result = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
     expect(result.level).toBe('warn');
     expect(result.text).toContain('coordinator (edited');
     expect(result.text).not.toContain('safety');
@@ -161,12 +163,12 @@ describe('doctor: blocks', () => {
   it('warns when a block or its file is missing, and when the markers are broken', async () => {
     const deps = await initialized();
     deps.files.delete(`${HOME}/.factory/roles/worker.md`);
-    const missing = checkBlocks(await inspectBlocks(deps, HOME, blockTemplates));
+    const missing = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
     expect(missing.level).toBe('warn');
     expect(missing.text).toContain('worker (missing');
 
     deps.files.set(`${HOME}/CLAUDE.md`, '<!-- factory:begin x v1 sha256=zz -->\n');
-    const broken = checkBlocks(await inspectBlocks(deps, HOME, blockTemplates));
+    const broken = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
     expect(broken.text).toContain('coordinator (malformed');
     expect(broken.text).toContain('safety (malformed');
   });
@@ -175,7 +177,49 @@ describe('doctor: blocks', () => {
     const deps = await initialized();
     const path = `${HOME}/CLAUDE.md`;
     deps.files.set(path, `My own rules.\n\n${deps.files.get(path) ?? ''}\nMore of my rules.\n`);
-    expect(checkBlocks(await inspectBlocks(deps, HOME, blockTemplates)).level).toBe('ok');
+    expect(checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks)).level).toBe('ok');
+  });
+});
+
+describe('doctor: the blocks of a layer', () => {
+  const setLayer = (deps: FakeDeps, layer: number): void => {
+    const path = `${HOME}/factory.yaml`;
+    deps.files.set(path, (deps.files.get(path) ?? '').replace('layer: 1', `layer: ${layer}`));
+  };
+
+  const nodeBlocks = async (deps: FakeDeps) => checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+
+  it('checks the coordinator, safety and worker blocks of a node on layer 1', async () => {
+    const deps = await initialized();
+    expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '3 managed blocks are intact' });
+  });
+
+  it('warns that the role block does not match when the layer was changed by hand', async () => {
+    const deps = await initialized();
+    setLayer(deps, 2);
+    const result = await nodeBlocks(deps);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('coordinator (intact, in /w/node/CLAUDE.md)');
+    expect(result.text).toContain('needs the block manager');
+  });
+
+  it('is ok for the blocks of layer 2: manager and safety', async () => {
+    const deps = await initialized();
+    setLayer(deps, 2);
+    const path = `${HOME}/CLAUDE.md`;
+    const blocks = layer2Blocks.map((block) => {
+      const rendered = renderBlock(block);
+      if (!rendered.ok) throw new Error(rendered.error.message);
+      return rendered.value;
+    });
+    deps.files.set(path, `${blocks.join('\n\n')}\n`);
+    expect(await nodeBlocks(deps)).toMatchObject({ level: 'ok', text: '2 managed blocks are intact' });
+  });
+
+  it('does not check the blocks when the config is not valid', async () => {
+    const deps = await initialized();
+    deps.files.delete(`${HOME}/factory.yaml`);
+    expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'warn', text: 'not checked: factory.yaml is not valid' });
   });
 });
 

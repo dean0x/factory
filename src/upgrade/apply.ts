@@ -52,13 +52,18 @@ const editBlockFile = (text: string, changes: readonly BlockPlan[]): CliResult<s
   return ok(added.length === 0 ? replaced : appendBlocks(replaced, added));
 };
 
-/** The new raw value of the state file: the migrated value and the versions of the changed blocks. */
+/**
+ * The new raw value of the state file: the migrated value and the versions of the changed blocks.
+ * A block that gets a new name leaves its old name.
+ */
 const nextStateRaw = (migrated: unknown, changes: readonly BlockPlan[]): CliResult<unknown> => {
   if (changes.length === 0) return ok(migrated);
   if (!isRecord(migrated)) return failure(`${stateKeys.blocks}: the migrated state is not a mapping`);
   const current = migrated[stateKeys.blocks];
   const versions = Object.fromEntries(changes.map((change) => [change.template.name, change.template.version]));
-  return ok({ ...migrated, [stateKeys.blocks]: { ...(isRecord(current) ? current : {}), ...versions } });
+  const oldNames = new Set(changes.flatMap((change) => renamedFromOf(change.status) ?? []));
+  const kept = Object.entries(isRecord(current) ? current : {}).filter(([name]) => !oldNames.has(name));
+  return ok({ ...migrated, [stateKeys.blocks]: { ...Object.fromEntries(kept), ...versions } });
 };
 
 const timestampOf = (deps: Deps): string => deps.now().toISOString().replace(/[:.]/g, '-');

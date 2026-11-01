@@ -18,6 +18,7 @@ export const roles = {
   node: 'node',
   cell: 'cell',
   coordinator: 'coordinator',
+  manager: 'manager',
   worker: 'worker',
   owner: 'owner',
   recipe: 'recipe',
@@ -172,7 +173,12 @@ export const checkIds = {
   projects: 'projects',
 } as const;
 
-export const blockNames = { coordinator: 'coordinator', safety: 'safety', worker: 'worker' } as const;
+export const blockNames = {
+  coordinator: 'coordinator',
+  manager: 'manager',
+  safety: 'safety',
+  worker: 'worker',
+} as const;
 
 /**
  * The names of a FAC-M1 node (schema 1) that schema 2 does not use. Only the migrations from schema 1 read them.
@@ -223,9 +229,11 @@ export const templateValues: Readonly<Record<string, string>> = {
   node: roles.node,
   cell: roles.cell,
   coordinator: roles.coordinator,
+  manager: roles.manager,
   worker: roles.worker,
   owner: roles.owner,
   recipe: roles.recipe,
+  childrenKey: keys.root.children,
   configFile: files.config,
   stateDir: dirs.state,
   nodeFile: inState(files.nodeState),

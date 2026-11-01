@@ -6,11 +6,11 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { stepsBetween, type FileStep } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
-import { planMigrations, type Migration } from '../migrate/runner.js';
+import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
 import { dirs, flags, flagText, program } from '../names.js';
 import type { Layout } from '../state/layout.js';
-import type { BlockTemplate } from '../templates/index.js';
-import type { UpgradeFile, UpgradeSpec } from './spec.js';
+import type { BlockTemplate } from '../templates/types.js';
+import type { BlockSet, UpgradeFile, UpgradeSpec } from './spec.js';
 
 const MAX_DIFF_LINES = 3;
 const MAX_DIFF_WIDTH = 100;
@@ -61,6 +61,15 @@ export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Pro
       return unreachable;
     }
   }
+};
+
+/** The managed blocks of the node, as its config is after the migrations. A failing migration stops the upgrade here. */
+export const planBlockSet = (config: FilePlan, upgrade: UpgradeSpec): CliResult<BlockSet> => {
+  const file = upgrade.config.spec.file;
+  const migrated = config.kind === 'migrate' ? runMigrations(config.raw, config.steps) : ok(config.raw);
+  if (!migrated.ok) return failure(`${file}: ${migrated.error.message}`);
+  const set = upgrade.blocksOf(migrated.value);
+  return set.ok ? set : failure(`${file}: ${set.error.message}`);
 };
 
 /** A file or a folder that moves. `from` and `to` are paths inside the node home, for the output. */
@@ -118,7 +127,9 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
     case 'intact':
     case 'edited': {
       const from = status.block.version;
-      if (from > template.version) {
+      const renamed = renamedFromOf(status) !== undefined;
+      // The version of a block under its old name has its own numbers, so it says nothing about the new block.
+      if (from > template.version && !renamed) {
         return {
           template,
           status,
@@ -128,7 +139,6 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
         };
       }
       if (status.kind === 'edited') return { template, status, action: overwrite ? 'replace' : 'refuse-edited', from };
-      const renamed = renamedFromOf(status) !== undefined;
       return { template, status, action: from < template.version || renamed ? 'update' : 'current', from };
     }
     default: {

@@ -21,7 +21,7 @@ import {
   type NewFile,
   type Written,
 } from '../upgrade/apply.js';
-import { isChange, planBlock, planFile, planFiles, planLines, refusalOf } from '../upgrade/plan.js';
+import { isChange, planBlock, planBlockSet, planFile, planFiles, planLines, refusalOf } from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
 
 export interface UpgradeOptions {
@@ -37,13 +37,6 @@ export const runUpgrade = async (
   options: UpgradeOptions,
   upgrade: UpgradeSpec = currentSpec,
 ): Promise<CliResult<CommandOutput>> => {
-  const known = upgrade.blocks.map((template) => template.name);
-  const oldNames = upgrade.files.flatMap((step) => step.renames.map((rename) => rename.from));
-  const unknown = options.overwrite.filter((name) => !known.includes(name) && !oldNames.includes(name));
-  if (unknown.length > 0) {
-    return usageError(`${flagText(flags.overwrite)}: unknown block ${unknown.join(', ')}`, `The blocks are: ${known.join(', ')}.`);
-  }
-
   const resolved = await resolveHome(deps, options.home);
   if (!resolved.ok) return resolved;
   const home = resolved.value;
@@ -58,10 +51,21 @@ export const runUpgrade = async (
   if (!state.ok) return state;
   const files = await planFiles(deps, layout, state.value, upgrade.files);
   if (!files.ok) return files;
+  const blockSet = planBlockSet(config.value, upgrade);
+  if (!blockSet.ok) return blockSet;
+
+  const known = blockSet.value.templates.map((template) => template.name);
+  const oldNames = [...upgrade.files.flatMap((step) => step.renames), ...blockSet.value.renames].map((rename) => rename.from);
+  const unknown = options.overwrite.filter((name) => !known.includes(name) && !oldNames.includes(name));
+  if (unknown.length > 0) {
+    return usageError(`${flagText(flags.overwrite)}: unknown block ${unknown.join(', ')}`, `The blocks are: ${known.join(', ')}.`);
+  }
+
   // A block that gets a new name is named by its old name or its new name.
   const named = (status: BlockStatus): boolean =>
     options.overwrite.some((name) => name === status.template.name || name === renamedFromOf(status));
-  const blocks = (await inspectBlocks(deps, home, upgrade.blocks, files.value)).map((status) =>
+  const pending = { ...files.value, renames: [...files.value.renames, ...blockSet.value.renames] };
+  const blocks = (await inspectBlocks(deps, home, blockSet.value.templates, pending)).map((status) =>
     planBlock(status, named(status)),
   );
 
