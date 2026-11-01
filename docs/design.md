@@ -415,11 +415,11 @@ From **firstmate** (github.com/kunchenguid/firstmate, MIT, read as untrusted dat
 4. An explicit list of config items that a parent passes down, and items that it never passes (`bin/fm-config-inherit-lib.sh`).
 5. A script-written upward channel, so a report does not depend on the model's memory (`docs/secondmate-parent-channel.md`).
 6. A readiness check before the first use of a remote host. An unreachable host is "unknown", never "dead", and never replaced by a local copy (`docs/remote-secondmates.md`).
-7. A fail-closed config parse (`docs/configuration.md` L1376–1378).
+7. A fail-closed config parse (`docs/configuration.md` L1380–1382).
 8. Upgrades by fast-forward only. A dirty home is reported and not touched (`bin/fm-update.sh`).
 
 factory avoids these firstmate choices:
-- Its workers skip permissions by default when no config file exists (`docs/configuration.md` L1368).
+- Its workers skip permissions by default when no config file exists (`docs/configuration.md` L1370).
 - Its config is scattered over many one-token files.
 - It installs by `git clone`, with no versioned release and no migrations.
 - It supports one person only, and it caps the hierarchy at two levels (`VISION.md` L7, L38).
