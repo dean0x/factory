@@ -62,10 +62,12 @@ describe('parseBlocks', () => {
     expect(parseBlocks('see the line <!-- factory:begin x v1 --> in the docs\n')).toEqual({ ok: true, value: [] });
   });
 
-  it('reads blocks with CRLF line ends', () => {
+  it('reads blocks with CRLF line ends as intact', () => {
     const crlf = rendered('a', 1, 'x\ny').replace(/\n/g, '\r\n');
     const parsed = parseBlocks(`owner\r\n${crlf}\r\n`);
     expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.map((block) => [block.name, block.body, verifyBlock(block)])).toEqual([['a', 'x\ny', 'intact']]);
   });
 
   it.each([
@@ -96,6 +98,12 @@ describe('verifyBlock', () => {
     expect(parsed.ok && verifyBlock(parsed.value[0]!)).toBe('edited');
   });
 
+  it('reports an edit in the body of a block with CRLF line ends', () => {
+    const crlf = rendered('a', 1, 'keep this\nand this').replace(/\n/g, '\r\n');
+    const parsed = parseBlocks(`owner\r\n${crlf}\r\n`.replace('and this', 'and that'));
+    expect(parsed.ok && verifyBlock(parsed.value[0]!)).toBe('edited');
+  });
+
   it('reports a changed hash in the marker', () => {
     const text = rendered('a', 1, 'x').replace(/sha256=[0-9a-f]{64}/, `sha256=${'0'.repeat(64)}`);
     const parsed = parseBlocks(text);
@@ -111,6 +119,26 @@ describe('replaceBlock', () => {
     if (!parsed.ok) return;
     const next = replaceBlock(text, parsed.value[0]!, rendered('a', 2, 'new'));
     expect(next).toBe(`before\n\n${rendered('a', 2, 'new')}\n\nmiddle\n\n${rendered('b', 1, 'other')}\n\nafter\n`);
+  });
+});
+
+describe('replaceBlock in a file with CRLF line ends', () => {
+  it('keeps the owner text and leaves a file whose blocks all read as intact', () => {
+    const crlf = (text: string): string => text.replace(/\n/g, '\r\n');
+    const text = crlf(`before\n\n${rendered('a', 1, 'old\nbody')}\n\nafter\n`);
+    const parsed = parseBlocks(text);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    const next = replaceBlock(text, parsed.value[0]!, rendered('a', 2, 'new\nbody'));
+    const reread = parseBlocks(next);
+    expect(reread.ok).toBe(true);
+    if (!reread.ok) return;
+    expect(reread.value.map((block) => [block.name, block.version, block.body, verifyBlock(block)])).toEqual([
+      ['a', 2, 'new\nbody', 'intact'],
+    ]);
+    expect(next.startsWith('before\r\n\r\n')).toBe(true);
+    expect(next.endsWith('\r\nafter\r\n')).toBe(true);
   });
 });
 

@@ -48,6 +48,7 @@ interface OpenBlock {
   readonly firstBodyLine: number;
 }
 
+/** The body joins its lines with LF. A CRLF line end in the text gives the same body as an LF line end. */
 export const parseBlocks = (text: string): CliResult<readonly ParsedBlock[]> => {
   const lines = text.split('\n');
   const blocks: ParsedBlock[] = [];
@@ -76,7 +77,10 @@ export const parseBlocks = (text: string): CliResult<readonly ParsedBlock[]> => 
         name: open.name,
         version: open.version,
         sha: open.sha,
-        body: lines.slice(open.firstBodyLine, index).join('\n'),
+        body: lines
+          .slice(open.firstBodyLine, index)
+          .map((bodyLine) => bodyLine.replace(/\r$/, ''))
+          .join('\n'),
         start: open.start,
         end: offset + line.length,
       });
