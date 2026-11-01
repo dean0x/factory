@@ -18,6 +18,7 @@ import {
 } from '../../src/names.js';
 import { fillTemplate } from '../../src/templates/fill.js';
 import { blockTemplates, fileTemplates } from '../../src/templates/index.js';
+import { denyMatches } from '../helpers/deny-list.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
@@ -79,9 +80,9 @@ const TEXT_NAMES = [...flat(files), dirs.state, dirs.claude, claudeSettings.suff
 /** These files call git, so they hold the words of git, for example its init command and its --quiet flag. */
 const GIT_VOCABULARY_FILES = new Set([join(SRC, 'core', 'git.ts')]);
 
-const violationsIn = (path: string): string[] => {
+const violationsInText = (source: string, path: string): string[] => {
   const found: string[] = [];
-  for (const literal of literalsOf(readFileSync(path, 'utf8'))) {
+  for (const literal of literalsOf(source)) {
     if (/^(node:|\.{1,2}\/)/.test(literal)) continue;
     if (!GIT_VOCABULARY_FILES.has(path)) {
       if (EXACT_NAMES.has(literal)) found.push(`"${literal}" is a name`);
@@ -105,10 +106,25 @@ const violationsIn = (path: string): string[] => {
   return found.map((message) => `${relative(SRC, path)}: ${message}`);
 };
 
+const violationsIn = (path: string): string[] => violationsInText(readFileSync(path, 'utf8'), path);
+
 describe('names', () => {
   it('keeps every user-visible name out of the other source files', () => {
     const violations = sourceFiles(SRC).flatMap(violationsIn);
     expect(violations).toEqual([]);
+  });
+
+  it('scans the whole source tree', () => {
+    expect(sourceFiles(SRC).length).toBeGreaterThan(20);
+  });
+
+  it('reports a name literal in a source text', () => {
+    const path = join(SRC, 'sample.ts');
+    expect(violationsInText(`const a = '${commands.init}';`, path)).toEqual([`sample.ts: "${commands.init}" is a name`]);
+    expect(violationsInText(`const a = '${files.config}';`, path)).toContain(
+      `sample.ts: "${files.config}" holds the name ${files.config}`,
+    );
+    expect(violationsInText("const a = 'plain words';", path)).toEqual([]);
   });
 
   it('finds a name literal in a file that is not names.ts', () => {
@@ -116,6 +132,16 @@ describe('names', () => {
     expect(sample("const a = 'factory.yaml';")).toEqual(['factory.yaml']);
     expect(sample('const a = `x ${y} {{lane}} z`;')).toEqual(['x     z']);
     expect(sample("// a 'comment'\nconst a = 1;")).toEqual([]);
+  });
+});
+
+describe('deny list', () => {
+  it('matches a text that holds a denied name', () => {
+    // Built at run time, so that this file does not hold the denied text itself.
+    const folder = ['', 'Users', 'x'].join('/');
+    const date = ['2026', '01', '01'].join('-');
+    expect(denyMatches(`see ${folder} and ${date}`)).toEqual(['user folder', 'date of an event']);
+    expect(denyMatches('plain words')).toEqual([]);
   });
 });
 
