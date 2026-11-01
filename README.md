@@ -63,7 +63,7 @@ The hash lets `factory` find out that a person edited a block. Text outside the 
 ## Safety defaults
 
 - The permission mode is `auto`. `doctor` fails when a settings file in the node folder skips the permission prompts.
-- A proxy comes only from the config. `doctor` checks that it answers. A stray `ANTHROPIC_BASE_URL` in the shell is a warning.
+- A proxy comes only from the config. `doctor` prints `Config: <path>` first. It checks that the proxy answers only when the config comes from `--home` or from the current folder. If the config is in a parent folder, `doctor` sends no request and warns: "Run with --home DIR to check the proxy". A stray `ANTHROPIC_BASE_URL` in the shell is a warning.
 - Merges and releases wait for the owner.
 - `doctor` fails when a value in `factory.yaml` looks like a token. It never prints the value.
 
