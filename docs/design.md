@@ -21,7 +21,7 @@ Roadmap: `/Users/dean/Sandbox/.devflow/docs/orchestration/roadmaps/factory.md`
 
 **Layers.** Every level is the same kind of node: a session with an owner, a role, one parent (or none) and children. Reports and the items that wait on the owner go up as one versioned JSON digest. Decisions, priorities and owner authority go down as records in the child's inbox. A parent reads a child only through `factory report --json`, locally or over SSH. So a new layer later needs no redesign, and no level is "the top" by design.
 
-**Safety is in the code, not only in the text.** factory can start a session only in auto mode, and only with no proxy variable. It has no flag that skips permissions. It types founder-authority input only for a decision that is recorded in the decision log. `factory doctor` checks the safety posture of each node.
+**Safety is in the code, not only in the text.** factory can start a session only in auto mode. It has no flag that skips permissions. A proxy (for example Subswitch) is an explicit config option per node and per lane. A launch never takes a stray proxy variable from the shell, and it checks that the configured proxy answers before it starts the session. It types founder-authority input only for a decision that is recorded in the decision log. `factory doctor` checks the safety posture of each node.
 
 **What I need from you** (details in §9). My recommendations:
 1. Language: TypeScript on Node 22+.
@@ -139,6 +139,8 @@ roles: { implementer: Code, verifier: Validate, tester: Test, reviewer: Review }
 state_dirs: [".devflow/", "~/.devflow/"]   # factory refuses to use these and never deletes them
 protocol_addendum: addendum.md             # extra lane rules for repos that use devflow
 profile_seed: /devflow:dynamic-profile
+proxy_presets:                             # optional; copied into `proxies` on request (§4.6)
+  subswitch: { base_url: "http://127.0.0.1:<port>", health: "<path>" }
 ```
 
 `factory pack add devflow` checks `detect`, offers `install`, and writes the pack id into the project entry in `factory.yaml`. A pack is per project, so one node can mix projects with and without devflow.
@@ -262,6 +264,14 @@ session:
   permission_mode: auto      # the only value accepted (§6)
   effort: high
   model: default
+  proxy: none                # none, or the id of an entry in `proxies` (§4.6)
+proxies:                     # optional; no keys or tokens here (§6)
+  - id: subswitch
+    base_url: http://127.0.0.1:8787   # becomes ANTHROPIC_BASE_URL for the session
+    health: /health                   # path that must answer before a launch
+    on_fail: stop                     # stop (default) | direct
+lanes:                       # optional per-lane overrides
+  web-checkout: { proxy: none }
 limits:
   memory_free_min_pct: 20
   disk_free_min_gb: 20
@@ -292,7 +302,14 @@ The config holds no secrets. `factory doctor` refuses a config with a value that
 
 ### 4.6 Claude Code integration
 
-- factory starts sessions with `env -u ANTHROPIC_BASE_URL claude --permission-mode auto --effort <e> --add-dir <home>/.factory`.
+- factory starts sessions with `env -u ANTHROPIC_BASE_URL [ANTHROPIC_BASE_URL=<proxy base_url>] claude --permission-mode auto --effort <e> --add-dir <home>/.factory`.
+- **Proxy.** A session uses a proxy only when the config names one: the lane's override in `lanes.<id>.proxy`, else `session.proxy` of the node. The launch always clears a stray `ANTHROPIC_BASE_URL` from the shell, then sets it only from the config. So a proxy is always a choice that the config shows, never an accident of the shell.
+- **Proxy check.** Before each launch, factory sends one bounded request to the proxy's `health` path. If the proxy does not answer, `on_fail` decides:
+  - `stop` (the default): factory does not start the session. It prints the proxy id, the failed check and the fix, for example "start the proxy, or set `proxy: none` for this lane".
+  - `direct`: factory starts the session with no proxy and records this in the lane state, so the views show it.
+  This rule comes from a workspace lesson of 2026-10-16: a dead local proxy stopped all lanes for hours. The check stops that failure before it starts.
+- `factory doctor` and `factory status` run the same check for each configured proxy. `factory lane list` and the lanes view show a Proxy column for each lane: `direct`, the proxy id, or `<id> (down)`.
+- **Restore and restart.** `lane resume`, `lane restart` and the tmux restore hook use the same launch code, so they apply the same proxy rules and the same check.
 - **Heartbeat hook (recommended, a decision for Dean).** `factory lane new` writes a hook into the checkout's `.claude/settings.local.json`. On SessionStart, Stop and PreCompact, the hook writes one line (session id, event, time) to `<home>/.factory/state/heartbeat/<lane>`. This replaces the reads of `~/.claude/projects/*.jsonl` and `~/.claude/sessions/*.json`. It also gives the lane state (working, idle, compacting) without a transcript parse. The context percent comes from the status line JSON that Claude Code passes to the hook or status line command, not from the screen text.
 - Today the lanes table reads the last-write time and entry flags of each transcript, with no message text. Dean allowed this in D-21 (2026-10-28). So the hook is not a fix for a broken rule. It removes a tie to a private file layout, and it works for a new user who has made no such decision.
 - Until Dean decides, all reads of Claude Code's private layout sit in one adapter module, so one change fixes them when Claude Code changes its layout.
@@ -405,7 +422,8 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 |---|---|---|
 | Every session runs in auto mode | yes | `session.permission_mode` accepts only `auto`. Every launch adds `--permission-mode auto`. |
 | Never skip permissions | yes | factory has no flag or config value that adds the skip flag. `doctor` reports a node or checkout whose settings set the bypass mode. |
-| No proxy | yes | Every launch runs under `env -u ANTHROPIC_BASE_URL`. `doctor` warns when the variable is set in the shell. |
+| A proxy only by explicit config, and only when it answers | yes | Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the config (§4.6). A health check runs before each launch and in `doctor` and `status`. On failure the default is `stop` with the fix in the message; `direct` is an explicit choice. `doctor` warns when the variable is set in the shell. |
+| No proxy keys or tokens in output | yes | `proxies` holds no keys; `doctor` refuses token-like values there. Output shows only the proxy id and its host and port, never user info, query strings or headers of the base URL. |
 | A denial is final; no laundering through another session | yes | `lane send` and `lane relay` refuse a text that asks a lane to run a command that the node recorded as denied (a `denied` list in state). |
 | Never invent the owner's consent | yes | `lane relay` types the owner prefix only for a decision record in `decision-log.json` with `by: owner`. |
 | No secrets in output | yes | No command prints env values. `doctor` refuses token-like values in `factory.yaml`. Process lists show only pid, elapsed time and command name. |
@@ -453,10 +471,12 @@ The setup uses Dean's name and devflow's words in many places. factory uses thes
 | 9 | Remote transport | (a) SSH only at first; (b) a small server | **(a).** No new service and no new port. |
 | 10 | Python and glow | (a) port the Python scripts and the viewer into factory; (b) keep them as external tools | **(a).** Fewer tools on a new machine and one test suite. |
 | 11 | Team defaults | (a) each member owns a root; a lead's node sends requests (§5.4); (b) one shared owner | **(a).** No name or account is fixed, and nobody acts on another person's authority. |
+| 12 | Where the Subswitch settings live | (a) factory core has only a generic `proxies` entry; a `subswitch` preset (base URL, health path) ships in the devflow pack; (b) the preset is in factory core | **(a).** The default setup then names no devflow tool, and a devflow user gets the preset with `factory pack add devflow`. If Subswitch is not part of devflow, (b) is simpler. |
 
 ## 10. Risks
 
 - **Claude Code changes its private layout or its CLI flags.** All Claude Code calls sit in one adapter, with a test that `doctor` runs against the installed version.
+- **A dead proxy stops every lane that uses it.** The health check runs before each launch, the default is `stop` with a clear fix, and the views show which lanes use a proxy (§4.6).
 - **tmux typing is fragile.** factory types only one short line per message and keeps the text in the inbox. Each typed input is checked by a capture.
 - **Scope grows.** The roadmap ships the CLI in stages. Each stage is useful for this workspace before the next one starts.
 - **Two copies of the setup during the move.** The adopt is one step with a dry run, and the old scripts stop when the adopt is done.
