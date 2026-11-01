@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install the dependencies
+        run: npm ci
+
+      - name: Check the types
+        run: npm run typecheck
+
+      - name: Run the unit tests
+        run: npm run test:unit
+
+      - name: Build
+        run: npm run build
+
+      - name: Run the integration tests
+        run: npm run test:integration
+
+      - name: Run the exit check
+        run: npm run exit-check
+
+      - name: Check the shell scripts
+        if: runner.os == 'Linux'
+        run: shellcheck scripts/*.sh
