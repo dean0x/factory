@@ -1,6 +1,6 @@
 # factory: design
 
-Status: draft for Dean's decisions · Lane: factory-design · Date: 2026-11-01
+Status: decided (D-45 A, D-46 B, D-47 yes; 2026-11-01) · Lane: factory-design · Date: 2026-11-01
 Roadmap: `/Users/dean/Sandbox/.devflow/docs/orchestration/roadmaps/factory.md`
 
 ## Summary for Dean (one page)
@@ -23,7 +23,7 @@ Roadmap: `/Users/dean/Sandbox/.devflow/docs/orchestration/roadmaps/factory.md`
 
 **Safety is in the code, not only in the text.** factory can start a session only in auto mode. It has no flag that skips permissions. A proxy (for example Subswitch) is an explicit config option per node and per lane. A launch never takes a stray proxy variable from the shell, and it checks that the configured proxy answers before it starts the session. It types founder-authority input only for a decision that is recorded in the decision log. `factory doctor` checks the safety posture of each node.
 
-**What I need from you** (details in §9). My recommendations:
+**Decided** (details in §9). On 2026-11-01 Dean accepted every recommendation below (D-45 A, D-47 yes):
 1. Language: TypeScript on Node 22+.
 2. Name: binary `factory`, npm package `@dean0x/factory`. Note that a company named Factory sells an AI coding agent, so the name can confuse people.
 3. License MIT. The repo stays private until the first team member installs it, then it goes public.
@@ -79,13 +79,13 @@ Private Claude Code layout: `~/.claude/projects/<cwd>/*.jsonl` (lane activity), 
 ### 1.3 Conflicts to fix before packaging
 
 I checked each of these on the file.
-1. **Merge authority.** `decision-profile/index.md:17` says "Merges, releases and priorities always wait for Dean". CLAUDE.md §5 step 4 delegates merges to the Orchestrator.
+1. **Merge authority (resolved).** `decision-profile/index.md:17` said "Merges, releases and priorities always wait for Dean", while CLAUDE.md §5 step 4 delegated merges to the Orchestrator. D-46 B (2026-11-01) ended the delegation: every merge waits for the owner's go.
 2. **How to stop a session.** `respawn-map.md:7` says "press Ctrl+C twice". CLAUDE.md §12 says that Ctrl+C quits only the client, and uses `kill -TERM`.
 3. **Where lanes live.** `respawn-map.md:3` puts lanes in `orchestrator:lanes`. CLAUDE.md §12 puts them on the bench.
 4. **Context budget.** `protocol.md:46` uses 250k/350k tokens. CLAUDE.md §12 uses 30–35% and 40% of the window.
 5. **Reads under `~/.claude`.** CLAUDE.md §1 tells lanes to avoid them. `lanes-table.py`, `tmux-save-map.sh`, `respawn-map.md:16` and CLAUDE.md §12 ("Moving a session") read there.
 
-factory takes one answer for each. My proposals: (1) the CLAUDE.md delegation wins, and the profile line changes; (2) `kill -TERM`; (3) the bench; (4) the percent rule, because it works for every window size; (5) the heartbeat hook of §4.6.
+factory takes one answer for each. The answers: (1) every merge waits for the owner's go, and factory copies that default (D-46 B); (2) `kill -TERM`; (3) the bench; (4) the percent rule, because it works for every window size; (5) the heartbeat hook of §4.6.
 
 ## 2. The devflow connection
 
@@ -429,7 +429,7 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 | No secrets in output | yes | No command prints env values. `doctor` refuses token-like values in `factory.yaml`. Process lists show only pid, elapsed time and command name. |
 | Peers never ask the owner directly | yes (protocol) | none (model behavior) |
 | One session per checkout | yes | `lane new` refuses a checkout that another lane uses. |
-| Pinned merges; `--admin` only by the node | yes | `pr merge` always passes `--match-head-commit <full SHA>`, and only after `pr gate` passed at that SHA. |
+| Every merge waits for the owner's go; pinned merges; `--admin` only by the node | yes | `pr merge` needs a recorded owner decision for that PR and head SHA. It always passes `--match-head-commit <full SHA>`, and only after `pr gate` passed at that SHA. If the head changes after the go, it refuses. |
 | Releases need the owner's go | yes | `release` commands only check; they do not publish. |
 | Never bypass the state hook | yes | `init` sets `core.hooksPath`; every state write commits through the helper, which refuses when the hook is off. |
 | Never delete another lane's files; look before removing | yes | `clean` is a dry run by default and refuses a worktree with unpushed work or a path that a lane or resume file names. |
@@ -456,7 +456,9 @@ The setup uses Dean's name and devflow's words in many places. factory uses thes
 
 `factory adopt /Users/dean/Sandbox` imports the current setup into a node. It moves `.devflow/docs/orchestration/*` and `decision-profile/` to `.factory/`, renames the files of §7, keeps the git history (a `git mv` in the state repo), and writes `factory.yaml` from the facts in CLAUDE.md §13. It adds the devflow pack to the devflow projects. It keeps the old CLAUDE.md text outside the managed blocks, so Dean can delete the duplicate lines in one review. A dry run comes first. The adopt runs only when all lanes are idle and pushed.
 
-## 9. Open decisions for Dean
+## 9. Decisions
+
+Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the name `factory`; D-47 yes for the heartbeat hook, which comes with FAC-M3). D-46 B sets the merge rule.
 
 | # | Decision | Options | Recommendation |
 |---|---|---|---|
@@ -467,7 +469,7 @@ The setup uses Dean's name and devflow's words in many places. factory uses thes
 | 5 | State folder and config | (a) `.factory/` and `factory.yaml`; (b) other names | **(a).** Never `.devflow/`, because devflow writes there. |
 | 6 | Where a single-project node lives | (a) always a separate node folder; (b) also inside the repo (`<repo>/.factory/`, gitignored) | **(a) first.** One layout for all cases. (b) can come later if people ask. |
 | 7 | Heartbeat hook | (a) factory writes a hook in each checkout's `.claude/settings.local.json`; (b) keep the reads of Claude Code's private files | **(a).** It is stable and needs no reads under `~/.claude`. Your D-21 allows the metadata reads today, so (b) is safe for you, but it ties factory to a private layout. It is a security config change, so it needs your yes. |
-| 8 | Conflicts of §1.3 | my proposals in §1.3 | **Accept them.** The profile line about merges is your call. |
+| 8 | Conflicts of §1.3 | my proposals in §1.3 | **Accept them.** Merge authority is decided by D-46 B: every merge waits for the owner's go, and factory copies that default. |
 | 9 | Remote transport | (a) SSH only at first; (b) a small server | **(a).** No new service and no new port. |
 | 10 | Python and glow | (a) port the Python scripts and the viewer into factory; (b) keep them as external tools | **(a).** Fewer tools on a new machine and one test suite. |
 | 11 | Team defaults | (a) each member owns a root; a lead's node sends requests (§5.4); (b) one shared owner | **(a).** No name or account is fixed, and nobody acts on another person's authority. |
