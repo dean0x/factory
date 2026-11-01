@@ -208,3 +208,10 @@ The health check sends one GET with a 3-second limit (`AbortSignal.timeout`), an
 - **Template text grows too large.** Keep each block short. FAC-M2 and FAC-M3 add text when the commands that need it exist.
 - **`npm i -g` with a temp HOME writes outside the temp folder.** Set `npm_config_prefix`, `npm_config_cache` and `npm_config_userconfig` to temp paths. Check that nothing changes in the real HOME, by an mtime list of `~/.npm` and the global prefix before and after.
 - **The macOS runner has a different `git` default branch or no `tmux`.** The tests set `init.defaultBranch`, and a missing tool is only a warning.
+
+## Resume here (updated 2026-11-01)
+- Phase: implement done (plan steps 1–9). Next: step 10, the review and resolve cycle (`/devflow:code-review`, then `/devflow:resolve`); summaries go in `docs/reviews/`.
+- Branch `fac-m1-skeleton`, head = the commit that adds this block. Nothing pushed; no GitHub repo (waits for Dean's go); no tag, no publish.
+- Verified by the lane: `tsc --noEmit` 0 errors; `npm test` 16 files, 368 tests pass; `npm run exit-check` passes (install from tarball in a throw-away HOME, `init` and `doctor` exit 0, doctor "11 ok, 0 warnings, 0 failures", deny list clean). Snyk: 2 low findings, both in tests (a local `node:http` server for the proxy health-check tests); accepted.
+- Reviewer changes already in: `init` refuses only when the home has `factory.yaml`; a parent `factory.yaml` gives a warning (no parent link). Every user-visible name is in `src/names.ts`; a test fails on a stray literal. Do not rename until the Orchestrator sends Dean's naming decision set (feedback file: `/Users/dean/Sandbox/.devflow/docs/orchestration/briefs/factory-design-feedback-2026-11-01.md`).
+- Open: untracked `.schema.tmp` in the repo root (a build agent's temp file; its delete was denied; not committed). The working `.gitignore` has an uncommitted devflow block added by a tool; do not commit it. LICENSE holder is "Dean Sharon" (from git config). CI uses `actions/*@v4` tags.
