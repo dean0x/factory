@@ -56,6 +56,14 @@ const nextStateRaw = (migrated: unknown, changes: readonly BlockPlan[]): CliResu
 
 const timestampOf = (deps: Deps): string => deps.now().toISOString().replace(/[:.]/g, '-');
 
+/** The name of a backup folder: a timestamp. Any other name in the backups folder is not ours. */
+const BACKUP_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
+export const BACKUPS_KEPT = 5;
+
+/**
+ * Copy the files that upgrade can change. The run-time folders `state/` and `locks/` are left out:
+ * upgrade writes only the config file, CLAUDE.md, the protocol file and the state file, and it never writes into them.
+ */
 export const backup = async (deps: Deps, home: string): Promise<CliResult<string>> => {
   const layout = layoutOf(home);
   const target = join(layout.backupsDir, timestampOf(deps));
@@ -64,11 +72,12 @@ export const backup = async (deps: Deps, home: string): Promise<CliResult<string
   if (exists.value !== null) return failure(`the backup folder ${relative(home, target)} exists already`);
   const made = await deps.fs.mkdir(target);
   if (!made.ok) return made;
+  const runtimeDirs = [dirs.runtime, dirs.locks].map((name) => join(layout.stateDir, name));
 
   const copies: readonly (readonly [string, string, readonly string[]])[] = [
     [layout.configFile, join(target, files.config), []],
     [layout.claudeMd, join(target, files.claudeMd), []],
-    [layout.stateDir, join(target, dirs.state), [layout.backupsDir]],
+    [layout.stateDir, join(target, dirs.state), [layout.backupsDir, ...runtimeDirs]],
   ];
   for (const [from, to, skip] of copies) {
     const kind = await deps.fs.stat(from);
@@ -78,6 +87,23 @@ export const backup = async (deps: Deps, home: string): Promise<CliResult<string
     if (!copied.ok) return copied;
   }
   return ok(target);
+};
+
+/**
+ * Remove the oldest backups, so that at most `BACKUPS_KEPT` stay and the current one is one of them.
+ * Folders with another name stay. Returns the messages of the failures.
+ */
+export const pruneBackups = async (deps: Deps, home: string, current: string): Promise<readonly string[]> => {
+  const { backupsDir } = layoutOf(home);
+  const names = await deps.fs.list(backupsDir);
+  if (!names.ok) return [names.error.message];
+  const older = names.value.filter((name) => BACKUP_NAME.test(name) && join(backupsDir, name) !== current);
+  const problems: string[] = [];
+  for (const name of older.slice(0, Math.max(0, older.length - (BACKUPS_KEPT - 1)))) {
+    const removed = await deps.fs.remove(join(backupsDir, name));
+    if (!removed.ok) problems.push(removed.error.message);
+  }
+  return problems;
 };
 
 /** Put the old text back, newest change first. Returns the messages of the failures. */

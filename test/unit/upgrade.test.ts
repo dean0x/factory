@@ -194,6 +194,19 @@ describe('upgrade: managed blocks', () => {
     expect([...deps.files.keys()].some((path) => path.startsWith(`${BACKUP}/.factory/backups`))).toBe(false);
   });
 
+  it('leaves the run-time folders out of the backup, because upgrade never writes into them', async () => {
+    const { deps } = await makeNode();
+    deps.seed(`${HOME}/.factory/state/run.json`, '{}');
+    deps.seed(`${HOME}/.factory/locks/lane.lock`, '1');
+    success(await upgrade(deps, newer));
+    const saved = [...deps.files.keys()].filter((path) => path.startsWith(`${BACKUP}/`));
+    expect(saved).toContain(`${BACKUP}/.factory/node.json`);
+    expect(saved.some((path) => path.startsWith(`${BACKUP}/.factory/state/`))).toBe(false);
+    expect(saved.some((path) => path.startsWith(`${BACKUP}/.factory/locks/`))).toBe(false);
+    expect(text(deps, `${HOME}/.factory/state/run.json`)).toBe('{}');
+    expect(text(deps, `${HOME}/.factory/locks/lane.lock`)).toBe('1');
+  });
+
   it('updates a block in the protocol file', async () => {
     const { deps } = await makeNode();
     success(await upgrade(deps, blocksSpec(withBlock('protocol', 2, 'New protocol text.'))));
@@ -472,6 +485,68 @@ describe('upgrade: when a step fails after the backup', () => {
     deps.files.delete(PROTOCOL);
     refusal(await upgrade(deps, currentSpec, { overwrite: ['protocol'] }));
     expect(deps.files.has(PROTOCOL)).toBe(false);
+  });
+});
+
+describe('upgrade: the number of backups', () => {
+  const newer = blocksSpec(withBlock('coordinator', 2, 'New coordinator text.'));
+  const BACKUPS = `${HOME}/.factory/backups`;
+  const stamp = (day: number): string => `2029-01-${String(day).padStart(2, '0')}T00-00-00-000Z`;
+  const kept = (deps: FakeDeps): string[] => {
+    const names = new Set<string>();
+    for (const path of deps.files.keys()) {
+      if (path.startsWith(`${BACKUPS}/`)) names.add(path.slice(BACKUPS.length + 1).split('/')[0] ?? '');
+    }
+    return [...names].sort();
+  };
+  const seedBackups = (deps: FakeDeps, days: number): void => {
+    for (let day = 1; day <= days; day += 1) deps.seed(`${BACKUPS}/${stamp(day)}/factory.yaml`, 'old backup');
+  };
+
+  it('keeps the last 5 backups and removes the older ones after a successful upgrade', async () => {
+    const { deps } = await makeNode();
+    seedBackups(deps, 7);
+    success(await upgrade(deps, newer));
+    expect(kept(deps)).toEqual([stamp(4), stamp(5), stamp(6), stamp(7), '2030-01-02T03-04-05-678Z']);
+  });
+
+  it('keeps the folders that are not backups of this tool', async () => {
+    const { deps } = await makeNode();
+    seedBackups(deps, 7);
+    deps.seed(`${BACKUPS}/my-notes/readme.txt`, 'mine');
+    success(await upgrade(deps, newer));
+    expect(text(deps, `${BACKUPS}/my-notes/readme.txt`)).toBe('mine');
+  });
+
+  it('keeps every older backup when the upgrade fails', async () => {
+    const { deps } = await makeNode({
+      run: (inner) => (call) => (call.args.includes('commit') ? exited(1) : inner(call)),
+    });
+    seedBackups(deps, 7);
+    refusal(await upgrade(deps, newer));
+    expect(kept(deps)).toHaveLength(8);
+  });
+
+  it('removes no backup when nothing changes', async () => {
+    const { deps } = await makeNode();
+    seedBackups(deps, 7);
+    success(await upgrade(deps));
+    expect(kept(deps)).toHaveLength(7);
+  });
+
+  it('succeeds with a warning when an old backup cannot be removed', async () => {
+    const { deps } = await makeNode();
+    seedBackups(deps, 7);
+    const stuck: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        remove: async (path) => (path === `${BACKUPS}/${stamp(1)}` ? failure(`cannot remove ${path}: EBUSY`) : deps.fs.remove(path)),
+      },
+    };
+    const output = success(await upgrade(stuck, newer));
+    expect(output.warnings.join('\n')).toContain(`cannot remove ${BACKUPS}/${stamp(1)}: EBUSY`);
+    expect(kept(deps)).toEqual([stamp(1), stamp(4), stamp(5), stamp(6), stamp(7), '2030-01-02T03-04-05-678Z']);
   });
 });
 

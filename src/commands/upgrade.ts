@@ -12,6 +12,7 @@ import {
   backup,
   blockFileTexts,
   configFileText,
+  pruneBackups,
   restore,
   stateFileText,
   writeAll,
@@ -72,7 +73,7 @@ export const runUpgrade = async (
     ok({
       lines: [...lines, ...extra],
       json: { schema: schemaIds.upgrade, home, dryRun: options.dryRun, changed, ...summary, backup: backupPath, committed },
-      warnings,
+      warnings: [...warnings, ...extra.filter((line) => line.level === 'warn').map((line) => line.text)],
       failed: false,
     });
 
@@ -139,8 +140,14 @@ export const runUpgrade = async (
   }
 
   const count = written.length;
+  const pruned = await pruneBackups(deps, home, backupDir.value);
   return done(
-    [{ level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` }],
+    [
+      { level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` },
+      ...(pruned.length === 0
+        ? []
+        : [{ level: 'warn' as const, text: `Old ${dirs.backups} could not be removed: ${pruned.join('; ')}.` }]),
+    ],
     backupPath,
     stateChanged,
   );

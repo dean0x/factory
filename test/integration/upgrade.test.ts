@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeSandbox, type Sandbox } from './harness.js';
@@ -61,6 +61,31 @@ describe('factory upgrade (built binary)', () => {
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
     expect(doctor.stdout).toContain('3 managed blocks are intact');
+  });
+
+  it('keeps the last 5 backups, and leaves the run-time folders out of the new backup', async () => {
+    await initNode();
+    const stateDir = join(box.node, '.factory');
+    await mkdir(join(stateDir, 'state'), { recursive: true });
+    await writeFile(join(stateDir, 'state', 'run.json'), '{}');
+    await mkdir(join(stateDir, 'locks'), { recursive: true });
+    await writeFile(join(stateDir, 'locks', 'lane.lock'), '1');
+    for (let day = 1; day <= 6; day += 1) {
+      await mkdir(join(stateDir, 'backups', `2020-01-0${day}T00-00-00-000Z`), { recursive: true });
+    }
+    await editCoordinator();
+
+    const upgraded = await box.run(['upgrade', '--home', box.node, '--overwrite', 'coordinator']);
+    expect(upgraded.code).toBe(0);
+
+    const names = (await readdir(join(stateDir, 'backups'))).sort();
+    expect(names).toHaveLength(5);
+    expect(names.slice(0, 4)).toEqual([3, 4, 5, 6].map((day) => `2020-01-0${day}T00-00-00-000Z`));
+    const saved = await readdir(join(stateDir, 'backups', names[4] ?? '?', '.factory'));
+    expect(saved).toContain('node.json');
+    expect(saved).not.toContain('state');
+    expect(saved).not.toContain('locks');
+    expect(await box.read(join(stateDir, 'state', 'run.json'))).toBe('{}');
   });
 
   it('exits 2 for the name of a block that does not exist', async () => {
