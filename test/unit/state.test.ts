@@ -8,11 +8,11 @@ import {
 } from '../../src/state/files.js';
 import { layoutOf, stagingDirOf } from '../../src/state/layout.js';
 import { inspectState, loadState, parseJsonText } from '../../src/state/load.js';
-import { nodeStateSchema } from '../../src/state/schema.js';
+import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 
-const valid = { schema_version: 1, created_with: '0.1.0', blocks: { coordinator: 1, safety: 1, worker: 1 } };
+const valid = { schema_version: STATE_SCHEMA_VERSION, created_with: '0.1.0', blocks: { coordinator: 1, safety: 1, worker: 1 } };
 
 const issues = (value: unknown): string | null => {
   const parsed = nodeStateSchema.safeParse(value);
@@ -29,8 +29,8 @@ describe('state schema', () => {
   });
 
   it('rejects a bad version, a missing key and a bad block entry', () => {
-    expect(issues({ ...valid, schema_version: 2 })).toContain('schema_version:');
-    expect(issues({ schema_version: 1, blocks: {} })).toContain('created_with:');
+    expect(issues({ ...valid, schema_version: STATE_SCHEMA_VERSION + 1 })).toContain('schema_version:');
+    expect(issues({ schema_version: STATE_SCHEMA_VERSION, blocks: {} })).toContain('created_with:');
     expect(issues({ ...valid, blocks: { 'Bad Name': 1 } })).toContain('blocks.Bad Name');
     expect(issues({ ...valid, blocks: { coordinator: 0 } })).toContain('blocks.coordinator:');
     expect(issues({ ...valid, blocks: { coordinator: 1.5 } })).toContain('blocks.coordinator:');
@@ -65,8 +65,19 @@ describe('inspectState and loadState', () => {
   });
 
   it('reports a newer schema_version', async () => {
-    const state = await inspectState(withState(jsonText({ ...valid, schema_version: 2 })), HOME);
-    expect(state).toMatchObject({ kind: 'newer', version: 2 });
+    const newer = STATE_SCHEMA_VERSION + 1;
+    const state = await inspectState(withState(jsonText({ ...valid, schema_version: newer })), HOME);
+    expect(state).toMatchObject({ kind: 'newer', version: newer });
+  });
+
+  it('reports the schema_version of a FAC-M1 node as older and says to run upgrade', async () => {
+    const text = jsonText({ schema_version: 1, created_with: '0.1.0', blocks: { coordinator: 1, safety: 1, protocol: 1 } });
+    const state = await inspectState(withState(text), HOME);
+    expect(state).toMatchObject({ kind: 'older', version: 1 });
+    expect(await loadState(withState(text), HOME)).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining('Run "factory upgrade".') },
+    });
   });
 
   it('reports an invalid document', async () => {

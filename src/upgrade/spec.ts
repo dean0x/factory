@@ -5,6 +5,7 @@ import { configSchema } from '../config/schema.js';
 import { ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
+import { fileSteps, type FileStep } from '../migrate/files.js';
 import type { SchemaParser, TextParser, VersionSpec } from '../migrate/inspect.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
@@ -25,6 +26,8 @@ export interface UpgradeFile {
 export interface UpgradeSpec {
   readonly config: UpgradeFile;
   readonly state: UpgradeFile;
+  /** The files that move, and the blocks that get a new name, when the state migrates. */
+  readonly files: readonly FileStep[];
   readonly blocks: readonly BlockTemplate[];
 }
 
@@ -48,5 +51,6 @@ export const currentSpec: UpgradeSpec = {
     migrations: stateMigrations,
     finish: finisher(nodeStateSchema, jsonText),
   },
+  files: fileSteps,
   blocks: blockTemplates,
 };

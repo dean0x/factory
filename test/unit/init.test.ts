@@ -5,6 +5,7 @@ import { applyInit, planInit, runInit, type InitOptions } from '../../src/comman
 import { loadConfig } from '../../src/config/load.js';
 import type { Deps } from '../../src/core/deps.js';
 import { loadState } from '../../src/state/load.js';
+import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps } from '../helpers/fake-deps.js';
@@ -98,7 +99,7 @@ describe('init: the files', () => {
     expect(await loadState(deps, HOME)).toEqual({
       ok: true,
       value: {
-        schema_version: 1,
+        schema_version: STATE_SCHEMA_VERSION,
         created_with: FACTORY_VERSION,
         blocks: { coordinator: 2, safety: 2, worker: 1 },
       },

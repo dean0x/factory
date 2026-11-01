@@ -1,0 +1,42 @@
+# factory.yaml: the configuration of this node.
+# People edit this file. Do not put keys, tokens or passwords here.
+schema: 1
+
+node:
+  id: demo    # also the name of the tmux session
+  role: coordinator
+
+owner:
+  display: "Test Owner"
+  # Input that starts with this prefix carries the authority of the owner.
+  prefix: "[From {owner}, typed by {node} at the owner's explicit instruction, {date}]"
+
+session:
+  permission_mode: auto    # the only accepted value
+  effort: high
+  model: default
+  proxy: none    # none, or the id of an entry in proxies
+
+# A session uses a proxy only when the config names it. Factory checks the proxy before each launch.
+proxies: []
+
+# Overrides for single lanes: <lane id>: { proxy: none }
+lanes: {}
+
+limits:
+  memory_free_min_pct: 20
+  disk_free_min_gb: 20
+  load_max: cpu_count
+  context_prepare_pct: 30
+  context_max_pct: 40
+
+# Each project path is relative to this folder.
+projects:
+  - id: web
+    path: "../web"
+    default_branch: "main"
+    merge_method: squash
+    pack: plain
+    gate: { checks: [] }
+
+children: []

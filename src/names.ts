@@ -174,6 +174,16 @@ export const checkIds = {
 
 export const blockNames = { coordinator: 'coordinator', safety: 'safety', worker: 'worker' } as const;
 
+/**
+ * The names of a FAC-M1 node (schema 1) that schema 2 does not use. Only the migrations from schema 1 read them.
+ */
+export const schema1 = {
+  keys: { role: 'role', lanes: 'lanes', projects: 'projects', pack: 'pack' },
+  protocolFile: 'protocol.md',
+  briefsDir: 'briefs',
+  protocolBlock: 'protocol',
+} as const;
+
 /** Markers of managed blocks: `<!-- factory:begin <name> v<n> sha256=<hex> -->` and `<!-- factory:end <name> -->`. */
 export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash: 'sha256' } as const;
 

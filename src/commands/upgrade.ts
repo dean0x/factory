@@ -1,5 +1,5 @@
 import { join, relative } from 'node:path';
-import { inspectBlocks } from '../blocks/status.js';
+import { inspectBlocks, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
@@ -9,6 +9,7 @@ import { ok } from '../core/result.js';
 import { commands, commandText, dirs, flags, flagText, schemaIds } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import {
+  applyMoves,
   backup,
   blockFileTexts,
   configFileText,
@@ -16,10 +17,11 @@ import {
   restore,
   stateFileText,
   writeAll,
+  type Moved,
   type NewFile,
   type Written,
 } from '../upgrade/apply.js';
-import { isChange, planBlock, planFile, planLines, refusalOf } from '../upgrade/plan.js';
+import { isChange, planBlock, planFile, planFiles, planLines, refusalOf } from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
 
 export interface UpgradeOptions {
@@ -36,7 +38,8 @@ export const runUpgrade = async (
   upgrade: UpgradeSpec = currentSpec,
 ): Promise<CliResult<CommandOutput>> => {
   const known = upgrade.blocks.map((template) => template.name);
-  const unknown = options.overwrite.filter((name) => !known.includes(name));
+  const oldNames = upgrade.files.flatMap((step) => step.renames.map((rename) => rename.from));
+  const unknown = options.overwrite.filter((name) => !known.includes(name) && !oldNames.includes(name));
   if (unknown.length > 0) {
     return usageError(`${flagText(flags.overwrite)}: unknown block ${unknown.join(', ')}`, `The blocks are: ${known.join(', ')}.`);
   }
@@ -53,20 +56,26 @@ export const runUpgrade = async (
   if (!config.ok) return config;
   const state = await planFile(deps, layout.nodeJson, upgrade.state);
   if (!state.ok) return state;
-  const blocks = (await inspectBlocks(deps, home, upgrade.blocks)).map((status) =>
-    planBlock(status, options.overwrite.includes(status.template.name)),
+  const files = await planFiles(deps, layout, state.value, upgrade.files);
+  if (!files.ok) return files;
+  // A block that gets a new name is named by its old name or its new name.
+  const named = (status: BlockStatus): boolean =>
+    options.overwrite.some((name) => name === status.template.name || name === renamedFromOf(status));
+  const blocks = (await inspectBlocks(deps, home, upgrade.blocks, files.value)).map((status) =>
+    planBlock(status, named(status)),
   );
 
   const refused = refusalOf(blocks);
   if (!refused.ok) return refused;
 
-  const lines = planLines(config.value, state.value, blocks, upgrade);
+  const lines = planLines(config.value, state.value, files.value, blocks, upgrade);
   const changes = blocks.filter(isChange);
   const changed = config.value.kind === 'migrate' || state.value.kind === 'migrate' || changes.length > 0;
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
   const summary = {
     config: { from: config.value.kind === 'current' ? config.value.version : config.value.from, to: upgrade.config.spec.supported },
     state: { from: state.value.kind === 'current' ? state.value.version : state.value.from, to: upgrade.state.spec.supported },
+    moves: files.value.moves.map((move) => ({ from: move.from, to: move.to })),
     blocks: blocks.map((plan) => ({ name: plan.template.name, action: plan.action, from: plan.from, to: plan.template.version })),
   };
   const done = (extra: readonly OutLine[], backupPath: string | null, committed: boolean): CliResult<CommandOutput> =>
@@ -97,8 +106,9 @@ export const runUpgrade = async (
   const backupPath = relative(home, backupDir.value);
 
   const written: Written[] = [];
+  const moved: Moved[] = [];
   const abort = async (error: string): Promise<CliResult<never>> => {
-    const problems = await restore(deps, written);
+    const problems = await restore(deps, written, moved);
     const unstaged = touchesState ? await unstageAll(deps, layout.stateDir) : ok(undefined);
     const notes: string[] = [];
     if (problems.length > 0) {
@@ -122,6 +132,8 @@ export const runUpgrade = async (
   if (!stateText.ok) return abort(stateText.error.message);
   const configText = configFileText(config.value, upgrade);
   if (!configText.ok) return abort(configText.error.message);
+  const movedFiles = await applyMoves(deps, files.value.moves, moved);
+  if (!movedFiles.ok) return abort(movedFiles.error.message);
   const blockTexts = await blockFileTexts(deps, home, changes);
   if (!blockTexts.ok) return abort(blockTexts.error.message);
 
@@ -133,13 +145,14 @@ export const runUpgrade = async (
   const wrote = await writeAll(deps, newFiles, written);
   if (!wrote.ok) return abort(wrote.error.message);
 
-  const stateChanged = written.some((entry) => !relative(layout.stateDir, entry.path).startsWith('..'));
+  const stateChanged =
+    moved.length > 0 || written.some((entry) => !relative(layout.stateDir, entry.path).startsWith('..'));
   if (stateChanged) {
     const committed = await commitAll(deps, layout.stateDir, COMMIT_MESSAGE);
     if (!committed.ok) return abort(committed.error.message);
   }
 
-  const count = written.length;
+  const count = written.length + moved.length;
   const pruned = await pruneBackups(deps, home, backupDir.value);
   return done(
     [

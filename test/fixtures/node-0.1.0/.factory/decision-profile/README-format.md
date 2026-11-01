@@ -1,0 +1,107 @@
+# Decision profile: format and update rules
+
+This file gives the format of the decision profile. It also gives the steps to update the profile after each decision.
+All text uses ASD-STE100 Simplified Technical English. Quotes of the owner stay verbatim.
+
+## Folder layout
+
+| Path | Content |
+|---|---|
+| `index.md` | What the profile is, how to use it, and the table of principles by area. |
+| `principles/<id>.md` | One principle per file. |
+| `decisions/<yyyy-mm-dd>-<slug>.md` | One decision record per file. |
+| `log.md` | One dated line for each decision record, newest first. |
+| `open-questions.md` | Questions that the profile cannot answer, and tensions between principles. |
+| `README-format.md` | This file. |
+
+Create a file or a folder when you need it for the first time.
+
+## Principle file
+
+Frontmatter:
+
+```yaml
+---
+id: kebab-case-id            # same as the file name
+title: Short title
+area: one area from index.md
+strength: firm | likely | tentative
+scope: global                # or a list of project names
+first_seen: yyyy-mm-dd
+last_confirmed: yyyy-mm-dd
+sources:
+  - source reference
+---
+```
+
+Body sections, in this order:
+
+1. `## Statement`: one to three sentences.
+2. `## How the owner decides`: the reason and the trade-off that the owner makes.
+3. `## Signals`: what in a situation tells you that the principle applies.
+4. `## Exceptions and limits`: where the principle stops.
+5. `## Examples`: dated items. Link each item to a decision record when one exists.
+6. `## Related`: `[[other-principle-id]]` links. Use many links.
+
+Keep each principle file under about 60 lines.
+
+### Strength
+
+- **firm**: the owner said it as a rule, or it has three or more confirmations in different contexts. Decide from it without a question.
+- **likely**: two confirmations, or one clear statement. Decide from it and name it in your report of decisions.
+- **tentative**: one observation, or limited to one project. Decide from it only inside its scope. Outside the scope, ask the owner.
+
+### Scope
+
+`global` means all projects. A list of project names limits the principle to those projects.
+
+### Dates
+
+`first_seen` is the earliest date that a source shows. `last_confirmed` is the date of the newest example or source.
+
+## Decision record
+
+Frontmatter:
+
+```yaml
+---
+date: yyyy-mm-dd
+context: project name
+principles: [principle-id, principle-id]
+decided_by: owner | coordinator-from-profile
+---
+```
+
+Body sections, in this order: `## Question`, `## Options`, `## Choice`, `## Reason` (the words of the owner when known), `## Consequences or follow-ups`.
+
+Link each principle in the body with `[[principle-id]]`.
+
+## Update procedure
+
+Do these steps after each decision. The decision can come from the owner, or from the coordinator on behalf of the owner.
+
+1. Write a decision record in `decisions/`. Set `decided_by`.
+2. Add one line to the top of `log.md`.
+3. Find the principles in `index.md` that cover the decision.
+4. If the decision agrees with a principle:
+   - Add the decision as a dated example in the principle file, with a link to the record.
+   - Set `last_confirmed` to the date of the decision.
+   - If the confirmation comes from a different context, raise the strength one step.
+   - If the decision widens the scope to a new project, add the project to `scope`.
+5. If the decision contradicts a principle:
+   - Do not overwrite the principle silently.
+   - Add an entry to `open-questions.md`. Give both sides, the dates and the links.
+   - Ask the owner at the next update. Then write a decision record, change the principle and close the entry.
+6. If the decision is new and no principle covers it:
+   - Create a principle file with strength `tentative` and the narrowest correct scope.
+   - Add a row to the table in `index.md`.
+7. Keep the profile linked. Add `[[id]]` links in both directions between related principles.
+
+## Rules for the coordinator
+
+- Look up the profile before you decide for the owner.
+- If a firm or likely principle covers the case, decide. Name the principle id in your report of decisions.
+- If only a tentative principle covers the case and the case is outside its scope, ask the owner.
+- If two principles conflict, or the case is in `open-questions.md`, ask the owner.
+- Decisions that need the authority of the owner wait for the owner, even when the profile covers them. These are merges, releases and priorities.
+- Never invent a decision or a quote. Record only what the owner said or what a principle covers.

@@ -13,6 +13,7 @@ import {
   marker,
   program,
   roles,
+  schema1,
   schemaIds,
   stateKeys,
   templateValues,
@@ -73,11 +74,20 @@ const EXACT_NAMES = new Set([
     keys.recipe,
     keys.link,
     stateKeys,
+    schema1.keys,
   ),
 ]);
 
 /** Names that a string literal must never hold as a part, matched as whole words. */
-const WORD_NAMES = [program, ...flat(roles), dirs.profile, dirs.roadmaps, dirs.orders, dirs.backups];
+const WORD_NAMES = [
+  program,
+  ...flat(roles),
+  dirs.profile,
+  dirs.roadmaps,
+  dirs.orders,
+  dirs.backups,
+  schema1.briefsDir,
+];
 
 /**
  * Names that a string literal must never hold as a part, matched as plain text.
@@ -85,6 +95,7 @@ const WORD_NAMES = [program, ...flat(roles), dirs.profile, dirs.roadmaps, dirs.o
  */
 const TEXT_NAMES = [
   ...flat(files),
+  schema1.protocolFile,
   dirs.state,
   dirs.claude,
   claudeSettings.suffix,

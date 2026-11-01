@@ -131,7 +131,7 @@ describe('doctor: config, version and state', () => {
     expect(checkState(await inspectState(deps, HOME))).toMatchObject({ level: 'fail', text: '.factory/node.json not found' });
     deps.files.set(path, '{');
     expect(checkState(await inspectState(deps, HOME)).level).toBe('fail');
-    deps.files.set(path, original.replace('"schema_version": 1', '"schema_version": 5'));
+    deps.files.set(path, original.replace(/"schema_version": \d+/, '"schema_version": 5'));
     const newer = checkState(await inspectState(deps, HOME));
     expect(newer.level).toBe('fail');
     expect(newer.text).toContain('Upgrade factory.');

@@ -7,7 +7,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { runInit } from '../../src/commands/init.js';
 import { runUpgrade } from '../../src/commands/upgrade.js';
 import { parseYamlText } from '../../src/config/load.js';
-import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
+import { CONFIG_SCHEMA_VERSION, configSchema } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
 import { jsonText } from '../../src/state/files.js';
@@ -17,6 +17,7 @@ import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../..
 import { blockTemplates, type BlockTemplate } from '../../src/templates/index.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
+import { schema1Doc, schema1Paths, seedSchema1Node } from '../helpers/schema1.js';
 
 /** The schema versions that this factory reads. A test migration starts from them. */
 const C = CONFIG_SCHEMA_VERSION;
@@ -343,6 +344,7 @@ describe('upgrade: migrations', () => {
     const spec: UpgradeSpec = {
       config: currentSpec.config,
       state: stateAt(S + 1, [step('schema_version', S, { note: 'x' })]),
+      files: currentSpec.files,
       blocks: withBlock('safety', 'New safety text.'),
     };
     const output = success(await upgrade(deps, spec));
@@ -361,6 +363,7 @@ describe('upgrade: migrations', () => {
     const spec: UpgradeSpec = {
       config: configAt(C + 1, [step('schema', C)]),
       state: stateAt(S + 1, [step('schema_version', S)]),
+      files: currentSpec.files,
       blocks: withBlock('coordinator', 'New coordinator text.'),
     };
     success(await upgrade(deps, spec));
@@ -591,7 +594,7 @@ describe('upgrade: before it changes anything', () => {
     expect(refusal(await upgrade(deps)).message).toBe('.factory/node.json not found');
     deps.files.set(NODE_JSON, '{');
     expect(refusal(await upgrade(deps)).message).toContain('does not parse');
-    deps.files.set(NODE_JSON, '{"schema_version":1}');
+    deps.files.set(NODE_JSON, JSON.stringify({ schema_version: S }));
     expect(refusal(await upgrade(deps)).message).toContain('is invalid');
   });
 
@@ -605,5 +608,237 @@ describe('upgrade: before it changes anything', () => {
     });
     const none = await runUpgrade(createFakeDeps({ cwd: '/empty' }), { home: undefined, dryRun: false, overwrite: [] }, currentSpec);
     expect(refusal(none).hint).toContain('--home DIR');
+  });
+});
+
+describe('upgrade: a node of schema 1', () => {
+  const OLD = schema1Paths(HOME);
+  const ROLES = `${HOME}/.factory/roles`;
+  const ORDERS_KEEP = `${HOME}/.factory/orders/.gitkeep`;
+  const BACKUPS_DIR = `${HOME}/.factory/backups/`;
+  const workerBody = blockTemplates.find((template) => template.name === 'worker')?.body ?? '';
+  const workerLine = workerBody.split('\n').find((line) => line.length > 20 && !line.startsWith('#')) ?? '';
+
+  const makeOldNode = (
+    options: { run?: (inner: RunHandler) => RunHandler; doc?: Record<string, any> } = {},
+  ): Node => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin' }, run: options.run?.(handler) ?? handler });
+    seedSchema1Node(deps, HOME, options.doc);
+    const first = deps.calls.length;
+    return { deps, gitSince: () => deps.calls.slice(first).map((call) => call.args.slice(2).join(' ')) };
+  };
+
+  /** The files of the node, without the backups. */
+  const live = (deps: FakeDeps): Map<string, string> =>
+    new Map([...deps.files].filter(([path]) => !path.startsWith(BACKUPS_DIR)));
+
+  it('has a worker line to edit', () => {
+    expect(workerLine).not.toBe('');
+  });
+
+  it('shows the moves and the renamed block in a dry run, and changes no file', async () => {
+    const { deps } = makeOldNode();
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toEqual(
+      expect.arrayContaining([
+        `factory.yaml: schema 1 to ${C} (1 step)`,
+        `.factory/node.json: schema_version 1 to ${S} (1 step)`,
+        'move .factory/protocol.md to .factory/roles/worker.md',
+        'move .factory/briefs to .factory/orders',
+        `block protocol: becomes block worker, version ${versionOf('worker')}`,
+        `block coordinator: version 1 to ${versionOf('coordinator')}`,
+        `block safety: version 1 to ${versionOf('safety')}`,
+        'Dry run: no file was changed.',
+      ]),
+    );
+    expect(output.json).toMatchObject({
+      changed: true,
+      dryRun: true,
+      moves: [
+        { from: '.factory/protocol.md', to: '.factory/roles/worker.md' },
+        { from: '.factory/briefs', to: '.factory/orders' },
+      ],
+    });
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('moves the files, migrates the config and the state, renames the block, and commits once', async () => {
+    const { deps, gitSince } = makeOldNode();
+    const output = success(await upgrade(deps));
+
+    expect(deps.files.has(OLD.protocol)).toBe(false);
+    expect(deps.files.has(OLD.briefsKeep)).toBe(false);
+    expect(deps.files.has(ORDERS_KEEP)).toBe(true);
+    const worker = text(deps, WORKER);
+    expect(worker).toContain(`<!-- factory:begin worker v${versionOf('worker')} sha256=`);
+    expect(worker).not.toContain('factory:begin protocol');
+    expect((await inspectBlocks(deps, HOME, blockTemplates)).map((status) => status.kind)).toEqual([
+      'intact',
+      'intact',
+      'intact',
+    ]);
+
+    const config = parseYamlText(text(deps, CONFIG));
+    expect(config.ok && configSchema.safeParse(config.value).success).toBe(true);
+    expect(config.ok && config.value).toMatchObject({
+      schema: C,
+      node: { id: 'demo', layer: 1 },
+      tracker: { kind: 'local' },
+      approval: { land: 'each' },
+      parent: null,
+      recipe: { id: 'software', variant: 'plain' },
+    });
+    const state = parseJsonText(text(deps, NODE_JSON));
+    expect(state.ok && state.value).toEqual({
+      schema_version: S,
+      created_with: '0.1.0',
+      blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
+    });
+
+    expect(output.lines.at(-1)?.text).toBe('Changed 6 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+    expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S } });
+    expect(gitSince().filter((command) => command === 'add -A')).toHaveLength(1);
+    expect(gitSince().some((command) => command.endsWith('chore: upgrade the state'))).toBe(true);
+    expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
+    expect(deps.files.has(`${BACKUP}/.factory/briefs/.gitkeep`)).toBe(true);
+  });
+
+  it('has nothing to upgrade the second time', async () => {
+    const { deps } = makeOldNode();
+    success(await upgrade(deps));
+    const before = snapshot(deps);
+    expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('refuses the edited protocol block with the old name in the hint, and changes nothing', async () => {
+    const { deps, gitSince } = makeOldNode();
+    edit(deps, OLD.protocol, workerLine, 'My own rule for the workers.');
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain('block protocol was edited');
+    expect(error.hint).toContain('--overwrite protocol');
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).kind).toBe('safety');
+  });
+
+  it.each(['protocol', 'worker'])('replaces the edited protocol block when %s is named', async (name) => {
+    const { deps } = makeOldNode();
+    edit(deps, OLD.protocol, workerLine, 'My own rule for the workers.');
+    success(await upgrade(deps, currentSpec, { overwrite: [name] }));
+    expect(text(deps, WORKER)).toContain(workerLine);
+    expect(text(deps, WORKER)).not.toContain('My own rule for the workers.');
+    expect(deps.files.has(OLD.protocol)).toBe(false);
+    expect((await inspectBlocks(deps, HOME, blockTemplates)).every((status) => status.kind === 'intact')).toBe(true);
+  });
+
+  it('keeps the text around the protocol block', async () => {
+    const { deps } = makeOldNode();
+    deps.files.set(OLD.protocol, `My notes.\n\n${text(deps, OLD.protocol)}\nMore notes.\n`);
+    success(await upgrade(deps));
+    expect(text(deps, WORKER).startsWith('My notes.\n')).toBe(true);
+    expect(text(deps, WORKER).endsWith('\nMore notes.\n')).toBe(true);
+  });
+
+  it.each([
+    ['the worker file', `${ROLES}/worker.md`, '.factory/protocol.md to .factory/roles/worker.md'],
+    ['the orders folder', `${HOME}/.factory/orders/note.md`, '.factory/briefs to .factory/orders'],
+  ])('refuses a move onto %s that exists, and changes nothing', async (_label, target, moveText) => {
+    const { deps } = makeOldNode();
+    deps.seed(target, 'mine');
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps));
+    expect(error.kind).toBe('failure');
+    expect(error.message).toBe(`cannot move ${moveText}: the target exists`);
+    expect(snapshot(deps)).toEqual(before);
+    expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).message).toContain('the target exists');
+  });
+
+  it('skips a move whose source is missing, and warns about the missing block', async () => {
+    const { deps } = makeOldNode();
+    deps.files.delete(OLD.protocol);
+    const output = success(await upgrade(deps));
+    expect(deps.files.has(WORKER)).toBe(false);
+    expect(deps.files.has(ORDERS_KEEP)).toBe(true);
+    expect(output.warnings).toEqual(['block worker is missing. Use --overwrite worker to add it.']);
+    expect(output.json).toMatchObject({ moves: [{ from: '.factory/briefs', to: '.factory/orders' }] });
+  });
+
+  it('stops on a child with an address that is not a file address, and moves nothing', async () => {
+    const doc = schema1Doc();
+    doc.children = [{ id: 'team-a', address: 'ssh://deploy:SECRET-TOKEN@host/work' }];
+    const { deps } = makeOldNode({ doc });
+    const before = live(deps);
+    const error = refusal(await upgrade(deps));
+    expect(error.message).toContain('factory.yaml: migration from version 1 to 2 failed');
+    expect(error.message).toContain('children[0] "team-a"');
+    expect(error.message).not.toContain('SECRET-TOKEN');
+    expect(live(deps)).toEqual(before);
+  });
+
+  it('restores the moved files and the written files when a write fails in the middle', async () => {
+    const { deps, gitSince } = makeOldNode();
+    const before = live(deps);
+    const failing = withFailingWrites(deps, (path, attempt) => path === CONFIG && attempt === 1);
+    const error = refusal(await upgrade(failing));
+    expect(error.message).toContain('The files are as they were.');
+    expect(live(deps)).toEqual(before);
+    expect(deps.dirs.has(ROLES)).toBe(false);
+    expect(gitSince()).toContain('reset -q');
+  });
+
+  it('puts the first move back when the second move fails', async () => {
+    const { deps } = makeOldNode();
+    const before = live(deps);
+    const stuck: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        rename: async (from, to) =>
+          from.endsWith('/briefs') ? failure(`cannot rename ${from}: EXDEV`) : deps.fs.rename(from, to),
+      },
+    };
+    const error = refusal(await upgrade(stuck));
+    expect(error.message).toContain('EXDEV');
+    expect(error.message).toContain('The files are as they were.');
+    expect(live(deps)).toEqual(before);
+    expect(deps.dirs.has(ROLES)).toBe(false);
+  });
+
+  it('leaves no empty roles folder when the first move fails', async () => {
+    const { deps } = makeOldNode();
+    const before = live(deps);
+    const stuck: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        rename: async (from, to) => (from === OLD.protocol ? failure(`cannot rename ${from}: EXDEV`) : deps.fs.rename(from, to)),
+      },
+    };
+    expect(refusal(await upgrade(stuck)).message).toContain('EXDEV');
+    expect(live(deps)).toEqual(before);
+    expect(deps.dirs.has(ROLES)).toBe(false);
+  });
+
+  it('names the backup when a moved file cannot be put back', async () => {
+    const { deps } = makeOldNode();
+    const failing = withFailingWrites(deps, (path, attempt) => path === CONFIG && attempt === 1);
+    const stuck: FakeDeps = {
+      ...failing,
+      fs: {
+        ...failing.fs,
+        rename: async (from, to) =>
+          to === OLD.protocol ? failure(`cannot rename ${from}: EBUSY`) : deps.fs.rename(from, to),
+      },
+    };
+    const error = refusal(await upgrade(stuck));
+    expect(error.message).toContain('1 file could not be restored');
+    expect(error.message).toContain('EBUSY');
+    expect(error.message).toContain('Restore it from .factory/backups/2030-01-02T03-04-05-678Z.');
+    expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
   });
 });

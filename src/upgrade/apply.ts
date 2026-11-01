@@ -1,13 +1,14 @@
-import { join, relative } from 'node:path';
-import { fileOfTarget } from '../blocks/status.js';
-import { appendBlocks, parseBlocks, renderBlock, replaceBlock } from '../blocks/managed.js';
+import { dirname, join, relative } from 'node:path';
+import { fileOfTarget, renamedFromOf } from '../blocks/status.js';
+import { appendBlocks, parseBlocks, renderBlock, replaceBlock, type ParsedBlock } from '../blocks/managed.js';
 import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { isRecord } from '../migrate/inspect.js';
 import { runMigrations } from '../migrate/runner.js';
 import { dirs, files, stateKeys } from '../names.js';
 import { layoutOf } from '../state/layout.js';
-import type { BlockPlan, FilePlan } from './plan.js';
+import type { BlockPlan, FilePlan, MovePlan } from './plan.js';
 import type { UpgradeSpec } from './spec.js';
 
 export interface Written {
@@ -22,9 +23,6 @@ const readIfFile = async (deps: Deps, path: string): Promise<CliResult<string | 
   return kind.value === 'file' ? deps.fs.readText(path) : ok(null);
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /** The new text of a file that holds managed blocks. */
 const editBlockFile = (text: string, changes: readonly BlockPlan[]): CliResult<string> => {
   const parsed = parseBlocks(text);
@@ -36,10 +34,19 @@ const editBlockFile = (text: string, changes: readonly BlockPlan[]): CliResult<s
     rendered.set(change.template.name, block.value);
   }
 
+  // A block is found by its name in the file: the name of the template, or the old name when the block gets a new one.
+  const changeOf = (block: ParsedBlock): BlockPlan | undefined =>
+    changes.find(
+      (change) =>
+        change.action !== 'add' && (change.template.name === block.name || renamedFromOf(change.status) === block.name),
+    );
   const replaced = parsed.value
-    .filter((block) => changes.some((change) => change.template.name === block.name && change.action !== 'add'))
+    .filter((block) => changeOf(block) !== undefined)
     .sort((left, right) => right.start - left.start)
-    .reduce((current, block) => replaceBlock(current, block, rendered.get(block.name) ?? ''), text);
+    .reduce(
+      (current, block) => replaceBlock(current, block, rendered.get(changeOf(block)?.template.name ?? '') ?? ''),
+      text,
+    );
 
   const added = changes.filter((change) => change.action === 'add').map((change) => rendered.get(change.template.name) ?? '');
   return ok(added.length === 0 ? replaced : appendBlocks(replaced, added));
@@ -105,13 +112,59 @@ export const pruneBackups = async (deps: Deps, home: string, current: string): P
   return problems;
 };
 
-/** Put the old text back, newest change first. Returns the messages of the failures. */
-export const restore = async (deps: Deps, written: readonly Written[]): Promise<readonly string[]> => {
+/** A move that was done. The paths are absolute. */
+export interface Moved {
+  readonly from: string;
+  readonly to: string;
+  /** The folder that the move made for its target, or null when the folder was there. */
+  readonly madeDir: string | null;
+}
+
+/** Move the files and the folders. Each move goes to `moved` as soon as it is done. */
+export const applyMoves = async (deps: Deps, moves: readonly MovePlan[], moved: Moved[]): Promise<CliResult<void>> => {
+  for (const move of moves) {
+    const parent = dirname(move.toPath);
+    const parentKind = await deps.fs.stat(parent);
+    if (!parentKind.ok) return parentKind;
+    const made = await deps.fs.mkdir(parent);
+    if (!made.ok) return made;
+    const madeDir = parentKind.value === null ? parent : null;
+    const result = await deps.fs.rename(move.fromPath, move.toPath);
+    if (!result.ok) {
+      // The move did not happen, so the folder that it made is empty. Removing it is only tidiness.
+      if (madeDir !== null) await deps.fs.removeEmptyDir(madeDir);
+      return result;
+    }
+    moved.push({ from: move.fromPath, to: move.toPath, madeDir });
+  }
+  return ok(undefined);
+};
+
+/**
+ * Put the old state back, newest change first: the old texts, then the moves back, then the folders that a move made.
+ * Returns the messages of the failures.
+ */
+export const restore = async (
+  deps: Deps,
+  written: readonly Written[],
+  moved: readonly Moved[] = [],
+): Promise<readonly string[]> => {
   const problems: string[] = [];
   for (const entry of [...written].reverse()) {
     const result =
       entry.previous === null ? await deps.fs.remove(entry.path) : await deps.fs.writeTextAtomic(entry.path, entry.previous);
     if (!result.ok) problems.push(result.error.message);
+  }
+  for (const move of [...moved].reverse()) {
+    const back = await deps.fs.rename(move.to, move.from);
+    if (!back.ok) {
+      problems.push(back.error.message);
+      continue;
+    }
+    if (move.madeDir !== null) {
+      const removed = await deps.fs.removeEmptyDir(move.madeDir);
+      if (!removed.ok) problems.push(removed.error.message);
+    }
   }
   return problems;
 };

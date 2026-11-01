@@ -32,7 +32,8 @@ export interface VersionSpec<T> {
   readonly schema: SchemaParser<T>;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+/** True for a mapping of keys: not null, not a list. */
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export const inspectParsed = <T>(raw: unknown, spec: VersionSpec<T>): DocState<T> => {
