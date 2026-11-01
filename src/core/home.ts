@@ -21,9 +21,17 @@ export const findNearestConfig = async (deps: Deps, startDir: string): Promise<C
   return ok(null);
 };
 
-/** The node home: the home flag, else the folder of the nearest config file above the current folder. */
-export const resolveHome = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<string>> => {
-  if (homeFlag !== undefined) return ok(resolve(deps.cwd, homeFlag));
+/** How the node home was found: from the home flag, in the current folder, or in a parent folder. */
+export type HomeSource = 'flag' | 'cwd' | 'parent';
+
+export interface LocatedHome {
+  readonly home: string;
+  readonly source: HomeSource;
+}
+
+/** The node home and how it was found: the home flag, else the folder of the nearest config file above the current folder. */
+export const locateHome = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<LocatedHome>> => {
+  if (homeFlag !== undefined) return ok({ home: resolve(deps.cwd, homeFlag), source: 'flag' });
   const found = await findNearestConfig(deps, deps.cwd);
   if (!found.ok) return found;
   if (found.value === null) {
@@ -32,5 +40,12 @@ export const resolveHome = async (deps: Deps, homeFlag: string | undefined): Pro
       `Use ${flagText(flags.home)} DIR, or run "${commandText(commands.init)}".`,
     );
   }
-  return ok(dirname(found.value));
+  const home = dirname(found.value);
+  return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'parent' });
+};
+
+/** The node home: the home flag, else the folder of the nearest config file above the current folder. */
+export const resolveHome = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<string>> => {
+  const located = await locateHome(deps, homeFlag);
+  return located.ok ? ok(located.value.home) : located;
 };

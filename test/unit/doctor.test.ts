@@ -37,12 +37,13 @@ interface Setup {
   readonly nodeVersion?: string;
   readonly fetch?: FetchHandler;
   readonly tools?: readonly string[];
+  readonly cwd?: string;
 }
 
 const makeDeps = (setup: Setup = {}): FakeDeps => {
   const { handler } = gitHandler(setup.git ?? {});
   const deps = createFakeDeps({
-    cwd: '/w',
+    cwd: setup.cwd ?? '/w',
     env: { PATH: '/bin', ...setup.env },
     run: handler,
     nodeVersion: setup.nodeVersion ?? 'v22.5.0',
@@ -233,8 +234,50 @@ describe('doctor: permission mode', () => {
     const deps = makeDeps({ env: { HOME } });
     deps.seed(`${HOME}/.claude/settings.json`, '{"permissions":{"defaultMode":"bypassPermissions"}}');
     const result = await checkPermissionMode(deps, HOME);
-    expect(result.level).toBe('ok');
+    expect(result.level).toBe('warn');
     expect(result.text).toContain('not checked');
+  });
+
+  it('warns when it cannot tell whether the settings folder exists', async () => {
+    const deps = await initialized();
+    const denied = { ...deps, fs: { ...deps.fs, stat: async () => failure('cannot stat /w/node/.claude: EACCES') } };
+    const result = await checkPermissionMode(denied, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('not checked');
+    expect(result.text).toContain('EACCES');
+  });
+
+  it('warns when the settings folder cannot be listed', async () => {
+    const deps = await initialized();
+    deps.seedDir(`${HOME}/.claude`);
+    const denied = { ...deps, fs: { ...deps.fs, list: async () => failure('cannot list /w/node/.claude: EACCES') } };
+    const result = await checkPermissionMode(denied, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('not checked');
+    expect(result.text).toContain('EACCES');
+  });
+
+  it('warns and names the settings file that it cannot read', async () => {
+    const deps = await initialized();
+    deps.seed(`${HOME}/.claude/settings.json`, '{}');
+    deps.seed(`${HOME}/.claude/settings.local.json`, '{}');
+    const readText = async (path: string) =>
+      path.endsWith('settings.local.json') ? failure(`cannot read ${path}: EACCES`) : deps.fs.readText(path);
+    const result = await checkPermissionMode({ ...deps, fs: { ...deps.fs, readText } }, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('.claude/settings.local.json');
+    expect(result.text).not.toContain('.claude/settings.json');
+  });
+
+  it('fails for a settings file that skips the checks, even when another file cannot be read', async () => {
+    const deps = await initialized();
+    deps.seed(`${HOME}/.claude/settings.json`, '{"permissions":{"defaultMode":"bypassPermissions"}}');
+    deps.seed(`${HOME}/.claude/settings.local.json`, '{}');
+    const readText = async (path: string) =>
+      path.endsWith('settings.local.json') ? failure(`cannot read ${path}: EACCES`) : deps.fs.readText(path);
+    const result = await checkPermissionMode({ ...deps, fs: { ...deps.fs, readText } }, HOME);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('.claude/settings.json');
   });
 });
 
@@ -272,27 +315,27 @@ describe('doctor: proxies', () => {
 
   it('says that no proxy is in use when the session names none', async () => {
     const deps = await initialized();
-    const results = await checkProxies(deps, await inspectConfig(deps, HOME));
+    const results = await checkProxies(deps, await inspectConfig(deps, HOME), true);
     expect(results).toEqual([{ id: 'proxy', level: 'ok', text: 'no proxy is in use' }]);
   });
 
   it('is ok when the proxy answers below 500, and sends one request to the health URL', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 404 }) });
-    const results = await checkProxies(deps, await stateOf(deps, withProxies('stop')));
+    const results = await checkProxies(deps, await stateOf(deps, withProxies('stop')), true);
     expect(results).toEqual([{ id: 'proxy:local', level: 'ok', text: 'local (127.0.0.1:8787) answers' }]);
     expect(deps.fetched).toEqual(['http://127.0.0.1:8787/v1/health']);
   });
 
   it('fails when the proxy is down and on_fail is stop', async () => {
     const deps = makeDeps();
-    const [result] = await checkProxies(deps, await stateOf(deps, withProxies('stop')));
+    const [result] = await checkProxies(deps, await stateOf(deps, withProxies('stop')), true);
     expect(result?.level).toBe('fail');
     expect(result?.text).toContain('local (127.0.0.1:8787) does not answer');
   });
 
   it('warns when the proxy is down and on_fail is direct', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 500 }) });
-    const [result] = await checkProxies(deps, await stateOf(deps, withProxies('direct')));
+    const [result] = await checkProxies(deps, await stateOf(deps, withProxies('direct')), true);
     expect(result?.level).toBe('warn');
     expect(result?.text).toContain('on_fail is direct');
   });
@@ -300,15 +343,81 @@ describe('doctor: proxies', () => {
   it('checks a proxy that only a lane uses, and skips a proxy that nothing uses', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
     const config = { ...withProxies('stop', { 'web-lane': { proxy: 'spare' } }), session: { ...sampleConfig().session } };
-    const results = await checkProxies(deps, await stateOf(deps, config));
+    const results = await checkProxies(deps, await stateOf(deps, config), true);
     expect(results.map((result) => result.id)).toEqual(['proxy:spare']);
   });
 
   it('warns that it did not check when the config is not valid', async () => {
     const deps = makeDeps();
     deps.seed(`${HOME}/factory.yaml`, 'schema: 1\n');
-    const results = await checkProxies(deps, await inspectConfig(deps, HOME));
+    const results = await checkProxies(deps, await inspectConfig(deps, HOME), true);
     expect(results).toEqual([{ id: 'proxy', level: 'warn', text: 'not checked: factory.yaml is not valid' }]);
+  });
+
+  it('sends no request when it may not, and tells the user to give the home', async () => {
+    const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
+    const [result, ...rest] = await checkProxies(deps, await stateOf(deps, withProxies('stop')), false);
+    expect(rest).toEqual([]);
+    expect(result?.id).toBe('proxy');
+    expect(result?.level).toBe('warn');
+    expect(result?.text).toContain('not checked');
+    expect(result?.text).toContain('--home DIR');
+    expect(deps.fetched).toEqual([]);
+  });
+
+  it('has nothing to skip when no proxy is in use', async () => {
+    const deps = await initialized();
+    const results = await checkProxies(deps, await inspectConfig(deps, HOME), false);
+    expect(results).toEqual([{ id: 'proxy', level: 'ok', text: 'no proxy is in use' }]);
+  });
+
+  describe('in the doctor command, by where the config comes from', () => {
+    const PROXY_URL = 'http://127.0.0.1:8787/v1/health';
+
+    const nodeWithProxy = async (cwd: string): Promise<FakeDeps> => {
+      const deps = await initialized({
+        cwd,
+        fetch: () => ok({ status: 200 }),
+        git: { committed: [`${HOME}/.factory`] },
+      });
+      deps.seedDir(`${HOME}/.factory/.git`);
+      writeConfig(deps, { ...withProxies('stop'), projects: [] });
+      return deps;
+    };
+
+    const run = async (deps: FakeDeps, home: string | undefined) => {
+      const result = await runDoctor(deps, { home });
+      if (!result.ok) throw new Error(result.error.message);
+      return result.value;
+    };
+
+    it('sends the request when the home comes from --home', async () => {
+      const deps = await nodeWithProxy('/elsewhere');
+      const output = await run(deps, HOME);
+      expect(deps.fetched).toEqual([PROXY_URL]);
+      expect(levelOf(output.json['checks'] as CheckResult[], 'proxy:local')).toBe('ok');
+      expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
+    });
+
+    it('sends the request when the config is in the current folder', async () => {
+      const deps = await nodeWithProxy(HOME);
+      const output = await run(deps, undefined);
+      expect(deps.fetched).toEqual([PROXY_URL]);
+      expect(levelOf(output.json['checks'] as CheckResult[], 'proxy:local')).toBe('ok');
+      expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
+    });
+
+    it('sends no request when the config is in a parent folder, and warns', async () => {
+      const deps = await nodeWithProxy(`${HOME}/deep/er`);
+      const output = await run(deps, undefined);
+      expect(deps.fetched).toEqual([]);
+      const proxy = (output.json['checks'] as CheckResult[]).find((result) => result.id === 'proxy');
+      expect(proxy?.level).toBe('warn');
+      expect(proxy?.text).toContain('--home DIR');
+      expect(output.lines.some((line) => line.level === 'warn' && line.text.includes('--home DIR'))).toBe(true);
+      expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
+      expect(output.failed).toBe(false);
+    });
   });
 });
 

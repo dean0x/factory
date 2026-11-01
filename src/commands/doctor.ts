@@ -6,7 +6,7 @@ import { inspectConfig } from '../config/load.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
-import { resolveHome } from '../core/home.js';
+import { locateHome, type LocatedHome } from '../core/home.js';
 import { ok } from '../core/result.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
@@ -17,6 +17,8 @@ import {
   dirs,
   env,
   files,
+  flags,
+  flagText,
   keys,
   program,
   roles,
@@ -154,24 +156,30 @@ export const checkPermissionMode = async (deps: Deps, home: string): Promise<Che
   const settingsDir = join(home, dirs.claude);
   const userDir = deps.env['HOME'] === undefined ? undefined : join(resolve(deps.env['HOME']), dirs.claude);
   if (userDir !== undefined && resolve(settingsDir) === userDir) {
-    return check(checkIds.permissionMode, 'ok', `not checked: ${settingsDir} holds the user settings of Claude Code`);
+    return notChecked(checkIds.permissionMode, `${settingsDir} holds the user settings of Claude Code`);
   }
+  const folder = await deps.fs.stat(settingsDir);
+  if (!folder.ok) return notChecked(checkIds.permissionMode, folder.error.message);
+  if (folder.value === null) return check(checkIds.permissionMode, 'ok', `no ${dirs.claude} folder in the ${program} home`);
   const names = await deps.fs.list(settingsDir);
-  if (!names.ok) return check(checkIds.permissionMode, 'ok', `no ${dirs.claude} folder in the ${program} home`);
+  if (!names.ok) return notChecked(checkIds.permissionMode, names.error.message);
 
   const settings = names.value.filter(
     (name) => name.startsWith(claudeSettings.prefix) && name.endsWith(claudeSettings.suffix),
   );
   const bad: string[] = [];
+  const unreadable: string[] = [];
   for (const name of settings) {
     const text = await deps.fs.readText(join(settingsDir, name));
-    if (text.ok && BYPASS_PATTERNS.some((pattern) => pattern.test(text.value))) {
-      bad.push(`${dirs.claude}/${name}`);
-    }
+    if (!text.ok) unreadable.push(`${dirs.claude}/${name}`);
+    else if (BYPASS_PATTERNS.some((pattern) => pattern.test(text.value))) bad.push(`${dirs.claude}/${name}`);
   }
-  return bad.length === 0
+  if (bad.length > 0) {
+    return check(checkIds.permissionMode, 'fail', `${bad.join(', ')} skips the permission checks. Remove the setting.`);
+  }
+  return unreadable.length === 0
     ? check(checkIds.permissionMode, 'ok', 'no settings file skips the permission checks')
-    : check(checkIds.permissionMode, 'fail', `${bad.join(', ')} skips the permission checks. Remove the setting.`);
+    : notChecked(checkIds.permissionMode, `cannot read ${unreadable.join(', ')}`);
 };
 
 export const checkProxyEnv = (deps: Deps): CheckResult => {
@@ -181,13 +189,29 @@ export const checkProxyEnv = (deps: Deps): CheckResult => {
     : check(checkIds.proxyEnv, 'warn', `${env.proxyBaseUrl} is set in the shell. ${program} clears it at launch.`);
 };
 
-export const checkProxies = async (deps: Deps, state: DocState<FactoryConfig>): Promise<readonly CheckResult[]> => {
+/**
+ * One health request for each proxy in use. When `mayRequest` is false, the config does not come from a place the
+ * user chose, so its URLs are not requested.
+ */
+export const checkProxies = async (
+  deps: Deps,
+  state: DocState<FactoryConfig>,
+  mayRequest: boolean,
+): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
   const config = state.value;
   const inUse = new Set([config.session.proxy, ...Object.values(config.lanes).map((lane) => lane.proxy)]);
   inUse.delete(values.noProxy);
   const used = config.proxies.filter((proxy) => inUse.has(proxy.id));
   if (used.length === 0) return [check(checkIds.proxy, 'ok', 'no proxy is in use')];
+  if (!mayRequest) {
+    return [
+      notChecked(
+        checkIds.proxy,
+        `${files.config} was found in a parent folder. Run with ${flagText(flags.home)} DIR to check the proxy.`,
+      ),
+    ];
+  }
 
   return Promise.all(
     used.map(async (proxy): Promise<CheckResult> => {
@@ -260,13 +284,14 @@ export const checkProjects = async (
     : check(checkIds.projects, 'fail', `not a git work tree: ${bad.join(', ')}`);
 };
 
-const runChecks = async (deps: Deps, home: string): Promise<readonly CheckResult[]> => {
+const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly CheckResult[]> => {
+  const { home, source } = located;
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
   const blocks = await inspectBlocks(deps, home, blockTemplates);
   const [permission, proxies, tools, stateRepo, projects] = await Promise.all([
     checkPermissionMode(deps, home),
-    checkProxies(deps, config),
+    checkProxies(deps, config, source !== 'parent'),
     checkTools(deps),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),
@@ -290,16 +315,18 @@ const count = (results: readonly CheckResult[], level: CheckLevel): number =>
   results.filter((result) => result.level === level).length;
 
 export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<CliResult<CommandOutput>> => {
-  const home = await resolveHome(deps, options.home);
-  if (!home.ok) return home;
-  const folder = await deps.fs.stat(home.value);
+  const located = await locateHome(deps, options.home);
+  if (!located.ok) return located;
+  const home = located.value.home;
+  const folder = await deps.fs.stat(home);
   if (!folder.ok) return folder;
-  if (folder.value !== 'dir') return failure(`${home.value} is not a folder`);
+  if (folder.value !== 'dir') return failure(`${home} is not a folder`);
 
-  const results = await runChecks(deps, home.value);
+  const results = await runChecks(deps, located.value);
   const summary = { ok: count(results, 'ok'), warn: count(results, 'warn'), fail: count(results, 'fail') };
   const width = Math.max(...results.map((result) => result.id.length));
   const lines: OutLine[] = [
+    { level: 'text', text: `Config: ${layoutOf(home).configFile}` },
     ...results.map((result) => ({ level: result.level, text: `${result.id.padEnd(width)}  ${result.text}` })),
     {
       level: 'text',
@@ -308,7 +335,7 @@ export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<Cli
   ];
   return ok({
     lines,
-    json: { schema: schemaIds.doctor, home: home.value, ok: summary.fail === 0, summary, checks: results },
+    json: { schema: schemaIds.doctor, home, ok: summary.fail === 0, summary, checks: results },
     warnings: [],
     failed: summary.fail > 0,
   });
