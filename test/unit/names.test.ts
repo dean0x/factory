@@ -110,6 +110,7 @@ const TEXT_NAMES = [
   tmuxNames.optionHome,
   tmuxNames.optionNode,
   tmuxNames.optionSlot,
+  tmuxNames.optionCell,
   marker.prefix,
   address.scheme,
 ];
@@ -212,6 +213,32 @@ describe('words of the old names', () => {
     for (const [path, text] of deps.files) {
       expect({ path, found: oldWordsIn(text) }).toEqual({ path, found: [] });
     }
+  });
+});
+
+describe('the pane options of tmux', () => {
+  /** The pane option of FAC-M1 for a work track. The option of v2 is `@cell`. */
+  const OLD_PANE_OPTION = '@lane';
+
+  const allSourceFiles = (dir: string): string[] =>
+    readdirSync(dir).flatMap((entry) => {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) return allSourceFiles(path);
+      return path.endsWith('.ts') ? [path] : [];
+    });
+
+  it('names the pane options, the cell option among them', () => {
+    expect(tmuxNames.optionCell).toBe('@cell');
+    expect(tmuxNames.optionNode).toBe('@node');
+    expect(tmuxNames.optionSlot).toBe('@slot');
+    expect(tmuxNames.optionHome).toBe('@factory_home');
+  });
+
+  it('keeps the old pane option out of every file of src, names.ts and comments included', () => {
+    const files = allSourceFiles(SRC);
+    expect(files).toContain(NAMES_FILE);
+    const found = files.filter((path) => readFileSync(path, 'utf8').includes(OLD_PANE_OPTION));
+    expect(found.map((path) => relative(SRC, path))).toEqual([]);
   });
 });
 

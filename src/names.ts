@@ -151,6 +151,8 @@ export const tmuxNames = {
   optionNode: '@node',
   /** The pane option that marks the slot of the view window. */
   optionSlot: '@slot',
+  /** The pane option that holds the cell id, on a bench pane. */
+  optionCell: '@cell',
   slotBoard: 'board',
 } as const;
 
