@@ -4,7 +4,7 @@ import { runUp, type UpOptions } from '../../src/commands/up.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
-import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
@@ -35,7 +35,15 @@ interface Setup {
   /** The programs on PATH. Default: tmux and claude. */
   readonly tools?: readonly string[];
   readonly links?: Record<string, string>;
+  /** The top folder of the git work tree that holds the home. Default: the home is in no work tree. */
+  readonly workTree?: string;
 }
+
+/** A fake of git: it knows only the top folder of the work tree. The tmux log does not record its calls. */
+const gitAnswer = (workTree: string | undefined) => (call: RunCall) =>
+  call.args.includes('--show-toplevel') && workTree !== undefined
+    ? exited(0, `${workTree}\n`)
+    : exited(128, '', 'fatal: not a git repository\n');
 
 const withProxy = (onFail: 'stop' | 'direct'): FactoryConfig => {
   const config = sampleConfig();
@@ -51,11 +59,12 @@ const withProxy = (onFail: 'stop' | 'direct'): FactoryConfig => {
 
 const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   const { handler, log } = tmuxHandler(setup.tmux);
+  const git = gitAnswer(setup.workTree);
   const tty = setup.tty ?? false;
   const deps = createFakeDeps({
     cwd: '/w',
     env: { PATH: '/bin', ...setup.env },
-    run: handler,
+    run: (call) => (call.command === 'git' ? git(call) : handler(call)),
     stdinIsTTY: tty,
     stdoutIsTTY: setup.stdoutTty ?? tty,
     ...(setup.fetch === undefined ? {} : { fetch: setup.fetch }),
@@ -405,5 +414,26 @@ describe('up: the home and the config', () => {
     const { deps } = make({ env: { FACTORY_HOME: HOME } });
     const result = await runUp(deps, { home: undefined, dryRun: true });
     expect(result.ok).toBe(true);
+  });
+
+  it.each([false, true])(
+    'refuses with exit 4 a home inside a git work tree, and sends no proxy check and no tmux call (dry run: %s)',
+    async (dryRun) => {
+      const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers, workTree: '/w' });
+      const result = await up(deps, { dryRun });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (!result.ok) expect(result.error.message).toContain('inside the git work tree /w');
+      expect(deps.fetched).toEqual([]);
+      expect(tmux.calls).toEqual([]);
+    },
+  );
+
+  it('refuses with exit 4 a home inside another node home, and starts nothing', async () => {
+    const { deps, tmux } = make();
+    deps.seed('/w/factory.yaml', renderConfig(sampleConfig()));
+    const result = await up(deps);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    if (!result.ok) expect(result.error.message).toContain('inside another node home');
+    expect(tmux.calls).toEqual([]);
   });
 });

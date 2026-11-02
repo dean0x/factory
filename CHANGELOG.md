@@ -20,7 +20,7 @@ Home, `init` and `up`
 - `factory init` now refuses (exit code 4) a home inside a git work tree, inside another node home, above a project, or that holds a git repo one level down. Version 0.1.0 gave a warning for a home inside another node home.
 - New flags of `init`: `--yes`, `--layer N`, `--recipe ID`. `--project` takes a path or a URL. A URL makes `init` clone the repo next to the home. If a later step fails, `init` removes the clones that it made, and the error names them. A URL name with `..` or a leading `-` is refused.
 - `init` records the home in a home index: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json`. A command with no `--home`, no `FACTORY_HOME` and no `factory.yaml` above the current folder finds the home from a project folder. A home from the index is not trusted for network checks.
-- New command `factory up`. It starts a tmux session with the id of the node, with the windows `view` and `bench`. The coordinator runs in the home in auto permission mode, with one `--add-dir` for each project and no inherited `ANTHROPIC_BASE_URL`. A second `up` starts no second coordinator. `--dry-run` prints the tmux calls and starts nothing.
+- New command `factory up`. It starts a tmux session with the id of the node, with the windows `view` and `bench`. The coordinator runs in the home in auto permission mode, with one `--add-dir` for each project and no inherited `ANTHROPIC_BASE_URL`. A second `up` starts no second coordinator. `--dry-run` prints the tmux calls and starts nothing. Like `init`, `up` refuses (exit code 4) a home inside a git work tree or inside another node home, and it does not use the config of that home.
 
 Roles, layers and nodes
 

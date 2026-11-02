@@ -20,6 +20,7 @@ import {
 } from '../launch/tmux.js';
 import { capitalize, commands, commandText, flags, flagText, keys, program, roles, schemaIds, tmuxNames, values } from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
+import { checkHomeLocation } from './init-home.js';
 
 export interface UpOptions {
   readonly home: string | undefined;
@@ -253,6 +254,10 @@ export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<C
   const located = await locateHomeFolder(deps, options.home);
   if (!located.ok) return located;
   const home = located.value.home;
+  // A node home is never inside a git work tree or another node home (the rules of init). A config file there can
+  // come from a cloned repo, and its proxy would get the requests of the session. So the config is not used.
+  const location = await checkHomeLocation(deps, home);
+  if (!location.ok) return location;
   const loaded = await loadConfig(deps, home);
   if (!loaded.ok) return loaded;
   const id = loaded.value.core.node.id;
