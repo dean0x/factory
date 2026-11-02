@@ -36,7 +36,7 @@ Home, `init` and `up`
 Roles, layers and nodes
 
 - The role of a node comes from its layer. Layer 1 has the coordinator template. Layer 2 has the manager template. A layer above 2 has no role template yet: `CLAUDE.md` holds the safety block only, `init` prints a warning, and `doctor` warns.
-- New commands `factory node children`, `factory node add-child PATH` and `factory node remove-child ID`. A child must be one layer lower. `add-child` refuses on layer 1, because the children of a coordinator are cells. The commands keep the comments and the key order of `factory.yaml`.
+- New commands `factory node children`, `factory node add-child PATH` and `factory node remove-child ID`. A child must be one layer lower, and its id must differ from the id of this node. `add-child` refuses on layer 1, because the children of a coordinator are cells. The commands keep the comments and the key order of `factory.yaml`.
 
 Platforms and help
 

@@ -167,6 +167,29 @@ describe('node add-child', () => {
     }
   });
 
+  it('refuses a child that is more than one layer below, and changes nothing', async () => {
+    const deps = make({ layer: 3, homes: { '/w/low': configOf('low', 1) } });
+    const before = deps.files.get(CONFIG_PATH);
+    const result = await node(deps, 'add-child', '/w/low');
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    if (!result.ok) {
+      expect(result.error.message).toBe('the child is on layer 1, but a node on layer 3 takes children on layer 2');
+    }
+    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+  });
+
+  it('refuses a child with the id of this node, tells how to fix it, and changes nothing', async () => {
+    const deps = make({ homes: { '/w/same': configOf('mgr', 1) } });
+    const before = deps.files.get(CONFIG_PATH);
+    const result = await node(deps, 'add-child', '/w/same');
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    if (!result.ok) {
+      expect(result.error.message).toBe('the child has the id mgr, which is the id of this node');
+      expect(result.error.hint).toContain('Change the id in the factory.yaml of the child');
+    }
+    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+  });
+
   it('refuses a child whose folder does not exist, and says why', async () => {
     const result = await node(make(), 'add-child', '/w/none');
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });

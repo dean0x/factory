@@ -10,7 +10,7 @@ import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { isSameOrInside, realPathOf } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
-import { commands, commandText, flags, flagText, nodeCommands, program, roles, schemaIds } from '../names.js';
+import { commands, commandText, files, flags, flagText, nodeCommands, program, roles, schemaIds } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 
 export interface NodeOptions {
@@ -134,6 +134,12 @@ const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): 
   if (answer.layer !== layer - 1) {
     return safetyRefusal(
       `the child is on layer ${answer.layer}, but a ${roles.node} on layer ${layer} takes children on layer ${layer - 1}`,
+    );
+  }
+  if (answer.id === config.core.node.id) {
+    return safetyRefusal(
+      `the child has the id ${answer.id}, which is the id of this ${roles.node}`,
+      `Change the id in the ${files.config} of the child, then add it again.`,
     );
   }
   if (config.core.children.some((child) => child.id === answer.id)) {
