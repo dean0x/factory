@@ -107,7 +107,7 @@ describe('scripts/check-intent-docs.sh', () => {
     await change('roadmap-v2.md', (text) => text.replace(/^\| `check`.*\n/m, ''));
     const result = check();
     expect(failedChecks(result.out)).toEqual(['3']);
-    expect(result.out).toMatch(/the command \S+ of design\.md 4\.2 has no row in the Command map/);
+    expect(result.out).toContain('the command check of design.md 4.2 has no row in the Command map');
   });
 
   it('exits 1 for a desk row in design 4.2', async () => {
@@ -464,16 +464,31 @@ describe('scripts/check-intent-docs.sh, check 9: the design has the headings for
   });
 });
 
-/** Words of the software recipe list (Step 24 of the code change makes the list equal to `words.ts`). */
-const RECIPE_WORDS = ['merge', 'merged', 'pull request', 'release', 'release check', 'release scope', 'CI log', 'PR', 'CI'] as const;
+/**
+ * Words of the software recipe list (Step 24 of the code change makes the list equal to `words.ts`), each with the word
+ * that the script prints for it. The script prints a longer word by its first part, and a word in lower case, but it
+ * keeps PR and CI in capital letters.
+ */
+const RECIPE_WORDS: ReadonlyArray<{ input: string; printed: string }> = [
+  { input: 'merge', printed: 'merge' },
+  { input: 'merged', printed: 'merged' },
+  { input: 'pull request', printed: 'pull request' },
+  { input: 'release', printed: 'release' },
+  { input: 'release check', printed: 'release' },
+  { input: 'release scope', printed: 'release' },
+  { input: 'CI log', printed: 'ci log' },
+  { input: 'PR', printed: 'PR' },
+  { input: 'CI', printed: 'CI' },
+];
 
 describe('scripts/check-intent-docs.sh, check 10: the core command table holds no word of the software recipe', () => {
-  it.each(RECIPE_WORDS)('exits 1 for the word "%s" in a line of the core command table', async (word) => {
-    await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, `$1 and the ${word}`));
+  it.each(RECIPE_WORDS)('exits 1 for the word "$input" in a line of the core command table, and prints "$printed"', async ({ input, printed }) => {
+    await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, `$1 and the ${input}`));
     const result = check();
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['10']);
     expect(result.out).toMatch(/design\.md line \d+: the core command table holds the software recipe word "/);
+    expect(result.out).toContain(`the software recipe word "${printed}"`);
   });
 
   it.each(['merging', 'releasing', 'merges', 'PRs', 'CI logs'])('exits 1 for the form "%s" in a line of the core command table', async (form) => {
@@ -635,8 +650,8 @@ const DESIGN_V3_ASKS = [
   'D-57', 'D-59', 'D-60',
 ] as const;
 
-/** A milestone cell of a row names a milestone or the label. A cell that starts with "None." names neither. */
-const MILESTONE_OR_LABEL = /FAC-M\d+|Design v3 PR/;
+/** A milestone cell of a row starts with a milestone or the label. A cell that only names one later in its text, such as "None. FAC-M5 dropped this ask", does not. */
+const MILESTONE_OR_LABEL = /^(?:FAC-M\d+|Design v3 PR)\b/;
 
 /** The rows of the tables of the trace, by ask id, as five cells each. */
 const traceRows = (text: string): Map<string, string[]> => {
@@ -686,6 +701,8 @@ describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
     expect(mutated.get('F-15b')?.[3]).toBe(oldCell);
     expect(mutated.get('F-15b')?.[3]).not.toMatch(MILESTONE_OR_LABEL);
     expect(cell('F-15b', 3)).toMatch(MILESTONE_OR_LABEL);
+    expect('None. FAC-M5 dropped this ask').not.toMatch(MILESTONE_OR_LABEL);
+    expect('None; not in the Design v3 PR').not.toMatch(MILESTONE_OR_LABEL);
   });
 
   it('names no command, script or key of the setup of today in a code span', () => {
@@ -696,7 +713,11 @@ describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
     expect(stale).toEqual([]);
   });
 
-  it('does not say that the command map marks a desk', () => {
-    expect(trace).not.toMatch(/marked "not built, no milestone"/);
+  it('does not say in any cell that a desk is marked as not built', () => {
+    const marksDesk = (cell: string): boolean => /\bdesk\b/i.test(cell) && /\bnot built\b/i.test(cell);
+    expect(marksDesk('The command map marks a desk, marked "not built, no milestone"')).toBe(true);
+    expect(marksDesk('The desk row is Not Built yet')).toBe(true);
+    expect(marksDesk('None. The command map has no desk row')).toBe(false);
+    expect(trace.split('\n').flatMap((line) => line.split('|')).filter(marksDesk)).toEqual([]);
   });
 });
