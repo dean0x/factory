@@ -1,4 +1,5 @@
 import { execFile, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -12,7 +13,6 @@ if (!hasTmux) console.warn('up.test.ts is skipped: tmux 3.0 or newer is not inst
 const POLL_STEP_MS = 100;
 const POLL_STEPS = 100;
 const STOP_STEPS = 30;
-const NO_NEW_LAUNCH_WAIT_MS = 600;
 const LAUNCH_PROXY_URL = 'http://127.0.0.1:9';
 
 let box: Sandbox;
@@ -64,6 +64,10 @@ const probeProxy = (dir: string): string =>
     'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/window-proxy"; else echo no > "$dir/window-proxy"; fi',
     '',
   ].join('\n');
+
+/** The panes of the session with their ids and process ids. A pane that starts or ends changes the text. */
+const paneSnapshot = async (): Promise<string> =>
+  (await tmux(['list-panes', '-s', '-t', '=demo', '-F', '#{window_name} #{pane_id} #{pane_pid} #{pane_dead}'])).stdout;
 
 const up = (...extra: string[]): Promise<RunResult> =>
   box.run(['up', '--home', box.node, ...extra], { env: tmuxEnv });
@@ -130,6 +134,9 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
     expect(result.stdout).toContain('Session demo runs. Attach with: tmux attach -t demo');
 
     expect(await waitForLaunch()).toEqual(['launched']);
+    // The launch is the start command of the first pane only. The slot pane and the bench window run the shell.
+    const starts = await tmux(['list-panes', '-s', '-t', '=demo', '-F', '#{pane_start_command}']);
+    expect(starts.stdout.trim().split('\n').filter((command) => command.includes('claude'))).toHaveLength(1);
     expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     const windows = await tmux(['list-windows', '-t', '=demo', '-F', '#{window_name}']);
     expect(windows.stdout.trim().split('\n')).toEqual(['view', 'bench']);
@@ -186,14 +193,20 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
 
   it('starts one launch after two runs, and the second run starts nothing', async () => {
     await initNode();
-    expect((await up()).code).toBe(0);
+    const first = await up('--json');
+    expect(first.code).toBe(0);
+    expect(JSON.parse(first.stdout)).toMatchObject({ started: true });
     expect(await waitForLaunch()).toHaveLength(1);
+    const before = await paneSnapshot();
+    // The coordinator and the slot in the view window, and the bench window.
+    expect(before.trim().split('\n')).toHaveLength(3);
 
-    const again = await up();
+    const again = await up('--json');
     expect(again.code).toBe(0);
-    expect(again.stdout).toContain('Session demo runs. Attach with: tmux attach -t demo');
-    await sleep(NO_NEW_LAUNCH_WAIT_MS);
-    expect(await waitForLaunch()).toHaveLength(1);
+    const report: unknown = JSON.parse(again.stdout);
+    expect(report).toMatchObject({ session: 'demo', started: false });
+    expect(report).not.toHaveProperty('coordinatorEnded');
+    expect(await paneSnapshot()).toEqual(before);
     const sessions = await tmux(['list-sessions', '-F', '#{session_name}']);
     expect(sessions.stdout.trim().split('\n')).toEqual(['demo']);
   });
@@ -213,7 +226,8 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
     expect(result.stdout).toContain('Dry run');
     expect(result.stdout).toContain('tmux new-session -d -s demo -n view');
     expect((await tmux(['has-session', '-t', '=demo'])).code).not.toBe(0);
-    await sleep(NO_NEW_LAUNCH_WAIT_MS);
-    expect(await readFile(join(outDir, 'launches'), 'utf8').catch(() => 'none')).toBe('none');
+    // A claude runs only in a pane of a session, and a session needs a server. A server makes its socket when it starts.
+    expect((await tmux(['list-sessions'])).code).not.toBe(0);
+    expect(existsSync(socket)).toBe(false);
   });
 });
