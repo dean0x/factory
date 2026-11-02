@@ -107,6 +107,12 @@ describe('factory upgrade (built binary)', () => {
 describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
   const FIXTURE = join(__dirname, '..', 'fixtures', 'node-0.1.0');
 
+  /** Commit every change of the state repository, as the owner would. */
+  const commitAll = async (state: string, message: string): Promise<void> => {
+    expect((await box.git(state, ['add', '-A'])).code).toBe(0);
+    expect((await box.git(state, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', message])).code).toBe(0);
+  };
+
   /** Copy the fixture, make the web project, and start the state repository with a first commit. */
   const prepareOldNode = async (): Promise<string> => {
     await cp(FIXTURE, box.node, { recursive: true });
@@ -116,8 +122,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     await box.makeProject('web');
     const state = join(box.node, '.factory');
     expect((await box.git(state, ['init', '-q'])).code).toBe(0);
-    expect((await box.git(state, ['add', '-A'])).code).toBe(0);
-    expect((await box.git(state, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'first'])).code).toBe(0);
+    await commitAll(state, 'first');
     return state;
   };
 
@@ -179,10 +184,40 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(refused.stderr).toContain('--overwrite protocol');
     expect((await readdir(state)).sort()).toContain('protocol.md');
 
+    // The upgrade moves the file, so a change of the owner in it must be in a commit before the upgrade runs.
+    await commitAll(state, 'my rule for the workers');
     const upgraded = await box.run(['upgrade', '--home', box.node, '--overwrite', 'protocol']);
     expect(upgraded.code).toBe(0);
     expect(await box.read(join(state, 'roles', 'worker.md'))).not.toContain('My own rule for the workers.');
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+  });
+
+  it('refuses an uncommitted change in a file that the upgrade moves, and changes nothing', async () => {
+    const state = await prepareOldNode();
+    const path = join(state, 'protocol.md');
+    const edited = `${await box.read(path)}\nA note of the owner, outside the block.\n`;
+    await writeFile(path, edited);
+    const config = await box.read(join(box.node, 'factory.yaml'));
+    const marker = await box.read(join(state, 'node.json'));
+
+    const refused = await box.run(['upgrade', '--home', box.node]);
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain('.factory has changes in files that the upgrade changes: protocol.md');
+    expect(refused.stderr).toContain('Commit them');
+
+    expect(await box.read(path)).toBe(edited);
+    expect(await box.read(join(box.node, 'factory.yaml'))).toBe(config);
+    expect(await box.read(join(state, 'node.json'))).toBe(marker);
+    const names = (await readdir(state)).sort();
+    expect(names).toContain('briefs');
+    expect(names).not.toContain('roles');
+    expect(names).not.toContain('orders');
+    expect(names).not.toContain('backups');
+    expect((await box.git(state, ['log', '--format=%s'])).stdout.trim()).toBe('first');
+
+    await commitAll(state, 'a note of the owner');
+    expect((await box.run(['upgrade', '--home', box.node])).code).toBe(0);
+    expect(await box.read(join(state, 'roles', 'worker.md'))).toContain('A note of the owner, outside the block.');
   });
 
   it('stops on a child with an ssh address, names the child, and changes nothing', async () => {
