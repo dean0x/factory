@@ -263,8 +263,18 @@ first=$(awk '
 ' "$@")
 report 8 "the docs, the README and the CHANGELOG hold no local machine path" "$first"
 
+first=$(awk '
+  /^#+ ([0-9]+(\.[0-9]+)* )?Core and setup[ \t]*$/ { core = 1 }
+  /^#+ ([0-9]+(\.[0-9]+)* )?Extension points[ \t]*$/ { points = 1 }
+  END {
+    if (!core) print "design.md has no heading \"Core and setup\""
+    else if (!points) print "design.md has no heading \"Extension points\""
+  }
+' "$design")
+report 9 "design.md has the headings for core and setup and for extension points" "$first"
+
 if [ "$failed" -ne 0 ]; then
-  printf '%s of 8 checks failed\n' "$failed"
+  printf '%s of 9 checks failed\n' "$failed"
   exit 1
 fi
-printf 'all 8 checks passed\n'
+printf 'all 9 checks passed\n'

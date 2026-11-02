@@ -1,7 +1,20 @@
 # factory: design
 
-Status: v2, decided (v1: D-45 A, D-46 B, D-47 yes on 2026-11-01; v2: D-49, D-51 A, D-52, D-53 on 2026-11-02) · Author: factory-design · Date: 2026-11-02
+Status: v3, decided (v1: D-45 A, D-46 B, D-47 yes on 2026-11-01; v2: D-49, D-51 A, D-52, D-53 on 2026-11-02; v3: D-59, D-60 and the Gate 1 and Gate 2 answers on 2026-11-02) · Author: factory-design · Date: 2026-11-02
 Roadmap: `docs/roadmap-v2.md` (proposal). It replaces FAC-M2 to FAC-M7 of the v1 roadmap.
+
+## Changes in v3
+
+Dean gave the feedback F-14 to F-21 and the decisions D-59 and D-60 on 2026-11-02. The Gate 1 and Gate 2 answers closed the open points (§9, table v3). Nothing is released, so v3 changes the FAC-M2 design in place. v3 makes these changes:
+1. **Plain words (F-14, D-59, D-11).** Text that a user reads uses everyday words. The table is in `docs/glossary.md`. A worker session is a **worker**. An item that waits for the owner is a **request**. A written task is an **assignment**. The merge order is the **queue**. The merge check is `factory check <pr>`. Code names, config keys and command names stay. See §4.1 and §7.
+2. **One folder (F-18, D-60).** The factory is one folder and one git repo. It holds the config, the clones of the projects, the coordinator folder and the work copies. The folder has no instruction file at its top. One factory runs on several machines from the same repo, and one machine runs several factories (§4.3).
+3. **A shared file and a local file (F-18).** `factory.yaml` travels in git. `factory.local.yaml` holds the personal values, the credentials and the values of one machine. It has mode 600 (§4.4).
+4. **Approval points (F-15, D-57).** The core knows approval points and work items only. The recipe lists the approval points and owns the words merge, pull request and release. `init` asks the owner for the mode of each point: `owner` or `delegated` (§6).
+5. **Core and setup (F-16).** The core is the metal. A setup is text and scripts that a person adds on top. The owner accepts the setup text by its hash (D-13) (§4.13).
+6. **No desk, few stops (F-17).** The design has no review desk of its own. It lists the extension points instead (§4.14). Only a security boundary stops a command, and every stop prints the command that fixes it (§4.3).
+7. **One board for many repos (F-19).** One GitHub project holds the issues of many repos in one board. FAC-M3 proves it with a real run (§4.10).
+8. **Lifecycle (F-20, F-21).** The commands `start`, `shutdown`, `restart`, `reboot`, `status` and `dismiss` have a milestone and a test each. The design defines an idle worker (§4.2, §4.11).
+9. **Leftovers.** The docs hold no local machine path (docs check 8). D-57 is answered: the release proof is an owner-approved release scope (§6.2).
 
 ## Changes from v1
 
@@ -208,26 +221,29 @@ The tracker removes most of the render scripts of today (`render-board.py`, `ren
 
 ### 4.1 Concepts
 
-- **Node**: one session with a layer and an owner. It has an optional parent and children. A node on layer 1 or above has a home folder. A cell (layer 0) has none: its state lives in the home of its parent. The coordinator is a node on layer 1. The word *node* stays because it fits a session on any layer.
-- **Layer**: the level of a node, counted from the bottom. Layer 0 is the cells. The layer sets the role (§5).
-- **Role**: the instructions, the commands and the reports of one layer. A role template from the recipe gives them.
+- **Node**: one session with a layer and an owner. It has an optional parent and children. A node on layer 1 or above has a factory folder. A worker (layer 0) has none: its state lives in the factory folder of its parent. The coordinator is a node on layer 1. The word *node* stays because it fits a session on any layer.
+- **Factory folder**: the folder of a node on layer 1 or above. It is a git repo of its own, the config repo. It holds the config, the setup text, the clones of the projects and the work copies (§4.3). In code and flags it is `home` or `root` (`--home`, `FACTORY_HOME`).
+- **Layer**: the level of a node, counted from the bottom. Layer 0 is the workers. The layer sets the role (§5).
+- **Role**: the instructions, the commands and the reports of one layer. A role text from the recipe gives them.
 - **Owner**: the person whose decisions the node carries. Each team member is the owner of their own nodes.
-- **Cell**: a worker session (layer 0) in one checkout. It does all the stages of the work cycle for one track of one project.
-- **Project**: a unit of work that the node manages. In the `software` recipe, a project is a git repo, with its own settings and variant.
-- **Recipe**: the kind of factory: role templates, work cycle, gate checks, output kind and tracker mapping (§4.9).
-- **Tracker**: the system that holds the board, the andon items and the decisions (§4.10).
+- **Worker**: a session (layer 0) in one work copy. It does all the stages of the work cycle for one track of one project.
+- **Work copy**: a git work tree of a project, in which one worker works. It is under `work-copies/` in the factory folder (§4.3).
+- **Project**: a unit of work that the node manages. In the `software` recipe, a project is a git repo, with its own settings and setup.
+- **Recipe**: the kind of factory: role texts, work cycle, approval points, output kind and board mapping (§4.9).
+- **Board**: the system that holds the work items, the requests and the decisions (§4.10). The config key is `tracker`.
+- **Approval point**: a step of the work that needs an approval. The recipe lists the points. The owner sets the mode of each point: `owner` or `delegated` (§6).
 
 Factory words, used where they are clearer than the generic word:
-- **andon**: an item that waits on the owner (a decision or an action);
-- **work order**: a brief or a decision record that goes down to a cell or a child node;
-- **changeover**: a clear or compact of a session between phases;
-- **staging**: the merge order;
-- `inspect`: the merge gate check (quality inspection);
-- `ship`: the release check and verify (shipping dock).
+- **request**: an item that waits for the owner (a decision or an action);
+- **assignment**: a written task, or a decision record, that goes down to a worker or a child node;
+- **session reset**: a clear or compact of a session between phases;
+- **queue**: the order of the finished work that waits for an approval point;
+- **check**: a check of one piece of finished work. It says `READY` or `NOT READY`, with the reasons. The software recipe checks a pull request with `factory check <pr>`;
+- **release check**: the software recipe check before a release, and the check after it.
 
-`docs/glossary.md` gives one plain sentence for each of these words, and `factory help words` prints them. A test fails when a name has no entry or the entry has more than 25 words. §7.1 shows which of Dean's shop-floor words factory uses.
+`docs/glossary.md` gives one plain sentence for each of these words, and `factory help words` prints them. The same file holds the plain-words table (D-11): for each jargon term, the plain word that user text uses. A test fails when a name has no entry or the entry has more than 25 words. §7.1 shows which of Dean's shop-floor words factory uses.
 
-A single-project setup is a node with one project. A multi-project setup is a node with many. There is one code path for both.
+A factory with one project is a node with one project. A factory with many projects is a node with many. There is one code path for both.
 
 ### 4.2 Commands
 
@@ -289,118 +305,217 @@ Global flags: `--home PATH`, `--json`, `--quiet`, `--no-color`. A command finds 
 Output rule: the default output of a job command (a command that replaces a manual job of §3) has at most 20 lines, and the verdict is on the first line. `docs/token-budget.md` gives the size budget of each job.
 Exit codes: `0` success, `1` failure, `2` usage error, `3` "not ready" (a gate verdict), `4` safety refusal. A gate verdict is not an error, so scripts can tell them apart.
 
-### 4.3 Node home layout
+### 4.3 Factory folder layout
 
-The node home is a folder of its own, next to the project folders. It is never inside a git work tree, and it is never a parent of a project or a checkout. The coordinator session always runs in the home.
+The factory folder is a git repo of its own, the config repo. It holds the config of the factory and every file that a person needs to make the same factory on another machine (F-18, D-60). The clones of the projects, the coordinator folder and the work copies are inside it. It has no instruction file at its top.
 
 ```
-<workspace>/
-  web/                          # project checkout (a git repo); a cell runs here
-  web-search/                   # one more checkout of web, for a second cell
-  api/                          # another project
-  acme-factory/                 # the node home
-    factory.yaml                # config, edited by people (YAML, comments allowed)
-    CLAUDE.md                   # coordinator role template: managed blocks plus owner text
-    .factory/                   # state; its own git repo with the delete-guard hook
-      node.json                 # schema_version, created_with, block versions
-      roles/worker.md           # the worker role template that every cell reads
-      decision-log.json         # decisions read from the tracker, with the answer and its author
-      staging.json              # the merge order
-      board.json  waiting.json  # the items, only with the `local` tracker (§4.10)
-      decision-profile/         # format, index, principles, decisions
-      roadmaps/  orders/  resume/
-      cells/<id>/inbox/         # work orders and records for each cell
-      inbox/  outbox/           # messages from the parent, reports to the parent (§5)
-      state/  locks/            # gitignored: heartbeats, tracker cache, pane map, locks
+~/work/acme/                        # the factory folder: a git repo, the config repo
+  factory.yaml                      # shared config; tracked (§4.4)
+  factory.local.yaml                # personal and one-machine config; ignored; mode 600
+  .gitignore                        # the share list; tracked
+  setup/
+    coordinator.md                  # tracked: the coordinator text of the owner
+  coordinator/
+    CLAUDE.md                       # generated on each machine; ignored; the coordinator runs here
+  web/  api/                        # clones of the project repos; ignored
+  work-copies/
+    web/web-search/                 # a work copy for one worker; ignored
+  .factory/                         # private state repo with the delete-guard hook; ignored
+    node.json                       # the factory marker: schema_version, created_with, block versions
+    roles/worker.md                 # the worker role text that every worker reads
+    decision-log.json               # decisions read from the board, with the answer and its author
+    queue.json                      # the queue
+    board.json  waiting.json        # the items, only with the `local` tracker (§4.10)
+    decision-profile/               # format, index, principles, decisions
+    roadmaps/  orders/  resume/
+    workers/<id>/inbox/             # assignments and records for each worker
+    inbox/  outbox/                 # messages from the parent, reports to the parent (§5)
+    state/  locks/                  # ignored: last-seen files, board cache, pane map, locks
 ```
 
-Why this layout: Claude Code loads every CLAUDE.md from the session folder up to the root. A cell runs in a checkout, and the home is not above the checkout. So the cell loads the project instructions and the worker role, never the coordinator instructions. The coordinator reads the projects through `--add-dir`.
+Why this layout: Claude Code loads every instruction file from the session folder up to the top of the file system. A worker runs in a work copy. The coordinator text is in `coordinator/`, and that folder is not above any work copy. The top of the factory folder holds no instruction file. So a worker loads the project instructions and the worker role text, and never the coordinator text. The coordinator reads the projects through `--add-dir`.
+
+A person can run more than one factory on one machine, each in its own folder. A person can run one factory on more than one machine, from the same config repo. One machine is the active one at a time. In v3 nothing stops a second machine. FAC-M4 adds a warning, and FAC-M8 allows use from several machines at once.
+
+The `.gitignore` is the share list. It ignores everything, and it allows `.gitignore`, `factory.yaml` and `setup/`. factory writes its part of the file between two marker lines. A person can add lines outside that part, and `upgrade` keeps them. The coordinator folder is not tracked (D-1): each machine renders `coordinator/CLAUDE.md` from the package and from `setup/coordinator.md`. So the rendered text can hold the owner prefix and the modes of each machine.
+
+The coordinator writes in the coordinator folder, in the state folder and in the clones. It does not edit the config. The launch adds `--add-dir` for the state folder and for each project, and not for the top of the factory folder. A project path is one folder name. It never names the top of the factory folder, and it never names a reserved folder. The reserved names are `coordinator`, `work-copies`, `setup`, `factory.yaml`, `factory.local.yaml`, `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md`, in any letter case. A name with a leading dot is also not allowed.
 
 `factory init`:
-- In a git work tree, with no `--home`: it proposes `../<repo>-factory` and adds that repo as the first project. It asks on a TTY. With `--yes` it uses the proposal. With no TTY and no `--yes`, it prints the proposal and exits 2.
-- In a folder that is not a git work tree and holds git repos one level down (a workspace folder), with no `--home`: it proposes `./<folder>-factory`, next to those repos. It lists each repo as a project. When two folders are checkouts of one repo (a linked worktree), it lists the repo once and names the extra folder as skipped. It asks on a TTY. With `--yes` it uses the proposal. With no TTY and no `--yes`, it prints the proposal and exits 2. It never makes the current folder the home.
-- In an empty folder, or in a folder with no git repo below it, or with `--home DIR`: that folder becomes the home.
-- It refuses (exit 4) a home inside a git work tree, a home inside another node home, a home that is a parent of one of its projects, and a home that holds a git repo one level down. The message names the rule. A child node home sits next to its parent home, not inside it.
-- `--project URL` clones the repo next to the home, in the folder that holds the home: `<folder of the home>/<repo name>`. The repo name is the last part of the URL, without `.git`; it must be a plain name. The clone runs `git clone` with an argument list and `--` before the URL, never through a shell. It refuses a target that exists and is not a clone of the same URL (exit 4). `init` makes every check that needs no cloned project, and counts all projects, before the first clone. If a later step fails, it removes the clones and the empty folders that it made, and nothing else.
-- `--tracker`, `--items` and `--decisions` choose the tracker at setup (§4.10). On a TTY, `init` asks "Which tracker?" when `--tracker` is absent.
-- `--state-from SRC` clones a state repo (a git URL or a path) into `.factory/` instead of an empty one, writes a new `factory.yaml` for this machine, and runs `doctor`. This is how a second machine of the same owner gets the profile and the roadmaps.
-- `factory up` then starts the session. The user never has to know the folder.
+- Inside a project work tree, with no `--home`: it proposes a new factory folder next to the project folder (`../<repo>-factory`). It clones the repo into `<factory folder>/<repo>` from its origin, and it warns that the old folder keeps the work that is not pushed. With no origin, it clones from the local folder, keeps the local source in `sources` of the local file, and warns that the factory cannot be shared with this repo. It asks in a terminal window. With `--yes` it uses the proposal. With no terminal window and no `--yes`, it prints the proposal and exits 2.
+- In a folder that is not a git work tree and holds git repos one level down (a workspace folder), with no `--home`: it proposes `./<folder>-factory`, next to those repos. It lists each repo as a project, and it clones each one into the new folder. When two folders are work trees of one repo, it lists the repo once and names the extra folder as skipped. It asks in a terminal window. With `--yes` it uses the proposal. With no terminal window and no `--yes`, it prints the proposal and exits 2.
+- In an empty folder, or with `--home DIR`: that folder becomes the factory folder.
+- It makes the folder a git repo and commits only the allowed files. It writes `factory.yaml` and `factory.local.yaml` (mode 600), writes `setup/coordinator.md` with a short comment when the file is absent, renders `coordinator/CLAUDE.md`, and registers the factory in the factory list. A child node folder sits in its own folder, never inside the folder of its parent.
+- It refuses a new factory folder inside a folder that the factory list holds (error, exit 1).
+- `--project URL` clones the repo into the factory folder: `<factory folder>/<repo name>`. The repo name is the last part of the URL, without `.git`. It must be one folder name that is not reserved. The clone runs `git clone` with an argument list and `--` before the URL, never through a shell, and with no submodule recursion. It refuses a target that exists and is not a clone of the same URL (error, exit 1). `init` makes every check that needs no cloned project, and counts all projects, before the first clone. If a later step fails, it removes only what this run made.
+- A clone URL has these rules: it is `https`, `ssh` (also the scp form) or `file`. An `https` URL has no user name. A password, a token or a secret part in any URL form is refused, a leading hyphen is refused, and the message never repeats the value. Two entries with one clone URL in normal form (the same host and path, with or without `.git`, in the scp or https form), or with one path, are refused. `init` refuses a project flag with credentials (exit 2) before it clones. A URL that `init` reads from an origin loses its user name, and `init` prints a warning. The rules protect secrets, so they stay stops.
+- A project with no shareable URL (no origin, a `file` URL, or a local path that the user types) works on this machine. `factory.yaml` never holds a local path or a `file` URL that `init` writes. `init` and `doctor` warn that the factory cannot be shared with that repo, and name the fix: add an origin and set `url`.
+- `--tracker`, `--items` and `--decisions` choose the board at setup (§4.10). In a terminal window, `init` asks which board to use when `--tracker` is absent.
+- `--approval <point>=<owner|delegated>` sets the mode of one approval point. In a terminal window, `init` asks for each point of the recipe, with `owner` as the default. With `--yes`, or with no terminal window and no flag, it writes `owner`. `--yes` with a flag that asks for `delegated` exits 2 and writes nothing. A `delegated` choice with no terminal window, or inside a factory session, exits 4 and writes nothing (§6).
+- `--state-from SRC` clones a state repo (a git URL or a path) into `.factory/` instead of an empty one, and runs `doctor`. This is how a second machine gets the work state (FAC-M3).
+- If a step fails, or if `init` cannot write the factory list, it exits 1 and removes only what this run made. A second `init` in the same folder then works. A file or folder that was there before the run stays as it was.
+- `factory start` then starts the session. The user never has to know the folder.
 
-**How a command finds the home from a project folder (F-3).** The home is next to the repo, not above it, so a walk up from the repo finds no `factory.yaml`. So `init` records the home in a per-user index: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The index is outside `~/.claude`. Each entry holds the home path, the node id and the absolute path of each project. It holds paths only. A command that finds no `--home`, no `FACTORY_HOME` and no `factory.yaml` above the current folder looks for the current folder in the index. The deepest project path that contains the current folder wins. If no entry matches, the command exits 2 and prints a hint ("run `factory init` here, or use `--home DIR`"). If two homes list the same project, it exits 2 and names both homes. A home that no longer exists is ignored, and `doctor` warns. A home that comes from the index is not trusted for network checks (the same rule as a home in a parent folder, §4.6).
+**How a command finds the factory folder (F-3).** The order is: `--home`; else `FACTORY_HOME`, which factory sets in every session that it starts; else a walk up from the current folder to `factory.yaml` (at most 64 levels). The projects are inside the factory folder, so the walk finds it from a clone, from the coordinator folder and from a work copy. Then the registration check runs (D-5). A `factory.yaml` counts only when three things are true:
+1. The factory list has an entry for its folder.
+2. The `id` of that entry is the `node.id` of the config.
+3. The factory marker `.factory/node.json` is present and valid.
 
-**State on a second machine (O-1d).** `.factory/` is a git repo. The owner can name a private remote for it: `factory state remote <url|path>` records it as `state.remote` (§4.4). `factory state push` pushes. `factory state pull` merges by fast-forward only and reports a dirty state repo without changing it. `doctor` fails when the remote is a public GitHub repo, and warns when it cannot check the remote. The remote holds the profile, the roadmaps and the decision log. It holds no secret (§6). The config `factory.yaml` stays on its machine, because paths and accounts differ.
+A config in a clone that someone else wrote has no entry, so it runs no command and gets no proxy check. If the check fails, `start`, `doctor`, `node` and `upgrade` exit 4. They name the file and the reason, and they print one remedy: `factory init` in the factory folder (no entry, another node id, or a missing or broken factory marker), or "run the command from the factory folder, or name it with --home" (a clone that holds its own `factory.yaml`). `init` on the factory folder registers a received or a moved factory (see "Share a factory"). The check applies to the walk, to `--home` and to `FACTORY_HOME`.
 
-The CLI code, templates, recipes and scripts live in the installed package, never in the node home. An upgrade of the package does not touch state (an idea from firstmate's code-root and home split).
+The factory list is a per-user file: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. It is outside `~/.claude`. Its folder has mode 700 and its file has mode 600, and a reader refuses a file of another user or a file that others can write. Each entry holds the folder path, the node id, the absolute path of each project and the origin (`own` or `received`). A folder that no longer exists is ignored, and `doctor` warns. A work copy does not enter the factory list. Several factories on one machine each have their own entry, and each resolves its own folder.
 
-### 4.4 Config: `factory.yaml`
+**The instruction-file rule (F-17, D-60).** Claude Code loads `CLAUDE.md` and `CLAUDE.local.md` from the session folder and from every folder above it (the memory page of the Claude Code documentation, https://code.claude.com/docs/en/memory). `AGENTS.md` is the file name that other common agents load. factory starts Claude Code only, and the warning names `AGENTS.md` too, because a person may start another agent in the same folder. `doctor` warns when the factory folder, or any folder above it, holds one of these three files. The walk stops at 64 levels, and an unreadable folder gives a warning, not a failure. `start` and `init` print the same warning before they act. The limit: factory never reads under `~/.claude`, so it cannot see the instructions of the user level. A warning is enough here, because the file is the choice of the user in the user's own folders.
 
-Schema 2 splits the core keys from the recipe keys. The core parses everything except `recipe`. The recipe parses its own block with its own schema.
+#### Share a factory
+
+A factory can travel from one machine or person to another through git (F-18f, D-60).
+
+- **What travels in git.** `factory.yaml` (the node, the board config, the recipe name and the projects, `session`, `limits`; the approval points come with the installed recipe) and the `setup/` folder (the coordinator text now; more setup files in FAC-M6).
+- **What does not travel.** `factory.local.yaml` (personal values, credentials and values of one machine), `coordinator/` (each machine renders it from the package and from `setup/coordinator.md`), the clones and the work copies (each machine clones them), and the work state in `.factory/` (items, decisions, workers) until FAC-M3 moves it with `init --state-from`.
+- **The one command.** Clone the config repo, then run `factory init` in it. `init` clones each repo, registers the factory on this machine, and asks only for the personal values: the account (the owner fields) and the mode of each approval point that the owner wants to delegate. Then `factory start` works.
+- **Publish the config repo.** Add a remote to the factory folder and push: `git remote add origin <url>`, then `git push -u origin main`. Only the files of the share list go out.
+- **A project with no origin.** A project with no origin, or with a local source that the user types, works on this machine, but the factory cannot be shared with it. Its local source stays in `factory.local.yaml` (key `sources`), never in `factory.yaml`. `init` and `doctor` say so.
+- **A received factory is a trust boundary.** The files of another machine or person are not trusted until the owner accepts them. The lighter rule of the user's own clones does not apply to them. `init` on a received or moved factory checks the tracked paths and the ignore rules before it writes anything. A tracked local file, a tracked state path or a tracked `coordinator/` path stops the command on every factory, until the owner acts. `init` records in the factory list whether the factory is your own or received. A moved factory counts as received, because `init` cannot tell a moved factory of your own from a copy of another one (D-16). On a received factory, `init` lists every other file that the config repo tracks (apart from `factory.yaml` and `.gitignore`), and the owner accepts them together with the setup text. An absent or empty setup file does not skip them. On your own factory, a tracked instruction file or Claude settings file gives a warning only (R2). A setting that skips permission prompts, or that changes the session marker, stops on every factory.
+- **The setup text needs the owner.** The text of `setup/coordinator.md` goes into session instructions. So the owner accepts its hash at the first `init`, and again after each change (D-13). After a change, `factory start` in a terminal window shows each added, removed and changed file with its text, and asks. With no terminal window, it stops and names the command (R1). With no acceptance at all, the command to run is `factory init` in a terminal window. Only `init` makes a first acceptance. `init --yes` prints the file, its hash, the folder, the node id and the reason, and accepts the setup text alone, only when no acceptance exists yet for this folder and no other tracked file is in the set. `--yes` never answers the prompt for the other tracked files of a received factory. With no terminal window, `init` stops there, also with `--yes`, and names the command. If the owner answers no in a terminal window, `init` goes on, and `start` stops until the owner accepts. The prompt shows the full text of each new or changed file, or a diff against the accepted version when git still has it. A file past the display bound is not shown in part: the prompt says so, names the path and the command to read it, and keeps no as the default. A control character shows as a visible escape.
+- **Links and outside paths.** factory refuses a link, or a path that resolves outside the factory folder, in `setup/`, in `coordinator/` and in the backup of a block.
+- **Your own coordinator text.** Write it in `setup/coordinator.md`, not in `coordinator/CLAUDE.md`. `init` and `upgrade` render the first file into the second. `doctor` warns about text in `coordinator/CLAUDE.md` that does not travel.
+
+#### Stops and warnings
+
+Factory gets in the way as little as possible (F-17). Each check is in one of three classes (F-17c):
+- **A security stop (exit 4).** Only a check at a security boundary stops a command. A stop prints one line with the reason and one line with the command that fixes it. A stop with no remedy is not allowed.
+- **An error (exit 1, or exit 2 for a usage error).** The command cannot run at all, for example on a platform that factory does not support. The errors of the URL and path rules also print a remedy line. Other errors keep their text.
+- **A warning (exit 0).** Every other check warns. `doctor` shows the warning, and the command goes on.
+
+A received factory is a trust boundary, so its checks are stops. The lighter rule, a warning, applies to the user's own clones. The security stops are:
+- the registration check;
+- the approval record guard and the session marker: a `delegated` choice with no terminal window, or inside a factory session;
+- an edited or missing safety block (the remedy is `factory upgrade --overwrite safety`, which keeps the old text in a backup file);
+- a local file or a state folder that git tracks or does not ignore, and a tracked path under `coordinator/` on every factory;
+- on a received factory: a tracked file that the owner has not accepted, a tracked link in that set, a tracked path under a clone folder, a list of tracked files at its cap, and a file over its size cap;
+- a setup file with no accepted hash, when the owner does not accept it in a terminal window;
+- a link, or a path that resolves outside the factory folder, in `setup/`, `coordinator/` or the backup of a block;
+- `upgrade --overwrite safety` inside a factory session;
+- a value that looks like a password or a token in a tracked file;
+- a setting that skips permission prompts in a checked settings file (also after an acceptance), and a checked settings file that sets or clears `FACTORY_SESSION`;
+- a clone URL with credentials or with a scheme that is not allowed;
+- a project path that is outside the factory folder or reserved;
+- a local file that another account owns, that others can write, or that is a link.
+
+These are warnings: a rule that allows a whole tool (for example `Bash` or `*`) in a settings file; a setting that approves project MCP servers; a tracked instruction file or Claude settings file on your own factory; a project with no shareable URL; a settings file in a clone with no skip setting; an instruction file above the factory folder; and a local file with a mode that others can read (see §4.4). A factory folder under a linked parent folder works. The link rule checks only the paths below the real folder.
+
+Section 6 says what the approval record guard, the session marker, the setup accept prompt and the origin of a factory list entry do not prove.
+
+#### Work state on a second machine
+
+`.factory/` is a git repo. The owner can name a private remote for it: `factory state remote <url|path>` (FAC-M3) records it. `factory state push` pushes. `factory state pull` merges by fast-forward only, and reports a dirty state repo without changing it. `doctor` fails when the remote is a public GitHub repo, and warns when it cannot check the remote. The remote holds the profile, the roadmaps, the decision log and the items of the `local` board. It holds no secret (§6). Until FAC-M3, the work state stays on its machine.
+
+The CLI code, templates, recipes and scripts live in the installed package, never in the factory folder. An upgrade of the package does not touch state (an idea from firstmate's code-root and home split).
+
+### 4.4 Config: a shared file and a local file
+
+The factory folder holds two config files. `factory.yaml` is shared: git tracks it, and it travels to every machine. `factory.local.yaml` is local: git ignores it, it has mode 600, and it holds only what is personal, a credential, or true for one machine. Each file has its own `schema` key and its own version. Schema 2 splits the core keys from the recipe keys. The core parses everything except `recipe`. The recipe parses its own block with its own schema.
+
+The shared file, `factory.yaml`:
 
 ```yaml
 schema: 2
 node:
   id: acme                   # unique among siblings; also the tmux session name
   layer: 1                   # set by factory; the role comes from the layer (§5)
-owner:
-  display: "{{from git config user.name}}"   # written by init, never by the template
-  github: "{{from gh api user}}"
-  prefix: "[From {owner}, typed by {node} at the owner's explicit instruction, {date}]"
 session:
   agent: claude              # the agent command of this node; only `claude` is built (§4.6)
-  statusline: null           # the owner's own status line command; the hook calls it (§4.6)
   permission_mode: auto      # the only value accepted (§6)
   effort: high
   model: default
-  proxy: none                # none, or the id of an entry in `proxies` (§4.6)
-proxies:                     # optional; no keys or tokens here (§6)
-  - id: local
-    base_url: http://127.0.0.1:8787   # becomes ANTHROPIC_BASE_URL for the session
-    health: /health                   # path that must answer before a launch
-    on_fail: stop                     # stop (default) | direct
-cells:                       # optional per-cell overrides
-  web-search: { proxy: none }
 limits:
   memory_free_min_pct: 20
   disk_free_min_gb: 20
-  load_max: cpu_count
+  load_max: cpu_count        # adapts to each machine
   context_prepare_pct: 30
   context_max_pct: 40
-approval:
-  land: each                 # each (every merge waits for the owner) | approved-work (§6.1)
-  ship: each                 # each is the only value until D-57 is decided (§6.2)
-state:
-  remote: null               # a private git remote for `.factory/` (a URL or a path), or null (§4.3)
-tracker:                     # the default tracker of the node; a project can override it (§4.10)
+  idle_after: 2h             # FAC-M4: a worker with no activity for this time may be idle (§4.11)
+tracker:                     # the default board of the node; a project can override it (§4.10)
   kind: github               # github | jira | linear | local
   items: acme/web            # where work items live (a repo, or a project or team scope)
   decisions: acme/decisions  # the decision store; private by default (§4.10)
   site: null                 # jira only: the base URL of the Jira site
   key: null                  # jira: the project key; linear: the team key
-  agent_account: null        # the tracker identity of the cells (a machine user or an app); must differ from the owner (§4.10)
   watch_interval: 5m         # `factory watch` read interval
 recipe:
-  id: software
-  variant: plain             # default variant for every project
+  id: software               # the approval points come with the installed recipe (§6)
+  variant: plain             # default setup for every project
   projects:
     - id: web
-      repo: acme/web
-      path: ../web           # relative to the node home
+      url: https://github.com/acme/web.git   # the clone URL; optional (a project with no URL stays on one machine)
+      repo: acme/web         # optional: the GitHub owner and name, for the board
+      path: web              # one folder name inside the factory folder
       default_branch: main
       merge_method: squash
       variant: devflow       # optional per-project override
       tracker: { kind: jira, items: WEB, site: "https://acme.atlassian.net", key: WEB }   # optional override (§4.10)
-      gate: { checks: [] }   # extra repo checks for `factory inspect`
+      gate: { checks: [] }   # extra repo checks for `factory check`
       heavy_test: "npm test" # runs under `factory lock run`
+```
+
+The local file, `factory.local.yaml`:
+
+```yaml
+schema: 1                    # the local file has its own version
+owner:
+  display: "{{from git config user.name}}"   # written by init, never by the template
+  github: "{{from gh api user}}"
+  prefix: "[From {owner}, typed by {node} at the owner's explicit instruction, {date}]"
+session:
+  proxy: none                # none, or the id of an entry in `proxies` (§4.6)
+  statusline: null           # the owner's own status line command; the hook calls it (§4.6)
+proxies:                     # optional; no keys or tokens here (§6)
+  - id: local
+    base_url: http://127.0.0.1:8787   # becomes ANTHROPIC_BASE_URL for the session
+    health: /health                   # path that must answer before a launch
+    on_fail: stop                     # stop (default) | direct
+workers:                     # optional per-worker overrides
+  web-search: { proxy: none }
+approval:                    # the mode of each approval point of the recipe (§6)
+  merge: owner               # owner (default) | delegated
+  release: owner
+sources:                     # the local source of a project with no shareable URL
+  api: ~/code/api
 parent: null                 # or { id, address }; the address is file:// only (§5.3)
 children: []                 # nodes this node manages, each { id, address } (§5)
 ```
 
+**The rule.** A key stays local only if it is personal, a credential, or true for one machine only. Everything else is shared. The shared schema refuses a local key, and the error names the key and the local file. A change that adds a proxy entry to `factory.yaml` fails the load, and `start` makes no tmux call. The reason for each key:
+
+| Key | File | Reason |
+|---|---|---|
+| `schema` | each file | Each file has its own version key. It is not a value that a person shares. |
+| `node`, `tracker` (kind, items, decisions, site, key, `watch_interval`) | shared | They describe the factory and its board. |
+| `recipe` with the projects | shared | The recipe name and the project list make the same factory on every machine. |
+| `session`: `agent`, `permission_mode`, `effort`, `model` | shared | They are a way of working. |
+| `limits` | shared | The context percents are a way of working. The memory, disk and load values are a policy, and `load_max: cpu_count` adapts to each machine. |
+| `owner` (display name, GitHub login, prefix) | local | Personal. A receiver is the owner on the receiver's machine. |
+| `session.proxy`, `session.statusline` | local | True for one machine only; each names a proxy or a command of this machine. |
+| `proxies` | local | True for one machine only (a local host and port). It is also a security boundary: a shared entry could send the model traffic of the receiver to a host that the receiver did not choose (Gate 1). |
+| `workers` | local | True for one machine only; each entry picks a proxy of this machine for one worker. |
+| `approval` (the mode of each point) | local | Personal. A delegation is owner authority and needs an approval record on each machine. The list of approval points travels with the recipe. Only the mode per person stays local. |
+| `parent`, `children` | local | True for one machine only; each holds an absolute `file://` address. |
+| the board account and its credentials (FAC-M3) | local | A credential. |
+| `sources` | local | True for one machine only. It holds a local path, which never goes into the shared file. |
+| `state.remote` (FAC-M3) | local | It names the private place of the work state of one owner. |
+
+**The project entry.** `url` is optional: the clone URL (§4.3). `repo` is optional: the GitHub owner and name, for the board. `path` is one folder name, and it is not a reserved name (§4.3). The recipe parses these keys. The core parses the file around them.
+
+**Mode 600.** `init` writes the local file with mode 600. `start`, `init`, `node` and `upgrade` set a mode that has only group or other read bits back to 600, and print a notice. They stop (exit 4) when the file has a group or other write bit, when another account owns it, or when it is a link (D-14). `doctor` and every dry run only warn, and name the `chmod` command. With `factory.yaml` and no `factory.local.yaml`, `start`, `doctor` and `node` exit 2 and name `init`.
+
 - `tracker.kind: local` takes no other tracker key: the items and the decisions stay in `.factory/` (§4.10). The schema refuses `items`, `decisions`, `site`, `key` or `watch_interval` with `local`. Every other kind needs `items` and `decisions`. `jira` also needs `site` and `key`. `linear` also needs `key`.
-- A project can name its own `tracker` with `kind`, `items`, `site` and `key`. The decision store stays the one of the node, so the owner answers in one place. A project with no `tracker` uses the one of the node.
+- A project can name its own `tracker` with `kind`, `items`, `site` and `key`. The decision store stays the one of the node, so the owner answers in one place. A project with no `tracker` uses the one of the node. The `tracker.decisions` key names a place, not the records, so it stays shared (D-9). With the `local` board the records stay in the private `.factory/`.
 - `session.agent` is the program that factory starts for a session. Only `claude` is accepted now. All starts of the agent use this value (§4.6).
-- `approval.land` names the step that makes a finished output final. In the `software` recipe, that step is the merge. `approval.ship` names the step that publishes a release. `each` is the only value until D-57 is decided: every release waits for the owner's go (§6.2).
-- `state.remote` is the private git remote of `.factory/` (§4.3). `null` means no remote.
-- The config holds no secrets. `factory doctor` refuses a config with a value that looks like a token. The schema is checked at load with a fixed schema (Zod). An unknown key or a bad value stops the command and names the key. It never falls back to a looser default (from firstmate's fail-closed parse).
+- `approval` maps each approval point of the recipe to `owner` or `delegated`. A point that the file does not name is `owner`. The schema refuses a point that the recipe does not list. §6 says what each value means and what proves `delegated`.
+- The shared file holds no secret and no local path. `factory doctor` refuses a tracked file with a value that looks like a password or a token. The schema is checked at load with a fixed schema (Zod). An unknown key or a bad value stops the command and names the key. It never falls back to a looser default (from firstmate's fail-closed parse).
+- A FAC-M2 config (the key `cells` or `approval.land`) is refused with a message to make the factory again with `init`.
 
 ### 4.5 Upgrades without loss of state
 
@@ -538,6 +653,13 @@ variants: [plain, devflow]   # variants/plain.yaml (default), variants/devflow.y
 
 factory does not build its own review desk. The board, the andon items and the decisions live in the team's tracker. The owner chooses the tracker in `tracker.kind`.
 
+**One board for many repos (F-19a).** Can one board show the work of many repos? Yes. One GitHub project can hold the issues of many repos in one board. Factory uses one project for all the repos of a factory. FAC-M3 verifies this with a real run on two repos before the board connector ships. Jira and Linear follow in FAC-M9.
+- **The bound.** One list call reads one board. It uses `--limit <cap+1>`. If the board holds more than the cap, the output has a line "more than <cap>" and does not print the rest.
+- **The filter.** The server filters the list (`--query`), also by repo. The reader does not filter the full list.
+- **The owner rule.** The owner of the project must reach every repo that the factory lists. The board shows only the items of the listed repos.
+- **The token scopes.** A read needs `read:project`. A write needs `project`.
+- **The items of the factory itself.** With `local` they are in `.factory`. With `github` they are issues of the config repo.
+
 **The choice of the tracker (F-2).** The user picks the tracker at setup, as in devflow. `init` asks "Which tracker?" on a TTY (`github`, `jira`, `linear`, `local`) and takes `--tracker <id>`, `--items` and `--decisions`. Later, `factory tracker set <id> [--project P]` changes it, and `factory tracker status` prints the tracker of each project and the result of the privacy check. `init` and `tracker set` check the decision store before they write anything. They exit 4 when the store is public. A node has one default tracker, and a project can override it (as devflow does: one machine can work on a Jira repo and a GitHub repo side by side). `item add --project P` goes to the tracker of P. The decision store is always the one of the node.
 
 **One adapter contract.** Every adapter gives the same small set of operations:
@@ -611,6 +733,41 @@ The rules:
 - **Owner authority stays in the typed line.** `cell relay` types the owner prefix, the record number and a short hash of the record. A record alone never carries authority (§5.5).
 - **Only this module types into a pane.** No code outside `src/comms/` calls `tmux send-keys`. The slash commands of `changeover` (`/clear`, `/compact`) also go through it. A typed line is at most 300 characters. `cell changeover --order` and `cell recover` send their text with `cell send`, never as typed text.
 - **Nothing outside the folder reads or writes inbox files.** The file format is the contract. The folder can become a package when a second tool must import it.
+
+### 4.13 Core and setup
+
+factory has two kinds of files. The **core** is the metal: the code, and the fixed rules that every factory needs. A **setup** is the text and the scripts that a person adds on top of the core (F-16). A setup is code. Its role texts and its coordinator text are session instructions, and a session obeys them. Dean's own examples are setup (F-16a). The fixed rules are core (F-16d).
+
+| Part | Kind | Rule |
+|---|---|---|
+| The priorities rule | setup | A person writes it. A second factory can take it from a shared setup. |
+| The lifecycle of work (plan, build, review, fix, release) | setup | The recipe gives a default. A person can change it. |
+| The review rules | setup | The recipe gives a default. A person can change it. |
+| The role texts | setup | The recipe renders the role block. A person adds text outside the core blocks. |
+| The scripts | setup | A script is a file of the setup. The owner accepts it (FAC-M6). |
+| The fixed rules (the `safety` block) | core | It is the metal. An edit cannot remove it: `doctor` and `start` check its hash. |
+| The role block that the recipe renders | core | The package renders it again when the setting or the package changes. |
+| The factory part of the `.gitignore` | core | It keeps the private files out of git. A person adds lines outside it. |
+
+- A setup adds text only outside the core blocks.
+- **The fixed rules are checked.** The `safety` block is a managed block with a hash in its marker. An edited or missing `safety` block stops `start` (exit 4) and fails `doctor`. The remedy is `factory upgrade --overwrite safety`. It renders the block again and keeps the old text in a new backup file in the state folder (at most 10 are kept). It runs only in a terminal window, outside a factory session. A block that is intact but differs from the text that the package renders now (a new package version, or a changed prefix) is rendered again with a notice. A role block that a person edited stays, with a warning.
+- **The check needs the rendered text of each machine.** So `coordinator/CLAUDE.md` is not tracked (D-1). Every file that a person needs to make the factory again is in the tracked folder: the coordinator text in `setup/coordinator.md`, the recipe choice with its list of approval points, the board config, and the setup files of FAC-M6. The mode of each point is per person and stays in the local file.
+- **In this design the owner accepts the hash of `setup/coordinator.md`** (D-13). The setup acceptance of every setup file, and the upgrade rule (an upgrade never overwrites a setup file), come with FAC-M6.
+- factory starts Claude Code only. The instruction-file warning also names `AGENTS.md`, because other common agents load that file (§4.3).
+
+### 4.14 Extension points
+
+factory has no review desk of its own, not even as an option (F-2, F-17). A person who wants a desk builds a reader on one of these extension points. Each point has a milestone.
+
+| Extension point | What it gives | Milestone |
+|---|---|---|
+| Board connector contract | The operations of §4.10: item, decision, doc and changes. A new board kind implements it. | FAC-M3 (GitHub), FAC-M9 (Jira, Linear) |
+| Event file | The digest of the node in `.factory/outbox/`, written by script (§5.4). A reader follows it. | FAC-M5 |
+| `report --json` | The digest on demand, in the same format (§5.4). | FAC-M5 |
+| Recipe registration | A recipe is registered in the recipe registry. This is a code path. A new recipe needs no change to the core (§4.9). | FAC-M6 |
+| Setup files | A script and one line in the setup list. The owner accepts each file (§4.13). | FAC-M6 |
+
+A person with no code skill adds a desk reader as a setup file in FAC-M6. FAC-M5 ships a sample reader outside `src/`. It reads the event file and `report --json`, and prints one line for each work item.
 
 ## 5. Layers: same mechanics, one role per layer
 
@@ -883,6 +1040,30 @@ An independent check of the design against Dean's notes found open points. The O
 | OD-8 | The word list of Dean ends with the heading "machinery and automation hardware". A table in §7.1 maps each of his 11 words. |
 | OD-9 | The state repo can push to a private git remote that the owner names. `init --state-from` clones it on a second machine (§4.3). |
 | OD-10 | A tracker event proves the owner only when the agents use another identity (`tracker.agent_account`). With a shared account, `doctor` warns and only `factory decide` from a TTY outside a factory session counts (§4.10, §6.1). |
+
+### v3 (2026-11-02)
+
+Dean gave F-14 to F-21, D-59 and D-60. The Gate 1 and Gate 2 answers and the later answers closed the open points. The decisions are final until Dean changes them.
+
+| Id | Decision |
+|---|---|
+| D-59 | Plain words. The names of v2 become worker, request, assignment, session reset, queue, check and release check. "Request" means only an item that waits for the owner (§7). |
+| D-60 | One folder. The factory folder is a git repo that holds the config, the clones, the coordinator folder and the work copies (§4.3). |
+| D-1 A | The coordinator folder is not tracked. `init` renders `coordinator/CLAUDE.md` on each machine from the package and from `setup/coordinator.md`. Everything else that a person needs to make the factory again is in the tracked folder. |
+| D-3 B | `upgrade` refuses a FAC-M1 node with a project, because the project sits outside the new folder and has no clone URL. It says to make the node again. A FAC-M1 node with no project upgrades. |
+| D-4 A | The warning for a second active machine goes to FAC-M4, with a named test that reads a state folder from the FAC-M3 state pull. |
+| D-5 A | A config counts only when the factory list has its folder, the entry has the node id of the config, and the factory marker is present. `init` registers a received or moved factory (§4.3). |
+| D-6 | The record from another owner is a "message". The merge check is `factory check <pr>`. The folder of the work copies is `work-copies`. |
+| D-7 A | The owner decides about the old local paths in the git history before FAC-M10. The history is not rewritten. |
+| D-8 A | `init` registers a folder that holds both config files, after a yes in a terminal window or with `--yes`. It refuses a folder whose git repo tracks the local file or a path under `.factory/` or `coordinator/`. Registration is not an approval. |
+| D-9 A | `tracker.decisions` stays shared (§4.4). FAC-M8 decides again if each owner needs a separate place for decisions. |
+| D-10 A | The terminal-window guard stays. Design 6 says that it cannot prove that the owner acts. FAC-M5 adds a control that factory does not run itself. |
+| D-11 A | The plain-words table is in `docs/glossary.md`. The table uses "factory marker", "setup acceptance" (the verb is "accept"), "work copies" and the folder `work-copies`. |
+| D-13 A, R1 | The owner accepts the hash of `setup/coordinator.md`. `start` in a terminal window shows a change and asks. Otherwise it stops and names the command (§4.3). |
+| D-14 A | A local file that others can write, that another account owns or that is a link stops the command. A mode with read bits only is set to 600 with a notice (§4.4). |
+| D-15 B | A rule that allows a whole tool is a warning. Only a setting that skips permission prompts stops. |
+| D-16 A | A moved factory, and a factory list entry with no origin, count as received. |
+| R2 | On your own factory, a tracked instruction file or Claude settings file is a warning. On a received factory, the owner accepts such files with the setup text, by one hash (§4.3). |
 
 ## 10. Risks
 

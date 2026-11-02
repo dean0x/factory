@@ -49,7 +49,7 @@ describe('scripts/check-intent-docs.sh', () => {
   it('passes on the docs of the repo', () => {
     const result = check(join(ROOT, 'docs'));
     expect({ code: result.code, err: result.err }).toEqual({ code: 0, err: '' });
-    expect(result.out).toContain('all 8 checks passed');
+    expect(result.out).toContain('all 9 checks passed');
     expect(failedChecks(result.out)).toEqual([]);
   });
 
@@ -229,6 +229,46 @@ describe('scripts/check-intent-docs.sh, check 8: no local machine paths', () => 
   it('passes when the README and the CHANGELOG are not above the docs folder', async () => {
     await rm(join(base, 'README.md'));
     await rm(join(base, 'CHANGELOG.md'));
+    expect(check().code).toBe(0);
+  });
+});
+
+describe('scripts/check-intent-docs.sh, check 9: the design has the headings for core and setup and for extension points', () => {
+  const HEADINGS = ['Core and setup', 'Extension points'] as const;
+
+  it.each(HEADINGS)('exits 1 when the heading "%s" is missing', async (title) => {
+    await change('design.md', (text) => text.replace(new RegExp(`^(#+ (?:[0-9.]+ )?)${title}$`, 'm'), '$1Another title'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['9']);
+    expect(result.out).toContain(`design.md has no heading "${title}"`);
+  });
+
+  it.each(HEADINGS)('exits 1 when "%s" is text and not a heading', async (title) => {
+    await change('design.md', (text) => text.replace(new RegExp(`^#+ (?:[0-9.]+ )?${title}$`, 'm'), title));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['9']);
+    expect(result.out).toContain(`design.md has no heading "${title}"`);
+  });
+
+  it.each(HEADINGS)('exits 1 when only a longer heading holds "%s"', async (title) => {
+    await change('design.md', (text) => text.replace(new RegExp(`^(#+ (?:[0-9.]+ )?)${title}$`, 'm'), `$1${title} and more`));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['9']);
+  });
+
+  it('names the core heading first when both are missing', async () => {
+    await change('design.md', (text) => text.replace(/^(#+ (?:[0-9.]+ )?)(Core and setup|Extension points)$/gm, '$1Another title'));
+    const result = check();
+    expect(failedChecks(result.out)).toEqual(['9']);
+    expect(result.out).toContain('design.md has no heading "Core and setup"');
+    expect(result.out).not.toContain('Extension points');
+  });
+
+  it.each(HEADINGS)('accepts "%s" as a heading with no number', async (title) => {
+    await change('design.md', (text) => text.replace(new RegExp(`^(#+ )[0-9.]+ ${title}$`, 'm'), `$1${title}`));
     expect(check().code).toBe(0);
   });
 });
