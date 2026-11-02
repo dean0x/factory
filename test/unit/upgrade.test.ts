@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { renderBlock } from '../../src/blocks/managed.js';
@@ -8,11 +11,13 @@ import { runInit } from '../../src/commands/init.js';
 import { runUpgrade } from '../../src/commands/upgrade.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION, configSchema } from '../../src/config/schema.js';
+import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
 import { jsonText } from '../../src/state/files.js';
 import { parseJsonText } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
+import { backup } from '../../src/upgrade/apply.js';
 import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
@@ -1456,5 +1461,122 @@ describe('upgrade: a node of schema 1', () => {
     expect(error.message).toContain('EBUSY');
     expect(error.message).toContain('Restore it from .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
+  });
+});
+
+describe('upgrade: the backup folder', () => {
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+  const BACKUPS = `${HOME}/.factory/backups`;
+  const holdsBackup = (deps: FakeDeps): boolean =>
+    deps.dirs.has(BACKUP) || [...deps.files.keys()].some((path) => path.startsWith(`${BACKUP}/`));
+
+  /** Deps whose copy of one path fails after the copy was made, as a disk that fills up does. */
+  const failingCopy = (deps: FakeDeps, failsFor: string): FakeDeps => ({
+    ...deps,
+    fs: {
+      ...deps.fs,
+      copyTree: async (from, to, skip) => {
+        const copied = await deps.fs.copyTree(from, to, skip);
+        return from === failsFor ? failure(`cannot copy ${from}: ENOSPC`) : copied;
+      },
+    },
+  });
+
+  it('removes the backup folder that this run made when a copy fails, and keeps the other backups', async () => {
+    const { deps } = await makeNode();
+    deps.seed(`${BACKUPS}/older/factory.yaml`, 'old backup');
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(failingCopy(deps, `${HOME}/.factory`), newer));
+    expect(error.message).toContain('ENOSPC');
+    expect(holdsBackup(deps)).toBe(false);
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('removes the backup folder that this run made when a file cannot be examined', async () => {
+    const { deps } = await makeNode();
+    const unreadable: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        // CLAUDE.md is read before the backup is made, so only the stat call that follows the backup folder fails.
+        stat: async (path) => (path === CLAUDE && deps.dirs.has(BACKUP) ? failure(`cannot stat ${path}: EIO`) : deps.fs.stat(path)),
+      },
+    };
+    const error = refusal(await upgrade(unreadable, newer));
+    expect(error.message).toContain('EIO');
+    expect(holdsBackup(deps)).toBe(false);
+  });
+
+  it('says so when the part-copied folder cannot be removed', async () => {
+    const { deps } = await makeNode();
+    const copying = failingCopy(deps, `${HOME}/.factory`);
+    const stuck: FakeDeps = {
+      ...copying,
+      fs: { ...copying.fs, remove: async (path) => (path === BACKUP ? failure(`cannot remove ${path}: EBUSY`) : deps.fs.remove(path)) },
+    };
+    const error = refusal(await upgrade(stuck, newer));
+    expect(error.message).toContain('ENOSPC');
+    expect(error.message).toContain('EBUSY');
+    expect(error.message).toContain('.factory/backups/2030-01-02T03-04-05-678Z');
+  });
+
+  it('removes nothing when a folder has the name of the backup already', async () => {
+    const { deps } = await makeNode();
+    deps.seed(`${BACKUP}/factory.yaml`, 'a folder that this run did not make');
+    const error = refusal(await upgrade(deps, newer));
+    expect(error.message).toContain('exists already');
+    expect(text(deps, `${BACKUP}/factory.yaml`)).toBe('a folder that this run did not make');
+  });
+});
+
+describe('upgrade: the backup on a real disk', () => {
+  const real = createNodeDeps();
+  const OLDER = '2029-01-01T00-00-00-000Z';
+  let root = '';
+  let counter = 0;
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), 'factory-upgrade-backup-'));
+  });
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  /** A node home with a config file, a state folder, an older backup, and CLAUDE.md as a link to a file outside the home. */
+  const linkedHome = async (): Promise<{ home: string; shared: string }> => {
+    const base = join(root, `case-${(counter += 1)}`);
+    const home = join(base, 'home');
+    const shared = join(base, 'shared', 'CLAUDE.md');
+    await mkdir(join(home, '.factory', 'backups', OLDER), { recursive: true });
+    await mkdir(join(base, 'shared'), { recursive: true });
+    await writeFile(join(home, 'factory.yaml'), 'schema: 2\n', 'utf8');
+    await writeFile(join(home, '.factory', 'node.json'), '{}\n', 'utf8');
+    await writeFile(join(home, '.factory', 'backups', OLDER, 'factory.yaml'), 'old backup', 'utf8');
+    await writeFile(shared, 'shared claude text\n', 'utf8');
+    await symlink(shared, join(home, 'CLAUDE.md'));
+    return { home, shared };
+  };
+
+  it('holds the content of a linked CLAUDE.md as a regular file', async () => {
+    const { home } = await linkedHome();
+    const result = await backup(real, home);
+    expect(result.ok).toBe(true);
+    const made = result.ok ? result.value : '';
+    expect((await lstat(join(made, 'CLAUDE.md'))).isFile()).toBe(true);
+    expect(await readFile(join(made, 'CLAUDE.md'), 'utf8')).toBe('shared claude text\n');
+    expect(await readFile(join(made, 'factory.yaml'), 'utf8')).toBe('schema: 2\n');
+    expect(await readFile(join(made, '.factory', 'node.json'), 'utf8')).toBe('{}\n');
+    expect((await lstat(join(home, 'CLAUDE.md'))).isSymbolicLink()).toBe(true);
+  });
+
+  it('leaves no part-copied folder when a link in the state folder stops the copy', async () => {
+    const { home, shared } = await linkedHome();
+    await symlink(shared, join(home, '.factory', 'inner-link'));
+    const result = await backup(real, home);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('ENOTSUP');
+    expect(await readdir(join(home, '.factory', 'backups'))).toEqual([OLDER]);
+    expect(await readFile(join(home, '.factory', 'backups', OLDER, 'factory.yaml'), 'utf8')).toBe('old backup');
   });
 });

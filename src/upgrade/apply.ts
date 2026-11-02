@@ -7,7 +7,7 @@ import { ok } from '../core/result.js';
 import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
 import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
 import { dirs, files, stateKeys } from '../names.js';
-import { layoutOf } from '../state/layout.js';
+import { layoutOf, type Layout } from '../state/layout.js';
 import type { BlockPlan, FilePlan, MovePlan } from './plan.js';
 import type { UpgradeFile, UpgradeSpec } from './spec.js';
 
@@ -72,19 +72,7 @@ const timestampOf = (deps: Deps): string => deps.now().toISOString().replace(/[:
 const BACKUP_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 export const BACKUPS_KEPT = 5;
 
-/**
- * Copy the files that upgrade can change. The run-time folders `state/` and `locks/` are left out:
- * upgrade writes only the config file, CLAUDE.md, the worker file and the state file, and it never writes into them.
- */
-export const backup = async (deps: Deps, home: string): Promise<CliResult<string>> => {
-  const layout = layoutOf(home);
-  const target = join(layout.backupsDir, timestampOf(deps));
-  const exists = await deps.fs.stat(target);
-  if (!exists.ok) return exists;
-  if (exists.value !== null) return failure(`the backup folder ${relative(home, target)} exists already`);
-  const made = await deps.fs.mkdir(target);
-  if (!made.ok) return made;
-
+const copyIntoBackup = async (deps: Deps, layout: Layout, target: string): Promise<CliResult<void>> => {
   const copies: readonly (readonly [string, string, readonly string[]])[] = [
     [layout.configFile, join(target, files.config), []],
     [layout.claudeMd, join(target, files.claudeMd), []],
@@ -97,7 +85,31 @@ export const backup = async (deps: Deps, home: string): Promise<CliResult<string
     const copied = await deps.fs.copyTree(from, to, skip);
     if (!copied.ok) return copied;
   }
-  return ok(target);
+  return ok(undefined);
+};
+
+/**
+ * Copy the files that upgrade can change. The run-time folders `state/` and `locks/` are left out:
+ * upgrade writes only the config file, CLAUDE.md, the worker file and the state file, and it never writes into them.
+ * A link to a file is copied as a regular file with the content of its target.
+ * If a copy fails, the folder that this run made is removed, so that no part-copied backup stays.
+ */
+export const backup = async (deps: Deps, home: string): Promise<CliResult<string>> => {
+  const layout = layoutOf(home);
+  const target = join(layout.backupsDir, timestampOf(deps));
+  const exists = await deps.fs.stat(target);
+  if (!exists.ok) return exists;
+  if (exists.value !== null) return failure(`the backup folder ${relative(home, target)} exists already`);
+  const made = await deps.fs.mkdir(target);
+  if (!made.ok) return made;
+
+  const copied = await copyIntoBackup(deps, layout, target);
+  if (copied.ok) return ok(target);
+  const removed = await deps.fs.remove(target);
+  if (removed.ok) return copied;
+  return failure(
+    `${copied.error.message}. The part-copied backup folder ${relative(home, target)} stays: ${removed.error.message}`,
+  );
 };
 
 /**

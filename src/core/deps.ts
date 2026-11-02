@@ -46,7 +46,10 @@ export interface Fs {
   remove(path: string): Promise<CliResult<void>>;
   /** Remove a folder that holds nothing. A folder with content is an error. A missing path is not an error. */
   removeEmptyDir(path: string): Promise<CliResult<void>>;
-  /** Copy a file or a folder tree. Paths in `skip` are not copied. */
+  /**
+   * Copy a file or a folder tree. Paths in `skip` are not copied. A link to a file as `from` is copied as a regular
+   * file with the content of its target. Any other link is an error.
+   */
   copyTree(from: string, to: string, skip: readonly string[]): Promise<CliResult<void>>;
 }
 

@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { constants, createReadStream } from 'node:fs';
+import { constants, createReadStream, type Stats } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -82,9 +82,14 @@ const MAX_COPY_DEPTH = 64;
 
 const unsupported = (code: string): Error => Object.assign(new Error(code), { code });
 
+/** A file, or the root of the copy when it is a link to a file. A link inside a tree is not followed. */
+const isCopyableFile = async (from: string, info: Stats, depth: number): Promise<boolean> =>
+  info.isFile() || (depth === 0 && info.isSymbolicLink() && (await stat(from)).isFile());
+
 /**
  * Copy a file or a folder tree. The target may be inside the source: the paths in `skip`
  * are left out, and fs.cp would refuse this case. The tree must hold only files and folders.
+ * A link to a file as the root is copied as a regular file with the content of its target.
  */
 const copyEntry = async (from: string, to: string, skip: readonly string[], depth: number): Promise<void> => {
   if (skip.includes(from)) return;
@@ -93,7 +98,7 @@ const copyEntry = async (from: string, to: string, skip: readonly string[], dept
   if (info.isDirectory()) {
     await mkdir(to, { recursive: true });
     for (const name of await readdir(from)) await copyEntry(join(from, name), join(to, name), skip, depth + 1);
-  } else if (info.isFile()) {
+  } else if (await isCopyableFile(from, info, depth)) {
     await copyFile(from, to, constants.COPYFILE_EXCL);
   } else {
     throw unsupported('ENOTSUP');

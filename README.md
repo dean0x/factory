@@ -114,7 +114,9 @@ When `upgrade` has something to upgrade, it checks the home rules of `init`. If 
 factory upgrade --overwrite coordinator
 ```
 
-`upgrade` keeps the last 5 backups. After a successful upgrade it removes the older ones. A folder in `.factory/backups/` whose name is not a timestamp stays. If a step fails, `upgrade` removes no backup.
+`upgrade` keeps the last 5 backups. After a successful upgrade it removes the older ones. A folder in `.factory/backups/` whose name is not a timestamp stays. If a step fails, `upgrade` removes no older backup.
+
+If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular file with the content of the target. If the backup itself fails, `upgrade` removes the backup folder that it made and changes nothing else.
 
 `upgrade` makes one commit in `.factory/` with the files that it writes or moves, and no other file. It runs no git hook for that commit. Before it changes anything, it stops when `.factory/` has a staged change, or a change in a file that the upgrade changes. Commit that change, or put the file back, and run `upgrade` again. If git reports an error after it wrote the commit, `upgrade` keeps the new files and tells you how to check the commit. After a successful upgrade, `upgrade` records the home in the home index, as `init` does. A problem with the index is a warning.
 

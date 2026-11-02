@@ -16,6 +16,7 @@ Config schema 2 and the migration
 - `factory upgrade` commits only the files that it writes or moves in `.factory/`. It stops before any change when `.factory/` has a staged change, or a change in a file that the upgrade changes. When a step fails, it clears from the index only the paths that it staged. If git reports an error after the commit was written, `upgrade` keeps the new files and says how to check the commit. After a successful upgrade, it records the home in the home index, as `init` does. A problem with the index is a warning.
 - The commits of `init` and `upgrade` in the state repo run no git hook.
 - A clone that takes longer than 300 seconds stops with a message that names the limit and suggests an ssh agent or `gh auth login`.
+- `factory upgrade` works for a home where `factory.yaml` or `CLAUDE.md` is a link to a file. The backup holds a regular file with the content of the target. If the backup fails, `upgrade` removes the backup folder that it made.
 - `factory upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports. The JSON output names the old name of a renamed block in `blocks[].renamedFrom`.
 - A node link (`parent` and `children`) accepts only a `file://` address on this machine. An `ssh://`, `https://` or relative address is refused. A node on layer 1 with entries in `children` stops the migration and changes nothing, because the children of layer 1 are cells. The message gives the remedy.
 

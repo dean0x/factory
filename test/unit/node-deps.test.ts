@@ -235,6 +235,60 @@ describe('node deps: fs', () => {
     expect(await deps.fs.readText(join(dir, 'two.txt'))).toEqual({ ok: true, value: 'one' });
   });
 
+  describe('a link as the path to copy', () => {
+    it('copies the content of a link to a file as a regular file', async () => {
+      const target = fresh('link-target.txt');
+      await writeFile(target, 'shared text', 'utf8');
+      const link = fresh('link.txt');
+      await symlink(target, link);
+      const copy = fresh('link-copy.txt');
+
+      expect((await deps.fs.copyTree(link, copy, [])).ok).toBe(true);
+
+      expect((await lstat(copy)).isFile()).toBe(true);
+      expect(await readFile(copy, 'utf8')).toBe('shared text');
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    });
+
+    it('fails for a link whose target does not exist', async () => {
+      const link = fresh('dangling.txt');
+      await symlink(fresh('no-target.txt'), link);
+      const copy = fresh('dangling-copy.txt');
+
+      const result = await deps.fs.copyTree(link, copy, []);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOENT');
+      expect(await deps.fs.stat(copy)).toEqual({ ok: true, value: null });
+    });
+
+    it('fails for a link to a folder', async () => {
+      const folder = fresh('link-folder');
+      await deps.fs.mkdir(folder);
+      await deps.fs.writeText(join(folder, 'a.txt'), 'a');
+      const link = fresh('link-to-folder');
+      await symlink(folder, link);
+
+      const result = await deps.fs.copyTree(link, fresh('link-folder-copy'), []);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOTSUP');
+    });
+
+    it('fails for a link inside the tree', async () => {
+      const source = fresh('tree-with-link');
+      await deps.fs.mkdir(source);
+      const target = fresh('inner-target.txt');
+      await writeFile(target, 'x', 'utf8');
+      await symlink(target, join(source, 'inner.txt'));
+
+      const result = await deps.fs.copyTree(source, fresh('tree-with-link-copy'), []);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOTSUP');
+    });
+  });
+
   it('renames, copies with a skip list, and removes a tree', async () => {
     const source = join(dir, 'tree');
     await deps.fs.mkdir(join(source, 'keep'));
