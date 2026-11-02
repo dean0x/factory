@@ -43,15 +43,27 @@ const tmux = (args: readonly string[]): Promise<RunResult> =>
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Wait for the file of the fake claude. The wait has an upper bound. */
-const waitForLaunch = async (): Promise<string[]> => {
+/** Wait until a program of the test has written a file into the output folder. The wait has an upper bound. */
+const waitForFile = async (name: string): Promise<string> => {
   for (let step = 0; step < POLL_STEPS; step += 1) {
-    const text = await readFile(join(outDir, 'launches'), 'utf8').catch(() => '');
-    if (text !== '') return text.trim().split('\n');
+    const text = await readFile(join(outDir, name), 'utf8').catch(() => '');
+    if (text !== '') return text;
     await sleep(POLL_STEP_MS);
   }
-  throw new Error('the fake claude did not start');
+  throw new Error(`the file ${name} did not appear`);
 };
+
+/** Wait for the file of the fake claude. */
+const waitForLaunch = async (): Promise<string[]> => (await waitForFile('launches')).trim().split('\n');
+
+/** A program that writes whether its environment holds the proxy variable. A new window of the session runs it. */
+const probeProxy = (dir: string): string =>
+  [
+    '#!/bin/sh',
+    `dir='${dir}'`,
+    'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/window-proxy"; else echo no > "$dir/window-proxy"; fi',
+    '',
+  ].join('\n');
 
 const up = (...extra: string[]): Promise<RunResult> =>
   box.run(['up', '--home', box.node, ...extra], { env: tmuxEnv });
@@ -137,6 +149,21 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
     expect((await up()).code).toBe(0);
     await waitForLaunch();
     expect((await readFile(join(outDir, 'proxy'), 'utf8')).trim()).toBe('no');
+  });
+
+  it('removes the proxy variable from the environment of the session, so a later window gets none', async () => {
+    await initNode();
+    expect((await up()).code).toBe(0);
+    await waitForLaunch();
+
+    const environment = await tmux(['show-environment', '-t', '=demo', 'ANTHROPIC_BASE_URL']);
+    expect(environment.stdout.trim()).toBe('-ANTHROPIC_BASE_URL');
+
+    const probe = join(box.root, 'bin', 'probe-proxy');
+    await writeFile(probe, probeProxy(outDir));
+    await chmod(probe, 0o755);
+    expect((await tmux(['new-window', '-d', '-t', '=demo:', '-n', 'probe', probe])).code).toBe(0);
+    expect((await waitForFile('window-proxy')).trim()).toBe('no');
   });
 
   it('marks the session and the panes with the options of factory', async () => {
