@@ -180,11 +180,19 @@ export const gitClone = async (deps: Deps, url: string, target: string): Promise
 export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>
   gitStep(deps, dir, ['init', '-q'], 'create the state repository');
 
-/** Stage everything and commit. The caller checks the identity first. */
+/**
+ * The hooks of a state repo do not run for a commit of this tool. `/dev/null` is a file, so git finds no hook below it.
+ * That turns off every hook; `--no-verify` turns off only two. An empty value is not documented as "no hooks".
+ */
+const NO_HOOKS = 'core.hooksPath=/dev/null';
+
+const commitStaged = (deps: Deps, dir: string, message: string): Promise<CliResult<void>> =>
+  gitStep(deps, dir, ['-c', 'commit.gpgsign=false', '-c', NO_HOOKS, 'commit', '-q', '-m', message], 'commit the state files');
+
+/** Stage everything and commit, for a new repo. The caller checks the identity first. */
 export const commitAll = async (deps: Deps, dir: string, message: string): Promise<CliResult<void>> => {
   const staged = await gitStep(deps, dir, ['add', '-A'], 'stage the state files');
-  if (!staged.ok) return staged;
-  return gitStep(deps, dir, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', message], 'commit the state files');
+  return staged.ok ? commitStaged(deps, dir, message) : staged;
 };
 
 /** Remove the staged changes from the index. The files keep their text. */

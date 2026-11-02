@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
-import { gitClone, listRepoChildren, MAX_SCAN_ENTRIES, withoutUserinfo } from '../../src/core/git.js';
+import { commitAll, gitClone, listRepoChildren, MAX_SCAN_ENTRIES, withoutUserinfo } from '../../src/core/git.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler, type FakeRepo, type GitFixture } from '../helpers/git-fake.js';
 
@@ -145,6 +145,18 @@ describe('git: clone', () => {
     const result = await gitClone(deps, 'https://host/acme/api.git', '/w/api');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toBe('cannot clone https://host/acme/api.git: cannot run git: ENOENT');
+  });
+});
+
+describe('git: the commit of a new state repo', () => {
+  it('stages everything and commits with the hooks of the repo off', async () => {
+    const { handler, log } = gitHandler();
+    const result = await commitAll(createFakeDeps({ cwd: WS, run: handler }), '/w/node/.factory', 'chore: first');
+    expect(result.ok).toBe(true);
+    expect(log.commands()).toEqual([
+      'add -A',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: first',
+    ]);
   });
 });
 

@@ -656,7 +656,7 @@ describe('init: the state repository', () => {
       'config user.name',
       'config user.email',
       'add -A',
-      '-c commit.gpgsign=false commit -q -m chore: initialize the state',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the state',
     ]);
   });
 
