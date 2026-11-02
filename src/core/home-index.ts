@@ -195,6 +195,31 @@ export const recordHome = async (deps: Deps, path: string, entry: HomeEntry): Pr
   return recorded;
 };
 
+/** A node home for the index: its folder, its id and the paths of its projects as its config holds them. */
+export interface IndexedNode {
+  readonly home: string;
+  readonly id: string;
+  readonly projects: readonly string[];
+}
+
+/**
+ * Put a node home in the index, so that a command finds it from a project folder. The node exists already, so a problem
+ * is a warning and not a failure. The result is the warnings. `indexPath` is null when no variable names a folder.
+ */
+export const recordNode = async (deps: Deps, indexPath: string | null, node: IndexedNode): Promise<readonly string[]> => {
+  if (indexPath === null) {
+    return [`The home index was not updated: ${env.stateHome} and ${env.userHome} name no folder.`];
+  }
+  const realHome = await realPathOf(deps, node.home);
+  if (!realHome.ok) return [`The home index ${indexPath} was not updated: ${realHome.error.message}`];
+  const recorded = await recordHome(deps, indexPath, {
+    [homeIndex.keys.home]: realHome.value,
+    [homeIndex.keys.id]: node.id,
+    [homeIndex.keys.projects]: node.projects.map((project) => resolve(realHome.value, project)),
+  });
+  return recorded.ok ? [] : [`The home index ${indexPath} was not updated: ${recorded.error}`];
+};
+
 /** True when an entry of the index has this home, as it is written or by its real path. */
 export const listsHome = async (deps: Deps, entries: readonly HomeEntry[], home: string): Promise<boolean> => {
   const real = await realPathOf(deps, home);

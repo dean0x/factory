@@ -3,8 +3,10 @@ import { fileOfTarget, inspectBlocks, renamedFromOf, type BlockStatus } from '..
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
+import { loadConfig } from '../config/load.js';
 import { commitPaths, hasIdentity, headOf, statusOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { resolveHome } from '../core/home.js';
+import { indexPathOf, recordNode } from '../core/home-index.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { commands, commandText, dirs, flags, flagText, roles, schemaIds } from '../names.js';
@@ -80,6 +82,25 @@ const checkStateRepoReady = async (deps: Deps, layout: Layout, touched: readonly
     );
   }
   return ok(undefined);
+};
+
+/**
+ * Put the upgraded home in the home index, as init does, so that a command finds the home from a project folder.
+ * The home is upgraded already, so a problem here is a warning and not a failure.
+ */
+const indexUpgraded = async (deps: Deps, home: string): Promise<readonly OutLine[]> => {
+  const warn = (texts: readonly string[]): readonly OutLine[] => texts.map((text) => ({ level: 'warn', text }));
+  const indexPath = await indexPathOf(deps);
+  if (!indexPath.ok) return warn([`The home index was not updated: ${indexPath.error.message}`]);
+  const config = await loadConfig(deps, home);
+  if (!config.ok) return warn([`The home index was not updated: ${config.error.message}`]);
+  return warn(
+    await recordNode(deps, indexPath.value, {
+      home,
+      id: config.value.core.node.id,
+      projects: config.value.recipe.projects.map((project) => project.path),
+    }),
+  );
 };
 
 /** The commit of the upgrade: the id of HEAD before it, and the paths that it staged. */
@@ -292,12 +313,14 @@ export const runUpgrade = async (
 
   const count = written.length + moved.length;
   const pruned = await pruneBackups(deps, home, backupDir.value);
+  const indexed = await indexUpgraded(deps, home);
   return done(
     [
       { level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` },
       ...(pruned.length === 0
         ? []
         : [{ level: 'warn' as const, text: `Old ${dirs.backups} could not be removed: ${pruned.join('; ')}.` }]),
+      ...indexed,
     ],
     backupPath,
     stateChanged,

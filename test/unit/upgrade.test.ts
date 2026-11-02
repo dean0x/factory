@@ -31,6 +31,9 @@ const NODE_JSON = `${HOME}/.factory/node.json`;
 const CONFIG = `${HOME}/factory.yaml`;
 const BACKUP = `${HOME}/.factory/backups/2030-01-02T03-04-05-678Z`;
 const COORDINATOR_LINE = 'Coordinate. Do not produce.';
+/** The variables that name the folder of the home index. */
+const INDEX_ENV: Record<string, string | undefined> = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+const INDEX = '/state/factory/homes.json';
 
 interface Node {
   readonly deps: FakeDeps;
@@ -42,7 +45,7 @@ const makeNode = async (
   options: { repo?: boolean; run?: (inner: RunHandler) => RunHandler } = {},
 ): Promise<Node> => {
   const { handler } = gitHandler();
-  const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin' }, run: options.run?.(handler) ?? handler });
+  const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin', ...INDEX_ENV }, run: options.run?.(handler) ?? handler });
   const init = await runInit(
     { ...deps, run: async (command, args, runOptions) => handler({ command, args, cwd: runOptions?.cwd }) },
     {
@@ -1018,10 +1021,19 @@ describe('upgrade: a node of schema 1', () => {
   const workerLine = workerBody.split('\n').find((line) => line.length > 20 && !line.startsWith('#')) ?? '';
 
   const makeOldNode = (
-    options: { run?: (inner: RunHandler) => RunHandler; doc?: Record<string, any>; git?: GitFixture } = {},
+    options: {
+      run?: (inner: RunHandler) => RunHandler;
+      doc?: Record<string, any>;
+      git?: GitFixture;
+      env?: Record<string, string | undefined>;
+    } = {},
   ): Node => {
     const { handler } = gitHandler(options.git);
-    const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin' }, run: options.run?.(handler) ?? handler });
+    const deps = createFakeDeps({
+      cwd: '/w',
+      env: { PATH: '/bin', ...(options.env ?? INDEX_ENV) },
+      run: options.run?.(handler) ?? handler,
+    });
     seedSchema1Node(deps, HOME, options.doc);
     const first = deps.calls.length;
     return { deps, gitSince: () => deps.calls.slice(first).map((call) => call.args.slice(2).join(' ')) };
@@ -1118,6 +1130,69 @@ describe('upgrade: a node of schema 1', () => {
     expect(error.message).toBe(`.factory has changes in files that the upgrade changes: ${path}`);
     expect(snapshot(deps)).toEqual(before);
     expect(gitWrites(gitSince())).toEqual([]);
+  });
+
+  describe('the home index', () => {
+    /** The entries of the home index file. */
+    const indexed = (deps: FakeDeps): unknown => {
+      const index = parseJsonText(text(deps, INDEX));
+      return index.ok ? (index.value as { homes: unknown }).homes : undefined;
+    };
+
+    it('records the home after a real upgrade, with the id and the projects of the upgraded config', async () => {
+      const { deps } = makeOldNode();
+      expect(deps.files.has(INDEX)).toBe(false);
+      const output = success(await upgrade(deps));
+      expect(indexed(deps)).toEqual([{ home: HOME, id: 'demo', projects: ['/w/web'] }]);
+      expect(output.warnings).toEqual([]);
+    });
+
+    it('writes no index in a dry run', async () => {
+      const { deps } = makeOldNode();
+      success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(deps.files.has(INDEX)).toBe(false);
+    });
+
+    it('writes no index when the upgrade fails', async () => {
+      const { deps } = makeOldNode();
+      const failing = withFailingWrites(deps, (path, attempt) => path === CONFIG && attempt === 1);
+      refusal(await upgrade(failing));
+      expect(deps.files.has(INDEX)).toBe(false);
+    });
+
+    it('writes no index when there is nothing to upgrade', async () => {
+      const { deps } = makeOldNode();
+      success(await upgrade(deps));
+      deps.files.delete(INDEX);
+      expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+      expect(deps.files.has(INDEX)).toBe(false);
+    });
+
+    it('warns, and still succeeds, when the index cannot be written', async () => {
+      const { deps } = makeOldNode();
+      const failing = withFailingWrites(deps, (path) => path === INDEX);
+      const output = success(await upgrade(failing));
+      expect(output.json).toMatchObject({ changed: true, committed: true });
+      expect(output.warnings).toHaveLength(1);
+      expect(output.warnings[0]).toContain(`The home index ${INDEX} was not updated`);
+      expect(output.warnings[0]).toContain('disk full');
+      expect(output.lines.some((line) => line.level === 'warn' && line.text === output.warnings[0])).toBe(true);
+    });
+
+    it('warns, and still succeeds, when no folder is named for the index', async () => {
+      const { deps } = makeOldNode({ env: {} });
+      const output = success(await upgrade(deps));
+      expect(output.json).toMatchObject({ changed: true, committed: true });
+      expect(output.warnings).toEqual(['The home index was not updated: XDG_STATE_HOME and HOME name no folder.']);
+    });
+
+    it('warns, and still succeeds, when the index would be inside the folder of Claude Code', async () => {
+      const { deps } = makeOldNode({ env: { XDG_STATE_HOME: '/users/me/.claude/state', HOME: '/users/me' } });
+      const output = success(await upgrade(deps));
+      expect(output.warnings).toHaveLength(1);
+      expect(output.warnings[0]).toContain('The home index was not updated');
+      expect(output.warnings[0]).toContain('/users/me/.claude');
+    });
   });
 
   it('keeps the comments and the order of the keys of a config that the owner edited', async () => {

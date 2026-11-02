@@ -22,7 +22,7 @@ import {
   isWorkTreeRoot,
   MAX_SCAN_ENTRIES,
 } from '../core/git.js';
-import { indexPathOf, recordHome } from '../core/home-index.js';
+import { indexPathOf, recordNode } from '../core/home-index.js';
 import { realPathOf } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
@@ -31,11 +31,9 @@ import {
   commandText,
   defaultOwnerPrefix,
   dirs,
-  env,
   files,
   flags,
   flagText,
-  homeIndex,
   keys,
   roles,
   schemaIds,
@@ -468,24 +466,6 @@ const projectsOf = (deps: Deps, paths: readonly string[], found: readonly string
   ...paths.filter((argument) => !found.includes(resolve(deps.cwd, argument))),
 ];
 
-/**
- * Put the new node in the home index, so that a command finds it from a project folder. The node exists already,
- * so a problem here is a warning and not a failure.
- */
-const indexNode = async (deps: Deps, indexPath: string | null, plan: InitPlan): Promise<readonly string[]> => {
-  if (indexPath === null) {
-    return [`The home index was not updated: ${env.stateHome} and ${env.userHome} name no folder.`];
-  }
-  const realHome = await realPathOf(deps, plan.home);
-  if (!realHome.ok) return [`The home index ${indexPath} was not updated: ${realHome.error.message}`];
-  const recorded = await recordHome(deps, indexPath, {
-    [homeIndex.keys.home]: realHome.value,
-    [homeIndex.keys.id]: plan.config.core.node.id,
-    [homeIndex.keys.projects]: plan.config.recipe.projects.map((project) => resolve(realHome.value, project.path)),
-  });
-  return recorded.ok ? [] : [`The home index ${indexPath} was not updated: ${recorded.error}`];
-};
-
 export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResult<CommandOutput>> => {
   // The place of the index is checked before init writes anything.
   const indexPath = await indexPathOf(deps);
@@ -520,7 +500,11 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
     ...plan.value.warnings,
     ...applied.value.warnings,
     ...notes,
-    ...(await indexNode(deps, indexPath.value, plan.value)),
+    ...(await recordNode(deps, indexPath.value, {
+      home: plan.value.home,
+      id: plan.value.config.core.node.id,
+      projects: plan.value.config.recipe.projects.map((project) => project.path),
+    })),
   ];
 
   const written = [files.config, files.claudeMd, `${dirs.state}/`];
