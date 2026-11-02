@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -268,6 +268,69 @@ describe('home index: reading the file', () => {
     deps.seedDir(INDEX);
     expect((await readHomeIndex(deps, INDEX)).ok).toBe(false);
   });
+
+  describe('who may write the index', () => {
+    const FOLDER = '/state/factory';
+    const seeded = (): FakeDeps => {
+      const deps = createFakeDeps({ env: {} });
+      deps.seed(INDEX, indexText([entry(HOME_A, [])]));
+      return deps;
+    };
+
+    it('reads a file and a folder that this user owns and nobody else writes', async () => {
+      const deps = seeded();
+      deps.modes.set(FOLDER, 0o755);
+      deps.modes.set(INDEX, 0o644);
+      expect(await readHomeIndex(deps, INDEX)).toEqual({ ok: true, value: [entry(HOME_A, [])] });
+    });
+
+    it.each([
+      ['a folder that a group may write', FOLDER, 0o770],
+      ['a folder that other users may write', FOLDER, 0o707],
+      ['a file that a group may write', INDEX, 0o660],
+      ['a file that other users may write', INDEX, 0o606],
+    ])('refuses %s', async (_name, path, mode) => {
+      const deps = seeded();
+      deps.modes.set(path, mode);
+      const result = await readHomeIndex(deps, INDEX);
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('written') });
+      if (!result.ok) expect(result.error).toContain(path);
+    });
+
+    it.each([
+      ['folder', FOLDER],
+      ['file', INDEX],
+    ])('refuses a %s that another user owns', async (_name, path) => {
+      const deps = seeded();
+      deps.owners.set(path, 2000);
+      const result = await readHomeIndex(deps, INDEX);
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('another user') });
+      if (!result.ok) expect(result.error).toContain(path);
+    });
+
+    it('refuses a folder of another user also when the file does not exist yet', async () => {
+      const deps = createFakeDeps({ env: {} });
+      deps.seedDir(FOLDER);
+      deps.owners.set(FOLDER, 2000);
+      expect(await readHomeIndex(deps, INDEX)).toMatchObject({ ok: false, error: expect.stringContaining('another user') });
+    });
+
+    it('checks no owner and no mode on a platform that has no user ids', async () => {
+      const deps = createFakeDeps({ env: {}, uid: null });
+      deps.seed(INDEX, indexText([entry(HOME_A, [])]));
+      deps.owners.set(INDEX, 2000);
+      deps.modes.set(FOLDER, 0o777);
+      expect(await readHomeIndex(deps, INDEX)).toEqual({ ok: true, value: [entry(HOME_A, [])] });
+    });
+
+    it('makes findHomeInIndex stop with a usage error that names the file', async () => {
+      const deps = withIndex([entry(HOME_A, ['/w/web'])], { cwd: '/w/web' });
+      deps.modes.set(FOLDER, 0o777);
+      const result = await findHomeInIndex(deps);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      if (!result.ok) expect(result.error.message).toContain(INDEX);
+    });
+  });
 });
 
 describe('home index: recording a home', () => {
@@ -286,6 +349,39 @@ describe('home index: recording a home', () => {
     expect(deps.atomicWrites).toEqual([INDEX]);
     expect(deps.modes.get(INDEX)).toBe(0o600);
     expect(deps.modes.get('/state/factory')).toBe(0o700);
+  });
+
+  it('sets mode 0700 on an existing index folder, and leaves the state home as it is', async () => {
+    const deps = fresh();
+    deps.seedDir('/state/factory');
+    deps.modes.set('/state', 0o755);
+    deps.modes.set('/state/factory', 0o755);
+    expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+    expect(deps.modes.get('/state/factory')).toBe(0o700);
+    expect(deps.modes.get('/state')).toBe(0o755);
+  });
+
+  it.each([
+    ['a folder that a group may write', '/state/factory', 0o775],
+    ['a file that other users may write', INDEX, 0o646],
+  ])('refuses %s, and changes nothing', async (_name, path, mode) => {
+    const deps = fresh();
+    deps.seed(INDEX, indexText([entry(HOME_B, [], 'api')]));
+    deps.modes.set(path, mode);
+    const result = await recordHome(deps, INDEX, entry(HOME_A, []));
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('written') });
+    expect(deps.atomicWrites).toEqual([]);
+    expect(deps.modes.get(path)).toBe(mode);
+    expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_B, [], 'api')] });
+  });
+
+  it('refuses a folder that another user owns, and changes nothing', async () => {
+    const deps = fresh();
+    deps.seedDir('/state/factory');
+    deps.owners.set('/state/factory', 2000);
+    const result = await recordHome(deps, INDEX, entry(HOME_A, []));
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('another user') });
+    expect(deps.files.has(INDEX)).toBe(false);
   });
 
   it('replaces the entry of the same home and keeps the others', async () => {
@@ -331,6 +427,47 @@ describe('home index: recording a home', () => {
     const result = await recordHome(failing, INDEX, entry(HOME_A, []));
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('disk full') });
     expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_B, [], 'api')] });
+  });
+});
+
+describe('home index: recording a home, with a real file system', () => {
+  let folder = '';
+  beforeAll(async () => {
+    folder = await mkdtemp(join(tmpdir(), 'factory-home-index-record-'));
+  });
+  afterAll(async () => {
+    await rm(folder, { recursive: true, force: true });
+  });
+
+  const modeOf = async (path: string): Promise<number> => (await stat(path)).mode & 0o777;
+
+  it('creates the index folder with mode 0700 and the file with mode 0600', async () => {
+    const index = join(folder, 'new', 'factory', 'homes.json');
+    expect((await recordHome(createNodeDeps(), index, entry(HOME_A, []))).ok).toBe(true);
+    expect(await modeOf(join(folder, 'new', 'factory'))).toBe(0o700);
+    expect(await modeOf(index)).toBe(0o600);
+  });
+
+  it('sets mode 0700 on an index folder that exists, and leaves the state home as it is', async () => {
+    const state = join(folder, 'old');
+    await mkdir(join(state, 'factory'), { recursive: true });
+    await chmod(state, 0o755);
+    await chmod(join(state, 'factory'), 0o755);
+    expect((await recordHome(createNodeDeps(), join(state, 'factory', 'homes.json'), entry(HOME_A, []))).ok).toBe(true);
+    expect(await modeOf(join(state, 'factory'))).toBe(0o700);
+    expect(await modeOf(state)).toBe(0o755);
+  });
+
+  it('refuses an index folder that a group may write, and writes no file', async () => {
+    const state = join(folder, 'shared');
+    await mkdir(join(state, 'factory'), { recursive: true });
+    await chmod(join(state, 'factory'), 0o775);
+    const index = join(state, 'factory', 'homes.json');
+    expect(await recordHome(createNodeDeps(), index, entry(HOME_A, []))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('written'),
+    });
+    expect(await readdir(join(state, 'factory'))).toEqual([]);
   });
 });
 

@@ -2,6 +2,15 @@ import type { CliResult } from '../cli/errors.js';
 
 export type PathKind = 'file' | 'dir' | 'other';
 
+/** What a path is and who may use it. A link is followed. */
+export interface PathInfo {
+  readonly kind: PathKind;
+  /** The id of the user that owns the path. */
+  readonly uid: number;
+  /** The permission bits only: 0o777 at most. */
+  readonly mode: number;
+}
+
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
   /** Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. */
@@ -15,6 +24,10 @@ export interface Fs {
   writeTextAtomic(path: string, text: string, mode?: number): Promise<CliResult<void>>;
   /** The kind of the path, or null when it does not exist. */
   stat(path: string): Promise<CliResult<PathKind | null>>;
+  /** The kind, the owner and the permission bits of the path, or null when it does not exist. */
+  statInfo(path: string): Promise<CliResult<PathInfo | null>>;
+  /** Set the permission bits of a file or a folder that exists. */
+  chmod(path: string, mode: number): Promise<CliResult<void>>;
   /** The path with every link resolved. The path must exist. */
   realpath(path: string): Promise<CliResult<string>>;
   /** Create the folder and its parents. A folder that this call creates gets `mode` when it is given. */
@@ -81,4 +94,6 @@ export interface Deps {
   readonly platform: Platform;
   readonly cwd: string;
   readonly pid: number;
+  /** The id of the user that runs this process, or null on a platform that has no user ids. */
+  readonly uid: number | null;
 }

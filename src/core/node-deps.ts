@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
 import {
   chmod,
@@ -18,7 +19,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from './result.js';
-import { MAX_ANSWER_CHARS, type Deps, type Fs, type PathKind } from './deps.js';
+import { MAX_ANSWER_CHARS, type Deps, type Fs, type PathInfo, type PathKind } from './deps.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 30_000;
 const MAX_RUN_OUTPUT_BYTES = 1_048_576;
@@ -38,18 +39,25 @@ const guard = async <T>(action: string, path: string, work: () => Promise<T>): P
   }
 };
 
-/** Write beside the target, then rename. A link is followed, so the link stays and its target changes. */
+/** The mode of a new file that has no mode from the caller and replaces no file. The umask takes bits from it. */
+const DEFAULT_FILE_MODE = 0o666;
+const TEMPORARY_SUFFIX_BYTES = 8;
+
+/**
+ * Write beside the target, then rename. A link is followed, so the link stays and its target changes.
+ * The temporary file is new, has a name that others cannot guess, and has its final mode from the start.
+ */
 const writeAtomic = async (path: string, text: string, mode: number | undefined): Promise<void> => {
   const target = await realpath(path).catch((cause: unknown) => {
     if (errorCode(cause) === 'ENOENT') return path;
     throw cause;
   });
-  const temporary = `${target}.tmp-${process.pid}`;
+  const temporary = `${target}.tmp-${process.pid}-${randomBytes(TEMPORARY_SUFFIX_BYTES).toString('hex')}`;
   try {
     const info = await stat(target).catch(() => null);
-    await writeFile(temporary, text, 'utf8');
-    if (mode !== undefined) await chmod(temporary, mode);
-    else if (info?.isFile() === true) await chmod(temporary, info.mode & 0o777);
+    const finalMode = mode ?? (info?.isFile() === true ? info.mode & 0o777 : undefined);
+    await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx', mode: finalMode ?? DEFAULT_FILE_MODE });
+    if (finalMode !== undefined) await chmod(temporary, finalMode);
     await rename(temporary, target);
   } catch (cause) {
     await rm(temporary, { force: true }).catch(() => undefined);
@@ -91,6 +99,22 @@ const copyEntry = async (from: string, to: string, skip: readonly string[], dept
   }
 };
 
+const PERMISSION_BITS = 0o777;
+
+const pathKindOf = (info: { isFile(): boolean; isDirectory(): boolean }): PathKind => {
+  if (info.isFile()) return 'file';
+  return info.isDirectory() ? 'dir' : 'other';
+};
+
+const statInfo = async (path: string): Promise<CliResult<PathInfo | null>> => {
+  try {
+    const info = await stat(path);
+    return ok({ kind: pathKindOf(info), uid: info.uid, mode: info.mode & PERMISSION_BITS });
+  } catch (cause) {
+    return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
+  }
+};
+
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   readTextLimited: async (path, maxBytes) => {
@@ -101,14 +125,11 @@ const nodeFs: Fs = {
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
   writeTextAtomic: (path, text, mode) => guard('write', path, () => writeAtomic(path, text, mode)),
   stat: async (path) => {
-    try {
-      const info = await stat(path);
-      const kind: PathKind = info.isFile() ? 'file' : info.isDirectory() ? 'dir' : 'other';
-      return ok(kind);
-    } catch (cause) {
-      return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
-    }
+    const info = await statInfo(path);
+    return info.ok ? ok(info.value?.kind ?? null) : info;
   },
+  statInfo,
+  chmod: (path, mode) => guard('change the mode of', path, () => chmod(path, mode)),
   realpath: (path) => guard('resolve', path, () => realpath(path)),
   mkdir: (path, mode) =>
     guard('create', path, async () => void (await mkdir(path, mode === undefined ? { recursive: true } : { recursive: true, mode }))),
@@ -189,4 +210,5 @@ export const createNodeDeps = (): Deps => ({
   platform: { os: process.platform, nodeVersion: process.version },
   cwd: process.cwd(),
   pid: process.pid,
+  uid: typeof process.getuid === 'function' ? process.getuid() : null,
 });

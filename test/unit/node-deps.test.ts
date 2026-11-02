@@ -256,6 +256,43 @@ describe('node deps: fs', () => {
   });
 });
 
+describe('node deps: owner and mode', () => {
+  it('tells the kind, the owner and the permission bits of a file and of a folder', async () => {
+    const file = fresh('info.txt');
+    await writeFile(file, 'x', 'utf8');
+    await chmod(file, 0o640);
+    const uid = process.getuid?.() ?? null;
+    expect(await deps.fs.statInfo(file)).toEqual({ ok: true, value: { kind: 'file', uid, mode: 0o640 } });
+    await chmod(dir, 0o700);
+    expect(await deps.fs.statInfo(dir)).toEqual({ ok: true, value: { kind: 'dir', uid, mode: 0o700 } });
+  });
+
+  it('gives null for a path that does not exist', async () => {
+    expect(await deps.fs.statInfo(fresh('none'))).toEqual({ ok: true, value: null });
+  });
+
+  it('knows the user id of the process', () => {
+    expect(deps.uid).toBe(process.getuid?.() ?? null);
+  });
+
+  it('sets the permission bits of a file and of a folder', async () => {
+    const folder = fresh('chmod');
+    await deps.fs.mkdir(folder);
+    const file = join(folder, 'f.txt');
+    await writeFile(file, 'x', 'utf8');
+    expect((await deps.fs.chmod(file, 0o600)).ok).toBe(true);
+    expect((await deps.fs.chmod(folder, 0o700)).ok).toBe(true);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+  });
+
+  it('returns an error with the code for a path that does not exist', async () => {
+    const result = await deps.fs.chmod(fresh('chmod-missing'), 0o600);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
+});
+
 describe('node deps: atomic write', () => {
   it('replaces the text of an existing file and leaves no temporary file', async () => {
     const folder = fresh('replace');
@@ -324,6 +361,30 @@ describe('node deps: atomic write', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
     expect(await deps.fs.stat(folder)).toEqual({ ok: true, value: null });
+  });
+
+  it('does not follow a link at the old temporary name, and leaves the link as it was', async () => {
+    const folder = fresh('planted');
+    await deps.fs.mkdir(folder);
+    const victim = join(folder, 'victim.txt');
+    const target = join(folder, 'homes.json');
+    await writeFile(victim, 'victim text', 'utf8');
+    await symlink(victim, `${target}.tmp-${process.pid}`);
+    expect((await deps.fs.writeTextAtomic(target, 'new text', 0o600)).ok).toBe(true);
+    expect(await readFile(victim, 'utf8')).toBe('victim text');
+    expect(await readFile(target, 'utf8')).toBe('new text');
+    expect(await readlink(`${target}.tmp-${process.pid}`)).toBe(victim);
+  });
+
+  it('does not touch a file at the old temporary name, and leaves only the target and that file', async () => {
+    const folder = fresh('planted-file');
+    await deps.fs.mkdir(folder);
+    const target = join(folder, 'homes.json');
+    const planted = `${target}.tmp-${process.pid}`;
+    await writeFile(planted, 'planted text', 'utf8');
+    expect((await deps.fs.writeTextAtomic(target, 'new text', 0o600)).ok).toBe(true);
+    expect(await readFile(planted, 'utf8')).toBe('planted text');
+    expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['homes.json', `homes.json.tmp-${process.pid}`] });
   });
 
   it('keeps the old text and leaves no temporary file when the target is a folder', async () => {

@@ -4,7 +4,7 @@ import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { slug } from '../config/primitives.js';
 import { dirs, env, files, flagText, flags, homeIndex, program, roles } from '../names.js';
 import { parseJsonText } from '../state/load.js';
-import type { Deps } from './deps.js';
+import type { Deps, PathInfo } from './deps.js';
 import { isSameOrInside, realPathOf } from './paths.js';
 import { err, ok, type Result } from './result.js';
 import { describeIssues } from './zod.js';
@@ -15,6 +15,8 @@ const MACOS = 'darwin';
 /** The folder of the index is private to the user, and so is the file. */
 const FOLDER_MODE = 0o700;
 const FILE_MODE = 0o600;
+/** The permission bits that let a group or another user write. */
+const GROUP_OTHER_WRITE = 0o022;
 
 const absolutePath = z
   .string()
@@ -78,12 +80,32 @@ export const indexPathOf = async (deps: Deps): Promise<CliResult<string | null>>
   return ok(path);
 };
 
-/** The entries of the index file. A file that does not exist holds no entry. The error is the reason. */
+/**
+ * What the path is, or null when it does not exist. The path must belong to this user, and no group or other user may
+ * write it, because the index decides which home a command uses. A platform with no user ids is not checked.
+ */
+const ownInfo = async (deps: Deps, path: string, what: string): Promise<Result<PathInfo | null, string>> => {
+  const info = await deps.fs.statInfo(path);
+  if (!info.ok) return err(info.error.message);
+  if (info.value === null || deps.uid === null) return ok(info.value);
+  if (info.value.uid !== deps.uid) return err(`the ${what} ${path} belongs to another user`);
+  if ((info.value.mode & GROUP_OTHER_WRITE) !== 0) {
+    return err(`the ${what} ${path} can be written by a group or by other users`);
+  }
+  return ok(info.value);
+};
+
+/**
+ * The entries of the index file. A file that does not exist holds no entry. A file or a folder that another user owns
+ * or can write is refused. The error is the reason.
+ */
 export const readHomeIndex = async (deps: Deps, path: string): Promise<Result<readonly HomeEntry[], string>> => {
-  const kind = await deps.fs.stat(path);
-  if (!kind.ok) return err(kind.error.message);
-  if (kind.value === null) return ok([]);
-  if (kind.value !== 'file') return err('it is not a file');
+  const folder = await ownInfo(deps, dirname(path), 'folder');
+  if (!folder.ok) return folder;
+  const file = await ownInfo(deps, path, 'file');
+  if (!file.ok) return file;
+  if (file.value === null) return ok([]);
+  if (file.value.kind !== 'file') return err('it is not a file');
   const text = await deps.fs.readTextLimited(path, homeIndex.maxBytes);
   if (!text.ok) return err(text.error.message);
 
@@ -103,7 +125,8 @@ const withEntry = (entries: readonly HomeEntry[], entry: HomeEntry): readonly Ho
 
 /**
  * Put the home in the index file. An entry of the same home is replaced. A file that cannot be read stays as it is.
- * The file is written atomically, with mode 0600, in a folder of mode 0700. The error is the reason.
+ * The file is written atomically, with mode 0600. Its folder gets mode 0700, also when it exists. The folder of the
+ * state home keeps its mode. The error is the reason.
  */
 export const recordHome = async (deps: Deps, path: string, entry: HomeEntry): Promise<Result<void, string>> => {
   if (entry[homeIndex.keys.projects].length > homeIndex.maxProjects) {
@@ -115,8 +138,11 @@ export const recordHome = async (deps: Deps, path: string, entry: HomeEntry): Pr
   if (next.length > homeIndex.maxHomes) return err(`the index lists the most homes that it can: ${homeIndex.maxHomes}`);
 
   const text = `${JSON.stringify({ [homeIndex.keys.schema]: homeIndex.schema, [homeIndex.keys.homes]: next }, null, 2)}\n`;
-  const folder = await deps.fs.mkdir(dirname(path), FOLDER_MODE);
+  const folderPath = dirname(path);
+  const folder = await deps.fs.mkdir(folderPath, FOLDER_MODE);
   if (!folder.ok) return err(folder.error.message);
+  const tightened = await deps.fs.chmod(folderPath, FOLDER_MODE);
+  if (!tightened.ok) return err(tightened.error.message);
   const written = await deps.fs.writeTextAtomic(path, text, FILE_MODE);
   return written.ok ? ok(undefined) : err(written.error.message);
 };

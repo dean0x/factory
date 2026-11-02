@@ -29,6 +29,8 @@ export interface FakeOptions {
   readonly fetch?: FetchHandler;
   readonly now?: Date;
   readonly pid?: number;
+  /** The id of the user of the process. Default: 1000. Null: a platform with no user ids. */
+  readonly uid?: number | null;
   /** A person types at the process. Default: false. */
   readonly stdinIsTTY?: boolean;
   /** A person reads the output on a terminal. Default: false. */
@@ -52,8 +54,13 @@ export interface FakeDeps extends Deps {
   readonly fetched: string[];
   /** The paths of the atomic writes, in order. */
   readonly atomicWrites: string[];
-  /** The mode that a write or a folder was created with, by path. A path with no mode is not in the map. */
+  /**
+   * The mode that a write or a folder was created with, or that a chmod set, by path. A path with no mode is not in
+   * the map, and `statInfo` then gives 0o600 for a file and 0o700 for a folder.
+   */
   readonly modes: Map<string, number>;
+  /** The owner of a path, by path. A path that is not in the map belongs to the user of the process. */
+  readonly owners: Map<string, number>;
   seed(path: string, text: string): void;
   seedDir(path: string): void;
 }
@@ -63,6 +70,10 @@ export const exited = (exitCode: number, stdout = '', stderr = ''): CliResult<Ru
 
 export const missingProgram = (command: string): CliResult<RunOutput> =>
   failure(`cannot run ${command}: ENOENT`);
+
+const DEFAULT_UID = 1000;
+const PRIVATE_FILE_MODE = 0o600;
+const PRIVATE_DIR_MODE = 0o700;
 
 const enoent = (action: string, path: string): CliResult<never> =>
   failure(`cannot ${action} ${path}: ENOENT`);
@@ -76,6 +87,8 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const fetched: string[] = [];
   const atomicWrites: string[] = [];
   const modes = new Map<string, number>();
+  const owners = new Map<string, number>();
+  const uid = options.uid === undefined ? DEFAULT_UID : options.uid;
 
   const ancestors = (path: string): string[] => {
     const found: string[] = [];
@@ -104,6 +117,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     fetched,
     atomicWrites,
     modes,
+    owners,
     seed: (path, text) => {
       addDir(posix.dirname(path));
       files.set(path, text);
@@ -132,6 +146,20 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         return ok(undefined);
       },
       stat: async (path) => ok(kindOf(path)),
+      statInfo: async (path) => {
+        const kind = kindOf(path);
+        if (kind === null) return ok(null);
+        return ok({
+          kind,
+          uid: owners.get(path) ?? uid ?? DEFAULT_UID,
+          mode: modes.get(path) ?? (kind === 'dir' ? PRIVATE_DIR_MODE : PRIVATE_FILE_MODE),
+        });
+      },
+      chmod: async (path, mode) => {
+        if (kindOf(path) === null) return enoent('change the mode of', path);
+        modes.set(path, mode);
+        return ok(undefined);
+      },
       realpath: async (path) => {
         if (kindOf(path) === null) return enoent('resolve', path);
         const link = Object.entries(options.links ?? {}).find(([from]) => under(from, path));
@@ -222,6 +250,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     platform: { os: options.os ?? 'linux', nodeVersion: options.nodeVersion ?? 'v22.1.0' },
     cwd: options.cwd ?? '/work',
     pid: options.pid ?? 4242,
+    uid,
   };
   fake.seedDir(fake.cwd);
   return fake;
