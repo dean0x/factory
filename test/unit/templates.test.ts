@@ -55,6 +55,20 @@ describe.each(texts)('template %s', (_name, text) => {
   });
 });
 
+describe('the deny list: workflow triage words', () => {
+  it.each(['FIX_NOW', 'ESCALATED', 'CHANGES REQUESTED'])('matches %s', (word) => {
+    expect(denyMatches(`The item is ${word} until the owner answers.`)).toEqual(['workflow triage word']);
+    expect(denyMatches(word)).toEqual(['workflow triage word']);
+  });
+
+  it.each(['fix_now', 'escalated', 'Changes requested', 'FIX_NOWHERE', 'DEESCALATED', 'CHANGES REQUESTEDLY'])(
+    'does not match %s',
+    (word) => {
+      expect(denyMatches(`The item is ${word} until the owner answers.`)).toEqual([]);
+    },
+  );
+});
+
 const summary = (blocks: readonly { name: string; version: number; target: string }[]) =>
   blocks.map(({ name, version, target }) => [name, version, target]);
 
