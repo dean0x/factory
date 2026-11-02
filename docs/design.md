@@ -704,7 +704,7 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 
 The default for a new node is `approval.land: each`: every merge waits for the owner. The owner can choose `approved-work`. This workspace uses `approved-work` (D-52).
 
-factory never reads or writes under `~/.claude/` (settings, rules, skills, transcripts or session files). It writes only to the node home and to each checkout's `.claude/settings.local.json` (the heartbeat hook, D-47). The home index of §4.3 sits outside `~/.claude`.
+factory never reads or writes under `~/.claude/` (settings, rules, skills, transcripts or session files). It writes only to three places: the node home, each checkout's `.claude/settings.local.json` (the heartbeat hook, D-47), and the per-user home index of §4.3, which is outside `~/.claude`.
 
 ### 6.1 What counts as approval and assignment (D-52)
 
