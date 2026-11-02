@@ -19,11 +19,13 @@ import { parseJsonText } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { backup } from '../../src/upgrade/apply.js';
 import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
+import { fileTemplates } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
-import { schema1Doc, schema1Paths, seedSchema1Node } from '../helpers/schema1.js';
+import { oldWordsIn } from '../helpers/old-words.js';
+import { OLD_ROADMAPS_README, schema1Doc, schema1Paths, seedSchema1Node } from '../helpers/schema1.js';
 
 /** The schema versions that this factory reads. A test migration starts from them. */
 const C = CONFIG_SCHEMA_VERSION;
@@ -1062,6 +1064,7 @@ describe('upgrade: a node of schema 1', () => {
         `.factory/node.json: schema_version 1 to ${S} (1 step)`,
         'move .factory/protocol.md to .factory/roles/worker.md',
         'move .factory/briefs to .factory/orders',
+        'replace .factory/roadmaps/README.md with the new text',
         `block protocol: becomes block worker, version ${versionOf('worker')}`,
         `block coordinator: version 1 to ${versionOf('coordinator')}`,
         `block safety: version 1 to ${versionOf('safety')}`,
@@ -1112,15 +1115,95 @@ describe('upgrade: a node of schema 1', () => {
       blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
     });
 
-    expect(output.lines.at(-1)?.text).toBe('Changed 6 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+    expect(output.lines.at(-1)?.text).toBe('Changed 7 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S } });
     expect(gitWrites(gitSince())).toEqual([
       'rm -r -q --cached --ignore-unmatch -- protocol.md briefs',
-      'add -A -- roles/worker.md node.json orders',
+      'add -A -- roles/worker.md roadmaps/README.md node.json orders',
       '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
     ]);
     expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
     expect(deps.files.has(`${BACKUP}/.factory/briefs/.gitkeep`)).toBe(true);
+  });
+
+  describe('the roadmap README', () => {
+    const owned = `${OLD_ROADMAPS_README}\n## Our own track rules\n`;
+
+    it('is the text of version 0.1.0 in the fixture, with old words that the new text does not have', () => {
+      expect(oldWordsIn(OLD_ROADMAPS_README).length).toBeGreaterThan(0);
+      expect(oldWordsIn(fileTemplates.roadmapsReadme)).toEqual([]);
+    });
+
+    it('is replaced with the new text when it is still the text of version 0.1.0, and the commit holds it', async () => {
+      const { deps, gitSince } = makeOldNode();
+      const output = success(await upgrade(deps));
+      expect(text(deps, OLD.roadmaps)).toBe(fileTemplates.roadmapsReadme);
+      expect(oldWordsIn(text(deps, OLD.roadmaps))).toEqual([]);
+      expect(output.json).toMatchObject({ replaces: [{ path: '.factory/roadmaps/README.md', action: 'replace' }] });
+      expect(output.warnings).toEqual([]);
+      expect(gitWrites(gitSince())[1]).toContain('roadmaps/README.md');
+      expect(text(deps, `${BACKUP}/.factory/roadmaps/README.md`)).toBe(OLD_ROADMAPS_README);
+    });
+
+    it('is kept when the owner edited it, with a note that names the file and the help for the words', async () => {
+      const { deps, gitSince } = makeOldNode();
+      deps.files.set(OLD.roadmaps, owned);
+      const output = success(await upgrade(deps));
+      expect(text(deps, OLD.roadmaps)).toBe(owned);
+      expect(output.json).toMatchObject({ replaces: [{ path: '.factory/roadmaps/README.md', action: 'keep' }] });
+      const note = output.lines.find((line) => line.text.includes('roadmaps/README.md was edited'));
+      expect(note?.level).toBe('warn');
+      expect(note?.text).toContain('factory help words');
+      expect(output.warnings).toEqual([note?.text]);
+      expect(output.lines.at(-1)?.text).toBe('Changed 6 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+      expect(gitWrites(gitSince())[1]).toBe('add -A -- roles/worker.md node.json orders');
+    });
+
+    it('is kept when its text differs in one character, also a trailing newline', async () => {
+      const { deps } = makeOldNode();
+      deps.files.set(OLD.roadmaps, OLD_ROADMAPS_README.trimEnd());
+      success(await upgrade(deps));
+      expect(text(deps, OLD.roadmaps)).toBe(OLD_ROADMAPS_README.trimEnd());
+    });
+
+    it('shows the note for an edited file in a dry run, and changes no file', async () => {
+      const { deps } = makeOldNode();
+      deps.files.set(OLD.roadmaps, owned);
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(output.lines.some((line) => line.level === 'warn' && line.text.includes('roadmaps/README.md was edited'))).toBe(true);
+      expect(output.lines.some((line) => line.text.startsWith('replace '))).toBe(false);
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('is skipped when the file is missing', async () => {
+      const { deps } = makeOldNode();
+      deps.files.delete(OLD.roadmaps);
+      const output = success(await upgrade(deps));
+      expect(deps.files.has(OLD.roadmaps)).toBe(false);
+      expect(output.json).toMatchObject({ replaces: [] });
+      expect(output.warnings).toEqual([]);
+    });
+
+    it('refuses before any change when git reports a change in the file that the upgrade replaces', async () => {
+      const { deps, gitSince } = makeOldNode({
+        run: (inner) => (call) => (call.args.includes('status') ? exited(0, ' M roadmaps/README.md\0') : inner(call)),
+      });
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(deps));
+      expect(error.message).toBe('.factory has changes in files that the upgrade changes: roadmaps/README.md');
+      expect(snapshot(deps)).toEqual(before);
+      expect(gitWrites(gitSince())).toEqual([]);
+    });
+
+    it('does not stop for a change in the file when the owner edited it, because the upgrade leaves it', async () => {
+      const { deps } = makeOldNode({
+        run: (inner) => (call) => (call.args.includes('status') ? exited(0, ' M roadmaps/README.md\0') : inner(call)),
+      });
+      deps.files.set(OLD.roadmaps, owned);
+      success(await upgrade(deps));
+      expect(text(deps, OLD.roadmaps)).toBe(owned);
+    });
   });
 
   it.each([

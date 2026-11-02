@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { stringify } from 'yaml';
 import { renderBlock } from '../../src/blocks/managed.js';
 import { jsonText } from '../../src/state/files.js';
@@ -32,14 +34,23 @@ const bodyOf = (name: string): string => layer1Blocks.find((template) => templat
 export const OLD_PROTOCOL = 'protocol.md';
 export const OLD_BRIEFS = 'briefs';
 
+/** The text of `roadmaps/README.md` as `init` of version 0.1.0 wrote it. The committed fixture holds it. */
+export const OLD_ROADMAPS_README = readFileSync(
+  join(__dirname, '..', 'fixtures', 'node-0.1.0', '.factory', 'roadmaps', 'README.md'),
+  'utf8',
+);
+
 /** The paths of the files of a FAC-M1 node, inside the state folder. */
-export const schema1Paths = (home: string): { config: string; claude: string; state: string; protocol: string; briefsKeep: string; board: string } => ({
+export const schema1Paths = (
+  home: string,
+): { config: string; claude: string; state: string; protocol: string; briefsKeep: string; board: string; roadmaps: string } => ({
   config: `${home}/factory.yaml`,
   claude: `${home}/CLAUDE.md`,
   state: `${home}/.factory`,
   protocol: `${home}/.factory/${OLD_PROTOCOL}`,
   briefsKeep: `${home}/.factory/${OLD_BRIEFS}/.gitkeep`,
   board: `${home}/.factory/board.json`,
+  roadmaps: `${home}/.factory/roadmaps/README.md`,
 });
 
 /**
@@ -60,5 +71,6 @@ export const seedSchema1Node = (deps: FakeDeps, home: string, doc: Record<string
   deps.seed(paths.protocol, `${block('protocol', 1, bodyOf('worker'))}\n`);
   deps.seed(paths.briefsKeep, '');
   deps.seed(paths.board, '{}\n');
+  deps.seed(paths.roadmaps, OLD_ROADMAPS_README);
   deps.seedDir(`${paths.state}/.git`);
 };

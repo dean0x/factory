@@ -198,6 +198,7 @@ export const runUpgrade = async (
     config: { from: config.value.kind === 'current' ? config.value.version : config.value.from, to: upgrade.config.spec.supported },
     state: { from: state.value.kind === 'current' ? state.value.version : state.value.from, to: upgrade.state.spec.supported },
     moves: files.value.moves.map((move) => ({ from: move.from, to: move.to })),
+    replaces: files.value.replaces.map((replace) => ({ path: replace.path, action: replace.action })),
     blocks: blocks.map((plan) => ({
       name: plan.template.name,
       action: plan.action,
@@ -217,6 +218,7 @@ export const runUpgrade = async (
   if (!changed) return done([{ level: 'text', text: 'Nothing to upgrade.' }], null, false);
   if (options.dryRun) return done([{ level: 'text', text: 'Dry run: no file was changed.' }], null, false);
 
+  const replacements = files.value.replaces.filter((replace) => replace.action === 'replace');
   const touchesState = state.value.kind === 'migrate' || changes.length > 0;
   if (touchesState) {
     const repo = await deps.fs.stat(join(layout.stateDir, '.git'));
@@ -230,6 +232,7 @@ export const runUpgrade = async (
     // These are the files that the upgrade can change in the repo: the commit holds those and no other file.
     const touched = inStateRepo(layout, [
       ...files.value.moves.flatMap((move) => [move.fromPath, move.toPath]),
+      ...replacements.map((replace) => replace.filePath),
       ...(stateText.value === null ? [] : [layout.nodeJson]),
       ...changes.map((change) => fileOfTarget(layout, change.template.target)),
     ]);
@@ -292,6 +295,7 @@ export const runUpgrade = async (
 
   const newFiles: NewFile[] = [
     ...blockTexts.value,
+    ...replacements.map((replace) => ({ path: replace.filePath, text: replace.text })),
     ...(stateText.value === null ? [] : [{ path: layout.nodeJson, text: stateText.value }]),
     ...(configText.value === null ? [] : [{ path: layout.configFile, text: configText.value }]),
   ];

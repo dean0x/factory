@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { sha256Hex } from '../../src/blocks/managed.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { configSchema } from '../../src/config/schema.js';
 import { configMigrations } from '../../src/migrate/config.js';
@@ -6,8 +7,9 @@ import { fileSteps, stepsBetween } from '../../src/migrate/files.js';
 import { planMigrations, runMigrations } from '../../src/migrate/runner.js';
 import { stateMigrations } from '../../src/migrate/state.js';
 import { nodeStateSchema } from '../../src/state/schema.js';
+import { fileTemplates } from '../../src/templates/index.js';
 import { sampleConfig } from '../helpers/sample-config.js';
-import { schema1Doc } from '../helpers/schema1.js';
+import { OLD_ROADMAPS_README, schema1Doc } from '../helpers/schema1.js';
 
 const migrateConfig = (raw: unknown) => {
   const steps = planMigrations(1, 2, configMigrations);
@@ -307,6 +309,18 @@ describe('file steps', () => {
     expect(step?.renames).toEqual([{ from: 'protocol', to: 'worker' }]);
   });
 
+  it('replaces roadmaps/README.md with the new template, only while it holds the text of 0.1.0', () => {
+    const [step] = fileSteps;
+    expect(step?.replaces).toEqual([
+      {
+        path: 'roadmaps/README.md',
+        oldSha256: sha256Hex(OLD_ROADMAPS_README),
+        text: fileTemplates.roadmapsReadme,
+      },
+    ]);
+    expect(step?.replaces[0]?.text).not.toBe(OLD_ROADMAPS_README);
+  });
+
   it('picks the steps between two versions', () => {
     expect(stepsBetween(fileSteps, 1, 2)).toEqual(fileSteps);
     expect(stepsBetween(fileSteps, 2, 2)).toEqual([]);
@@ -314,7 +328,7 @@ describe('file steps', () => {
   });
 
   it('puts the steps in the order of their versions', () => {
-    const later = { from: 2, to: 3, moves: [], renames: [] };
+    const later = { from: 2, to: 3, moves: [], renames: [], replaces: [] };
     const steps = [later, ...fileSteps];
     expect(stepsBetween(steps, 1, 3).map((step) => step.from)).toEqual([1, 2]);
   });

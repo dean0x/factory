@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { sha256Hex } from '../blocks/managed.js';
 import { renamedFromOf, type BlockStatus, type PendingFiles } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
@@ -7,7 +8,7 @@ import { ok } from '../core/result.js';
 import { stepsBetween, type FileStep } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
-import { dirs, flags, flagText, program } from '../names.js';
+import { commands, commandText, dirs, flags, flagText, helpTopics, program } from '../names.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate } from '../templates/types.js';
 import type { BlockSet, UpgradeFile, UpgradeSpec } from './spec.js';
@@ -93,15 +94,28 @@ export interface MovePlan {
   readonly toPath: string;
 }
 
-export interface FilesPlan extends PendingFiles {
-  readonly moves: readonly MovePlan[];
+/**
+ * A file that gets a new text. `path` is inside the node home, for the output. The file is replaced when it still holds
+ * the text that the old version wrote, and kept when anything else is in it.
+ */
+export interface ReplacePlan {
+  readonly path: string;
+  readonly filePath: string;
+  readonly action: 'replace' | 'keep';
+  readonly text: string;
 }
 
-export const NO_FILES_PLAN: FilesPlan = { moves: [], renames: [] };
+export interface FilesPlan extends PendingFiles {
+  readonly moves: readonly MovePlan[];
+  readonly replaces: readonly ReplacePlan[];
+}
+
+export const NO_FILES_PLAN: FilesPlan = { moves: [], renames: [], replaces: [] };
 
 /**
- * The file moves and the block renames of the steps that take the state to the current version.
- * A source that does not exist is skipped. A target that exists stops the upgrade.
+ * The file moves, the new file texts and the block renames of the steps that take the state to the current version.
+ * A source that does not exist is skipped. A target that exists stops the upgrade. A file to replace that does not
+ * exist is skipped, and one that a person edited is kept.
  */
 export const planFiles = async (
   deps: Deps,
@@ -127,7 +141,18 @@ export const planFiles = async (
     }
     moves.push({ from, to, fromPath, toPath });
   }
-  return ok({ moves, renames: chosen.flatMap((step) => step.renames) });
+  const replaces: ReplacePlan[] = [];
+  for (const replace of chosen.flatMap((step) => step.replaces)) {
+    const filePath = join(layout.stateDir, replace.path);
+    const kind = await deps.fs.stat(filePath);
+    if (!kind.ok) return kind;
+    if (kind.value !== 'file') continue;
+    const current = await deps.fs.readText(filePath);
+    if (!current.ok) return current;
+    const action = sha256Hex(current.value) === replace.oldSha256 ? 'replace' : 'keep';
+    replaces.push({ path: join(dirs.state, replace.path), filePath, action, text: replace.text });
+  }
+  return ok({ moves, renames: chosen.flatMap((step) => step.renames), replaces });
 };
 
 export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan => {
@@ -247,5 +272,20 @@ export const planLines = (
     }
   };
   const moveLines = files.moves.map((move): OutLine => ({ level: 'text', text: `move ${move.from} to ${move.to}` }));
-  return [fileLine(config, upgrade.config), fileLine(state, upgrade.state), ...moveLines, ...blocks.map(blockLine)];
+  const replaceLine = (replace: ReplacePlan): OutLine =>
+    replace.action === 'replace'
+      ? { level: 'text', text: `replace ${replace.path} with the new text` }
+      : {
+          level: 'warn',
+          text:
+            `${replace.path} was edited, so ${program} keeps it. It can hold old names: ` +
+            `run "${commandText(commands.help)} ${helpTopics.words}" for the current names.`,
+        };
+  return [
+    fileLine(config, upgrade.config),
+    fileLine(state, upgrade.state),
+    ...moveLines,
+    ...files.replaces.map(replaceLine),
+    ...blocks.map(blockLine),
+  ];
 };

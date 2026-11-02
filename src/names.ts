@@ -275,6 +275,8 @@ export const schema1 = {
   protocolFile: 'protocol.md',
   briefsDir: 'briefs',
   protocolBlock: 'protocol',
+  /** The sha256, as hex, of `roadmaps/README.md` as `init` of version 0.1.0 wrote it. */
+  roadmapsReadmeSha256: '2f9168abccda69f6ed71c8c1339ee899ad39e20c606838c750bae4d5346fad2c',
 } as const;
 
 /** Markers of managed blocks: `<!-- factory:begin <name> v<n> sha256=<hex> -->` and `<!-- factory:end <name> -->`. */

@@ -28,6 +28,7 @@ import { allBlocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
+import { oldWordsIn } from '../helpers/old-words.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
@@ -172,11 +173,6 @@ describe('names', () => {
     expect(sample("// a 'comment'\nconst a = 1;")).toEqual([]);
   });
 });
-
-/** The words of FAC-M1 that v2 replaced: lane, pack and brief, also as a verb or in a plural. */
-const OLD_WORDS = /\b(?:lane|pack|brief)(?:s|ed)?\b/i;
-
-const oldWordsIn = (text: string): string[] => text.match(new RegExp(OLD_WORDS, 'gi')) ?? [];
 
 describe('words of the old names', () => {
   it('finds an old word in a text, in any case and in a plural', () => {
