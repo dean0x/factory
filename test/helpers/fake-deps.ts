@@ -7,6 +7,8 @@ export interface RunCall {
   readonly command: string;
   readonly args: readonly string[];
   readonly cwd: string | undefined;
+  /** True when the caller asked for the environment of the process as it is. */
+  readonly inheritEnv?: boolean;
 }
 
 export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
@@ -175,7 +177,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       },
     },
     run: async (command: string, args: readonly string[], runOptions?: RunOptions) => {
-      const call: RunCall = { command, args, cwd: runOptions?.cwd };
+      const call: RunCall = { command, args, cwd: runOptions?.cwd, inheritEnv: runOptions?.inheritEnv === true };
       calls.push(call);
       return (options.run ?? (() => missingProgram(command)))(call);
     },

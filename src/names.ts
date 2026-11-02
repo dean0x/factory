@@ -27,6 +27,7 @@ export const roles = {
 
 export const commands = {
   init: 'init',
+  up: 'up',
   doctor: 'doctor',
   upgrade: 'upgrade',
   version: 'version',
@@ -87,7 +88,23 @@ export const dirs = {
 /** The settings files of Claude Code in a project: `<prefix>*<suffix>` inside the `.claude` folder. */
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
 
-export const env = { proxyBaseUrl: 'ANTHROPIC_BASE_URL', home: 'FACTORY_HOME' } as const;
+export const env = { proxyBaseUrl: 'ANTHROPIC_BASE_URL', home: 'FACTORY_HOME', session: 'FACTORY_SESSION' } as const;
+
+/**
+ * The names that factory gives to the tmux session of a node: two windows, and options that tell
+ * a session of this node home from any other tmux session.
+ */
+export const tmuxNames = {
+  windowView: 'view',
+  windowBench: 'bench',
+  /** The session option that holds the node home. */
+  optionHome: '@factory_home',
+  /** The pane option that holds the node id, on the pane of the coordinator. */
+  optionNode: '@node',
+  /** The pane option that marks the slot of the view window. */
+  optionSlot: '@slot',
+  slotBoard: 'board',
+} as const;
 
 /** The keys of the config file. */
 export const keys = {
@@ -199,6 +216,7 @@ export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash:
 /** The ids of the JSON documents that commands print. */
 export const schemaIds = {
   init: `${program}.init/v1`,
+  up: `${program}.up/v1`,
   doctor: `${program}.doctor/v1`,
   upgrade: `${program}.upgrade/v1`,
   version: `${program}.version/v1`,

@@ -47,6 +47,33 @@ describe('node deps: run', () => {
     const result = await deps.run('pwd', [], { cwd: dir });
     expect(result.ok && result.value.stdout.trim().endsWith(dir.split('/').pop() ?? '?')).toBe(true);
   });
+
+  describe('the environment of the program', () => {
+    const show = ['-e', 'process.stdout.write([process.env.LC_ALL, process.env.GIT_TERMINAL_PROMPT].join(","))'];
+    const saved = { LC_ALL: process.env['LC_ALL'], GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] };
+
+    beforeEach(() => {
+      process.env['LC_ALL'] = 'en_US.UTF-8';
+      process.env['GIT_TERMINAL_PROMPT'] = '1';
+    });
+
+    afterEach(() => {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    });
+
+    it('sets the C locale and no git prompt by default', async () => {
+      const result = await deps.run('node', show);
+      expect(result.ok && result.value.stdout).toBe('C,0');
+    });
+
+    it('keeps the environment of this process when the caller asks for it', async () => {
+      const result = await deps.run('node', show, { inheritEnv: true });
+      expect(result.ok && result.value.stdout).toBe('en_US.UTF-8,1');
+    });
+  });
 });
 
 describe('node deps: run with the terminal', () => {

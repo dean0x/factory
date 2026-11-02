@@ -17,6 +17,7 @@ import {
   schemaIds,
   stateKeys,
   templateValues,
+  tmuxNames,
 } from '../../src/names.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
 import { runInit } from '../../src/commands/init.js';
@@ -76,6 +77,7 @@ const EXACT_NAMES = new Set([
     keys.link,
     stateKeys,
     schema1.keys,
+    { windowView: tmuxNames.windowView, windowBench: tmuxNames.windowBench, slotBoard: tmuxNames.slotBoard },
   ),
 ]);
 
@@ -102,6 +104,10 @@ const TEXT_NAMES = [
   claudeSettings.suffix,
   env.proxyBaseUrl,
   env.home,
+  env.session,
+  tmuxNames.optionHome,
+  tmuxNames.optionNode,
+  tmuxNames.optionSlot,
   marker.prefix,
   address.scheme,
 ];

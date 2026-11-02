@@ -1,4 +1,4 @@
-import { delimiter, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { inspectBlocks, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
@@ -8,6 +8,7 @@ import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHome, type LocatedHome } from '../core/home.js';
 import { ok } from '../core/result.js';
+import { onPath } from '../core/tools.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
   checkIds,
@@ -45,7 +46,6 @@ export interface DoctorOptions {
 }
 
 const MIN_NODE_MAJOR = 22;
-const MAX_PATH_ENTRIES = 256;
 
 /** Programs that later commands need. The text says which. */
 const TOOLS: readonly { readonly name: string; readonly neededFor: string }[] = [
@@ -244,16 +244,6 @@ export const checkProxies = async (
         : check(id, 'fail', `${health.label} does not answer. ${fix}`);
     }),
   );
-};
-
-/** True when an executable file with this name is in a folder of PATH. */
-const onPath = async (deps: Deps, name: string): Promise<boolean> => {
-  const folders = (deps.env['PATH'] ?? '').split(delimiter).filter((folder) => folder !== '');
-  for (const folder of folders.slice(0, MAX_PATH_ENTRIES)) {
-    const kind = await deps.fs.stat(join(folder, name));
-    if (kind.ok && kind.value === 'file') return true;
-  }
-  return false;
 };
 
 export const checkTools = async (deps: Deps): Promise<CheckResult> => {

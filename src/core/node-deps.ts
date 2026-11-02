@@ -120,7 +120,7 @@ export const createNodeDeps = (): Deps => ({
           maxBuffer: MAX_RUN_OUTPUT_BYTES,
           encoding: 'utf8',
           windowsHide: true,
-          env: { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' },
+          env: options?.inheritEnv === true ? process.env : { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' },
         },
         (error, stdout, stderr) => {
           if (error === null) {

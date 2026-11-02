@@ -73,6 +73,7 @@ export const makeSandbox = async (): Promise<Sandbox> => {
       return path;
     },
     read: (path) => readFile(path, 'utf8'),
-    remove: () => rm(root, { recursive: true, force: true }),
+    // A program that stops late can still write a file while the folder is removed, so the removal tries again.
+    remove: () => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }),
   };
 };

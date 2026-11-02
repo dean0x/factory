@@ -1,6 +1,7 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
 import { runInit } from '../commands/init.js';
+import { runUp } from '../commands/up.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
@@ -111,6 +112,19 @@ export const commandTable: readonly Command[] = [
         recipe: given.string(flags.recipe),
         layer: given.string(flags.layer),
       }),
+  },
+  {
+    name: commands.up,
+    summary: `Start the session of the ${roles.node} in tmux, or attach to it.`,
+    usage: `${commandText(commands.up)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}]`,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.dryRun]: {
+        type: 'boolean',
+        description: 'Show the tmux calls and the launch. Start no session and change no file.',
+      },
+    },
+    run: (given, deps) => runUp(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }),
   },
   {
     name: commands.doctor,

@@ -30,6 +30,12 @@ export interface Fs {
 export interface RunOptions {
   readonly cwd?: string;
   readonly timeoutMs?: number;
+  /**
+   * Run the program with the environment of this process as it is. By default the locale is C and git asks no question,
+   * so that the output is the same everywhere. A program that starts other programs, such as the tmux server,
+   * would pass that environment on to them.
+   */
+  readonly inheritEnv?: boolean;
 }
 
 export interface RunOutput {
