@@ -32,6 +32,7 @@ Home, `init` and `up`
 - When the home index lists 200 homes, `init` first drops the entries whose home has no config file. It keeps an entry whose home it cannot check.
 - The `index` check of `doctor` warns when the home index does not list the current home.
 - `factory doctor` sends no proxy request for a home inside a git work tree or inside another node home. The `proxy` check says that it did not run, and the `home` check fails.
+- The `secrets` check of `doctor` accepts a long `file://` address in `parent` and `children`. An address that holds a known token prefix or a hex run of 40 characters or more fails the check.
 - `factory` refuses a config file, a state file or a home index file of more than 1,048,576 bytes. It does not read the rest of such a file. This holds for the config of a child that `doctor` and `node children` read.
 - New command `factory up`. It starts a tmux session with the id of the node, with the windows `view` and `bench`. The coordinator runs in the home in auto permission mode, with one `--add-dir` for each project and no inherited `ANTHROPIC_BASE_URL`. The shells of the slot and the bench get no `ANTHROPIC_BASE_URL` either. A second `up` starts no second coordinator. `--dry-run` prints the tmux calls and starts nothing. Like `init`, `up` refuses (exit code 4) a home inside a git work tree or inside another node home, and it does not use the config of that home.
 

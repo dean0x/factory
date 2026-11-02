@@ -260,6 +260,37 @@ describe('doctor: secrets', () => {
     expect(result.text).not.toContain('ghp_');
   });
 
+  describe('the address of a node link', () => {
+    const withLinks = (parent: string, child: string): FactoryConfig => {
+      const config = sampleConfig();
+      return {
+        ...config,
+        core: {
+          ...config.core,
+          node: { id: 'mgr', layer: 2 },
+          parent: { id: 'up', address: parent },
+          children: [{ id: 'web', address: child }],
+        },
+      };
+    };
+
+    it('is ok for a long file address of this machine', async () => {
+      const deps = await initialized();
+      const address = 'file:///Users/Dean/Work/payments-team-factory-2';
+      writeConfig(deps, withLinks(address, address));
+      expect(checkSecrets(await inspectConfig(deps, HOME))).toMatchObject({ id: 'secrets', level: 'ok' });
+    });
+
+    it('fails and names the key when the address holds a token, never the value', async () => {
+      const deps = await initialized();
+      writeConfig(deps, withLinks('file:///w/up', `file:///Users/Dean/${secret}`));
+      const result = checkSecrets(await inspectConfig(deps, HOME));
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('children.0.address');
+      expect(result.text).not.toContain('ghp_');
+    });
+  });
+
   it('scans a config that is invalid for other reasons', async () => {
     const deps = await initialized();
     deps.files.set(`${HOME}/factory.yaml`, `schema: 1\nextra: ${secret}\n`);
