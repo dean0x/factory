@@ -22,14 +22,14 @@ How to read the table:
 | F-2c | A decision is a labelled item; a script reads the answer; private store; bounded watch | §4.10, §6 | FAC-M3: `decide read` tests (owner account only), `doctor` fails on a public store, `watch` bound test | covered |
 | F-2d | Plans and designs: link the repo file or attach it | §4.10 | FAC-M3: the contract tests name the `doc` operation (attach a file, link a repo file) | covered |
 | F-3a | Say where the main session runs | §4.3 | FAC-M2: `init` tests (exit 4 rules) and the `up` test on a separate tmux server | covered |
-| F-3b | The user does not need to know the folder; `factory up` starts it | §4.3 | FAC-M2: home index test: `up --dry-run` from `web/` and from `web/src` finds `web-factory`; an unknown folder exits 2 with a hint | covered |
+| F-3b | The user does not need to know the folder; `factory up` starts it | §4.3 | FAC-M2: home index test: `up --dry-run` from `web/` and from `web/src` finds `web-factory`; an unknown folder exits 2 with a hint. Design v3 PR (D-60 replaces the home placement): the lookup from the folder that holds several repos; the factory root holds `factory.yaml`, so `up --dry-run` and `doctor` exit 0 from the factory root, the coordinator folder and a project clone | covered |
 | F-3c | A cell does not load the coordinator instructions | §4.3, §8 | FAC-M2 (a new node), FAC-M7: `scripts/check-cell-paths.sh` passes on the adopted fixture and fails on the fixture before the adopt | covered |
 | F-3d | One project or many: the same layout | §4.1, §4.3 | FAC-M2: `up` test with one `--add-dir` for each project | covered |
 | F-4a | Same layer, same behavior; the role comes from the layer | §5.2 | FAC-M2: role template tests; `node add-child` exits 4 for another layer | covered |
 | F-4b | The pyramid can grow; a new top layer changes nothing below | §5.2, §5.7 | FAC-M8: growth test (hashes of the nodes below stay the same) and the layer-3 rollup test | covered |
 | F-5 | macOS and Linux only | §4.7 | FAC-M2: fake `win32` refusal test. FAC-M4: `machine` fixtures for both systems. FAC-M5: `lock run` with `flock` and `lockf`. CI runs on Ubuntu and macOS | covered |
-| F-6a | Approved and assigned work merges when the gates pass, with no ask for each PR | §6, §6.1 | FAC-M5: `pr merge` tests, one for each proof, for both kinds of assignment, and the refusals | covered |
-| F-6b | Does "a-z" include releases? | §6.2, §9 | FAC-M5: `approval.ship: each` config test and the no-publish test. D-57 is in "Decisions needed" before FAC-M5 | covered; D-57 is open with Dean |
+| F-6a | Approved and assigned work merges when the gates pass, with no ask for each PR | §6, §6.1 | FAC-M5: `pr merge` tests, one for each proof, for both kinds of assignment, and the refusals; template test: the coordinator role text and the safety block follow the approval setting | covered |
+| F-6b | Does "a-z" include releases? | §6.2, §9 | FAC-M5: `approval.ship: each` config test and the no-publish test. D-57 is answered: releases wait for the owner | covered |
 | F-6c | The owner chooses the merge rule | §4.4, §6 | FAC-M5: `pr merge` tests for `each` and `approved-work` | covered |
 | F-7 | Test the ways to stop a session, then use the best one | §4.11 | FAC-M4: the rule for "safe" and 12 rows in `docs/session-stop.md` (`scripts/check-session-stop.sh`); `cell stop` uses the safe way; a busy cell with no safe way exits 3 | covered |
 | F-8 | Cells on the bench; the view has the coordinator and one slot | §4.11 | FAC-M4: tmux tests (`cell new`, `cell summon`, return of the board). FAC-M7: the adopt | covered |
@@ -87,7 +87,7 @@ How to read the table:
 | V-F-2b | Use the tracker UI and CLI; listen on comments and more from the board | §4.10 | FAC-M3: wake test (comment, label change, assignee change and issue close each cause one record and one doorbell line; another account causes none; `watch` calls no model) | covered |
 | V-F-2c | The user picks the tracker, as in devflow | §4.10, §4.4 | FAC-M3: tracker choice test and override test. FAC-M9: `site` and `key` tests and the mixed test | covered |
 | V-F-3a | The main session of "Codex" | §4.6 | FAC-M4: `session.agent: claude` loads and another value fails; static test on agent starts | covered |
-| V-F-3b | Which folder: the root of the repo, or the root of the folder where he starts | §4.3 | FAC-M2: workspace folder test (two repos and a worktree) and the home index test | covered |
+| V-F-3b | Which folder: the root of the repo, or the root of the folder where he starts | §4.3 | FAC-M2: workspace folder test (two repos and a worktree) and the home index test. Design v3 PR: the lookup from the factory root, the coordinator folder and a project clone (D-60) | covered |
 | V-F-3c | Make sure it is figured out; say if not understood | §4.3 | None. The one-page summary of the design answers it | not applicable: a request to confirm |
 | V-F-4a | Nodes on the same layer work the same | §5.2 | FAC-M2: role template tests. FAC-M6: same-layer hash test | covered |
 | V-F-4b | Nodes on different layers work differently | §5.2 | FAC-M2: `roleForLayer` tests. FAC-M8: the `director` template | covered |
@@ -99,11 +99,11 @@ How to read the table:
 
 | Ask id | Short ask | Design section | Milestone and exit criterion | Status |
 |---|---|---|---|---|
-| Gap 1 | Find the home from a project folder | §4.3 | FAC-M2: home index test | covered |
+| Gap 1 | Find the home from a project folder | §4.3 | FAC-M2: home index test. Design v3 PR: the lookup from the factory root, the coordinator folder and a project clone (D-60) | covered |
 | Gap 2 | The owner has a view and a way to answer in the `local` period | §4.10, §8 | FAC-M7: `scripts/check-owner-view.sh` and the owner answer pty test. FAC-M3 retires the old scripts | covered |
 | Gap 3 | The proof of approval follows D-52 | §6.1 | FAC-M5: one test for each proof, all through the owner channel; `inspect` exits 3 on an open ask | covered |
 | OD-10 | A tracker event proves the owner only when the agents use another identity | §4.10, §6.1 | FAC-M5: tracker identity tests (shared account refuses tracker proofs and accepts `factory decide`; separate accounts accept owner events and refuse agent events); `doctor` warning test; README setup check | covered |
-| Gap 4 | The release question is open | §6.2, §4.4 | FAC-M5: `approval.ship` config test. D-57 is in "Decisions needed" | covered; D-57 is open with Dean |
+| Gap 4 | The release question is open | §6.2, §4.4 | FAC-M5: `approval.ship` config test. D-57 is answered: releases wait for the owner | covered |
 | Gap 5 | The user picks the tracker at setup | §4.10 | FAC-M3: tracker choice test with a fake `gh` | covered |
 | Gap 6 | The adopt moves the coordinator text out of the folder above the checkouts | §8 | FAC-M7: `scripts/check-cell-paths.sh` | covered |
 | Gap 7 | The context percent has a proven source | §4.6 | FAC-M4: fixtures from the installed Claude Code; wrapper test | covered |

@@ -99,7 +99,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   - the shop-floor table of design §7.1 does not have 11 rows;
   - the parity table of design §8.1 holds a Status that is not `planned`, `done` or `retired`;
   - `docs/token-budget.md` does not have 17 job rows;
-  - a file under `docs/research/` holds the whole word `lane`.
+  - a file under `docs/research/` holds the whole word `lane` or `lanes`.
 - [ ] `npm run exit-check` passes with the v2 flow: `init`, `up --dry-run`, `doctor`, deny list, and the docs check.
 
 ### FAC-M4: Cell control
@@ -204,6 +204,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] `lock run` tests: with a fake platform `darwin` it uses `lockf`, and with `linux` it uses `flock`. A second run waits and stops at its bound with exit 3. The exit code of the inner command passes through.
 - [ ] A tmux test: the view slot pane shows the item titles of a fixture `local` board.
 - [ ] `scripts/budget-check.sh` exits 0 for the jobs built so far. It exits 1 when a fixture output is more than twice the figure in `docs/token-budget.md` (test with an inflated output).
+- [ ] Template test: the coordinator role text and the safety block follow the approval setting. With `approval.land: each`, the text says that every merge waits for the owner. With `approval.land: approved-work`, it names the proofs of design §6.1 and does not say that every merge waits.
 - [ ] Unit test: `doctor` warns, with the fix, when the host of a configured proxy is not loopback (`127.0.0.1`, `::1` or `localhost`). It gives no such warning for a loopback host.
 
 ### FAC-M6: devflow variant
@@ -318,6 +319,16 @@ The import into GitHub issues is not here: it is FAC-M3.
 - [ ] `tracker set jira` with no `site` exits 2 and names `site`. `tracker set linear` with no `key` exits 2 and names `key`.
 - [ ] Mixed test with fakes: a node with a `github` project and a `jira` project. `item add --project P` goes to the adapter of P, and `tracker status` prints both.
 
+## Design v3 PR (after FAC-M2)
+
+The design v3 PR comes after the FAC-M2 merge and before FAC-M4. It brings D-59, D-60 and Dean's notes F-14 to F-21 into the design, this roadmap, the trace and the code. Its scope includes these items:
+
+- [ ] Home lookup (moved from FAC-M2: F-3b, V-F-3b, Gap 1). D-60 makes the factory one folder. The factory root holds `factory.yaml`, so the walk up finds it from the root and from every folder below. Integration test: `up --dry-run` and `doctor` exit 0 from the factory root, from the coordinator folder and from a project clone.
+- [ ] Rename (D-59, F-14): worker (was cell), request (was andon) and coordinator; queue, check and release check in place of staging, inspect and ship. The names test and the glossary test pass with the new words.
+- [ ] Schema 2 changes in place, before any release. The schema 1 migration writes the new keys. No migration from schema 2 to schema 3 is needed. Migration test: a FAC-M1 node upgrades, and `doctor` then exits 0.
+- [ ] A project entry can hold a clone URL, so one repo list can set up the factory on a second machine (as in mars, D-60). Config test: the entry accepts a URL with no user name and no password.
+- Approval points (F-15): the recipe names its approval points (for `software`, the merge and the release). The core names none.
+
 ## Later (no milestone yet)
 
 - Other recipes, for example research or content (F-10).
@@ -326,8 +337,8 @@ The import into GitHub issues is not here: it is FAC-M3.
 ## Decisions needed
 
 - None blocks the FAC-M2 code.
-- Before the FAC-M2 merge: Dean reads `docs/glossary.md` and the table of design §7.1, and says yes or no to each word. The answer goes into a decision record. A "no" changes the words in `src/names.ts` and the glossary.
-- Before FAC-M5: D-57. Does the approval of work include the release ("a-z")? Dean has not answered. FAC-M5 builds `approval.ship: each`, the only value. An answer "yes" adds a value in a later version.
+- Answered (D-59, F-14): the glossary words. Dean chose worker (was cell), request (was andon) and coordinator, and queue, check and release check in place of staging, inspect and ship. The rename comes in the design v3 PR, not in FAC-M2.
+- Answered (D-57): releases wait for the owner. FAC-M5 builds `approval.ship: each`, the only value. The design v3 PR updates design §6.2.
 - Before FAC-M3 (after the workspace move in FAC-M7): which private repo holds the decision store of this workspace, and which private git remote holds the state repo (`state.remote`) for a second machine.
 - Before FAC-M10: the first publish and the public visibility of the repo. The owner records a decision id in `docs/release-approval.md`.
 
