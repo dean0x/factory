@@ -97,6 +97,44 @@ describe('parseFlags', () => {
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.error.kind).toBe('usage');
   });
+
+  it('returns a usage error for a word that is not a flag, unless the command takes words', () => {
+    const refused = parseFlags(['add-child', 'x'], options);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error.kind).toBe('usage');
+
+    const allowed = parseFlags(['add-child', '--home', '/a', 'x'], options, true);
+    expect(allowed.ok).toBe(true);
+    if (!allowed.ok) return;
+    expect(allowed.value.positionals()).toEqual(['add-child', 'x']);
+    expect(allowed.value.string('home')).toBe('/a');
+  });
+
+  it('still refuses a flag that the command does not know, when it takes words', () => {
+    expect(parseFlags(['children', '--nope'], options, true).ok).toBe(false);
+  });
+});
+
+describe('the node command in the command line', () => {
+  it('shows one usage line for each subcommand', async () => {
+    const result = await run(['node', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Usage: factory node children [--home DIR]');
+    expect(result.out).toContain('       factory node add-child PATH [--home DIR]');
+    expect(result.out).toContain('       factory node remove-child ID [--home DIR]');
+  });
+
+  it('lists the command and the up command in the help', async () => {
+    const result = await run(['help']);
+    expect(result.out).toMatch(/\n {2}up {8}Start the session/);
+    expect(result.out).toMatch(/\n {2}node {6}Show or change the children/);
+  });
+
+  it('exits 2 for a node command without a subcommand', async () => {
+    const result = await run(['node']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('needs a subcommand');
+  });
 });
 
 describe('output style', () => {

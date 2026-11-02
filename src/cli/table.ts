@@ -1,12 +1,24 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
 import { runInit } from '../commands/init.js';
+import { runNode } from '../commands/node.js';
 import { runUp } from '../commands/up.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, env, flags, flagShorts, flagText, program, roles, values } from '../names.js';
+import {
+  commands,
+  commandText,
+  env,
+  flags,
+  flagShorts,
+  flagText,
+  nodeCommands,
+  program,
+  roles,
+  values,
+} from '../names.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import type { CommandOutput } from './output.js';
@@ -24,13 +36,18 @@ export interface Given {
   string(name: string): string | undefined;
   strings(name: string): readonly string[];
   bool(name: string): boolean;
+  /** The words that are not flags, in order. Only a command with `positionals` gets any. */
+  positionals(): readonly string[];
 }
 
 export interface Command {
   readonly name: string;
   readonly summary: string;
+  /** One line, or several lines for a command with subcommands. */
   readonly usage: string;
   readonly options: Readonly<Record<string, FlagOption>>;
+  /** True when the command takes words that are not flags, for example a subcommand and its argument. */
+  readonly positionals?: boolean;
   run(given: Given, deps: Deps): Promise<CliResult<CommandOutput>>;
 }
 
@@ -127,6 +144,18 @@ export const commandTable: readonly Command[] = [
     run: (given, deps) => runUp(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }),
   },
   {
+    name: commands.node,
+    summary: `Show or change the children of the ${roles.node}.`,
+    usage: [
+      `${commandText(commands.node)} ${nodeCommands.children} [${flagText(flags.home)} DIR]`,
+      `${commandText(commands.node)} ${nodeCommands.addChild} PATH [${flagText(flags.home)} DIR]`,
+      `${commandText(commands.node)} ${nodeCommands.removeChild} ID [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }),
+  },
+  {
     name: commands.doctor,
     summary: `Check the ${roles.node}, its config and its state.`,
     usage: `${commandText(commands.doctor)} [${flagText(flags.home)} DIR]`,
@@ -173,7 +202,8 @@ const toDescriptor = (option: FlagOption): NonNullable<ParseArgsConfig['options'
   ...(option.short === undefined ? {} : { short: option.short }),
 });
 
-const toGiven = (values: Readonly<Record<string, ParsedValue>>): Given => ({
+const toGiven = (values: Readonly<Record<string, ParsedValue>>, words: readonly string[]): Given => ({
+  positionals: () => words,
   string: (name) => {
     const value = values[name];
     return typeof value === 'string' ? value : undefined;
@@ -189,13 +219,14 @@ const toGiven = (values: Readonly<Record<string, ParsedValue>>): Given => ({
 export const parseFlags = (
   args: readonly string[],
   options: Readonly<Record<string, FlagOption>>,
+  allowPositionals = false,
 ): CliResult<Given> => {
   const descriptors = Object.fromEntries(
     Object.entries(options).map(([name, option]) => [name, toDescriptor(option)]),
   );
   try {
-    const parsed = parseArgs({ args: [...args], options: descriptors, strict: true, allowPositionals: false });
-    return ok(toGiven(parsed.values));
+    const parsed = parseArgs({ args: [...args], options: descriptors, strict: true, allowPositionals });
+    return ok(toGiven(parsed.values, parsed.positionals));
   } catch (cause) {
     return usageError(cause instanceof Error ? cause.message : 'cannot read the flags');
   }

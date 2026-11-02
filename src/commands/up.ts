@@ -4,7 +4,7 @@ import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { locateHome } from '../core/home.js';
+import { locateHomeFolder } from '../core/home.js';
 import { err, ok } from '../core/result.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
@@ -250,12 +250,9 @@ const dryRunOutput = (input: {
 };
 
 export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<CommandOutput>> => {
-  const located = await locateHome(deps, options.home);
+  const located = await locateHomeFolder(deps, options.home);
   if (!located.ok) return located;
   const home = located.value.home;
-  const folder = await deps.fs.stat(home);
-  if (!folder.ok) return folder;
-  if (folder.value !== 'dir') return failure(`${home} is not a folder`);
   const loaded = await loadConfig(deps, home);
   if (!loaded.ok) return loaded;
   const id = loaded.value.core.node.id;

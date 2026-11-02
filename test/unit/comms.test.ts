@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkFileAddress, MAX_ADDRESS_LENGTH } from '../../src/comms/address.js';
+import { checkFileAddress, childTarget, MAX_ADDRESS_LENGTH } from '../../src/comms/address.js';
 
 const SCHEME_HINT = 'factory runs on one machine: use a file:// address';
 
@@ -63,5 +63,48 @@ describe('file address', () => {
       expect(checked.ok).toBe(false);
       if (!checked.ok) expect(checked.error).not.toContain('SECRET');
     }
+  });
+});
+
+describe('child target', () => {
+  it('turns an absolute path into a file address', () => {
+    expect(childTarget('/w', '/srv/web-factory')).toEqual({
+      ok: true,
+      value: { address: 'file:///srv/web-factory', path: '/srv/web-factory' },
+    });
+  });
+
+  it('resolves a relative path against the current folder', () => {
+    expect(childTarget('/w/node', '../web-factory')).toEqual({
+      ok: true,
+      value: { address: 'file:///w/web-factory', path: '/w/web-factory' },
+    });
+    expect(childTarget('/w', 'a/./b')).toMatchObject({ ok: true, value: { path: '/w/a/b' } });
+  });
+
+  it('takes a file address and cleans its trailing slash', () => {
+    expect(childTarget('/w', 'file:///srv/web-factory/')).toEqual({
+      ok: true,
+      value: { address: 'file:///srv/web-factory', path: '/srv/web-factory' },
+    });
+  });
+
+  it.each([
+    ['ssh', 'ssh://owner@host/srv/web-factory'],
+    ['https', 'https://example.com/x'],
+    ['a host', 'file://host/srv/web-factory'],
+    ['a .. segment', 'file:///srv/../etc'],
+    ['an empty text', ''],
+    ['a percent sign in a path', '/srv/web%2Ffactory'],
+    ['a fragment character in a path', '/srv/web#factory'],
+  ])('refuses %s', (_name, argument) => {
+    expect(childTarget('/w', argument).ok).toBe(false);
+  });
+
+  it('gives the one-machine hint for another scheme', () => {
+    expect(childTarget('/w', 'ssh://host/x')).toEqual({
+      ok: false,
+      error: 'factory runs on one machine: use a file:// address',
+    });
   });
 });

@@ -28,11 +28,15 @@ export const roles = {
 export const commands = {
   init: 'init',
   up: 'up',
+  node: 'node',
   doctor: 'doctor',
   upgrade: 'upgrade',
   version: 'version',
   help: 'help',
 } as const;
+
+/** The subcommands of `node`. */
+export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
 export const flags = {
   home: 'home',
@@ -217,6 +221,7 @@ export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash:
 export const schemaIds = {
   init: `${program}.init/v1`,
   up: `${program}.up/v1`,
+  nodeChildren: `${program}.node-children/v1`,
   doctor: `${program}.doctor/v1`,
   upgrade: `${program}.upgrade/v1`,
   version: `${program}.version/v1`,

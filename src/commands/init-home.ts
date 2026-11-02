@@ -74,7 +74,8 @@ export const realPathOf = async (deps: Deps, path: string): Promise<CliResult<st
   return real.ok ? ok(join(real.value, ...nearest.value.below)) : real;
 };
 
-const isSameOrInside = (parent: string, child: string): boolean => {
+/** True when `child` is `parent` or a path inside it. Both paths are absolute and clean. */
+export const isSameOrInside = (parent: string, child: string): boolean => {
   const path = relative(parent, child);
   return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 };

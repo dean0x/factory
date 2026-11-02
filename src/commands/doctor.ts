@@ -1,12 +1,12 @@
 import { join, resolve } from 'node:path';
 import { inspectBlocks, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
-import { failure, type CliResult } from '../cli/errors.js';
+import type { CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { inspectConfig } from '../config/load.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
-import { locateHome, type LocatedHome } from '../core/home.js';
+import { locateHomeFolder, type LocatedHome } from '../core/home.js';
 import { ok } from '../core/result.js';
 import { onPath } from '../core/tools.js';
 import type { DocState } from '../migrate/inspect.js';
@@ -325,12 +325,9 @@ const count = (results: readonly CheckResult[], level: CheckLevel): number =>
   results.filter((result) => result.level === level).length;
 
 export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<CliResult<CommandOutput>> => {
-  const located = await locateHome(deps, options.home);
+  const located = await locateHomeFolder(deps, options.home);
   if (!located.ok) return located;
   const home = located.value.home;
-  const folder = await deps.fs.stat(home);
-  if (!folder.ok) return folder;
-  if (folder.value !== 'dir') return failure(`${home} is not a folder`);
 
   const results = await runChecks(deps, located.value);
   const summary = { ok: count(results, 'ok'), warn: count(results, 'warn'), fail: count(results, 'fail') };

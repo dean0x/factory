@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inspectConfig, loadConfig, parseYamlText } from '../../src/config/load.js';
+import { inspectConfig, loadConfig, parseConfigText, parseYamlText } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
 import { configSchema, type FactoryConfig } from '../../src/config/schema.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
@@ -20,6 +20,28 @@ const withFile = (text: string | null) => {
   if (text !== null) deps.seed(`${HOME}/factory.yaml`, text);
   return deps;
 };
+
+describe('parseConfigText', () => {
+  it('gives the typed config for a valid text', () => {
+    const parsed = parseConfigText(renderConfig(sampleConfig()));
+    expect(parsed.ok && parsed.value.core.node.id).toBe('demo');
+  });
+
+  it('fails, and names the key, for a text that is not valid', () => {
+    const parsed = parseConfigText(renderConfig(sampleConfig()).replace('effort: high', 'effort: wild'));
+    expect(parsed).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!parsed.ok) expect(parsed.error.message).toContain('session.effort');
+  });
+
+  it('fails for a text that does not parse, and for an older schema', () => {
+    const broken = parseConfigText('a: [1\n');
+    expect(broken.ok).toBe(false);
+    if (!broken.ok) expect(broken.error.message).toContain('factory.yaml does not parse');
+    const older = parseConfigText('schema: 1\n');
+    expect(older.ok).toBe(false);
+    if (!older.ok) expect(older.error.message).toContain('factory upgrade');
+  });
+});
 
 describe('parseYamlText', () => {
   it('parses a mapping', () => {

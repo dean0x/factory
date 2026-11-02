@@ -41,7 +41,7 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
     return EXIT_USAGE;
   }
 
-  const parsed = parseFlags(rest, { ...globalOptions, ...command.options });
+  const parsed = parseFlags(rest, { ...globalOptions, ...command.options }, command.positionals === true);
   if (!parsed.ok) {
     await sink.stderr(
       renderError({ ...parsed.error, hint: `Run "${commandText(command.name)} ${flagText(flags.help)}".` }),

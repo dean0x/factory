@@ -11,6 +11,7 @@ import {
   flags,
   keys,
   marker,
+  nodeCommands,
   program,
   roles,
   schema1,
@@ -61,6 +62,7 @@ const flat = (...groups: readonly Record<string, unknown>[]): string[] =>
 const EXACT_NAMES = new Set([
   ...flat(
     commands,
+    nodeCommands,
     flags,
     keys.root,
     keys.node,

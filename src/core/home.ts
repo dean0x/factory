@@ -55,6 +55,15 @@ export const locateHome = async (deps: Deps, homeFlag: string | undefined): Prom
   return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'ancestor' });
 };
 
+/** Like `locateHome`, and the home must be a folder. */
+export const locateHomeFolder = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<LocatedHome>> => {
+  const located = await locateHome(deps, homeFlag);
+  if (!located.ok) return located;
+  const folder = await deps.fs.stat(located.value.home);
+  if (!folder.ok) return folder;
+  return folder.value === 'dir' ? located : failure(`${located.value.home} is not a folder`);
+};
+
 /** The node home, in the order of `locateHome`. */
 export const resolveHome = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<string>> => {
   const located = await locateHome(deps, homeFlag);

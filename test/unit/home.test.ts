@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { locateHome, resolveHome } from '../../src/core/home.js';
+import { locateHome, locateHomeFolder, resolveHome } from '../../src/core/home.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 
 const HOME = '/w/node';
@@ -59,5 +59,24 @@ describe('home: the order', () => {
   it('gives the same home to resolveHome', async () => {
     const deps = nodeAt('/w', { FACTORY_HOME: HOME });
     expect(await resolveHome(deps, undefined)).toEqual({ ok: true, value: HOME });
+  });
+});
+
+describe('home: a folder', () => {
+  it('gives the located home when it is a folder', async () => {
+    const result = await locateHomeFolder(nodeAt(HOME), undefined);
+    expect(result).toEqual({ ok: true, value: { home: HOME, source: 'cwd' } });
+  });
+
+  it('fails for a home that is a file or does not exist', async () => {
+    const deps = nodeAt(HOME);
+    deps.seed('/w/file', 'x');
+    expect(await locateHomeFolder(deps, '/w/file')).toMatchObject({ ok: false, error: { message: '/w/file is not a folder' } });
+    expect(await locateHomeFolder(deps, '/w/none')).toMatchObject({ ok: false, error: { message: '/w/none is not a folder' } });
+  });
+
+  it('passes on the failure of locateHome', async () => {
+    const result = await locateHomeFolder(createFakeDeps({ cwd: '/empty' }), undefined);
+    expect(result.ok).toBe(false);
   });
 });
