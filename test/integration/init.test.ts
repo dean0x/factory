@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
-import { makeSandbox, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 
@@ -13,6 +13,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await box.remove();
 });
+
+afterAll(removeOpenSandboxes);
 
 const initArgs = (extra: readonly string[] = []): string[] => [
   'init',

@@ -1,7 +1,7 @@
 import { mkdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeSandbox, type Sandbox } from './harness.js';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 let stateHome: string;
@@ -16,6 +16,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await box.remove();
 });
+
+afterAll(removeOpenSandboxes);
 
 const indexFile = (): string => join(stateHome, 'factory', 'homes.json');
 const withState = (): { env: Record<string, string> } => ({ env: { XDG_STATE_HOME: stateHome } });

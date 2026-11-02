@@ -1,8 +1,8 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { makeSandbox, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 
@@ -13,6 +13,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await box.remove();
 });
+
+afterAll(removeOpenSandboxes);
 
 const initNode = async (): Promise<void> => {
   const web = await box.makeProject('web', 'git@github.com:acme/web.git');

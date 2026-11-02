@@ -1,8 +1,8 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeSandbox, type RunResult, type Sandbox } from './harness.js';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -11,6 +11,7 @@ if (!hasTmux) console.warn('up.test.ts is skipped: tmux 3.0 or newer is not inst
 
 const POLL_STEP_MS = 100;
 const POLL_STEPS = 100;
+const STOP_STEPS = 30;
 const NO_NEW_LAUNCH_WAIT_MS = 600;
 const LAUNCH_PROXY_URL = 'http://127.0.0.1:9';
 
@@ -78,13 +79,27 @@ beforeEach(async () => {
   };
 });
 
-afterEach(async () => {
-  // Stop the server of this test only: both the folder and the socket name this server.
-  if (hasTmux && tmuxEnv['TMUX_TMPDIR']?.startsWith(box.root) === true) {
-    await tmux(['-S', socket, 'kill-server']);
+/** Stops the tmux server of this test, then waits until its socket no longer answers. The wait has an upper bound. */
+const stopServer = async (): Promise<void> => {
+  await tmux(['-S', socket, 'kill-server']);
+  for (let step = 0; step < STOP_STEPS; step += 1) {
+    if ((await tmux(['-S', socket, 'list-sessions'])).code !== 0) return;
+    await sleep(POLL_STEP_MS);
   }
-  await box.remove();
+};
+
+afterEach(async () => {
+  try {
+    // Stop the server of this test only: both the folder and the socket name this server.
+    if (hasTmux && tmuxEnv['TMUX_TMPDIR']?.startsWith(box.root) === true) await stopServer();
+  } finally {
+    // The sandbox folder holds the home of the test and the TMUX_TMPDIR folder, so one removal clears both.
+    // It runs also when the stop of the server fails.
+    await box.remove();
+  }
 });
+
+afterAll(removeOpenSandboxes);
 
 const initNode = async (): Promise<string[]> => {
   const web = await box.makeProject('web');

@@ -38,10 +38,37 @@ const exec = (
     });
   });
 
+/** The roots of the sandboxes that are not removed yet. */
+const openRoots = new Set<string>();
+
+// A program that stops late can still write a file while the folder is removed, so the removal tries again.
+const removeRoot = async (root: string): Promise<void> => {
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  openRoots.delete(root);
+};
+
+/**
+ * Removes every sandbox that is still open, for example after a hook failed before its test could remove the sandbox.
+ * Each file of integration tests calls it in `afterAll`, so a failed run leaves no folder behind.
+ */
+export const removeOpenSandboxes = async (): Promise<void> => {
+  await Promise.all([...openRoots].map(removeRoot));
+};
+
 /** A throw-away folder tree with its own HOME and git identity. The real HOME is never used. */
 export const makeSandbox = async (): Promise<Sandbox> => {
   if (!existsSync(DIST)) throw new Error('dist/factory.js is missing: run "npm run build" first');
   const root = await mkdtemp(join(tmpdir(), 'factory-it-'));
+  openRoots.add(root);
+  try {
+    return await buildSandbox(root);
+  } catch (cause) {
+    await removeRoot(root);
+    throw cause;
+  }
+};
+
+const buildSandbox = async (root: string): Promise<Sandbox> => {
   const home = join(root, 'home');
   await mkdir(home, { recursive: true });
   await writeFile(
@@ -73,7 +100,6 @@ export const makeSandbox = async (): Promise<Sandbox> => {
       return path;
     },
     read: (path) => readFile(path, 'utf8'),
-    // A program that stops late can still write a file while the folder is removed, so the removal tries again.
-    remove: () => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }),
+    remove: () => removeRoot(root),
   };
 };

@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeSandbox, type RunResult, type Sandbox } from './harness.js';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 let manager: string;
@@ -16,6 +16,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await box.remove();
 });
+
+afterAll(removeOpenSandboxes);
 
 const initNode = async (home: string, name: string, layer: number): Promise<void> => {
   const args = ['init', '--home', home, '--name', name, '--owner-name', 'Test Owner', '--layer', String(layer)];
