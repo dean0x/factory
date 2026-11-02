@@ -4,6 +4,7 @@
 #
 # Usage: sh scripts/check-intent-docs.sh [DOCS_DIR]
 # DOCS_DIR is the docs folder to check. The default is the docs folder of this repo.
+# Check 2 also reads the label "Design v3 PR": see the comment of check 2.
 # Check 8 also reads README.md and CHANGELOG.md in the folder above DOCS_DIR, when they exist.
 # Check 10 reads the fenced block under "**Core commands**" in design 4.2 and stops at "**Software recipe commands**".
 #
@@ -74,6 +75,9 @@ first=$(awk '
 report 1 "each section in intent-trace.md is a heading of design.md" "$first"
 
 # 2. Each milestone id of the trace is named in the roadmap. Each milestone from FAC-M2 up has a heading there.
+# A row of the trace that names the label "Design v3 PR" needs a heading of the roadmap that starts with the label. Under
+# that heading, down to the next heading of the same or a higher level, the roadmap has the two checkboxes "Docs PR" and
+# "Code PR". A checkbox may be ticked or not.
 first=$(awk '
   FILENAME == ARGV[1] {
     line = $0
@@ -85,6 +89,15 @@ first=$(awk '
       split($2, part, ":")
       heading[substr(part[1], 6) + 0] = 1
     }
+    if ($0 ~ /^```/) fenced = !fenced
+    if (!fenced && $0 ~ /^#+ /) {
+      match($0, /^#+/)
+      level = RLENGTH
+      if (inlabel && level <= labellevel) inlabel = 0
+      if ($0 ~ /^#+ Design v3 PR/) { hasheading = 1; inlabel = 1; labellevel = level }
+    }
+    if (inlabel && !fenced && $0 ~ /^- \[[ xX]\] Docs PR/) docsbox = 1
+    if (inlabel && !fenced && $0 ~ /^- \[[ xX]\] Code PR/) codebox = 1
     if ($0 ~ /^\| *[0-9]+ *\| *FAC-M[0-9]+ /) {
       split($0, cell, "|")
       if (match(cell[3], /FAC-M[0-9]+/) && substr(cell[3], RSTART + 5, RLENGTH - 5) + 0 > top) {
@@ -94,6 +107,7 @@ first=$(awk '
     next
   }
   {
+    if (!labelline && $0 ~ /^\|/ && index($0, "Design v3 PR") > 0) labelline = FNR
     line = $0
     while (match(line, /FAC-M[0-9]+/)) {
       id = substr(line, RSTART + 5, RLENGTH - 5) + 0
@@ -113,9 +127,17 @@ first=$(awk '
         exit
       }
     }
+    if (labelline) {
+      if (!hasheading) {
+        printf "intent-trace.md line %d: the label \"Design v3 PR\" is not a heading of roadmap-v2.md\n", labelline
+        exit
+      }
+      if (!docsbox) { print "roadmap-v2.md: the heading \"Design v3 PR\" has no checkbox for the docs PR"; exit }
+      if (!codebox) { print "roadmap-v2.md: the heading \"Design v3 PR\" has no checkbox for the code PR"; exit }
+    }
   }
 ' "$roadmap" "$trace")
-report 2 "each milestone of the trace is in roadmap-v2.md, with a heading" "$first"
+report 2 "each milestone and each label of the trace is in roadmap-v2.md, with a heading" "$first"
 
 # 3. The first word of each command line in the code block of design 4.2 has a row in the Command map of the roadmap.
 first=$(awk '

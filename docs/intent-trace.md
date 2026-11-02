@@ -1,64 +1,64 @@
 # Intent trace
 
-This table maps each note from Dean to the text that answers it. It has one row for each ask id of the intent check (the baseline of 2026-11-02 and its verbatim check). The intent check at each milestone merge reads the rows of that milestone. A row that is not covered blocks the merge, or moves to a named later milestone with a reason.
+This table maps each note from Dean to the text that answers it. It has one row for each ask id of the intent check (the baseline of 2026-11-02 and its verbatim check) and one row for each ask of the design v3 feedback. The intent check at each milestone merge reads the rows of that milestone. A row that is not covered blocks the merge, or moves to a named later milestone with a reason.
 
 How to read the table:
-- **Ask id.** `F-n`, `D-n` and `O-1x` are the ids of the first table of the check. `V-F-nx` is a row of the verbatim check, which compares Dean's own words. `Gap n` is a numbered gap of the check (1 to 19). `A1` to `A12` are the new gaps of the verbatim check.
-- **Design section.** A heading of `docs/design.md`.
-- **Milestone and exit criterion.** A milestone of `docs/roadmap-v2.md` and the check that proves the ask. The word "criterion" refers to the exit criteria of that milestone.
+- **Ask id.** `F-n`, `D-n` and `O-1x` are the ids of the first table of the check. `V-F-nx` is a row of the verbatim check, which compares Dean's own words. `Gap n` is a numbered gap of the check (1 to 19). `A1` to `A12` are the new gaps of the verbatim check. `F-14a` to `F-21c`, `D-57`, `D-59` and `D-60` are the asks of the design v3 feedback. The letter gives the part of the note.
+- **Design section.** A heading of `docs/design.md`. A numbered section has its mark and number. The parts "Core and setup" and "Extension points" are named, because docs check 9 accepts their headings with no number.
+- **Milestone and exit criterion.** A milestone of `docs/roadmap-v2.md` and the check that proves the ask. The word "criterion" refers to the exit criteria of that milestone. "Design v3 PR" is the label of the milestone in the roadmap that has the two checkboxes for the docs PR and the code PR.
 - **Status.** `covered` means that the design and the roadmap answer the ask. `not applicable` gives the reason.
 
-`scripts/check-intent-docs.sh` (FAC-M2) checks that each design section here is a heading of the design, and that each milestone id is named in the roadmap.
+`scripts/check-intent-docs.sh` (FAC-M2) checks that each design section here is a heading of the design, that each milestone id is named in the roadmap, and that the label "Design v3 PR" is a heading of the roadmap with its two checkboxes.
 
 ## Notes of the first table
 
 | Ask id | Short ask | Design section | Milestone and exit criterion | Status |
 |---|---|---|---|---|
-| F-1a | Replace "lane" and "pack" with factory words | §4.1, §7 | FAC-M2: the names test finds no `lane`, `pack` or `brief` in `--help`, templates and files that `init` writes, and no `@lane` under `src/` | covered |
+| F-1a | Replace "lane" and "pack" with factory words | §4.1, §7 | FAC-M2: the names test finds no `lane`, `pack` or `brief` in `--help`, templates and files that `init` writes, and no `@lane` under `src/`. Design v3 PR: the same test finds none of the eight words of the setup of today (design §7) | covered |
 | F-1b | Keep node, owner, project | §4.1 | FAC-M2: names test; glossary test (entries for node, owner, project) | covered |
-| F-1c | Factory words for commands and items | §4.1, §4.2, §7 | FAC-M4 (changeover) and FAC-M5 (andon, staging, inspect, ship): each command has its own criterion. FAC-M2: names test and glossary test | covered |
+| F-1c | Factory words for commands and items | §4.1, §4.2, §7 | FAC-M4 (session reset) and FAC-M5 (request, queue, check, release check): each command has its own criterion. FAC-M2: names test and glossary test. Design v3 PR: the plain-words table (D-59) | covered |
 | F-2a | Use the team tracker (GitHub, Jira, Linear); the user picks it | §4.10, §4.4 | FAC-M3: tracker choice test (`init --tracker github` with a fake `gh`; `doctor` exits 0; a public store exits 4). FAC-M9: Jira and Linear | covered |
-| F-2b | Do not build an own review desk | §4.10, §4.2 | None. `desk` is marked "not built, no milestone" in the command map | not applicable: the ask is to not build it |
+| F-2b | Do not build an own review desk | §4.10, §4.2 | None. The command map has no desk row, and docs check 3 fails on one (F-17a) | not applicable: the ask is to not build it |
 | F-2c | A decision is a labelled item; a script reads the answer; private store; bounded watch | §4.10, §6 | FAC-M3: `decide read` tests (owner account only), `doctor` fails on a public store, `watch` bound test | covered |
 | F-2d | Plans and designs: link the repo file or attach it | §4.10 | FAC-M3: the contract tests name the `doc` operation (attach a file, link a repo file) | covered |
-| F-3a | Say where the main session runs | §4.3 | FAC-M2: `init` tests (exit 4 rules) and the `up` test on a separate tmux server | covered |
-| F-3b | The user does not need to know the folder; `factory up` starts it | §4.3 | FAC-M2: home index test: `up --dry-run` from `web/` and from `web/src` finds `web-factory`; an unknown folder exits 2 with a hint. Design v3 PR (D-60 replaces the home placement): the lookup from the folder that holds several repos; the factory root holds `factory.yaml`, so `up --dry-run` and `doctor` exit 0 from the factory root, the coordinator folder and a project clone | covered |
-| F-3c | A cell does not load the coordinator instructions | §4.3, §8 | FAC-M2 (a new node), FAC-M7: `scripts/check-cell-paths.sh` passes on the adopted fixture and fails on the fixture before the adopt | covered |
-| F-3d | One project or many: the same layout | §4.1, §4.3 | FAC-M2: `up` test with one `--add-dir` for each project | covered |
+| F-3a | Say where the main session runs | §4.3 | FAC-M2: `init` tests (exit 4 rules) and the `start` test on a separate tmux server | covered |
+| F-3b | The user does not need to know the folder; `factory start` finds it | §4.3 | Design v3 PR (moved from FAC-M2: D-60 makes the factory one folder): the factory folder holds `factory.yaml`, so `start --dry-run` and `doctor` exit 0 from the factory folder, from the coordinator folder and from a project clone | covered |
+| F-3c | A worker does not load the coordinator instructions | §4.3, §8 | FAC-M2 (a new node), FAC-M7: `scripts/check-worker-paths.sh` passes on the adopted fixture and fails on the fixture before the adopt | covered |
+| F-3d | One project or many: the same layout | §4.1, §4.3 | FAC-M2: `start` test with one `--add-dir` for each project | covered |
 | F-4a | Same layer, same behavior; the role comes from the layer | §5.2 | FAC-M2: role template tests; `node add-child` exits 4 for another layer | covered |
 | F-4b | The pyramid can grow; a new top layer changes nothing below | §5.2, §5.7 | FAC-M8: growth test (hashes of the nodes below stay the same) and the layer-3 rollup test | covered |
 | F-5 | macOS and Linux only | §4.7 | FAC-M2: fake `win32` refusal test. FAC-M4: `machine` fixtures for both systems. FAC-M5: `lock run` with `flock` and `lockf`. CI runs on Ubuntu and macOS | covered |
-| F-6a | Approved and assigned work merges when the gates pass, with no ask for each PR | §6, §6.1 | FAC-M5: `pr merge` tests, one for each proof, for both kinds of assignment, and the refusals; template test: the coordinator role text and the safety block follow the approval setting | covered |
-| F-6b | Does "a-z" include releases? | §6.2, §9 | FAC-M5: `approval.ship: each` config test and the no-publish test. D-57 is answered: releases wait for the owner | covered |
-| F-6c | The owner chooses the merge rule | §4.4, §6 | FAC-M5: `pr merge` tests for `each` and `approved-work` | covered |
-| F-7 | Test the ways to stop a session, then use the best one | §4.11 | FAC-M4: the rule for "safe" and 12 rows in `docs/session-stop.md` (`scripts/check-session-stop.sh`); `cell stop` uses the safe way; a busy cell with no safe way exits 3 | covered |
-| F-8 | Cells on the bench; the view has the coordinator and one slot | §4.11 | FAC-M4: tmux tests (`cell new`, `cell summon`, return of the board). FAC-M7: the adopt | covered |
+| F-6a | Approved and assigned work merges when the gates pass, with no ask for each PR | §6, §6.1 | FAC-M5: `pr merge` tests, one for each proof, for both kinds of assignment, and the refusals; template test: the coordinator role text and the fixed rules follow the approval setting | covered |
+| F-6b | Does "a-z" include releases? | §6.2, §9 | FAC-M5: the `approval.release` config test and the no-publish test. D-57 is answered: releases wait for the owner | covered |
+| F-6c | The owner chooses the merge rule | §4.4, §6 | FAC-M5: `pr merge` tests for `owner` and `delegated` | covered |
+| F-7 | Test the ways to stop a session, then use the best one | §4.11 | FAC-M4: the rule for "safe" and 12 rows in `docs/session-stop.md` (`scripts/check-session-stop.sh`); `worker stop` uses the safe way; a busy worker with no safe way exits 3 | covered |
+| F-8 | Workers in their own window; the view has the coordinator and one slot | §4.11 | FAC-M4: tmux tests (`worker new`, `worker summon`, return of the board). FAC-M7: the adopt | covered |
 | F-9a | No read under `~/.claude`; a hook replaces them | §4.6, §6 | FAC-M4: static test (no source file or template names such a path); hook test | covered |
 | F-9b | The hook gives session id, last activity and context percent | §4.6 | FAC-M4: fixtures from the installed Claude Code; the hook parses them; the status line wrapper passes the output of the owner's command through | covered |
 | F-9c | Remove the "avoid reads" instruction | §4.6 | FAC-M4: static test on the templates | covered |
 | F-10a | One general core; the recipe decides the kind of factory | §4.9, §4.4 | FAC-M2: schema split. FAC-M6: dependency test and the test recipe `document` | covered |
 | F-10b | `software` first, in a plain and a devflow form | §4.9, §2.2 | FAC-M2 (plain), FAC-M6 (devflow) | covered |
-| F-11 | Git commands for multi-repo work, from mars | §3, §4.2 | FAC-M5: `checkout` tests on fixture repos, with the case `STUCK:` | covered |
-| F-12a | Analysis of firstmate: what it is, how it works, what factory takes | §4.8 | None. `docs/research/firstmate-and-mars.md` is the answer, and it uses the word cell | not applicable: the answer is a document |
+| F-11 | Git commands for multi-repo work, from mars | §3, §4.2 | FAC-M5: `copies` tests on fixture repos, with the case `STUCK:` | covered |
+| F-12a | Analysis of firstmate: what it is, how it works, what factory takes | §4.8 | None. `docs/research/firstmate-and-mars.md` is the answer | not applicable: the answer is a document |
 | F-12b | Explain the doorbell inbox; make it the only way to send text | §4.12 | FAC-M4: inbox tests; static test that only `src/comms/` calls `send-keys`; typed line limit of 300 characters | covered |
 | F-12c | Communication as its own module | §4.12, §5.3 | FAC-M4: static test (no module outside `src/comms/` touches inbox files) | covered |
 | F-13 | Same machine only; no remote host | §5.3, §4.4 | FAC-M2: the config refuses `ssh://`, `https://` and relative addresses (tests) | covered |
 | D-45a | TypeScript on Node 22+, `factory`, `@dean0x/factory`, MIT, `.factory/`, `factory.yaml` | §4.7, §9 | FAC-M1 is done (PR #1) | covered |
 | D-45b | Private repo until a team member installs it; an npm publish waits for Dean's go | §4.7 | FAC-M10: `scripts/check-release-workflow.sh`, `scripts/release-gate.sh` tests, `scripts/check-environment.sh`, `scripts/check-private.sh` | covered |
-| D-45c | Subswitch as a proxy option for each node and each cell, with a health check and no stray variable | §4.6, §2.2 | FAC-M6: stub server tests (live, dead, per-cell override). FAC-M7: `scripts/subswitch-run.sh` | covered |
-| D-45d | Fix the six conflicts of design §1.3 | §1.3 | Conflicts 1, 2, 3, 5, 6: rows F-6, F-7, F-8, F-9, F-3c. Conflict 4 (context in percent): FAC-M4 `cell list` marks `PREPARE` and `MAX` | covered |
-| D-47 | The heartbeat hook comes with the cell control milestone | §4.6 | FAC-M4: hook test and static test | covered |
+| D-45c | Subswitch as a proxy option for each node and each worker, with a health check and no stray variable | §4.6, §2.2 | FAC-M6: stub server tests (live, dead, per-worker override). FAC-M7: `scripts/subswitch-run.sh` | covered |
+| D-45d | Fix the six conflicts of design §1.3 | §1.3 | Conflicts 1, 2, 3, 5, 6: rows F-6, F-7, F-8, F-9, F-3c. Conflict 4 (context in percent): FAC-M4 `worker list` marks `PREPARE` and `MAX` | covered |
+| D-47 | The last-seen hook comes with the worker control milestone | §4.6 | FAC-M4: hook test and static test | covered |
 | D-52a | Approved and assigned work lands with no ask for each PR; `--admin` only at the pinned head | §6 | FAC-M5: head-changed refusal test | covered |
-| D-52b | What counts as approval and assignment | §6.1 | FAC-M5: one test for each proof (decision, ask, plan approved through an ask), with direct, decision and tracker assignment; a commit author is refused | covered |
-| D-52c | Unapproved work, or a PR with a question for the owner, still waits | §6.1 | FAC-M5: refusal tests; `inspect` exits 3 while the PR has an open ask or andon item | covered |
-| D-52d | Releases are not in D-52; they wait for his go | §6.2 | FAC-M5: `ship` no-publish test and the `approval.ship` config test | covered |
-| D-52e | factory offers the rule as an owner choice | §4.4 | FAC-M5: `pr merge` tests for `each` and `approved-work` | covered |
+| D-52b | What counts as approval and assignment | §6.1 | FAC-M5: one test for each proof (decision, ask, plan approved through an ask), with direct, decision and board assignment; a commit author is refused | covered |
+| D-52c | Unapproved work, or a PR with a question for the owner, still waits | §6.1 | FAC-M5: refusal tests; `check` exits 3 with `NOT READY` while the PR has an open ask or an open request | covered |
+| D-52d | Releases are not in D-52; they wait for his go | §6.2 | FAC-M5: the `release check` no-publish test and the `approval.release` config test | covered |
+| D-52e | factory offers the rule as an owner choice | §4.4 | FAC-M5: `pr merge` tests for `owner` and `delegated` | covered |
 | D-53a | Accept F-1 to F-10 as a set | §9 | The rows F-1 to F-10 above | covered by those rows |
 | D-53b | Design v2 and a new roadmap replace FAC-M2 to FAC-M7 | §9 | None. `docs/design.md` and `docs/roadmap-v2.md` are the result | not applicable: the answer is the two documents |
 | D-53c | The D-51 A review covers the FAC-M1 setup and upgrade code | §9 | FAC-M2: `scripts/check-review-scope.sh docs/reviews/fac-m2-review-summary.md` exits 0 | covered |
 | D-53d | FAC-M1 goes to `dean0x/factory` as it is | §9 | FAC-M1 is done (PR #1) | covered |
 | D-55a | The doorbell inbox goes into FAC-M4 | §4.12 | FAC-M4: inbox tests (numbered record, constant line, `handled/`, bounded re-rings, restart) | covered |
-| D-55b | `factory checkout` goes into FAC-M5 | §4.2 | FAC-M5: `checkout` tests | covered |
+| D-55b | The git commands across work copies (`factory copies`) go into FAC-M5 | §4.2 | FAC-M5: `copies` tests | covered |
 | D-55c | The rest of the 8 firstmate ideas, and `inbox next` and `inbox ack` | §4.8, §4.12 | Idea 3 and idea 4: FAC-M8 (`node tree` test, inherit list test). Idea 5: FAC-M5 (report tests) and FAC-M8 (rollup). Idea 8: FAC-M3 (`state pull` and `upgrade` on a dirty state repo). `inbox next` and `inbox ack`: FAC-M4 | covered |
 | D-56 | Build order M2, M4, M5, M6, M7, then M3, M8, M9 | §9 | None. The table "Milestones" of the roadmap holds the order. FAC-M10 comes after FAC-M8 and before FAC-M9 | not applicable: a build order, not a feature |
 
@@ -67,10 +67,10 @@ How to read the table:
 | Ask id | Short ask | Design section | Milestone and exit criterion | Status |
 |---|---|---|---|---|
 | O-1a | Do the packaging in a new folder | §4.7 | FAC-M1 is done: `dean0x/factory` is its own repo | covered |
-| O-1b | A CLI `factory` that creates the setup we have here | §8, §8.1 | FAC-M7: `scripts/check-parity.sh FAC-M7` exits 0; `adopt --dry-run` test. FAC-M4: reboot test | covered |
+| O-1b | A CLI `factory` that creates the setup we have here | §8, §8.1 | FAC-M7: `scripts/check-parity.sh FAC-M7` exits 0; `adopt --dry-run` test. FAC-M4: test `start resumes the recorded workers after kill-server` | covered |
 | O-1c | Think first about how it works | §1 | None. The design and the research came first | not applicable: a request about the order of work |
-| O-1d | Other developers, other projects, other machines of Dean | §4.3, §4.7 | FAC-M10: clean machine script (install, `init`, `up --dry-run`, `doctor`). FAC-M3: `init --state-from` test | covered |
-| O-1e | One project or many projects | §4.1, §4.3 | FAC-M2: `up` test with one `--add-dir` for each project | covered |
+| O-1d | Other developers, other projects, other machines of Dean | §4.3, §4.7 | FAC-M10: clean machine script (install, `init`, `start --dry-run`, `doctor`). FAC-M3: `init --state-from` test | covered |
+| O-1e | One project or many projects | §4.1, §4.3 | FAC-M2: `start` test with one `--add-dir` for each project | covered |
 | O-1f | Take ideas from firstmate and mars | §4.8 | Rows D-55a to D-55c | covered by those rows |
 | O-1g | Turn routine work into reusable scripts that save tokens | §3, §4.2 | FAC-M2: short-output helper. FAC-M5: `scripts/budget-check.sh` against `docs/token-budget.md` | covered |
 | O-1h | Cut the tie to devflow by default | §2.1, §4.9 | FAC-M2: deny list test with the three triage words. FAC-M6: core has no devflow word | covered |
@@ -87,11 +87,11 @@ How to read the table:
 | V-F-2b | Use the tracker UI and CLI; listen on comments and more from the board | §4.10 | FAC-M3: wake test (comment, label change, assignee change and issue close each cause one record and one doorbell line; another account causes none; `watch` calls no model) | covered |
 | V-F-2c | The user picks the tracker, as in devflow | §4.10, §4.4 | FAC-M3: tracker choice test and override test. FAC-M9: `site` and `key` tests and the mixed test | covered |
 | V-F-3a | The main session of "Codex" | §4.6 | FAC-M4: `session.agent: claude` loads and another value fails; static test on agent starts | covered |
-| V-F-3b | Which folder: the root of the repo, or the root of the folder where he starts | §4.3 | FAC-M2: workspace folder test (two repos and a worktree) and the home index test. Design v3 PR: the lookup from the factory root, the coordinator folder and a project clone (D-60) | covered |
+| V-F-3b | Which folder: the root of the repo, or the root of the folder where he starts | §4.3 | FAC-M2: workspace folder test (two repos and a worktree). Design v3 PR (moved from FAC-M2: D-60): the lookup from the factory folder, the coordinator folder and a project clone | covered |
 | V-F-3c | Make sure it is figured out; say if not understood | §4.3 | None. The one-page summary of the design answers it | not applicable: a request to confirm |
 | V-F-4a | Nodes on the same layer work the same | §5.2 | FAC-M2: role template tests. FAC-M6: same-layer hash test | covered |
 | V-F-4b | Nodes on different layers work differently | §5.2 | FAC-M2: `roleForLayer` tests. FAC-M8: the `director` template | covered |
-| V-F-4c | All child nodes of one layer work the same | §5.2 | FAC-M2: `add-child` exits 4 for another layer; all cells use the worker role | covered |
+| V-F-4c | All child nodes of one layer work the same | §5.2 | FAC-M2: `add-child` exits 4 for another layer; all workers use the worker role | covered |
 | V-F-4d | The layer that runs devflow knows its projects and variants | §5.2, §4.4 | FAC-M6: coordinator knowledge test and same-layer hash test | covered |
 | V-F-4e | A new top layer works unlike the two below; the pyramid grows | §5.2, §5.7 | FAC-M8: growth test and layer-3 rollup | covered |
 
@@ -99,13 +99,13 @@ How to read the table:
 
 | Ask id | Short ask | Design section | Milestone and exit criterion | Status |
 |---|---|---|---|---|
-| Gap 1 | Find the home from a project folder | §4.3 | FAC-M2: home index test. Design v3 PR: the lookup from the factory root, the coordinator folder and a project clone (D-60) | covered |
+| Gap 1 | Find the factory folder from a project folder | §4.3 | Design v3 PR (moved from FAC-M2: D-60): the lookup from the factory folder, the coordinator folder and a project clone | covered |
 | Gap 2 | The owner has a view and a way to answer in the `local` period | §4.10, §8 | FAC-M7: `scripts/check-owner-view.sh` and the owner answer pty test. FAC-M3 retires the old scripts | covered |
-| Gap 3 | The proof of approval follows D-52 | §6.1 | FAC-M5: one test for each proof, all through the owner channel; `inspect` exits 3 on an open ask | covered |
+| Gap 3 | The proof of approval follows D-52 | §6.1 | FAC-M5: one test for each proof, all from the owner's account or from a terminal window outside a factory session; `check` exits 3 on an open ask | covered |
 | OD-10 | A tracker event proves the owner only when the agents use another identity | §4.10, §6.1 | FAC-M5: tracker identity tests (shared account refuses tracker proofs and accepts `factory decide`; separate accounts accept owner events and refuse agent events); `doctor` warning test; README setup check | covered |
-| Gap 4 | The release question is open | §6.2, §4.4 | FAC-M5: `approval.ship` config test. D-57 is answered: releases wait for the owner | covered |
+| Gap 4 | The release question is open | §6.2, §4.4 | FAC-M5: `approval.release` config test. D-57 is answered: releases wait for the owner | covered |
 | Gap 5 | The user picks the tracker at setup | §4.10 | FAC-M3: tracker choice test with a fake `gh` | covered |
-| Gap 6 | The adopt moves the coordinator text out of the folder above the checkouts | §8 | FAC-M7: `scripts/check-cell-paths.sh` | covered |
+| Gap 6 | The adopt moves the coordinator text out of the folder above the work copies | §8 | FAC-M7: `scripts/check-worker-paths.sh` | covered |
 | Gap 7 | The context percent has a proven source | §4.6 | FAC-M4: fixtures from the installed Claude Code; wrapper test | covered |
 | Gap 8 | The core works without the `software` recipe | §4.9 | FAC-M6: dependency test and the test recipe `document` | covered |
 | Gap 9 | The inbox is the only way; the comms module has a section | §4.12, §5.3 | FAC-M4: static tests (only `src/comms/` types or touches inbox files) | covered |
@@ -115,9 +115,9 @@ How to read the table:
 | Gap 13 | The growth of the pyramid is tested | §5.2 | FAC-M8: growth test and layer-3 rollup | covered |
 | Gap 14 | Each command has a milestone; the Linux parts are tested | §4.2, §4.7 | FAC-M2: the docs check compares the §4.2 commands with the command map. FAC-M4: `machine` fixtures. FAC-M5: `lock run` tests and the report core | covered |
 | Gap 15 | The D-51 A review has an owner | §9 | FAC-M2: `scripts/check-review-scope.sh` | covered |
-| Gap 16 | The percent rule for context is checked | §4.6 | FAC-M4: `cell list` marks `PREPARE` and `MAX` at 29, 30, 40 and 41 percent | covered |
+| Gap 16 | The percent rule for context is checked | §4.6 | FAC-M4: `worker list` marks `PREPARE` and `MAX` at 29, 30, 40 and 41 percent | covered |
 | Gap 17 | The accepted firstmate ideas have a place | §4.8 | FAC-M3 (idea 8), FAC-M4 (`inbox next` and `inbox ack`), FAC-M5 and FAC-M8 (idea 5), FAC-M8 (ideas 3 and 4) | covered |
-| Gap 18 | Small items: `@lane` name, "lane" in the research doc, the `doc` operation | §5.1, §4.10 | FAC-M2: no `@lane` under `src/`; the docs check finds no whole word `lane` in `docs/research/`. FAC-M3: `doc` operation tests | covered |
+| Gap 18 | Small items: the `@lane` name, the word `lane` in the research doc, the `doc` operation | §5.1, §4.10 | FAC-M2: no `@lane` under `src/`; the docs check finds no whole word `lane` in `docs/research/`. FAC-M3: `doc` operation tests | covered |
 | Gap 19 | A proxy host receives the API traffic of the node; the owner is warned about a host that is not loopback | §4.6 | FAC-M5: unit test: `doctor` warns when the proxy host is not loopback, and gives no warning for a loopback host | covered |
 
 ## New gaps of the verbatim check
@@ -128,11 +128,47 @@ How to read the table:
 | A2 | The word "Codex" | §4.6 | FAC-M4: `session.agent` tests. The decision is OD-4 in §9 | covered |
 | A3 | Layers 3 and up share the layer-2 role | §5.2, §4.9 | FAC-M2: `roleForLayer(3)` returns no template and `doctor` warns. FAC-M8: the `director` template | covered |
 | A4 | The layer-1 role does not know the project variants | §5.2 | FAC-M6: coordinator knowledge test and same-layer hash test | covered |
-| A5 | The coordinator does not listen to the board | §4.10, §4.11 | FAC-M3: wake test; `up --dry-run` lists the window `ops` | covered |
+| A5 | The coordinator does not listen to the board | §4.10, §4.11 | FAC-M3: wake test; `start --dry-run` lists the window `ops` | covered |
 | A6 | The tracker choice is weaker than in devflow | §4.4, §4.10 | FAC-M3: tracker choice and override tests. FAC-M9: `site`, `key` and mixed tests | covered |
-| A7 | No parity table, and no restore after a reboot | §8.1, §4.11 | FAC-M4: reboot test. FAC-M7: `scripts/check-parity.sh FAC-M7`. FAC-M3: the same script for all rows | covered |
+| A7 | No parity table, and no restore after a reboot | §8.1, §4.11 | FAC-M4: test `start resumes the recorded workers after kill-server`. FAC-M7: `scripts/check-parity.sh FAC-M7`. FAC-M3: the same script for all rows | covered |
 | A8 | Nothing checks that the scripts save tokens | §3, §4.2 | FAC-M2: short-output helper. FAC-M5: `scripts/budget-check.sh` | covered |
 | A9 | A new name has no plain description | §4.1, §7 | FAC-M2: glossary test and `factory help words` | covered |
 | A10 | Dean's word list has no table | §7.1 | FAC-M2: `scripts/check-intent-docs.sh` counts 11 rows | covered |
 | A11 | A second machine of the same owner has no profile | §4.3 | FAC-M3: `init --state-from` integration test | covered |
-| A12 | The three triage words are not in the deny list; `desk render` is not marked | §2.2, §4.2 | FAC-M2: deny list test with the three words. `desk` is marked "not built, no milestone" | covered |
+| A12 | The three triage words are not in the deny list; a desk command is not marked | §2.2, §4.2 | FAC-M2: deny list test with the three words. Design v3 PR: the design has no desk command, and docs check 3 fails on a desk row (F-17a) | covered |
+
+## Notes of the design v3 feedback
+
+Dean gave these notes on 2026-11-02 as F-14 to F-21, D-57, D-59 and D-60. One row holds one part of a note. The milestone "Design v3 PR" has two PRs: the docs PR brings the design text, and the code PR brings the code.
+
+| Ask id | Short ask | Design section | Milestone and exit criterion | Status |
+|---|---|---|---|---|
+| F-14a | Use everyday words in the text that a user reads | §4.1, §7 | Design v3 PR: the plain-words table in `docs/glossary.md` and `test/helpers/plain-words.ts`; the docs scan finds none of the eight old words and no scanned jargon word in the design, the roadmap, the token budget, this trace and the glossary | covered |
+| F-14b | No "lane" and no "andon" | §7, §7.1 | Design v3 PR: design 7 and 7.1 map each old word to its new word; in the code PR, the names test finds none of the eight old words in a user value of `src/names.ts`, and the pane option is `@worker` | covered |
+| F-14c | A plain word for each jargon term that a user reads | §4.1, §7 | Design v3 PR: the plain-words table has a row for each jargon term and marks it "scanned" or "by hand". The scan covers the docs of the docs PR. In the code PR, it covers the README, the unreleased part of the CHANGELOG and the text that `src` prints | covered |
+| F-15a | The owner sets the rules for merge and release at setup | §6, §6.1, §6.2 | Design v3 PR: `init` asks for the mode of each approval point, `owner` or `delegated`, with `owner` as the default. FAC-M5: `pr merge` and `release check` tests for both modes | covered |
+| F-15b | The factory home should hold all of its parts | §4.3 | None. D-60 replaces this ask: see F-18a | not applicable: D-60 replaces it, and F-18a answers it |
+| F-15c | The core is not tied to software: the words merge and release belong to the recipe | §4.2, §4.9, §6 | Design v3 PR: docs check 10 (the core command table holds no word of the software recipe); in the code PR, the software recipe owns its words, and a test recipe runs `init`, `doctor`, `upgrade` and `start --dry-run` | covered |
+| F-16a | Priorities, the lifecycle of work, review rules, role texts and scripts are the owner's own setup | "Core and setup" | Design v3 PR: the table of the part "Core and setup" lists them as setup, and docs check 9 finds the heading. FAC-M6: the shareable setup | covered |
+| F-16b | The owner can share their way of working | "Core and setup", §4.3 | Design v3 PR: `setup/coordinator.md` travels in git, and the owner accepts its hash. FAC-M6: a second factory folder takes a setup from a fixture repo at an accepted commit | covered |
+| F-16c | A new feature of factory does not break the setup | "Core and setup", §4.5 | Design v3 PR: `upgrade` keeps the lines that a person adds to the root `.gitignore`. FAC-M6: upgrades never overwrite a setup file (upgrade test) | covered |
+| F-16d | The core is the metal: a small base with fixed rules | "Core and setup" | Design v3 PR: the table of the part "Core and setup" lists the fixed rules as core and the other files as setup; a manual read of the table in the review of the docs PR | covered |
+| F-17a | No review desk, not even as an option | §4.2, "Extension points" | Design v3 PR: design 4.2 and the command map have no desk row, and docs check 3 fails on one; in the code PR, a static test finds no word desk in `src/` | covered |
+| F-17b | A user can build a desk | "Extension points" | FAC-M5: the event file and `report --json` hold the fields that the part "Extension points" lists, and a sample reader outside `src/` reads them. FAC-M6: a desk reader as a setup file | covered |
+| F-17c | Factory gets in the way as little as possible: only a security boundary stops a command | §4.3 | Design v3 PR: design 4.3 "Stops and warnings" lists the stops and the warnings, and every stop prints one remedy line; in the code PR, the stops test runs each stop | covered |
+| F-18a | One folder holds the whole factory | §4.3 | Design v3 PR: the factory folder is one git repo with the clones, the coordinator folder and the work copies, and `start --dry-run` and `doctor` exit 0 from the factory folder, the coordinator folder and a project clone | covered |
+| F-18b | The coordinator folder is next to the clones, and a worker does not load the coordinator text | §4.3, §8 | Design v3 PR: the coordinator folder is not above any work copy, and the top of the factory folder holds no instruction file. FAC-M7: `scripts/check-worker-paths.sh` | covered |
+| F-18c | One list of repos as in mars: each repo once, and extra work copies stay on one machine | §4.3, §4.8 | Design v3 PR: `factory.yaml` lists each repo once, and the work copies in `work-copies/` do not travel. FAC-M4: `worker new` and `dismiss` tests | covered |
+| F-18d | Several factories on one machine | §4.3 | Design v3 PR: the registration check ties a config to its entry in the factory list, and `init` refuses a new factory folder inside a listed folder | covered |
+| F-18e | One factory on several machines of the owner | §4.3 | Design v3 PR: the same config repo makes the same factory on a second machine. FAC-M3: the criterion `init --state-from` moves the work state to a second machine. FAC-M4: `start` warns when another machine is active | covered |
+| F-18f | Share a factory with another developer | §4.3 | Design v3 PR: design 4.3 "Share a factory" lists the files that travel, the one command and the setup acceptance. The work state of a shared factory: FAC-M3 | covered |
+| F-19a | One board for the work of many repos | §4.10 | Design v3 PR: design 4.10 answers in plain words that one GitHub project holds the issues of many repos. FAC-M3: the first criterion is a recorded run of real `gh project` commands on a private throw-away project with two repos | covered |
+| F-19b | The board works with GitHub, Jira and Linear | §4.10, §4.4 | FAC-M3: GitHub. FAC-M9: Jira and Linear list the work of two projects or two teams in one board view, and the roadmap gives the reason for the order | covered |
+| F-20a | The verbs `start`, `shutdown` and `restart` | §4.2, §4.11 | FAC-M4: one named test for each verb, and `start` resumes the recorded workers after a machine restart | covered |
+| F-20b | `reboot`: shut down the factory and start it again | §4.2, §4.11 | FAC-M4: test `reboot stops and starts every worker of this factory` | covered |
+| F-21a | Dismiss the idle workers | §4.2, §4.11 | FAC-M4: `status` shows the idle state, and `dismiss --idle` lists the idle workers and the owner picks (tests); the setting `limits.idle_after` | covered |
+| F-21b | Clean up after a dismissed worker | §4.11 | FAC-M4: test `dismiss frees a work copy only when its work is pushed` | covered |
+| F-21c | The old worker names do not fit their work | §4.11 | FAC-M4: `status` shows the work item of each worker, so a name that differs from its work is visible. FAC-M7: each old worker of this workspace gets a name from its current work item | covered |
+| D-57 | The release is an approval point of its own, and releases wait for the owner | §6.2 | Design v3 PR: design 6.2. FAC-M5: the release proof test, the `approval.release` config test and the no-publish test | covered |
+| D-59 | The glossary words: worker, request, coordinator, queue, check and release check | §4.1, §7, §7.1 | Design v3 PR: the names and the docs use the new words; the names test, the glossary test and the docs scan | covered |
+| D-60 | One factory folder and one config repo, with a shared file and a local file | §4.3, §4.4 | Design v3 PR: design 4.3 and 4.4, the lookup of the factory folder (moved from FAC-M2) and the config tests for both files. FAC-M3: the work state on a second machine | covered |

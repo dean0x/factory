@@ -168,6 +168,14 @@ describe('the docs scan: what it skips', () => {
     expect(scanDoc('glossary.md', line)).toEqual([]);
     expect(scanDoc('design.md', line).length).toBeGreaterThan(0);
   });
+
+  it('skips a quoted note of the owner in the trace only, and reads the other rows', () => {
+    const quoted = readDoc('intent-trace.md').split('\n').find((line) => line.startsWith('| F-1a |')) ?? '';
+    expect(quoted).not.toBe('');
+    expect(scanDoc('intent-trace.md', `${quoted}\n`)).toEqual([]);
+    expect(scanDoc('design.md', `${quoted}\n`).length).toBeGreaterThan(0);
+    expect(scanDoc('intent-trace.md', '| F-9 | A cell stops | §4.11 | FAC-M4 | covered |\n')).toHaveLength(1);
+  });
 });
 
 describe('the allow list', () => {
@@ -184,6 +192,10 @@ describe('the allow list', () => {
 });
 
 describe('the docs that the docs change reads', () => {
+  it('reads the five docs of the docs change, the intent trace included', () => {
+    expect([...SCANNED_DOCS]).toEqual(['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md']);
+  });
+
   it.each(SCANNED_DOCS)('%s holds no old word and no scanned jargon word outside code spans and the mapping tables', (name) => {
     expect(describeHits(scanDoc(name, readDoc(name)))).toEqual([]);
   });

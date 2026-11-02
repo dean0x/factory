@@ -347,7 +347,12 @@ The import into GitHub issues is not here: it is FAC-M3.
 
 ## Design v3 PR (after FAC-M2)
 
-The design v3 PR comes after the FAC-M2 merge and before FAC-M4. It brings D-59, D-60 and Dean's notes F-14 to F-21 into the design, this roadmap, the trace and the code. It is two PRs (D-12 B): the docs PR first, then the code PR. Nothing is released, so both PRs are releasable at merge. There is one checkbox for each point of Dean's request:
+The design v3 PR comes after the FAC-M2 merge and before FAC-M4. It brings D-59, D-60 and Dean's notes F-14 to F-21 into the design, this roadmap, the trace and the code. It is two PRs (D-12 B): the docs PR first, then the code PR. Nothing is released, so both PRs are releasable at merge. Each PR has one checkbox. The first commit of the code PR ticks the first box, because the docs PR is merged by then. The last commit of the code PR ticks the second box. `scripts/check-intent-docs.sh` finds these two boxes under this heading, because rows of `docs/intent-trace.md` name the label "Design v3 PR".
+
+- [ ] Docs PR (branch `design-v3`): the design text, this roadmap, the token budget, the intent trace and the glossary in plain words, the plain-words table and its scan, and the docs checks 8, 9 and 10. No file under `src/` changes.
+- [ ] Code PR (branch `design-v3-code`): the code and test changes of the points below.
+
+There is one checkbox for each point of Dean's request:
 
 - [ ] Plain words (F-14, D-59). `docs/glossary.md` and `test/helpers/plain-words.ts` hold the plain-words table. The docs scan finds none of the eight old words (the words of the setup of today, design §7) and no scanned jargon word in the design, this roadmap, the token budget and the glossary, outside code, the mapping tables and a named list of allowed lines. In the code PR, `src/names.ts` holds no user value for an old word, it has one worker role key, no two role values and no two term values are equal, and the pane option is `@worker`. The names test and the glossary test pass.
 - [ ] Recipe words stay in the recipe, and approval points (F-15). The core command table of design §4.2 holds no word of the software recipe (docs check 10). In the code PR, the software recipe lists the approval points `merge` and `release`, owns its words, and `init` asks for each point with `owner` as the default. Only the approval record writer writes an approval record, and only in a terminal window outside a factory session.

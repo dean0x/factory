@@ -268,7 +268,7 @@ export const JARGON_PATTERNS: readonly JargonPattern[] = [
 ];
 
 /** The docs that the scan reads in the docs change. */
-export const SCANNED_DOCS = ['design.md', 'roadmap-v2.md', 'token-budget.md', 'glossary.md'] as const;
+export const SCANNED_DOCS = ['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md'] as const;
 
 /** A line that keeps an old word on purpose. The docs review reads this list. */
 export interface AllowedLine {
@@ -281,8 +281,15 @@ export interface AllowedLine {
 const GLOSSARY_SYNC =
   'the entry must equal the text of src/glossary.ts, and the glossary test checks that; the code change renames the term and removes this line from the list';
 
+const OWNER_NOTE =
+  'the row quotes a note of the owner, and the note holds the old word; the intent check compares the row with his own words';
+
 /** The lines of the docs that keep an old word, each with its reason. */
 export const ALLOWED_LINES: readonly AllowedLine[] = [
+  { file: 'intent-trace.md', startsWith: '| F-1a |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| F-14b |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| V-F-1b |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| V-F-1c |', reason: OWNER_NOTE },
   { file: 'glossary.md', startsWith: '- **layer**:', reason: GLOSSARY_SYNC },
   { file: 'glossary.md', startsWith: '- **cell**:', reason: GLOSSARY_SYNC },
   { file: 'glossary.md', startsWith: '- **andon**:', reason: GLOSSARY_SYNC },

@@ -343,3 +343,120 @@ describe('scripts/check-intent-docs.sh, check 10: the core command table holds n
     expect(result.out).toContain('design.md 4.2 has no core command table');
   });
 });
+
+const LABEL = 'Design v3 PR';
+const LABEL_HEADING = '## Design v3 PR (after FAC-M2)';
+
+describe('scripts/check-intent-docs.sh, check 2: the label "Design v3 PR"', () => {
+  it('exits 1 when a row of the trace names the label and the roadmap has no heading for it', async () => {
+    await change('roadmap-v2.md', (text) => text.replace(LABEL_HEADING, '## Another section (after FAC-M2)'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['2']);
+    expect(result.out).toMatch(/intent-trace\.md line \d+: the label "Design v3 PR" is not a heading of roadmap-v2\.md/);
+  });
+
+  it.each([
+    ['docs', 'Docs PR'],
+    ['code', 'Code PR'],
+  ])('exits 1 when the heading has no checkbox for the %s PR', async (kind, title) => {
+    await change('roadmap-v2.md', (text) => text.replace(`- [ ] ${title}`, '- [ ] Something else'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['2']);
+    expect(result.out).toContain(`roadmap-v2.md: the heading "${LABEL}" has no checkbox for the ${kind} PR`);
+  });
+
+  it('exits 1 when the two checkboxes are under another heading of the same level', async () => {
+    await change('roadmap-v2.md', (text) => text.replace(LABEL_HEADING, `${LABEL_HEADING}\n\n## Another section`));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['2']);
+    expect(result.out).toContain('has no checkbox for the docs PR');
+  });
+
+  it('accepts the two checkboxes under a deeper heading of the milestone', async () => {
+    await change('roadmap-v2.md', (text) => text.replace(LABEL_HEADING, `${LABEL_HEADING}\n\n### The two PRs`));
+    expect(check().code).toBe(0);
+  });
+
+  it('accepts ticked checkboxes', async () => {
+    await change('roadmap-v2.md', (text) => text.replace('- [ ] Docs PR', '- [x] Docs PR'));
+    await change('roadmap-v2.md', (text) => text.replace('- [ ] Code PR', '- [X] Code PR'));
+    expect(check().code).toBe(0);
+  });
+
+  it('needs no heading when no row of the trace names the label', async () => {
+    await change('intent-trace.md', (text) => text.split(LABEL).join('a later PR'));
+    await change('roadmap-v2.md', (text) => text.replace(LABEL_HEADING, '## Another section (after FAC-M2)'));
+    expect(check().code).toBe(0);
+  });
+});
+
+/** The asks of the design v3 feedback, each with one row in the trace. */
+const DESIGN_V3_ASKS = [
+  'F-14a', 'F-14b', 'F-14c',
+  'F-15a', 'F-15b', 'F-15c',
+  'F-16a', 'F-16b', 'F-16c', 'F-16d',
+  'F-17a', 'F-17b', 'F-17c',
+  'F-18a', 'F-18b', 'F-18c', 'F-18d', 'F-18e', 'F-18f',
+  'F-19a', 'F-19b',
+  'F-20a', 'F-20b',
+  'F-21a', 'F-21b', 'F-21c',
+  'D-57', 'D-59', 'D-60',
+] as const;
+
+/** The rows of the tables of the trace, by ask id, as five cells each. */
+const traceRows = (text: string): Map<string, string[]> => {
+  const rows = new Map<string, string[]>();
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('| ') || line.startsWith('| Ask id')) continue;
+    const cells = line.slice(1, line.length - 1).split('|').map((cell) => cell.trim());
+    rows.set(cells[0] ?? '', cells);
+  }
+  return rows;
+};
+
+describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
+  const trace = readFileSync(join(ROOT, 'docs', 'intent-trace.md'), 'utf8');
+  const rows = traceRows(trace);
+  const cell = (id: string, index: number): string => rows.get(id)?.[index] ?? '';
+
+  it('has one row for each ask, and no ask id twice', () => {
+    const ids = trace.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| Ask id')).map((line) => line.split('|')[1]?.trim() ?? '');
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(DESIGN_V3_ASKS.filter((id) => !rows.has(id))).toEqual([]);
+  });
+
+  it.each(DESIGN_V3_ASKS)('gives the row %s a design section, a milestone or the label, and a status', (id) => {
+    expect(cell(id, 2), 'no design section').toMatch(/§\d|"(?:Core and setup|Extension points)"/);
+    expect(cell(id, 3), 'no milestone and no label').toMatch(/FAC-M\d+|Design v3 PR|^None\./);
+    expect(cell(id, 4)).toMatch(/^(?:covered|not applicable: .+)$/);
+  });
+
+  it.each([
+    ['F-14c', ['Design v3 PR']],
+    ['F-15b', ['D-60', 'F-18a']],
+    ['F-16d', ['Design v3 PR']],
+    ['F-17c', ['Design v3 PR']],
+    ['F-18e', ['FAC-M3', 'init --state-from']],
+    ['F-18f', ['Design v3 PR', 'FAC-M3']],
+    ['F-20b', ['FAC-M4']],
+    ['F-21c', ['FAC-M4', 'FAC-M7']],
+  ] as const)('names in the row %s: %j', (id, words) => {
+    const text = `${cell(id, 3)} ${cell(id, 4)}`;
+    for (const word of words) expect(text).toContain(word);
+  });
+
+  it('names no command, script or key of the setup of today in a code span', () => {
+    const spans = [...trace.matchAll(/`([^`]+)`/g)].map((match) => match[1] ?? '');
+    const stale = spans.filter(
+      (span) => /^(?:cell|up|ship|inspect|checkout|desk)(?:[ -]|$)/.test(span) || /approval\.ship|check-cell-paths|approved-work/.test(span),
+    );
+    expect(stale).toEqual([]);
+  });
+
+  it('does not say that the command map marks a desk', () => {
+    expect(trace).not.toMatch(/marked "not built, no milestone"/);
+  });
+});
