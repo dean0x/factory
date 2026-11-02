@@ -194,12 +194,18 @@ const stateFilesOf = (templates: readonly BlockTemplate[], workerText: string | 
   ]);
 };
 
+interface BlockTexts {
+  readonly original: string | null;
+  readonly claudeText: string;
+  readonly workerText: string | null;
+}
+
 /** Render the managed blocks. CLAUDE.md keeps its text, and the blocks go at the end. */
 const blockTexts = async (
   deps: Deps,
   claudePath: string,
   templates: readonly BlockTemplate[],
-): Promise<CliResult<{ original: string | null; claudeText: string; workerText: string | null }>> => {
+): Promise<CliResult<BlockTexts>> => {
   const kind = await deps.fs.stat(claudePath);
   if (!kind.ok) return kind;
   if (kind.value !== null && kind.value !== 'file') return failure(`${files.claudeMd} is not a file`);
@@ -228,18 +234,65 @@ const blockTexts = async (
   });
 };
 
-/** The values of the flags that a clone does not change. */
-interface CheckedOptions {
+/** The values that a clone does not change. */
+interface CheckedValues {
   readonly layer: number;
   readonly recipe: (typeof values.recipes)[number];
   readonly ownerName: string;
+  /** The id of the node. */
+  readonly id: string;
 }
 
+/** The checked values, and the texts that follow from them. */
+interface CheckedOptions extends CheckedValues {
+  readonly templates: readonly BlockTemplate[];
+  readonly blocks: BlockTexts;
+}
+
+/** The settings of the config. The projects are the described projects of the command. */
+const settingsOf = (checked: CheckedValues, github: string | undefined, projects: readonly unknown[]): unknown => ({
+  [keys.root.schema]: CONFIG_SCHEMA_VERSION,
+  [keys.root.node]: { [keys.node.id]: checked.id, [keys.node.layer]: checked.layer },
+  [keys.root.owner]: {
+    [keys.owner.display]: checked.ownerName,
+    ...(github === undefined ? {} : { [keys.owner.github]: github }),
+    [keys.owner.prefix]: defaultOwnerPrefix,
+  },
+  [keys.root.session]: {
+    [keys.session.permissionMode]: values.permissionMode,
+    [keys.session.effort]: values.efforts[2],
+    [keys.session.model]: DEFAULT_MODEL,
+    [keys.session.proxy]: values.noProxy,
+  },
+  [keys.root.proxies]: [],
+  [keys.root.cells]: {},
+  [keys.root.limits]: DEFAULT_LIMITS,
+  [keys.root.approval]: { [keys.approval.land]: values.landModes[0] },
+  [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },
+  [keys.root.recipe]: {
+    [keys.recipe.id]: checked.recipe,
+    [keys.recipe.variant]: values.variants[0],
+    [keys.recipe.projects]: projects,
+  },
+  [keys.root.parent]: null,
+  [keys.root.children]: [],
+});
+
+const parseSettings = (input: unknown): CliResult<FactoryConfig> => {
+  const parsed = configSchema.safeParse(input);
+  return parsed.success
+    ? ok(parsed.data)
+    : usageError(`invalid settings: ${describeIssues(parsed.error)}`, 'Check the flags.');
+};
+
 /**
- * Check the layer, the recipe, the home location and the owner name. They need no project, so a bad value
- * is found before any clone runs. This function writes nothing.
+ * Run every check that needs no cloned project: the home holds no node, the layer, the recipe, the home location,
+ * the owner name, the node id, the settings with no project, the home holds no repo, and CLAUDE.md. A bad value
+ * is found before any clone runs, because a clone costs time and disk. This function writes nothing.
  */
 const checkOptions = async (deps: Deps, options: InitOptions, home: string): Promise<CliResult<CheckedOptions>> => {
+  const fresh = await checkHomeIsNew(deps, home);
+  if (!fresh.ok) return fresh;
   const layer = parseLayer(options.layer);
   if (!layer.ok) return layer;
   const recipe = parseRecipe(options.recipe);
@@ -253,7 +306,19 @@ const checkOptions = async (deps: Deps, options: InitOptions, home: string): Pro
       `Pass ${flagText(flags.ownerName)} NAME, or set git config user.name.`,
     );
   }
-  return ok({ layer: layer.value, recipe: recipe.value, ownerName });
+  const id = options.name ?? slugify(basename(home));
+  if (id === null) {
+    return usageError(`cannot make a ${roles.node} id from the folder name`, `Pass ${flagText(flags.name)} ID.`);
+  }
+  const base = { layer: layer.value, recipe: recipe.value, ownerName, id };
+  const settings = parseSettings(settingsOf(base, options.ownerGithub, []));
+  if (!settings.ok) return settings;
+  const holdsNoRepo = await checkHomeHoldsNoRepo(deps, home);
+  if (!holdsNoRepo.ok) return holdsNoRepo;
+  const templates = blockTemplatesFor(layer.value);
+  const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
+  if (!blocks.ok) return blocks;
+  return ok({ ...base, templates, blocks: blocks.value });
 };
 
 /** Read the system and decide what init writes. This function writes nothing. */
@@ -263,21 +328,16 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
   return planChecked(deps, options, checked.value);
 };
 
-/** The plan, after `checkOptions` has passed. */
+/**
+ * The plan, after `checkOptions` has passed. The clones are there now, so this function describes the projects
+ * and checks the home against them. The folders above the home exist when a clone needed them.
+ */
 const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOptions): Promise<CliResult<InitPlan>> => {
-  const { layer, recipe, ownerName } = checked;
+  const { layer, templates, blocks } = checked;
   const home = resolve(deps.cwd, options.home ?? '.');
-  const layout = layoutOf(home);
 
-  const fresh = await checkHomeIsNew(deps, home);
-  if (!fresh.ok) return fresh;
   const missing = await missingFolders(deps, home);
   if (!missing.ok) return missing;
-
-  const id = options.name ?? slugify(basename(home));
-  if (id === null) {
-    return usageError(`cannot make a ${roles.node} id from the folder name`, `Pass ${flagText(flags.name)} ID.`);
-  }
   const github = options.ownerGithub ?? (await detectGithubLogin(deps));
 
   const projects = await describeProjects(deps, home, options.projects);
@@ -288,53 +348,19 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
     options.projects.map((argument) => resolve(deps.cwd, argument)),
   );
   if (!apart.ok) return apart;
-  const holdsNoRepo = await checkHomeHoldsNoRepo(deps, home);
-  if (!holdsNoRepo.ok) return holdsNoRepo;
 
-  const parsed = configSchema.safeParse({
-    [keys.root.schema]: CONFIG_SCHEMA_VERSION,
-    [keys.root.node]: { [keys.node.id]: id, [keys.node.layer]: layer },
-    [keys.root.owner]: {
-      [keys.owner.display]: ownerName,
-      ...(github === undefined ? {} : { [keys.owner.github]: github }),
-      [keys.owner.prefix]: defaultOwnerPrefix,
-    },
-    [keys.root.session]: {
-      [keys.session.permissionMode]: values.permissionMode,
-      [keys.session.effort]: values.efforts[2],
-      [keys.session.model]: DEFAULT_MODEL,
-      [keys.session.proxy]: values.noProxy,
-    },
-    [keys.root.proxies]: [],
-    [keys.root.cells]: {},
-    [keys.root.limits]: DEFAULT_LIMITS,
-    [keys.root.approval]: { [keys.approval.land]: values.landModes[0] },
-    [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },
-    [keys.root.recipe]: {
-      [keys.recipe.id]: recipe,
-      [keys.recipe.variant]: values.variants[0],
-      [keys.recipe.projects]: projects.value,
-    },
-    [keys.root.parent]: null,
-    [keys.root.children]: [],
-  });
-  if (!parsed.success) {
-    return usageError(`invalid settings: ${describeIssues(parsed.error)}`, 'Check the flags.');
-  }
-
-  const templates = blockTemplatesFor(layer);
-  const blocks = await blockTexts(deps, layout.claudeMd, templates);
-  if (!blocks.ok) return blocks;
-  const stateFiles = stateFilesOf(templates, blocks.value.workerText);
+  const config = parseSettings(settingsOf(checked, github, projects.value));
+  if (!config.ok) return config;
+  const stateFiles = stateFilesOf(templates, blocks.workerText);
   if (!stateFiles.ok) return stateFiles;
 
   return ok({
     home,
     createdRoot: missing.value.at(-1) ?? null,
-    config: parsed.data,
-    configText: renderConfig(parsed.data),
-    claudeOriginal: blocks.value.original,
-    claudeText: blocks.value.claudeText,
+    config: config.value,
+    configText: renderConfig(config.value),
+    claudeOriginal: blocks.original,
+    claudeText: blocks.claudeText,
     stateFiles: stateFiles.value,
     warnings:
       roleForLayer(layer) === null

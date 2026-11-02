@@ -1467,6 +1467,81 @@ describe('init: the checks before a clone', () => {
     expect(changed).toBe(false);
   });
 
+  it('gives the error for a home name that makes no node id and runs no clone', async () => {
+    const { result, log, changed } = await initWithUrl({ home: '/w/___' });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('cannot make a node id from the folder name');
+    expect(messageOf(result)).toContain('--name');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it.each([
+    ['--name', { name: 'Not A Slug' }],
+    ['--owner-github', { ownerGithub: '-no-login' }],
+    ['--owner-name', { ownerName: 'x'.repeat(81) }],
+  ])('gives the error for a bad value of %s and runs no clone', async (_flag, extra) => {
+    const { result, log, changed } = await initWithUrl(extra);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('invalid settings');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it.each([
+    ['a config file', (deps: FakeDeps) => deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n'), 'factory.yaml already exists'],
+    ['a state folder', (deps: FakeDeps) => deps.seedDir(`${HOME}/.factory`), '.factory already exists'],
+    ['a home that is a file', (deps: FakeDeps) => deps.seed(HOME, 'x'), `${HOME} is not a folder`],
+  ])('refuses %s with exit 1 and runs no clone', async (_name, prepare, text) => {
+    const { result, log, changed } = await initWithUrl({}, {}, prepare);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain(text);
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('gives "already exists" before the error for a missing owner name', async () => {
+    const { result, log } = await initWithUrl({ ownerName: undefined }, { identity: false }, (deps) =>
+      deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n'),
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain('factory.yaml already exists');
+    expect(log.clones()).toEqual([]);
+  });
+
+  it.each([
+    ['is not a file', (deps: FakeDeps) => deps.seedDir(`${HOME}/CLAUDE.md`), 'CLAUDE.md is not a file'],
+    ['has a broken block marker', (deps: FakeDeps) => deps.seed(`${HOME}/CLAUDE.md`, '<!-- factory:begin x v1 sha256=zz -->\n'), 'CLAUDE.md: line 1'],
+  ])('refuses a CLAUDE.md that %s and runs no clone', async (_name, prepare, text) => {
+    const { result, log, changed } = await initWithUrl({}, {}, prepare);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain(text);
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('refuses a CLAUDE.md that holds a block of the same name and runs no clone', async () => {
+    const first = setup();
+    await runInit(first.deps, options());
+    const { result, log, changed } = await initWithUrl({}, {}, (deps) =>
+      deps.seed(`${HOME}/CLAUDE.md`, first.deps.files.get(`${HOME}/CLAUDE.md`) ?? ''),
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain('already holds the block coordinator');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('refuses a home that holds a git repo one level down and runs no clone', async () => {
+    const { result, log, changed } = await initWithUrl({}, { repos: { [`${HOME}/app`]: {} } }, (deps) =>
+      deps.seedDir(`${HOME}/app/.git`),
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('holds the git repo app one level down');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
   it('still clones when every value is good', async () => {
     const { result, log } = await initWithUrl({ layer: '1', recipe: 'software' }, { repos: { '/w/api': { origin: URL_API } } });
     expect(result.ok).toBe(true);
