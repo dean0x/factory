@@ -30,6 +30,22 @@ export const nearestExisting = async (
   return failure(`no folder above ${path} exists`);
 };
 
+/** The folders on the way up from `dir` that do not exist, the deepest first. The list is empty when `dir` exists. */
+export const missingFolders = async (deps: Deps, dir: string): Promise<CliResult<readonly string[]>> => {
+  const missing: string[] = [];
+  let current = dir;
+  for (let level = 0; level < MAX_PARENT_LEVELS; level += 1) {
+    const kind = await deps.fs.stat(current);
+    if (!kind.ok) return kind;
+    if (kind.value !== null) return ok(missing);
+    missing.push(current);
+    const parent = dirname(current);
+    if (parent === current) return ok(missing);
+    current = parent;
+  }
+  return ok(missing);
+};
+
 /** The path with its links resolved. The part that does not exist yet is added as it is. */
 export const realPathOf = async (deps: Deps, path: string): Promise<CliResult<string>> => {
   const nearest = await nearestExisting(deps, path);

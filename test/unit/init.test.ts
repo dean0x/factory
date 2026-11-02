@@ -1098,7 +1098,7 @@ describe('init: a project URL', () => {
     const URL_DOCS = 'https://host/acme/docs.git';
 
     /** The fake git makes the folder of a clone, as the real git does. A clone of `failingUrl` fails. */
-    const cloneSetup = (fixture: GitFixture, failingUrl?: string) => {
+    const cloneSetup = (fixture: GitFixture, failingUrl?: string, afterClone?: (deps: FakeDeps, target: string) => void) => {
       const { handler } = gitHandler(fixture);
       const deps: FakeDeps = createFakeDeps({
         cwd: '/w',
@@ -1108,6 +1108,7 @@ describe('init: a project URL', () => {
             const target = call.args[3] ?? '';
             deps.seedDir(target);
             deps.seed(`${target}/README.md`, 'cloned');
+            afterClone?.(deps, target);
           }
           return handler(call);
         },
@@ -1155,6 +1156,86 @@ describe('init: a project URL', () => {
       expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
       expect(messageOf(result)).toContain('These clones could not be removed: /w/api (cannot remove /w/api: EBUSY).');
       expect(messageOf(result)).not.toContain('Removed the clone');
+    });
+
+    describe('the folders above the home', () => {
+      const NESTED = '/w/new/deep/place';
+      const nested = (): InitOptions => options({ home: NESTED, projects: [URL_API] });
+      const repos = { '/w/new/deep/api': { origin: URL_API } };
+
+      it('removes the folders that this run made, deepest first, when a later step fails', async () => {
+        const deps = cloneSetup({ repos });
+
+        const result = await runInit(failingWrite(deps, '/factory.yaml'), nested());
+
+        expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+        expect(messageOf(result)).toContain('Removed the clone that this run made: /w/new/deep/api.');
+        expect(messageOf(result)).toContain('Removed the folders that this run made: /w/new/deep, /w/new.');
+        expect([...deps.dirs].filter((dir) => dir.startsWith('/w/new'))).toEqual([]);
+        expect(deps.dirs.has('/w')).toBe(true);
+      });
+
+      it('removes the folders that this run made when a clone fails', async () => {
+        const deps = cloneSetup({}, URL_API);
+
+        const result = await runInit(deps, nested());
+
+        expect(messageOf(result)).toContain('cannot clone https://host/acme/api.git');
+        expect(messageOf(result)).toContain('Removed the folders that this run made: /w/new/deep, /w/new.');
+        expect([...deps.dirs].filter((dir) => dir.startsWith('/w/new'))).toEqual([]);
+      });
+
+      it('never removes a folder that was there before the run', async () => {
+        const deps = cloneSetup({ repos });
+        deps.seedDir('/w/new');
+        deps.seed('/w/new/mine.txt', 'mine');
+
+        const result = await runInit(failingWrite(deps, '/factory.yaml'), nested());
+
+        expect(messageOf(result)).toContain('Removed the folder that this run made: /w/new/deep.');
+        expect(deps.dirs.has('/w/new/deep')).toBe(false);
+        expect(deps.files.get('/w/new/mine.txt')).toBe('mine');
+      });
+
+      it('keeps a folder that this run made when it is not empty, and names it', async () => {
+        const deps = cloneSetup({ repos }, undefined, (fake) => fake.seed('/w/new/stray.txt', 'x'));
+
+        const result = await runInit(failingWrite(deps, '/factory.yaml'), nested());
+
+        expect(deps.files.has('/w/new/stray.txt')).toBe(true);
+        expect(deps.dirs.has('/w/new/deep')).toBe(false);
+        expect(messageOf(result)).toContain('These folders could not be removed: /w/new (cannot remove /w/new: ENOTEMPTY).');
+      });
+
+      it('removes the folders that it made when it cannot make the next one, and runs no clone', async () => {
+        const { deps, log } = setup({ repos });
+        const stuck: Deps = {
+          ...deps,
+          fs: {
+            ...deps.fs,
+            mkdir: async (path, mode) =>
+              path === '/w/new/deep' ? failure('cannot create /w/new/deep: EACCES') : deps.fs.mkdir(path, mode),
+          },
+        };
+
+        const result = await runInit(stuck, nested());
+
+        expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+        expect(messageOf(result)).toContain('cannot create /w/new/deep: EACCES');
+        expect(messageOf(result)).toContain('Removed the folder that this run made: /w/new.');
+        expect(deps.dirs.has('/w/new')).toBe(false);
+        expect(log.clones()).toEqual([]);
+      });
+
+      it('keeps the folders and the home when the run succeeds', async () => {
+        const deps = cloneSetup({ repos });
+
+        const result = await runInit(deps, nested());
+
+        expect(result.ok).toBe(true);
+        expect(deps.files.has(`${NESTED}/factory.yaml`)).toBe(true);
+        expect(deps.dirs.has('/w/new/deep/api')).toBe(true);
+      });
     });
   });
 

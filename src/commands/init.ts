@@ -23,7 +23,7 @@ import {
   MAX_SCAN_ENTRIES,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
-import { realPathOf } from '../core/paths.js';
+import { missingFolders, realPathOf } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import {
@@ -53,7 +53,7 @@ import { roleForLayer } from '../recipes/software/recipe.js';
 import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
-import { checkProjectCount, planProjects, runClones, undoClones } from './init-clone.js';
+import { checkProjectCount, makeCloneParents, planProjects, runClones, undoClones } from './init-clone.js';
 import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
 
 export interface InitOptions {
@@ -170,22 +170,6 @@ const describeProjects = async (
 
 const MAX_PARENT_LEVELS = 64;
 
-/** The topmost folder on the way up from `dir` that does not exist, or null when `dir` exists. */
-const topMissingFolder = async (deps: Deps, dir: string): Promise<CliResult<string | null>> => {
-  let missing: string | null = null;
-  let current = dir;
-  for (let level = 0; level < MAX_PARENT_LEVELS; level += 1) {
-    const kind = await deps.fs.stat(current);
-    if (!kind.ok) return kind;
-    if (kind.value !== null) return ok(missing);
-    missing = current;
-    const parent = dirname(current);
-    if (parent === current) return ok(missing);
-    current = parent;
-  }
-  return ok(missing);
-};
-
 const withNewline = (text: string): string => (text.endsWith('\n') ? text : `${text}\n`);
 
 /** The state files. The worker file exists only when the layer has a worker block. */
@@ -301,8 +285,8 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
   const homeKind = await deps.fs.stat(home);
   if (!homeKind.ok) return homeKind;
   if (homeKind.value !== null && homeKind.value !== 'dir') return failure(`${home} is not a folder`);
-  const createdRoot = homeKind.value === null ? await topMissingFolder(deps, home) : ok(null);
-  if (!createdRoot.ok) return createdRoot;
+  const missing = await missingFolders(deps, home);
+  if (!missing.ok) return missing;
 
   const id = options.name ?? slugify(basename(home));
   if (id === null) {
@@ -360,7 +344,7 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
 
   return ok({
     home,
-    createdRoot: createdRoot.value,
+    createdRoot: missing.value.at(-1) ?? null,
     config: parsed.data,
     configText: renderConfig(parsed.data),
     claudeOriginal: blocks.value.original,
@@ -486,14 +470,17 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   const allProjects = projectsOf(deps, projects.value.paths, found);
   const counted = checkProjectCount(allProjects.length);
   if (!counted.ok) return counted;
-  const cloned = await runClones(deps, projects.value.clones);
+  // Git makes the folders above a clone by itself. This run makes them first, so that the undo can remove them.
+  const parents = projects.value.clones.some((clone) => !clone.present) ? await makeCloneParents(deps, home) : ok([]);
+  if (!parents.ok) return parents;
+  const cloned = await runClones(deps, projects.value.clones, parents.value);
   if (!cloned.ok) return cloned;
   const made = cloned.value;
 
   const plan = await planChecked(deps, { ...options, home, projects: allProjects }, checked.value);
-  if (!plan.ok) return undoClones(deps, made, plan.error);
+  if (!plan.ok) return undoClones(deps, made, parents.value, plan.error);
   const applied = await applyInit(deps, plan.value);
-  if (!applied.ok) return undoClones(deps, made, applied.error);
+  if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
   const warnings = [
     ...projects.value.warnings,
