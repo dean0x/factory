@@ -79,7 +79,7 @@ factory up --dry-run
 factory up
 ```
 
-`up` starts a tmux session with the id of the node. The coordinator runs in the window `view`, in the node home. It runs in auto permission mode, with one `--add-dir` for each project. The window `bench` is empty. The session never inherits `ANTHROPIC_BASE_URL`. A proxy comes only from the config, and only when it answers. A second `up` starts no second coordinator. It attaches to the session. `--dry-run` prints the tmux calls and starts no session. `up` refuses (exit code 4) a home inside a git work tree or inside another node home, as `init` does. So a `factory.yaml` that a cloned repo holds never starts a session.
+`up` starts a tmux session with the id of the node. The coordinator runs in the window `view`, in the node home. It runs in auto permission mode, with one `--add-dir` for each project. The window `bench` is empty. The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy comes only from the config, and only when it answers. A second `up` starts no second coordinator. It attaches to the session. `--dry-run` prints the tmux calls and starts no session. `up` refuses (exit code 4) a home inside a git work tree or inside another node home, as `init` does. So a `factory.yaml` that a cloned repo holds never starts a session.
 
 ### Child nodes
 
