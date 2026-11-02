@@ -5,10 +5,11 @@
 **Date**: 2026-11-02
 **Cycle**: 1
 **Gate level**: lean. **Focus areas**: security, testing, reliability, regression, setup and upgrade.
+**Status**: resolved. All blocking findings are fixed. The resolution is in `docs/reviews/fac-m2-resolution-summary.md`.
 
 ## Merge Recommendation: CHANGES REQUESTED
 
-Do not merge PR #5 until the 22 blocking findings are fixed.
+This recommendation was for the reviewed range. It asked for a fix of the 22 blocking findings before the merge.
 
 Finding B-01 is the only HIGH finding. The upgrade removes comments from the file factory.yaml.
 
