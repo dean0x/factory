@@ -5,7 +5,7 @@ import { slug } from '../config/primitives.js';
 import { dirs, env, files, flagText, flags, homeIndex, program, roles } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps, PathInfo } from './deps.js';
-import { isSameOrInside, isSameOrInsideFolder } from './paths.js';
+import { comparable, isSameOrInside, isSameOrInsideFolder, realPathOf } from './paths.js';
 import { err, ok, type Result } from './result.js';
 import { describeIssues } from './zod.js';
 
@@ -115,27 +115,87 @@ const withEntry = (entries: readonly HomeEntry[], entry: HomeEntry): readonly Ho
 };
 
 /**
- * Put the home in the index file. An entry of the same home is replaced. A file that cannot be read stays as it is.
- * The file is written atomically, with mode 0600. Its folder gets mode 0700, also when it exists. The folder of the
- * state home keeps its mode. The error is the reason.
+ * Make the folder of the index ready: a folder that another user owns or can write is refused, and the folder gets
+ * mode 0700, also when it exists. The folder of the state home keeps its mode.
  */
-export const recordHome = async (deps: Deps, path: string, entry: HomeEntry): Promise<Result<void, string>> => {
-  if (entry[homeIndex.keys.projects].length > homeIndex.maxProjects) {
-    return err(`a home can list at most ${homeIndex.maxProjects} projects`);
+const prepareFolder = async (deps: Deps, path: string): Promise<Result<void, string>> => {
+  const folderPath = dirname(path);
+  const own = await ownInfo(deps, folderPath, 'folder');
+  if (!own.ok) return err(`${path} cannot be used: ${own.error}`);
+  const made = await deps.fs.mkdir(folderPath, FOLDER_MODE);
+  if (!made.ok) return err(made.error.message);
+  const tightened = await deps.fs.chmod(folderPath, FOLDER_MODE);
+  return tightened.ok ? ok(undefined) : err(tightened.error.message);
+};
+
+/**
+ * Remove a lock that is older than `homeIndex.lockStaleMs`: a process that ended left it. The value is true when
+ * the lock is gone and the caller may try to take it at once.
+ */
+const dropStaleLock = async (deps: Deps, lockPath: string): Promise<Result<boolean, string>> => {
+  const info = await deps.fs.statInfo(lockPath);
+  if (!info.ok) return err(info.error.message);
+  if (info.value === null) return ok(true);
+  if (deps.now().getTime() - info.value.mtimeMs <= homeIndex.lockStaleMs) return ok(false);
+  const removed = await deps.fs.remove(lockPath);
+  return removed.ok ? ok(true) : err(removed.error.message);
+};
+
+/**
+ * Take the lock file beside the index. The file is new, so only one process holds it. The call tries
+ * `homeIndex.lockAttempts` times and waits `homeIndex.lockWaitMs` between two tries. A stale lock is taken over.
+ */
+const takeLock = async (deps: Deps, lockPath: string): Promise<Result<void, string>> => {
+  for (let attempt = 1; attempt <= homeIndex.lockAttempts; attempt += 1) {
+    const created = await deps.fs.writeTextExclusive(lockPath, `${deps.pid}\n`, FILE_MODE);
+    if (!created.ok) return err(created.error.message);
+    if (created.value) return ok(undefined);
+    const dropped = await dropStaleLock(deps, lockPath);
+    if (!dropped.ok) return dropped;
+    if (!dropped.value && attempt < homeIndex.lockAttempts) await deps.sleep(homeIndex.lockWaitMs);
   }
+  return err(`another ${program} command holds the lock ${lockPath}. Run the command again, or remove that file when no such command runs.`);
+};
+
+/** Read the index, add the entry and write the file. The caller holds the lock. */
+const addEntry = async (deps: Deps, path: string, entry: HomeEntry): Promise<Result<void, string>> => {
   const entries = await readHomeIndex(deps, path);
   if (!entries.ok) return err(`${path} cannot be read: ${entries.error}`);
   const next = withEntry(entries.value, entry);
   if (next.length > homeIndex.maxHomes) return err(`the index lists the most homes that it can: ${homeIndex.maxHomes}`);
 
   const text = `${JSON.stringify({ [homeIndex.keys.schema]: homeIndex.schema, [homeIndex.keys.homes]: next }, null, 2)}\n`;
-  const folderPath = dirname(path);
-  const folder = await deps.fs.mkdir(folderPath, FOLDER_MODE);
-  if (!folder.ok) return err(folder.error.message);
-  const tightened = await deps.fs.chmod(folderPath, FOLDER_MODE);
-  if (!tightened.ok) return err(tightened.error.message);
   const written = await deps.fs.writeTextAtomic(path, text, FILE_MODE);
   return written.ok ? ok(undefined) : err(written.error.message);
+};
+
+/**
+ * Put the home in the index file. An entry of the same home is replaced. A file that cannot be read stays as it is.
+ * The file is written atomically, with mode 0600. Its folder gets mode 0700 (see `prepareFolder`). A lock file beside
+ * the index lets only one process read, change and write at a time, so two runs at once lose no entry.
+ * The error is the reason.
+ */
+export const recordHome = async (deps: Deps, path: string, entry: HomeEntry): Promise<Result<void, string>> => {
+  if (entry[homeIndex.keys.projects].length > homeIndex.maxProjects) {
+    return err(`a home can list at most ${homeIndex.maxProjects} projects`);
+  }
+  const folder = await prepareFolder(deps, path);
+  if (!folder.ok) return folder;
+  const lockPath = `${path}${homeIndex.lockSuffix}`;
+  const locked = await takeLock(deps, lockPath);
+  if (!locked.ok) return locked;
+
+  const recorded = await addEntry(deps, path, entry);
+  // A lock that stays is taken over once it is older than homeIndex.lockStaleMs.
+  await deps.fs.remove(lockPath);
+  return recorded;
+};
+
+/** True when an entry of the index has this home, as it is written or by its real path. */
+export const listsHome = async (deps: Deps, entries: readonly HomeEntry[], home: string): Promise<boolean> => {
+  const real = await realPathOf(deps, home);
+  const wanted = [home, ...(real.ok ? [real.value] : [])].map((candidate) => comparable(deps, candidate));
+  return entries.some((entry) => wanted.includes(comparable(deps, entry[homeIndex.keys.home])));
 };
 
 /** True when the folder of the home still holds its config file. */

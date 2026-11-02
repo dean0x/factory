@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmod, lstat, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -262,9 +262,22 @@ describe('node deps: owner and mode', () => {
     await writeFile(file, 'x', 'utf8');
     await chmod(file, 0o640);
     const uid = process.getuid?.() ?? null;
-    expect(await deps.fs.statInfo(file)).toEqual({ ok: true, value: { kind: 'file', uid, mode: 0o640 } });
+    expect(await deps.fs.statInfo(file)).toEqual({
+      ok: true,
+      value: { kind: 'file', uid, mode: 0o640, mtimeMs: (await stat(file)).mtimeMs },
+    });
     await chmod(dir, 0o700);
-    expect(await deps.fs.statInfo(dir)).toEqual({ ok: true, value: { kind: 'dir', uid, mode: 0o700 } });
+    expect(await deps.fs.statInfo(dir)).toMatchObject({ ok: true, value: { kind: 'dir', uid, mode: 0o700 } });
+  });
+
+  it('tells the time of the last change of a file', async () => {
+    const file = fresh('mtime.txt');
+    const before = Date.now();
+    await writeFile(file, 'x', 'utf8');
+    const result = await deps.fs.statInfo(file);
+    expect(result.ok && result.value !== null && Math.abs(result.value.mtimeMs - before) < 5_000).toBe(true);
+    await utimes(file, new Date(1_000_000), new Date(1_000_000));
+    expect(await deps.fs.statInfo(file)).toMatchObject({ ok: true, value: { mtimeMs: 1_000_000 } });
   });
 
   it('gives null for a path that does not exist', async () => {
@@ -290,6 +303,45 @@ describe('node deps: owner and mode', () => {
     const result = await deps.fs.chmod(fresh('chmod-missing'), 0o600);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
+});
+
+describe('node deps: exclusive write', () => {
+  it('creates a file with the text and the mode, and says that it did', async () => {
+    const file = fresh('exclusive.lock');
+    expect(await deps.fs.writeTextExclusive(file, '123\n', 0o600)).toEqual({ ok: true, value: true });
+    expect(await readFile(file, 'utf8')).toBe('123\n');
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+  });
+
+  it('leaves a file that exists as it was, and says that it did not create it', async () => {
+    const file = fresh('exclusive-held.lock');
+    await writeFile(file, 'other process', 'utf8');
+    expect(await deps.fs.writeTextExclusive(file, 'mine', 0o600)).toEqual({ ok: true, value: false });
+    expect(await readFile(file, 'utf8')).toBe('other process');
+  });
+
+  it('does not follow a link: the target stays as it was', async () => {
+    const victim = fresh('exclusive-victim.txt');
+    const link = fresh('exclusive-link.lock');
+    await writeFile(victim, 'victim text', 'utf8');
+    await symlink(victim, link);
+    expect(await deps.fs.writeTextExclusive(link, 'mine', 0o600)).toEqual({ ok: true, value: false });
+    expect(await readFile(victim, 'utf8')).toBe('victim text');
+  });
+
+  it('returns an error with the code when the folder does not exist', async () => {
+    const result = await deps.fs.writeTextExclusive(join(fresh('no-folder'), 'x.lock'), 'x', 0o600);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
+});
+
+describe('node deps: sleep', () => {
+  it('waits at least the time that the caller asks for', async () => {
+    const start = Date.now();
+    await deps.sleep(40);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(35);
   });
 });
 

@@ -782,22 +782,66 @@ describe('doctor: the home index', () => {
     JSON.stringify({ schema: 1, homes: homes.map((home, i) => ({ home, id: `h${i}`, projects: ['/w/web'] })) });
 
   it('is ok when no variable names a folder for the index', async () => {
-    expect(await checkIndex(makeDeps())).toMatchObject({ id: 'index', level: 'ok', text: expect.stringContaining('no home index is used') });
+    expect(await checkIndex(makeDeps(), HOME)).toMatchObject({ id: 'index', level: 'ok', text: expect.stringContaining('no home index is used') });
   });
 
-  it('is ok when there is no index file yet, and when every home in it is present', async () => {
+  it('is ok when this home is in the index and every home in it is present', async () => {
     const deps = makeDeps({ env });
-    expect(await checkIndex(deps)).toMatchObject({ level: 'ok', text: '0 entries in the home index, all present' });
     deps.seed(INDEX, indexOf(HOME));
     deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
-    expect(await checkIndex(deps)).toMatchObject({ level: 'ok', text: '1 entry in the home index, all present' });
+    expect(await checkIndex(deps, HOME)).toMatchObject({ level: 'ok', text: '1 entry in the home index, all present' });
+  });
+
+  it('warns when there is no index file yet, because this home is not in it', async () => {
+    const deps = makeDeps({ env });
+    const result = await checkIndex(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(HOME);
+    expect(result.text).toContain(INDEX);
+  });
+
+  it('warns when the index lists other homes but not this one, and says how to fix it', async () => {
+    const deps = makeDeps({ env });
+    deps.seed(INDEX, indexOf('/w/other'));
+    deps.seed('/w/other/factory.yaml', 'schema: 2\n');
+    const result = await checkIndex(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(`does not list ${HOME}`);
+    expect(result.text).toContain('--home DIR');
+    expect(result.text).toContain(INDEX);
+  });
+
+  it('finds this home in the index by its real path', async () => {
+    const deps = makeDeps({ env, links: { '/link': '/real' } });
+    deps.seed(INDEX, indexOf('/real/node'));
+    deps.seed('/real/node/factory.yaml', 'schema: 2\n');
+    deps.seedDir('/link/node');
+    expect((await checkIndex(deps, '/link/node')).level).toBe('ok');
+  });
+
+  it('ignores the case of letters on macOS when it looks for this home, and not on other systems', async () => {
+    for (const [os, level] of [['darwin', 'ok'], ['linux', 'warn']] as const) {
+      const deps = makeDeps({ env, os });
+      deps.seed(INDEX, indexOf('/w/NODE'));
+      deps.seed('/w/NODE/factory.yaml', 'schema: 2\n');
+      expect((await checkIndex(deps, '/w/node')).level).toBe(level);
+    }
+  });
+
+  it('names both problems in one warning', async () => {
+    const deps = makeDeps({ env });
+    deps.seed(INDEX, indexOf('/w/gone'));
+    const result = await checkIndex(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('/w/gone');
+    expect(result.text).toContain(`does not list ${HOME}`);
   });
 
   it('warns on an entry whose home is gone, and names the home and the file', async () => {
     const deps = makeDeps({ env });
     deps.seed(INDEX, indexOf(HOME, '/w/gone'));
     deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
-    const result = await checkIndex(deps);
+    const result = await checkIndex(deps, HOME);
     expect(result).toMatchObject({ level: 'warn' });
     expect(result.text).toContain('/w/gone');
     expect(result.text).not.toContain(`${HOME},`);
@@ -807,12 +851,29 @@ describe('doctor: the home index', () => {
   it('warns when the file cannot be read', async () => {
     const deps = makeDeps({ env });
     deps.seed(INDEX, 'broken');
-    expect(await checkIndex(deps)).toMatchObject({ level: 'warn', text: expect.stringContaining(`${INDEX} cannot be read`) });
+    expect(await checkIndex(deps, HOME)).toMatchObject({ level: 'warn', text: expect.stringContaining(`${INDEX} cannot be read`) });
   });
 
   it('warns when the place of the index is inside the folder of Claude Code', async () => {
     const deps = makeDeps({ env: { HOME: '/users/me', XDG_STATE_HOME: '/users/me/.claude/state' } });
-    expect(await checkIndex(deps)).toMatchObject({ level: 'warn' });
+    expect(await checkIndex(deps, HOME)).toMatchObject({ level: 'warn' });
+  });
+
+  it('warns in the command when the index does not list the home', async () => {
+    const deps = await initialized({ env });
+    deps.files.delete(INDEX);
+    const result = await runDoctor(deps, { home: HOME });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(levelOf(result.value.json['checks'] as CheckResult[], 'index')).toBe('warn');
+  });
+
+  it('is ok in the command right after init, because init lists the home', async () => {
+    const deps = await initialized({ env });
+    const result = await runDoctor(deps, { home: HOME });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(levelOf(result.value.json['checks'] as CheckResult[], 'index')).toBe('ok');
   });
 
   it('runs from a project folder through the index, and sends no network request', async () => {

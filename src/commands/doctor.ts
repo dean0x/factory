@@ -9,7 +9,7 @@ import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder, type LocatedHome } from '../core/home.js';
-import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
+import { goneHomes, indexPathOf, listsHome, readHomeIndex } from '../core/home-index.js';
 import { isSameOrInsideFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
@@ -157,7 +157,7 @@ export const checkHome = async (deps: Deps, home: string, state: DocState<Factor
  * The home index lets a command find a home from a project folder. An entry whose home is gone, and a file that
  * cannot be read, are warnings: the index is a cache, and a command that needs it says so.
  */
-export const checkIndex = async (deps: Deps): Promise<CheckResult> => {
+export const checkIndex = async (deps: Deps, home: string): Promise<CheckResult> => {
   const path = await indexPathOf(deps);
   if (!path.ok) return check(checkIds.index, 'warn', path.error.message);
   if (path.value === null) {
@@ -165,14 +165,19 @@ export const checkIndex = async (deps: Deps): Promise<CheckResult> => {
   }
   const entries = await readHomeIndex(deps, path.value);
   if (!entries.ok) return check(checkIds.index, 'warn', `${path.value} cannot be read: ${entries.error}`);
+  const problems: string[] = [];
   const gone = await goneHomes(deps, entries.value);
   if (gone.length > 0) {
-    return check(
-      checkIds.index,
-      'warn',
+    problems.push(
       `the home index lists ${gone.join(', ')}, with no ${files.config}. Remove the ${plural(gone.length, 'entry', 'entries')} from ${path.value}.`,
     );
   }
+  if (!(await listsHome(deps, entries.value, home))) {
+    problems.push(
+      `the home index does not list ${home}, so a command in a project folder cannot find it. Use ${flagText(flags.home)} DIR, or add an entry for this ${roles.node} home to ${path.value}.`,
+    );
+  }
+  if (problems.length > 0) return check(checkIds.index, 'warn', problems.join(' '));
   const count = entries.value.length;
   return check(checkIds.index, 'ok', `${count} ${plural(count, 'entry', 'entries')} in the home index, all present`);
 };
@@ -421,7 +426,7 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
   const state = await inspectState(deps, home);
   const [homeCheck, index, blocks, children, permission, proxies, tools, stateRepo, projects] = await Promise.all([
     checkHome(deps, home, config),
-    checkIndex(deps),
+    checkIndex(deps, home),
     checkNodeBlocks(deps, home, config),
     checkChildren(deps, config),
     checkPermissionMode(deps, home),

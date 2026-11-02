@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
@@ -61,6 +62,12 @@ export interface FakeDeps extends Deps {
   readonly modes: Map<string, number>;
   /** The owner of a path, by path. A path that is not in the map belongs to the user of the process. */
   readonly owners: Map<string, number>;
+  /** The time of the last write of a file, in milliseconds, by path. A file that is not in the map changed just now. */
+  readonly mtimes: Map<string, number>;
+  /** The waits of `sleep`, in order. */
+  readonly sleeps: number[];
+  /** Move the clock on by `ms` milliseconds. `sleep` does the same. */
+  advance(ms: number): void;
   seed(path: string, text: string): void;
   seedDir(path: string): void;
 }
@@ -71,6 +78,7 @@ export const exited = (exitCode: number, stdout = '', stderr = ''): CliResult<Ru
 export const missingProgram = (command: string): CliResult<RunOutput> =>
   failure(`cannot run ${command}: ENOENT`);
 
+const DEFAULT_NOW = new Date('2030-01-02T03:04:05.678Z');
 const DEFAULT_UID = 1000;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIR_MODE = 0o700;
@@ -88,7 +96,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const atomicWrites: string[] = [];
   const modes = new Map<string, number>();
   const owners = new Map<string, number>();
+  const mtimes = new Map<string, number>();
+  const sleeps: number[] = [];
   const uid = options.uid === undefined ? DEFAULT_UID : options.uid;
+  let clock = (options.now ?? DEFAULT_NOW).getTime();
+  const touch = (path: string): void => void mtimes.set(path, clock);
 
   const ancestors = (path: string): string[] => {
     const found: string[] = [];
@@ -118,9 +130,15 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     atomicWrites,
     modes,
     owners,
+    mtimes,
+    sleeps,
+    advance: (ms) => {
+      clock += ms;
+    },
     seed: (path, text) => {
       addDir(posix.dirname(path));
       files.set(path, text);
+      touch(path);
     },
     seedDir: (path) => addDir(path),
     fs: {
@@ -136,12 +154,22 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       writeText: async (path, text) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
         files.set(path, text);
+        touch(path);
         return ok(undefined);
+      },
+      writeTextExclusive: async (path, text, mode) => {
+        if (!dirs.has(posix.dirname(path))) return enoent('write', path);
+        if (kindOf(path) !== null) return ok(false);
+        files.set(path, text);
+        modes.set(path, mode);
+        touch(path);
+        return ok(true);
       },
       writeTextAtomic: async (path, text, mode) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
         atomicWrites.push(path);
         files.set(path, text);
+        touch(path);
         if (mode !== undefined) modes.set(path, mode);
         return ok(undefined);
       },
@@ -153,6 +181,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
           kind,
           uid: owners.get(path) ?? uid ?? DEFAULT_UID,
           mode: modes.get(path) ?? (kind === 'dir' ? PRIVATE_DIR_MODE : PRIVATE_FILE_MODE),
+          mtimeMs: mtimes.get(path) ?? clock,
         });
       },
       chmod: async (path, mode) => {
@@ -246,7 +275,13 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       fetched.push(url);
       return (options.fetch ?? (() => failure('no answer')))(url);
     },
-    now: () => options.now ?? new Date('2030-01-02T03:04:05.678Z'),
+    now: () => new Date(clock),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      clock += ms;
+      // Other work that waits runs before this wait ends, as it does with a real wait.
+      await yieldTurn();
+    },
     platform: { os: options.os ?? 'linux', nodeVersion: options.nodeVersion ?? 'v22.1.0' },
     cwd: options.cwd ?? '/work',
     pid: options.pid ?? 4242,

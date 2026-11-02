@@ -17,6 +17,7 @@ import {
 } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from './result.js';
 import { MAX_ANSWER_CHARS, type Deps, type Fs, type PathInfo, type PathKind } from './deps.js';
@@ -109,7 +110,7 @@ const pathKindOf = (info: { isFile(): boolean; isDirectory(): boolean }): PathKi
 const statInfo = async (path: string): Promise<CliResult<PathInfo | null>> => {
   try {
     const info = await stat(path);
-    return ok({ kind: pathKindOf(info), uid: info.uid, mode: info.mode & PERMISSION_BITS });
+    return ok({ kind: pathKindOf(info), uid: info.uid, mode: info.mode & PERMISSION_BITS, mtimeMs: info.mtimeMs });
   } catch (cause) {
     return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
   }
@@ -123,6 +124,16 @@ const nodeFs: Fs = {
     return text.value === null ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text.value);
   },
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
+  writeTextExclusive: (path, text, mode) =>
+    guard('write', path, async () => {
+      try {
+        await writeFile(path, text, { encoding: 'utf8', flag: 'wx', mode });
+        return true;
+      } catch (cause) {
+        if (errorCode(cause) === 'EEXIST') return false;
+        throw cause;
+      }
+    }),
   writeTextAtomic: (path, text, mode) => guard('write', path, () => writeAtomic(path, text, mode)),
   stat: async (path) => {
     const info = await statInfo(path);
@@ -207,6 +218,7 @@ export const createNodeDeps = (): Deps => ({
     }
   },
   now: () => new Date(),
+  sleep: (ms) => wait(ms),
   platform: { os: process.platform, nodeVersion: process.version },
   cwd: process.cwd(),
   pid: process.pid,

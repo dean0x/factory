@@ -9,6 +9,8 @@ export interface PathInfo {
   readonly uid: number;
   /** The permission bits only: 0o777 at most. */
   readonly mode: number;
+  /** The time of the last change of the content, in milliseconds since the epoch. */
+  readonly mtimeMs: number;
 }
 
 export interface Fs {
@@ -16,6 +18,11 @@ export interface Fs {
   /** Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. */
   readTextLimited(path: string, maxBytes: number): Promise<CliResult<string>>;
   writeText(path: string, text: string): Promise<CliResult<void>>;
+  /**
+   * Create a file that does not exist, with `mode`, and write the text. The value is true when this call created the
+   * file, and false when the path exists already (a link counts, and it is not followed). Then nothing changes.
+   */
+  writeTextExclusive(path: string, text: string, mode: number): Promise<CliResult<boolean>>;
   /**
    * Write the text to a temporary file in the same folder, then rename it over the target.
    * A reader sees the old text or the new text, never a part. A failure leaves the target as it was.
@@ -91,6 +98,8 @@ export interface Deps {
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;
   now(): Date;
+  /** Wait for `ms` milliseconds. */
+  sleep(ms: number): Promise<void>;
   readonly platform: Platform;
   readonly cwd: string;
   readonly pid: number;

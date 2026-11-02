@@ -139,6 +139,13 @@ export const homeIndex = {
   maxHomes: 200,
   maxProjects: 200,
   maxBytes: maxFileBytes,
+  /** The lock file beside the index: the name of the index and this suffix. */
+  lockSuffix: '.lock',
+  /** A writer tries to take the lock this many times, and waits this long between two tries. */
+  lockAttempts: 20,
+  lockWaitMs: 50,
+  /** A lock that is older than this was left by a process that ended. The next writer takes it. */
+  lockStaleMs: 5_000,
 } as const;
 
 /**

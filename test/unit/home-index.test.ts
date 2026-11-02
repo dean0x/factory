@@ -430,6 +430,136 @@ describe('home index: recording a home', () => {
   });
 });
 
+describe('home index: two writers at once', () => {
+  const LOCK = `${INDEX}.lock`;
+  const fresh = (): FakeDeps => {
+    const deps = createFakeDeps({ env: {} });
+    deps.seedDir('/state');
+    return deps;
+  };
+  const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
+
+  it('keeps both entries when two homes are recorded at the same time', async () => {
+    const deps = fresh();
+    const results = await Promise.all([
+      recordHome(deps, INDEX, entry(HOME_A, ['/w/web'])),
+      recordHome(deps, INDEX, entry(HOME_B, ['/w/api'], 'api')),
+    ]);
+    expect(results.map((result) => result.ok)).toEqual([true, true]);
+    expect(stored(deps)).toEqual({
+      schema: 1,
+      homes: expect.arrayContaining([entry(HOME_A, ['/w/web']), entry(HOME_B, ['/w/api'], 'api')]),
+    });
+    expect((stored(deps) as { homes: unknown[] }).homes).toHaveLength(2);
+  });
+
+  it('keeps all entries when five homes are recorded at the same time', async () => {
+    const deps = fresh();
+    const homes = ['/h/a', '/h/b', '/h/c', '/h/d', '/h/e'];
+    const results = await Promise.all(homes.map((home) => recordHome(deps, INDEX, entry(home, [], 'node'))));
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect((stored(deps) as { homes: { home: string }[] }).homes.map((candidate) => candidate.home).sort()).toEqual(homes);
+  });
+
+  it('removes the lock when it has recorded the home', async () => {
+    const deps = fresh();
+    await recordHome(deps, INDEX, entry(HOME_A, []));
+    expect(deps.files.has(LOCK)).toBe(false);
+  });
+
+  it('removes the lock when the index cannot be read', async () => {
+    const deps = fresh();
+    deps.seed(INDEX, 'not json');
+    expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(false);
+    expect(deps.files.has(LOCK)).toBe(false);
+  });
+
+  it('removes the lock when the write fails', async () => {
+    const deps = fresh();
+    const failing = { ...deps, fs: { ...deps.fs, writeTextAtomic: async () => failure('cannot write: disk full') } };
+    expect((await recordHome(failing, INDEX, entry(HOME_A, []))).ok).toBe(false);
+    expect(deps.files.has(LOCK)).toBe(false);
+  });
+
+  it('waits for a lock that another process holds, and goes on when the lock goes away', async () => {
+    const deps = fresh();
+    deps.seed(LOCK, '1\n');
+    const waiting: Deps = {
+      ...deps,
+      sleep: async (ms) => {
+        await deps.sleep(ms);
+        if (deps.sleeps.length === 3) deps.files.delete(LOCK);
+      },
+    };
+    expect((await recordHome(waiting, INDEX, entry(HOME_A, []))).ok).toBe(true);
+    expect(deps.sleeps).toEqual([50, 50, 50]);
+    expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_A, [])] });
+  });
+
+  it('gives up after 20 tries when the lock stays, writes nothing, and leaves the lock of the other process', async () => {
+    const deps = fresh();
+    deps.seed(LOCK, '1\n');
+    const result = await recordHome(deps, INDEX, entry(HOME_A, []));
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK) });
+    expect(deps.sleeps).toEqual(Array.from({ length: 19 }, () => 50));
+    expect(deps.files.has(INDEX)).toBe(false);
+    expect(deps.files.get(LOCK)).toBe('1\n');
+  });
+
+  it('takes over a lock that is older than the stale age', async () => {
+    const deps = fresh();
+    deps.seed(LOCK, '1\n');
+    deps.advance(5_001);
+    expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+    expect(deps.sleeps).toEqual([]);
+    expect(deps.files.has(LOCK)).toBe(false);
+    expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_A, [])] });
+  });
+
+  it('takes over a lock that becomes stale while it waits, after the time on the clock and not before', async () => {
+    const deps = fresh();
+    deps.seed(LOCK, '1\n');
+    deps.advance(4_880);
+    expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+    expect(deps.sleeps).toEqual([50, 50, 50]);
+  });
+
+  it('does not take a lock that is as old as the stale age', async () => {
+    const deps = fresh();
+    deps.seed(LOCK, '1\n');
+    deps.advance(5_000 - 19 * 50);
+    expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(false);
+  });
+
+  it('creates the lock with mode 0600', async () => {
+    const deps = fresh();
+    const modes: number[] = [];
+    const watched: Deps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        writeTextExclusive: async (path, text, mode) => {
+          modes.push(mode);
+          return deps.fs.writeTextExclusive(path, text, mode);
+        },
+      },
+    };
+    await recordHome(watched, INDEX, entry(HOME_A, []));
+    expect(modes).toEqual([0o600]);
+  });
+
+  it('stops with the error when it cannot create the lock', async () => {
+    const deps = fresh();
+    const denied: Deps = {
+      ...deps,
+      fs: { ...deps.fs, writeTextExclusive: async () => failure('cannot write /state/factory/homes.json.lock: EACCES') },
+    };
+    const result = await recordHome(denied, INDEX, entry(HOME_A, []));
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('EACCES') });
+    expect(deps.sleeps).toEqual([]);
+  });
+});
+
 describe('home index: recording a home, with a real file system', () => {
   let folder = '';
   beforeAll(async () => {
@@ -456,6 +586,16 @@ describe('home index: recording a home, with a real file system', () => {
     expect((await recordHome(createNodeDeps(), join(state, 'factory', 'homes.json'), entry(HOME_A, []))).ok).toBe(true);
     expect(await modeOf(join(state, 'factory'))).toBe(0o700);
     expect(await modeOf(state)).toBe(0o755);
+  });
+
+  it('keeps every entry when five homes are recorded at the same time, and leaves no lock file', async () => {
+    const index = join(folder, 'parallel', 'factory', 'homes.json');
+    const homes = ['/h/a', '/h/b', '/h/c', '/h/d', '/h/e'];
+    const results = await Promise.all(homes.map((home) => recordHome(createNodeDeps(), index, entry(home, [], 'node'))));
+    expect(results.every((result) => result.ok)).toBe(true);
+    const read = await readHomeIndex(createNodeDeps(), index);
+    expect(read.ok && read.value.map((candidate) => candidate.home).sort()).toEqual(homes);
+    expect(await readdir(join(folder, 'parallel', 'factory'))).toEqual(['homes.json']);
   });
 
   it('refuses an index folder that a group may write, and writes no file', async () => {
