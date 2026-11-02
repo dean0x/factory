@@ -6,6 +6,8 @@ A node is a folder with a config file, a `CLAUDE.md` for the coordinator, and a 
 
 ## Install
 
+Not published yet.
+
 ```sh
 npm install --global @dean0x/factory
 ```
@@ -159,7 +161,7 @@ The hash lets `factory` find out that a person edited a block. Text outside the 
 - The permission mode is `auto`. `doctor` fails when a settings file in the node folder skips the permission prompts.
 - A proxy comes only from the config. `doctor` prints `Config: <path>` first. It checks that the proxy answers only when the config comes from `--home` or from the current folder. If the config comes from a parent folder, from `FACTORY_HOME` or from the home index, `doctor` sends no request. It warns: "Run with --home DIR to check the proxy". A stray `ANTHROPIC_BASE_URL` in the shell is a warning.
 - The proxy host receives the API traffic of the coordinator. Use only a proxy that you control.
-- Merges and releases wait for the owner.
+- By default, merges and releases wait for the owner.
 - `doctor` fails when a value in `factory.yaml` looks like a token. It never prints the value.
 
 ## Exit codes
