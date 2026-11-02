@@ -7,7 +7,7 @@ import { ok } from '../../src/core/result.js';
 import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
-import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
@@ -123,6 +123,17 @@ describe('up: a new session', () => {
     expect(tmux.commands().some((line) => line.startsWith('kill-session'))).toBe(false);
     expect(tmux.commands().at(-1)).toBe('new-window -d -t =demo: -n bench -c /w/node');
     expect(output.json).toMatchObject({ started: true });
+  });
+
+  it('keeps a PATH that ends in a semicolon as one word of the launch, and not as the end of a command', async () => {
+    const { deps, tmux } = make({ env: { PATH: '/bin:/opt/claude/bin;' } });
+    await succeeded(deps);
+    const start = tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
+    const [launch, keepPane] = chainOf(start);
+    expect(chainOf(start)).toHaveLength(2);
+    expect(launch).toContain('PATH=/bin:/opt/claude/bin;');
+    expect(launch?.slice(-2)).toEqual(['--add-dir', '/w/web']);
+    expect(keepPane).toEqual(['set-option', '-w', '-t', '=demo:view', 'remain-on-exit', 'on']);
   });
 
   it('gives the PATH of this process to the launch, so the PATH of the tmux server does not matter', async () => {

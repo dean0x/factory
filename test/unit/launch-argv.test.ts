@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { launchArgv, type LaunchInput } from '../../src/launch/argv.js';
+import { startSteps } from '../../src/launch/tmux.js';
+import { chainOf } from '../helpers/tmux-fake.js';
 
 const input = (change: Partial<LaunchInput> = {}): LaunchInput => ({
   home: '/w/demo-factory',
@@ -131,5 +133,41 @@ describe('launch argument list', () => {
     const result = launchArgv(input({ model: '--secret-flag-value' }));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).not.toContain('secret-flag-value');
+  });
+});
+
+describe('the tmux calls that start a session', () => {
+  const launch = ['env', 'PATH=/bin:/x;', 'FACTORY_HOME=/w/node;', 'claude', '--add-dir', '/w/web;'];
+
+  it('reads a path that ends in a semicolon as one value, and not as the end of a command', () => {
+    const steps = startSteps({ id: 'demo', home: '/w/node;', launch });
+    const commands = steps.flatMap(chainOf);
+    expect(commands.map((command) => command[0])).toEqual([
+      'new-session',
+      'set-option',
+      'set-environment',
+      'set-option',
+      'set-option',
+      'split-window',
+      'set-option',
+      'new-window',
+    ]);
+    expect(commands[0]).toEqual(['new-session', '-d', '-s', 'demo', '-n', 'view', '-c', '/w/node;', '--', ...launch]);
+    expect(commands[4]).toEqual(['set-option', '-t', '=demo:', '@factory_home', '/w/node;']);
+    const folders = commands.flatMap((command) => (command.includes('-c') ? [command[command.indexOf('-c') + 1]] : []));
+    expect(folders).toEqual(['/w/node;', '/w/node;', '/w/node;']);
+  });
+
+  it('keeps a backslash before the last semicolon of a value', () => {
+    const steps = startSteps({ id: 'demo', home: '/w/node\;', launch: ['claude'] });
+    expect(steps.flatMap(chainOf)[0]).toContain('/w/node\;');
+    expect(steps.flatMap(chainOf)).toHaveLength(8);
+  });
+
+  it('leaves a word without a final semicolon as it is, with the one separator of the first call', () => {
+    const steps = startSteps({ id: 'demo', home: '/w/node', launch: ['claude', '--add-dir', '/w/a;b'] });
+    expect(steps[0]?.filter((word) => word === ';')).toEqual([';']);
+    expect(steps[0]).toContain('/w/a;b');
+    expect(steps.slice(1).flat().filter((word) => word.includes(';'))).toEqual([]);
   });
 });

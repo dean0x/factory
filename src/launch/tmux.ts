@@ -15,6 +15,17 @@ const windowTarget = (id: string, window: string): string => `${sessionTarget(id
 /** In an argument list, this word ends a tmux command and starts the next one. */
 const NEXT_COMMAND = ';';
 
+/**
+ * tmux reads a word that ends in a semicolon as the end of a command, and the words after it as the next command.
+ * A word that comes from outside, such as a path, can end in a semicolon. A backslash before the last semicolon makes
+ * the semicolon part of the word, and tmux drops the backslash. This keeps every path usable, and it needs no check.
+ */
+const literalWord = (word: string): string =>
+  word.endsWith(NEXT_COMMAND) ? `${word.slice(0, -NEXT_COMMAND.length)}\\${NEXT_COMMAND}` : word;
+
+/** One tmux command as an argument list. No word of it ends the command. */
+const call = (...words: readonly string[]): TmuxArgs => words.map(literalWord);
+
 /** The left pane of the view window is the coordinator, the right pane is the slot. */
 const LEFT_PANE = '{left}';
 const RIGHT_PANE = '{right}';
@@ -22,36 +33,25 @@ const RIGHT_PANE = '{right}';
 /** The pane of the coordinator: the left pane of the view window. */
 const coordinatorPane = (id: string): string => `${windowTarget(id, tmuxNames.windowView)}.${LEFT_PANE}`;
 
-export const hasSessionArgs = (id: string): TmuxArgs => ['has-session', '-t', sessionTarget(id)];
+export const hasSessionArgs = (id: string): TmuxArgs => call('has-session', '-t', sessionTarget(id));
 
 /**
  * Asks whether the program of the coordinator pane has ended. The output is `1` for an ended program and `0` for a program
  * that runs. The pane stays after its program ended, because of remain-on-exit. `display-message` names the one pane
  * exactly, so the answer never comes from the slot pane.
  */
-export const coordinatorEndedArgs = (id: string): TmuxArgs => [
-  'display-message',
-  '-p',
-  '-t',
-  coordinatorPane(id),
-  '#{pane_dead}',
-];
+export const coordinatorEndedArgs = (id: string): TmuxArgs =>
+  call('display-message', '-p', '-t', coordinatorPane(id), '#{pane_dead}');
 
 /** The node home that a session holds in its option. `-q` gives an empty answer, not an error, for a session without the option. */
-export const showHomeArgs = (id: string): TmuxArgs => [
-  'show-options',
-  '-q',
-  '-v',
-  '-t',
-  windowTarget(id, ''),
-  tmuxNames.optionHome,
-];
+export const showHomeArgs = (id: string): TmuxArgs =>
+  call('show-options', '-q', '-v', '-t', windowTarget(id, ''), tmuxNames.optionHome);
 
-export const killSessionArgs = (id: string): TmuxArgs => ['kill-session', '-t', sessionTarget(id)];
+export const killSessionArgs = (id: string): TmuxArgs => call('kill-session', '-t', sessionTarget(id));
 
-export const attachArgs = (id: string): TmuxArgs => ['attach', '-t', sessionTarget(id)];
+export const attachArgs = (id: string): TmuxArgs => call('attach', '-t', sessionTarget(id));
 
-export const switchArgs = (id: string): TmuxArgs => ['switch-client', '-t', sessionTarget(id)];
+export const switchArgs = (id: string): TmuxArgs => call('switch-client', '-t', sessionTarget(id));
 
 /** The command that a person types to attach to the session. */
 export const attachHint = (id: string): string => `${toolNames.tmux} attach -t ${id}`;
@@ -66,6 +66,7 @@ export const attachHint = (id: string): string => `${toolNames.tmux} attach -t $
  * The first pane runs the launch with no shell, and the launch clears the proxy variable. The call after the first one
  * removes the variable from the environment of the session, so the shell of every later pane and window gets none.
  * The call names the session and never the server: other sessions keep their environment.
+ * Every word goes through `call`, so a path or a value that ends in a semicolon stays one word.
  */
 export const startSteps = (input: {
   readonly id: string;
@@ -76,29 +77,15 @@ export const startSteps = (input: {
   const view = windowTarget(id, tmuxNames.windowView);
   return [
     [
-      'new-session',
-      '-d',
-      '-s',
-      id,
-      '-n',
-      tmuxNames.windowView,
-      '-c',
-      home,
-      '--',
-      ...launch,
+      ...call('new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', home, '--', ...launch),
       NEXT_COMMAND,
-      'set-option',
-      '-w',
-      '-t',
-      view,
-      'remain-on-exit',
-      'on',
+      ...call('set-option', '-w', '-t', view, 'remain-on-exit', 'on'),
     ],
-    ['set-environment', '-t', sessionTarget(id), '-r', env.proxyBaseUrl],
-    ['set-option', '-p', '-t', coordinatorPane(id), tmuxNames.optionNode, id],
-    ['set-option', '-t', windowTarget(id, ''), tmuxNames.optionHome, home],
-    ['split-window', '-d', '-h', '-t', view, '-c', home],
-    ['set-option', '-p', '-t', `${view}.${RIGHT_PANE}`, tmuxNames.optionSlot, tmuxNames.slotBoard],
-    ['new-window', '-d', '-t', windowTarget(id, ''), '-n', tmuxNames.windowBench, '-c', home],
+    call('set-environment', '-t', sessionTarget(id), '-r', env.proxyBaseUrl),
+    call('set-option', '-p', '-t', coordinatorPane(id), tmuxNames.optionNode, id),
+    call('set-option', '-t', windowTarget(id, ''), tmuxNames.optionHome, home),
+    call('split-window', '-d', '-h', '-t', view, '-c', home),
+    call('set-option', '-p', '-t', `${view}.${RIGHT_PANE}`, tmuxNames.optionSlot, tmuxNames.slotBoard),
+    call('new-window', '-d', '-t', windowTarget(id, ''), '-n', tmuxNames.windowBench, '-c', home),
   ];
 };

@@ -36,12 +36,25 @@ const NEEDS_SESSION = new Set([
   'display-message',
 ]);
 
-/** A command chain is a list of commands in one argument list, separated by the argument `;`. */
-const chainOf = (args: readonly string[]): readonly (readonly string[])[] => {
+/**
+ * A command chain is a list of commands in one argument list. tmux reads the list this way: a word that ends in a
+ * semicolon ends the command, with the word before the semicolon as its last word. A backslash before that semicolon
+ * makes the semicolon part of the word, and the backslash goes away.
+ */
+export const chainOf = (args: readonly string[]): readonly (readonly string[])[] => {
   const commands: string[][] = [[]];
   for (const arg of args) {
-    if (arg === ';') commands.push([]);
-    else commands.at(-1)?.push(arg);
+    if (!arg.endsWith(';')) {
+      commands.at(-1)?.push(arg);
+      continue;
+    }
+    const body = arg.slice(0, -1);
+    if (body.endsWith('\\')) {
+      commands.at(-1)?.push(`${body.slice(0, -1)};`);
+      continue;
+    }
+    if (body !== '') commands.at(-1)?.push(body);
+    commands.push([]);
   }
   return commands.filter((command) => command.length > 0);
 };

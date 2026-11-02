@@ -150,6 +150,19 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
     expect(await readFile(join(outDir, 'session'), 'utf8')).toBe('demo');
   });
 
+  it('passes a project folder that ends in a semicolon to claude as one value', async () => {
+    const odd = await box.makeProject('odd;');
+    const init = await box.run(
+      ['init', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner', '--project', odd],
+      { env: tmuxEnv },
+    );
+    expect(init.code).toBe(0);
+    expect((await up()).code).toBe(0);
+    await waitForLaunch();
+    const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
+    expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', odd]);
+  });
+
   it('clears a proxy variable that the shell holds', async () => {
     await initNode();
     expect(tmuxEnv['ANTHROPIC_BASE_URL']).toBe(LAUNCH_PROXY_URL);
