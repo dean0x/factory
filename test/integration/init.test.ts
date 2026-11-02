@@ -98,6 +98,57 @@ describe('factory init (built binary)', () => {
   });
 });
 
+describe('factory init: a workspace folder (built binary)', () => {
+  const ownerArgs = ['--owner-name', 'Test Owner'];
+
+  /** `ws/` holds the repos `web` and `api`, and `web-search` as a linked work tree of `web`. */
+  const makeWorkspace = async (): Promise<string> => {
+    const ws = join(box.root, 'ws');
+    const web = await box.makeProject('ws/web');
+    await box.makeProject('ws/api');
+    await box.git(web, ['commit', '--allow-empty', '-q', '-m', 'first']);
+    const linked = await box.git(web, ['worktree', 'add', '-q', '-b', 'search', join(ws, 'web-search')]);
+    expect(linked.code).toBe(0);
+    return ws;
+  };
+
+  it('makes ./<folder>-factory with the repos as projects, names the other checkout as skipped, and exits 0', async () => {
+    const ws = await makeWorkspace();
+    const result = await box.run(['init', '--yes', ...ownerArgs], { cwd: ws });
+    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+    const home = join(ws, 'ws-factory');
+    const config = await box.read(join(home, 'factory.yaml'));
+    expect(config).toContain('path: "../web"');
+    expect(config).toContain('path: "../api"');
+    expect(config).not.toContain('web-search');
+    expect(result.stdout).toContain('web-search');
+    expect(result.stdout).toContain('one more checkout of the repo web');
+    expect(existsSync(join(ws, 'factory.yaml'))).toBe(false);
+    const doctor = await box.run(['doctor', '--home', home]);
+    expect(doctor.code).toBe(0);
+    expect(doctor.stdout).toContain('holds no git repo one level down');
+  });
+
+  it('exits 4 and names the rule for --home on the workspace folder', async () => {
+    const ws = await makeWorkspace();
+    const result = await box.run(['init', '--home', '.', ...ownerArgs], { cwd: ws });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('holds the git repo');
+    expect(result.stderr).toContain('one level down');
+    expect(existsSync(join(ws, 'factory.yaml'))).toBe(false);
+  });
+
+  it('prints the proposal and exits 2 without a terminal and without --yes', async () => {
+    const ws = await makeWorkspace();
+    const result = await box.run(['init', ...ownerArgs], { cwd: ws });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('The proposed node home is');
+    expect(result.stderr).toContain('ws-factory');
+    expect(result.stderr).toContain('web-search');
+    expect(existsSync(join(ws, 'ws-factory'))).toBe(false);
+  });
+});
+
 describe('factory init: the home rules (built binary)', () => {
   const ownerArgs = ['--owner-name', 'Test Owner'];
 

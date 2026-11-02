@@ -20,6 +20,7 @@ import {
   gitInit,
   hasIdentity,
   isWorkTreeRoot,
+  MAX_SCAN_ENTRIES,
 } from '../core/git.js';
 import { indexPathOf, recordHome } from '../core/home-index.js';
 import { err, ok } from '../core/result.js';
@@ -52,7 +53,8 @@ import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
 import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
-import { chooseHome, checkHomeApart, checkHomeLocation, realPathOf } from './init-home.js';
+import { MAX_PROJECTS, planProjects, runClones } from './init-clone.js';
+import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation, realPathOf } from './init-home.js';
 
 export interface InitOptions {
   readonly home: string | undefined;
@@ -91,7 +93,6 @@ export interface InitResult {
 }
 
 const GH_TIMEOUT_MS = 10_000;
-const MAX_PROJECTS = 100;
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_MODEL = 'default';
 const FIRST_COMMIT_MESSAGE = 'chore: initialize the state';
@@ -293,6 +294,8 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
     options.projects.map((argument) => resolve(deps.cwd, argument)),
   );
   if (!apart.ok) return apart;
+  const holdsNoRepo = await checkHomeHoldsNoRepo(deps, home);
+  if (!holdsNoRepo.ok) return holdsNoRepo;
 
   const parsed = configSchema.safeParse({
     [keys.root.schema]: CONFIG_SCHEMA_VERSION,
@@ -430,11 +433,11 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   });
 };
 
-/** The projects of the command: the git work tree that the command runs in comes first, when the home is proposed. */
-const projectsOf = (deps: Deps, options: InitOptions, firstProject: string | null): readonly string[] =>
-  firstProject === null
-    ? options.projects
-    : [firstProject, ...options.projects.filter((argument) => resolve(deps.cwd, argument) !== firstProject)];
+/** The projects of the command: the git work trees that the command found come first, when the home is proposed. */
+const projectsOf = (deps: Deps, paths: readonly string[], found: readonly string[]): readonly string[] => [
+  ...found,
+  ...paths.filter((argument) => !found.includes(resolve(deps.cwd, argument))),
+];
 
 /**
  * Put the new node in the home index, so that a command finds it from a project folder. The node exists already,
@@ -460,21 +463,34 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!indexPath.ok) return indexPath;
   const chosen = await chooseHome(deps, options);
   if (!chosen.ok) return chosen;
+  const { home, found, skipped, truncated } = chosen.value;
+
+  // The clones come before the plan, because the plan reads each project. A clone stays when a later step fails;
+  // the next run finds it and uses it.
+  const projects = await planProjects(deps, home, options.projects);
+  if (!projects.ok) return projects;
+  const cloned = await runClones(deps, projects.value.clones);
+  if (!cloned.ok) return cloned;
+
   const plan = await planInit(deps, {
     ...options,
-    home: chosen.value.home,
-    projects: projectsOf(deps, options, chosen.value.firstProject),
+    home,
+    projects: projectsOf(deps, projects.value.paths, found),
   });
   if (!plan.ok) return plan;
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return applied;
-  const warnings = [...applied.value.warnings, ...(await indexNode(deps, indexPath.value, plan.value))];
+  const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
+  const warnings = [...applied.value.warnings, ...notes, ...(await indexNode(deps, indexPath.value, plan.value))];
 
   const written = [files.config, files.claudeMd, `${dirs.state}/`];
+  const made = projects.value.clones.filter((clone) => !clone.present).map((clone) => clone.target);
   return ok({
     lines: [
       { level: 'text', text: `Created the ${roles.node} "${plan.value.config.core.node.id}" in ${plan.value.home}.` },
       ...written.map((name) => ({ level: 'text' as const, text: `  ${name}` })),
+      ...made.map((target) => ({ level: 'text' as const, text: `Cloned into ${target}.` })),
+      ...skipped.map((folder) => ({ level: 'text' as const, text: `Skipped ${folder.path}: ${folder.reason}.` })),
       {
         level: 'text',
         text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${plan.value.home}".`,
@@ -485,6 +501,8 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
       home: plan.value.home,
       nodeId: plan.value.config.core.node.id,
       files: written,
+      cloned: made,
+      skipped,
       committed: applied.value.committed,
       warnings,
     },

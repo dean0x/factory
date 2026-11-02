@@ -3,6 +3,7 @@ import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import { applyInit, planInit, runInit, type InitOptions } from '../../src/commands/init.js';
+import { checkHomeHoldsNoRepo } from '../../src/commands/init-home.js';
 import { loadConfig } from '../../src/config/load.js';
 import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
@@ -818,6 +819,227 @@ describe('init: rollback', () => {
     const result = await applyInit(failing, plan.value);
     expect(result.ok).toBe(false);
     expect(snapshot(deps)).toBe(before);
+  });
+});
+
+describe('init: a workspace folder that holds several repos', () => {
+  const WS = '/ws';
+  const PROPOSAL = '/ws/ws-factory';
+  const repos = {
+    '/ws/web': { origin: 'git@github.com:acme/web.git' },
+    '/ws/api': {},
+    '/ws/web-search': { commonDir: '/ws/web/.git' },
+  };
+
+  const inWorkspace = (extra: FakeOptions = {}, fixture: GitFixture = { repos }) => {
+    const { handler } = gitHandler(fixture);
+    const deps = createFakeDeps({ cwd: WS, run: handler, ...extra });
+    for (const path of Object.keys(fixture.repos ?? {})) deps.seedDir(`${path}/.git`);
+    deps.seedDir('/ws/docs');
+    return deps;
+  };
+  const withHome = (extra: Partial<InitOptions> = {}): InitOptions => options({ home: undefined, ...extra });
+  const terminal = { stdinIsTTY: true, stdoutIsTTY: true };
+  const projectsOf = async (deps: FakeDeps) => {
+    const config = await loadConfig(deps, PROPOSAL);
+    return config.ok ? config.value.recipe.projects.map((project) => [project.id, project.path]) : null;
+  };
+
+  it('uses ./<folder>-factory for --yes, lists each repo as a project and names the skipped checkout', async () => {
+    const deps = inWorkspace();
+    const result = await runInit(deps, withHome({ yes: true }));
+    expect(result.ok && result.value.json['home']).toBe(PROPOSAL);
+    expect(await projectsOf(deps)).toEqual([
+      ['api', '../api'],
+      ['web', '../web'],
+    ]);
+    expect(result.ok && result.value.json['skipped']).toEqual([
+      { path: '/ws/web-search', reason: 'it is one more checkout of the repo web' },
+    ]);
+    const text = result.ok ? result.value.lines.map((line) => line.text).join('\n') : '';
+    expect(text).toContain('Skipped /ws/web-search: it is one more checkout of the repo web.');
+    expect(deps.files.has('/ws/factory.yaml')).toBe(false);
+  });
+
+  it('puts the repos of the folder before every --project, and does not repeat one', async () => {
+    const deps = inWorkspace({}, { repos: { ...repos, '/ws/more/lib': {} } });
+    const result = await runInit(deps, withHome({ yes: true, projects: ['/ws/more/lib', '/ws/web'] }));
+    expect(result.ok).toBe(true);
+    expect((await projectsOf(deps))?.map(([id]) => id)).toEqual(['api', 'web', 'lib']);
+  });
+
+  it('prints the proposal and exits 2 without a terminal and without --yes, and writes nothing', async () => {
+    const deps = inWorkspace();
+    const before = snapshot(deps);
+    const result = await runInit(deps, withHome());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    const message = messageOf(result);
+    expect(message).toContain('this folder holds the git repos api, web');
+    expect(message).toContain(`The proposed node home is ${PROPOSAL}`);
+    expect(message).toContain('/ws/web-search');
+    expect(message).toContain('--yes');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('asks on a terminal, shows the repos and the skipped folder, and goes on for y', async () => {
+    const deps = inWorkspace({ ...terminal, prompt: () => ok('y') });
+    const result = await runInit(deps, withHome());
+    expect(result.ok).toBe(true);
+    expect(deps.prompts).toHaveLength(1);
+    expect(deps.prompts[0]).toContain('this folder holds the git repos api, web');
+    expect(deps.prompts[0]).toContain('/ws/web-search');
+    expect(deps.prompts[0]).toContain('Create the node home here? [y/N]');
+  });
+
+  it('stops with exit 2 when the person does not accept', async () => {
+    const deps = inWorkspace({ ...terminal, prompt: () => ok('n') });
+    const before = snapshot(deps);
+    expect(await runInit(deps, withHome())).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('never makes the workspace folder the home: --home on that folder exits 4 and names the rule', async () => {
+    const deps = inWorkspace();
+    const before = snapshot(deps);
+    const result = await runInit(deps, withHome({ home: WS, yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('holds the git repo');
+    expect(messageOf(result)).toContain('one level down');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('uses the current folder when it holds no repo', async () => {
+    const deps = inWorkspace({}, { repos: {} });
+    const result = await runInit(deps, withHome());
+    expect(result.ok && result.value.json['home']).toBe(WS);
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it('does not count the state folder of a node as a repo in the home', async () => {
+    const deps = inWorkspace({}, { repos: { '/ws/.factory': {} } });
+    expect(await checkHomeHoldsNoRepo(deps, WS)).toEqual({ ok: true, value: undefined });
+  });
+
+  it('counts a repo that sits in the home next to the state folder', async () => {
+    const deps = inWorkspace({}, { repos: { '/ws/.factory': {}, '/ws/web': {} } });
+    expect(await checkHomeHoldsNoRepo(deps, WS)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+
+  it('reports a folder with more entries than the scan reads', async () => {
+    const deps = inWorkspace();
+    for (let i = 0; i < 205; i += 1) deps.seedDir(`/ws/z${String(i).padStart(3, '0')}`);
+    const result = await runInit(deps, withHome({ yes: true }));
+    expect(result.ok && result.value.warnings.join('\n')).toContain('Only the first 200 entries');
+  });
+});
+
+describe('init: a project URL', () => {
+  const URL_API = 'https://host/acme/api.git';
+  const run = (fixture: GitFixture, projects: readonly string[], extra: FakeOptions = {}) => {
+    const { deps, log } = setup(fixture, extra);
+    return { deps, log, done: runInit(deps, options({ projects })) };
+  };
+
+  it('clones next to the home with "--" before the URL, and stores the path relative to the home', async () => {
+    const { deps, log, done } = run({ repos: { '/w/api': { origin: URL_API } } }, [URL_API]);
+    const result = await done;
+    expect(result.ok).toBe(true);
+    expect(log.clones()).toEqual([['clone', '--', URL_API, '/w/api']]);
+    expect(deps.calls.find((call) => call.args[0] === 'clone')?.timeoutMs).toBe(300_000);
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.recipe.projects.map((project) => [project.id, project.path])).toEqual([['api', '../api']]);
+    expect(result.ok && result.value.json['cloned']).toEqual(['/w/api']);
+  });
+
+  it.each([
+    ['https://host/acme/api', 'api'],
+    ['https://host:8443/acme/api.git', 'api'],
+    ['ssh://git@host/acme/api.git', 'api'],
+    ['git@host.example:acme/api.git', 'api'],
+  ])('accepts the form %s', async (url, name) => {
+    const { log, done } = run({ repos: { [`/w/${name}`]: { origin: url } } }, [url]);
+    expect((await done).ok).toBe(true);
+    expect(log.clones()).toEqual([['clone', '--', url, `/w/${name}`]]);
+  });
+
+  it('reuses a target that is a clone of the same URL, and runs no clone', async () => {
+    const { deps, log } = setup({ repos: { '/w/api': { origin: URL_API } } });
+    deps.seedDir('/w/api');
+    const result = await runInit(deps, options({ projects: [URL_API] }));
+    expect(result.ok).toBe(true);
+    expect(log.clones()).toEqual([]);
+    expect(result.ok && result.value.json['cloned']).toEqual([]);
+  });
+
+  it('exits 4 and names the path when the target is a clone of another URL, and changes nothing', async () => {
+    const { deps, log } = setup({ repos: { '/w/api': { origin: 'https://host/other/api.git' } } });
+    deps.seedDir('/w/api');
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ projects: [URL_API] }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('/w/api');
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('exits 4 for a target that is a folder with no repo, and for a target that is a file', async () => {
+    const folder = setup({});
+    folder.deps.seedDir('/w/api');
+    expect(await runInit(folder.deps, options({ projects: [URL_API] }))).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(folder.log.clones()).toEqual([]);
+
+    const file = setup({});
+    file.deps.seed('/w/api', 'x');
+    expect(await runInit(file.deps, options({ projects: [URL_API] }))).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(file.log.clones()).toEqual([]);
+  });
+
+  it.each([
+    ['a name with ..', 'https://host/acme/..'],
+    ['a name with .. inside', 'https://host/acme/a..b.git'],
+    ['a name that starts with a hyphen', 'https://host/acme/-x.git'],
+    ['a name that is only .git', 'https://host/acme/.git'],
+    ['a name that is too long', `https://host/acme/${'a'.repeat(101)}.git`],
+    ['an http URL', 'http://host/acme/api.git'],
+    ['a file URL', 'file:///srv/acme/api.git'],
+    ['a transport helper', 'ext::sh -c touch% /tmp/x'],
+    ['a host that starts with a hyphen', 'ssh://-oProxyCommand=x/acme/api.git'],
+    ['a user that starts with a hyphen', '-oProxyCommand=x@host:acme/api.git'],
+  ])('exits 2 and clones nothing for %s', async (_name, url) => {
+    const { deps, log, done } = run({}, [url]);
+    const before = snapshot(deps);
+    const result = await done;
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('exits 2 for two URLs that name the same folder', async () => {
+    const { log, done } = run({}, [URL_API, 'git@host:other/api.git']);
+    expect(await done).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(log.clones()).toEqual([]);
+  });
+
+  it('exits 2 when the repo would be cloned into the home itself', async () => {
+    const { log, done } = run({}, ['https://host/acme/node.git']);
+    expect(await done).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(log.clones()).toEqual([]);
+  });
+
+  it('fails with exit 1 when the clone fails, and writes no node file', async () => {
+    const { deps, done } = run({ cloneExit: 128 }, [URL_API]);
+    const result = await done;
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain('cannot clone');
+    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
+  });
+
+  it('keeps a path as a path and a URL as a URL in one command', async () => {
+    const { deps, log, done } = run({ repos: { '/w/web': {}, '/w/api': { origin: URL_API } } }, ['/w/web', URL_API]);
+    expect((await done).ok).toBe(true);
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.recipe.projects.map((project) => project.id)).toEqual(['web', 'api']);
+    expect(log.clones()).toHaveLength(1);
   });
 });
 

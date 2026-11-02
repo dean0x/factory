@@ -73,14 +73,14 @@ export const commandTable: readonly Command[] = [
     usage:
       `${commandText(commands.init)} [${flagText(flags.home)} DIR] [${flagText(flags.yes)}] ` +
       `[${flagText(flags.name)} ID] [${flagText(flags.ownerName)} NAME] [${flagText(flags.ownerGithub)} LOGIN] ` +
-      `[${flagText(flags.project)} PATH]... [${flagText(flags.layer)} N] [${flagText(flags.recipe)} ID]`,
+      `[${flagText(flags.project)} PATH|URL]... [${flagText(flags.layer)} N] [${flagText(flags.recipe)} ID]`,
     options: {
       [flags.home]: {
         type: 'string',
         placeholder: 'DIR',
         description:
-          `The ${roles.node} folder. Default: in a git work tree, a folder beside it, after you confirm; ` +
-          'else the current folder.',
+          `The ${roles.node} folder. Default: in a git work tree, a folder beside it; in a folder that holds git repos, ` +
+          'a folder inside it; in both cases after you confirm. Else the current folder.',
       },
       [flags.yes]: {
         type: 'boolean',
@@ -104,8 +104,10 @@ export const commandTable: readonly Command[] = [
       [flags.project]: {
         type: 'string',
         multiple: true,
-        placeholder: 'PATH',
-        description: 'A git work tree to manage. Repeat the flag for more projects.',
+        placeholder: 'PATH|URL',
+        description:
+          'A git work tree to manage, or the URL of a repo to clone next to the home folder ' +
+          '(https://, ssh:// or user@host:path). Repeat the flag for more projects.',
       },
       [flags.layer]: {
         type: 'string',

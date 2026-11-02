@@ -9,6 +9,8 @@ export interface RunCall {
   readonly cwd: string | undefined;
   /** True when the caller asked for the environment of the process as it is. */
   readonly inheritEnv?: boolean;
+  /** The time limit that the caller asked for. */
+  readonly timeoutMs?: number;
 }
 
 export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
@@ -185,7 +187,13 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       },
     },
     run: async (command: string, args: readonly string[], runOptions?: RunOptions) => {
-      const call: RunCall = { command, args, cwd: runOptions?.cwd, inheritEnv: runOptions?.inheritEnv === true };
+      const call: RunCall = {
+        command,
+        args,
+        cwd: runOptions?.cwd,
+        inheritEnv: runOptions?.inheritEnv === true,
+        ...(runOptions?.timeoutMs === undefined ? {} : { timeoutMs: runOptions.timeoutMs }),
+      };
       calls.push(call);
       return (options.run ?? (() => missingProgram(command)))(call);
     },

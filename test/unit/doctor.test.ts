@@ -591,7 +591,7 @@ describe('doctor: the home', () => {
     expect(await checkHome(deps, HOME, await validConfig(deps))).toEqual({
       id: 'home',
       level: 'ok',
-      text: 'the node home is outside every git work tree and every other node home, and apart from its projects',
+      text: 'the node home is outside every git work tree and every other node home, and holds no git repo one level down, and is apart from its projects',
     });
   });
 
@@ -600,6 +600,24 @@ describe('doctor: the home', () => {
     const result = await checkHome(deps, HOME, await validConfig(deps));
     expect(result.level).toBe('fail');
     expect(result.text).toContain('is inside the git work tree /w');
+  });
+
+  it('fails when the home holds a git repo one level down, and not for its own state folder', async () => {
+    const own = makeDeps({ git: { repos: { [`${HOME}/.factory`]: {} } } });
+    const made = await initialized();
+    for (const dir of made.dirs) own.seedDir(dir);
+    for (const [path, text] of made.files) own.seed(path, text);
+    own.seedDir(`${HOME}/.factory/.git`);
+    expect((await checkHome(own, HOME, await validConfig(own))).level).toBe('ok');
+
+    const holding = makeDeps({ git: { repos: { [`${HOME}/.factory`]: {}, [`${HOME}/web`]: {} } } });
+    for (const dir of made.dirs) holding.seedDir(dir);
+    for (const [path, text] of made.files) holding.seed(path, text);
+    holding.seedDir(`${HOME}/.factory/.git`);
+    holding.seedDir(`${HOME}/web/.git`);
+    const result = await checkHome(holding, HOME, await validConfig(holding));
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('holds the git repo web one level down');
   });
 
   it('fails when the home is inside another node home', async () => {

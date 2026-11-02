@@ -1,51 +1,119 @@
 import { basename, dirname, join, resolve } from 'node:path';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
-import { workTreeTop } from '../core/git.js';
+import { listRepoChildren, workTreeTop, type SkippedFolder } from '../core/git.js';
 import { findNearestConfig } from '../core/home.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
-import { flags, flagText, program, roles } from '../names.js';
+import { dirs, flags, flagText, program, roles } from '../names.js';
 
 const MAX_PARENT_LEVELS = 64;
 const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
 export interface HomeChoice {
   readonly home: string;
-  /** The top folder of the git work tree that the command runs in. It is the first project. Null when the home is not proposed. */
-  readonly firstProject: string | null;
+  /**
+   * The git work trees that the command found and that become the first projects: the work tree that the command
+   * runs in, or each repo of a workspace folder. Empty when the home is not proposed.
+   */
+  readonly found: readonly string[];
+  /** The folders of a workspace folder that are one more checkout of a repo in `found`. */
+  readonly skipped: readonly SkippedFolder[];
+  /** True when a workspace folder holds more entries than the scan reads. */
+  readonly truncated: boolean;
 }
 
+const NOT_PROPOSED = { found: [], skipped: [], truncated: false } as const;
+
+const describeSkipped = (skipped: readonly SkippedFolder[]): string =>
+  skipped.length === 0
+    ? ''
+    : ` Skipped: ${skipped.map((folder) => `${folder.path} (${folder.reason})`).join('; ')}.`;
+
 /**
- * Choose the node home. The home flag wins. Else, in a git work tree, the proposal is a folder beside the work tree:
- * a person confirms it on a terminal, or the yes flag confirms it. Else the home is the current folder.
+ * Ask for the proposed home. The yes flag accepts it. A person accepts it on a terminal.
+ * With no terminal and no yes flag, the command prints the proposal and exits with a usage error.
+ */
+const confirmProposal = async (
+  deps: Deps,
+  yes: boolean,
+  choice: HomeChoice,
+  reason: string,
+): Promise<CliResult<HomeChoice>> => {
+  if (yes) return ok(choice);
+  const about = `${reason}.${describeSkipped(choice.skipped)} The proposed ${roles.node} home is ${choice.home}`;
+  if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
+    return usageError(
+      about,
+      `Run the command again with ${flagText(flags.yes)} to use it, or with ${flagText(flags.home)} DIR to choose another folder.`,
+    );
+  }
+  const answer = await deps.prompt(`${about}\nCreate the ${roles.node} home here? [y/N] `);
+  if (!answer.ok) return answer;
+  if (ACCEPT_ANSWER.test(answer.value.trim())) return ok(choice);
+  return usageError(
+    `the ${roles.node} home ${choice.home} was not accepted`,
+    `Pass ${flagText(flags.home)} DIR to choose a folder.`,
+  );
+};
+
+/** The name of the home beside a folder: `<folder name>-factory`. */
+const proposedName = (folder: string): string | null => {
+  const name = basename(folder);
+  return name === '' ? null : `${name}-${program}`;
+};
+
+/**
+ * Choose the node home. The home flag wins. Else, in a git work tree, the proposal is a folder beside the work tree.
+ * Else, in a folder that holds git repos one level down, the proposal is a folder inside it, and each repo is a project.
+ * A person confirms the proposal on a terminal, or the yes flag confirms it. Else the home is the current folder.
  */
 export const chooseHome = async (
   deps: Deps,
   options: { readonly home: string | undefined; readonly yes: boolean },
 ): Promise<CliResult<HomeChoice>> => {
-  if (options.home !== undefined) return ok({ home: resolve(deps.cwd, options.home), firstProject: null });
+  if (options.home !== undefined) return ok({ home: resolve(deps.cwd, options.home), ...NOT_PROPOSED });
+  const refuse = (folder: string): CliResult<never> =>
+    usageError(`cannot make a ${roles.node} home name from the folder ${folder}`, `Pass ${flagText(flags.home)} DIR.`);
+
   const top = await workTreeTop(deps, deps.cwd);
-  if (top === null) return ok({ home: resolve(deps.cwd), firstProject: null });
-
-  const name = basename(top);
-  if (name === '') return usageError(`cannot make a ${roles.node} home name from the folder ${top}`, `Pass ${flagText(flags.home)} DIR.`);
-  const proposal = join(dirname(top), `${name}-${program}`);
-  const choice: HomeChoice = { home: proposal, firstProject: top };
-  if (options.yes) return ok(choice);
-
-  if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
-    return usageError(
-      `this folder is in the git work tree ${top}. The proposed ${roles.node} home is ${proposal}`,
-      `Run the command again with ${flagText(flags.yes)} to use it, or with ${flagText(flags.home)} DIR to choose another folder.`,
-    );
+  if (top !== null) {
+    const name = proposedName(top);
+    if (name === null) return refuse(top);
+    const choice = { home: join(dirname(top), name), found: [top], skipped: [], truncated: false };
+    return confirmProposal(deps, options.yes, choice, `this folder is in the git work tree ${top}`);
   }
-  const answer = await deps.prompt(
-    `The proposed ${roles.node} home is ${proposal}\nCreate the ${roles.node} home here? [y/N] `,
+
+  const folder = resolve(deps.cwd);
+  const scan = await listRepoChildren(deps, folder);
+  if (!scan.ok) return scan;
+  if (scan.value.repos.length === 0) return ok({ home: folder, ...NOT_PROPOSED });
+  const name = proposedName(folder);
+  if (name === null) return refuse(folder);
+  const { repos, skipped, truncated } = scan.value;
+  const choice = { home: join(folder, name), found: repos, skipped, truncated };
+  const names = repos.map((repo) => basename(repo)).join(', ');
+  return confirmProposal(deps, options.yes, choice, `this folder holds the git repos ${names}`);
+};
+
+/**
+ * The home holds no git repo one level down. The state folder of a node is a repo, so it does not count.
+ * This covers a home that is a workspace folder, also when no project is declared.
+ */
+export const checkHomeHoldsNoRepo = async (deps: Deps, home: string): Promise<CliResult<void>> => {
+  const kind = await deps.fs.stat(home);
+  if (!kind.ok) return kind;
+  if (kind.value !== 'dir') return ok(undefined);
+  const scan = await listRepoChildren(deps, home);
+  if (!scan.ok) return scan;
+  const repo = [...scan.value.repos, ...scan.value.skipped.map((folder) => folder.path)].find(
+    (path) => basename(path) !== dirs.state,
   );
-  if (!answer.ok) return answer;
-  if (ACCEPT_ANSWER.test(answer.value.trim())) return ok(choice);
-  return usageError(`the ${roles.node} home ${proposal} was not accepted`, `Pass ${flagText(flags.home)} DIR to choose a folder.`);
+  if (repo === undefined) return ok(undefined);
+  return safetyRefusal(
+    `the ${roles.node} home ${home} holds the git repo ${basename(repo)} one level down`,
+    `A ${roles.node} home must hold no git repo. Choose another folder with ${flagText(flags.home)} DIR.`,
+  );
 };
 
 /** The nearest folder on the way up from `path` that exists, and the names of the folders below it. */

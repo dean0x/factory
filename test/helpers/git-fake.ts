@@ -4,6 +4,8 @@ import { exited, missingProgram, type RunCall, type RunHandler } from './fake-de
 export interface FakeRepo {
   /** False when the folder is inside a work tree but not its top folder. */
   readonly topLevel?: boolean;
+  /** What `git rev-parse --git-common-dir` prints. Default: .git. A linked work tree prints the git folder of its repo. */
+  readonly commonDir?: string;
   readonly origin?: string;
   readonly originHead?: string;
   readonly branch?: string;
@@ -20,12 +22,16 @@ export interface GitFixture {
   readonly committed?: readonly string[];
   /** The user.name that git config returns outside the fixture identity. */
   readonly userName?: string;
+  /** The exit code of `git clone`. Default: 0. */
+  readonly cloneExit?: number;
 }
 
 export interface GitLog {
   readonly calls: RunCall[];
   /** The git command lines, without the folder: for example "add -A". */
   commands(): string[];
+  /** The argument lists of the clones. */
+  clones(): (readonly string[])[];
 }
 
 /**
@@ -49,11 +55,19 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       if (fixture.gh === undefined) return missingProgram('gh');
       return fixture.gh === null ? exited(1, '', 'not logged in') : exited(0, `${fixture.gh}\n`);
     }
+    if (call.command === 'git' && call.args[0] === 'clone') {
+      const code = fixture.cloneExit ?? 0;
+      return code === 0 ? exited(0) : exited(code, '', 'fatal: could not read from the remote repository\n');
+    }
     if (call.command !== 'git' || call.args[0] !== '-C') return missingProgram(call.command);
     const dir = call.args[1] ?? '';
     const rest = call.args.slice(2).join(' ');
     const repo = fixture.repos?.[dir];
     switch (rest) {
+      case 'rev-parse --git-common-dir':
+        return repo === undefined ? exited(128) : exited(0, `${repo.commonDir ?? '.git'}\n`);
+      case 'config remote.origin.url':
+        return repo?.origin === undefined ? exited(1) : exited(0, `${repo.origin}\n`);
       case 'rev-parse --is-inside-work-tree --show-prefix':
         return repo === undefined ? exited(128) : exited(0, repo.topLevel === false ? 'true\nsub/\n' : 'true\n\n');
       case 'rev-parse --show-toplevel': {
@@ -81,7 +95,10 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     log: {
       calls,
       commands: () =>
-        calls.filter((call) => call.command === 'git').map((call) => call.args.slice(2).join(' ')),
+        calls
+          .filter((call) => call.command === 'git')
+          .map((call) => (call.args[0] === '-C' ? call.args.slice(2) : call.args).join(' ')),
+      clones: () => calls.filter((call) => call.command === 'git' && call.args[0] === 'clone').map((call) => call.args),
     },
   };
 };

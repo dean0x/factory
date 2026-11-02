@@ -35,7 +35,7 @@ import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
 import { blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
-import { checkHomeApart, checkHomeLocation } from './init-home.js';
+import { checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 
@@ -138,14 +138,16 @@ export const checkState = (state: DocState<NodeState>): CheckResult => {
 export const checkHome = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
   const location = await checkHomeLocation(deps, home);
   if (!location.ok) return check(checkIds.home, 'fail', location.error.message);
-  const where = `the ${roles.node} home is outside every git work tree and every other ${roles.node} home`;
+  const holdsNoRepo = await checkHomeHoldsNoRepo(deps, home);
+  if (!holdsNoRepo.ok) return check(checkIds.home, 'fail', holdsNoRepo.error.message);
+  const where = `the ${roles.node} home is outside every git work tree and every other ${roles.node} home, and holds no git repo one level down`;
   if (state.kind !== 'valid') {
     return check(checkIds.home, 'ok', `${where}; the projects are not checked, because ${files.config} is not valid`);
   }
   const projects = state.value.recipe.projects.map((project) => resolve(home, project.path));
   const apart = await checkHomeApart(deps, home, projects);
   return apart.ok
-    ? check(checkIds.home, 'ok', `${where}, and apart from its projects`)
+    ? check(checkIds.home, 'ok', `${where}, and is apart from its projects`)
     : check(checkIds.home, 'fail', apart.error.message);
 };
 
