@@ -114,6 +114,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         const text = files.get(path);
         return text === undefined ? enoent('read', path) : ok(text);
       },
+      readTextLimited: async (path, maxBytes) => {
+        const text = files.get(path);
+        if (text === undefined) return enoent('read', path);
+        return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text);
+      },
       writeText: async (path, text) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
         files.set(path, text);

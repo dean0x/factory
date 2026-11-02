@@ -4,6 +4,8 @@ export type PathKind = 'file' | 'dir' | 'other';
 
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
+  /** Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. */
+  readTextLimited(path: string, maxBytes: number): Promise<CliResult<string>>;
   writeText(path: string, text: string): Promise<CliResult<void>>;
   /**
    * Write the text to a temporary file in the same folder, then rename it over the target.

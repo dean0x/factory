@@ -125,6 +125,9 @@ export const env = {
   userHome: 'HOME',
 } as const;
 
+/** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
+export const maxFileBytes = 1_048_576;
+
 /**
  * The per-user index of node homes (design 4.3): the number of its schema, its keys, its default place
  * below the user home, and its bounds. A command finds a home from a project folder through it.
@@ -135,7 +138,7 @@ export const homeIndex = {
   defaultStateHome: ['.local', 'state'],
   maxHomes: 200,
   maxProjects: 200,
-  maxBytes: 1_048_576,
+  maxBytes: maxFileBytes,
 } as const;
 
 /**

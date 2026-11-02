@@ -184,6 +184,35 @@ describe('node deps: fs', () => {
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
   });
 
+  describe('a read with a size limit', () => {
+    it('reads a file that is exactly as large as the limit', async () => {
+      const file = fresh('limit-exact.txt');
+      await writeFile(file, 'abcde', 'utf8');
+      expect(await deps.fs.readTextLimited(file, 5)).toEqual({ ok: true, value: 'abcde' });
+    });
+
+    it('fails for a file that is one byte over the limit, and says that it is too large', async () => {
+      const file = fresh('limit-over.txt');
+      await writeFile(file, 'abcdef', 'utf8');
+      const result = await deps.fs.readTextLimited(file, 5);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('larger than 5 bytes');
+    });
+
+    it('counts bytes and not characters', async () => {
+      const file = fresh('limit-bytes.txt');
+      await writeFile(file, 'ééé', 'utf8');
+      expect((await deps.fs.readTextLimited(file, 5)).ok).toBe(false);
+      expect(await deps.fs.readTextLimited(file, 6)).toEqual({ ok: true, value: 'ééé' });
+    });
+
+    it('returns an error with the code for a missing file', async () => {
+      const result = await deps.fs.readTextLimited(fresh('limit-missing.txt'), 5);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOENT');
+    });
+  });
+
   it('copies a tree into a folder inside the tree, and leaves out the skipped folder', async () => {
     const source = join(dir, 'self');
     await deps.fs.mkdir(join(source, 'old'));

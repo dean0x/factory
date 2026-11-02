@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { constants } from 'node:fs';
+import { constants, createReadStream } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -57,6 +57,18 @@ const writeAtomic = async (path: string, text: string, mode: number | undefined)
   }
 };
 
+/** The text of the file, or null when the file holds more than `maxBytes`. At most `maxBytes` plus one byte is read. */
+const readBounded = async (path: string, maxBytes: number): Promise<string | null> => {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of createReadStream(path, { start: 0, end: maxBytes })) {
+    const bytes = chunk as Buffer;
+    chunks.push(bytes);
+    size += bytes.length;
+  }
+  return size > maxBytes ? null : Buffer.concat(chunks).toString('utf8');
+};
+
 const MAX_COPY_DEPTH = 64;
 
 const unsupported = (code: string): Error => Object.assign(new Error(code), { code });
@@ -81,6 +93,11 @@ const copyEntry = async (from: string, to: string, skip: readonly string[], dept
 
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
+  readTextLimited: async (path, maxBytes) => {
+    const text = await guard('read', path, () => readBounded(path, maxBytes));
+    if (!text.ok) return text;
+    return text.value === null ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text.value);
+  },
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
   writeTextAtomic: (path, text, mode) => guard('write', path, () => writeAtomic(path, text, mode)),
   stat: async (path) => {

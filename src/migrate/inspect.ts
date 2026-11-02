@@ -3,7 +3,7 @@ import { failure, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok, type Err, type Result } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
-import { commands, commandText, program } from '../names.js';
+import { commands, commandText, maxFileBytes, program } from '../names.js';
 
 /** What a versioned file holds, after the version check and the schema check. */
 export type DocState<T> =
@@ -69,7 +69,7 @@ export const inspectParsed = <T>(raw: unknown, spec: VersionSpec<T>): DocState<T
 /** Turns the text of a file into a value. The error must not repeat the text: it names a position or a code. */
 export type TextParser = (text: string) => Result<unknown, string>;
 
-/** Read a file, parse its text, and check its version and its schema. */
+/** Read a file, parse its text, and check its version and its schema. A file over `maxFileBytes` is not read in full. */
 export const inspectFile = async <T>(
   deps: Deps,
   path: string,
@@ -80,7 +80,7 @@ export const inspectFile = async <T>(
   if (!kind.ok) return { kind: 'unparsable', message: kind.error.message };
   if (kind.value !== 'file') return { kind: 'missing' };
 
-  const text = await deps.fs.readText(path);
+  const text = await deps.fs.readTextLimited(path, maxFileBytes);
   if (!text.ok) return { kind: 'unparsable', message: text.error.message };
   const raw = parse(text.value);
   if (!raw.ok) return { kind: 'unparsable', message: raw.error };

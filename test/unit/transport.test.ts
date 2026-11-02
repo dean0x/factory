@@ -53,6 +53,13 @@ describe('file transport: ping', () => {
     if (result.kind === 'unknown') expect(result.reason).toContain('factory.yaml does not parse');
   });
 
+  it('is unknown, and says that the file is too large, for a config over the size limit', async () => {
+    const { transport } = withConfig(`${childConfig()}# ${'x'.repeat(1_048_577)}\n`);
+    const result = await transport.ping(`file://${CHILD}`);
+    expect(result.kind).toBe('unknown');
+    if (result.kind === 'unknown') expect(result.reason).toContain('larger than 1048576 bytes');
+  });
+
   it('is unknown for a newer schema, reports the schema, and says that this factory needs the upgrade', async () => {
     const { transport } = withConfig('schema: 3\n');
     const result = await transport.ping(`file://${CHILD}`);

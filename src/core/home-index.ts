@@ -84,9 +84,8 @@ export const readHomeIndex = async (deps: Deps, path: string): Promise<Result<re
   if (!kind.ok) return err(kind.error.message);
   if (kind.value === null) return ok([]);
   if (kind.value !== 'file') return err('it is not a file');
-  const text = await deps.fs.readText(path);
+  const text = await deps.fs.readTextLimited(path, homeIndex.maxBytes);
   if (!text.ok) return err(text.error.message);
-  if (text.value.length > homeIndex.maxBytes) return err(`it is larger than ${homeIndex.maxBytes} bytes`);
 
   const json = parseJsonText(text.value);
   if (!json.ok) return json;

@@ -258,6 +258,11 @@ describe('home index: reading the file', () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('larger') });
   });
 
+  it('counts bytes for the size limit, not characters', async () => {
+    const result = await read(`${'é'.repeat(600_000)}{}`);
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('larger') });
+  });
+
   it('fails for a path that is a folder', async () => {
     const deps = createFakeDeps({ env: {} });
     deps.seedDir(INDEX);
