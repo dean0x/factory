@@ -19,16 +19,16 @@ Dean gave the feedback F-14 to F-21 and the decisions D-59 and D-60 on 2026-11-0
 ## Changes from v1
 
 Dean gave the feedback F-1 to F-10 on v1, and accepted the proposals as a set (D-53). v2 makes these changes:
-1. **Names from a real factory (F-1).** A lane is now a **cell**. A workflow pack is now a **recipe**. node, owner and project stay. New factory words where they are clearer: `factory inspect` (merge gate), `factory ship` (release check), **andon** (an item that waits on the owner), **work order** (a brief or a decision that goes down), **changeover** (a clear or compact between phases), **staging** (the merge order). See §4.1 and §7.
-2. **The team's tracker holds the board (F-2).** factory gets one tracker connector: GitHub (the default), Jira or Linear. A `local` connector keeps the items in files, for a node with no network or no tracker account, and it is the test double of the connector. factory has no review desk of its own, not even as an option (F-17). A decision is a labelled tracker item, and a script reads the answer. The decision store is private by default. See §4.10.
-3. **The coordinator runs in its own home folder (F-3).** The node home is next to the projects, never inside a repo and never above the checkouts. `factory up` starts the coordinator. See §4.3.
-4. **Same mechanics, one role per layer (F-4).** Layers count from the bottom: cells are layer 0. factory sets the role of a node from its layer. All children of a node are on one layer. See §5.
+1. **Names from a real factory (F-1).** A session that works on one track is a **worker**. The kind of factory is a **recipe**. node, owner and project stay. New factory words where they are clearer: `factory check` (the merge check), `factory release check`, **request** (an item that waits for the owner), **assignment** (a written task or a decision that goes down), **session reset** (a clear or compact between phases), **queue** (the merge order). v3 changed some of these names to plain words (D-59). §7 maps the old names. See §4.1 and §7.
+2. **The team's board tool holds the board (F-2).** factory gets one board connector: GitHub (the default), Jira or Linear. A `local` connector keeps the items in files, for a node with no network or no board account, and it is the test double of the connector. factory has no review desk of its own, not even as an option (F-17). A decision is a labelled item on the board, and a script reads the answer. The decision store is private by default. See §4.10.
+3. **The coordinator runs in its own folder (F-3, D-60).** The coordinator folder is inside the factory folder. The factory folder has no instruction file at its top, so a worker never loads the coordinator text. `factory start` starts the coordinator. See §4.3.
+4. **Same mechanics, one role per layer (F-4).** Layers count from the bottom: workers are layer 0. factory sets the role of a node from its layer. All children of a node are on one layer. See §5.
 5. **macOS and Linux only (F-5).** See §4.7.
-6. **The merge rule is an owner choice (F-6).** This workspace uses D-52. Releases wait for the owner's go: `approval.ship: each` is the only value until D-57 is decided. See §6.
-7. **One command stops a cell (F-7).** A test of the ways to stop a session comes first. Then `factory cell stop` uses the safe way. See §4.11.
-8. **Cells live on the bench window (F-8).** The view window has the coordinator and one slot. See §4.11.
-9. **The heartbeat hook replaces every read under `~/.claude` (F-9).** The instruction to avoid those reads goes away. See §4.6.
-10. **One general core; the recipe sets the kind of factory (F-10).** factory ships the `software` recipe first, in two variants: plain Claude Code (the default) and devflow. The config schema gets a `recipe` block. See §4.4 and §4.9.
+6. **Each approval point is an owner choice (F-6, F-15).** This workspace uses D-52. Releases are an approval point too, and D-57 is answered. See §6.
+7. **One command stops a session (F-7).** A test of the ways to stop a session comes first. Then `factory shutdown`, `restart` and `dismiss` use the safe way. See §4.11.
+8. **Workers live in the worker window (F-8).** The view window has the coordinator and one slot. See §4.11.
+9. **The last-seen hook replaces every read under `~/.claude` (F-9).** The instruction to avoid those reads goes away. See §4.6.
+10. **One general core; the recipe sets the kind of factory (F-10).** factory provides the `software` recipe first, with two setups: plain Claude Code (the default) and devflow. The config schema gets a `recipe` block. See §4.4 and §4.9.
 
 Other changes: D-49 put the code in the private repo `dean0x/factory`. D-51 A: no second review of FAC-M1; the review of the v2 code covers the setup and upgrade code.
 
@@ -37,44 +37,44 @@ After v2, F-13 (2026-11-02): **one machine only for now.** The `ssh://` transpor
 ## Changes after the intent check (2026-11-02)
 
 An independent check compared this design with every note from Dean. `docs/intent-trace.md` lists each note with its design section and its milestone. The check found gaps. The Orchestrator decided the open points (§9, table OD). The design now changes as follows:
-1. A command finds the home from a project folder, through a per-user index outside `~/.claude` (§4.2, §4.3).
-2. `init` in a folder that holds several repos proposes a home next to them. A project URL clones next to the home (§4.3).
-3. The user picks the tracker at `init` and changes it with `factory tracker set`. A project can override the tracker of the node (§4.4, §4.10).
-4. The proofs of D-52 are listed (§6.1). Releases get the key `approval.ship`, with `each` as the only value until D-57 is decided (§4.4, §6.2).
+1. A command finds the factory folder, and a per-user list outside `~/.claude` registers it (§4.2, §4.3).
+2. `init` in a folder that holds several repos proposes a factory folder next to them. A project URL clones into the factory folder (§4.3).
+3. The user picks the board at `init` and changes it with `factory tracker set`. A project can override the board of the node (§4.4, §4.10).
+4. The proofs of D-52 are listed (§6.1). Releases are an approval point like the merge (§6, §6.2).
 5. Each layer has its own role template. Layer 3 gets its own template in FAC-M8 (§4.9, §5.2).
 6. The main session is a Claude Code session. A node names its agent command in the config (§4.6).
-7. The coordinator reads comments, label changes, assignee changes and open or close changes from the tracker. `factory up` starts `factory watch` (§4.10, §4.11).
+7. The coordinator reads comments, label changes, assignee changes and open or close changes from the board. `factory start` starts `factory watch` (§4.10, §4.11).
 8. The communication module has its own section. It is the only code that types into a pane (§4.12, §5.3).
-9. A parity table maps each part of today's setup to a command, a milestone or "retired". The adopt moves the coordinator text out of the folder above the checkouts (§8).
+9. A parity table maps each part of today's setup to a command, a milestone or "retired". The adopt moves the coordinator text out of the folder above the work copies (§8).
 10. The state repo can push to a private remote, for a second machine of the same owner (§4.3).
 11. Dean's shop-floor words have a table, and each new name has a plain description (§7.1, `docs/glossary.md`).
 12. The release has its own milestone, with a protected-environment check (§4.7).
 
 ## Summary for Dean (one page)
 
-**What factory is.** `factory` is a CLI. It creates and runs the orchestration setup of this workspace on any machine, for any person. `factory init` writes a node: the coordinator instructions, the role templates, the decision profile and the config. `factory up` starts the tmux layout and the coordinator session. Other commands do the multi-step jobs that the Orchestrator does by hand today. The CLI never contains a name, an account or a path. It reads them from the person who runs `init`.
+**What factory is.** `factory` is a CLI. It creates and runs the orchestration setup of this workspace on any machine, for any person. `factory init` makes a factory folder: the config, the coordinator text, the role texts and the decision profile. `factory start` starts the tmux layout and the coordinator session. Other commands do the multi-step jobs that the Orchestrator does by hand today. The CLI never contains a name, an account or a path. It reads them from the person who runs `init`.
 
-**One core, many kinds of factory.** The core knows nodes, layers, roles, sessions, the inbox and reports, the owner's decisions, the tracker, capacity and the state store. A **recipe** gives the rest: the role template of each layer, the work cycle, the gate checks, the kind of output and the tracker mapping. The first recipe is `software`: projects are git repos, the output is a PR, and the gate is the merge gate. It has two variants: plain Claude Code (the default) and devflow. Other recipes, for example research or content, come later.
+**One core, many kinds of factory.** The core knows nodes, layers, roles, sessions, the inbox and reports, the owner's decisions, the board, capacity, the state store and approval points. A **recipe** gives the rest: the role text of each layer, the work cycle, the approval points, the kind of output and the board mapping. The first recipe is `software`: projects are git repos, the output is a pull request, and the approval points are the merge and the release. It has two setups: plain Claude Code (the default) and devflow. Other recipes, for example research or content, come later.
 
-**Names from a real factory.** A worker session is a **cell**. A cell does all the steps (plan to release) for one track of one project, as a work cell does for one product family. Items that wait on the owner are **andon** items. Briefs are **work orders**. The merge order is **staging**.
+**Plain words (D-59).** A session that works on one track is a **worker**. A worker does all the steps (plan to release) for one track of one project. Items that wait for the owner are **requests**. A written task is an **assignment**. The merge order is the **queue**. `docs/glossary.md` has the table of plain words.
 
-**The team's tracker, not our own desk.** The board, the andon items and the decisions live in GitHub, Jira or Linear. The owner answers a decision with a comment such as `/choose B`. A script reads the answer, so the coordinator spends no tokens on it. The decision store is private by default.
+**The team's board, not our own desk.** The work items, the requests and the decisions live in GitHub, Jira or Linear. One GitHub project holds the issues of many repos in one board. The owner answers a decision with a comment such as `/choose B`. A script reads the answer, so the coordinator spends no tokens on it. The decision store is private by default.
 
-**Where things run.** The coordinator runs in the node home, a folder of its own next to the project folders. Cells run in the project checkouts. So a cell never loads the coordinator instructions. One project or many: the layout is the same. The user can run `factory up` from any project folder, because `factory init` records where the home is.
+**Where things run.** One factory is one folder and one git repo. The coordinator runs in `coordinator/` inside it. Workers run in work copies of the projects, under `work-copies/`. So a worker never loads the coordinator text. The config travels in git: clone the config repo on another machine and run `factory init`. Personal values and credentials stay in a local file that git ignores.
 
-**Layers.** Every node has the same mechanics: the config, the report digest that goes up, the inbox that comes down, and the CLI. Each layer has its own role. Layer 0 is the cells (workers). Layer 1 is the coordinator. Layer 2 manages coordinators. Each layer above 2 gets its own role when it becomes real. A new top layer changes no node below it.
+**Layers.** Every node has the same mechanics: the config, the report digest that goes up, the inbox that comes down, and the CLI. Each layer has its own role. Layer 0 is the workers. Layer 1 is the coordinator. Layer 2 manages coordinators. Each layer above 2 gets its own role when it becomes real. A new top layer changes no node below it.
 
-**Scripts save tokens.** The largest costs today are the merge gate (25–60k tokens each time), the status round (40–80k), a restart of all cells (60–100k) and cell creation (20–30k). Each becomes one command with a short verdict as output, about 1–4k tokens. A rough total: 50–70% less coordinator spend on routine work.
+**Scripts save tokens.** The largest costs today are the merge check (25–60k tokens each time), the status round (40–80k), a restart of all workers (60–100k) and worker creation (20–30k). Each becomes one command with a short verdict as output, about 1–4k tokens. A rough total: 50–70% less coordinator spend on routine work.
 
-**Safety is in the code, not only in the text.** factory starts a session only in auto mode. It has no flag that skips permissions. A proxy is an explicit config option, checked before each launch. factory types owner-authority input only for a decision that the owner recorded. A decision answer counts only when it comes from the owner's tracker account. Releases always wait for the owner's go.
+**Safety is in the code, not only in the text.** factory starts a session only in auto mode. It has no flag that skips permissions. A proxy is an explicit config option, checked before each launch. factory types owner-authority input only for a decision that the owner recorded. A decision answer counts only when it comes from the owner's board account. Each approval point waits for the owner, unless the owner delegated it. Only the owner can delegate, and a release always needs the proof of §6.2.
 
-**Decided** (details in §9). v1: TypeScript on Node 22+; binary `factory`, npm package `@dean0x/factory`; MIT; state folder `.factory/` and config `factory.yaml`; the heartbeat hook. v2: the ten changes above.
+**Decided** (details in §9). v1: TypeScript on Node 22+; binary `factory`, npm package `@dean0x/factory`; MIT; state folder `.factory/` and config `factory.yaml`; the last-seen hook. v2: the ten changes above. v3: the changes at the top, and the decisions of the table v3 in §9.
 
 ---
 
 ## 1. Inventory of the current setup
 
-This section describes the workspace setup as it is today. It uses the workspace words (lane, Orchestrator, On Dean), because those are the names in the files.
+This section describes the workspace setup as it is today. It uses the names of the files of this workspace (the Orchestrator, On Dean and the `lane` files), because those are the names in the files.
 
 Paths are relative to `~/Sandbox/.devflow/` unless they start with `~/` or `/`.
 Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, accounts, paths), **M** machine-specific.
@@ -84,27 +84,27 @@ Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, ac
 | Part | Job | Class | What ties it (file:line) |
 |---|---|---|---|
 | `~/Sandbox/CLAUDE.md` | Orchestrator rules §1–§13 | G, D, P, M | "Dean", `dean0x` §13; founder prefix §12; `~/Sandbox/.devflow` (`--add-dir`); session names `orchestrator:lanes`, `orchestrator:bench`; "10 CPUs, 64 GB", `lockf`, `pbcopy`, `sysctl`, `memory_pressure`; `/devflow:*` in §5 and §7 |
-| `docs/orchestration/protocol.md` | Lane protocol: escalation, test lock, disk, context, PRs, style | G, D, P, M | `~/Sandbox/.devflow/...` (L19–34); Node 24 and `/opt/homebrew/bin` (L34, devflow tests only); `vitest` (L25); devflow timeout rule (L54) |
+| `docs/orchestration/protocol.md` | Worker protocol: escalation, test lock, disk, context, PRs, style | G, D, P, M | `~/Sandbox/.devflow/...` (L19–34); Node 24 and `/opt/homebrew/bin` (L34, devflow tests only); `vitest` (L25); devflow timeout rule (L54) |
 | `docs/orchestration/status.md` | Status layout | G, P | "Waiting on Dean" (L42) |
-| `docs/orchestration/respawn-map.md` | Lane, pane, folder and session-id table, plus the restart steps | G (steps), P, M (data) | pane ids, UUIDs, `--add-dir` path (L14), reads `~/.claude/sessions` (L16) |
+| `docs/orchestration/respawn-map.md` | Worker, pane, folder and session-id table, plus the restart steps | G (steps), P, M (data) | pane ids, UUIDs, `--add-dir` path (L14), reads `~/.claude/sessions` (L16) |
 | `docs/orchestration/orchestrator-resume.md` | The Orchestrator's resume block | instance data | devflow PR numbers |
 | `roadmaps/README.md` and track roadmaps | Track arcs and their template | G (README); instance data | paths on line 2 of each track file |
 | `board.json` → `board.md`, page | Board source of truth | G (schema), P (links) | `dean0x` issue links via boardlib |
-| `lanes.json` | Hand-written lane facts | G | none |
+| `lanes.json` | Hand-written worker facts | G | none |
 | `on-dean.json`, `decision-log.json` → `on-dean.md` | Items that wait on the founder, and his decisions | G (schema), P (names) | file names, "# On Dean", artifact URL in the intro |
 | `board-detail.md`, `board-log-<yyyy-mm>.md`, `done.md` | Item detail, log, append-only removals | G | none |
-| `briefs/brief-<track>-<date>.md` | Lane briefs | G (shape) | paths and repos inside |
+| `briefs/brief-<track>-<date>.md` | Assignments for workers | G (shape) | paths and repos inside |
 | `review/dean-review.html` | Review page: board, items, decision forms, docs drawer | G (template), P | "Dean" (L8); `dean0x` URLs in the data block |
 | `review/README-decision-pages.md` | How the page and its database work | G, P | live artifact URL (L3) |
 | `scripts/boardlib.py`, `render-board.py` | Board schema check, sort, release groups, render | G, P | `github.com/dean0x/{repo}` (boardlib L241), default repo `devflow` (L240), env `DEAN_DIR` |
 | `scripts/render-dean.py` | On Dean file, page data block, `files.json` | G, P | `PR_URL = .../dean0x/devflow/pull/{}` (L69), "# On Dean" (L237) |
 | `scripts/board-set.sh` | Only writer of `board.json`; locked; fails closed | G, P, M | `BOARD_REPO:-dean0x/devflow` (L91); `/usr/bin/lockf` (L35) |
-| `scripts/lane-set.sh`, `lane-lib.sh` | Only writer of `lanes.json`; tmux helpers | G, M | `lockf`; session name `orchestrator` (lane-lib L3) |
+| `scripts/lane-set.sh`, `lane-lib.sh` | Only writer of `lanes.json`; tmux helpers | G, M | `lockf`; session name `orchestrator` (`lane-lib` L3) |
 | `scripts/state-commit.sh`, `git-hooks/pre-commit` | Commit helper; ID delete guard; `done.md` append-only | G | needs `core.hooksPath=scripts/git-hooks` |
-| `scripts/layout.sh`, `lane-summon.sh`, `md-view.sh` | View and bench windows, pinned summon, glow viewer | G, M | session `orchestrator`; `/bin/zsh`; `glow` |
-| `scripts/lanes-refresh.sh`, `lanes-table.py`, `live_boxes.py` | Live lanes table every 30 s; machine box | G, M | reads `~/.claude/projects/*.jsonl` (lanes-table L64); status-line regex `Context\s+\S+\s+(\d{1,3})%` (L82); `memory_pressure`, `pmset` (live_boxes L105–106); `pyenv` |
-| `scripts/tmux-save-map.sh`, `tmux-restore-lanes.sh` | tmux-resurrect hooks: save the pane map, resume lanes | G, M | reads `~/.claude/sessions/*.json` (save-map L14); restore forces `--permission-mode auto` and `env -u ANTHROPIC_BASE_URL` (restore L20, L58) |
-| `scripts/tmux.conf` | Mouse, lane names on borders, resurrect, continuum | P, M | absolute paths in the user folder (L2, L3, L25, L26, L32) |
+| `scripts/layout.sh`, `lane-summon.sh`, `md-view.sh` | View and worker windows, pinned summon, glow viewer | G, M | session `orchestrator`; `/bin/zsh`; `glow` |
+| `scripts/lanes-refresh.sh`, `lanes-table.py`, `live_boxes.py` | Live worker table every 30 s; machine box | G, M | reads `~/.claude/projects/*.jsonl` (`lanes-table` L64); status-line regex `Context\s+\S+\s+(\d{1,3})%` (L82); `memory_pressure`, `pmset` (live_boxes L105–106); `pyenv` |
+| `scripts/tmux-save-map.sh`, `tmux-restore-lanes.sh` | tmux-resurrect hooks: save the pane map, resume workers | G, M | reads `~/.claude/sessions/*.json` (save-map L14); restore forces `--permission-mode auto` and `env -u ANTHROPIC_BASE_URL` (restore L20, L58) |
+| `scripts/tmux.conf` | Mouse, worker names on borders, resurrect, continuum | P, M | absolute paths in the user folder (L2, L3, L25, L26, L32) |
 | `scripts/test-*` | Tests with fixtures and a separate tmux server | G | none |
 | `priorities/apply-labels.sh` | One-time label script | P | `R=dean0x/devflow`; fixed issue list |
 | `decision-profile/` | Founder decision wiki: index, format, log, principles, records | G (format), P (content) | "Dean" throughout; some principles scoped `devflow` |
@@ -115,48 +115,48 @@ Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, ac
 
 Required: `tmux` (with TPM, resurrect, continuum), `git`, `gh`, `jq`, `python3` (stdlib only), Bash 3.2+, `glow`, Claude Code.
 macOS only: `/usr/bin/lockf`, `memory_pressure`, `pmset`, `pbcopy`, `sysctl`.
-Private Claude Code layout: `~/.claude/projects/<cwd>/*.jsonl` (lane activity), `~/.claude/sessions/<pid>.json` (session ids), and the text of Dean's status line (context percent).
+Private Claude Code layout: `~/.claude/projects/<cwd>/*.jsonl` (worker activity), `~/.claude/sessions/<pid>.json` (session ids), and the text of Dean's status line (context percent).
 
 ### 1.3 Conflicts to fix before packaging
 
 I checked each of these on the file. factory takes one answer for each.
 1. **Merge authority.** D-46 B (2026-11-01) said that every merge waits for the owner's go. D-52 (2026-11-02) replaced it for this workspace: approved and assigned work merges when the gates pass. factory makes the rule an owner choice (F-6, §6).
 2. **How to stop a session.** `respawn-map.md` said "press Ctrl+C twice". CLAUDE.md §12 says that Ctrl+C quits only the client, and uses `kill -TERM`. factory tests the ways first (F-7, §4.11).
-3. **Where lanes live.** The respawn map put lanes in the view window. CLAUDE.md §12 puts them on the bench. factory uses the bench (F-8, §4.11). The respawn map line is fixed.
+3. **Where workers live.** The respawn map put workers in the view window. CLAUDE.md §12 puts them in the tmux window `bench`. factory uses the worker window `workers` (F-8, §4.11). The respawn map line is fixed.
 4. **Context budget.** `protocol.md` used 250k/350k tokens. CLAUDE.md §12 uses 30–35% and 40% of the window. factory uses the percent rule, because it works for every window size.
-5. **Reads under `~/.claude`.** CLAUDE.md §1 told lanes to avoid them, but three scripts read there. factory replaces every read with the heartbeat hook (F-9, §4.6).
-6. **The coordinator instructions reach every lane.** Claude Code loads every CLAUDE.md from the session folder up to the root. The Orchestrator instructions are in `~/Sandbox/CLAUDE.md`, and every lane checkout is under `~/Sandbox`. So each lane also loads them. factory puts the node home next to the checkouts, never above them (F-3, §4.3).
+5. **Reads under `~/.claude`.** CLAUDE.md §1 told workers to avoid them, but three scripts read there. factory replaces every read with the last-seen hook (F-9, §4.6).
+6. **The coordinator instructions reach every worker.** Claude Code loads every CLAUDE.md from the session folder up to the top of the file system. The Orchestrator instructions are in `~/Sandbox/CLAUDE.md`, and every worker folder is under `~/Sandbox`. So each worker also loads them. factory keeps the coordinator text in the coordinator folder, and the top of the factory folder holds no instruction file (F-3, D-60, §4.3).
 
 ## 2. The devflow connection
 
 ### 2.1 Ties
 
-devflow (npm `devflow-kit`, MIT) installs commands, agents, skills, hooks and rules into `~/.claude`, and uses `.devflow/` in each project and `~/.devflow/` in HOME. In factory, devflow is one variant of the `software` recipe (§4.9). The core knows nothing of devflow.
+devflow (npm `devflow-kit`, MIT) installs commands, agents, skills, hooks and rules into `~/.claude`, and uses `.devflow/` in each project and `~/.devflow/` in HOME. In factory, devflow is one setup of the `software` recipe (§4.9). The core knows nothing of devflow.
 
 | Tie | Where | Default in factory |
 |---|---|---|
-| Cycle plan → implement → code-review → resolve | CLAUDE.md §5.2; protocol L47 | Stage ids `plan`, `build`, `review`, `fix`. The plain variant uses plain Claude Code: plan mode, edits, a review subagent, fixes. |
+| Cycle plan → implement → code-review → resolve | CLAUDE.md §5.2; protocol L47 | Stage ids `plan`, `build`, `review`, `fix`. The plain setup uses plain Claude Code: plan mode, edits, a review subagent, fixes. |
 | "code-review is for software; else a multi-lens audit" | CLAUDE.md §5.2 | Keep the rule. Each stage declares `applies_to: code | prose | any`. |
 | Review and resolution summaries posted on the PR | CLAUDE.md §5.3, §5.4 | An evidence contract: one PR comment per stage, found by a marker. The plain markers are `<!-- factory:review -->` and `<!-- factory:fix -->`. |
-| One evidence comment per head | CLAUDE.md §5.2 | Optional. The plain variant needs CI plus the review comment. |
-| `/devflow:release` | CLAUDE.md §7 | A `release` stage. The plain variant uses the repo's own release script, named in `factory.yaml`. |
-| Triage words (FIX_NOW, ESCALATED, CHANGES REQUESTED) | board-detail.md | Neutral words `blocker`, `fix`, `defer`, `ask`, `ready`. A variant maps its words to them. |
-| Agent types Code, Validate, Test | protocol L32 | Agent kinds: implementer, verifier, tester, reviewer. A variant maps them to its agent types. ("Role" now means the role of a layer, §5.) |
+| One evidence comment per head | CLAUDE.md §5.2 | Optional. The plain setup needs CI plus the review comment. |
+| `/devflow:release` | CLAUDE.md §7 | A `release` stage. The plain setup uses the repo's own release script, named in `factory.yaml`. |
+| Triage words (FIX_NOW, ESCALATED, CHANGES REQUESTED) | board-detail.md | Neutral words `blocker`, `fix`, `defer`, `ask`, `ready`. A setup maps its words to them. |
+| Agent types Code, Validate, Test | protocol L32 | Agent kinds: implementer, verifier, tester, reviewer. A setup maps them to its agent types. ("Role" now means the role of a layer, §5.) |
 | State folder named `.devflow` | CLAUDE.md §11–§12; respawn-map | `.factory/`. Proof of the clash: devflow already wrote `~/Sandbox/.devflow/.devflow/{curation,docs,features,memory}`. |
 | `--add-dir ~/Sandbox/.devflow` | CLAUDE.md §12; restore L20 | `--add-dir <node home>/.factory`, from the config. |
-| Lane name examples `devflow-*` | CLAUDE.md §4 | Keep the `<project>-<track>` form for cells; use neutral examples. |
+| Worker name examples `devflow-*` | CLAUDE.md §4 | Keep the `<project>-<track>` form for workers; use neutral examples. |
 | Default repo `dean0x/devflow` | board-set L91; boardlib L13, L240; render-dean L69 | `recipe.projects[].repo` in `factory.yaml`. A bare issue number is refused when the node has more than one project. |
 | Rules in `~/.claude/rules/devflow/` (STE, read economy, quality) | HOME CLAUDE.md | factory writes its own short rules into the role templates. It never writes to `~/.claude/rules/`. |
-| Profile seeded from devflow `preference-profile.md` | decision-profile/README-format.md:64 | factory ships an empty profile with its format. A variant may give a seed command. |
+| Profile seeded from devflow `preference-profile.md` | decision-profile/README-format.md:64 | factory comes with an empty profile and its format. A setup may give a seed command. |
 | devflow memory and curation hooks | protocol L19 | Resume files plus Claude Code auto-memory. No ledger by default. |
-| devflow-repo rules inside the generic protocol | protocol L34 (Node 24), L54 (timeouts), L62 (standalone) | Move them to the devflow variant's worker addendum or the devflow repo's CLAUDE.md. |
+| devflow-repo rules inside the generic protocol | protocol L34 (Node 24), L54 (timeouts), L62 (standalone) | Move them to the worker addendum of the devflow setup or the devflow repo's CLAUDE.md. |
 | Repo checks in the gate routine (Independent audit, ceiling diff) | orchestrator-resume.md:14 | A per-project `gate.checks` list in `factory.yaml`. |
 
 The gate-level words `full`, `standard` and `lean` are not in the setup itself. They appear only in devflow product work, so there is no tie to replace.
 
-### 2.2 devflow as a recipe variant
+### 2.2 devflow as a setup of the recipe
 
-The devflow variant is data plus prompt text in the `software` recipe (§4.9). It has no code that factory runs, except its `install` and `detect` commands, and the user must confirm those.
+The devflow setup is data plus prompt text in the `software` recipe (§4.9). It has no code that factory runs, except its `install` and `detect` commands, and the user must confirm those.
 
 ```yaml
 # recipes/software/variants/devflow.yaml
@@ -170,22 +170,22 @@ stages:
   review:  { run: /devflow:code-review, applies_to: code }
   fix:     { run: /devflow:resolve,     applies_to: code }
   release: { run: /devflow:release }
-evidence:                 # how `factory inspect` finds proof of each stage
+evidence:                 # how `factory check` finds proof of each stage
   review:  "<!-- devflow:review-summary"
   fix:     "<!-- devflow:resolution-summary"
   release: "<!-- devflow:shipped"
 verdicts: { FIX_NOW: fix, ESCALATED: ask, "CHANGES REQUESTED": blocker, READY: ready }
 agents: { implementer: Code, verifier: Validate, tester: Test, reviewer: Review }
 state_dirs: [".devflow/", "~/.devflow/"]   # factory refuses to use these and never deletes them
-worker_addendum: addendum.md               # extra cell rules for repos that use devflow
+worker_addendum: addendum.md               # extra worker rules for repos that use devflow
 profile_seed: /devflow:dynamic-profile
 proxy_presets:                             # optional; copied into `proxies` on request (§4.6)
   subswitch: { base_url: "http://127.0.0.1:4141", health: /__subswitch/health }   # port 4141 is the default of `subswitch serve`
 ```
 
-`factory recipe variant devflow --project P` checks `detect`, offers `install`, and writes the variant into the project entry in `factory.yaml`. The variant is per project, so one node can mix projects with and without devflow.
+`factory recipe variant devflow --project P` checks `detect`, offers `install`, and writes the setup into the project entry in `factory.yaml`. The setup is per project, so one node can mix projects with and without devflow.
 
-The triage words `FIX_NOW`, `ESCALATED` and `CHANGES REQUESTED` are devflow ties (§2.1). They appear only in this variant file. The deny list of the tests finds them in any other template or generated file.
+The triage words `FIX_NOW`, `ESCALATED` and `CHANGES REQUESTED` are devflow ties (§2.1). They appear only in this setup file. The deny list of the tests finds them in any other template or generated file.
 
 The dependency goes one way: factory knows devflow's public surface (commands, markers, paths). devflow never knows factory. This keeps the founder rule "devflow stays standalone" (CLAUDE.md §8; `decision-profile/principles/devflow-standalone.md`).
 
@@ -195,27 +195,27 @@ Costs are rough, per use, for the new tokens that enter the coordinator context.
 
 | Job today | Steps today | Today | Command | After |
 |---|---|---|---|---|
-| Merge gate and merge (§5) | CI on the head SHA, behind-by, open threads (GraphQL), review and fix evidence, impact inventory over the diff, public-text check, pinned merge, board, commit, close issue | 12–18 calls, 25–60k | `factory inspect <pr>` then `factory pr merge <pr>` | 2 calls, 3–6k (the impact inventory stays a judgment; `inspect` prints the diff stat and the touched surfaces only) |
-| Status round (§2, §3) | ListAgents, panes, worktrees, PRs and milestones per repo, board, roadmaps, message each lane, capture idle panes | 20–30 calls, 40–80k | `factory status` | 1–2 calls, 3–5k (cell replies still cost their own tokens) |
-| Restart of all lanes (§12) | Per lane: capture, push check, CronList, stop, respawn, rename, re-brief | ~50 calls, 60–100k | `factory cell restart --all` | 2 calls, 3–5k |
-| Lane creation (§12) | Resource check, worktree, pane, launch, wait, rename, protocol line, brief, board, lanes, respawn map, commit | 15–20 calls, 20–30k | `factory cell new <name> --project <p> --order <file>` | 1 call, 1–2k |
-| Board and owner-item updates (§11) | Edit JSON, render, commit, republish, label sync | 5–8 calls, 8–15k | `factory item …`, `factory andon …` (tracker writes, labels built in) | 1–2 calls, 1–3k; no render step, because the tracker shows the board |
+| Merge check and merge (§5) | CI on the head SHA, behind-by, open threads (GraphQL), review and fix evidence, impact inventory over the diff, public-text check, pinned merge, board, commit, close issue | 12–18 calls, 25–60k | `factory check <pr>` then `factory pr merge <pr>` | 2 calls, 3–6k (the impact inventory stays a judgment; `check` prints the diff stat and the touched surfaces only) |
+| Status round (§2, §3) | ListAgents, panes, worktrees, PRs and milestones per repo, board, roadmaps, message each worker, capture idle panes | 20–30 calls, 40–80k | `factory status` | 1–2 calls, 3–5k (worker replies still cost their own tokens) |
+| Restart of all workers (§12) | Per worker: capture, push check, CronList, stop, respawn, rename, new assignment | ~50 calls, 60–100k | `factory reboot` | 2 calls, 3–5k |
+| Worker creation (§12) | Resource check, worktree, pane, launch, wait, rename, protocol line, assignment, board, workers table, respawn map, commit | 15–20 calls, 20–30k | `factory worker new <name> --project <p> --assignment <file>` | 1 call, 1–2k |
+| Board and owner-item updates (§11) | Edit JSON, render, commit, republish, label sync | 5–8 calls, 8–15k | `factory item …`, `factory request …` (board writes, labels built in) | 1–2 calls, 1–3k; no render step, because the board tool shows the board |
 | Reading the owner's answers (§8) | Read the page database, record each decision, relay it | 3–6 calls, 5–10k | `factory decide read` (a script reads `/choose` comments and labels from the owner's account) | 1 call, <1k |
-| Lane clear or compact, then re-brief (§12) | Capture, idle and pushed checks, resume file check, C-u, type, verify, protocol line, re-brief | 8–10 calls, 10–15k | `factory cell changeover <cell> --clear|--compact` | 1 call, 1k |
-| Release pre-check and post-check (§7) | Version, changelog, package contents, registry; after: registry, clean install, smoke | 6–10 calls, 10–20k | `factory ship check <project>` / `factory ship verify <project> <version>` | 1 call each, 2–3k |
+| Worker clear or compact, then a new assignment (§12) | Capture, idle and pushed checks, resume file check, C-u, type, verify, protocol line, new assignment | 8–10 calls, 10–15k | `factory worker reset <worker>` with `--clear` or `--compact` | 1 call, 1k |
+| Release pre-check and post-check (§7) | Version, changelog, package contents, registry; after: registry, clean install, smoke | 6–10 calls, 10–20k | `factory release check <project>` / `factory release verify <project> <version>` | 1 call each, 2–3k |
 | Issue audit and labels (§8) | List issues, classify, apply labels | 5–10 calls, 30–100k | `factory issues audit` (finds unlabeled or conflicting issues; the model classifies only those) | 1 call plus the classification of new issues only |
 | Decision record and profile update (§1) | Record file, log line, principle, decision-log row, commit | 4–6 calls, 8–15k | `factory decide read` records it; `--principle <id>` links a principle | 1 call, 1–2k (the principle wording stays a model job) |
-| Worktree cleanup (§4) | List, check tip on remote, search board and resume files, remove | 5–8 calls, 5–10k | `factory checkout clean` (dry run by default) | 1 call, 1k |
-| Typed founder-authority input (§12) | Map, capture, Escape/C-u, type, Enter, verify | 4–6 calls, 4–6k | `factory cell relay <cell> --decision <D-n>` | 1 call, <1k |
+| Work copy cleanup (§4) | List, check tip on remote, search board and resume files, remove | 5–8 calls, 5–10k | `factory copies clean` (dry run by default) | 1 call, 1k |
+| Typed founder-authority input (§12) | Map, capture, Escape/C-u, type, Enter, verify | 4–6 calls, 4–6k | `factory worker relay <worker> --decision <D-n>` | 1 call, <1k |
 | CI watch (§10) | Monitor or loop on `gh pr checks`, then read | 2–4 calls, 3–8k | `factory pr watch <pr>` (exits when CI ends; for a background task) | 1 call, <1k |
-| Stopped-lane watch and limit recovery (§11, §12) | Loop on `lanes-stopped.txt`; capture each lane; answer the dialog; nudge | 5–15k | `factory cell watch` (exits on a change); `factory cell recover` | <1k plus |
-| Moving an outside session into tmux (§12) | ListAgents, session file, stop, resume, rename, protocol line | ~6 calls, ~6k | `factory cell adopt <name>` | 1 call, <1k |
-| Resource check (§8) | 4 commands | 1–4 calls, 1–2k | built into `cell new`; `factory machine` | 0–1 call |
-| Orchestrator self-compact (§12) | Resume file, C-u, queue `/compact` | ~3 calls, 3–5k | `factory self changeover` (checks the resume file, then queues `/compact`) | 1 call |
+| Stopped-worker watch and limit recovery (§11, §12) | Loop on `lanes-stopped.txt`; capture each worker; answer the dialog; nudge | 5–15k | `factory worker watch` (exits on a change); `factory worker recover` | <1k plus |
+| Moving an outside session into tmux (§12) | ListAgents, session file, stop, resume, rename, protocol line | ~6 calls, ~6k | `factory worker adopt <name>` | 1 call, <1k |
+| Resource check (§8) | 4 commands | 1–4 calls, 1–2k | built into `worker new`; `factory machine` | 0–1 call |
+| Orchestrator self-compact (§12) | Resume file, C-u, queue `/compact` | ~3 calls, 3–5k | `factory self reset` (checks the resume file, then queues `/compact`) | 1 call |
 
 Rule for every command: the output is a short verdict for the model (`READY`, or `NOT READY: 2 open threads, CI pending`). `--json` gives the full facts. The default output never prints a diff, a log or a transcript.
 
-The tracker removes most of the render scripts of today (`render-board.py`, `render-dean.py`, the page data block). The tracker UI shows the board and the andon items.
+The board tool removes most of the render scripts of today (`render-board.py`, `render-dean.py`, the page data block). Its UI shows the board and the requests.
 
 ## 4. CLI shape
 
@@ -247,63 +247,82 @@ A factory with one project is a node with one project. A factory with many proje
 
 ### 4.2 Commands
 
+**Core commands** (the same for every recipe; they speak of approval points and work items only)
+
 ```
 factory init [--home DIR] [--name N] [--project PATH|URL]... [--recipe software] [--variant plain|devflow] [--layer N]
-             [--tracker ID] [--items X] [--decisions X] [--state-from SRC] [--yes]
-factory up [--home DIR]                     # start or attach: tmux session, windows, coordinator (§4.11); works from a project folder (§4.3)
-factory doctor [--fix]                      # tools, versions, platform, safety posture, hooks, tracker
+             [--tracker ID] [--items X] [--decisions X] [--approval POINT=owner|delegated]... [--state-from SRC] [--yes]
+factory start [--home DIR]                  # start or attach: tmux session, windows, coordinator (§4.11); after a machine restart it resumes each recorded worker; works from a project folder (§4.3)
+factory shutdown                            # stop every session of this factory, and nothing else (§4.11)
+factory restart <worker>                    # restart one worker with its session id (§4.11)
+factory reboot                              # shut down the whole factory and start it again; each recorded worker resumes (§4.11)
+factory status [--json]                     # each worker with its state, its work item and its idle state; the digest for the owner
+factory dismiss <worker> | --idle           # end a worker and free its work copy; --idle lists the idle workers first, and the owner picks (§4.11)
+factory doctor [--fix]                      # tools, versions, platform, safety posture, hooks, board
 factory upgrade [--dry-run]                 # migrate state and managed blocks (§4.5)
 factory machine                             # CPU, memory, disk, load against the limits
 factory help words                          # the plain description of each factory word (docs/glossary.md)
 
 factory project add|remove|list
 factory recipe show                         # the project table of the coordinator, from the config
-factory recipe variant <plain|devflow> [--project P]
-factory tracker set <id> [--project P]      # change the tracker of the node, or of one project (§4.10)
-factory tracker status                      # the tracker of each project, and the check of its decision store
+factory recipe variant <plain|devflow> [--project P]   # the setup of the project: the key `variant` stays until FAC-M6 (§2.2)
+factory tracker set <id> [--project P]      # change the board of the node, or of one project (§4.10)
+factory tracker status                      # the board of each project, and the check of its decision store
 factory state remote <url|path> | push | pull   # the private remote of the state repo (§4.3)
 
-factory cell new <name> --project P [--checkout PATH] [--order FILE]
-factory cell list [--json]                  # the live cells table
-factory cell send <cell> (--file F | --text T)   # inbox record plus a one-line doorbell
-factory cell relay <cell> --decision D-n    # owner-authority input, from a recorded decision
-factory cell changeover <cell> (--clear | --compact) [--order FILE]
-factory cell stop|resume|restart <cell>|--all
-factory cell summon <cell> [--for 15m]
-factory cell watch | recover | adopt <name>
+factory worker new <name> --project P [--copy PATH] [--assignment FILE]
+factory worker list [--json]                # the live workers table
+factory worker send <worker> (--file F | --text T)   # inbox record plus a one-line doorbell
+factory worker relay <worker> --decision D-n   # owner-authority input, from a recorded decision
+factory worker reset <worker> (--clear | --compact) [--assignment FILE]   # the session reset
+factory worker stop|resume <worker>
+factory worker summon <worker> [--for 15m]
+factory worker watch | recover | adopt <name>
 factory inbox next | ack <n>                # read and acknowledge a record of the own inbox (§4.12)
 factory layout                              # build the windows again
 
-factory item add|update|move|close|list|import ...   # tracker items: the board
-factory andon add|list|close ...            # items that wait on the owner
+factory item add|update|move|close|list|import ...   # work items: the board
+factory request add|list|close ...          # items that wait for the owner
 factory decide ask <D-n> --options FILE     # a decision item in the decision store
 factory decide read [<D-n>] [--principle ID]   # read answers by script; record them in the log and profile
-factory decide <D-n> <option> [--note T]    # the owner answers in the CLI (the `local` tracker, §4.10)
-factory staging set|show                    # the merge order
-factory watch                               # bounded reads of new tracker changes; wakes the coordinator (§4.10)
-factory desk render                         # NOT BUILT, no milestone: no own review desk (F-2, §4.10)
+factory decide <D-n> <option> [--note T]    # the owner answers in the CLI (the `local` board, §4.10)
+factory queue set|show                      # the order of the finished work that waits for an approval point
+factory watch                               # bounded reads of new board changes; wakes the coordinator (§4.10)
 
-factory inspect <pr> [--project P]          # merge-ready verdict at the current head
-factory pr merge <pr>                       # pinned merge, then the bookkeeping
-factory pr watch <pr>
-factory issues audit [--project P]
-factory ship check|verify <project> [<version>]
-factory checkout list | status | sync <pr|branch> | clean [--apply]   # git across checkouts (D-55)
-factory lock run -- <command>               # the shared heavy-test lock
-
-factory status [--json]                     # digest for the owner
-factory report [--json] [--since CURSOR]    # digest for the parent (§5)
 factory node tree | children | add-child | remove-child
-factory self changeover
+factory report [--json] [--since CURSOR]    # digest for the parent (§5)
+factory self reset                          # the session reset of the coordinator itself
 factory adopt <path> [--dry-run]            # import the setup of today into a node (§8)
 factory hook <event> | statusline           # called by Claude Code; not for people (§4.6)
 ```
 
-The `software` recipe adds `inspect`, `pr`, `issues`, `ship` and `checkout`. Another recipe adds its own gate and output commands. The core commands are the same for every recipe.
+**Software recipe commands** (the commands that the `software` recipe adds)
 
-Global flags: `--home PATH`, `--json`, `--quiet`, `--no-color`. A command finds the home in this order: `--home`; else `FACTORY_HOME`, which factory sets in every session that it starts; else a walk up from the current folder to `factory.yaml`; else the home index, which matches the current folder to a project path (§4.3).
+```
+factory check <pr> [--project P]            # the merge check: READY or NOT READY at the current head
+factory pr merge <pr>                       # pinned merge, then the bookkeeping
+factory pr watch <pr>
+factory issues audit [--project P]
+factory release check|verify <project> [<version>]   # the release check before a release, and the check after it
+factory copies list | status | sync <pr|branch> | clean [--apply]   # git across work copies (D-55)
+factory lock run -- <command>               # the shared heavy-test lock
+```
+
+Another recipe adds its own check and output commands. The core commands stay the same for every recipe, and a docs check fails when the core table holds a word of the software recipe. §7.1 maps Dean's shop-floor words to the command words `worker`, `request` and `queue`.
+
+The lifecycle verbs of the core table:
+- `start` starts the factory. After a machine restart it resumes the recorded workers.
+- `shutdown` stops every session of this factory, and nothing else.
+- `restart <worker>` restarts one worker with its session id.
+- `reboot` shuts down the whole factory and starts it again. Each recorded worker resumes.
+- `status` lists each worker with its state, its work item and its idle state.
+- `dismiss <worker>` and `dismiss --idle` end a worker and free its work copy. `--idle` lists the idle workers first, and the owner picks.
+
+§4.11 defines "idle", "pushed" and "free", the stop scope and the recovery after a machine restart.
+
+Global flags: `--home PATH`, `--json`, `--quiet`, `--no-color`. A command finds the factory folder in this order: `--home`; else `FACTORY_HOME`, which factory sets in every session that it starts; else a walk up from the current folder to `factory.yaml`; else the factory list, which matches the current folder to a project path (§4.3).
 Output rule: the default output of a job command (a command that replaces a manual job of §3) has at most 20 lines, and the verdict is on the first line. `docs/token-budget.md` gives the size budget of each job.
-Exit codes: `0` success, `1` failure, `2` usage error, `3` "not ready" (a gate verdict), `4` safety refusal. A gate verdict is not an error, so scripts can tell them apart.
+Exit codes: `0` success, `1` failure, `2` usage error, `3` "not ready" (a check verdict), `4` safety refusal. A check verdict is not an error, so scripts can tell them apart.
 
 ### 4.3 Factory folder layout
 
@@ -326,7 +345,7 @@ The factory folder is a git repo of its own, the config repo. It holds the confi
     roles/worker.md                 # the worker role text that every worker reads
     decision-log.json               # decisions read from the board, with the answer and its author
     queue.json                      # the queue
-    board.json  waiting.json        # the items, only with the `local` tracker (§4.10)
+    board.json  waiting.json        # the items, only with the `local` board (§4.10)
     decision-profile/               # format, index, principles, decisions
     roadmaps/  orders/  resume/
     workers/<id>/inbox/             # assignments and records for each worker
@@ -515,12 +534,13 @@ children: []                 # nodes this node manages, each { id, address } (§
 - `session.agent` is the program that factory starts for a session. Only `claude` is accepted now. All starts of the agent use this value (§4.6).
 - `approval` maps each approval point of the recipe to `owner` or `delegated`. A point that the file does not name is `owner`. The schema refuses a point that the recipe does not list. §6 says what each value means and what proves `delegated`.
 - The shared file holds no secret and no local path. `factory doctor` refuses a tracked file with a value that looks like a password or a token. The schema is checked at load with a fixed schema (Zod). An unknown key or a bad value stops the command and names the key. It never falls back to a looser default (from firstmate's fail-closed parse).
+- A command that a shared project entry names (a check command of the recipe) runs only after the owner accepts it. No code runs such a command before FAC-M5, which builds the acceptance.
 - A FAC-M2 config (the key `cells` or `approval.land`) is refused with a message to make the factory again with `init`.
 
 ### 4.5 Upgrades without loss of state
 
 - **State has a version.** `node.json` holds `schema_version`, and `factory.yaml` holds `schema`. Each migration is one pure function from version N to N+1, with a test.
-- **The upgrade order:** a dry run that prints the plan, warns when the home breaks a home rule, and checks every new file against the new schema; a backup to `.factory/backups/<ts>/`; the migrations; one commit in the state repo with the files that the upgrade wrote or moved. If one step fails, factory restores the backup and stops.
+- **The upgrade order:** a dry run that prints the plan, warns when the factory folder breaks a folder rule, and checks every new file against the new schema; a backup to `.factory/backups/<ts>/`; the migrations; one commit in the state repo with the files that the upgrade wrote or moved. If one step fails, factory restores the backup and stops.
 - **Managed blocks.** `CLAUDE.md` and the role templates contain blocks between `<!-- factory:begin <name> v<n> sha256=<hash> -->` and `<!-- factory:end <name> -->`. An upgrade rewrites only these blocks. The owner's text outside them stays. If the hash shows a hand edit inside a block, factory stops and shows the diff. The owner then moves the edit out of the block or accepts the loss with `--overwrite <name>`.
 - **No downgrade of state.** An older CLI refuses a newer `schema_version`, with a message.
 - **Parents and children can run different versions.** The report schema has its own version, and a parent reads every report version back to the oldest supported one.
@@ -530,44 +550,45 @@ children: []                 # nodes this node manages, each { id, address } (§
 | Schema 1 | Schema 2 |
 |---|---|
 | `node.role: coordinator` | `node.layer: 1` |
-| `lanes.<id>` | `cells.<id>` |
+| `lanes.<id>` | `workers.<id>` |
 | `projects[]` | `recipe.projects[]`, with `recipe.id: software` |
 | `projects[].pack: plain` | `recipe.variant: plain` (a per-project `variant` only when it differs) |
-| (none) | `tracker.kind: local`. The owner moves to a team tracker later with `factory item import` |
-| (none) | `approval.land: each` |
+| (none) | `tracker.kind: local`. The owner moves to a team board later with `factory item import` |
+| (none) | the approval map in the local file: `approval.merge: owner` and `approval.release: owner` (§6) |
 | (none) | `parent: null` |
-| `children[]` with entries | The migration stops and changes nothing, because the children of layer 1 are cells. A child whose address is not a valid `file://` address is named (F-13). The owner removes the entries, or sets `node.layer: 2` after the upgrade and adds the nodes with `factory node add-child` |
+| `children[]` with entries | The migration stops and changes nothing, because the children of layer 1 are workers. A child whose address is not a valid `file://` address is named (F-13). The owner removes the entries, or sets `node.layer: 2` after the upgrade and adds the nodes with `factory node add-child` |
 | `.factory/protocol.md` (block `protocol`) | `.factory/roles/worker.md` (block `worker`) |
-| `.factory/briefs/` | `.factory/orders/` |
-| `.factory/board.json`, `waiting.json` | kept in place: they are the files of the `local` tracker |
+| `.factory/briefs/` | `.factory/orders/` (the folder of the assignments) |
+| `.factory/board.json`, `waiting.json` | kept in place: they are the files of the `local` board |
 
 ### 4.6 Claude Code integration
 
-- **The main session is a Claude Code session (F-3).** Dean's note says "Codex"; the decision is that factory starts Claude Code. The config names one agent command for each node (`session.agent`), so another agent CLI can come later behind the adapter of §10. Only `claude` is built now.
-- factory starts a cell with `env -u ANTHROPIC_BASE_URL [ANTHROPIC_BASE_URL=<proxy base_url>] FACTORY_HOME=<home> FACTORY_SESSION=<id> <session.agent> --permission-mode auto --effort <e> --add-dir <home>/.factory`, in the cell's checkout. `<session.agent>` is `claude`. It starts the coordinator the same way in the home, with one `--add-dir` for each project path.
-- **Proxy.** A session uses a proxy only when the config names one: the cell's override in `cells.<id>.proxy`, else `session.proxy` of the node. The launch always clears a stray `ANTHROPIC_BASE_URL` from the shell, then sets it only from the config. So a proxy is always a choice that the config shows, never an accident of the shell.
+- **The main session is a Claude Code session (F-3).** Dean's note says "Codex"; the decision is that factory starts Claude Code. The config names one agent command for each node (`session.agent`), so another agent CLI can come later behind the board connector of §10. Only `claude` is built now.
+- factory starts a worker with `env -u ANTHROPIC_BASE_URL [ANTHROPIC_BASE_URL=<proxy base_url>] FACTORY_HOME=<home> FACTORY_SESSION=<id> <session.agent> --permission-mode auto --effort <e> --add-dir <home>/.factory`, in the work copy of the worker. `<session.agent>` is `claude`. It starts the coordinator the same way in the factory folder, with one `--add-dir` for each project path.
+- **Proxy.** A session uses a proxy only when the config names one: the override of the worker in `workers.<id>.proxy`, else `session.proxy` of the node. The launch always clears a stray `ANTHROPIC_BASE_URL` from the shell, then sets it only from the config. So a proxy is always a choice that the config shows, never an accident of the shell.
 - **Proxy check.** Before each launch, factory sends one bounded request to the proxy's `health` path. If the proxy does not answer, `on_fail` decides:
-  - `stop` (the default): factory does not start the session. It prints the proxy id, the failed check and the fix, for example "start the proxy, or set `proxy: none` for this cell".
-  - `direct`: factory starts the session with no proxy and records this in the cell state, so the views show it.
-  This rule comes from a workspace lesson of 2026-10-16: a dead local proxy stopped all lanes for hours. The check stops that failure before it starts.
-- **Proxy presets (D-45).** The devflow variant ships the preset for Subswitch. The health path is `/__subswitch/health`, and the default port is 4141 (`subswitch serve --port N` changes it). The preset gives `base_url: http://127.0.0.1:<port>` with that port. So the owner changes one number. FAC-M6 tests the preset against a stub server. FAC-M7 runs one cell of this workspace through the real Subswitch.
-- `factory doctor` and `factory status` run the same check for each configured proxy. `doctor` sends it only when the config comes from `--home` or from the current folder, and the home is outside every git work tree and every other node home (the rule of `up`). For a config found in a parent folder, it sends no request and warns: "Run with --home DIR to check the proxy". For a home that fails the place rule, it sends no request and the proxy check says why. The proxy host receives the API traffic of the coordinator, so from FAC-M5 `doctor` warns when a proxy host is not loopback (`127.0.0.1`, `::1` or `localhost`). `doctor` prints `Config: <path>` first, to show which config it uses. `factory cell list` and the cells view show a Proxy column for each cell: `direct`, the proxy id, or `<id> (down)`.
-- **Restore and restart.** `cell resume`, `cell restart` and the restore after a reboot (§4.11) use the same launch code, so they apply the same proxy rules and the same check.
-- **Heartbeat hook (decided, D-47).** `factory cell new` writes a hook into the checkout's `.claude/settings.local.json`. `factory up` writes the same hook for the coordinator in the home. Claude Code calls the hook on SessionStart, Stop (the end of each turn) and PreCompact, and the status line command calls it too. The hook writes one line to `<home>/.factory/state/heartbeat/<session>`: the session id, the event, the time and the context percent. The context percent comes from the status line JSON that Claude Code passes, not from the screen text.
-- **The status line is a user setting.** An entry in `settings.local.json` replaces the status line of the owner in that checkout. So factory writes only a wrapper, `factory hook statusline`. It records the percent from the JSON on its stdin, runs the command named in `session.statusline` with the same stdin, and prints the output of that command unchanged. With no `session.statusline`, it prints one short line, `context N%`. factory never reads the settings of the owner to find the command (§6), so the owner names it in the config. If the status line JSON has no percent field in the installed Claude Code, this section names the other source before the hook ships.
-- **Consent for every settings write.** factory never edits user-level Claude Code settings. Before it writes the hook or the status line wrapper, the command (`init`, `up` or `cell new`) prints the exact change and the target file. The target is project or local scope only: `.claude/settings.json` or `.claude/settings.local.json` in the home or the checkout. The write needs a yes on a TTY, or `--yes`. With no TTY and no `--yes`, the command writes nothing, prints the change, and exits 2. A status line command that the owner set before keeps working, because the wrapper passes its output through.
+  - `stop` (the default): factory does not start the session. It prints the proxy id, the failed check and the fix, for example "start the proxy, or set `proxy: none` for this worker".
+  - `direct`: factory starts the session with no proxy and records this in the worker state, so the views show it.
+  This rule comes from a workspace lesson of 2026-10-16: a dead local proxy stopped all workers for hours. The check stops that failure before it starts.
+- **Proxy presets (D-45).** The devflow setup has the preset for Subswitch. The health path is `/__subswitch/health`, and the default port is 4141 (`subswitch serve --port N` changes it). The preset gives `base_url: http://127.0.0.1:<port>` with that port. So the owner changes one number. FAC-M6 tests the preset against a stub server. FAC-M7 runs one worker of this workspace through the real Subswitch.
+- `factory doctor` and `factory status` run the same check for each configured proxy. `doctor` sends it only when the config comes from `--home` or from the current folder, and the factory folder passes the registration check (§4.3). For a config found in a parent folder, it sends no request and warns: "Run with --home DIR to check the proxy". For a factory folder that fails the registration check, it sends no request and the proxy check says why. The proxy host receives the API traffic of the coordinator, so from FAC-M5 `doctor` warns when a proxy host is not loopback (`127.0.0.1`, `::1` or `localhost`). `doctor` prints `Config: <path>` first, to show which config it uses. `factory worker list` and the workers view show a Proxy column for each worker: `direct`, the proxy id, or `<id> (down)`.
+- **Restore and restart.** `worker resume`, `restart`, `reboot` and the restore after a machine restart (§4.11) use the same launch code, so they apply the same proxy rules and the same check.
+- **Last-seen hook (decided, D-47).** `factory worker new` writes a hook into the `.claude/settings.local.json` of the work copy. `factory start` writes the same hook for the coordinator in the factory folder. Claude Code calls the hook on SessionStart, Stop (the end of each turn) and PreCompact, and the status line command calls it too. The hook writes one line to the last-seen file, `<home>/.factory/state/heartbeat/<session>`: the session id, the event, the time and the context percent. The context percent comes from the status line JSON that Claude Code passes, not from the screen text.
+- **The status line is a user setting.** An entry in `settings.local.json` replaces the status line of the owner in that work copy. So factory writes only a wrapper, `factory hook statusline`. It records the percent from the JSON on its stdin, runs the command named in `session.statusline` with the same stdin, and prints the output of that command unchanged. With no `session.statusline`, it prints one short line, `context N%`. factory never reads the settings of the owner to find the command (§6), so the owner names it in the config. If the status line JSON has no percent field in the installed Claude Code, this section names the other source before the hook is built.
+- **Consent for every settings write.** factory never edits user-level Claude Code settings. Before it writes the hook or the status line wrapper, the command (`init`, `start` or `worker new`) prints the exact change and the target file. The target is project or local scope only: `.claude/settings.json` or `.claude/settings.local.json` in the factory folder or the work copy. The write needs a yes in a terminal window, or `--yes`. With no terminal window and no `--yes`, the command writes nothing, prints the change, and exits 2. A status line command that the owner set before keeps working, because the wrapper passes its output through.
+- **Settings in work copies.** Before a worker starts in a work copy, factory checks the Claude Code settings files of that work copy for a setting that skips permission prompts. If it finds one, the start exits 4 with one remedy line (§4.3, "Stops and warnings"). The check runs for every start of a worker, also for `restart` and `reboot`.
 - **Fixtures from the real program.** FAC-M4 captures one payload for each hook event and one status line payload from the installed Claude Code. It commits them as test fixtures. The hook tests parse these fixtures, so the claim "the percent comes from the status line" rests on a real payload, not on a made-up one.
-- **No reads under `~/.claude`.** The heartbeat file gives every fact that the scripts read under `~/.claude` today: the last activity (working, idle, stopped), the session id (to resume a cell after a restart) and the context percent. So no factory code and no role template reads or copies a file under `~/.claude`. The instruction "avoid reads under ~/.claude" is not necessary, and the templates do not contain it. A static test fails on any code path that opens a file there.
+- **No reads under `~/.claude`.** The last-seen file gives every fact that the scripts read under `~/.claude` today: the last activity (working, idle, stopped), the session id (to resume a worker after a restart) and the context percent. So no factory code and no role template reads or copies a file under `~/.claude`. The instruction "avoid reads under ~/.claude" is not necessary, and the templates do not contain it. A static test fails on any code path that opens a file there.
 
 ### 4.7 Language, platforms, install and distribution
 
 - **TypeScript on Node 22+**, built to one bundled file (from mars: dev mode from source, one bundled file for a release). Zod for config and state schemas, Result types and no throws in the logic (Dean's engineering rules). Commands come from one command table, not from three hand lists (a mars gap).
 - **Platforms: macOS and Linux only (F-5).** factory needs tmux, git and a POSIX shell. On native Windows, `factory doctor` refuses with a hint: "Use WSL; factory runs there as on Linux". Every other command refuses with the same hint.
-- **External tools:** `tmux`, `git`, `claude`, and the tracker CLI (`gh` for GitHub). factory replaces `jq`, `python3` and `glow` with its own code, so a new machine needs fewer tools. `doctor` checks the versions.
+- **External tools:** `tmux`, `git`, `claude`, and the CLI of the board tool (`gh` for GitHub). factory replaces `jq`, `python3` and `glow` with its own code, so a new machine needs fewer tools. `doctor` checks the versions.
 - **Portable parts:** the heavy-test lock uses `lockf` on macOS and `flock` on Linux. `factory machine` reads memory and load on both systems. The owner's clipboard command is a config value with a platform default. CI runs the full suite on an Ubuntu and a macOS runner. Tests of `lock run` and `machine` run both system paths with fixtures.
 - **Install:** `npm i -g @dean0x/factory`, or `npx @dean0x/factory init`, plus a Homebrew formula in `dean0x/homebrew-tap`. An `install.sh` for curl, with a SHA256 check (mars has none). The repo is private now (D-49), so none of these is public yet. FAC-M10 builds them.
 - **Release:** one `v*` tag runs the tests, checks that the version is the same in every place, makes the GitHub Release, publishes to npm and updates the tap (from mars `release.yml`). The version lives in one file only.
-- **The publish is gated (D-45).** The publish job runs in a protected environment (`npm-publish`) whose required reviewer is the owner. The job starts with a gate script. The script fails unless `docs/release-approval.md` holds a line `Decision: D-<n>` and the tag version equals the version in `package.json`. So a tag alone never publishes. The repo stays private until the owner records a decision id in `docs/release-approval.md`. FAC-M10 tests the workflow with a script and checks the environment with a read-only `gh api` call.
+- **The publish is gated (D-45).** The publish job runs in a protected environment (`npm-publish`) whose required reviewer is the owner. The job starts with a gate script. The script fails unless `docs/release-approval.md` holds a line `Decision: D-<n>` and the tag version equals the version in `package.json`. So a tag alone never publishes. The repo stays private until the owner writes a decision id in `docs/release-approval.md`. FAC-M10 tests the workflow with a script and checks the environment with a read-only `gh api` call.
 
 ### 4.8 What factory takes from mars and from firstmate
 
@@ -576,7 +597,7 @@ From **mars**:
 2. Dev mode from source, one bundled file for release (`mars:16-31`, `build.sh`).
 3. One tag fans out to GitHub Release, npm and the Homebrew tap (`.github/workflows/release.yml`).
 4. An installer that is safe to run again, with env overrides and a final `--version` check (`install.sh`).
-5. TTY-aware output with an ASCII fallback, and spinners that do nothing on a pipe (`lib/ui.sh`).
+5. Output that knows if a terminal window is present, with an ASCII fallback, and spinners that do nothing on a pipe (`lib/ui.sh`).
 6. Batch commands that continue after a failure and give a count at the end (`lib/commands/clone.sh:96-110`).
 7. Black-box tests that run the real entry point in a temp folder (`test/test_integration.sh`).
 
@@ -593,7 +614,7 @@ From **firstmate** (github.com/kunchenguid/firstmate, MIT, read as untrusted dat
 8. Upgrades by fast-forward only. A dirty home is reported and not touched (`bin/fm-update.sh`).
 
 **Where each idea lands (D-55).** Dean accepted the analysis, so each idea has a milestone:
-- Idea 1: FAC-M1 and FAC-M2 (`--home`, the walk up, the home index of §4.3).
+- Idea 1: FAC-M1 and FAC-M2 (`--home`, the walk up, the factory list of §4.3).
 - Idea 2: FAC-M4 (the doorbell inbox, `inbox next`, `inbox ack`; §4.12).
 - Idea 3: FAC-M8. The marker is `.factory/node.json`. `ping` returns the id and layer from it. `node tree` prints one line for each child from `children[]` with no folder scan. A folder whose marker names another id shows `mismatch` and receives nothing.
 - Idea 4: FAC-M8. One constant lists the config items that a parent passes down (§5.5). A test shows that owner, accounts and session settings never pass.
@@ -611,14 +632,15 @@ factory avoids these firstmate choices:
 
 ### 4.9 Recipes: one core, the kind of factory comes from the recipe
 
-The core is general. It knows nodes, layers and roles, sessions, the inbox and reports, the owner's decisions, the tracker, capacity and the state store. It uses git only to keep its own state (the `.factory/` repo). It knows nothing of PRs, CI or the git repos of projects. A test recipe with no git and a document as output runs `init`, `up --dry-run`, `doctor` and `report`, and no core, config or comms file imports a recipe (FAC-M6).
+The core is general. It knows nodes, layers and roles, sessions, the inbox and reports, the owner's decisions, the board, capacity and the state store. It uses git only to keep its own state (the `.factory/` repo) and the config repo of the factory folder. It knows nothing of PRs, CI or the git repos of projects (§4.13). A test recipe with no git and a document as output runs `init`, `start --dry-run`, `doctor` and `report`, and no core, config or comms file imports a recipe (FAC-M6).
 
 A recipe gives the parts that depend on the kind of work:
 - the role template of each layer (§5.2);
 - the work cycle: the stages, their order, and the proof that each stage ran;
-- the gate checks before an output is final;
+- the checks before an output is final;
 - the kind of output (a PR, a document, a data set);
-- the tracker mapping: which item kinds, labels and states the recipe uses;
+- the board mapping: which item kinds, labels and states the recipe uses;
+- the approval points (§6);
 - its own config block and commands.
 
 ```yaml
@@ -639,75 +661,93 @@ stages:
   release: {}
 gate: [ci-green, base-merged, threads-resolved, evidence, head-pinned]
 tracker:
-  kinds:  { work: issue, decision: "issue+label:decision", andon: "issue+label:andon" }
+  kinds:  { work: issue, decision: "issue+label:decision", request: "issue+label:request" }
   states: { next: Todo, progress: In Progress, done: Done }
 variants: [plain, devflow]   # variants/plain.yaml (default), variants/devflow.yaml (§2.2)
 ```
 
-- A recipe is data plus prompt text. It runs no code, except the `install` and `detect` commands of a variant, and only after the user confirms them.
-- factory ships one recipe first: `software`. Its parts are the projects as git repos, the checkouts and worktrees, PRs, the merge gate, CI and releases. The plain variant uses plain Claude Code. The devflow variant maps the stages to the devflow commands (§2.2).
+- A recipe is data plus prompt text. It runs no code, except the `install` and `detect` commands of a setup, and only after the user confirms them.
+- factory comes with one recipe first: `software`. Its parts are the projects as git repos, the work copies, PRs, the merge check, CI and releases. The plain setup uses plain Claude Code. The devflow setup maps the stages to the devflow commands (§2.2).
 - Other recipes, for example research or content, come later. They need no change to the core.
 - Cost (F-10): medium now, high later. The split is mostly in this design and in the config schema. The FAC-M1 code already keeps the software parts in a few modules.
 
-### 4.10 Tracker connector
+### 4.10 Board connector
 
-factory does not build its own review desk. The board, the andon items and the decisions live in the team's tracker. The owner chooses the tracker in `tracker.kind`.
+factory does not build its own review desk. The board, the requests and the decisions live in the team's board tool. The owner chooses the tool in `tracker.kind`. Dean's word is "board"; the config key `tracker` stays.
 
-**One board for many repos (F-19a).** Can one board show the work of many repos? Yes. One GitHub project can hold the issues of many repos in one board. Factory uses one project for all the repos of a factory. FAC-M3 verifies this with a real run on two repos before the board connector ships. Jira and Linear follow in FAC-M9.
+**One board for many repos (F-19a).** Can one board show the work of many repos? Yes. One GitHub project can hold the issues of many repos in one board. Factory uses one project for all the repos of a factory. FAC-M3 verifies this with a real run on two repos before the board connector is built. Jira and Linear follow in FAC-M9.
 - **The bound.** One list call reads one board. It uses `--limit <cap+1>`. If the board holds more than the cap, the output has a line "more than <cap>" and does not print the rest.
 - **The filter.** The server filters the list (`--query`), also by repo. The reader does not filter the full list.
 - **The owner rule.** The owner of the project must reach every repo that the factory lists. The board shows only the items of the listed repos.
 - **The token scopes.** A read needs `read:project`. A write needs `project`.
 - **The items of the factory itself.** With `local` they are in `.factory`. With `github` they are issues of the config repo.
 
-**The choice of the tracker (F-2).** The user picks the tracker at setup, as in devflow. `init` asks "Which tracker?" on a TTY (`github`, `jira`, `linear`, `local`) and takes `--tracker <id>`, `--items` and `--decisions`. Later, `factory tracker set <id> [--project P]` changes it, and `factory tracker status` prints the tracker of each project and the result of the privacy check. `init` and `tracker set` check the decision store before they write anything. They exit 4 when the store is public. A node has one default tracker, and a project can override it (as devflow does: one machine can work on a Jira repo and a GitHub repo side by side). `item add --project P` goes to the tracker of P. The decision store is always the one of the node.
+**The choice of the board (F-2).** The user picks the board tool at setup, as in devflow. `init` asks "Which board?" in a terminal window (`github`, `jira`, `linear`, `local`) and takes `--tracker <id>`, `--items` and `--decisions`. Later, `factory tracker set <id> [--project P]` changes it, and `factory tracker status` prints the board of each project and the result of the privacy check. `init` and `tracker set` check the decision store before they write anything. They exit 4 when the store is public. A node has one default board, and a project can override it (as devflow does: one machine can work on a Jira repo and a GitHub repo side by side). `item add --project P` goes to the board of P. The decision store is always the one of the node.
 
-**One adapter contract.** Every adapter gives the same small set of operations:
+**One connector contract.** Every board connector gives the same small set of operations:
 - item: add, update, move (change the state), close;
 - decision: ask (an item with the options), read the answer;
 - doc: attach a file, or link a repo file;
 - changes: read comments, label changes, assignee changes and open or close changes since a cursor, each with its author.
 
-**Adapters.**
+**Board connectors.**
 - `github` (the default): issues plus a Projects board, through `gh`. factory already needs `gh` for the `software` recipe.
 - `jira` and `linear`: the same contract, through their CLI or API. `jira` needs `site` and `key`; `linear` needs `key` (§4.4).
-- `local`: files in `.factory/` (`board.json` and `waiting.json`, as in the setup of today), for a node with no network or no tracker account. It has no changes and no watch: `changes read` returns nothing, and `factory watch` exits at once with a note. `factory item list` and `factory andon list` show the items; there is no other UI. The owner answers a decision in the CLI with `factory decide <D-n> <option>`. `local` is also the test double of the connector: the contract tests run against `local` and against each real adapter. In this workspace, the review page and the scripts of today stay as the owner view during the `local` period. They read the `local` files (the same format as today). FAC-M3 retires them.
-- No review desk. Dean said that the factory has no review desk of its own, not even as an option (F-2, F-17). No tracker kind and no command makes one.
+- `local`: files in `.factory/` (`board.json` and `waiting.json`, as in the setup of today), for a node with no network or no board account. It has no changes and no watch: `changes read` returns nothing, and `factory watch` exits at once with a note. `factory item list` and `factory request list` show the items; there is no other UI. The owner answers a decision in the CLI with `factory decide <D-n> <option>`. `local` is also the test double of the connector: the contract tests run against `local` and against each real connector. In this workspace, the review page and the scripts of today stay as the owner view during the `local` period. They read the `local` files (the same format as today). FAC-M3 retires them.
+- No review desk. Dean said that the factory has no review desk of its own, not even as an option (F-2, F-17). No board kind and no command makes one. The extension points (§4.14) let a person add a reader.
 
 **Decisions.**
 - A decision is an item with the `decision` label. Its body has the question, the options and a recommendation.
 - The owner answers with a comment `/choose <option>`, or with a label `choose:<option>`.
-- `factory decide read` reads the answer with a script, not with model tokens. An answer counts only when its author is the owner's tracker account (`owner.github` for GitHub). The script records the decision in `decision-log.json`, with the comment link and the author.
-- With `local`, `factory decide <D-n> <option>` records the answer with `by: owner`. It needs a TTY, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). This guard stops a session from answering by accident. The owner's permission settings are the second guard.
+- `factory decide read` reads the answer with a script, not with model tokens. An answer counts only when its author is the owner's account on the board (`owner.github` for GitHub). The script records the decision in `decision-log.json`, with the comment link and the author.
+- With `local`, `factory decide <D-n> <option>` records the answer with `by: owner`. It needs a terminal window, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). This guard stops a session from answering by accident. The owner's permission settings are the second guard.
 - An *ask* is a decision item for one PR or one work item. The owner answers `approve` or `refuse` in the same way. §6.1 says which answers count as an approval.
 
-**Tracker identity.** The author of a tracker event proves the owner only when the agents write with another identity. If the cells and the coordinator use the owner's own account, an agent can post a comment, a label or an assignee that looks like the owner's.
+**Board identity.** The author of a board event proves the owner only when the agents write with another identity. If the workers and the coordinator use the owner's own account, an agent can post a comment, a label or an assignee that looks like the owner's.
 - `tracker.agent_account` names the identity that the agents use: a machine user, or a GitHub App with its own token.
-- A tracker event counts as an owner proof only when two things are true: its author is the owner account, and `tracker.agent_account` is set to another account.
-- When `tracker.agent_account` is unset, or equal to the owner account, the account is *shared*. Then `doctor` warns, and no tracker event counts as a proof: no comment answer, no label and no assignee. Only `factory decide <D-n> <option>` from a TTY outside a factory session counts. With a shared account, `factory decide` works with every tracker kind. It records `by: owner` in the decision log and adds a comment to the item that says the answer came from the CLI. That comment is a record, not a proof.
-- With `local`, there are no tracker events, so only `factory decide` counts in every case.
+- A board event counts as an owner proof only when two things are true: its author is the owner account, and `tracker.agent_account` is set to another account.
+- When `tracker.agent_account` is unset, or equal to the owner account, the account is *shared*. Then `doctor` warns, and no board event counts as a proof: no comment answer, no label and no assignee. Only `factory decide <D-n> <option>` from a terminal window outside a factory session counts. With a shared account, `factory decide` works with every board kind. It records `by: owner` in the decision log and adds a comment to the item that says the answer came from the CLI. That comment is a record, not a proof.
+- With `local`, there are no board events, so only `factory decide` counts in every case.
 - The setup text (README and `factory doctor`) tells the owner how to make a machine user or an app for the agents.
 - Designs and plans: the `doc` operation links the repo file (GitHub shows Markdown), or attaches it.
 
-**Changes and wake-up (F-2).** There is no live push to a local session without a webhook server. So `factory watch` calls `changes read` with the tracker CLI at a fixed interval (`tracker.watch_interval`), with a bound on the number of reads per run. The coordinator reads these owner actions:
+**Changes and wake-up (F-2).** There is no live push to a local session without a webhook server. So `factory watch` calls `changes read` with the board CLI at a fixed interval (`tracker.watch_interval`), with a bound on the number of reads per run. The coordinator reads these owner actions:
 - a comment `/choose <option>`, and a mention of the coordinator;
 - a label added or removed, for example `choose:<option>` or `ready` (a work item is ready);
 - an issue or item opened or closed.
 
-An event counts only when its author is the owner's tracker account. An event from another account wakes nobody, and the digest counts it as "other". With a shared account (see "Tracker identity"), an owner event still wakes the coordinator, but it never counts as a proof. An assignee change is read, because it is a proof of assignment (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new owner event, it writes one record into `.factory/inbox/` and rings one constant doorbell line in the coordinator pane (§4.12). `factory up` starts `factory watch` in the window `ops` (§4.11).
+An event counts only when its author is the owner's account on the board. An event from another account wakes nobody, and the digest counts it as "other". With a shared account (see "Tracker identity"), an owner event still wakes the coordinator, but it never counts as a proof. An assignee change is read, because it is a proof of assignment (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new owner event, it writes one record into `.factory/inbox/` and rings one constant doorbell line in the coordinator pane (§4.12). `factory start` starts `factory watch` in the window `ops` (§4.11).
 
 **Privacy.** An issue in a public repo is public. Decision items can hold private facts. So the default decision store is a private repo, or private draft items in a private Project. `factory doctor` fails when the decision store is public, and warns when it is not set. The `local` store is private: it is the node's own state repo, with no remote.
 
-### 4.11 Sessions in tmux: bench, view and stop
+### 4.11 Sessions in tmux: workers, view and the lifecycle
 
-**Layout (F-8).** `factory up` makes one tmux session per node, named with the node id. It has these windows:
-- **bench**: one pane for each cell. The cells keep running there.
-- **view**: the coordinator, plus one slot. The slot shows the board, or a cell on request (`factory cell summon <cell> [--for 15m]`). When the time ends, the slot shows the board again.
-- **ops**: `factory watch` (§4.10). The window exists only when the tracker is not `local`, because `local` has nothing to watch. `up --dry-run` lists it.
+**Layout (F-8).** `factory start` makes one tmux session per node, named with the node id. It has these windows:
+- **workers**: one pane for each worker. The workers keep running there.
+- **view**: the coordinator, plus one slot. The slot shows the board, or a worker on request (`factory worker summon <worker> [--for 15m]`). When the time ends, the slot shows the board again.
+- **ops**: `factory watch` (§4.10). The window exists only when the board is not `local`, because `local` has nothing to watch. `start --dry-run` lists it.
 
-`factory up` attaches when the session runs already. It never starts a second coordinator for the same home. The pane options are `@factory_home`, `@node`, `@slot` and `@cell` (the cell id, on a bench pane).
+`factory start` attaches when the session runs already. It never starts a second coordinator for the same factory folder. The pane options are `@factory_home`, `@node`, `@slot` and `@worker` (the worker id, on a pane of the window `workers`).
 
-**After a reboot.** A reboot kills the tmux server. `factory up` on a dead server starts the coordinator, and then runs `cell restart --all` from the heartbeat files. Each cell resumes with the session id that its heartbeat file holds. So a reboot needs no tmux-resurrect scripts.
+**After a machine restart.** A machine restart kills the tmux server. `factory start` on a dead server starts the coordinator, and then resumes each recorded worker from the last-seen files. Each worker resumes with the session id that its last-seen file holds. So a machine restart needs no tmux-resurrect scripts. The id rule: a session id enters a command line only in UUID form, and only for a worker that the config or the state knows. A last-seen file with any other value is refused: factory names the file, starts nothing for it and goes on with the other workers. `restart` and `reboot` use the same path, so they apply the same rule. When the state shows another machine as the active one, `start` warns before it resumes any worker (§4.3).
+
+**The lifecycle verbs (F-20).**
+- `start` starts or attaches the factory, as above.
+- `shutdown` stops every session of this factory, and nothing else.
+- `restart <worker>` stops one worker and starts it again with its session id. The other workers keep their panes.
+- `reboot` is `shutdown`, then `start`. Each recorded worker runs again with its session id.
+- `status` lists each worker with its state, its work item and its idle state. The work item column shows the current work, so a worker with an old name shows it.
+- `dismiss <worker>` ends a worker and frees its work copy. `dismiss --idle` lists the idle workers first, and the owner picks which to dismiss.
+
+**The stop scope rule (F-20).** A stop verb (`shutdown`, `restart`, `reboot`, `dismiss` and `worker stop`) ends only the sessions, panes and processes that factory started for that factory or that worker. factory knows them from the pane options of its own tmux session and from the ids that it recorded at the launch. A session with the same name and another home option, a session of another factory, and a `claude` process outside the panes of the factory keep running. If the tmux session of the name has no home option, or has the home option of another folder, `shutdown` ends nothing and exits 4 with one remedy line.
+
+**Idle (F-21a).** A worker is idle when two things are true: it shows no activity for a set time, and it has no open work in progress (no work item in progress is assigned to it). The time is the setting `limits.idle_after`. It is shared, and its default is 2h. The setting uses the interval parser of the config schema, with a bound of 1m to 24h. `status` shows the idle state.
+
+**Dismiss (F-21a, F-21b).** `dismiss` is a dry run by default: it prints what it would end and what it would free, and it changes nothing until the owner confirms. It refuses a busy worker (a worker with open work in progress) with one remedy line and exit 1.
+- **Pushed.** The work of a worker is pushed when, after a fetch, the head of its branch is on the remote branch, and the work copy has no changed file, no untracked file and no stash. A remote reference that the fetch did not update does not count.
+- **Free.** A work copy is free when it is removed from `work-copies/` with the plain git command, with no force. The primary clone of the project stays. A path outside `work-copies/` is never freed.
+- If the work is not pushed, `dismiss` frees nothing and prints one line that starts with `STUCK:` and names the reason.
+- `dismiss --idle` is a dry run first: it lists the idle workers and changes nothing. In a terminal window the owner then picks which to dismiss. With no terminal window it only lists, and the pick step refuses (exit 4) inside a factory session (`FACTORY_SESSION` set).
 
 **Stop (F-7).** The safe way to stop a session is not known yet. The rule for the word "safe" comes first, in `docs/session-stop.md`, before any test. A way is **safe** when all four facts hold:
 1. The process ends, and the background daemon does not keep the session.
@@ -717,21 +757,21 @@ An event counts only when its author is the owner's tracker account. An event fr
 
 Then a test runs in a throw-away session. It tries each way: `/exit`, `/quit` (if it exists), `/restart`, `kill -TERM`, `kill -INT`, and the delete in the agent view. A busy session is the hard case (F-7), so it tries each way twice: once on an idle session, and once on a busy session (a tool runs and a background agent runs). The table has one row for each way and each case, with the four facts and the verdict "safe" or "not safe".
 
-Then `factory cell stop` uses the way that is safe for the case of the cell. If the cell is busy and no way is safe for a busy cell, `cell stop` exits 3 ("not ready") and names what runs. Until the test: stop only an idle session (no tool, no agent and no prompt in flight), then send `kill -TERM`. The test is a task of the cell-control milestone (roadmap-v2).
+Then `factory worker stop` uses the way that is safe for the case of the worker. If the worker is busy and no way is safe for a busy worker, `worker stop` exits 3 ("not ready") and names what runs. Until the test: stop only an idle session (no tool, no agent and no prompt in flight), then send `kill -TERM`. The test is a task of the worker-control milestone (roadmap-v2).
 
 ### 4.12 Communication module
 
 All text that reaches another session goes through one module, `src/comms/`, with one interface of four calls (F-12):
-- `send`: write one numbered record into the inbox of a cell, then ring the doorbell in the cell pane;
+- `send`: write one numbered record into the inbox of a worker, then ring the doorbell in the worker pane;
 - `deliver`: write one record into the inbox of a child node (the `file://` transport, §5.3);
 - `report`: read the digest of a child node;
 - `ping`: read the identity of a node, or `unknown` with a reason.
 
 The rules:
-- **The doorbell is constant.** The line typed into a pane has no message text. It names the inbox and tells the session to read it. The message is a numbered file, in the format of firstmate (a short header, then the exact text), with a `schema` field. The session acknowledges a record when it moves it to `handled/`. The cell finds its inbox through the variable `FACTORY_INBOX`, which the launch sets.
+- **The doorbell is constant.** The line typed into a pane has no message text. It names the inbox and tells the session to read it. The message is a numbered file, in the format of firstmate (a short header, then the exact text), with a `schema` field. The session acknowledges a record when it moves it to `handled/`. The worker finds its inbox through the variable `FACTORY_INBOX`, which the launch sets.
 - **`factory inbox next` and `factory inbox ack <n>`** print the oldest unhandled record, and move record `n` to `handled/`. A plain `mv` also works. The commands keep the format private to factory.
-- **Owner authority stays in the typed line.** `cell relay` types the owner prefix, the record number and a short hash of the record. A record alone never carries authority (§5.5).
-- **Only this module types into a pane.** No code outside `src/comms/` calls `tmux send-keys`. The slash commands of `changeover` (`/clear`, `/compact`) also go through it. A typed line is at most 300 characters. `cell changeover --order` and `cell recover` send their text with `cell send`, never as typed text.
+- **Owner authority stays in the typed line.** `worker relay` types the owner prefix, the record number and a short hash of the record. A record alone never carries authority (§5.5).
+- **Only this module types into a pane.** No code outside `src/comms/` calls `tmux send-keys`. The slash commands of a session reset (`/clear`, `/compact`) also go through it. A typed line is at most 300 characters. `worker reset --assignment` and `worker recover` send their text with `worker send`, never as typed text.
 - **Nothing outside the folder reads or writes inbox files.** The file format is the contract. The folder can become a package when a second tool must import it.
 
 ### 4.13 Core and setup
@@ -743,13 +783,13 @@ factory has two kinds of files. The **core** is the metal: the code, and the fix
 | The priorities rule | setup | A person writes it. A second factory can take it from a shared setup. |
 | The lifecycle of work (plan, build, review, fix, release) | setup | The recipe gives a default. A person can change it. |
 | The review rules | setup | The recipe gives a default. A person can change it. |
-| The role texts | setup | The recipe renders the role block. A person adds text outside the core blocks. |
+| The role texts | setup | The recipe renders the role block. A person adds text outside the fixed rules. |
 | The scripts | setup | A script is a file of the setup. The owner accepts it (FAC-M6). |
 | The fixed rules (the `safety` block) | core | It is the metal. An edit cannot remove it: `doctor` and `start` check its hash. |
 | The role block that the recipe renders | core | The package renders it again when the setting or the package changes. |
 | The factory part of the `.gitignore` | core | It keeps the private files out of git. A person adds lines outside it. |
 
-- A setup adds text only outside the core blocks.
+- A setup adds text only outside the fixed rules.
 - **The fixed rules are checked.** The `safety` block is a managed block with a hash in its marker. An edited or missing `safety` block stops `start` (exit 4) and fails `doctor`. The remedy is `factory upgrade --overwrite safety`. It renders the block again and keeps the old text in a new backup file in the state folder (at most 10 are kept). It runs only in a terminal window, outside a factory session. A block that is intact but differs from the text that the package renders now (a new package version, or a changed prefix) is rendered again with a notice. A role block that a person edited stays, with a warning.
 - **The check needs the rendered text of each machine.** So `coordinator/CLAUDE.md` is not tracked (D-1). Every file that a person needs to make the factory again is in the tracked folder: the coordinator text in `setup/coordinator.md`, the recipe choice with its list of approval points, the board config, and the setup files of FAC-M6. The mode of each point is per person and stays in the local file.
 - **In this design the owner accepts the hash of `setup/coordinator.md`** (D-13). The setup acceptance of every setup file, and the upgrade rule (an upgrade never overwrites a setup file), come with FAC-M6.
@@ -767,7 +807,9 @@ factory has no review desk of its own, not even as an option (F-2, F-17). A pers
 | Recipe registration | A recipe is registered in the recipe registry. This is a code path. A new recipe needs no change to the core (§4.9). | FAC-M6 |
 | Setup files | A script and one line in the setup list. The owner accepts each file (§4.13). | FAC-M6 |
 
-A person with no code skill adds a desk reader as a setup file in FAC-M6. FAC-M5 ships a sample reader outside `src/`. It reads the event file and `report --json`, and prints one line for each work item.
+The event file and `report --json` hold these fields (§5.4): the node id, the layer, the factory version, the report schema version, the cursor, the state of each worker, the board counts by state and priority, the items in progress, the milestone events, each request with its origin path, and the reports of the child nodes.
+
+A person with no code skill adds a desk reader as a setup file in FAC-M6. FAC-M5 adds a sample reader outside `src/`, in `examples/`. It reads the event file and `report --json` of a fixture node, and prints one line for each work item. A test runs it.
 
 ## 5. Layers: same mechanics, one role per layer
 
@@ -780,58 +822,58 @@ Every node has the same mechanics: `factory.yaml` and `node.json`, the report di
   "owner": { "display": "Ana", "github": "ana-x" },
   "parent": { "address": "file:///home/example/work/acme-factory", "id": "acme" },
   "children": [
-    { "kind": "cell", "id": "web-checkout", "pane": "@cell=web-checkout" },
-    { "kind": "cell", "id": "web-search", "pane": "@cell=web-search" }
+    { "kind": "worker", "id": "web-checkout", "pane": "@worker=web-checkout" },
+    { "kind": "worker", "id": "web-search", "pane": "@worker=web-search" }
   ] }
 ```
 
 ### 5.2 Layers and roles (F-4)
 
-- **Layers count from the bottom.** Cells are layer 0. Their managers are layer 1. The managers of layer-1 nodes are layer 2, and so on. A new top layer changes no node below it.
+- **Layers count from the bottom.** Workers are layer 0. Their managers are layer 1. The managers of layer-1 nodes are layer 2, and so on. A new top layer changes no node below it.
 - **The role comes from the layer.** A node does not choose its role. factory sets it from `node.layer` and the recipe's role template for that layer.
-- **Each layer has its own role template.** Every node on one layer uses the same template. A node on another layer uses another template, because a different layer works differently (F-4). The `software` recipe ships these:
-  - layer 0, **worker**: runs the work cycle (plain or devflow) on one track of one project. Text: `roles/worker.md`, which every cell reads.
-  - layer 1, **coordinator**: manages cells across one or many projects (the Orchestrator today). Text: the managed blocks of the home's `CLAUDE.md`. One block, `projects`, lists the projects of the node: the id, the variant and the stage-to-command map of each. `init`, `recipe variant` and `upgrade` write it from `recipe.projects[]`. So the coordinator knows that it runs one plain project, one devflow project, or both. Two coordinators with different project sets have the same text except this block.
-  - layer 2, **manager**: manages coordinators. It handles priorities, capacity and owner items across its children, and does no PR-level work. A first template, which the owner edits when that layer becomes real.
-  - layer 3, **director**: manages managers. FAC-M8 ships a separate template for it.
+- **Each layer has its own role template.** Every node on one layer uses the same template. A node on another layer uses another template, because a different layer works differently (F-4). The `software` recipe has these:
+  - layer 0, **worker**: runs the work cycle (plain or devflow) on one track of one project. Text: `roles/worker.md`, which every worker reads.
+  - layer 1, **coordinator**: manages workers across one or many projects (the Orchestrator today). Text: `coordinator/CLAUDE.md`, which factory renders from the package and from the tracked `setup/coordinator.md` (§4.3). The rendered file holds the managed blocks. One block, `projects`, lists the projects of the node: the id, the setup and the stage-to-command map of each. `init`, `recipe variant` and `upgrade` write it from `recipe.projects[]`. So the coordinator knows that it runs one plain project, one devflow project, or both. Two coordinators with different project sets have the same text except this block.
+  - layer 2, **manager**: manages coordinators. It handles priorities, capacity and the requests across its children, and does no PR-level work. A first template, which the owner edits when that layer becomes real.
+  - layer 3, **director**: manages managers. FAC-M8 adds a separate template for it.
   - A layer above 3 has no template yet. A node on a layer with no template gets the `safety` block and no role block. `doctor` warns and names the layer. The recipe or the owner adds the template, and no node below changes.
-- **All children of a node are on one layer**, the layer just below it. `factory node add-child` refuses a child from another layer. `factory cell new` refuses on a node that is not on layer 1.
-- A cell is a layer-0 node with no home of its own. Its inbox and heartbeat live in its parent's home (`.factory/cells/<id>/`, `.factory/state/heartbeat/`).
+- **All children of a node are on one layer**, the layer just below it. `factory node add-child` refuses a child from another layer. `factory worker new` refuses on a node that is not on layer 1.
+- A worker is a layer-0 node with no factory folder of its own. Its inbox and last-seen file live in the factory folder of its parent (`.factory/workers/<id>/`, `.factory/state/heartbeat/`).
 
 ### 5.3 Addresses
 
 - A child is named by a relative path from its parent: `acme/acme-web/web-checkout`. A path is unique because each id is unique among its siblings.
 - A transport says how to reach a node. factory has one transport: `file://<absolute home path>`, on the same machine (F-13). It has the four calls of the comms module (§4.12): `send`, `deliver`, `report` and `ping`. The config refuses any other address, for example `ssh://` or `https://`. A remote transport can come later behind the same four calls, with no redesign.
-- A parent reaches a cell only through the cell's own parent node. It never types into a grandchild's pane.
+- A parent reaches a worker only through the parent node of that worker. It never types into a grandchild's pane.
 
 ### 5.4 What goes up
 
 `factory report --json --since <cursor>` returns one digest:
 - node id, layer, factory version, report schema version, and the cursor for the next read;
-- cell states and context use (from the heartbeat files);
-- tracker counts by state and priority, and the items in progress;
+- worker states and context use (from the last-seen files);
+- board counts by state and priority, and the items in progress;
 - milestone events since the cursor (PR ready, merged with SHA, released with version, blocked);
-- the andon items, each with its **origin path** (for example `acme/acme-web#D-4`);
+- the requests, each with its **origin path** (for example `acme/acme-web#D-4`);
 - the reports of the node's own children, already merged (a rollup).
 
-So a node at any depth sees its whole subtree in one call. The digest is also written to `.factory/outbox/` by script, so the facts do not depend on the model's memory.
+So a node at any depth sees its whole subtree in one call. The digest is also written to the event file `.factory/outbox/` by script, so the facts do not depend on the model's memory. The event file and `report --json` hold the fields that §4.14 lists.
 
 ### 5.5 What goes down
 
-- **Work orders:** a brief or a decision record goes to the inbox of a cell or a child node. `factory decide read` writes the decision record to the origin node's `inbox/`, through each node on the path. Each relay adds its own id to the record's `chain`.
-- **Priorities:** a parent sends a `priorities` record. The child applies it to its tracker items and reports the result.
+- **Assignments:** an assignment or a decision record goes to the inbox of a worker or a child node. `factory decide read` writes the decision record to the origin node's `inbox/`, through each node on the path. Each relay adds its own id to the record's `chain`.
+- **Priorities:** a parent sends a `priorities` record. The child applies it to its board items and reports the result.
 - **Inherited config:** the parent passes only items on an explicit list (limits, the writing style, the safety rules), kept as one constant. Owner identity, accounts and session settings are never passed. FAC-M8 tests this.
-- **Owner authority** comes only from the owner. A record carries authority only when its `by` is the owner of the target node and it arrived through the parent channel. If a parent node has a different owner (a team lead over a member's node), its records arrive as **requests**: the child's owner decides them. This is how a team works without a shared founder.
-- In a cell pane, factory types only the one-line owner prefix and a pointer to the inbox record (`factory cell relay`). The record holds the text.
+- **Owner authority** comes only from the owner. A record carries authority only when its `by` is the owner of the target node and it arrived through the parent channel. If a parent node has a different owner (a team lead over a member's node), its records arrive as **messages** (D-6): the child's owner decides them. "Request" stays the word for an item that waits for the owner (D-59). This is how a team works without a shared founder.
+- In a worker pane, factory types only the one-line owner prefix and a pointer to the inbox record (`factory worker relay`). The record holds the text.
 
 ### 5.6 Where state lives, and how a parent reads it
 
-Each node keeps its state in its own home (§4.3). A parent never reads or writes a child's files directly, except through `deliver` into the child's inbox. It reads the child only through `report`. Then the file format inside a node can change at an upgrade, and only the versioned report format is a contract.
+Each node keeps its state in its own factory folder (§4.3). A parent never reads or writes a child's files directly, except through `deliver` into the child's inbox. It reads the child only through `report`. Then the file format inside a node can change at an upgrade, and only the versioned report format is a contract.
 
 ### 5.7 What the CLI does now, so that a layer needs no redesign
 
 - `factory.yaml` has `node.layer`, `parent` and `children` from day one, also in a node with no parent.
-- Every owner item and every event carries an origin path, also at depth 1.
+- Every request and every event carries an origin path, also at depth 1.
 - `factory status` is a view of `factory report`. There is one code path, not two.
 - The tmux session name is the node id, not a fixed `orchestrator`. Two nodes on one machine do not collide.
 - The heavy-test lock is per machine and is shared by every node on it.
@@ -850,56 +892,81 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 | Rule | Text (managed block) | Code enforcement |
 |---|---|---|
 | Every session runs in auto mode | yes | `session.permission_mode` accepts only `auto`. Every launch adds `--permission-mode auto`. |
-| Never skip permissions | yes | factory has no flag or config value that adds the skip flag. `doctor` reports a node or checkout whose settings set the bypass mode. |
-| A proxy only by explicit config, and only when it answers | yes | Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the config (§4.6). A health check runs before each launch and in `doctor` and `status`. On failure the default is `stop` with the fix in the message; `direct` is an explicit choice. `doctor` sends the check only when the config comes from `--home` or from the current folder, and the home is outside every git work tree and every other node home. For a config in a parent folder, `doctor` sends no request and warns to run with `--home DIR`. For a home in a git work tree or in another node home, `doctor` sends no request and the home check fails. `doctor` warns when the variable is set in the shell. |
-| No proxy keys or tokens in output | yes | `proxies` holds no keys; `doctor` refuses token-like values there. Output shows only the proxy id and its host and port, never user info, query strings or headers of the base URL. |
-| A denial is final; no laundering through another session | yes | `cell send` and `cell relay` refuse a text that asks a cell to run a command that the node recorded as denied (a `denied` list in state). |
-| Never invent the owner's consent | yes | `cell relay` types the owner prefix only for a decision record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only for an answer from the owner's tracker account, and only when the agents use another account (`tracker.agent_account`). With a shared account, or with `local`, only `factory decide` counts: it needs a TTY and refuses inside a session that factory started. `doctor` warns on a shared account. |
+| Never skip permissions | yes | factory has no flag or config value that adds the skip flag. `doctor` reports a factory folder or work copy whose settings skip permission prompts, and `start` exits 4 (§4.3, "Stops and warnings"). |
+| A proxy only by explicit config, and only when it answers | yes | Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the local config (§4.6). A health check runs before each launch and in `doctor` and `status`. On failure the default is `stop` with the fix in the message; `direct` is an explicit choice. `doctor` sends the check only when the config comes from `--home` or from the current folder, and the factory folder passes the registration check (§4.3). For a config in a parent folder, `doctor` sends no request and warns to run with `--home DIR`. For a factory folder that fails the registration check, `doctor` sends no request and the check fails. `doctor` warns when the variable is set in the shell. |
+| No proxy keys or passwords in output | yes | `proxies` holds no keys; `doctor` refuses a value that looks like a password or a token there. Output shows only the proxy id and its host and port, never user info, query strings or headers of the base URL. |
+| A denial is final; no laundering through another session | yes | `worker send` and `worker relay` refuse a text that asks a worker to run a command that the node recorded as denied (a `denied` list in state). |
+| Never invent the owner's consent | yes | `worker relay` types the owner prefix only for a decision record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only for an answer from the owner's account on the board, and only when the agents use another account (`tracker.agent_account`). With a shared account, or with `local`, only `factory decide` counts: it needs a terminal window and refuses inside a session that factory started. `doctor` warns on a shared account. |
 | Decisions stay private | yes | `doctor` fails when the decision store is public, and warns when it is not set (§4.10). |
-| No secrets in output | yes | No command prints env values. `doctor` refuses token-like values in `factory.yaml`. Process lists show only pid, elapsed time and command name. |
+| No secrets in output | yes | No command prints env values. `doctor` refuses a value that looks like a password or a token in a tracked file of the factory folder. Process lists show only pid, elapsed time and command name. |
 | Peers never ask the owner directly | yes (role templates) | none (model behavior) |
-| One session per checkout | yes | `cell new` refuses a checkout that another cell uses. |
-| The coordinator instructions never reach a cell | yes | `init` refuses a home inside a git work tree, inside another home, or above a project (§4.3). |
-| Merges follow the owner's merge rule (F-6) | yes | `approval.land: each`: `pr merge` needs an owner decision or an answered ask for that PR and head SHA. `approval.land: approved-work`: `pr merge` needs one proof of approval and one proof of assignment (§6.1). In both cases it passes `--match-head-commit <full SHA>` only after `inspect` passed at that SHA, and refuses when the head changed. `--admin` only by the node, at the pinned head. |
-| Releases need the owner's go | yes | `approval.ship: each` is the only accepted value (§6.2). `ship` commands only check; they do not publish. |
+| One session per work copy | yes | `worker new` refuses a work copy that another worker uses. |
+| The coordinator instructions never reach a worker | yes | The factory folder has no instruction file at its top. The coordinator text is in `coordinator/CLAUDE.md`, and no project clone or work copy is inside or above that folder (§4.3, the instruction-file rule). |
+| Merges follow the approval point `merge` (F-6, D-52) | yes | `merge: owner`: `pr merge` needs an owner decision or an answered ask for that PR and head SHA. `merge: delegated`: `pr merge` needs one proof of approval and one proof of assignment (§6.1). In both cases it passes `--match-head-commit <full SHA>` only after `check` passed at that SHA, and refuses when the head changed. `--admin` only by the node, at the pinned head. |
+| Releases follow the approval point `release` | yes | `release: owner`: every release waits for the owner's go. `release: delegated`: `release check` needs an owner-approved release scope that names the version (§6.2). `release check` and `release verify` only check; they do not publish. |
 | Never bypass the state hook | yes | `init` sets `core.hooksPath`; every state write commits through the helper, which refuses when the hook is off. |
-| Never delete another cell's files; look before removing | yes | `checkout clean` is a dry run by default and refuses a worktree with unpushed work or a path that a cell or resume file names. |
-| Resource limits; one heavy suite at a time | yes | `cell new` checks the limits; `lock run` takes the machine lock. |
+| Never delete another worker's files; look before removing | yes | `copies clean` is a dry run by default and refuses a work copy with unpushed work or a path that a worker or resume file names. |
+| Resource limits; one heavy suite at a time | yes | `worker new` checks the limits; `lock run` takes the machine lock. |
 | Look before typing; target by pane id | yes | Every typed input captures the pane first, refuses an open dialog, clears the input, and checks that the text arrived. Only `src/comms/` types into a pane, and a typed line has at most 300 characters (§4.12). |
 | Supported platforms only | no | Every command refuses on native Windows, with the WSL hint (§4.7). |
 
-The default for a new node is `approval.land: each`: every merge waits for the owner. The owner can choose `approved-work`. This workspace uses `approved-work` (D-52).
+factory never reads or writes under `~/.claude/` (settings, rules, skills, transcripts or session files). It writes only to three places: the factory folder, the `.claude/settings.local.json` of each work copy (the last-seen hook, D-47), and the per-user files of §4.3 (the factory list, the approval records and the setup acceptances), which are outside `~/.claude`.
 
-factory never reads or writes under `~/.claude/` (settings, rules, skills, transcripts or session files). It writes only to three places: the node home, each checkout's `.claude/settings.local.json` (the heartbeat hook, D-47), and the per-user home index of §4.3, which is outside `~/.claude`.
+**Approval points.** A step of the work that needs an approval is an approval point. The recipe lists its points. The owner sets the mode of each point. The default for a new node is `owner`: every point waits for the owner.
+
+| Point (software recipe) | Values | Default | The proof when the value is `delegated` |
+|---|---|---|---|
+| `merge` | `owner`, `delegated` | `owner` | One proof of approval and one proof of assignment for that work (§6.1) |
+| `release` | `owner`, `delegated` | `owner` | An owner-approved release scope: the items and the version (§6.2) |
+
+The rules:
+- **The list is shared, the mode is personal.** The list of points comes with the recipe choice, so it is in the shared file. The mode of each point is in the local file (`approval`, §4.4), because a delegation is owner authority, and each machine has its own approval record.
+- **Only the owner sets a delegation.** The owner sets it with `init` (the prompt, or `--approval <point>=<owner|delegated>`) or with `factory decide`, in a terminal window outside a factory session. `init --yes` writes `owner` only. A delegated approval counts only for work that the owner approved and assigned.
+- **The approval record.** A delegation is real only with an approval record. The record names the node id, the real path of the factory folder, the point, the mode and the time. Only the approval record writer writes it. The writer needs a terminal window and no `FACTORY_SESSION`, with no exception. The store is a per-user file in the state folder beside the factory list, outside every factory folder, with folder mode 700 and file mode 600. A reader refuses a file of another user or a file that others can write. The store keeps only the newest record for each node id, factory folder and point, and it has a size cap. A record file inside the factory folder or the state folder does not count.
+- **The effective mode.** A matching record has the same node id, the same real path and the same point.
+
+  | Local value | Newest matching record | Effective mode |
+  |---|---|---|
+  | `owner` | any, or none | `owner` |
+  | `delegated` | none | `owner`, and `doctor` warns |
+  | `delegated` | `owner` | `owner` (an `owner` record ends a delegation) |
+  | `delegated` | `delegated` | `delegated` |
+
+- **A move ends a delegation.** A record names the real path of the factory folder. So a move of the folder ends each delegation, and the owner sets it again.
+- **The text follows the setting.** With `owner`, the coordinator text and the fixed rules say that each point waits for the owner. With a recorded delegation, they name the proof that the recipe states for the point. The fixed rules have no fixed merge or release line.
+- **Delegations are visible.** `start` and `doctor` list each active delegation with its time.
+- **The setup acceptance is not an approval record.** It has its own writer and its own store, and it writes only its own kind. So `init --yes` can never write an approval record (§4.3).
+
+**What the guards do not prove (D-10 A).** The approval record writer refuses in every pane of a factory session and in a process with no terminal window. `start` puts the session marker `FACTORY_SESSION` in the tmux environment before it makes the second pane and every other window. This stops a factory session, and the tools that it starts, from setting a delegation through factory. It does not replace the permission checks of Claude Code, and it does not protect against other programs of the same user. The writer and the session marker can not prove that the owner acts. The same limit applies to the setup accept prompt and to the origin of an entry in the factory list: a process that runs as the same user can answer a prompt in a terminal window and can change per-user files. So these controls stop the sessions and tools of a factory, not other programs of the same user. FAC-M5 adds a control that factory does not run itself: the session settings that factory renders hold deny rules for the record commands and for the store path. This text keeps the limit until that control exists.
 
 ### 6.1 What counts as approval and assignment (D-52)
 
-With `approval.land: approved-work`, `pr merge` needs two proofs: the owner approved the work, and the owner assigned it to a cell or a track. The proof of approval is one of three forms:
+With `merge: delegated`, `pr merge` needs two proofs: the owner approved the work, and the owner assigned it to a worker or a track. The proof of approval is one of three forms:
 1. **A decision.** A record in `decision-log.json` with `by: owner` that approves the work. The record names the work: a PR, an item or a track.
-2. **An ask.** An ask item (§4.10) for the PR or the work item, with the answer `approve` from the owner's account. With `github`, the answer is the comment `/choose approve` or the label `choose:approve`. With `local`, the owner types `factory decide <D-n> approve` in a terminal outside any factory session.
-3. **An approved plan.** An ask or a decision item that names the plan file (its path and its commit SHA), answered `approve` through the owner channel. With `github`, the answer is a comment or a label by the owner's account, read through the adapter. With `local`, it is `factory decide` from a TTY outside a factory session. The plan text itself proves nothing.
+2. **An ask.** An ask item (§4.10) for the PR or the work item, with the answer `approve` from the owner's account. With `github`, the answer is the comment `/choose approve` or the label `choose:approve`. With `local`, the owner types `factory decide <D-n> approve` in a terminal window outside any factory session.
+3. **An approved plan.** An ask or a decision item that names the plan file (its path and its commit SHA), answered `approve` through the owner input. With `github`, the answer is a comment or a label by the owner's account, read through the board connector. With `local`, it is `factory decide` from a terminal window outside a factory session. The plan text itself proves nothing.
 
-The assignment is direct, by a decision, or by the tracker:
-- Direct: the proof of approval names the cell or the track.
-- By a decision: a second record by the owner names the cell or the track for that work.
-- By the tracker: the owner's account sets the assignee or a `cell:<id>` label on the work item. `factory watch` reads the change through the adapter (§4.10).
+The assignment is direct, by a decision, or by the board:
+- Direct: the proof of approval names the worker or the track.
+- By a decision: a second record by the owner names the worker or the track for that work.
+- By the board: the owner's account sets the assignee or a `worker:<id>` label on the work item. `factory watch` reads the change through the board connector (§4.10).
 
-Every tracker proof above (a comment answer, a label, an assignee) needs separate identities: the agents write with `tracker.agent_account`, not with the owner account (§4.10, "Tracker identity"). With a shared account, no tracker proof counts. Then only a decision recorded by `factory decide` from a TTY outside a factory session proves approval or assignment.
+Every board proof above (a comment answer, a label, an assignee) needs separate identities: the agents write with `tracker.agent_account`, not with the owner account (§4.10, "Board identity"). With a shared account, no board proof counts. Then only a decision recorded by `factory decide` from a terminal window outside a factory session proves approval or assignment.
 
 These do not count:
 - chat text;
 - an answer, a label or an assignee change from another account;
 - a record that names another PR or head SHA;
 - a commit author or a `Status:` line in a file. Agents can commit with the owner's own account, so a commit author proves nothing;
-- any tracker event while the agents and the owner share one account.
+- any board event while the agents and the owner share one account.
 
-An approval in chat becomes a proof when the owner records it in one of the three forms. With `approval.land: each`, only a decision or an answered ask for that PR and head SHA counts; a plan does not.
+An approval in chat becomes a proof when the owner writes it in one of the three forms. With `merge: owner`, only a decision or an answered ask for that PR and head SHA counts; a plan does not.
 
-An open question of the owner blocks the merge (D-52). `factory inspect` gives `NOT READY` while the PR has an open ask or an open andon item.
+An open question of the owner blocks the merge (D-52). `factory check` gives `NOT READY` while the PR has an open ask or an open request.
 
 ### 6.2 Releases (D-57)
 
-D-52 does not cover releases. Whether the owner's approval of work includes the release is an open question: **D-57**, which Dean has not answered. Until he answers, the key `approval.ship` accepts `each` only. Every release waits for the owner's go. The schema refuses any other value and names the key. If Dean answers that approved work includes the release, a later version adds a value and a test. `ship check|verify` read only and publish nothing in every case.
+D-57 is answered: the release is an approval point of its own, with the values `owner` and `delegated` (OD-1). The default is `owner`: every release waits for the owner's go. With `release: delegated`, the proof is an **owner-approved release scope**: the items and the version that the owner approved for release. The owner writes the scope through the approval record writer (§6), with the same rules as any approval record. `factory release check` refuses (exit 4) when no owner-approved release scope names the version. The approval of the work (§6.1) does not include the release. `release check` and `release verify` read only and publish nothing in every case. FAC-M5 builds the check and its test.
 
 ## 7. Generic names
 
@@ -908,15 +975,15 @@ The setup uses Dean's name and devflow's words in many places. factory uses thes
 | Today | In factory |
 |---|---|
 | founder, Dean | owner (the display name from `factory.yaml`) |
-| lane | cell |
-| workflow pack | recipe (and its variant) |
-| On Dean, `on-dean.json`, `dean-review.html` | andon items in the tracker (the `local` files and the old page until FAC-M3) |
-| board, `board.json` | tracker items |
-| merge order | staging |
-| brief | work order (`.factory/orders/`) |
-| clear or compact between phases | changeover |
-| merge gate | `factory inspect` |
-| release check and verify | `factory ship check|verify` |
+| lane | worker |
+| workflow pack | recipe (and its setup) |
+| On Dean, `on-dean.json`, `dean-review.html` | requests on the board (the `local` files and the old page until FAC-M3) |
+| board, `board.json` | board items |
+| merge order | queue |
+| brief | assignment (`.factory/orders/`) |
+| clear or compact between phases | session reset |
+| merge gate | `factory check` |
+| release check and verify | `factory release check|verify` |
 | Orchestrator | coordinator (the layer-1 role); the session name is the node id |
 | lane protocol | worker role template (`.factory/roles/worker.md`) |
 | `.devflow/` (workspace state) | `.factory/` |
@@ -932,29 +999,29 @@ Dean found 11 words for the physical layout of a factory. The list ends with the
 
 | # | His word | In factory |
 |---|---|---|
-| 1 | assembly line | Not used as a name. A cell does all the stages for one track, so there is no line of stations. The ordered stages are the **work cycle** (§4.9). |
-| 2 | functional cells | Used as **cell** (§4.1): a worker session that does all the stages for one track of one project. |
-| 3 | linear sequential layout | Not used. The stages of a track run in order inside one cell, so the layout of the folders (§4.3) is not a line. |
-| 4 | receiving inbound docks | Used in meaning: the `inbox/` folder is where work orders arrive (§4.12). The name stays `inbox`, because it is the plain word. |
-| 5 | staging areas | Used as **staging**: the merge order (§4.1). |
-| 6 | workstation cells | Used as **cell**, the same word as row 2. |
-| 7 | buffer zones | Used in meaning: the `Todo` state of the tracker is where work waits for a cell (§4.9, `tracker.states`). The name is not used. |
-| 8 | quality inspection | Used as `factory inspect`, the merge gate (§4.2). |
-| 9 | pack out | Not used as a name. The package check before a release is a part of `factory ship check`. |
-| 10 | shipping docks (his text: "chipping docks") | Used as `factory ship`: the release check and verify (§4.2). |
+| 1 | assembly line | Not used as a name (D-59). A worker does all the stages for one track, so there is no line of stations. The ordered stages are the **work cycle** (§4.9). |
+| 2 | functional cells | Not used as a name (D-59). The new word is **worker** (§4.1): a session that does all the stages for one track of one project. |
+| 3 | linear sequential layout | Not used. The stages of a track run in order inside one worker, so the layout of the folders (§4.3) is not a line. |
+| 4 | receiving inbound docks | Used in meaning: the `inbox/` folder is where assignments arrive (§4.12). The name stays `inbox`, because it is the plain word. |
+| 5 | staging areas | Not used as a name (D-59). The new word is **queue**: the order of the finished work that waits for an approval point (§4.1). |
+| 6 | workstation cells | Not used as a name (D-59). The new word is **worker**, the same word as row 2. |
+| 7 | buffer zones | Used in meaning: the `Todo` state of the board is where work waits for a worker (§4.9, `tracker.states`). The name is not used. |
+| 8 | quality inspection | Not used as a name (D-59). The new word is **check**: `factory check`, the merge check (§4.2). |
+| 9 | pack out | Not used as a name. The package check before a release is a part of `factory release check`. |
+| 10 | shipping docks (his text: "chipping docks") | Not used as a name (D-59). The new words are `factory release check` and `factory release verify`: the release check before a release, and the check after it (§4.2). |
 | 11 | metrology lab | Used in meaning: `factory doctor` checks the tools and `factory machine` measures the machine (§4.2). The name is not used. |
 
 ## 8. Migration of this workspace
 
-`factory adopt ~/Sandbox` imports the current setup into a node. A dry run comes first. The adopt runs only when all lanes are idle and pushed. It does these steps (FAC-M7):
-1. It makes a node home next to the projects, for example `~/Sandbox/sandbox-factory`. The Orchestrator moves there from the workspace root.
-2. It moves the Orchestrator text of `~/Sandbox/CLAUDE.md` into the `CLAUDE.md` of the new home, and keeps a copy in `.factory/backups/`. It leaves no coordinator text in any `CLAUDE.md` on the path from a cell checkout to the root: the old file is removed, or it keeps only lines that every cell may read. The dry run shows this change, and the owner confirms it. Only then do the lanes stop loading the Orchestrator instructions (F-3). Without this step, they still load them, because the file sits above every checkout.
+`factory adopt ~/Sandbox` imports the current setup into a node. A dry run comes first. The adopt runs only when all workers are idle and pushed. It does these steps (FAC-M7):
+1. It makes a factory folder next to the projects, for example `~/Sandbox/sandbox-factory` (§4.3). The Orchestrator moves there from the workspace root.
+2. It moves the Orchestrator text of `~/Sandbox/CLAUDE.md` into the tracked file `setup/coordinator.md` of the new factory folder, and keeps a copy in `.factory/backups/`. `init` renders it to `coordinator/CLAUDE.md`. It leaves no coordinator text in any `CLAUDE.md` on the path from a work copy to the root: the old file is removed, or it keeps only lines that every worker may read. The dry run shows this change, and the owner confirms it. Only then do the workers stop loading the Orchestrator instructions (F-3). Without this step, they still load them, because the file sits above every work copy.
 3. It moves `decision-profile/` and the roadmaps to `.factory/`, keeps the git history (a `git mv` in the state repo), and writes `factory.yaml` from the facts in CLAUDE.md §13.
-4. It imports the board and the On Dean items into the `local` tracker files. The review page and its scripts stay as the owner view, and the owner can still answer there. FAC-M3 moves the items into GitHub issues with a private repo as the decision store (F-2), and retires the page and its scripts.
-5. It sets `approval.land: approved-work` (D-52).
-6. It adds the devflow variant to the devflow projects.
-7. The lanes become cells on the bench window (F-8).
-8. It runs one cell through the real Subswitch and records the run (D-45).
+4. It imports the board and the On Dean items into the `local` board files. The review page and its scripts stay as the owner view, and the owner can still answer there. FAC-M3 moves the items into GitHub issues with a private repo as the decision store (F-2), and retires the page and its scripts.
+5. It asks the owner to set the approval point `merge` to `delegated` (D-52). The owner confirms in a terminal window, and the approval record writer records it (§6).
+6. It adds the devflow setup to the devflow projects.
+7. The workers of today become workers in the window `workers` (F-8). Each old worker gets a name from its current work item (F-21c), and `status` shows no worker whose name and work item differ.
+8. It runs one worker through the real Subswitch and records the run (D-45).
 
 ### 8.1 Parity table
 
@@ -962,28 +1029,28 @@ Each part of the setup of today (§1.1) has an owner in factory: a command, a mi
 
 | Part (§1.1) | In factory | Milestone | Status |
 |---|---|---|---|
-| `~/Sandbox/CLAUDE.md` | The `coordinator` and `safety` blocks of the home `CLAUDE.md`; `adopt` moves the text (step 2) | FAC-M2, FAC-M7 | planned |
+| `~/Sandbox/CLAUDE.md` | The `coordinator` and `safety` blocks of `coordinator/CLAUDE.md`, rendered from `setup/coordinator.md`; `adopt` moves the text (step 2) | FAC-M2, FAC-M7 | planned |
 | `protocol.md` | The worker role template `.factory/roles/worker.md` | FAC-M2 | planned |
 | `status.md` | The output of `factory status` | FAC-M5 | planned |
-| `respawn-map.md` | The heartbeat files, `cell restart --all` and the restore of §4.11 | FAC-M4 | planned |
-| `orchestrator-resume.md` | `.factory/resume/` and `factory self changeover` | FAC-M4 | planned |
+| `respawn-map.md` | The last-seen files, `factory reboot` and the restore of §4.11 | FAC-M4 | planned |
+| `orchestrator-resume.md` | `.factory/resume/` and `factory self reset` | FAC-M4 | planned |
 | `roadmaps/` | `.factory/roadmaps/`; `adopt` moves the files | FAC-M2, FAC-M7 | planned |
-| `board.json`, `board.md`, page | The `local` tracker files and `factory item`; then the tracker items | FAC-M5, FAC-M3 | planned |
-| `lanes.json` | The heartbeat files and `factory cell list` | FAC-M4 | planned |
-| `on-dean.json`, `decision-log.json`, `on-dean.md` | `factory andon`, `factory decide` and `.factory/decision-log.json` | FAC-M5 | planned |
-| `board-detail.md`, `board-log-*.md`, `done.md` | The item body and its comments in the tracker; `item close` records the reason in the state repo | FAC-M5 | planned |
-| `briefs/` | Work orders in `.factory/orders/`; `cell new --order` | FAC-M2, FAC-M4 | planned |
-| `review/dean-review.html`, `review/README-decision-pages.md` | Kept as the owner view of the `local` period. Retired when the tracker UI shows the items and the decisions | FAC-M3 | planned |
-| `boardlib.py`, `render-board.py`, `render-dean.py` | Kept for the `local` period. Retired: `factory item` and the tracker UI replace them | FAC-M3 | planned |
+| `board.json`, `board.md`, page | The `local` board files and `factory item`; then the board items | FAC-M5, FAC-M3 | planned |
+| `lanes.json` | The last-seen files and `factory worker list` | FAC-M4 | planned |
+| `on-dean.json`, `decision-log.json`, `on-dean.md` | `factory request`, `factory decide` and `.factory/decision-log.json` | FAC-M5 | planned |
+| `board-detail.md`, `board-log-*.md`, `done.md` | The item body and its comments on the board; `item close` records the reason in the state repo | FAC-M5 | planned |
+| `briefs/` | Assignments in `.factory/orders/`; `worker new --assignment` | FAC-M2, FAC-M4 | planned |
+| `review/dean-review.html`, `review/README-decision-pages.md` | Kept as the owner view of the `local` period. Retired when the board UI shows the items and the decisions | FAC-M3 | planned |
+| `boardlib.py`, `render-board.py`, `render-dean.py` | Kept for the `local` period. Retired: `factory item` and the board UI replace them | FAC-M3 | planned |
 | `board-set.sh` | `factory item add|update|move|close` | FAC-M5 | planned |
-| `lane-set.sh`, `lane-lib.sh` | `factory cell` commands and the heartbeat files | FAC-M4 | planned |
+| `lane-set.sh`, `lane-lib.sh` | `factory worker` commands and the last-seen files | FAC-M4 | planned |
 | `state-commit.sh`, `git-hooks/pre-commit` | The state commit helper and the delete-guard hook that `init` installs | FAC-M5 | planned |
-| `layout.sh`, `lane-summon.sh` | `factory layout` and `factory cell summon` | FAC-M4 | planned |
+| `layout.sh`, `lane-summon.sh` | `factory layout` and `factory worker summon` | FAC-M4 | planned |
 | `md-view.sh` | Retired, because the slot runs `factory item list` and needs no `glow` | FAC-M5 | planned |
-| `lanes-refresh.sh`, `lanes-table.py` | `factory cell list` and `factory cell watch` | FAC-M4 | planned |
+| `lanes-refresh.sh`, `lanes-table.py` | `factory worker list` and `factory worker watch` | FAC-M4 | planned |
 | `live_boxes.py` | `factory machine` | FAC-M4 | planned |
-| `tmux-save-map.sh`, `tmux-restore-lanes.sh` | The heartbeat files, and `factory up` on a dead server runs `cell restart --all` (§4.11) | FAC-M4 | planned |
-| `tmux.conf` | Retired, because `factory up` and `factory layout` set the options of each session, and the restore needs no resurrect plugin | FAC-M4 | planned |
+| `tmux-save-map.sh`, `tmux-restore-lanes.sh` | The last-seen files, and `factory start` on a dead server resumes the recorded workers (§4.11) | FAC-M4 | planned |
+| `tmux.conf` | Retired, because `factory start` and `factory layout` set the options of each session, and the restore needs no resurrect plugin | FAC-M4 | planned |
 | `scripts/test-*` | The test suite of the factory repo | FAC-M1 | done |
 | `priorities/apply-labels.sh` | Retired, because it was a one-time script. `factory issues audit` finds unlabeled issues | FAC-M5 | planned |
 | `decision-profile/` | `.factory/decision-profile/`; `adopt` moves the content | FAC-M2, FAC-M7 | planned |
@@ -994,7 +1061,7 @@ Each part of the setup of today (§1.1) has an owner in factory: a command, a mi
 
 ### v1 (2026-11-01)
 
-Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the name `factory`; D-47 yes for the heartbeat hook). D-46 B set the merge rule; D-52 replaced it for this workspace.
+Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the name `factory`; D-47 yes for the last-seen hook). D-46 B set the merge rule; D-52 replaced it for this workspace.
 
 | # | Decision | Options | Recommendation |
 |---|---|---|---|
@@ -1004,12 +1071,12 @@ Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the
 | 4 | Public or private | (a) private now, public later; (b) public now | **(a).** The repo `dean0x/factory` is private (D-49). It goes public when a team member installs it on a new machine, if Dean agrees. |
 | 5 | State folder and config | (a) `.factory/` and `factory.yaml`; (b) other names | **(a).** Never `.devflow/`, because devflow writes there. |
 | 6 | Where a single-project node lives | (a) always a separate node folder; (b) also inside the repo | **(a).** v2 makes it a rule: the home is never inside a repo (F-3). |
-| 7 | Heartbeat hook | (a) factory writes a hook in each checkout's `.claude/settings.local.json`; (b) keep the reads of Claude Code's private files | **(a).** v2: it replaces every read under `~/.claude` (F-9). |
+| 7 | Last-seen hook | (a) factory writes a hook in the `.claude/settings.local.json` of each work copy; (b) keep the reads of Claude Code's private files | **(a).** v2: it replaces every read under `~/.claude` (F-9). |
 | 8 | Conflicts of §1.3 | my proposals in §1.3 | **Accept them.** v2 updates the answers (§1.3). |
 | 9 | Remote transport | (a) SSH only at first; (b) a small server | **Replaced by F-13 (2026-11-02):** one machine only for now, with `file://` addresses only. |
-| 10 | Python and glow | (a) port the Python scripts and the viewer into factory; (b) keep them as external tools | **(a).** Fewer tools on a new machine and one test suite. The tracker removes most of the render scripts (F-2). |
-| 11 | Team defaults | (a) each member owns a root; a lead's node sends requests (§5.5); (b) one shared owner | **(a).** No name or account is fixed, and nobody acts on another person's authority. |
-| 12 | Where the Subswitch settings live | (a) factory core has only a generic `proxies` entry; a preset ships in the devflow variant; (b) the preset is in factory core | **(a).** The default setup then names no devflow tool. |
+| 10 | Python and glow | (a) port the Python scripts and the viewer into factory; (b) keep them as external tools | **(a).** Fewer tools on a new machine and one test suite. The board tool removes most of the render scripts (F-2). |
+| 11 | Team defaults | (a) each member owns a factory folder; a lead's node sends messages (§5.5); (b) one shared owner | **(a).** No name or account is fixed, and nobody acts on another person's authority. |
+| 12 | Where the Subswitch settings live | (a) factory core has only a generic `proxies` entry; a preset is in the devflow setup; (b) the preset is in factory core | **(a).** The default setup then names no devflow tool. |
 
 ### v2 (2026-11-02)
 
@@ -1017,12 +1084,12 @@ Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the
 |---|---|
 | D-49 | The code goes to the private repo `dean0x/factory`. No public visibility, no npm publish, no tag. |
 | D-51 A | No second review of FAC-M1 now. The review of the v2 code covers the setup and upgrade code. The review of the FAC-M2 PR names `init`, `upgrade` and `doctor`, and its summary lists those files (roadmap, FAC-M2). |
-| D-52 | This workspace: approved and assigned work merges when the gates pass. Releases are not part of it. factory offers the rule as an owner choice. §6.1 lists the proofs. |
+| D-52 | This workspace: approved and assigned work merges when the checks pass. Releases are not part of it. factory offers the rule as an owner choice, the value `delegated` of the approval point `merge`. §6.1 lists the proofs. |
 | D-53 | Dean accepted the proposals F-1 to F-10 as a set ("Changes from v1" above). |
 | F-13 | One machine only for now. No `ssh://` transport, no remote readiness check and no remote child. The config refuses any address but `file://`. |
 | D-56 | The build order is FAC-M2, M4, M5, M6, M7, then M3, M8, M10, M9 (roadmap-v2; FAC-M10 is the release milestone, added after the intent check). |
 
-**Open point: D-57.** F-6 asked whether "a-z" includes releases. Dean has not answered. The question is on his page. Until he answers, `approval.ship` accepts `each` only (§6.2). The roadmap lists D-57 under "Decisions needed", before FAC-M5.
+**D-57 is answered (v3).** F-6 asked whether "a-z" includes releases. The release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope (§6.2). FAC-M5 builds the release check.
 
 ### Intent fixes (2026-11-02, table OD)
 
@@ -1031,15 +1098,15 @@ An independent check of the design against Dean's notes found open points. The O
 | Id | Decision |
 |---|---|
 | OD-1 | The review page of today and its scripts stay as the owner view until FAC-M3. FAC-M7 keeps them. FAC-M3 retires them (§4.10, §8). |
-| OD-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. A plan counts only through an ask or decision item answered `approve` by the owner; a commit author is no proof. The assignment is direct, by a decision, or by an assignee or `cell:<id>` label that the owner's account sets. `inspect` gives NOT READY while a PR has an open ask or andon item (§6.1). |
-| OD-3 | Releases: `approval.ship: each`, the only value. D-57 stays open (§6.2). |
+| OD-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. A plan counts only through an ask or decision item answered `approve` by the owner; a commit author is no proof. The assignment is direct, by a decision, or by an assignee or `worker:<id>` label that the owner's account sets. `check` gives NOT READY while a PR has an open ask or an open request (§6.1). |
+| OD-3 | Releases have their own approval point, `release`, with the values `owner` and `delegated`. D-57 is answered (§6.2). |
 | OD-4 | "Codex" in note F-3: factory starts Claude Code. The config names one agent command for each node, and only `claude` is built (§4.6). |
-| OD-5 | Each layer has its own role template. FAC-M8 ships the template of layer 3. `doctor` warns when a layer has no template (§5.2). |
-| OD-6 | The tracker adapter reads comments, label changes, assignee changes and open or close changes. Card moves stay out for now. `up` starts `watch` (§4.10, §4.11). |
-| OD-7 | The tracker scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira has `site` and `key` (§4.4, §4.10). |
+| OD-5 | Each layer has its own role template. FAC-M8 adds the template of layer 3. `doctor` warns when a layer has no template (§5.2). |
+| OD-6 | The board connector reads comments, label changes, assignee changes and open or close changes. Card moves stay out for now. `start` starts `watch` (§4.10, §4.11). |
+| OD-7 | The board scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira has `site` and `key` (§4.4, §4.10). |
 | OD-8 | The word list of Dean ends with the heading "machinery and automation hardware". A table in §7.1 maps each of his 11 words. |
 | OD-9 | The state repo can push to a private git remote that the owner names. `init --state-from` clones it on a second machine (§4.3). |
-| OD-10 | A tracker event proves the owner only when the agents use another identity (`tracker.agent_account`). With a shared account, `doctor` warns and only `factory decide` from a TTY outside a factory session counts (§4.10, §6.1). |
+| OD-10 | A board event proves the owner only when the agents use another identity (`tracker.agent_account`). With a shared account, `doctor` warns and only `factory decide` from a terminal window outside a factory session counts (§4.10, §6.1). |
 
 ### v3 (2026-11-02)
 
@@ -1067,14 +1134,14 @@ Dean gave F-14 to F-21, D-59 and D-60. The Gate 1 and Gate 2 answers and the lat
 
 ## 10. Risks
 
-- **Claude Code changes its hook events, status line JSON or CLI flags.** All Claude Code calls sit in one adapter, with a test that `doctor` runs against the installed version. The heartbeat hook uses only documented hook events.
-- **A dead proxy stops every cell that uses it.** The health check runs before each launch, the default is `stop` with a clear fix, and the views show which cells use a proxy (§4.6).
+- **Claude Code changes its hook events, status line JSON or CLI flags.** All Claude Code calls sit in one module, with a test that `doctor` runs against the installed version. The last-seen hook uses only documented hook events.
+- **A dead proxy stops every worker that uses it.** The health check runs before each launch, the default is `stop` with a clear fix, and the views show which workers use a proxy (§4.6).
 - **tmux typing is fragile.** factory types only one short line per message and keeps the text in the inbox. Each typed input is checked by a capture.
-- **Tracker limits and cost.** The tracker APIs have rate limits, and reads cost time. `factory watch` reads at a fixed interval with a bound per run, and caches in `.factory/state/`. A tracker that does not answer is "unknown", never "no answer".
-- **A false decision answer.** Anyone with access can comment on a decision item. `decide read` accepts only the owner's account, and records the author and the link. If the agents write with the owner's account, an agent can fake an answer. So a tracker answer counts only when `tracker.agent_account` is another account; else only `factory decide` counts.
+- **Board limits and cost.** The APIs of the board tools have rate limits, and reads cost time. `factory watch` reads at a fixed interval with a bound per run, and caches in `.factory/state/`. A board that does not answer is "unknown", never "no answer".
+- **A false decision answer.** Anyone with access can comment on a decision item. `decide read` accepts only the owner's account, and records the author and the link. If the agents write with the owner's account, an agent can fake an answer. So an answer on the board counts only when `tracker.agent_account` is another account; else only `factory decide` counts.
 - **A public decision store.** `doctor` fails on it (§4.10).
 - **The renames and the schema 2 migration touch every part.** They come first in the roadmap, before more code uses the old names. The schema 1 → 2 migration has a test, and every name sits in `src/names.ts`.
-- **Scope grows.** The roadmap ships the CLI in stages. Each stage is useful for this workspace before the next one starts. Other recipes and other trackers wait until the `software` recipe on GitHub works.
+- **Scope grows.** The roadmap builds the CLI in stages. Each stage is useful for this workspace before the next one starts. Other recipes and other boards wait until the `software` recipe on GitHub works.
 - **Two copies of the setup during the move.** The adopt is one step with a dry run. The old page and scripts stay as the owner view of the `local` period and read the same `local` files, so there is one source of truth. FAC-M3 retires them, and a search finds no process that calls them.
-- **The status line of the owner is a user setting.** A checkout setting replaces it. The wrapper of §4.6 passes its output through, and a test checks this.
+- **The status line of the owner is a user setting.** A work copy setting replaces it. The wrapper of §4.6 passes its output through, and a test checks this.
 - **A release publishes by mistake.** The publish job needs a protected environment, a gate script and a recorded decision id (§4.7).

@@ -5,6 +5,7 @@
 # Usage: sh scripts/check-intent-docs.sh [DOCS_DIR]
 # DOCS_DIR is the docs folder to check. The default is the docs folder of this repo.
 # Check 8 also reads README.md and CHANGELOG.md in the folder above DOCS_DIR, when they exist.
+# Check 10 reads the fenced block under "**Core commands**" in design 4.2 and stops at "**Software recipe commands**".
 #
 # Exit code 0: every check passes. Exit code 1: a check fails. The output names the first failure of each check.
 
@@ -120,13 +121,10 @@ report 2 "each milestone of the trace is in roadmap-v2.md, with a heading" "$fir
 first=$(awk '
   FILENAME == ARGV[1] {
     if ($0 ~ /^### 4\.2 /) { inside = 1; next }
-    if (inside && $0 ~ /^#/) { inside = 0 }
-    if (inside && $0 ~ /^```/) {
-      fence = !fence
-      if (!fence) inside = 0
-      next
-    }
+    if (inside && !fence && $0 ~ /^#/) { inside = 0 }
+    if (inside && $0 ~ /^```/) { fence = !fence; next }
     if (inside && fence && $1 == "factory" && $2 != "") {
+      if ($2 == "desk" && !deskline) deskline = FNR
       if (!($2 in seen)) { seen[$2] = 1; count++; word[count] = $2 }
     }
     next
@@ -143,6 +141,8 @@ first=$(awk '
   }
   END {
     if (count == 0) { print "design.md 4.2 has no command line in its code block"; exit }
+    if (deskline) { printf "design.md 4.2 has a desk row (line %d)\n", deskline; exit }
+    if ("desk" in mapped) { print "the Command map of roadmap-v2.md has a desk row"; exit }
     for (n = 1; n <= count; n++) {
       if (!(word[n] in mapped)) {
         printf "the command %s of design.md 4.2 has no row in the Command map of roadmap-v2.md\n", word[n]
@@ -273,8 +273,39 @@ first=$(awk '
 ' "$design")
 report 9 "design.md has the headings for core and setup and for extension points" "$first"
 
+first=$(awk '
+  function recipe_word(line,   low, word) {
+    low = tolower(line)
+    if (match(low, /(^|[^a-z0-9_])(merge[sd]?|pull requests?|release[sd]?|ci logs?)($|[^a-z0-9_])/)) {
+      word = substr(low, RSTART, RLENGTH)
+      sub(/^[^a-z]+/, "", word)
+      sub(/[^a-z]+$/, "", word)
+      return word
+    }
+    if (match(line, /(^|[^A-Za-z0-9_])(PRs?|CIs?)($|[^A-Za-z0-9_])/)) {
+      word = substr(line, RSTART, RLENGTH)
+      sub(/^[^A-Z]+/, "", word)
+      sub(/[^A-Za-z]+$/, "", word)
+      return word
+    }
+    return ""
+  }
+  /^### 4\.2 / { inside = 1; next }
+  inside && !fence && /^#/ { inside = 0 }
+  !inside { next }
+  /^\*\*Core commands\*\*/ { core = 1; found = 1; next }
+  /^\*\*Software recipe commands\*\*/ { core = 0; next }
+  /^```/ { fence = !fence; next }
+  core && fence && !hit {
+    hit = recipe_word($0)
+    if (hit != "") printf "design.md line %d: the core command table holds the software recipe word \"%s\"\n", NR, hit
+  }
+  END { if (!found) print "design.md 4.2 has no core command table" }
+' "$design")
+report 10 "the core command table of design 4.2 holds no word of the software recipe" "$first"
+
 if [ "$failed" -ne 0 ]; then
-  printf '%s of 9 checks failed\n' "$failed"
+  printf '%s of 10 checks failed\n' "$failed"
   exit 1
 fi
-printf 'all 9 checks passed\n'
+printf 'all 10 checks passed\n'

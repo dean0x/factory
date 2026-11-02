@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,13 +44,13 @@ const change = async (name: string, edit: (text: string) => string, folder: stri
 };
 
 /** The checks that failed, by number. */
-const failedChecks = (out: string): string[] => [...out.matchAll(/^FAIL (\d)/gm)].map((match) => match[1] ?? '');
+const failedChecks = (out: string): string[] => [...out.matchAll(/^FAIL (\d+)/gm)].map((match) => match[1] ?? '');
 
 describe('scripts/check-intent-docs.sh', () => {
   it('passes on the docs of the repo', () => {
     const result = check(join(ROOT, 'docs'));
     expect({ code: result.code, err: result.err }).toEqual({ code: 0, err: '' });
-    expect(result.out).toContain('all 9 checks passed');
+    expect(result.out).toContain('all 10 checks passed');
     expect(failedChecks(result.out)).toEqual([]);
   });
 
@@ -95,11 +96,34 @@ describe('scripts/check-intent-docs.sh', () => {
   });
 
   it('exits 1 for a command of design 4.2 with no row in the Command map', async () => {
-    await change('roadmap-v2.md', (text) => text.replace(/^\| `desk` .*\n/m, ''));
+    await change('roadmap-v2.md', (text) => text.replace(/^\| `item`, `request`.*\n/m, ''));
     const result = check();
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['3']);
-    expect(result.out).toContain('the command desk of design.md 4.2 has no row in the Command map');
+    expect(result.out).toContain('the command request of design.md 4.2 has no row in the Command map');
+  });
+
+  it('reads the commands of the table of software recipe commands too', async () => {
+    await change('roadmap-v2.md', (text) => text.replace(/^\| `check`.*\n/m, ''));
+    const result = check();
+    expect(failedChecks(result.out)).toEqual(['3']);
+    expect(result.out).toMatch(/the command \S+ of design\.md 4\.2 has no row in the Command map/);
+  });
+
+  it('exits 1 for a desk row in design 4.2', async () => {
+    await change('design.md', (text) => text.replace(/^(factory help words.*)$/m, '$1\nfactory desk render   # a review desk'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['3']);
+    expect(result.out).toMatch(/design\.md 4\.2 has a desk row \(line \d+\)/);
+  });
+
+  it('exits 1 for a desk row in the Command map', async () => {
+    await change('roadmap-v2.md', (text) => text.replace('| `adopt` | FAC-M7 |', '| `adopt` | FAC-M7 |\n| `desk` | not built |'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['3']);
+    expect(result.out).toContain('the Command map of roadmap-v2.md has a desk row');
   });
 
   it('exits 1 for a table in design 7.1 that does not have 11 rows', async () => {
@@ -270,5 +294,52 @@ describe('scripts/check-intent-docs.sh, check 9: the design has the headings for
   it.each(HEADINGS)('accepts "%s" as a heading with no number', async (title) => {
     await change('design.md', (text) => text.replace(new RegExp(`^(#+ )[0-9.]+ ${title}$`, 'm'), `$1${title}`));
     expect(check().code).toBe(0);
+  });
+});
+
+/** Words of the software recipe list (Step 24 of the code change makes the list equal to `words.ts`). */
+const RECIPE_WORDS = ['merge', 'merged', 'pull request', 'release', 'release check', 'release scope', 'CI log', 'PR', 'CI'] as const;
+
+describe('scripts/check-intent-docs.sh, check 10: the core command table holds no word of the software recipe', () => {
+  it.each(RECIPE_WORDS)('exits 1 for the word "%s" in a line of the core command table', async (word) => {
+    await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, `$1 and the ${word}`));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['10']);
+    expect(result.out).toMatch(/design\.md line \d+: the core command table holds the software recipe word "/);
+  });
+
+  it('accepts the recipe words in the table of software recipe commands', () => {
+    const text = readFileSync(join(copy, 'design.md'), 'utf8');
+    const recipe = text.slice(text.indexOf('**Software recipe commands**'));
+    expect(recipe).toMatch(/factory pr merge/);
+    expect(check().code).toBe(0);
+  });
+
+  it('accepts a word that only holds a recipe word', async () => {
+    await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, '$1 and the ciphers, a prune, a premerge and a spring'));
+    expect(check().code).toBe(0);
+  });
+
+  it('accepts a lower-case pr and ci in the core table, because the recipe words PR and CI are upper case', async () => {
+    await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, '$1 and a pr and a ci'));
+    expect(check().code).toBe(0);
+  });
+
+  it('names the first hit only', async () => {
+    await change('design.md', (text) =>
+      text.replace(/^(factory doctor .*)$/m, '$1 and the merge').replace(/^(factory machine .*)$/m, '$1 and the release'),
+    );
+    const result = check();
+    expect(result.out).toContain('"merge"');
+    expect(result.out).not.toContain('"release"');
+  });
+
+  it('exits 1 when design 4.2 has no core command table', async () => {
+    await change('design.md', (text) => text.replace('**Core commands**', '**Commands**'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['10']);
+    expect(result.out).toContain('design.md 4.2 has no core command table');
   });
 });
