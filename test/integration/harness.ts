@@ -38,6 +38,21 @@ const exec = (
     });
   });
 
+/** The variable that tells a program it runs inside tmux. A command of the sandbox never gets it. */
+const TMUX_VARIABLE = 'TMUX';
+
+const withoutTmux = (values: Readonly<Record<string, string>>): Record<string, string> =>
+  Object.fromEntries(Object.entries(values).filter(([name]) => name !== TMUX_VARIABLE));
+
+/**
+ * The folder that holds the tmux socket of a sandbox. It is short, because a socket path has at most 103 bytes on macOS.
+ * Every command of the sandbox gets it as TMUX_TMPDIR, so no command reaches the tmux server of the user.
+ */
+const tmuxDirOf = (root: string): string => join(root, 'tmux');
+
+/** The socket of the tmux server of a sandbox. A tmux that gets TMUX_TMPDIR puts its socket below `tmux-<uid>`. */
+export const tmuxSocketOf = (root: string): string => join(tmuxDirOf(root), `tmux-${process.getuid?.() ?? 0}`, 'default');
+
 /** The roots of the sandboxes that are not removed yet. */
 const openRoots = new Set<string>();
 
@@ -71,6 +86,7 @@ export const makeSandbox = async (): Promise<Sandbox> => {
 const buildSandbox = async (root: string): Promise<Sandbox> => {
   const home = join(root, 'home');
   await mkdir(home, { recursive: true });
+  await mkdir(tmuxDirOf(root), { recursive: true });
   await writeFile(
     join(home, '.gitconfig'),
     '[user]\n\tname = Test Owner\n\temail = test.owner@example.com\n[init]\n\tdefaultBranch = main\n',
@@ -85,12 +101,14 @@ const buildSandbox = async (root: string): Promise<Sandbox> => {
     LANG: 'C',
     NO_COLOR: '1',
     npm_config_cache: join(home, 'npm-cache'),
+    TMUX_TMPDIR: tmuxDirOf(root),
   };
   return {
     root,
     node: join(root, 'node'),
     env,
-    run: (args, options) => exec('node', [DIST, ...args], options?.cwd ?? root, { ...env, ...options?.env }),
+    run: (args, options) =>
+      exec('node', [DIST, ...args], options?.cwd ?? root, withoutTmux({ ...env, ...options?.env })),
     git: (cwd, args) => exec('git', args, cwd, env),
     makeProject: async (name, origin) => {
       const path = join(root, name);

@@ -2,7 +2,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -65,16 +65,13 @@ beforeEach(async () => {
   await writeFile(join(bin, 'claude'), fakeClaude(outDir));
   await chmod(join(bin, 'claude'), 0o755);
 
-  // A separate tmux server: its socket is below TMUX_TMPDIR, and the environment has no TMUX.
-  const tmuxDir = join(box.root, 'tmux');
-  await mkdir(tmuxDir, { recursive: true });
-  socket = join(tmuxDir, `tmux-${process.getuid?.() ?? 0}`, 'default');
+  // A separate tmux server: the harness sets TMUX_TMPDIR to a folder of the sandbox and gives no TMUX.
+  socket = tmuxSocketOf(box.root);
   tmuxEnv = {
     ...box.env,
     // The slot pane runs this shell. A plain shell writes no history file into the folder that the test removes.
     SHELL: '/bin/sh',
     PATH: `${bin}:${box.env['PATH'] ?? ''}`,
-    TMUX_TMPDIR: tmuxDir,
     ANTHROPIC_BASE_URL: LAUNCH_PROXY_URL,
   };
 });
