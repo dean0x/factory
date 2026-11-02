@@ -56,7 +56,7 @@ In cases 2 and 3, `init` asks you to confirm the proposal. With `--yes`, it uses
 
 More flags of `init`:
 
-- `--project PATH|URL` adds a project. Repeat the flag for more. A URL (`https://`, `ssh://` or `user@host:path`) makes `init` clone the repo next to the home.
+- `--project PATH|URL` adds a project. Repeat the flag for more. A URL (`https://`, `ssh://` or `user@host:path`) makes `init` clone the repo next to the home. If a later step fails, `init` removes the clones that it made. It never removes a folder that was there before.
 - `--layer N` sets the layer of the node, from 1 to 16. The default is 1. Layer 1 has the coordinator role, layer 2 the manager role. A layer above 2 has no role template yet: `CLAUDE.md` holds the safety block only, and `init` prints a warning.
 - `--recipe ID` sets the recipe. The only recipe is `software`.
 - `--name ID`, `--owner-name NAME` and `--owner-github LOGIN` set the id of the node and the owner.
