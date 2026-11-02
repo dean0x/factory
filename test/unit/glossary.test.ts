@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
 import { glossary } from '../../src/glossary.js';
-import { schemaIds, terms } from '../../src/names.js';
+import { schemaIds, templateValues, terms } from '../../src/names.js';
 import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { captureSink } from '../helpers/sink.js';
@@ -47,6 +47,11 @@ describe('the glossary', () => {
     const count = text.split(/\s+/).filter((word) => word !== '').length;
     expect(count).toBeGreaterThan(0);
     expect(count).toBeLessThanOrEqual(MAX_WORDS);
+  });
+
+  it('names the orders folder in the entry for a work order', () => {
+    const text = glossary.find((word) => word.term === 'work order')?.text ?? '';
+    expect(text).toContain(templateValues.ordersDir);
   });
 
   it('has no placeholder left in any text', () => {
