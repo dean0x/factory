@@ -765,6 +765,67 @@ describe('upgrade: before it changes anything', () => {
   });
 });
 
+/** A config of schema 1 that the owner edited: comments on top, inline and between the keys, and an own key order. */
+const OWNER_CONFIG = `# My factory config.
+schema: 1
+
+# The note on the node.
+node:
+  id: demo    # The inline note on the id.
+  role: coordinator    # The inline note on the role.
+
+# The note on the limits.
+limits:
+  memory_free_min_pct: 20
+  disk_free_min_gb: 20
+  load_max: cpu_count
+  context_prepare_pct: 30
+  context_max_pct: 40
+
+# The note on the lanes.
+lanes: {}
+
+owner:
+  display: "Test Owner"
+  # The note on the prefix.
+  prefix: "[From {owner}, typed by {node} at the owner's explicit instruction, {date}]"
+
+session:
+  permission_mode: auto
+  effort: high
+  model: default
+  proxy: none
+
+proxies: []
+
+# The note on the projects.
+projects:
+  - id: web
+    # The note inside the project.
+    path: "../web"    # The inline note on the path.
+    default_branch: "main"
+    merge_method: squash
+    pack: plain
+    gate: { checks: [] }
+
+# The note on the children.
+children: []
+`;
+
+const OWNER_COMMENTS: readonly string[] = [
+  '# My factory config.',
+  '# The note on the node.',
+  '# The inline note on the id.',
+  '# The inline note on the role.',
+  '# The note on the limits.',
+  '# The note on the lanes.',
+  '# The note on the prefix.',
+  '# The note on the projects.',
+  '# The note inside the project.',
+  '# The inline note on the path.',
+  '# The note on the children.',
+];
+
 describe('upgrade: a node of schema 1', () => {
   const OLD = schema1Paths(HOME);
   const ROLES = `${HOME}/.factory/roles`;
@@ -857,6 +918,47 @@ describe('upgrade: a node of schema 1', () => {
     expect(gitSince().some((command) => command.endsWith('chore: upgrade the state'))).toBe(true);
     expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
     expect(deps.files.has(`${BACKUP}/.factory/briefs/.gitkeep`)).toBe(true);
+  });
+
+  it('keeps the comments and the order of the keys of a config that the owner edited', async () => {
+    const { deps } = makeOldNode();
+    deps.files.set(CONFIG, OWNER_CONFIG);
+    success(await upgrade(deps));
+
+    const written = text(deps, CONFIG);
+    for (const comment of OWNER_COMMENTS) expect(written).toContain(comment);
+    const parsed = parseYamlText(written);
+    expect(parsed.ok && configSchema.safeParse(parsed.value).success).toBe(true);
+    const value = parsed.ok ? (parsed.value as Record<string, Record<string, unknown>>) : {};
+    expect(Object.keys(value)).toEqual([
+      'schema',
+      'node',
+      'limits',
+      'cells',
+      'owner',
+      'session',
+      'proxies',
+      'recipe',
+      'children',
+      'tracker',
+      'approval',
+      'parent',
+    ]);
+    expect(Object.keys(value['node'] ?? {})).toEqual(['id', 'layer']);
+    expect(Object.keys(value['owner'] ?? {})).toEqual(['display', 'prefix']);
+    expect(written.indexOf('# The note on the limits.')).toBeLessThan(written.indexOf('limits:'));
+    expect(written.indexOf('limits:')).toBeLessThan(written.indexOf('session:'));
+  });
+
+  it('checks the new text of the config with the schema before it writes, and changes no file', async () => {
+    const doc = schema1Doc();
+    doc.extra = 1;
+    const { deps } = makeOldNode({ doc });
+    const before = live(deps);
+    const error = refusal(await upgrade(deps));
+    expect(error.message).toContain('factory.yaml is invalid');
+    expect(error.message).toContain('extra');
+    expect(live(deps)).toEqual(before);
   });
 
   it('has nothing to upgrade the second time', async () => {

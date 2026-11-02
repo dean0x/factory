@@ -134,7 +134,7 @@ export const runUpgrade = async (
 
   const stateText = stateFileText(state.value, upgrade, changes);
   if (!stateText.ok) return abort(stateText.error.message);
-  const configText = configFileText(config.value, upgrade);
+  const configText = await configFileText(deps, layout.configFile, config.value, upgrade);
   if (!configText.ok) return abort(configText.error.message);
   const movedFiles = await applyMoves(deps, files.value.moves, moved);
   if (!movedFiles.ok) return abort(movedFiles.error.message);

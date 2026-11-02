@@ -4,12 +4,12 @@ import { appendBlocks, parseBlocks, renderBlock, replaceBlock, type ParsedBlock 
 import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { isRecord } from '../migrate/inspect.js';
-import { runMigrations } from '../migrate/runner.js';
+import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
+import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
 import { dirs, files, stateKeys } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import type { BlockPlan, FilePlan, MovePlan } from './plan.js';
-import type { UpgradeSpec } from './spec.js';
+import type { UpgradeFile, UpgradeSpec } from './spec.js';
 
 export interface Written {
   readonly path: string;
@@ -223,10 +223,41 @@ export const stateFileText = (state: FilePlan, upgrade: UpgradeSpec, changes: re
   return text.ok ? ok(text.value) : failure(`${upgrade.state.spec.file}: ${text.error.message}`);
 };
 
-export const configFileText = (config: FilePlan, upgrade: UpgradeSpec): CliResult<string | null> => {
+/** The text, when it parses and holds a valid value of the current schema. */
+const checkedText = (text: string, file: UpgradeFile): CliResult<string> => {
+  const raw = file.parse(text);
+  if (!raw.ok) return failure(`${file.spec.file} does not parse: ${raw.error}`);
+  const checked = requireValid(inspectParsed(raw.value, file.spec), file.spec.file);
+  return checked.ok ? ok(text) : checked;
+};
+
+/**
+ * The new text of the config file. When every step can work on the text, the steps edit the text of the owner, so that
+ * the comments and the order of the keys stay. Else the steps migrate the value and the file is written from it.
+ * Either way, the new text is checked before the caller writes it.
+ */
+export const configFileText = async (
+  deps: Deps,
+  path: string,
+  config: FilePlan,
+  upgrade: UpgradeSpec,
+): Promise<CliResult<string | null>> => {
   if (config.kind === 'current') return ok(null);
-  const migrated = runMigrations(config.raw, config.steps);
-  if (!migrated.ok) return failure(`${upgrade.config.spec.file}: ${migrated.error.message}`);
-  const text = upgrade.config.finish(migrated.value);
-  return text.ok ? ok(text.value) : failure(`${upgrade.config.spec.file}: ${text.error.message}`);
+  const file = upgrade.config;
+  const label = file.spec.file;
+
+  const textSteps = config.steps.filter(isTextMigration);
+  if (textSteps.length < config.steps.length) {
+    const migrated = runMigrations(config.raw, config.steps);
+    if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
+    const text = file.finish(migrated.value);
+    return text.ok ? ok(text.value) : failure(`${label}: ${text.error.message}`);
+  }
+
+  const original = await readIfFile(deps, path);
+  if (!original.ok) return original;
+  if (original.value === null) return failure(`${label} not found`);
+  const migrated = runTextMigrations(original.value, textSteps);
+  if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
+  return checkedText(migrated.value, file);
 };

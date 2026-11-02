@@ -100,7 +100,7 @@ factory upgrade --dry-run
 factory upgrade
 ```
 
-`upgrade` migrates a node of version 0.1.0 to schema 2. It renames `lanes` to `cells`, `node.role` to `node.layer` and `pack` to `recipe` and `variant`. It moves `.factory/protocol.md` to `.factory/roles/worker.md` and `.factory/briefs/` to `.factory/orders/`. It adds `tracker.kind: local`.
+`upgrade` migrates a node of version 0.1.0 to schema 2. It renames `lanes` to `cells`, `node.role` to `node.layer` and `pack` to `recipe` and `variant`. It moves `.factory/protocol.md` to `.factory/roles/worker.md` and `.factory/briefs/` to `.factory/orders/`. It adds `tracker.kind: local`. It keeps the comments, the blank lines and the order of the keys in `factory.yaml`. A comment on a key that `upgrade` removes goes with that key.
 
 `upgrade` backs up `factory.yaml`, `CLAUDE.md` and `.factory/` to `.factory/backups/<timestamp>/`. The backup leaves out `.factory/state/` and `.factory/locks/`: they hold run-time data, and `upgrade` never changes them. It restores the files when a step fails. It never replaces a managed block that you edited. To replace such a block with the template text, name it:
 

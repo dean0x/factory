@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseYamlText } from '../../src/config/load.js';
 import { configSchema } from '../../src/config/schema.js';
 import { configMigrations } from '../../src/migrate/config.js';
 import { fileSteps, stepsBetween } from '../../src/migrate/files.js';
@@ -147,6 +148,104 @@ describe('config migration, schema 1 to 2', () => {
     const migrated = valueOf(migrateConfig(doc));
     const parsed = configSchema.safeParse(migrated);
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe('config migration on the text, schema 1 to 2', () => {
+  const [step] = configMigrations;
+
+  const migrateText = (text: string) => {
+    const applied = step?.applyText?.(text);
+    if (applied === undefined) throw new Error('the step has no text form');
+    return applied;
+  };
+
+  const textOf = (text: string): string => {
+    const migrated = migrateText(text);
+    if (!migrated.ok) throw new Error(`expected success, got: ${migrated.error.message}`);
+    return migrated.value;
+  };
+
+  const SOURCE = `# Top note.
+schema: 1    # Version note.
+
+# Between note.
+node:
+  id: demo
+  role: "coordinator"    # Role note.
+
+# Lanes note.
+lanes:
+  cell-a: { proxy: none }
+
+# Projects note.
+projects:
+  - id: web
+    path: "../web"
+    default_branch: "main"
+    merge_method: squash
+    pack: other
+    gate: { checks: [] }
+  - id: api
+    path: "../api"
+    default_branch: "main"
+    merge_method: squash
+    pack: plain
+    gate: { checks: [] }
+`;
+
+  it('gives the same value as the step on the value', () => {
+    const raw = parseYamlText(SOURCE);
+    if (!raw.ok) throw new Error(raw.error);
+    const written = parseYamlText(textOf(SOURCE));
+    expect(written.ok && written.value).toEqual(valueOf(migrateConfig(raw.value)));
+  });
+
+  it('keeps every comment, and puts the renamed keys where the old keys were', () => {
+    const migrated = textOf(SOURCE);
+    for (const note of ['# Top note.', '# Version note.', '# Between note.', '# Role note.', '# Lanes note.', '# Projects note.']) {
+      expect(migrated).toContain(note);
+    }
+    const written = parseYamlText(migrated);
+    expect(written.ok && Object.keys(written.value as object)).toEqual([
+      'schema',
+      'node',
+      'cells',
+      'recipe',
+      'tracker',
+      'approval',
+      'parent',
+    ]);
+    expect(migrated.indexOf('# Lanes note.')).toBeLessThan(migrated.indexOf('cells:'));
+    expect(migrated.indexOf('# Projects note.')).toBeLessThan(migrated.indexOf('recipe:'));
+  });
+
+  it('turns the pack of a project into a variant only when it differs, in the place of the pack', () => {
+    const written = parseYamlText(textOf(SOURCE));
+    const recipe = (written.ok ? (written.value as Record<string, any>)['recipe'] : {}) as Record<string, any>;
+    expect(Object.keys(recipe['projects'][0])).toEqual(['id', 'path', 'default_branch', 'merge_method', 'variant', 'gate']);
+    expect(recipe['projects'][0]['variant']).toBe('other');
+    expect(recipe['projects'][1]).not.toHaveProperty('variant');
+    expect(recipe['projects'][1]).not.toHaveProperty('pack');
+  });
+
+  it('makes the role a number, also when the role was quoted', () => {
+    const written = parseYamlText(textOf(SOURCE));
+    expect(written.ok && (written.value as Record<string, any>)['node']).toEqual({ id: 'demo', layer: 1 });
+    expect(written.ok && (written.value as Record<string, any>)['schema']).toBe(2);
+  });
+
+  it('refuses text that does not parse, and a role other than coordinator, without the text in the message', () => {
+    const broken = migrateText('schema: 1\nnode: [SECRET-TOKEN\n');
+    expect(!broken.ok && broken.error.message).not.toContain('SECRET-TOKEN');
+    expect(broken.ok).toBe(false);
+    const worker = migrateText(SOURCE.replace('"coordinator"', 'worker'));
+    expect(!worker.ok && worker.error.message).toContain('node.role');
+  });
+
+  it('refuses a document that holds a key of schema 2', () => {
+    const migrated = migrateText(`${SOURCE}tracker: { kind: local }\n`);
+    expect(!migrated.ok && migrated.error.message).toContain('tracker');
   });
 });
 
