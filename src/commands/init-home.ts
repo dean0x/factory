@@ -1,5 +1,6 @@
 import { basename, dirname, join, resolve } from 'node:path';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { printable } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { listRepoChildren, workTreeTop, type SkippedFolder } from '../core/git.js';
 import { findNearestConfig } from '../core/home.js';
@@ -48,7 +49,7 @@ const confirmProposal = async (
       `Run the command again with ${flagText(flags.yes)} to use it, or with ${flagText(flags.home)} DIR to choose another folder.`,
     );
   }
-  const answer = await deps.prompt(`${about}\nCreate the ${roles.node} home here? [y/N] `);
+  const answer = await deps.prompt(printable(`${about}\nCreate the ${roles.node} home here? [y/N] `));
   if (!answer.ok) return answer;
   if (ACCEPT_ANSWER.test(answer.value.trim())) return ok(choice);
   return usageError(

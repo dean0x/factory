@@ -1,3 +1,5 @@
+import type { CliError } from './errors.js';
+
 export type LineLevel = 'text' | 'heading' | 'ok' | 'warn' | 'fail';
 
 export interface OutLine {
@@ -79,8 +81,11 @@ export const detectStyle = (
 /** C0 controls (not tab or newline), DEL and C1 controls. The escape character is among them. */
 const CONTROL_CHARACTERS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 
-/** Values from config reach the terminal as text. Control characters never go through as they are. */
-const printable = (text: string): string => text.replace(CONTROL_CHARACTERS, '?');
+/** Values from config and folder names reach the terminal as text. Control characters never go through as they are. */
+export const printable = (text: string): string => text.replace(CONTROL_CHARACTERS, '?');
+
+export const renderError = (error: CliError): string =>
+  `error: ${printable(error.message)}\n${error.hint === undefined ? '' : `${printable(error.hint)}\n`}`;
 
 export const renderText = (output: CommandOutput, style: Style, quiet: boolean): string => {
   const shown = output.lines.filter((line) => !quiet || line.level === 'warn' || line.level === 'fail');

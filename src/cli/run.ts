@@ -1,7 +1,7 @@
 import type { Deps } from '../core/deps.js';
 import { commands, commandText, flags, flagShorts, flagText, helpTopics, program, schemaIds } from '../names.js';
-import { exitCodeOf, safetyRefusal, type CliError } from './errors.js';
-import { detectStyle, renderJson, renderText, renderWarnings } from './output.js';
+import { exitCodeOf, safetyRefusal } from './errors.js';
+import { detectStyle, renderError, renderJson, renderText, renderWarnings } from './output.js';
 import {
   commandTable,
   globalOptions,
@@ -23,9 +23,6 @@ const EXIT_FAILURE = 1;
 const EXIT_USAGE = 2;
 /** The value of `process.platform` on native Windows, where the tmux and shell steps cannot work. */
 const NATIVE_WINDOWS = 'win32';
-
-const renderError = (error: CliError): string =>
-  `error: ${error.message}\n${error.hint === undefined ? '' : `${error.hint}\n`}`;
 
 const findCommand = (name: string) => commandTable.find((command) => command.name === name);
 
@@ -64,7 +61,7 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
 
   const command = findCommand(first === flagText(flags.version) ? commands.version : first);
   if (command === undefined) {
-    await sink.stderr(`error: unknown command "${first}"\n\n${renderHelp()}`);
+    await sink.stderr(`${renderError({ kind: 'usage', message: `unknown command "${first}"` })}\n${renderHelp()}`);
     return EXIT_USAGE;
   }
 

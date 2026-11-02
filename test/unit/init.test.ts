@@ -917,6 +917,15 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(deps.prompts[0]).toContain('Create the node home here? [y/N]');
   });
 
+  it('replaces the control characters of a folder name in the question', async () => {
+    const deps = inWorkspace({ ...terminal, prompt: () => ok('y') }, { repos: { '/ws/we\u001b[2Jb': {} } });
+    const result = await runInit(deps, withHome());
+    expect(result.ok).toBe(true);
+    expect(deps.prompts).toHaveLength(1);
+    expect(deps.prompts[0]).toContain('this folder holds the git repos we?[2Jb');
+    expect(deps.prompts[0]).not.toContain('\u001b');
+  });
+
   it('stops with exit 2 when the person does not accept', async () => {
     const deps = inWorkspace({ ...terminal, prompt: () => ok('n') });
     const before = snapshot(deps);

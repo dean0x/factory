@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createStyle, detectStyle, renderJson, renderText, renderWarnings } from '../../src/cli/output.js';
+import { createStyle, detectStyle, renderError, renderJson, renderText, renderWarnings } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags } from '../../src/cli/table.js';
 import { FACTORY_VERSION } from '../../src/version.js';
@@ -250,5 +250,30 @@ describe('control characters in text output', () => {
     const doc = { schema: 'x/v1', path: 'a\u001bb' };
     expect(JSON.parse(renderJson(doc))).toEqual(doc);
     expect(renderJson(doc)).not.toContain('\u001b');
+  });
+});
+
+describe('control characters in error text', () => {
+  it('replaces them in the message and in the hint', () => {
+    const text = renderError({ kind: 'failure', message: 'bad \u001b[2J folder', hint: 'try \u0007 again\u009b' });
+    expect(text).toBe('error: bad ?[2J folder\ntry ? again?\n');
+  });
+
+  it('prints an error with no hint as one line', () => {
+    expect(renderError({ kind: 'usage', message: 'bad' })).toBe('error: bad\n');
+  });
+
+  it('replaces them in the error of a command', async () => {
+    const result = await run(['node', 'x\u001b[2Jy']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('unknown subcommand "x?[2Jy"');
+    expect(result.err).not.toContain('\u001b');
+  });
+
+  it('replaces them in the name of an unknown command', async () => {
+    const result = await run(['\u001b[2Jx']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('unknown command "?[2Jx"');
+    expect(result.err).not.toContain('\u001b');
   });
 });
