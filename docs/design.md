@@ -376,6 +376,7 @@ tracker:                     # the default tracker of the node; a project can ov
   decisions: acme/decisions  # the decision store; private by default (§4.10)
   site: null                 # jira only: the base URL of the Jira site
   key: null                  # jira: the project key; linear: the team key
+  agent_account: null        # the tracker identity of the cells (a machine user or an app); must differ from the owner (§4.10)
   watch_interval: 5m         # `factory watch` read interval
 recipe:
   id: software
@@ -557,6 +558,13 @@ factory does not build its own review desk. The board, the andon items and the d
 - `factory decide read` reads the answer with a script, not with model tokens. An answer counts only when its author is the owner's tracker account (`owner.github` for GitHub). The script records the decision in `decision-log.json`, with the comment link and the author.
 - With `local`, `factory decide <D-n> <option>` records the answer with `by: owner`. It needs a TTY, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). This guard stops a session from answering by accident. The owner's permission settings are the second guard.
 - An *ask* is a decision item for one PR or one work item. The owner answers `approve` or `refuse` in the same way. §6.1 says which answers count as an approval.
+
+**Tracker identity.** The author of a tracker event proves the owner only when the agents write with another identity. If the cells and the coordinator use the owner's own account, an agent can post a comment, a label or an assignee that looks like the owner's.
+- `tracker.agent_account` names the identity that the agents use: a machine user, or a GitHub App with its own token.
+- A tracker event counts as an owner proof only when two things are true: its author is the owner account, and `tracker.agent_account` is set to another account.
+- When `tracker.agent_account` is unset, or equal to the owner account, the account is *shared*. Then `doctor` warns, and no tracker event counts as a proof: no comment answer, no label and no assignee. Only `factory decide <D-n> <option>` from a TTY outside a factory session counts. With a shared account, `factory decide` works with every tracker kind. It records `by: owner` in the decision log and adds a comment to the item that says the answer came from the CLI. That comment is a record, not a proof.
+- With `local`, there are no tracker events, so only `factory decide` counts in every case.
+- The setup text (README and `factory doctor`) tells the owner how to make a machine user or an app for the agents.
 - Designs and plans: the `doc` operation links the repo file (GitHub shows Markdown), or attaches it.
 
 **Changes and wake-up (F-2).** There is no live push to a local session without a webhook server. So `factory watch` calls `changes read` with the tracker CLI at a fixed interval (`tracker.watch_interval`), with a bound on the number of reads per run. The coordinator reads these owner actions:
@@ -564,7 +572,7 @@ factory does not build its own review desk. The board, the andon items and the d
 - a label added or removed, for example `choose:<option>` or `ready` (a work item is ready);
 - an issue or item opened or closed.
 
-An event counts only when its author is the owner's tracker account. An event from another account wakes nobody, and the digest counts it as "other". An assignee change is read, because it is a proof of assignment (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new owner event, it writes one record into `.factory/inbox/` and rings one constant doorbell line in the coordinator pane (§4.12). `factory up` starts `factory watch` in the window `ops` (§4.11).
+An event counts only when its author is the owner's tracker account. An event from another account wakes nobody, and the digest counts it as "other". With a shared account (see "Tracker identity"), an owner event still wakes the coordinator, but it never counts as a proof. An assignee change is read, because it is a proof of assignment (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new owner event, it writes one record into `.factory/inbox/` and rings one constant doorbell line in the coordinator pane (§4.12). `factory up` starts `factory watch` in the window `ops` (§4.11).
 
 **Privacy.** An issue in a public repo is public. Decision items can hold private facts. So the default decision store is a private repo, or private draft items in a private Project. `factory doctor` fails when the decision store is public, and warns when it is not set. The `local` store is private: it is the node's own state repo, with no remote.
 
@@ -689,7 +697,7 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 | A proxy only by explicit config, and only when it answers | yes | Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the config (§4.6). A health check runs before each launch and in `doctor` and `status`. On failure the default is `stop` with the fix in the message; `direct` is an explicit choice. `doctor` sends the check only when the config comes from `--home` or from the current folder. For a config in a parent folder, `doctor` sends no request and warns to run with `--home DIR`. `doctor` warns when the variable is set in the shell. |
 | No proxy keys or tokens in output | yes | `proxies` holds no keys; `doctor` refuses token-like values there. Output shows only the proxy id and its host and port, never user info, query strings or headers of the base URL. |
 | A denial is final; no laundering through another session | yes | `cell send` and `cell relay` refuse a text that asks a cell to run a command that the node recorded as denied (a `denied` list in state). |
-| Never invent the owner's consent | yes | `cell relay` types the owner prefix only for a decision record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only for an answer from the owner's tracker account. With `local`, `factory decide` needs a TTY and refuses inside a session that factory started. |
+| Never invent the owner's consent | yes | `cell relay` types the owner prefix only for a decision record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only for an answer from the owner's tracker account, and only when the agents use another account (`tracker.agent_account`). With a shared account, or with `local`, only `factory decide` counts: it needs a TTY and refuses inside a session that factory started. `doctor` warns on a shared account. |
 | Decisions stay private | yes | `doctor` fails when the decision store is public, and warns when it is not set (§4.10). |
 | No secrets in output | yes | No command prints env values. `doctor` refuses token-like values in `factory.yaml`. Process lists show only pid, elapsed time and command name. |
 | Peers never ask the owner directly | yes (role templates) | none (model behavior) |
@@ -719,11 +727,16 @@ The assignment is direct, by a decision, or by the tracker:
 - By a decision: a second record by the owner names the cell or the track for that work.
 - By the tracker: the owner's account sets the assignee or a `cell:<id>` label on the work item. `factory watch` reads the change through the adapter (§4.10).
 
+Every tracker proof above (a comment answer, a label, an assignee) needs separate identities: the agents write with `tracker.agent_account`, not with the owner account (§4.10, "Tracker identity"). With a shared account, no tracker proof counts. Then only a decision recorded by `factory decide` from a TTY outside a factory session proves approval or assignment.
+
 These do not count:
 - chat text;
 - an answer, a label or an assignee change from another account;
 - a record that names another PR or head SHA;
-- a commit author or a `Status:` line in a file. Agents can commit with the owner's own account, so a commit author proves nothing. An approval in chat becomes a proof when the owner records it in one of the three forms. With `approval.land: each`, only a decision or an answered ask for that PR and head SHA counts; a plan does not.
+- a commit author or a `Status:` line in a file. Agents can commit with the owner's own account, so a commit author proves nothing;
+- any tracker event while the agents and the owner share one account.
+
+An approval in chat becomes a proof when the owner records it in one of the three forms. With `approval.land: each`, only a decision or an answered ask for that PR and head SHA counts; a plan does not.
 
 An open question of the owner blocks the merge (D-52). `factory inspect` gives `NOT READY` while the PR has an open ask or an open andon item.
 
@@ -869,6 +882,7 @@ An independent check of the design against Dean's notes found open points. The O
 | OD-7 | The tracker scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira has `site` and `key` (§4.4, §4.10). |
 | OD-8 | The word list of Dean ends with the heading "machinery and automation hardware". A table in §7.1 maps each of his 11 words. |
 | OD-9 | The state repo can push to a private git remote that the owner names. `init --state-from` clones it on a second machine (§4.3). |
+| OD-10 | A tracker event proves the owner only when the agents use another identity (`tracker.agent_account`). With a shared account, `doctor` warns and only `factory decide` from a TTY outside a factory session counts (§4.10, §6.1). |
 
 ## 10. Risks
 
@@ -876,7 +890,7 @@ An independent check of the design against Dean's notes found open points. The O
 - **A dead proxy stops every cell that uses it.** The health check runs before each launch, the default is `stop` with a clear fix, and the views show which cells use a proxy (§4.6).
 - **tmux typing is fragile.** factory types only one short line per message and keeps the text in the inbox. Each typed input is checked by a capture.
 - **Tracker limits and cost.** The tracker APIs have rate limits, and reads cost time. `factory watch` reads at a fixed interval with a bound per run, and caches in `.factory/state/`. A tracker that does not answer is "unknown", never "no answer".
-- **A false decision answer.** Anyone with access can comment on a decision item. `decide read` accepts only the owner's account, and records the author and the link.
+- **A false decision answer.** Anyone with access can comment on a decision item. `decide read` accepts only the owner's account, and records the author and the link. If the agents write with the owner's account, an agent can fake an answer. So a tracker answer counts only when `tracker.agent_account` is another account; else only `factory decide` counts.
 - **A public decision store.** `doctor` fails on it (§4.10).
 - **The renames and the schema 2 migration touch every part.** They come first in the roadmap, before more code uses the old names. The schema 1 → 2 migration has a test, and every name sits in `src/names.ts`.
 - **Scope grows.** The roadmap ships the CLI in stages. Each stage is useful for this workspace before the next one starts. Other recipes and other trackers wait until the `software` recipe on GitHub works.

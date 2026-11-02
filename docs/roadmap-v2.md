@@ -189,6 +189,11 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   - a plan file with `Status: approved` in a commit by the owner's account, with no answered ask or decision item;
   - an assignee or label set by another account;
   - chat text with no record.
+- [ ] Tracker identity tests (design §4.10, §6.1), with a fake adapter that gives events with an author. The `github` adapter comes in FAC-M3 and runs the same tests.
+  - Shared account (`tracker.agent_account` unset, or equal to the owner account): an owner comment `approve`, an owner assignee and an owner `cell:<id>` label are each refused as a proof, and the message names the shared account. A decision from `factory decide` on a fake TTY with no `FACTORY_SESSION` is accepted, and `pr merge` merges.
+  - Separate accounts: the same owner events are accepted, and `pr merge` merges. The same events with the agent account as author are refused.
+- [ ] `doctor` warns, with the fix, when the tracker kind is not `local` and `tracker.agent_account` is unset or equal to the owner account. The config accepts the key, and a token-like value in it fails (tests).
+- [ ] The README setup section tells the owner how to give the agents their own tracker identity (a machine user or an app). A docs check finds the section.
 - [ ] Config test: `approval.ship: each` loads, and an absent key means `each`. Any other value fails and names the key. `ship check|verify` only read; a test asserts that they run no publish command.
 - [ ] `checkout clean` is a dry run by default, and refuses a worktree with unpushed work or a path that a cell or resume file names. `factory clean` does not exist as a second command.
 - [ ] `checkout list` and `checkout status` give the right rows and counts on fixture repos with linked worktrees: clean, dirty, unpushed, branch not on the remote. They ask git, never a `.git` folder test.

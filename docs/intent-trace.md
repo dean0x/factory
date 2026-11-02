@@ -102,6 +102,7 @@ How to read the table:
 | Gap 1 | Find the home from a project folder | §4.3 | FAC-M2: home index test | covered |
 | Gap 2 | The owner has a view and a way to answer in the `local` period | §4.10, §8 | FAC-M7: `scripts/check-owner-view.sh` and the owner answer pty test. FAC-M3 retires the old scripts | covered |
 | Gap 3 | The proof of approval follows D-52 | §6.1 | FAC-M5: one test for each proof, all through the owner channel; `inspect` exits 3 on an open ask | covered |
+| OD-10 | A tracker event proves the owner only when the agents use another identity | §4.10, §6.1 | FAC-M5: tracker identity tests (shared account refuses tracker proofs and accepts `factory decide`; separate accounts accept owner events and refuse agent events); `doctor` warning test; README setup check | covered |
 | Gap 4 | The release question is open | §6.2, §4.4 | FAC-M5: `approval.ship` config test. D-57 is in "Decisions needed" | covered; D-57 is open with Dean |
 | Gap 5 | The user picks the tracker at setup | §4.10 | FAC-M3: tracker choice test with a fake `gh` | covered |
 | Gap 6 | The adopt moves the coordinator text out of the folder above the checkouts | §8 | FAC-M7: `scripts/check-cell-paths.sh` | covered |
