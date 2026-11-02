@@ -11,7 +11,9 @@ Renames
 Config schema 2 and the migration
 
 - `factory.yaml` has schema 2. The projects are now in `recipe.projects`, and `recipe.id` names the recipe. New keys: `tracker`, `approval`, `parent` and `children`. The only tracker is `local`. The other tracker kinds parse, and `doctor` warns that their connector comes later.
-- `factory upgrade` migrates a node of version 0.1.0 to schema 2 in one step. It keeps the comments, the blank lines and the order of the keys in `factory.yaml`. It moves the files, renames the managed block, backs up first, and restores the files when a step fails. It refuses an edited `protocol` block unless you name it with `--overwrite`. After the upgrade, `factory doctor` passes.
+- `factory upgrade` migrates a node of version 0.1.0 to schema 2 in one step. It keeps the comments, the blank lines and the order of the keys in `factory.yaml`. It moves the files, renames the managed block, backs up first, and restores the files when a step fails. It refuses an edited `protocol` block unless you name it with `--overwrite`. After the upgrade of a home that follows the home rules, `factory doctor` passes.
+- When `factory upgrade` has something to upgrade, it checks the home rules of `init`. If the home is inside a git work tree or inside another node home, holds a git repo one level down, or is a project folder or holds one, `upgrade` prints a warning with the remedy and still upgrades.
+- `factory upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports. The JSON output names the old name of a renamed block in `blocks[].renamedFrom`.
 - A node link (`parent` and `children`) accepts only a `file://` address on this machine. An `ssh://`, `https://` or relative address is refused. A node on layer 1 with entries in `children` stops the migration and changes nothing, because the children of layer 1 are cells. The message gives the remedy.
 
 Home, `init` and `up`

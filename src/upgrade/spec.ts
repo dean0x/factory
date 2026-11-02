@@ -40,6 +40,8 @@ export interface UpgradeSpec {
   readonly files: readonly FileStep[];
   /** The managed blocks of the node that a config value describes. The value has the current schema version. */
   blocksOf(config: unknown): CliResult<BlockSet>;
+  /** The paths of the projects that a config value lists, as the value holds them. The value has the current schema version. */
+  projectPathsOf(config: unknown): CliResult<readonly string[]>;
 }
 
 export const finisher =
@@ -59,6 +61,18 @@ const blocksOfLayer = (config: unknown): CliResult<BlockSet> => {
   return ok({ templates: blockTemplatesFor(layer), renames: roleBlockRenames(layer) });
 };
 
+const projectsSchema = z.looseObject({
+  [keys.root.recipe]: z.looseObject({
+    [keys.recipe.projects]: z.array(z.looseObject({ [keys.project.path]: z.string() })).default([]),
+  }),
+});
+
+const projectPathsOfRecipe = (config: unknown): CliResult<readonly string[]> => {
+  const parsed = projectsSchema.safeParse(config);
+  if (!parsed.success) return failure(describeIssues(parsed.error));
+  return ok(parsed.data[keys.root.recipe][keys.recipe.projects].map((project) => project[keys.project.path]));
+};
+
 export const currentSpec: UpgradeSpec = {
   config: {
     spec: CONFIG_SPEC,
@@ -74,4 +88,5 @@ export const currentSpec: UpgradeSpec = {
   },
   files: fileSteps,
   blocksOf: blocksOfLayer,
+  projectPathsOf: projectPathsOfRecipe,
 };

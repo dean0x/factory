@@ -63,13 +63,26 @@ export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Pro
   }
 };
 
-/** The managed blocks of the node, as its config is after the migrations. A failing migration stops the upgrade here. */
-export const planBlockSet = (config: FilePlan, upgrade: UpgradeSpec): CliResult<BlockSet> => {
-  const file = upgrade.config.spec.file;
+/** The config as it is after the migrations. A failing migration stops the upgrade here. */
+const migratedConfig = (config: FilePlan, upgrade: UpgradeSpec): CliResult<unknown> => {
   const migrated = config.kind === 'migrate' ? runMigrations(config.raw, config.steps) : ok(config.raw);
-  if (!migrated.ok) return failure(`${file}: ${migrated.error.message}`);
+  return migrated.ok ? migrated : failure(`${upgrade.config.spec.file}: ${migrated.error.message}`);
+};
+
+/** The managed blocks of the node, as its config is after the migrations. */
+export const planBlockSet = (config: FilePlan, upgrade: UpgradeSpec): CliResult<BlockSet> => {
+  const migrated = migratedConfig(config, upgrade);
+  if (!migrated.ok) return migrated;
   const set = upgrade.blocksOf(migrated.value);
-  return set.ok ? set : failure(`${file}: ${set.error.message}`);
+  return set.ok ? set : failure(`${upgrade.config.spec.file}: ${set.error.message}`);
+};
+
+/** The paths of the projects, as the config holds them after the migrations. */
+export const planProjectPaths = (config: FilePlan, upgrade: UpgradeSpec): CliResult<readonly string[]> => {
+  const migrated = migratedConfig(config, upgrade);
+  if (!migrated.ok) return migrated;
+  const paths = upgrade.projectPathsOf(migrated.value);
+  return paths.ok ? paths : failure(`${upgrade.config.spec.file}: ${paths.error.message}`);
 };
 
 /** A file or a folder that moves. `from` and `to` are paths inside the node home, for the output. */

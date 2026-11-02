@@ -1,4 +1,4 @@
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { inspectBlocks, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
@@ -6,7 +6,7 @@ import type { Deps } from '../core/deps.js';
 import { commitAll, hasIdentity, unstageAll } from '../core/git.js';
 import { resolveHome } from '../core/home.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, dirs, flags, flagText, schemaIds } from '../names.js';
+import { commands, commandText, dirs, flags, flagText, roles, schemaIds } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import {
   applyMoves,
@@ -21,8 +21,19 @@ import {
   type NewFile,
   type Written,
 } from '../upgrade/apply.js';
-import { isChange, planBlock, planBlockSet, planFile, planFiles, planLines, refusalOf } from '../upgrade/plan.js';
+import {
+  isChange,
+  planBlock,
+  planBlockSet,
+  planFile,
+  planFiles,
+  planLines,
+  planProjectPaths,
+  refusalOf,
+  type FilePlan,
+} from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
+import { checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
 
 export interface UpgradeOptions {
   readonly home: string | undefined;
@@ -31,6 +42,37 @@ export interface UpgradeOptions {
 }
 
 const COMMIT_MESSAGE = 'chore: upgrade the state';
+
+/**
+ * A warning for each home rule that the home breaks. The upgrade still runs, because the owner moves the home.
+ * The paths of the projects are those of the config after the migrations.
+ */
+const homeRuleLines = async (
+  deps: Deps,
+  home: string,
+  config: FilePlan,
+  upgrade: UpgradeSpec,
+): Promise<CliResult<readonly OutLine[]>> => {
+  const paths = planProjectPaths(config, upgrade);
+  if (!paths.ok) return paths;
+  const projects = paths.value.map((path) => resolve(home, path));
+  const remedy =
+    `${commandText(commands.doctor)} fails for this home. Move the home to a folder beside the projects, ` +
+    `outside every git work tree and every other ${roles.node} home, and fix the project paths in ${upgrade.config.spec.file}.`;
+
+  const results = [
+    await checkHomeLocation(deps, home),
+    await checkHomeHoldsNoRepo(deps, home),
+    await checkHomeApart(deps, home, projects),
+  ];
+  const lines: OutLine[] = [];
+  for (const result of results) {
+    if (result.ok) continue;
+    if (result.error.kind !== 'safety') return result;
+    lines.push({ level: 'warn', text: `${result.error.message}. ${remedy}` });
+  }
+  return ok(lines);
+};
 
 export const runUpgrade = async (
   deps: Deps,
@@ -72,15 +114,31 @@ export const runUpgrade = async (
   const refused = refusalOf(blocks);
   if (!refused.ok) return refused;
 
-  const lines = planLines(config.value, state.value, files.value, blocks, upgrade);
   const changes = blocks.filter(isChange);
   const changed = config.value.kind === 'migrate' || state.value.kind === 'migrate' || changes.length > 0;
+
+  // The new texts come from pure functions. The dry run makes them too, so that it reports what the real run refuses.
+  const stateText = stateFileText(state.value, upgrade, changes);
+  if (!stateText.ok) return stateText;
+  const configText = await configFileText(deps, layout.configFile, config.value, upgrade);
+  if (!configText.ok) return configText;
+
+  const homeLines = changed ? await homeRuleLines(deps, home, config.value, upgrade) : ok<readonly OutLine[]>([]);
+  if (!homeLines.ok) return homeLines;
+
+  const lines = [...planLines(config.value, state.value, files.value, blocks, upgrade), ...homeLines.value];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
   const summary = {
     config: { from: config.value.kind === 'current' ? config.value.version : config.value.from, to: upgrade.config.spec.supported },
     state: { from: state.value.kind === 'current' ? state.value.version : state.value.from, to: upgrade.state.spec.supported },
     moves: files.value.moves.map((move) => ({ from: move.from, to: move.to })),
-    blocks: blocks.map((plan) => ({ name: plan.template.name, action: plan.action, from: plan.from, to: plan.template.version })),
+    blocks: blocks.map((plan) => ({
+      name: plan.template.name,
+      action: plan.action,
+      from: plan.from,
+      to: plan.template.version,
+      renamedFrom: renamedFromOf(plan.status) ?? null,
+    })),
   };
   const done = (extra: readonly OutLine[], backupPath: string | null, committed: boolean): CliResult<CommandOutput> =>
     ok({
@@ -132,10 +190,6 @@ export const runUpgrade = async (
     );
   };
 
-  const stateText = stateFileText(state.value, upgrade, changes);
-  if (!stateText.ok) return abort(stateText.error.message);
-  const configText = await configFileText(deps, layout.configFile, config.value, upgrade);
-  if (!configText.ok) return abort(configText.error.message);
   const movedFiles = await applyMoves(deps, files.value.moves, moved);
   if (!movedFiles.ok) return abort(movedFiles.error.message);
   const blockTexts = await blockFileTexts(deps, home, changes);

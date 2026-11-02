@@ -17,7 +17,7 @@ import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../..
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
-import { gitHandler } from '../helpers/git-fake.js';
+import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { schema1Doc, schema1Paths, seedSchema1Node } from '../helpers/schema1.js';
 
 /** The schema versions that this factory reads. A test migration starts from them. */
@@ -79,6 +79,10 @@ const refusal = (result: UpgradeResult): CliError => {
   if (result.ok) throw new Error('expected an error');
   return result.error;
 };
+
+/** The git commands that write: reads of the config and of the work tree do not count. */
+const gitWrites = (commands: readonly string[]): string[] =>
+  commands.filter((command) => !command.startsWith('config') && !command.startsWith('rev-parse'));
 
 const text = (deps: FakeDeps, path: string): string => deps.files.get(path) ?? '';
 const snapshot = (deps: FakeDeps): Map<string, string> => new Map(deps.files);
@@ -269,7 +273,7 @@ describe('upgrade: managed blocks', () => {
     expect(text(deps, CLAUDE)).not.toContain('Do as you like.');
     expect(output.lines.at(-1)?.text).toMatch(/^Changed 1 file\./);
     expect(output.json).toMatchObject({ committed: false });
-    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    expect(gitWrites(gitSince())).toEqual([]);
     expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
   });
 
@@ -351,7 +355,7 @@ describe('upgrade: migrations', () => {
     expect(lineTexts(output)).toContain(`factory.yaml: schema ${C} to ${C + 2} (2 steps)`);
     expect(output.json).toMatchObject({ config: { from: C, to: C + 2 }, committed: false });
     expect(text(deps, `${BACKUP}/factory.yaml`)).toBe(original);
-    expect(gitSince()).toEqual([]);
+    expect(gitWrites(gitSince())).toEqual([]);
   });
 
   it('migrates the state and records the new block versions in one file', async () => {
@@ -360,6 +364,7 @@ describe('upgrade: migrations', () => {
       config: currentSpec.config,
       state: stateAt(S + 1, [step('schema_version', S, { note: 'x' })]),
       files: currentSpec.files,
+      projectPathsOf: currentSpec.projectPathsOf,
       ...fixedBlocks(withBlock('safety', 'New safety text.')),
     };
     const output = success(await upgrade(deps, spec));
@@ -379,6 +384,7 @@ describe('upgrade: migrations', () => {
       config: configAt(C + 1, [step('schema', C)]),
       state: stateAt(S + 1, [step('schema_version', S)]),
       files: currentSpec.files,
+      projectPathsOf: currentSpec.projectPathsOf,
       ...fixedBlocks(withBlock('coordinator', 'New coordinator text.')),
     };
     success(await upgrade(deps, spec));
@@ -408,28 +414,41 @@ describe('upgrade: migrations', () => {
     expect(gitSince()).toEqual([]);
   });
 
-  it('stops at a failing step of the state, changes no file and keeps the backup', async () => {
+  it('stops at a failing step of the state, in the plan, before it makes a backup, also in a dry run', async () => {
     const { deps, gitSince } = await makeNode();
-    const original = text(deps, NODE_JSON);
+    const before = snapshot(deps);
     const spec: UpgradeSpec = { ...currentSpec, state: stateAt(S + 2, [step('schema_version', S), brokenStep(S + 1)]) };
-    const error = refusal(await upgrade(deps, spec));
-    expect(error.kind).toBe('failure');
-    expect(error.message).toContain(`.factory/node.json: migration from version ${S + 1} to ${S + 2} failed: boom`);
-    expect(error.message).toContain('The files are as they were.');
-    expect(error.message).toContain('.factory/backups/2030-01-02T03-04-05-678Z');
-    expect(text(deps, NODE_JSON)).toBe(original);
-    expect(text(deps, `${BACKUP}/.factory/node.json`)).toBe(original);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, spec, { dryRun }));
+      expect(error.kind).toBe('failure');
+      expect(error.message).toBe(`.factory/node.json: migration from version ${S + 1} to ${S + 2} failed: boom`);
+    }
+    expect(snapshot(deps)).toEqual(before);
     expect(gitSince().some((command) => command.includes('commit'))).toBe(false);
   });
 
-  it('fails when the migrated value does not pass the schema, and names the key', async () => {
+  it('fails when the migrated value does not pass the schema, and names the key, also in a dry run', async () => {
     const { deps } = await makeNode();
-    const original = text(deps, CONFIG);
+    const before = snapshot(deps);
     const sloppy: Migration = { from: C + 1, to: C + 2, apply: (raw) => ok(raw) };
     const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 2, [step('schema', C), sloppy]) };
-    const error = refusal(await upgrade(deps, spec));
-    expect(error.message).toContain('factory.yaml: schema:');
-    expect(text(deps, CONFIG)).toBe(original);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, spec, { dryRun }));
+      expect(error.message).toContain('factory.yaml: schema:');
+    }
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('fails when the migrated state does not pass the schema, also in a dry run', async () => {
+    const { deps } = await makeNode();
+    const before = snapshot(deps);
+    const sloppy: Migration = { from: S + 1, to: S + 2, apply: (raw) => ok(raw) };
+    const spec: UpgradeSpec = { ...currentSpec, state: stateAt(S + 2, [step('schema_version', S), sloppy]) };
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, spec, { dryRun }));
+      expect(error.message).toContain('.factory/node.json: schema_version:');
+    }
+    expect(snapshot(deps)).toEqual(before);
   });
 
   it('fails for a file that is newer than this factory', async () => {
@@ -835,9 +854,9 @@ describe('upgrade: a node of schema 1', () => {
   const workerLine = workerBody.split('\n').find((line) => line.length > 20 && !line.startsWith('#')) ?? '';
 
   const makeOldNode = (
-    options: { run?: (inner: RunHandler) => RunHandler; doc?: Record<string, any> } = {},
+    options: { run?: (inner: RunHandler) => RunHandler; doc?: Record<string, any>; git?: GitFixture } = {},
   ): Node => {
-    const { handler } = gitHandler();
+    const { handler } = gitHandler(options.git);
     const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin' }, run: options.run?.(handler) ?? handler });
     seedSchema1Node(deps, HOME, options.doc);
     const first = deps.calls.length;
@@ -950,15 +969,86 @@ describe('upgrade: a node of schema 1', () => {
     expect(written.indexOf('limits:')).toBeLessThan(written.indexOf('session:'));
   });
 
-  it('checks the new text of the config with the schema before it writes, and changes no file', async () => {
+  it('checks the new text of the config with the schema before it writes, also in a dry run, and changes no file', async () => {
     const doc = schema1Doc();
     doc.extra = 1;
     const { deps } = makeOldNode({ doc });
     const before = live(deps);
-    const error = refusal(await upgrade(deps));
-    expect(error.message).toContain('factory.yaml is invalid');
-    expect(error.message).toContain('extra');
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.message).toContain('factory.yaml is invalid');
+      expect(error.message).toContain('extra');
+    }
     expect(live(deps)).toEqual(before);
+  });
+
+  describe('the home rules', () => {
+    const homeWarnings = async (deps: FakeDeps, dryRun: boolean): Promise<readonly string[]> =>
+      success(await upgrade(deps, currentSpec, { dryRun })).warnings;
+
+    it('gives no warning when the home follows the rules', async () => {
+      const { deps } = makeOldNode();
+      expect(await homeWarnings(deps, true)).toEqual([]);
+      expect(await homeWarnings(deps, false)).toEqual([]);
+    });
+
+    it('warns when the home is inside a git work tree, with the remedy, and still upgrades', async () => {
+      const { deps } = makeOldNode({ git: { repos: { '/w': {} } } });
+      const [warning, ...others] = await homeWarnings(deps, true);
+      expect(others).toEqual([]);
+      expect(warning).toContain('is inside the git work tree /w');
+      expect(warning).toContain('Move the home');
+      expect(warning).toContain('fix the project paths in factory.yaml');
+      expect(text(deps, CONFIG)).toContain('schema: 1');
+
+      expect(await homeWarnings(deps, false)).toEqual([warning]);
+      expect(text(deps, CONFIG)).toContain('schema: 2');
+    });
+
+    it('warns when the home is inside another node home', async () => {
+      const { deps } = makeOldNode();
+      deps.seed('/w/factory.yaml', 'schema: 2\n');
+      const [warning, ...others] = await homeWarnings(deps, false);
+      expect(others).toEqual([]);
+      expect(warning).toContain('is inside another node home: /w/factory.yaml exists');
+    });
+
+    it('warns when a project is inside the home', async () => {
+      const doc = schema1Doc();
+      doc.projects[0].path = 'web';
+      const { deps } = makeOldNode({ doc });
+      const [warning, ...others] = await homeWarnings(deps, false);
+      expect(others).toEqual([]);
+      expect(warning).toContain('is the project folder /w/node/web, or holds it');
+    });
+
+    it('warns when the home holds a git repo one level down', async () => {
+      const doc = schema1Doc();
+      doc.projects[0].path = '../web';
+      const { deps } = makeOldNode({ doc, git: { repos: { '/w/node/other': {} } } });
+      deps.seedDir('/w/node/other/.git');
+      const [warning, ...others] = await homeWarnings(deps, false);
+      expect(others).toEqual([]);
+      expect(warning).toContain('holds the git repo other one level down');
+    });
+
+    it('does not check the home when nothing is upgraded', async () => {
+      const { deps, gitSince } = await makeNode();
+      expect(success(await upgrade(deps)).warnings).toEqual([]);
+      expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    });
+  });
+
+  it('names the old name of a renamed block in the JSON', async () => {
+    const { deps } = makeOldNode();
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(output.json).toMatchObject({
+      blocks: [
+        { name: 'coordinator', renamedFrom: null },
+        { name: 'safety', renamedFrom: null },
+        { name: 'worker', renamedFrom: 'protocol' },
+      ],
+    });
   });
 
   it('has nothing to upgrade the second time', async () => {
