@@ -110,6 +110,9 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
   /** Copy the fixture, make the web project, and start the state repository with a first commit. */
   const prepareOldNode = async (): Promise<string> => {
     await cp(FIXTURE, box.node, { recursive: true });
+    const marker = JSON.parse(await box.read(join(box.node, '.factory', 'node.json'))) as Record<string, unknown>;
+    expect(marker['created_with']).toBe('0.1.0');
+    expect(marker['schema_version']).toBe(1);
     await box.makeProject('web');
     const state = join(box.node, '.factory');
     expect((await box.git(state, ['init', '-q'])).code).toBe(0);
