@@ -286,9 +286,9 @@ const parseSettings = (input: unknown): CliResult<FactoryConfig> => {
 };
 
 /**
- * Run every check that needs no cloned project: the home holds no node, the layer, the recipe, the home location,
- * the owner name, the node id, the settings with no project, the home holds no repo, and CLAUDE.md. A bad value
- * is found before any clone runs, because a clone costs time and disk. This function writes nothing.
+ * Run every check that needs no project: the home holds no node, the layer, the recipe, the home location, the owner
+ * name, the node id, the settings with no project, and CLAUDE.md. A bad value is found before any clone runs,
+ * because a clone costs time and disk. This function writes nothing.
  */
 const checkOptions = async (deps: Deps, options: InitOptions, home: string): Promise<CliResult<CheckedOptions>> => {
   const fresh = await checkHomeIsNew(deps, home);
@@ -313,24 +313,43 @@ const checkOptions = async (deps: Deps, options: InitOptions, home: string): Pro
   const base = { layer: layer.value, recipe: recipe.value, ownerName, id };
   const settings = parseSettings(settingsOf(base, options.ownerGithub, []));
   if (!settings.ok) return settings;
-  const holdsNoRepo = await checkHomeHoldsNoRepo(deps, home);
-  if (!holdsNoRepo.ok) return holdsNoRepo;
   const templates = blockTemplatesFor(layer.value);
   const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
   if (!blocks.ok) return blocks;
   return ok({ ...base, templates, blocks: blocks.value });
 };
 
+/**
+ * The home is apart from the projects, and it holds no git repo one level down. Both checks need only the paths
+ * of the projects, so a clone target counts before the clone is made.
+ */
+const checkHomeBesideProjects = async (
+  deps: Deps,
+  home: string,
+  projects: readonly string[],
+): Promise<CliResult<void>> => {
+  const apart = await checkHomeApart(
+    deps,
+    home,
+    projects.map((argument) => resolve(deps.cwd, argument)),
+  );
+  if (!apart.ok) return apart;
+  return checkHomeHoldsNoRepo(deps, home);
+};
+
 /** Read the system and decide what init writes. This function writes nothing. */
 export const planInit = async (deps: Deps, options: InitOptions): Promise<CliResult<InitPlan>> => {
-  const checked = await checkOptions(deps, options, resolve(deps.cwd, options.home ?? '.'));
+  const home = resolve(deps.cwd, options.home ?? '.');
+  const checked = await checkOptions(deps, options, home);
   if (!checked.ok) return checked;
+  const beside = await checkHomeBesideProjects(deps, home, options.projects);
+  if (!beside.ok) return beside;
   return planChecked(deps, options, checked.value);
 };
 
 /**
- * The plan, after `checkOptions` has passed. The clones are there now, so this function describes the projects
- * and checks the home against them. The folders above the home exist when a clone needed them.
+ * The plan, after the checks have passed. The clones are there now, so this function describes the projects.
+ * The folders above the home exist when a clone needed them.
  */
 const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOptions): Promise<CliResult<InitPlan>> => {
   const { layer, templates, blocks } = checked;
@@ -342,12 +361,6 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
 
   const projects = await describeProjects(deps, home, options.projects);
   if (!projects.ok) return projects;
-  const apart = await checkHomeApart(
-    deps,
-    home,
-    options.projects.map((argument) => resolve(deps.cwd, argument)),
-  );
-  if (!apart.ok) return apart;
 
   const config = parseSettings(settingsOf(checked, github, projects.value));
   if (!config.ok) return config;
@@ -482,6 +495,8 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   const allProjects = projectsOf(deps, projects.value.paths, found);
   const counted = checkProjectCount(allProjects.length);
   if (!counted.ok) return counted;
+  const beside = await checkHomeBesideProjects(deps, home, allProjects);
+  if (!beside.ok) return beside;
   // Git makes the folders above a clone by itself. This run makes them first, so that the undo can remove them.
   const parents = projects.value.clones.some((clone) => !clone.present) ? await makeCloneParents(deps, home) : ok([]);
   if (!parents.ok) return parents;

@@ -1542,6 +1542,18 @@ describe('init: the checks before a clone', () => {
     expect(changed).toBe(false);
   });
 
+  it('refuses a home that holds a project and runs no clone', async () => {
+    const { result, log, changed } = await initWithUrl(
+      { projects: ['/w/node/app', URL_API] },
+      { repos: { [`${HOME}/app`]: {}, '/w/api': { origin: URL_API } } },
+      (deps) => deps.seedDir(`${HOME}/app/.git`),
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain(`${HOME} is the project folder /w/node/app, or holds it`);
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
   it('still clones when every value is good', async () => {
     const { result, log } = await initWithUrl({ layer: '1', recipe: 'software' }, { repos: { '/w/api': { origin: URL_API } } });
     expect(result.ok).toBe(true);
