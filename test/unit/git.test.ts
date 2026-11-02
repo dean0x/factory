@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { failure } from '../../src/cli/errors.js';
 import { gitClone, listRepoChildren, MAX_SCAN_ENTRIES, withoutUserinfo } from '../../src/core/git.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler, type FakeRepo, type GitFixture } from '../helpers/git-fake.js';
@@ -123,6 +124,27 @@ describe('git: clone', () => {
       expect(result.error.message).toContain('cannot clone https://host/acme/api.git: git exited with 128');
       expect(result.error.message).toContain("unable to access 'https://host/acme/api.git/'");
     }
+  });
+
+  it('says that the clone took longer than the limit, and what to do, when the time limit stops git', async () => {
+    const deps = createFakeDeps({ cwd: WS, run: () => failure('cannot run git: SIGTERM') });
+    const result = await gitClone(deps, 'https://user:tok3n@host/acme/api.git', '/w/api');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('cannot clone https://host/acme/api.git');
+      expect(result.error.message).toContain('took longer than 300 seconds');
+      expect(result.error.hint).toContain('ssh agent');
+      expect(result.error.hint).toContain('gh auth login');
+      expect(JSON.stringify(result.error)).not.toContain('SIGTERM');
+      expect(JSON.stringify(result.error)).not.toContain('tok3n');
+    }
+  });
+
+  it('keeps the message of another failure to run git', async () => {
+    const deps = createFakeDeps({ cwd: WS, run: () => failure('cannot run git: ENOENT') });
+    const result = await gitClone(deps, 'https://host/acme/api.git', '/w/api');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toBe('cannot clone https://host/acme/api.git: cannot run git: ENOENT');
   });
 });
 

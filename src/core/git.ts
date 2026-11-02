@@ -158,10 +158,19 @@ const gitStep = async (deps: Deps, dir: string, args: readonly string[], what: s
   return result.value.exitCode === 0 ? ok(undefined) : failure(`cannot ${what}: git exited with ${result.value.exitCode}`);
 };
 
+/** The message of `run` ends with this signal name when the time limit stops the program. */
+const TIME_LIMIT_SIGNAL = 'SIGTERM';
+
 /** Clone the repo at `url` into the folder `target`. The `--` keeps a URL from acting as an option. */
 export const gitClone = async (deps: Deps, url: string, target: string): Promise<CliResult<void>> => {
   const result = await deps.run('git', ['clone', '--', url, target], { timeoutMs: CLONE_TIMEOUT_MS });
   const shown = withoutUserinfo(url);
+  if (!result.ok && result.error.message.endsWith(`: ${TIME_LIMIT_SIGNAL}`)) {
+    return failure(
+      `cannot clone ${shown}: the clone took longer than ${CLONE_TIMEOUT_MS / 1000} seconds`,
+      'An ssh clone can wait for a prompt that nobody sees. Load the key into an ssh agent, or sign in with "gh auth login", then run the command again.',
+    );
+  }
   if (!result.ok) return failure(`cannot clone ${shown}: ${withoutUserinfo(result.error.message)}`);
   if (result.value.exitCode === 0) return ok(undefined);
   const detail = withoutUserinfo(result.value.stderr.trim().split('\n').at(-1) ?? '').slice(0, MAX_STDERR_CHARS);
