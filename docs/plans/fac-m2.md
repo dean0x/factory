@@ -16,7 +16,15 @@ The criteria of roadmap-v2 FAC-M2 are the acceptance list. §12 maps each one to
 
 ## Scope
 In: the renames (F-1); the home rules, `init` and `factory up` (F-3); the role templates, `node.layer` and the `node` child commands (F-4); the native Windows refusal (F-5); config schema 2 with the recipe split (F-10); the schema 1 → 2 migration; `file://` addresses only (F-13).
-Out (later milestones, in the build order of D-56): cells, `layout`, the board in the view slot, the heartbeat hook, the doorbell inbox (FAC-M4); the `local` tracker, `item`, `andon`, `decide`, `staging`, `inspect`, `pr`, `ship`, `checkout` (FAC-M5); the devflow variant (FAC-M6); `adopt` (FAC-M7); the `github` adapter and `watch` (FAC-M3); `report`, `deliver`, `node tree` (FAC-M8). `init --project URL` (a clone) also waits; FAC-M2 takes paths only.
+Also in, from the intent check (§13a): the home index; the rule for a folder that holds several repos; the clone path of `--project URL`; the role of each layer; the glossary and `factory help words`; the three triage words in the deny list; the pane option `@cell`; the short-output helper; the docs check; the D-51 review scope.
+Out (later milestones, in the build order of D-56):
+- cells, `layout`, the board in the view slot, the heartbeat hook, the doorbell inbox (FAC-M4);
+- the `local` tracker, `item`, `andon`, `decide`, `staging`, `inspect`, `pr`, `ship`, `checkout`, the report core (FAC-M5);
+- the devflow variant (FAC-M6); `adopt` (FAC-M7);
+- the `github` adapter, `watch`, `tracker` and `state` (FAC-M3);
+- the rollup, `deliver`, `node tree` (FAC-M8).
+
+Later milestones add optional config keys with no schema bump, because old configs stay valid: `session.agent` and `session.statusline` (FAC-M4), `approval.ship` and `tracker.agent_account` (FAC-M5), the tracker keys `site` and `key`, `recipe.projects[].tracker` and `state.remote` (FAC-M3, FAC-M9).
 
 One PR (roadmap rule). There is no split: the renames and the schema change touch every module, and the roadmap keeps them in one PR so that the names test sees all of them at once.
 
@@ -53,8 +61,8 @@ All in `src/names.ts`, plus the template text and the tests.
 | `dirs.briefs` `briefs` | `dirs.orders` `orders` |
 | placeholders `{{lane}}`, `{{pack}}`, `{{protocolFile}}`, `{{briefsDir}}` | `{{cell}}`, `{{recipe}}`, `{{workerFile}}`, `{{ordersDir}}` |
 
-- New names: the commands `up` and `node` (subcommands `children`, `add-child`, `remove-child`); the flags `yes`, `layer`, `recipe`; the env names `FACTORY_HOME`, `FACTORY_SESSION`; the tmux window names `view` and `bench`; the pane options `@factory_home`, `@node`, `@slot`; the block `manager`; the JSON ids `factory.up/v1` and `factory.node-children/v1`.
-- The names test (`test/unit/names.test.ts`) keeps its stray-literal check. It also fails on the words `lane`, `pack` and `brief` (whole words, any case) in three places: the `--help` output of every command, every template, and the files that `init` writes. Template text must not use "brief" as a verb either.
+- New names: the commands `up` and `node` (subcommands `children`, `add-child`, `remove-child`); the flags `yes`, `layer`, `recipe`; the env names `FACTORY_HOME`, `FACTORY_SESSION`, `XDG_STATE_HOME`; the tmux window names `view` and `bench`; the pane options `@factory_home`, `@node`, `@slot`, `@cell`; the block `manager`; the JSON ids `factory.up/v1` and `factory.node-children/v1`; the index file name `homes.json`; the help topic `words` and the list `terms` (§13a).
+- The names test (`test/unit/names.test.ts`) keeps its stray-literal check. It also fails on the words `lane`, `pack` and `brief` (whole words, any case) in three places: the `--help` output of every command, every template, and the files that `init` writes. Template text must not use "brief" as a verb either. It also fails when a file under `src/` contains `@lane`.
 
 ## 3. Config schema 2 (F-10, F-13)
 The keys are those of design §4.4, plus `parent`. Every object is strict.
@@ -90,7 +98,7 @@ The keys are those of design §4.4, plus `parent`. Every object is strict.
 
 ```
 <home>/factory.yaml                    schema 2, tracker.kind: local, approval.land: each, parent: null
-<home>/CLAUDE.md                       managed blocks: coordinator (layer 1) or manager (layer 2+), safety
+<home>/CLAUDE.md                       managed blocks: coordinator (layer 1) or manager (layer 2), safety; a layer above 2 gets safety only
 <home>/.factory/node.json              schema_version 2
 <home>/.factory/roles/worker.md        managed block: worker (layer 1 only)
 <home>/.factory/board.json  waiting.json  decision-log.json   (as FAC-M1; the files of the local tracker)
@@ -128,18 +136,20 @@ Where the home is:
    - On a TTY, `init` prints the proposal and asks "Create the node home here? [y/N]". Only `y` or `yes` goes on.
    - With `--yes`, it uses the proposal.
    - With no TTY and no `--yes`, it prints the proposal and exits 2.
-3. Else: the current folder.
+3. Else, when the current folder is not a git work tree and holds git repos one level down (step 5.2): the proposal is `./<folder>-factory`, next to those repos. Each repo found becomes a project. The same TTY, `--yes` and exit 2 rules as in rule 2 apply. `init` never makes the current folder the home in this case.
+4. Else: the current folder.
 
 Refusals, all with exit 4 and a message that names the rule and the path:
 - the home is inside a git work tree (a `git rev-parse --show-toplevel` from the nearest folder of the home that exists);
 - the home is inside another node home: a parent folder has a `factory.yaml`. This changes the FAC-M1 rule, which gave a warning;
-- the home is a project folder or a parent of one (a compare of real paths).
+- the home is a project folder or a parent of one (a compare of real paths);
+- the home holds a git repo one level down (step 5.2). This covers `init --home .` in a workspace folder, where no project is declared.
 
-`init` still refuses when the home itself has a `factory.yaml`. The walk-ups stop at the file-system root or after 64 levels.
+`init` still refuses when the home itself has a `factory.yaml`. The walk-ups stop at the file-system root or after 64 levels. The scan below the home reads at most 200 entries and follows no symbolic link.
 
 New `Deps` parts: `stdinIsTTY` and `stdoutIsTTY` (booleans), `prompt(question)` (reads one line, at most 200 chars), and `runAttached(command, args)` (inherits the terminal, for `tmux attach`). The fakes get the same parts.
 
-Home order for every command: `--home`, else `FACTORY_HOME`, else the walk-up. `doctor` sends network checks only when the home comes from `--home` or is the current folder (SEC-S2 option A). `FACTORY_HOME` alone does not allow them.
+Home order for every command: `--home`, else `FACTORY_HOME`, else the walk-up, else the home index (step 5.1). `doctor` sends network checks only when the home comes from `--home` or is the current folder (SEC-S2 option A). `FACTORY_HOME` alone does not allow them, and a home from the index does not allow them either.
 
 ## 7. `factory up` (F-3)
 Flags: `--home DIR`, `--dry-run`.
@@ -170,9 +180,9 @@ Steps:
 **Role templates** live in the package, in `src/recipes/software/roles/`:
 - `worker.ts` (layer 0): the FAC-M1 protocol text, renamed. It has the sections Role, Questions and escalation, Milestones, Denial is final, Context budget, Heavy tests, Disk, and Writing.
 - `coordinator.ts` (layer 1): the FAC-M1 coordinator text, renamed. It has the sections Role, Owner authority, Merges and releases, Cells, and State files.
-- `manager.ts` (layer 2 and up): new and short. It has the sections Role, Children, Priorities and capacity, Owner items, and Limits ("no PR-level work").
-- `src/recipes/software/recipe.ts` maps the layers to templates: 0 → worker, 1 → coordinator, 2+ → manager. `roleForLayer(layer)` is the only lookup.
-- The `safety` block stays in the core (`src/templates/safety.ts`). Every role gets it.
+- `manager.ts` (layer 2 only): new and short. It manages coordinators. It has the sections Role, Children, Priorities and capacity, Owner items, and Limits ("no PR-level work").
+- `src/recipes/software/recipe.ts` maps the layers to templates: 0 → worker, 1 → coordinator, 2 → manager. A layer above 2 has no template: each layer has its own role, so the manager text does not serve layer 3 (decision OD-5). FAC-M8 ships the layer-3 template (`director`). `roleForLayer(layer)` is the only lookup. It returns the template, or `null` for a layer with no template.
+- The `safety` block stays in the core (`src/templates/safety.ts`). Every role gets it. A node on a layer with no template gets the `safety` block and no role block: `init --layer 3` writes `CLAUDE.md` with that block only and prints a warning that names the layer.
 - The upgrade spec takes the block list from the config layer, not from a fixed list. If the layer changes by hand, `doctor` warns that the role block does not match. `upgrade` then swaps an intact role block, and refuses an edited one without `--overwrite`.
 
 **Transport** (`src/comms/`): `address.ts` (§3) and `transport.ts` with one interface. FAC-M2 has only `ping` on the `file://` transport. `ping` reads the child's `factory.yaml` with the normal config loader, and gives `{ id, layer, schema }` or `unknown` with a reason. `report` and `deliver` come in FAC-M8. The doorbell inbox of FAC-M4 goes into the same folder (research recommendation, PR #3).
@@ -197,6 +207,8 @@ Steps:
 | `config` | schema-2 core or recipe parse fails | — |
 | `home` | the home is inside a git work tree, inside another node home, or above a project (the `init` rules) | — |
 | `blocks` | — | a block is missing or edited, or the role block does not match `node.layer` |
+| `roles` | — | `node.layer` has no role template (a layer above 2); the message names the layer |
+| `index` | — | the home index has an entry whose home is gone, or the index file is not readable |
 | `tracker` | — | `tracker.kind` is not `local`: its connector comes in a later version |
 | `children` | a child is on the wrong layer | a child is `unknown` |
 | `tools` | Node is older than 22 | `tmux` is missing or older than 3.0 (names `up`); `git`, `gh` or `claude` is missing |
@@ -218,6 +230,15 @@ The other FAC-M1 checks stay. A migrated FAC-M1 node passes all of them.
 | Fake `win32`: every command exits 4 with the hint | unit `cli.test.ts`, a loop over the command table |
 | `exit-check` with the v2 flow | `scripts/exit-check.sh` |
 | F-13: no address but `file://` | unit `config-schema.test.ts` and `comms.test.ts`: `ssh://`, `https://`, a relative path, a host, `..`, `%`, a query; the migration of a schema-1 child with an `ssh://` address fails |
+| Home index: `up --dry-run` from `web/` and `web/src` | unit `home-index.test.ts`; integration `up.test.ts` (step 5.1) |
+| Workspace folder with two repos and a linked worktree | integration `init.test.ts` (step 5.2) |
+| Clone path of `--project URL` | unit `init.test.ts` with the fake `run` (step 5.2) |
+| `roleForLayer(3)` has no template; `init --layer 3`; `doctor` warning | unit `templates.test.ts`, `doctor.test.ts`; integration `init.test.ts` (step 5.3) |
+| Glossary: every term has an entry of at most 25 words | unit `glossary.test.ts` (step 5.4) |
+| Three triage words in the deny list | unit `templates.test.ts`; integration `init.test.ts` scans the files (step 5.5) |
+| Pane option `@cell`, no `@lane` | unit `names.test.ts` (step 5.6) |
+| Short-output helper | unit `short-output.test.ts` (step 5.7) |
+| Docs check; review scope | `scripts/check-intent-docs.sh`, run by `exit-check.sh` (step 5.7); `scripts/check-review-scope.sh`, run after the review (steps 5.8 and 10) |
 
 Other unit tests: the schema-2 core and recipe parsers (each key, strictness, the tracker union, cross checks); the config, state and file migrations, also a move onto an existing target, an edited `protocol` block, and the restore after a failure in the middle; `argv.ts` (proxy, no proxy, `direct`, model, the project list); the `up` plan with a fake `run` (new session, own session, a session of another home, proxy down); `ping` (ok, missing home, bad config, newer schema).
 
@@ -229,11 +250,95 @@ Test runs: a single test file runs without the lock. The full suite runs under t
 3. State schema 2, layout, and the three migrations, with the fixture script and the committed fixture.
 4. Role templates, `roleForLayer`, and the block list from the layer.
 5. `init`: the home rules, the proposal, `--yes`, `--layer`, `--recipe`, and the new `Deps` parts.
+5.1 to 5.7. The intent fixes of part A (§13a), each its own commit, in this order. Steps 6 to 8 can come between them. The `up --dry-run` case of step 5.1 is added in step 6.
 6. `launch/argv.ts` and `factory up`, with the tmux integration test.
 7. `comms/` and the `node` commands.
 8. The platform refusal and the doctor checks.
 9. `exit-check.sh`, CI (`ci.yml` installs tmux on the ubuntu and macOS runners), README, CHANGELOG (0.2.0, not released). A full local run of the CI steps under the lock. A Snyk code scan.
-10. The review and resolve cycle. The summaries go in `docs/reviews/`.
+10. The review and resolve cycle. The summaries go in `docs/reviews/`. One review agent reads the FAC-M1 setup and upgrade code in full, not only the diff (§13a, step 5.8).
+
+## 13a. Intent fixes (part A)
+
+An independent check of the design against Dean's notes found gaps that belong to this PR. The roadmap FAC-M2 has the related exit criteria. These steps come after §13 step 5 and before the review. Each step is its own commit. A step lists its files, its behavior and its test. The design sections hold the full rules.
+
+### 5.1 Home index (F-3b, design §4.3)
+Files: `src/core/home-index.ts` (new), `src/core/home.ts`, `src/commands/init.ts`, `src/commands/doctor.ts`, `src/names.ts`, `test/unit/home-index.test.ts` (new), `test/integration/up.test.ts` (the case is added in step 6).
+
+Behavior:
+- The index file is `$XDG_STATE_HOME/factory/homes.json` when the variable holds an absolute path, else `$HOME/.local/state/factory/homes.json`. Both paths come from `deps.env`. The code refuses an index path under `$HOME/.claude/` (exit 4).
+- The content is `{ "schema": 1, "homes": [ { "home", "id", "projects": [absolute path] } ] }`, parsed with Zod (strict). At most 200 homes and 200 projects for each home.
+- `init` writes the entry after it writes the node. An entry for the same home replaces the old one. The write is atomic (a temp file and a rename), with file mode 0600 in a folder of mode 0700.
+- `locateHome` gets a fourth source, `index` (`HomeSource` gets the value `index`). It runs after the walk-up finds nothing. It compares real paths. The deepest project path that contains the current folder wins. No match gives exit 2 with the hint "run `factory init` here, or use `--home DIR`". A tie between two homes gives exit 2 and names both. An index that cannot be read gives the same exit 2 and names the file.
+- `doctor` treats the source `index` like a home in a parent folder: no network check, and a warning. A new check `index` warns on an entry whose home is gone.
+- Every command gets this through `resolveHome`. No command reads the index by itself.
+
+Test: unit tests for the match function (deepest wins, tie, no match, a path under `~/.claude`, a bad file, the bounds). Integration test with a temp HOME and a temp `XDG_STATE_HOME`: after `init --yes` in the repo `web`, `factory doctor` from `web/` and from `web/src` prints the `web-factory` config path. After step 6, the same test runs `up --dry-run` and checks exit 0. A folder in no entry gives exit 2 and the hint.
+
+### 5.2 Workspace folder and clone path (F-3b, design §4.3)
+Files: `src/commands/init.ts`, `src/core/git.ts`, `src/commands/doctor.ts` (the `home` check), `test/unit/init.test.ts`, `test/integration/init.test.ts`, `test/helpers/git-fake.ts`.
+
+Behavior:
+- `listRepoChildren(deps, dir)` in `src/core/git.ts` reads at most 200 entries, follows no symbolic link, and returns each child folder that `isWorkTreeRoot` accepts. `commonDirOf(deps, dir)` runs `git rev-parse --git-common-dir`. Two folders with the same common dir are one repo: the main checkout is the project, and the others are returned as `skipped` with the reason.
+- `init` rule 3 of §6 uses this list: the proposal, the project list, the confirmation, `--yes` and exit 2 are as in rule 2. The output names each skipped folder.
+- The refusal "the home holds a git repo one level down" uses the same list. It applies to `--home DIR` and to rule 4.
+- `--project URL`: the accepted forms are `https://`, `ssh://` and `user@host:path`. The repo name is the last part of the URL without `.git`. It must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`. Else exit 2. The target is `<folder of the home>/<repo name>`. `gitClone` runs `git clone -- <url> <target>` through `deps.run` with a time limit of 300 s. If the target exists and is a git repo with the same `remote.origin.url`, `init` reuses it. If it exists in any other way, exit 4 and name the path. The project path in the config is relative to the home (`../<repo name>`).
+
+Test: integration test (the roadmap criterion): a temp folder with the git repos `web/` and `api/`, and `web-search/` as a linked worktree of `web`. `init --yes` makes `./<folder>-factory` and lists `web` and `api`, and names `web-search` as skipped. `init --home .` there exits 4 and names the rule. Without a TTY and without `--yes`, exit 2 with the proposal. Unit test with a fake `run`: the clone argument list has `--` before the URL; the target is next to the home; a target that exists and has another origin gives exit 4; a name with `..` or with `-` as its first character gives exit 2.
+
+### 5.3 Role of each layer (decision OD-5, design §4.9 and §5.2)
+Files: `src/recipes/software/recipe.ts`, `src/recipes/software/roles/manager.ts`, `src/commands/init.ts`, `src/upgrade/spec.ts`, `src/commands/doctor.ts`, `test/unit/templates.test.ts`, `test/unit/doctor.test.ts`, `test/integration/init.test.ts`.
+
+Behavior: as in §8. `roleForLayer(layer)` returns the worker, coordinator or manager template for 0, 1 and 2, and `null` above 2. The upgrade spec lists no role block for a layer with no template. `init --layer 3` writes the `safety` block only and prints a warning that names the layer. `doctor` adds the check `roles` (§10).
+
+Test: unit tests for the four calls of `roleForLayer` (0, 1, 2, 3); the block list for layer 3; the `doctor` warning with the layer in the message; an integration test of `init --layer 3`.
+
+### 5.4 Glossary and `factory help words` (F-1c, F-1d, design §4.1 and §7)
+Files: `docs/glossary.md` (the text is ready; the format is `- **term**: sentence`), `src/glossary.ts` (new), `src/names.ts` (the list `terms`), `src/cli/run.ts` (the help topic `words`), `test/unit/glossary.test.ts` (new).
+
+Behavior:
+- `terms` lists these 13 names: node, owner, project, layer, cell, recipe, variant, andon, work order, changeover, staging, inspect, ship.
+- `src/glossary.ts` holds one sentence for each term, equal to the line in `docs/glossary.md`. No text in it may match the deny list.
+- `factory help words` prints one line for each term, `<term>: <sentence>`, after a first line `factory words`. `--json` gives `{ schema: "factory.words/v1", words: [ { term, text } ] }`. Exit 0.
+
+Test: for each term of `names.terms`, an entry exists in `src/glossary.ts` and in `docs/glossary.md`, the two texts are equal, and the entry has at most 25 words (split on white space). The output of `help words` has the 13 terms and no deny-list word. A term that is added to `terms` with no entry fails the test.
+
+### 5.5 Triage words in the deny list (O-1h, design §2.2)
+Files: `test/helpers/deny-list.ts`, `test/unit/templates.test.ts`, `test/integration/init.test.ts`.
+
+Behavior: `DENY_PATTERNS` gets three patterns, case sensitive and with word edges: `FIX_NOW`, `ESCALATED` and `CHANGES REQUESTED` (name: "workflow triage word"). The devflow variant file of FAC-M6 is the only file that may hold them. The command `desk render` is not built (design §4.2), so there is nothing to change in the code. The names test already fails on a command that the command table lacks.
+
+Test: a unit case shows that each of the three words is matched. Every template and every file that `init` writes passes the deny list again.
+
+### 5.6 Pane option `@cell` (F-1, design §4.11 and §5.1)
+Files: `src/names.ts`, `test/unit/names.test.ts`.
+
+Behavior: `names` gets the pane option `@cell` next to `@factory_home`, `@node` and `@slot`. FAC-M4 sets it on each bench pane. No file under `src/` uses `@lane`.
+
+Test: the names test asserts the value `@cell` and fails when any file under `src/` contains `@lane`.
+
+### 5.7 Short-output helper, token budget and docs check (O-1g, design §3 and §4.2)
+Files: `test/helpers/short-output.ts` (new), `test/unit/short-output.test.ts` (new), `docs/token-budget.md` (the text is ready), `scripts/check-intent-docs.sh` (new), `scripts/exit-check.sh`, `package.json`.
+
+Behavior:
+- `expectShortOutput(text)` fails when the output has more than 20 lines, when the first line is empty, or when the first line has more than 120 characters. Tests of a job command call it. In FAC-M2 it applies to the default output of `up` (not the dry run, which prints the plan) and of `node children`.
+- `scripts/check-intent-docs.sh` uses POSIX shell with `grep` and `awk`, and no other tool. It exits 1 and names the first failure of each check:
+  1. Each `§n` or `§n.m` in `docs/intent-trace.md` is a heading of `docs/design.md`.
+  2. Each `FAC-M<n>` in the trace is named in `docs/roadmap-v2.md`. Each milestone from FAC-M2 up has a heading there.
+  3. The first word of each command line in the §4.2 code block of the design has a row in the "Command map" of the roadmap.
+  4. The table of design §7.1 has 11 rows.
+  5. The Status column of the parity table in design §8.1 holds only `planned`, `done` or `retired`.
+  6. `docs/token-budget.md` has one row for each of the 17 jobs of design §3.
+  7. No file under `docs/research/` holds the whole word `lane`.
+- `exit-check.sh` runs the script.
+
+Test: the unit test for the helper (20 lines pass, 21 lines fail, an empty first line fails, a first line of 121 characters fails). The docs check runs in `exit-check.sh` and in CI. A fixture copy of the docs with one broken reference shows exit 1.
+
+### 5.8 Review of the setup and upgrade code (D-51 A, design §9)
+Files: `docs/reviews/fac-m2-review-summary.md` (written by the review), `scripts/check-review-scope.sh` (new).
+
+Behavior: D-51 A moved the review of the FAC-M1 setup and upgrade code into the review of this PR. In step 10, one review agent reads these files in full, not only the diff: `src/commands/init.ts`, `src/commands/upgrade.ts`, `src/commands/doctor.ts`, `src/upgrade/apply.ts`, `src/upgrade/plan.ts` and `src/upgrade/spec.ts`. Its findings go into the one review summary. The summary has a section "Setup and upgrade code (D-51 A)" that lists those six paths. `scripts/check-review-scope.sh <summary>` exits 1 and names each path that the summary does not list.
+
+Test: the script runs on a fixture summary with all paths (exit 0) and on one with a path removed (exit 1). The Orchestrator runs it on the real summary before the merge.
 
 ## 14. Risks
 - **The PR is large.** The steps are separate commits, so the review can read them one by one. The names test catches a stray old word.
@@ -256,6 +361,7 @@ Dean accepted both, and roadmap-v2 now has their scope and exit criteria.
 - The software recipe accepts only the `plain` variant until FAC-M6.
 - Network checks in `doctor` do not trust `FACTORY_HOME` alone (SEC-S2 option A stays strict).
 - The non-`local` tracker kinds parse now, and `doctor` warns that their connector comes later. So FAC-M3 needs no schema bump.
+- Intent fixes (§13a): `init --project URL` clones in FAC-M2 now, next to the home. A layer above 2 has no role template until FAC-M8, so `roleForLayer(3)` returns `null` and `init --layer 3` writes the `safety` block only. The home index is a cache in `$XDG_STATE_HOME`, never a source of truth for network checks.
 
 ## Resume here (updated 2026-11-02)
 - The plan PR #4 is merged (f2aa733). PR #3 is merged (1935011). D-55 (doorbell inbox in FAC-M4, `factory checkout` in FAC-M5) and D-56 (build order M2, M4, M5, M6, M7, M3, M8, M9) are in `docs/roadmap-v2.md`.
@@ -264,3 +370,4 @@ Dean accepted both, and roadmap-v2 now has their scope and exit criteria.
 - Step deviations, accepted: the fixture script uses `git archive` of 4849465, not a tarball; a file move with no source is skipped; `--overwrite` takes `protocol` or `worker`; the upgrade JSON has a new `moves` field.
 - Next: §13 steps 4–5 (role templates, `roleForLayer`, block list from the layer; `init` home rules, `--yes`, `--layer`, `--recipe`, new `Deps` parts), then 6–8 (`up`; `comms` and `node`; platform and doctor), then 9 (exit check, CI with tmux, README, CHANGELOG). Then the devflow implement gates at level lean: Harden, Evaluate (one pass), Validate under the lock, Test, PR, CI. The test plan is in `.devflow/docs/evidence-fac-m2.md`.
 - Brief every Code agent: no `python3` in any form, no `/tmp` (use the scratchpad), single test files only, Node 24 on PATH.
+- Intent fixes: §13a has steps 5.1 to 5.8 (home index, workspace folder and clone path, role of each layer, glossary, triage words, `@cell`, output helper and docs check, review scope). They come after step 5 and before step 10. The docs files `docs/glossary.md`, `docs/token-budget.md` and `docs/intent-trace.md` are ready.

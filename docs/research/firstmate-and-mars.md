@@ -1,6 +1,6 @@
 # firstmate and mars: what factory takes
 
-Status: research · Lane: factory-design · Date: 2026-11-02 · Sources: firstmate at `49dc31b`, mars at `ae5f8c4` (read only; line numbers refer to these commits)
+Status: research · Track: factory-design · Date: 2026-11-02 · Sources: firstmate at `49dc31b`, mars at `ae5f8c4` (read only; line numbers refer to these commits)
 
 **Summary**
 1. firstmate is a cloned folder of instructions and bash scripts. It turns one agent session into a supervisor of worker sessions in tmux windows and git worktrees.
@@ -49,7 +49,7 @@ Build effort is rough: S is less than one day, M is one to three days. Token fig
 | 1 | Code root and private home are separate | Code in the clone; `state/`, `data/`, `config/`, `projects/` under `FM_HOME` (`docs/configuration.md` L19–30) | An upgrade of the package never touches state (design §4.3) | S, mostly done in FAC-M1 (`--home`, walk-up) | 0 |
 | 2 | Durable inbox plus one-line doorbell | `bin/fm-send.sh`, `bin/fm-task-inbox-lib.sh` | Long text, proof of receipt, survives restarts (section 3) | M (writer, sequence lock, ack, re-ring in the watcher, tests) | Sender: from 4–6k to under 1k per message. Receiver: about 0.5k plus the body |
 | 3 | Node identity markers and a one-line registry entry per child | `.fm-secondmate-home` marker and `.fm-secondmate-parent` record (`docs/configuration.md` L1198–1201); one line per child in `data/secondmates.md` (`.agents/skills/secondmate-provisioning/SKILL.md` L16–40) | A folder proves what it is; a parent lists children without a scan | S (`node.json` already has `parent` and `children`) | Saves one lookup per use |
-| 4 | Explicit list of config items that a parent passes down | One declared list, `FM_INHERITABLE_CONFIG` (`bin/fm-config-inherit-lib.sh` L96). The parent's own launch setting is not on it (L65–68) | Identity, accounts and session settings never leak to a child (design §5.4) | S (one constant, one copy function, one test) | 0 |
+| 4 | Explicit list of config items that a parent passes down | One declared list, `FM_INHERITABLE_CONFIG` (`bin/fm-config-inherit-lib.sh` L96). The parent's own launch setting is not on it (L65–68) | Identity, accounts and session settings never leak to a child (design §5.5) | S (one constant, one copy function, one test) | 0 |
 | 5 | Script-written upward channel | Scripts publish each outcome that leaves evidence on disk; the model adds only judgment (`docs/secondmate-parent-channel.md` L16–33) | A report must not depend on the model's memory | M (writers at merge, release and decision events) | Parent reads one digest, 1–3k; fewer missed reports |
 | 6 | Readiness check before the first use of a remote host | `bin/fm-remote-doctor.sh` gate; an unreachable host is "unknown", never "dead" (`docs/architecture.md` L394; `docs/remote-secondmates.md` L508) | Correct, but remote hosts are out for now | 0 now | 0 now |
 | 7 | Fail-closed config parse | A bad value "refuses every spawn"; no fallback to a posture the person did not choose (`docs/configuration.md` L1380–1382) | A wrong default is worse than a stop | S, done in FAC-M1 (Zod) | 0 |
@@ -58,6 +58,7 @@ Build effort is rough: S is less than one day, M is one to three days. Token fig
 **Notes.**
 - Idea 5: in firstmate, four outcomes never reached the captain on one day, because the mate wrote them in its own chat (`docs/secondmate-parent-channel.md` L10–14). The fix: "the scripts report facts, the mate reports judgement" (L20). A receipt per event stops a double delivery (L36). factory gets this with the cursor of `factory report --since`.
 - Idea 8: factory installs from npm, so the rule applies to the state repo. `factory upgrade` stops on a dirty `.factory/` and names the files.
+- Placement (D-55): idea 2 is in FAC-M4 with `inbox next` and `inbox ack`. Ideas 3 and 4 are in FAC-M8. Idea 5 is in FAC-M5 (the report core) and FAC-M8 (the rollup). Idea 8 is in FAC-M3. Idea 6 is skipped (F-13). Design §4.8 and the roadmap hold the exit criteria.
 - Line numbers in design §4.8 are slightly off at this commit. The bypass default is at `docs/configuration.md` L1370 (design says L1368). The fail-closed text is at L1380–1382 (design says L1376–1378).
 
 ---
@@ -119,21 +120,21 @@ Token figures are rough, for one message of about 300 words.
 | Long text | Yes | No: long text becomes a paste that Enter does not submit | Yes | Yes, any length, newlines allowed |
 | Works for other agent tools | No, Claude Code only | Yes, any terminal tool | Yes | Yes: any tool that reads files and runs one command (firstmate supports 9 tools, `README.md` L62) |
 | Owner authority | None, by rule | Yes, with the owner prefix | Yes, with the prefix in the typed line | None by itself. The authority stays in the typed relay line (see 3.3) |
-| Tokens per message, sender | About 0.5k plus the body | 4–6k (map, capture, clear, type, Enter, verify; design §3) | 3–5k (write, capture, type, verify) | Under 1k (one `factory lane send` call) |
+| Tokens per message, sender | About 0.5k plus the body | 4–6k (map, capture, clear, type, Enter, verify; design §3) | 3–5k (write, capture, type, verify) | Under 1k (one `factory cell send` call) |
 | Tokens per message, receiver | The body | The body | About 0.5k plus the body | About 0.5k plus the body (list, read, ack) |
 
 ### 3.3 What factory changes
 
-- **Owner authority stays in the typed line.** Any process on the machine can write a file into an inbox. So a record alone never carries authority. `factory lane relay` types the owner prefix plus the record number and a short hash of the record. The worker checks the hash before it acts. This matches design §5.4: "factory types only the one-line owner prefix and a pointer to the inbox record".
+- **Owner authority stays in the typed line.** Any process on the machine can write a file into an inbox. So a record alone never carries authority. `factory cell relay` types the owner prefix plus the record number and a short hash of the record. The worker checks the hash before it acts. This matches design §5.5: "factory types only the one-line owner prefix and a pointer to the inbox record".
 - **The bell can use more than one channel.** For a Claude Code worker, `SendMessage` can carry the doorbell, so no pane typing is necessary. For other tools, or when `SendMessage` fails, factory types the line. The record is the same in both cases.
-- **An acknowledgement command.** factory gives `factory inbox next` (print the oldest unhandled record) and `factory inbox ack <n>`. A plain `mv` also works. A command keeps the format private to factory and gives one exact path for every tool.
-- **One format at every level.** The lane inbox and the node inbox of design §4.3 (`.factory/inbox/`) use the same record format with a `schema` field. Decisions from a parent and steers from a coordinator then share one code path.
+- **An acknowledgement command.** factory gives `factory inbox next` (print the oldest unhandled record) and `factory inbox ack <n>`. A plain `mv` also works. A command keeps the format private to factory and gives one exact path for every tool. Both commands are built in FAC-M4 (design §4.12).
+- **One format at every level.** The cell inbox and the node inbox of design §4.3 (`.factory/inbox/`) use the same record format with a `schema` field. Decisions from a parent and steers from a coordinator then share one code path.
 
 ### 3.4 One module, or a separate CLI or package
 
 Today factory is the only user. A separate package adds a second release pipeline and a second version. factory and the package can then disagree about the format. A public API also freezes before the design settles. The only gain is reuse by another tool, and no such tool exists yet.
 
-**Recommendation: one module.** Put it in one folder (for example `src/comms/`) with one interface: `send`, `deliver`, `report`, `ping`. Nothing outside the folder reads or writes inbox files. Write the record format down as a versioned contract: the contract is the file format, not the code. Split the folder into a package only when a second tool must import it. This follows design §5.2: each transport has the same calls, and new transports come later behind them.
+**Recommendation: one module.** Put it in one folder (for example `src/comms/`) with one interface: `send`, `deliver`, `report`, `ping`. Nothing outside the folder reads or writes inbox files. Write the record format down as a versioned contract: the contract is the file format, not the code. Split the folder into a package only when a second tool must import it. This follows design §5.3: each transport has the same calls, and new transports come later behind them.
 
 ---
 
@@ -146,7 +147,7 @@ Today factory is the only user. A separate package adds a second release pipelin
 | Install by `git clone`, with no versioned release and no migrations | `README.md` L82–88; `VISION.md` L73 | factory ships from npm with a version, and `factory upgrade` runs state migrations (design §4.5) |
 | One person only, and a depth cap | `VISION.md` L7 ("exactly one individual"), L38 ("depth is capped") | factory must serve a team, at any depth (design §5) |
 | Many backends (tmux, Herdr, Zellij, Orca, cmux and more) | `README.md` L45; 13 adapters in `bin/backends/` | Each backend adds test and upkeep work. factory supports tmux only |
-| Remote hosts (whole homes over SSH) | `docs/remote-secondmates.md`; `docs/architecture.md` L374 | Skipped for now: same machine only. The `ssh://` transport of design §5.2 stays a later step |
+| Remote hosts (whole homes over SSH) | `docs/remote-secondmates.md`; `docs/architecture.md` L374 | Same machine only (F-13). The config refuses any address but `file://` (design §5.3) |
 
 ---
 
@@ -178,16 +179,16 @@ Each command reads the projects from `factory.yaml` (the mars walk-up), works on
 
 | Command | What it does | mars idea it uses | Manual steps it replaces | Before | After |
 |---|---|---|---|---|---|
-| `factory checkout list` | One row per checkout: project, path, lane (from the lane map), branch, short HEAD | Config walk-up, repo list from config, table output (`lib/config.sh` L12–27; `lib/commands/list.sh`) | `git worktree list` per repo, the pane map, and a look at the board's session map | 2–3 calls, 2–4k | 1 call, under 1k |
+| `factory checkout list` | One row per checkout: project, path, cell (from the cell map), branch, short HEAD | Config walk-up, repo list from config, table output (`lib/config.sh` L12–27; `lib/commands/list.sh`) | `git worktree list` per repo, the pane map, and a look at the board's session map | 2–3 calls, 2–4k | 1 call, under 1k |
 | `factory checkout status` | Per checkout: dirty files, ahead and behind the upstream, unpushed commits, branch on the remote or not. Verdict example: `4 checkouts: 1 dirty (web-auth), 2 unpushed (api-cache)` | Status table with dirty and ahead/behind (`lib/commands/status.sh` L54–80) | Start-of-session scan of worktrees and unpushed work | 3–6 calls, 5–10k | 1 call, 1–2k |
-| `factory checkout sync <pr\|branch>` | Base update of a waiting PR: fetch once, merge `origin/<default>` into the branch in a short-lived worktree under `.factory/state/`, push, remove the worktree. On a conflict it stops, names the files, and leaves the fix to the owning lane | Fetch then pull with a conflict list at the end (`lib/commands/sync.sh` L58–92) | Switch a checkout back, merge the base, push, switch again | 3–5 calls, 4–8k | 1 call, about 1k |
-| `factory checkout clean [--apply]` | For each checkout that no live lane holds and that no board item or resume file names: check that the tip is on the remote, the tree is clean, and the PR is merged; then `git worktree remove`. Dry run by default | Batch that continues after a failure, with a count (`lib/commands/clone.sh` L96–110) | Post-merge cleanup: list, tip check, search of board and resume files, remove | 5–8 calls, 5–10k | 1–2 calls, 1–2k |
+| `factory checkout sync <pr\|branch>` | Base update of a waiting PR: fetch once, merge `origin/<default>` into the branch in a short-lived worktree under `.factory/state/`, push, remove the worktree. On a conflict it stops, names the files, and leaves the fix to the owning cell | Fetch then pull with a conflict list at the end (`lib/commands/sync.sh` L58–92) | Switch a checkout back, merge the base, push, switch again | 3–5 calls, 4–8k | 1 call, about 1k |
+| `factory checkout clean [--apply]` | For each checkout that no live cell holds and that no board item or resume file names: check that the tip is on the remote, the tree is clean, and the PR is merged; then `git worktree remove`. Dry run by default | Batch that continues after a failure, with a count (`lib/commands/clone.sh` L96–110) | Post-merge cleanup: list, tip check, search of board and resume files, remove | 5–8 calls, 5–10k | 1–2 calls, 1–2k |
 
 **Rough daily effect.** Assume 2 session starts, 3 merges and 2 base updates per day. Today that is about 50k tokens. With the commands it is about 10k.
 
 **Notes.**
 - `factory checkout clean` is the same job as `factory clean` in design §3 and §4.2. Keep one command with one owner. Rename the design entry, or make `factory clean` an alias.
-- `sync` uses a short-lived worktree, so it never touches a lane's checkout. Then it needs no lock. A merge (not a rebase) keeps the pushed history, and the repo's merge rule decides the final shape. `gh pr update-branch` is a second option with no local git at all. It is not checked here.
+- `sync` uses a short-lived worktree, so it never touches the checkout of a cell. Then it needs no lock. A merge (not a rebase) keeps the pushed history, and the repo's merge rule decides the final shape. `gh pr update-branch` is a second option with no local git at all. It is not checked here.
 - firstmate's clone refresh is a better model than mars for the safety rules of `sync` and `clean`. It moves only a clean default branch by fast-forward. It reports a dirty, diverged or off-default checkout as `STUCK:` and leaves it untouched (`docs/architecture.md` L529–537). firstmate also never tears down unlanded work (`VISION.md` L53).
 - The existing `src/core/git.ts` module already holds git helpers. The new commands extend it; they do not add a second git module.
 
@@ -204,14 +205,14 @@ Each command reads the projects from `factory.yaml` (the mars walk-up), works on
 
 ## 6. Recommendations
 
-1. Build the doorbell inbox as the default way to send any text to a worker: one numbered record per message, one constant short line in the pane, acknowledgement by a move to `handled/`, and re-rings from the existing lane watcher.
+1. Build the doorbell inbox as the only way to send message text to a worker: one numbered record per message, one constant short line in the pane, acknowledgement by a move to `handled/`, and re-rings from the cell watcher. No other path types message text into a pane (design §4.12).
 2. Keep owner authority in the typed relay line. The line names the record number and a short hash. A record alone never carries authority.
 3. Keep all communication in one factory module with one interface (`send`, `deliver`, `report`, `ping`) and a versioned record format. Make it a separate package only when a second tool must import it.
 4. Write upward reports by script at each event (merge, release, decision), as firstmate does. The model adds judgment only.
 5. Add `factory checkout list|status|sync|clean` for the coordinator, with mars batch counts and firstmate's fast-forward and `STUCK:` safety rules. Merge `factory clean` into `factory checkout clean`.
 6. Leave branch git to the workers. Do not build a shared git API or a lock across sessions.
 7. Fix the design §4.8 line references to the firstmate configuration document (L1370; L1380–1382). This PR makes that fix.
-8. Before the inbox build, test one open question: can a lane in auto mode read and move files under the node home without a permission prompt? firstmate grants exactly the inbox folder with `--add-dir` for this reason (`docs/configuration.md` L1376–1378).
+8. Before the inbox build, test one open question: can a cell in auto mode read and move files under the node home without a permission prompt? firstmate grants exactly the inbox folder with `--add-dir` for this reason (`docs/configuration.md` L1376–1378).
 
 ---
 
