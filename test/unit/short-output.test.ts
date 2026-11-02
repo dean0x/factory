@@ -27,6 +27,14 @@ describe('expectShortOutput', () => {
     expect(() => expectShortOutput('\nStarted the session.\n')).toThrow();
   });
 
+  it('rejects a first line that holds only spaces', () => {
+    expect(() => expectShortOutput('   \nStarted the session.\n')).toThrow();
+  });
+
+  it('does not read the words of the first line', () => {
+    expect(() => expectShortOutput('x y z\n')).not.toThrow();
+  });
+
   it('rejects an empty text', () => {
     expect(() => expectShortOutput('')).toThrow();
   });

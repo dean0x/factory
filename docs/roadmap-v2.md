@@ -90,7 +90,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] Clone path, unit test with a fake `git`: `init --project https://host/acme/api.git` runs `git clone -- <url> <folder of the home>/api`. A target that exists and has another origin gives exit 4. A URL whose repo name has `..` or starts with `-` gives exit 2.
 - [ ] Glossary test: every term in the list `terms` of `src/names.ts` has an entry in `docs/glossary.md` and in `factory help words`. An entry has at most 25 words. The two texts are equal. The output has no deny-list word.
 - [ ] The deny-list test has the patterns `FIX_NOW`, `ESCALATED` and `CHANGES REQUESTED`. No template and no file that `init` writes contains one.
-- [ ] Helper test: the short-output helper accepts 20 lines with the verdict on line 1, and fails on 21 lines and on a verdict that is not on line 1. The default output of `factory start` (with no `--dry-run`) and of `node children` passes it.
+- [ ] Helper test: the short-output helper has three checks: at most 20 lines, a non-empty first line, and a first line of at most 120 characters. It accepts 20 lines. It fails on 21 lines, on an empty first line and on a first line of 121 characters. It does not read the words of the first line. The default output of `factory start` (with no `--dry-run`) and of `node children` passes it.
 - [ ] `scripts/check-review-scope.sh docs/reviews/fac-m2-review-summary.md` exits 0. It fails when the summary does not list `src/commands/init.ts`, `src/commands/upgrade.ts`, `src/commands/doctor.ts` and the files under `src/upgrade/`.
 - [ ] `scripts/check-intent-docs.sh` exits 0. It exits 1 when one of these checks fails:
   - a design section named in `docs/intent-trace.md` is not a heading of `docs/design.md`;

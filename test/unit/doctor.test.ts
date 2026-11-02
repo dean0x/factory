@@ -276,14 +276,14 @@ describe('doctor: secrets', () => {
 
     it('is ok for a long file address of this machine', async () => {
       const deps = await initialized();
-      const address = 'file:///Users/Dean/Work/payments-team-factory-2';
+      const address = 'file:///Users/example/Work/payments-team-factory-2';
       writeConfig(deps, withLinks(address, address));
       expect(checkSecrets(await inspectConfig(deps, HOME))).toMatchObject({ id: 'secrets', level: 'ok' });
     });
 
     it('fails and names the key when the address holds a token, never the value', async () => {
       const deps = await initialized();
-      writeConfig(deps, withLinks('file:///w/up', `file:///Users/Dean/${secret}`));
+      writeConfig(deps, withLinks('file:///w/up', `file:///Users/example/${secret}`));
       const result = checkSecrets(await inspectConfig(deps, HOME));
       expect(result.level).toBe('fail');
       expect(result.text).toContain('children.0.address');
@@ -342,7 +342,7 @@ describe('doctor: permission mode', () => {
   });
 
   describe('the user settings folder of Claude Code, written in another way', () => {
-    const USER_SETTINGS = '/users/me/.claude';
+    const USER_SETTINGS = '/users/example/.claude';
     const BYPASS = '{"permissions":{"defaultMode":"bypassPermissions"}}';
 
     /** Deps that count every list and read inside a settings folder. */
@@ -366,7 +366,7 @@ describe('doctor: permission mode', () => {
     };
 
     it('skips a settings folder that is a link to the user settings folder', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/me' }, links: { [`${HOME}/.claude`]: USER_SETTINGS } });
+      const deps = makeDeps({ env: { HOME: '/users/example' }, links: { [`${HOME}/.claude`]: USER_SETTINGS } });
       deps.seedDir(`${HOME}/.claude`);
       deps.seed(`${USER_SETTINGS}/settings.json`, BYPASS);
       const { guarded, touched } = watched(deps);
@@ -377,23 +377,23 @@ describe('doctor: permission mode', () => {
     });
 
     it('skips a settings folder in other letter case on macOS', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/me' }, os: 'darwin' });
-      deps.seed(`/Users/Me/.claude/settings.json`, BYPASS);
+      const deps = makeDeps({ env: { HOME: '/users/example' }, os: 'darwin' });
+      deps.seed(`/Users/Example/.claude/settings.json`, BYPASS);
       const { guarded, touched } = watched(deps);
-      const result = await checkPermissionMode(guarded, '/Users/Me');
+      const result = await checkPermissionMode(guarded, '/Users/Example');
       expect(result.level).toBe('warn');
       expect(result.text).toContain('not checked');
       expect(touched).toEqual([]);
     });
 
     it('compares the letters exactly on the other platforms', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/me' }, os: 'linux' });
-      deps.seed(`/Users/Me/.claude/settings.json`, BYPASS);
-      expect((await checkPermissionMode(deps, '/Users/Me')).level).toBe('fail');
+      const deps = makeDeps({ env: { HOME: '/users/example' }, os: 'linux' });
+      deps.seed(`/Users/Example/.claude/settings.json`, BYPASS);
+      expect((await checkPermissionMode(deps, '/Users/Example')).level).toBe('fail');
     });
 
     it('skips a settings folder below the user settings folder', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/me' } });
+      const deps = makeDeps({ env: { HOME: '/users/example' } });
       deps.seed(`${USER_SETTINGS}/node/.claude/settings.json`, BYPASS);
       const result = await checkPermissionMode(deps, `${USER_SETTINGS}/node`);
       expect(result.level).toBe('warn');
@@ -401,7 +401,7 @@ describe('doctor: permission mode', () => {
     });
 
     it('warns and reads nothing when it cannot resolve the links of the paths', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/me' } });
+      const deps = makeDeps({ env: { HOME: '/users/example' } });
       deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
       const denied = { ...deps, fs: { ...deps.fs, realpath: async () => failure('cannot resolve /: EACCES') } };
       const { guarded, touched } = watched(denied as FakeDeps);
@@ -895,7 +895,7 @@ describe('doctor: the role of the layer', () => {
 
 describe('doctor: the home index', () => {
   const INDEX = '/state/factory/homes.json';
-  const env = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+  const env = { XDG_STATE_HOME: '/state', HOME: '/users/example' };
   const indexOf = (...homes: string[]): string =>
     JSON.stringify({ schema: 1, homes: homes.map((home, i) => ({ home, id: `h${i}`, projects: ['/w/web'] })) });
 
@@ -973,7 +973,7 @@ describe('doctor: the home index', () => {
   });
 
   it('warns when the place of the index is inside the folder of Claude Code', async () => {
-    const deps = makeDeps({ env: { HOME: '/users/me', XDG_STATE_HOME: '/users/me/.claude/state' } });
+    const deps = makeDeps({ env: { HOME: '/users/example', XDG_STATE_HOME: '/users/example/.claude/state' } });
     expect(await checkIndex(deps, HOME)).toMatchObject({ level: 'warn' });
   });
 
