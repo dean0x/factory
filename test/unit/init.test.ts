@@ -1058,6 +1058,70 @@ describe('init: a project URL', () => {
     expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
   });
 
+  describe('the undo of the clones', () => {
+    const URL_DOCS = 'https://host/acme/docs.git';
+
+    /** The fake git makes the folder of a clone, as the real git does. A clone of `failingUrl` fails. */
+    const cloneSetup = (fixture: GitFixture, failingUrl?: string) => {
+      const { handler } = gitHandler(fixture);
+      const deps: FakeDeps = createFakeDeps({
+        cwd: '/w',
+        run: (call) => {
+          if (call.command === 'git' && call.args[0] === 'clone') {
+            if (call.args[2] === failingUrl) return exited(128, '', 'fatal: could not read from the remote repository\n');
+            const target = call.args[3] ?? '';
+            deps.seedDir(target);
+            deps.seed(`${target}/README.md`, 'cloned');
+          }
+          return handler(call);
+        },
+      });
+      return deps;
+    };
+
+    it('removes the clone that this run made when a later step fails, and keeps a folder that was there before', async () => {
+      const deps = cloneSetup({ repos: { '/w/api': { origin: URL_API }, '/w/docs': { origin: URL_DOCS } } });
+      deps.seedDir('/w/docs');
+      deps.seed('/w/docs/README.md', 'mine');
+
+      const result = await runInit(failingWrite(deps, '/factory.yaml'), options({ projects: [URL_API, URL_DOCS] }));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(deps.dirs.has('/w/api')).toBe(false);
+      expect(deps.files.has('/w/api/README.md')).toBe(false);
+      expect(deps.dirs.has('/w/docs')).toBe(true);
+      expect(deps.files.get('/w/docs/README.md')).toBe('mine');
+      expect(messageOf(result)).toContain('Removed the clone that this run made: /w/api.');
+      expect(messageOf(result)).not.toContain('/w/docs');
+      expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
+    });
+
+    it('removes the clone that an earlier URL made when a later clone fails', async () => {
+      const deps = cloneSetup({}, URL_DOCS);
+
+      const result = await runInit(deps, options({ projects: [URL_API, URL_DOCS] }));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(messageOf(result)).toContain('cannot clone https://host/acme/docs.git');
+      expect(messageOf(result)).toContain('Removed the clone that this run made: /w/api.');
+      expect(deps.dirs.has('/w/api')).toBe(false);
+    });
+
+    it('names a clone that it cannot remove', async () => {
+      const deps = cloneSetup({ repos: { '/w/api': { origin: URL_API } } });
+      const stuck: Deps = {
+        ...deps,
+        fs: { ...deps.fs, remove: async (path) => (path === '/w/api' ? failure('cannot remove /w/api: EBUSY') : deps.fs.remove(path)) },
+      };
+
+      const result = await runInit(failingWrite(stuck, '/factory.yaml'), options({ projects: [URL_API] }));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(messageOf(result)).toContain('These clones could not be removed: /w/api (cannot remove /w/api: EBUSY).');
+      expect(messageOf(result)).not.toContain('Removed the clone');
+    });
+  });
+
   it('keeps a path as a path and a URL as a URL in one command', async () => {
     const { deps, log, done } = run({ repos: { '/w/web': {}, '/w/api': { origin: URL_API } } }, ['/w/web', URL_API]);
     expect((await done).ok).toBe(true);

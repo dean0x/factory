@@ -54,7 +54,7 @@ import { roleForLayer } from '../recipes/software/recipe.js';
 import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
-import { MAX_PROJECTS, planProjects, runClones } from './init-clone.js';
+import { MAX_PROJECTS, planProjects, runClones, undoClones } from './init-clone.js';
 import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation, realPathOf } from './init-home.js';
 
 export interface InitOptions {
@@ -472,21 +472,22 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!chosen.ok) return chosen;
   const { home, found, skipped, truncated } = chosen.value;
 
-  // The clones come before the plan, because the plan reads each project. A clone stays when a later step fails;
-  // the next run finds it and uses it.
+  // The clones come before the plan, because the plan reads each project. When a later step fails, the clones
+  // that this run made are removed again. A folder that was there before the run is never removed.
   const projects = await planProjects(deps, home, options.projects);
   if (!projects.ok) return projects;
   const cloned = await runClones(deps, projects.value.clones);
   if (!cloned.ok) return cloned;
+  const made = cloned.value;
 
   const plan = await planInit(deps, {
     ...options,
     home,
     projects: projectsOf(deps, projects.value.paths, found),
   });
-  if (!plan.ok) return plan;
+  if (!plan.ok) return undoClones(deps, made, plan.error);
   const applied = await applyInit(deps, plan.value);
-  if (!applied.ok) return applied;
+  if (!applied.ok) return undoClones(deps, made, applied.error);
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
   const warnings = [
     ...plan.value.warnings,
@@ -496,7 +497,6 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   ];
 
   const written = [files.config, files.claudeMd, `${dirs.state}/`];
-  const made = projects.value.clones.filter((clone) => !clone.present).map((clone) => clone.target);
   return ok({
     lines: [
       { level: 'text', text: `Created the ${roles.node} "${plan.value.config.core.node.id}" in ${plan.value.home}.` },

@@ -1,8 +1,8 @@
 import { dirname, join, resolve } from 'node:path';
-import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { gitClone, isWorkTreeRoot, originUrlOf } from '../core/git.js';
-import { ok } from '../core/result.js';
+import { err, ok } from '../core/result.js';
 import { flags, flagText, program, roles } from '../names.js';
 
 export const MAX_PROJECTS = 100;
@@ -110,12 +110,40 @@ export const planProjects = async (
   return ok({ paths, clones });
 };
 
-/** Clone each repo that is not there yet. A clone that was made stays when a later step fails. */
-export const runClones = async (deps: Deps, clones: readonly PlannedClone[]): Promise<CliResult<void>> => {
+/**
+ * Undo the clones that this run made, after a later step failed. Only a folder in `made` is removed, so a folder
+ * that was there before the run is never touched. The message names each folder that was removed, and each folder
+ * that could not be removed.
+ */
+export const undoClones = async (deps: Deps, made: readonly string[], cause: CliError): Promise<CliResult<never>> => {
+  if (made.length === 0) return err(cause);
+  const removed: string[] = [];
+  const stuck: string[] = [];
+  for (const target of made) {
+    const result = await deps.fs.remove(target);
+    if (result.ok) removed.push(target);
+    else stuck.push(`${target} (${result.error.message})`);
+  }
+  const notes = [
+    ...(removed.length === 0
+      ? []
+      : [`Removed the ${removed.length === 1 ? 'clone' : 'clones'} that this run made: ${removed.join(', ')}.`]),
+    ...(stuck.length === 0 ? [] : [`These clones could not be removed: ${stuck.join('; ')}.`]),
+  ];
+  return err({ ...cause, message: `${cause.message.replace(/\.$/, '')}. ${notes.join(' ')}` });
+};
+
+/**
+ * Clone each repo that is not there yet. The result is the folders that this run made. When a clone fails, the
+ * clones that this run made before it are removed again.
+ */
+export const runClones = async (deps: Deps, clones: readonly PlannedClone[]): Promise<CliResult<readonly string[]>> => {
+  const made: string[] = [];
   for (const clone of clones) {
     if (clone.present) continue;
     const cloned = await gitClone(deps, clone.url, clone.target);
-    if (!cloned.ok) return cloned;
+    if (!cloned.ok) return undoClones(deps, made, cloned.error);
+    made.push(clone.target);
   }
-  return ok(undefined);
+  return ok(made);
 };
