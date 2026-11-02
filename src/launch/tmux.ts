@@ -16,7 +16,23 @@ const windowTarget = (id: string, window: string): string => `${sessionTarget(id
 const LEFT_PANE = '{left}';
 const RIGHT_PANE = '{right}';
 
+/** The pane of the coordinator: the left pane of the view window. */
+const coordinatorPane = (id: string): string => `${windowTarget(id, tmuxNames.windowView)}.${LEFT_PANE}`;
+
 export const hasSessionArgs = (id: string): TmuxArgs => ['has-session', '-t', sessionTarget(id)];
+
+/**
+ * Asks whether the program of the coordinator pane has ended. The output is `1` for an ended program and `0` for a program
+ * that runs. The pane stays after its program ended, because of remain-on-exit. `display-message` takes a pane target,
+ * but `list-panes` takes a window target, which cannot name one pane.
+ */
+export const coordinatorEndedArgs = (id: string): TmuxArgs => [
+  'display-message',
+  '-p',
+  '-t',
+  coordinatorPane(id),
+  '#{pane_dead}',
+];
 
 /** The node home that a session holds in its option. `-q` gives an empty answer, not an error, for a session without the option. */
 export const showHomeArgs = (id: string): TmuxArgs => [
@@ -56,7 +72,7 @@ export const startSteps = (input: {
     ['new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', home, '--', ...launch],
     ['set-environment', '-t', sessionTarget(id), '-r', env.proxyBaseUrl],
     ['set-option', '-w', '-t', view, 'remain-on-exit', 'on'],
-    ['set-option', '-p', '-t', `${view}.${LEFT_PANE}`, tmuxNames.optionNode, id],
+    ['set-option', '-p', '-t', coordinatorPane(id), tmuxNames.optionNode, id],
     ['set-option', '-t', windowTarget(id, ''), tmuxNames.optionHome, home],
     ['split-window', '-d', '-h', '-t', view, '-c', home],
     ['set-option', '-p', '-t', `${view}.${RIGHT_PANE}`, tmuxNames.optionSlot, tmuxNames.slotBoard],

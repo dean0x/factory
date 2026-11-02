@@ -8,6 +8,8 @@ export interface TmuxFixture {
   readonly sessions?: Readonly<Record<string, string | null>>;
   /** The first word of a tmux command that fails with exit code 1. */
   readonly failing?: string;
+  /** Sessions whose coordinator program has ended. The pane stays, because of remain-on-exit. */
+  readonly endedCoordinators?: readonly string[];
 }
 
 export interface TmuxLog {
@@ -23,6 +25,7 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
   const calls: RunCall[] = [];
   const sessions = new Map<string, string | null>(Object.entries(fixture.sessions ?? {}));
   const version = fixture.version === undefined ? 'tmux 3.4' : fixture.version;
+  const endedCoordinators = new Set(fixture.endedCoordinators ?? []);
 
   const targetSession = (args: readonly string[]): string => {
     const target = args[args.indexOf('-t') + 1] ?? '';
@@ -40,6 +43,11 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
         return sessions.has(targetSession(call.args)) ? exited(0) : exited(1, '', "can't find session\n");
       case 'show-options':
         return exited(0, `${sessions.get(targetSession(call.args)) ?? ''}\n`);
+      case 'display-message': {
+        const session = targetSession(call.args);
+        if (!sessions.has(session)) return exited(1, '', "can't find session\n");
+        return exited(0, `${endedCoordinators.has(session) ? 1 : 0}\n`);
+      }
       case 'new-session': {
         const name = rest[rest.indexOf('-s') + 1] ?? '';
         if (sessions.has(name)) return exited(1, '', 'duplicate session\n');

@@ -216,10 +216,57 @@ describe('up: a session that runs already', () => {
   it('starts nothing for a session of this home, and attaches', async () => {
     const { deps, tmux } = make({ tty: true, tmux: { sessions: { demo: HOME } } });
     const output = await succeeded(deps);
-    expect(tmux.commands()).toEqual(['-V', 'has-session -t =demo', 'show-options -q -v -t =demo: @factory_home']);
+    expect(tmux.commands()).toEqual([
+      '-V',
+      'has-session -t =demo',
+      'show-options -q -v -t =demo: @factory_home',
+      'display-message -p -t =demo:view.{left} #{pane_dead}',
+    ]);
     expect(deps.attached).toHaveLength(1);
-    expect(output.json).toMatchObject({ started: false, attached: true });
+    expect(output.json).toEqual({ schema: 'factory.up/v1', session: 'demo', started: false, attached: true, proxy: null });
     expect(output.lines.map((line) => line.text).join('\n')).not.toContain('Started');
+    expect(output.lines.some((line) => line.level === 'warn')).toBe(false);
+  });
+
+  it('says that the coordinator has ended, and gives the remedy, when the pane stays after its program ended', async () => {
+    const { deps } = make({ tty: true, tmux: { sessions: { demo: HOME }, endedCoordinators: ['demo'] } });
+    const output = await succeeded(deps);
+    const warning = output.lines.find((line) => line.level === 'warn');
+    expect(warning?.text).toBe('The coordinator of the session demo has ended.');
+    const remedy = output.lines.map((line) => line.text).join('\n');
+    expect(remedy).toContain('"tmux kill-session -t =demo"');
+    expect(remedy).toContain('"factory up --home /w/node"');
+    expect(output.json).toEqual({
+      schema: 'factory.up/v1',
+      session: 'demo',
+      started: false,
+      attached: true,
+      proxy: null,
+      coordinatorEnded: true,
+    });
+    expect(output.failed).toBe(false);
+    expect(deps.attached).toHaveLength(1);
+  });
+
+  it('says that the coordinator has ended also when nobody types, and still prints how to attach', async () => {
+    const { deps } = make({ tmux: { sessions: { demo: HOME }, endedCoordinators: ['demo'] } });
+    const output = await succeeded(deps);
+    expect(output.lines.at(-1)?.text).toBe('Session demo runs. Attach with: tmux attach -t demo');
+    expect(output.lines.some((line) => line.level === 'warn')).toBe(true);
+    expectShortOutput(plainText(output));
+  });
+
+  it('says that the session runs when the state of the coordinator pane cannot be read', async () => {
+    const { deps } = make({ tmux: { sessions: { demo: HOME }, endedCoordinators: ['demo'], failing: 'display-message' } });
+    const output = await succeeded(deps);
+    expect(output.lines.some((line) => line.level === 'warn')).toBe(false);
+    expect(output.json).not.toHaveProperty('coordinatorEnded');
+  });
+
+  it('does not ask for the coordinator pane in a dry run', async () => {
+    const { deps, tmux } = make({ tmux: { sessions: { demo: HOME }, endedCoordinators: ['demo'] } });
+    await succeeded(deps, { dryRun: true });
+    expect(tmux.commands()).toEqual(['has-session -t =demo']);
   });
 
   it('prints how to attach when nobody types', async () => {

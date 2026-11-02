@@ -11,6 +11,7 @@ import { launchArgv } from '../launch/argv.js';
 import {
   attachArgs,
   attachHint,
+  coordinatorEndedArgs,
   hasSessionArgs,
   killSessionArgs,
   showHomeArgs,
@@ -80,6 +81,12 @@ const tmuxStep = async (deps: Deps, args: TmuxArgs): Promise<CliResult<string>> 
 const sessionExists = async (deps: Deps, id: string): Promise<boolean> => {
   const result = await tmuxCall(deps, hasSessionArgs(id));
   return result.ok && result.value.exitCode === 0;
+};
+
+/** True when the program of the coordinator pane has ended. A pane that cannot be read counts as one that runs. */
+const coordinatorEnded = async (deps: Deps, id: string): Promise<boolean> => {
+  const result = await tmuxCall(deps, coordinatorEndedArgs(id));
+  return result.ok && result.value.exitCode === 0 && result.value.stdout.trim() === '1';
 };
 
 /** The tools that `up` needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
@@ -217,6 +224,15 @@ const startSession = async (deps: Deps, id: string, steps: readonly TmuxArgs[]):
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 
+/** The warning for a session whose coordinator pane stays after its program ended, with the remedy. */
+const coordinatorEndedLines = (id: string, home: string): readonly OutLine[] => [
+  { level: 'warn', text: `The ${roles.coordinator} of the session ${id} has ended.` },
+  text(
+    `The window ${tmuxNames.windowView} shows why. Remove the session with "${commandLine(killSessionArgs(id))}". ` +
+      `Then run "${commandText(commands.up)} ${flagText(flags.home)} ${shellWord(home)}" again.`,
+  ),
+];
+
 /** The last line of the output: where the person is now, or how to get to the session. */
 const arrivalText = (how: Reach, arrived: boolean, id: string): string => {
   if (!arrived) return `Session ${id} runs. Attach with: ${attachHint(id)}`;
@@ -295,6 +311,8 @@ export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<C
     const started = await startSession(deps, id, planned.steps);
     if (!started.ok) return started;
   }
+  // A session that runs already can hold a coordinator pane that stays after its program ended.
+  const ended = planned === null && (await coordinatorEnded(deps, id));
   const attached = await reach(deps, how, id);
   if (!attached.ok) return attached;
 
@@ -303,6 +321,7 @@ export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<C
       ...(planned === null
         ? []
         : [text(`Started the session ${id} in ${home}. The ${roles.coordinator} runs in the window ${tmuxNames.windowView}.`)]),
+      ...(ended ? coordinatorEndedLines(id, home) : []),
       text(arrivalText(how, attached.value, id)),
     ],
     json: {
@@ -311,6 +330,7 @@ export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<C
       started: planned !== null,
       attached: attached.value,
       proxy: planned?.proxy.label ?? null,
+      ...(ended ? { coordinatorEnded: true } : {}),
     },
     warnings: planned?.proxy.warning === undefined ? [] : [planned.proxy.warning],
     failed: false,
