@@ -1215,6 +1215,33 @@ describe('init: a project URL', () => {
       expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
       expect(JSON.stringify(result)).not.toContain('tok3n');
     });
+
+    it.each(['user:s3cr3t@host:acme/api.git', 'user:@host:acme/api.git', 'a:b@host'])(
+      'refuses the form %s with a usage error that does not repeat it, and runs no clone',
+      async (value) => {
+        const { deps, log, done } = run({}, [value], { env });
+        const result = await done;
+        expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+        expect(messageOf(result)).toContain('this URL form is not accepted');
+        expect(everythingOf(deps, result)).not.toContain(value);
+        expect(log.clones()).toEqual([]);
+      },
+    );
+
+    it('prints no part of a user:secret@host:path value on stdout or stderr', async () => {
+      const { deps } = setup({}, { env });
+      const sink = captureSink();
+      const argv = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--project', 'user:s3cr3t@host:acme/api.git'];
+      expect(await runCli(argv, deps, sink)).toBe(2);
+      expect(`${sink.out.join('')}${sink.errors.join('')}`).not.toContain('s3cr3t');
+    });
+
+    it('keeps a path that holds a colon and an @ as a path', async () => {
+      const { deps, log } = setup({ repos: { '/w/odd:name@x': {} } });
+      deps.seedDir('/w/odd:name@x');
+      expect(await runInit(deps, options({ projects: ['/w/odd:name@x'] }))).toMatchObject({ ok: true });
+      expect(log.clones()).toEqual([]);
+    });
   });
 
   it('keeps a path as a path and a URL as a URL in one command', async () => {

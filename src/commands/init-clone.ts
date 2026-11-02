@@ -14,6 +14,8 @@ const HTTPS_URL = new RegExp(`^https://(?:${USER}@)?${HOST}(?::\\d{1,5})?/${URL_
 const SSH_URL = new RegExp(`^ssh://(?:${USER}@)?${HOST}(?::\\d{1,5})?/${URL_PATH}$`);
 const SCP_URL = new RegExp(`^${USER}@${HOST}:${URL_PATH}$`);
 const OTHER_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+/** A value with a colon before its first @ and no slash before it, such as user:secret@host:path. It is no path. */
+const COLON_IN_USER = /^[^\s/@:]+:[^\s/@]*@/;
 const GIT_SUFFIX = '.git';
 /** An https URL with a userinfo part. The other forms hold no credentials: ssh uses a key, never a URL secret. */
 const HTTPS_USERINFO = /^https:\/\/[^\s/]*@/;
@@ -39,12 +41,13 @@ export interface PlannedClone extends RepoUrl {
 /**
  * Read a value of the project flag as a repo URL. The accepted forms are https://, ssh:// and user@host:path.
  * The result is null when the value is a path. A form with a hostname or a user name that starts with a hyphen
- * is not accepted, so a URL can never act as an option of git or ssh.
+ * is not accepted, so a URL can never act as an option of git or ssh. A value with a colon in the user part is
+ * not accepted either, and the error does not repeat the value.
  */
 export const parseProjectUrl = (argument: string): CliResult<RepoUrl | null> => {
   const accepted = HTTPS_URL.test(argument) || SSH_URL.test(argument) || SCP_URL.test(argument);
   if (!accepted) {
-    return OTHER_SCHEME.test(argument)
+    return OTHER_SCHEME.test(argument) || COLON_IN_USER.test(argument)
       ? usageError(
           `${flagText(flags.project)}: this URL form is not accepted`,
           'Use a URL that starts with https:// or ssh://, or the form user@host:path.',
