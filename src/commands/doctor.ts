@@ -136,9 +136,14 @@ export const checkState = (state: DocState<NodeState>): CheckResult => {
 /**
  * The home is outside every git work tree and every other node home. When the config is valid, no project is the
  * home or inside it. These are the rules that `init` enforces, checked again for a home that was moved or edited.
+ * `location` is the result of `checkHomeLocation` for this home.
  */
-export const checkHome = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
-  const location = await checkHomeLocation(deps, home);
+export const checkHome = async (
+  deps: Deps,
+  home: string,
+  state: DocState<FactoryConfig>,
+  location: CliResult<void>,
+): Promise<CheckResult> => {
   if (!location.ok) return check(checkIds.home, 'fail', location.error.message);
   const holdsNoRepo = await checkHomeHoldsNoRepo(deps, home);
   if (!holdsNoRepo.ok) return check(checkIds.home, 'fail', holdsNoRepo.error.message);
@@ -320,14 +325,25 @@ export const checkProxyEnv = (deps: Deps): CheckResult => {
     : check(checkIds.proxyEnv, 'warn', `${env.proxyBaseUrl} is set in the shell. ${program} clears it at launch.`);
 };
 
+/** Whether doctor may send a request to the URLs of the config. When it may not, `reason` says why. */
+export type ProxyRequestRule = { readonly may: true } | { readonly may: false; readonly reason: string };
+
+const NO_HOME_FLAG = `the ${roles.node} home does not come from ${flagText(flags.home)} and is not the current folder. Run with ${flagText(flags.home)} DIR to check the proxy.`;
+
 /**
- * One health request for each proxy in use. When `mayRequest` is false, the config does not come from a place the
- * user chose, so its URLs are not requested.
+ * The URLs of a config are requested only when the user chose the place of the config, and the home is a place that
+ * the up command accepts. A home inside a git work tree or inside another node home is not requested.
  */
+export const proxyRequestRule = (source: LocatedHome['source'], location: CliResult<void>): ProxyRequestRule => {
+  if (!location.ok) return { may: false, reason: `${location.error.message}, so ${program} sends no request` };
+  return source === 'flag' || source === 'cwd' ? { may: true } : { may: false, reason: NO_HOME_FLAG };
+};
+
+/** One health request for each proxy in use, when the rule allows it. */
 export const checkProxies = async (
   deps: Deps,
   state: DocState<FactoryConfig>,
-  mayRequest: boolean,
+  request: ProxyRequestRule,
 ): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
   const { core } = state.value;
@@ -335,15 +351,7 @@ export const checkProxies = async (
   inUse.delete(values.noProxy);
   const used = core.proxies.filter((proxy) => inUse.has(proxy.id));
   if (used.length === 0) return [check(checkIds.proxy, 'ok', 'no proxy is in use')];
-  if (!mayRequest) {
-    return [
-      notChecked(
-        checkIds.proxy,
-        `the ${roles.node} home does not come from ${flagText(flags.home)} and is not the current folder. ` +
-          `Run with ${flagText(flags.home)} DIR to check the proxy.`,
-      ),
-    ];
-  }
+  if (!request.may) return [notChecked(checkIds.proxy, request.reason)];
 
   return Promise.all(
     used.map(async (proxy): Promise<CheckResult> => {
@@ -424,13 +432,14 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
   const { home, source } = located;
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
+  const location = await checkHomeLocation(deps, home);
   const [homeCheck, index, blocks, children, permission, proxies, tools, stateRepo, projects] = await Promise.all([
-    checkHome(deps, home, config),
+    checkHome(deps, home, config, location),
     checkIndex(deps, home),
     checkNodeBlocks(deps, home, config),
     checkChildren(deps, config),
     checkPermissionMode(deps, home),
-    checkProxies(deps, config, source === 'flag' || source === 'cwd'),
+    checkProxies(deps, config, proxyRequestRule(source, location)),
     checkTools(deps),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),

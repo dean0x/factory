@@ -31,6 +31,7 @@ Home, `init` and `up`
 - Two `init` runs at the same time both keep their entry in the home index. A lock file `homes.json.lock` beside the index lets one run write at a time. A run tries 20 times, 50 ms apart, then stops with an error. A lock older than 5 seconds is taken over.
 - When the home index lists 200 homes, `init` first drops the entries whose home has no config file. It keeps an entry whose home it cannot check.
 - The `index` check of `doctor` warns when the home index does not list the current home.
+- `factory doctor` sends no proxy request for a home inside a git work tree or inside another node home. The `proxy` check says that it did not run, and the `home` check fails.
 - `factory` refuses a config file, a state file or a home index file of more than 1,048,576 bytes. It does not read the rest of such a file. This holds for the config of a child that `doctor` and `node children` read.
 - New command `factory up`. It starts a tmux session with the id of the node, with the windows `view` and `bench`. The coordinator runs in the home in auto permission mode, with one `--add-dir` for each project and no inherited `ANTHROPIC_BASE_URL`. The shells of the slot and the bench get no `ANTHROPIC_BASE_URL` either. A second `up` starts no second coordinator. `--dry-run` prints the tmux calls and starts nothing. Like `init`, `up` refuses (exit code 4) a home inside a git work tree or inside another node home, and it does not use the config of that home.
 
