@@ -7,7 +7,7 @@ import { findNearestConfig } from '../core/home.js';
 import { isSameOrInside, nearestExisting, realPathOf } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { commands, commandText, dirs, files, flags, flagText, program, roles } from '../names.js';
-import { layoutOf } from '../state/layout.js';
+import { isStagingDirName, layoutOf } from '../state/layout.js';
 
 const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
@@ -142,10 +142,18 @@ export const checkHomeHoldsNoRepo = async (deps: Deps, home: string): Promise<Cl
   if (kind.value !== 'dir') return ok(undefined);
   const scan = await listRepoChildren(deps, home);
   if (!scan.ok) return scan;
-  const repo = [...scan.value.repos, ...scan.value.skipped.map((folder) => folder.path)].find(
+  const found = [...scan.value.repos, ...scan.value.skipped.map((folder) => folder.path)].filter(
     (path) => basename(path) !== dirs.state,
   );
-  if (repo === undefined) return ok(undefined);
+  const repo = found.find((path) => !isStagingDirName(basename(path)));
+  if (repo === undefined) {
+    const staging = found[0];
+    if (staging === undefined) return ok(undefined);
+    return safetyRefusal(
+      `the ${roles.node} home ${home} holds the staging folder ${staging}, left by a stopped ${commands.init}. ` +
+        'You can remove it by hand.',
+    );
+  }
   return safetyRefusal(
     `the ${roles.node} home ${home} holds the git repo ${basename(repo)} one level down`,
     `A ${roles.node} home must hold no git repo. Choose another folder with ${flagText(flags.home)} DIR.`,

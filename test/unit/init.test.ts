@@ -960,6 +960,34 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(await checkHomeHoldsNoRepo(deps, WS)).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 
+  it('names a staging folder that a stopped init left, says it can be removed by hand, and removes nothing', async () => {
+    const deps = inWorkspace({}, { repos: { '/ws/.factory.tmp-4242': {} } });
+    const before = snapshot(deps);
+    const result = await checkHomeHoldsNoRepo(deps, WS);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    const message = messageOf(result);
+    expect(message).toContain('/ws/.factory.tmp-4242');
+    expect(message).toContain('left by a stopped init');
+    expect(message).toContain('You can remove it by hand');
+    expect(message).not.toContain('git repo');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('names a real repo before a staging folder when the home holds both', async () => {
+    const deps = inWorkspace({}, { repos: { '/ws/.factory.tmp-1': {}, '/ws/web': {} } });
+    const message = messageOf(await checkHomeHoldsNoRepo(deps, WS));
+    expect(message).toContain('holds the git repo web one level down');
+    expect(message).not.toContain('left by a stopped init');
+  });
+
+  it.each([['.factory.tmp-'], ['.factory.tmp-4a'], ['.factory.tmp']])(
+    'treats %s as a repo, because it is no staging folder',
+    async (name) => {
+      const deps = inWorkspace({}, { repos: { [`/ws/${name}`]: {} } });
+      expect(messageOf(await checkHomeHoldsNoRepo(deps, WS))).toContain(`holds the git repo ${name} one level down`);
+    },
+  );
+
   it('reports a folder with more entries than the scan reads', async () => {
     const deps = inWorkspace();
     for (let i = 0; i < 205; i += 1) deps.seedDir(`/ws/z${String(i).padStart(3, '0')}`);
@@ -1547,6 +1575,17 @@ describe('init: the checks before a clone', () => {
     );
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     expect(messageOf(result)).toContain('holds the git repo app one level down');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('refuses a home that holds a staging folder of a stopped init, names it and runs no clone', async () => {
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const { result, log, changed } = await initWithUrl({}, { repos: { [staging]: {} } }, (deps) =>
+      deps.seedDir(`${staging}/.git`),
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain(`holds the staging folder ${staging}, left by a stopped init`);
     expect(log.clones()).toEqual([]);
     expect(changed).toBe(false);
   });

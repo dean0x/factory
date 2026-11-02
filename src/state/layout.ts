@@ -47,4 +47,10 @@ export const layoutOf = (home: string): Layout => {
   };
 };
 
-export const stagingDirOf = (home: string, pid: number): string => join(home, `${dirs.state}.tmp-${pid}`);
+const STAGING_PREFIX = `${dirs.state}.tmp-`;
+
+export const stagingDirOf = (home: string, pid: number): string => join(home, `${STAGING_PREFIX}${pid}`);
+
+/** The folder name is the name of a staging folder, which an init that stopped can leave in the home. */
+export const isStagingDirName = (name: string): boolean =>
+  name.startsWith(STAGING_PREFIX) && /^\d+$/.test(name.slice(STAGING_PREFIX.length));
