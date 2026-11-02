@@ -285,9 +285,13 @@ first=$(awk '
 ' "$@")
 report 8 "the docs, the README and the CHANGELOG hold no local machine path" "$first"
 
+# 9. design.md has the headings "Core and setup" and "Extension points". A heading may start with a section number, with
+# or without a dot after it. A line in fenced code is not a heading.
 first=$(awk '
-  /^#+ ([0-9]+(\.[0-9]+)* )?Core and setup[ \t]*$/ { core = 1 }
-  /^#+ ([0-9]+(\.[0-9]+)* )?Extension points[ \t]*$/ { points = 1 }
+  /^```/ { fenced = !fenced; next }
+  fenced { next }
+  /^#+ ([0-9]+(\.[0-9]+)*\.? )?Core and setup[ \t]*$/ { core = 1 }
+  /^#+ ([0-9]+(\.[0-9]+)*\.? )?Extension points[ \t]*$/ { points = 1 }
   END {
     if (!core) print "design.md has no heading \"Core and setup\""
     else if (!points) print "design.md has no heading \"Extension points\""
@@ -295,10 +299,13 @@ first=$(awk '
 ' "$design")
 report 9 "design.md has the headings for core and setup and for extension points" "$first"
 
+# 10. The fenced block under "**Core commands**" in design 4.2 holds no word of the software recipe list: merge, pull
+# request, release (also release check and release scope), CI log, PR and CI. A word also counts as a plural, a past form
+# or an -ing form. PR and CI count only in capital letters. The core part needs at least one line of fenced code.
 first=$(awk '
   function recipe_word(line,   low, word) {
     low = tolower(line)
-    if (match(low, /(^|[^a-z0-9_])(merge[sd]?|pull requests?|release[sd]?|ci logs?)($|[^a-z0-9_])/)) {
+    if (match(low, /(^|[^a-z0-9_])(merg(e[sd]?|ing)|pull requests?|releas(e[sd]?|ing)|ci logs?)($|[^a-z0-9_])/)) {
       word = substr(low, RSTART, RLENGTH)
       sub(/^[^a-z]+/, "", word)
       sub(/[^a-z]+$/, "", word)
@@ -318,11 +325,17 @@ first=$(awk '
   /^\*\*Core commands\*\*/ { core = 1; found = 1; next }
   /^\*\*Software recipe commands\*\*/ { core = 0; next }
   /^```/ { fence = !fence; next }
-  core && fence && !hit {
-    hit = recipe_word($0)
-    if (hit != "") printf "design.md line %d: the core command table holds the software recipe word \"%s\"\n", NR, hit
+  core && fence {
+    corelines++
+    if (!hit) {
+      hit = recipe_word($0)
+      if (hit != "") printf "design.md line %d: the core command table holds the software recipe word \"%s\"\n", NR, hit
+    }
   }
-  END { if (!found) print "design.md 4.2 has no core command table" }
+  END {
+    if (!found) print "design.md 4.2 has no core command table"
+    else if (!corelines) print "design.md 4.2 has no fenced code under \"**Core commands**\""
+  }
 ' "$design")
 report 10 "the core command table of design 4.2 holds no word of the software recipe" "$first"
 

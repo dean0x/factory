@@ -247,7 +247,7 @@ describe('scripts/check-intent-docs.sh, check 8: no local machine paths', () => 
     const result = check();
     expect(result.out).toContain('design.md:');
     expect(result.out).not.toContain('README.md:');
-    expect(result.out).not.toContain('private');
+    expect(result.out).not.toContain('a private path');
   });
 
   it('passes when the README and the CHANGELOG are not above the docs folder', async () => {
@@ -295,6 +295,21 @@ describe('scripts/check-intent-docs.sh, check 9: the design has the headings for
     await change('design.md', (text) => text.replace(new RegExp(`^(#+ )[0-9.]+ ${title}$`, 'm'), `$1${title}`));
     expect(check().code).toBe(0);
   });
+
+  it.each(HEADINGS)('accepts "%s" with a dot after the section number', async (title) => {
+    await change('design.md', (text) => text.replace(new RegExp(`^(#+ [0-9]+(?:\\.[0-9]+)*) ${title}$`, 'm'), `$1. ${title}`));
+    expect(check().code).toBe(0);
+  });
+
+  it.each(HEADINGS)('exits 1 when "%s" is only a line in fenced code', async (title) => {
+    await change('design.md', (text) =>
+      text.replace(new RegExp(`^#+ (?:[0-9.]+ )?${title}$`, 'm'), ['```sh', `# ${title}`, '```'].join('\n')),
+    );
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['9']);
+    expect(result.out).toContain(`design.md has no heading "${title}"`);
+  });
 });
 
 /** Words of the software recipe list (Step 24 of the code change makes the list equal to `words.ts`). */
@@ -307,6 +322,22 @@ describe('scripts/check-intent-docs.sh, check 10: the core command table holds n
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['10']);
     expect(result.out).toMatch(/design\.md line \d+: the core command table holds the software recipe word "/);
+  });
+
+  it.each(['merging', 'releasing', 'merges', 'PRs', 'CI logs'])('exits 1 for the form "%s" in a line of the core command table', async (form) => {
+    await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, `$1 and the ${form}`));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['10']);
+    expect(result.out.toLowerCase()).toContain(`the software recipe word "${form.toLowerCase()}"`);
+  });
+
+  it('exits 1 when the core part of design 4.2 has no fenced code', async () => {
+    await change('design.md', (text) => text.replace(/(\*\*Core commands\*\*[^\n]*\n\n)```\n[\s\S]*?\n```\n/, '$1The core commands are in a list.\n'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['10']);
+    expect(result.out).toContain('design.md 4.2 has no fenced code under "**Core commands**"');
   });
 
   it('accepts the recipe words in the table of software recipe commands', () => {

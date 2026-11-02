@@ -221,7 +221,10 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
   { term: 'node, owner, project', plain: 'stay', scan: '-', note: "Dean's words (F-1)" },
 ];
 
-/** The eight words that D-59 replaced. A second list of the same words is in `test/helpers/old-words.ts` (Step 8 of the code change). */
+/**
+ * The eight words that D-59 replaced. `test/helpers/old-words.ts` has the list for the scan of `src`: it holds only three
+ * of these words until Step 8 of the code change adds the other five.
+ */
 export const OLD_WORD_LIST = ['lane', 'pack', 'brief', 'cell', 'andon', 'staging', 'inspect', 'ship'] as const;
 
 /** An old word, also as a plural, a past form or an -ing form (shipped, shipping, packed, briefing). */
