@@ -321,7 +321,7 @@ The import into GitHub issues is not here: it is FAC-M3.
 ## Later (no milestone yet)
 
 - Other recipes, for example research or content (F-10).
-- The `desk` adapter and `factory desk render`: not built and not planned (F-2). An owner who asks for them gets a new milestone.
+- No review desk: no `desk` adapter and no `factory desk render` (F-2, F-17).
 
 ## Decisions needed
 

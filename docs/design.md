@@ -7,7 +7,7 @@ Roadmap: `docs/roadmap-v2.md` (proposal). It replaces FAC-M2 to FAC-M7 of the v1
 
 Dean gave the feedback F-1 to F-10 on v1, and accepted the proposals as a set (D-53). v2 makes these changes:
 1. **Names from a real factory (F-1).** A lane is now a **cell**. A workflow pack is now a **recipe**. node, owner and project stay. New factory words where they are clearer: `factory inspect` (merge gate), `factory ship` (release check), **andon** (an item that waits on the owner), **work order** (a brief or a decision that goes down), **changeover** (a clear or compact between phases), **staging** (the merge order). See §4.1 and §7.
-2. **The team's tracker holds the board (F-2).** factory gets one tracker connector: GitHub (the default), Jira or Linear. A `local` connector keeps the items in files, for a node with no network or no tracker account, and it is the test double of the connector. The artifact review desk is optional. A decision is a labelled tracker item, and a script reads the answer. The decision store is private by default. See §4.10.
+2. **The team's tracker holds the board (F-2).** factory gets one tracker connector: GitHub (the default), Jira or Linear. A `local` connector keeps the items in files, for a node with no network or no tracker account, and it is the test double of the connector. factory has no review desk of its own, not even as an option (F-17). A decision is a labelled tracker item, and a script reads the answer. The decision store is private by default. See §4.10.
 3. **The coordinator runs in its own home folder (F-3).** The node home is next to the projects, never inside a repo and never above the checkouts. `factory up` starts the coordinator. See §4.3.
 4. **Same mechanics, one role per layer (F-4).** Layers count from the bottom: cells are layer 0. factory sets the role of a node from its layer. All children of a node are on one layer. See §5.
 5. **macOS and Linux only (F-5).** See §4.7.
@@ -371,7 +371,7 @@ approval:
 state:
   remote: null               # a private git remote for `.factory/` (a URL or a path), or null (§4.3)
 tracker:                     # the default tracker of the node; a project can override it (§4.10)
-  kind: github               # github | jira | linear | local | desk   (desk parses but is not built, §4.10)
+  kind: github               # github | jira | linear | local
   items: acme/web            # where work items live (a repo, or a project or team scope)
   decisions: acme/decisions  # the decision store; private by default (§4.10)
   site: null                 # jira only: the base URL of the Jira site
@@ -550,7 +550,7 @@ factory does not build its own review desk. The board, the andon items and the d
 - `github` (the default): issues plus a Projects board, through `gh`. factory already needs `gh` for the `software` recipe.
 - `jira` and `linear`: the same contract, through their CLI or API. `jira` needs `site` and `key`; `linear` needs `key` (§4.4).
 - `local`: files in `.factory/` (`board.json` and `waiting.json`, as in the setup of today), for a node with no network or no tracker account. It has no changes and no watch: `changes read` returns nothing, and `factory watch` exits at once with a note. `factory item list` and `factory andon list` show the items; there is no other UI. The owner answers a decision in the CLI with `factory decide <D-n> <option>`. `local` is also the test double of the connector: the contract tests run against `local` and against each real adapter. In this workspace, the review page and the scripts of today stay as the owner view during the `local` period. They read the `local` files (the same format as today). FAC-M3 retires them.
-- `desk`: **not built, and no milestone.** Dean said that the factory should not create its own review desk (F-2). The kind `desk` parses, so a later adapter needs no schema change, and `doctor` warns that no adapter exists. The command `factory desk render` is not built. An owner who wants a page can ask for it later (roadmap, "Later").
+- No review desk. Dean said that the factory has no review desk of its own, not even as an option (F-2, F-17). No tracker kind and no command makes one.
 
 **Decisions.**
 - A decision is an item with the `decision` label. Its body has the question, the options and a recommendation.

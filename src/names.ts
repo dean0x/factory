@@ -233,7 +233,7 @@ export const values = {
   recipes: ['software'],
   landModes: ['each', 'approved-work'],
   trackerLocal: 'local',
-  trackerHosted: ['github', 'jira', 'linear', 'desk'],
+  trackerHosted: ['github', 'jira', 'linear'],
   defaultWatchInterval: '5m',
 } as const;
 

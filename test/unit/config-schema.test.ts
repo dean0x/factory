@@ -166,7 +166,7 @@ describe('config schema 2', () => {
       );
     });
 
-    it.each(['github', 'jira', 'linear', 'desk'])('accepts the %s tracker with its items and decisions', (kind) => {
+    it.each(['github', 'jira', 'linear'])('accepts the %s tracker with its items and decisions', (kind) => {
       expect(check((raw) => hosted(raw, { kind }))).toBeNull();
     });
 
@@ -186,6 +186,10 @@ describe('config schema 2', () => {
 
     it('accepts items and decisions of 200 characters', () => {
       expect(check((raw) => hosted(raw, { items: 'x'.repeat(200), decisions: 'y'.repeat(200) }))).toBeNull();
+    });
+
+    it('rejects the kind desk: factory has no review desk', () => {
+      expect(check((raw) => hosted(raw, { kind: 'desk' }))).toContain('tracker.kind:');
     });
 
     it('rejects a kind that does not exist and names the key', () => {
