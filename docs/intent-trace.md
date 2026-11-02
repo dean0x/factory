@@ -3,7 +3,7 @@
 This table maps each note from Dean to the text that answers it. It has one row for each ask id of the intent check (the baseline of 2026-11-02 and its verbatim check). The intent check at each milestone merge reads the rows of that milestone. A row that is not covered blocks the merge, or moves to a named later milestone with a reason.
 
 How to read the table:
-- **Ask id.** `F-n`, `D-n` and `O-1x` are the ids of the first table of the check. `V-F-nx` is a row of the verbatim check, which compares Dean's own words. `Gap n` is a numbered gap of the check (1 to 18). `A1` to `A12` are the new gaps of the verbatim check.
+- **Ask id.** `F-n`, `D-n` and `O-1x` are the ids of the first table of the check. `V-F-nx` is a row of the verbatim check, which compares Dean's own words. `Gap n` is a numbered gap of the check (1 to 19). `A1` to `A12` are the new gaps of the verbatim check.
 - **Design section.** A heading of `docs/design.md`.
 - **Milestone and exit criterion.** A milestone of `docs/roadmap-v2.md` and the check that proves the ask. The word "criterion" refers to the exit criteria of that milestone.
 - **Status.** `covered` means that the design and the roadmap answer the ask. `not applicable` gives the reason.
@@ -118,6 +118,7 @@ How to read the table:
 | Gap 16 | The percent rule for context is checked | §4.6 | FAC-M4: `cell list` marks `PREPARE` and `MAX` at 29, 30, 40 and 41 percent | covered |
 | Gap 17 | The accepted firstmate ideas have a place | §4.8 | FAC-M3 (idea 8), FAC-M4 (`inbox next` and `inbox ack`), FAC-M5 and FAC-M8 (idea 5), FAC-M8 (ideas 3 and 4) | covered |
 | Gap 18 | Small items: `@lane` name, "lane" in the research doc, the `doc` operation | §5.1, §4.10 | FAC-M2: no `@lane` under `src/`; the docs check finds no whole word `lane` in `docs/research/`. FAC-M3: `doc` operation tests | covered |
+| Gap 19 | A proxy host receives the API traffic of the node; the owner is warned about a host that is not loopback | §4.6 | FAC-M5: unit test: `doctor` warns when the proxy host is not loopback, and gives no warning for a loopback host | covered |
 
 ## New gaps of the verbatim check
 

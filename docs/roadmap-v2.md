@@ -158,6 +158,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 3. **`factory checkout list|status|sync|clean` (D-55).**
 4. **Report core.** `factory report` and `factory status` for one node, with no children: cell states, tracker counts, the items in progress, the andon items and the events that scripts write at merge, release and decision. The rollup over children stays in FAC-M8. `lock run`. The view slot shows `factory item list`.
 5. **Token budget.** `scripts/budget-check.sh`.
+6. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
 
 **`factory checkout` (D-55).** The coordinator's repeated git work across checkouts becomes four commands. Cells do their own git work on their own branch.
 - `list`: one row per checkout: project, path, cell, branch, short HEAD.
@@ -203,6 +204,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] `lock run` tests: with a fake platform `darwin` it uses `lockf`, and with `linux` it uses `flock`. A second run waits and stops at its bound with exit 3. The exit code of the inner command passes through.
 - [ ] A tmux test: the view slot pane shows the item titles of a fixture `local` board.
 - [ ] `scripts/budget-check.sh` exits 0 for the jobs built so far. It exits 1 when a fixture output is more than twice the figure in `docs/token-budget.md` (test with an inflated output).
+- [ ] Unit test: `doctor` warns, with the fix, when the host of a configured proxy is not loopback (`127.0.0.1`, `::1` or `localhost`). It gives no such warning for a loopback host.
 
 ### FAC-M6: devflow variant
 
