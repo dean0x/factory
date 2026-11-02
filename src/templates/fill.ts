@@ -3,8 +3,8 @@ import { capitalize, templateValues } from '../names.js';
 const PLACEHOLDER = /\{\{([A-Za-z]+)\}\}/g;
 
 /**
- * Join the lines of a template and fill its placeholders. {{lane}} gives the
- * value, and {{Lane}} gives the value with a capital first letter. An unknown
+ * Join the lines of a template and fill its placeholders. {{cell}} gives the
+ * value, and {{Cell}} gives the value with a capital first letter. An unknown
  * placeholder stays in the text, and a unit test finds it.
  */
 export const fillTemplate = (

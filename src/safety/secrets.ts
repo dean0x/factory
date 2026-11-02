@@ -1,3 +1,5 @@
+import { address, keys } from '../names.js';
+
 const TOKEN_PREFIXES: readonly RegExp[] = [
   /sk-ant-[A-Za-z0-9_-]{4,}/,
   /gh[po]_[A-Za-z0-9]{8,}/,
@@ -16,14 +18,32 @@ const HIDDEN_KEY = '<key>';
 /** A long run that mixes lower case, upper case and digits looks like random data. */
 const isRandomLooking = (run: string): boolean => /[a-z]/.test(run) && /[A-Z]/.test(run) && /[0-9]/.test(run);
 
+/** True when the text holds a known token prefix or a hex run of 40 characters or more. */
+const hasKnownTokenShape = (text: string): boolean =>
+  TOKEN_PREFIXES.some((pattern) => pattern.test(text)) || HEX_RUN.test(text);
+
 /**
  * True when the text looks like a token: a known prefix, a hex run of 40 characters or more,
  * or a long base64 run. A long name in lower case with hyphens, or a path, is not a token.
  */
 export const looksLikeToken = (text: string): boolean =>
-  TOKEN_PREFIXES.some((pattern) => pattern.test(text)) ||
-  HEX_RUN.test(text) ||
-  (text.match(BASE64_RUN) ?? []).some(isRandomLooking);
+  hasKnownTokenShape(text) || (text.match(BASE64_RUN) ?? []).some(isRandomLooking);
+
+const ITEM_INDEX = /^\d+$/;
+
+/** The key path of the address of a node link: `parent.address` or `children.<n>.address`. */
+const isLinkAddressPath = (path: readonly string[]): boolean => {
+  const [first, ...rest] = path;
+  if (first === keys.root.parent) return rest.length === 1 && rest[0] === keys.link.address;
+  return first === keys.root.children && rest.length === 2 && ITEM_INDEX.test(rest[0] ?? '') && rest[1] === keys.link.address;
+};
+
+/**
+ * A file address of a node link is a long path, and a path holds `/` like base64 does. So it gets the tests of
+ * the known prefix and of the hex run only. Any other value gets all the tests.
+ */
+const looksLikeTokenAt = (path: readonly string[], text: string): boolean =>
+  isLinkAddressPath(path) && text.startsWith(address.scheme) ? hasKnownTokenShape(text) : looksLikeToken(text);
 
 /** A key that looks like a token is replaced, so a path or an error text never repeats it. */
 export const hideTokenKey = (segment: PropertyKey): string => {
@@ -46,7 +66,7 @@ export const findTokenPaths = (raw: unknown): readonly string[] => {
     if (budget <= 0 || depth > MAX_DEPTH) return;
     budget -= 1;
     if (typeof value === 'string') {
-      if (looksLikeToken(value)) found.push(path.join('.'));
+      if (looksLikeTokenAt(path, value)) found.push(path.join('.'));
     } else if (Array.isArray(value)) {
       value.forEach((item, index) => visit(item, [...path, String(index)], depth + 1));
     } else if (isRecord(value)) {

@@ -1,5 +1,6 @@
-import { execFile } from 'node:child_process';
-import { constants } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { constants, createReadStream, type Stats } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -15,9 +16,11 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from './result.js';
-import type { Deps, Fs, PathKind } from './deps.js';
+import { MAX_ANSWER_CHARS, type Deps, type Fs, type PathInfo, type PathKind } from './deps.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 30_000;
 const MAX_RUN_OUTPUT_BYTES = 1_048_576;
@@ -37,17 +40,25 @@ const guard = async <T>(action: string, path: string, work: () => Promise<T>): P
   }
 };
 
-/** Write beside the target, then rename. A link is followed, so the link stays and its target changes. */
-const writeAtomic = async (path: string, text: string): Promise<void> => {
+/** The mode of a new file that has no mode from the caller and replaces no file. The umask takes bits from it. */
+const DEFAULT_FILE_MODE = 0o666;
+const TEMPORARY_SUFFIX_BYTES = 8;
+
+/**
+ * Write beside the target, then rename. A link is followed, so the link stays and its target changes.
+ * The temporary file is new, has a name that others cannot guess, and has its final mode from the start.
+ */
+const writeAtomic = async (path: string, text: string, mode: number | undefined): Promise<void> => {
   const target = await realpath(path).catch((cause: unknown) => {
     if (errorCode(cause) === 'ENOENT') return path;
     throw cause;
   });
-  const temporary = `${target}.tmp-${process.pid}`;
+  const temporary = `${target}.tmp-${process.pid}-${randomBytes(TEMPORARY_SUFFIX_BYTES).toString('hex')}`;
   try {
     const info = await stat(target).catch(() => null);
-    await writeFile(temporary, text, 'utf8');
-    if (info?.isFile() === true) await chmod(temporary, info.mode & 0o777);
+    const finalMode = mode ?? (info?.isFile() === true ? info.mode & 0o777 : undefined);
+    await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx', mode: finalMode ?? DEFAULT_FILE_MODE });
+    if (finalMode !== undefined) await chmod(temporary, finalMode);
     await rename(temporary, target);
   } catch (cause) {
     await rm(temporary, { force: true }).catch(() => undefined);
@@ -55,13 +66,30 @@ const writeAtomic = async (path: string, text: string): Promise<void> => {
   }
 };
 
+/** The text of the file, or null when the file holds more than `maxBytes`. At most `maxBytes` plus one byte is read. */
+const readBounded = async (path: string, maxBytes: number): Promise<string | null> => {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of createReadStream(path, { start: 0, end: maxBytes })) {
+    const bytes = chunk as Buffer;
+    chunks.push(bytes);
+    size += bytes.length;
+  }
+  return size > maxBytes ? null : Buffer.concat(chunks).toString('utf8');
+};
+
 const MAX_COPY_DEPTH = 64;
 
 const unsupported = (code: string): Error => Object.assign(new Error(code), { code });
 
+/** A file, or the root of the copy when it is a link to a file. A link inside a tree is not followed. */
+const isCopyableFile = async (from: string, info: Stats, depth: number): Promise<boolean> =>
+  info.isFile() || (depth === 0 && info.isSymbolicLink() && (await stat(from)).isFile());
+
 /**
  * Copy a file or a folder tree. The target may be inside the source: the paths in `skip`
  * are left out, and fs.cp would refuse this case. The tree must hold only files and folders.
+ * A link to a file as the root is copied as a regular file with the content of its target.
  */
 const copyEntry = async (from: string, to: string, skip: readonly string[], depth: number): Promise<void> => {
   if (skip.includes(from)) return;
@@ -70,27 +98,57 @@ const copyEntry = async (from: string, to: string, skip: readonly string[], dept
   if (info.isDirectory()) {
     await mkdir(to, { recursive: true });
     for (const name of await readdir(from)) await copyEntry(join(from, name), join(to, name), skip, depth + 1);
-  } else if (info.isFile()) {
+  } else if (await isCopyableFile(from, info, depth)) {
     await copyFile(from, to, constants.COPYFILE_EXCL);
   } else {
     throw unsupported('ENOTSUP');
   }
 };
 
+const PERMISSION_BITS = 0o777;
+
+const pathKindOf = (info: { isFile(): boolean; isDirectory(): boolean }): PathKind => {
+  if (info.isFile()) return 'file';
+  return info.isDirectory() ? 'dir' : 'other';
+};
+
+const statInfo = async (path: string): Promise<CliResult<PathInfo | null>> => {
+  try {
+    const info = await stat(path);
+    return ok({ kind: pathKindOf(info), uid: info.uid, mode: info.mode & PERMISSION_BITS, mtimeMs: info.mtimeMs });
+  } catch (cause) {
+    return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
+  }
+};
+
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
-  writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
-  writeTextAtomic: (path, text) => guard('write', path, () => writeAtomic(path, text)),
-  stat: async (path) => {
-    try {
-      const info = await stat(path);
-      const kind: PathKind = info.isFile() ? 'file' : info.isDirectory() ? 'dir' : 'other';
-      return ok(kind);
-    } catch (cause) {
-      return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
-    }
+  readTextLimited: async (path, maxBytes) => {
+    const text = await guard('read', path, () => readBounded(path, maxBytes));
+    if (!text.ok) return text;
+    return text.value === null ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text.value);
   },
-  mkdir: (path) => guard('create', path, async () => void (await mkdir(path, { recursive: true }))),
+  writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
+  writeTextExclusive: (path, text, mode) =>
+    guard('write', path, async () => {
+      try {
+        await writeFile(path, text, { encoding: 'utf8', flag: 'wx', mode });
+        return true;
+      } catch (cause) {
+        if (errorCode(cause) === 'EEXIST') return false;
+        throw cause;
+      }
+    }),
+  writeTextAtomic: (path, text, mode) => guard('write', path, () => writeAtomic(path, text, mode)),
+  stat: async (path) => {
+    const info = await statInfo(path);
+    return info.ok ? ok(info.value?.kind ?? null) : info;
+  },
+  statInfo,
+  chmod: (path, mode) => guard('change the mode of', path, () => chmod(path, mode)),
+  realpath: (path) => guard('resolve', path, () => realpath(path)),
+  mkdir: (path, mode) =>
+    guard('create', path, async () => void (await mkdir(path, mode === undefined ? { recursive: true } : { recursive: true, mode }))),
   list: (path) => guard('list', path, async () => (await readdir(path)).sort()),
   rename: (from, to) => guard('rename', from, () => rename(from, to)),
   remove: (path) => guard('remove', path, () => rm(path, { recursive: true, force: true })),
@@ -118,7 +176,7 @@ export const createNodeDeps = (): Deps => ({
           maxBuffer: MAX_RUN_OUTPUT_BYTES,
           encoding: 'utf8',
           windowsHide: true,
-          env: { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' },
+          env: options?.inheritEnv === true ? process.env : { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' },
         },
         (error, stdout, stderr) => {
           if (error === null) {
@@ -131,6 +189,29 @@ export const createNodeDeps = (): Deps => ({
         },
       );
     }),
+  runAttached: (command, args) =>
+    new Promise((resolve) => {
+      const child = spawn(command, [...args], { stdio: 'inherit', windowsHide: true });
+      child.once('error', (error) => resolve(failure(`cannot run ${command}: ${errorCode(error)}`)));
+      child.once('close', (code, signal) =>
+        resolve(code === null ? failure(`${command} was stopped by ${String(signal)}`) : ok(code)),
+      );
+    }),
+  stdinIsTTY: process.stdin.isTTY === true,
+  stdoutIsTTY: process.stdout.isTTY === true,
+  prompt: (question) =>
+    new Promise((resolve) => {
+      const lines = createInterface({ input: process.stdin, output: process.stderr });
+      let answered = false;
+      lines.once('close', () => {
+        if (!answered) resolve(failure('no answer was given'));
+      });
+      lines.question(question, (answer) => {
+        answered = true;
+        lines.close();
+        resolve(ok(answer.slice(0, MAX_ANSWER_CHARS)));
+      });
+    }),
   env: process.env,
   fetch: async (url, timeoutMs) => {
     try {
@@ -142,7 +223,9 @@ export const createNodeDeps = (): Deps => ({
     }
   },
   now: () => new Date(),
+  sleep: (ms) => wait(ms),
   platform: { os: process.platform, nodeVersion: process.version },
   cwd: process.cwd(),
   pid: process.pid,
+  uid: typeof process.getuid === 'function' ? process.getuid() : null,
 });

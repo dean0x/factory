@@ -1,24 +1,41 @@
-import type { BlockSpec } from '../blocks/managed.js';
+import { CELL_LAYER, COORDINATOR_LAYER } from '../config/schema.js';
+import type { BlockRename } from '../migrate/files.js';
 import { blockNames } from '../names.js';
-import { COORDINATOR_LINES } from './coordinator.js';
+import { homeRoleBlockNames, roleForLayer } from '../recipes/software/recipe.js';
 import { PROFILE_INDEX_LINES, PROFILE_README_LINES } from './decision-profile.js';
 import { fillTemplate } from './fill.js';
-import { PROTOCOL_LINES } from './protocol.js';
 import { ROADMAPS_README_LINES } from './roadmaps.js';
 import { SAFETY_LINES } from './safety.js';
+import type { BlockTemplate } from './types.js';
 
-/** The file that holds a managed block. */
-export type BlockTarget = 'claudeFile' | 'protocolFile';
+/** The safety block belongs to the core. Every role gets it. */
+const safety: BlockTemplate = {
+  name: blockNames.safety,
+  version: 2,
+  target: 'claudeFile',
+  body: fillTemplate(SAFETY_LINES),
+};
 
-export interface BlockTemplate extends BlockSpec {
-  readonly target: BlockTarget;
-}
+/**
+ * The managed blocks of a node on this layer: its role block, the safety block, and, on layer 1,
+ * the worker block. A cell has no home, so the node just above the cells holds the instructions that the cells follow.
+ * A layer with no role template has the safety block only.
+ */
+export const blockTemplatesFor = (layer: number): readonly BlockTemplate[] => {
+  const role = roleForLayer(layer);
+  const worker = layer === COORDINATOR_LAYER ? roleForLayer(CELL_LAYER) : null;
+  return [role, safety, worker].filter((template): template is BlockTemplate => template !== null);
+};
 
-export const blockTemplates: readonly BlockTemplate[] = [
-  { name: blockNames.coordinator, version: 1, target: 'claudeFile', body: fillTemplate(COORDINATOR_LINES) },
-  { name: blockNames.safety, version: 1, target: 'claudeFile', body: fillTemplate(SAFETY_LINES) },
-  { name: blockNames.protocol, version: 1, target: 'protocolFile', body: fillTemplate(PROTOCOL_LINES) },
-];
+/**
+ * The role blocks that another layer would hold, each as the old name of the role block of this layer.
+ * A node whose layer was changed by hand holds one of them. A layer with no role template renames nothing.
+ */
+export const roleBlockRenames = (layer: number): readonly BlockRename[] => {
+  const role = roleForLayer(layer);
+  if (role === null) return [];
+  return homeRoleBlockNames.filter((other) => other !== role.name).map((from) => ({ from, to: role.name }));
+};
 
 export const fileTemplates = {
   profileReadme: fillTemplate(PROFILE_README_LINES),

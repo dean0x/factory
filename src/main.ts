@@ -1,3 +1,4 @@
+import { renderInternalError } from './cli/output.js';
 import { runCli } from './cli/run.js';
 import { createNodeDeps } from './core/node-deps.js';
 
@@ -15,7 +16,7 @@ const exitCode = await runCli(process.argv.slice(2), createNodeDeps(), {
   stderr,
   isTTY: process.stdout.isTTY,
 }).catch(async (cause: unknown) => {
-  await stderr(`error: internal error: ${cause instanceof Error ? cause.message : 'unknown'}\n`);
+  await stderr(renderInternalError(cause));
   return 1;
 });
 

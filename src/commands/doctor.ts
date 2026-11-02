@@ -1,13 +1,18 @@
-import { delimiter, join, resolve } from 'node:path';
-import { inspectBlocks, type BlockStatus } from '../blocks/status.js';
-import { failure, type CliResult } from '../cli/errors.js';
+import { join, resolve } from 'node:path';
+import { inspectBlocks, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
+import type { CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
+import { probeChildren } from '../comms/children.js';
+import { fileTransport } from '../comms/transport.js';
 import { inspectConfig } from '../config/load.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
-import { locateHome, type LocatedHome } from '../core/home.js';
+import { locateHomeFolder, type LocatedHome } from '../core/home.js';
+import { goneHomes, indexPathOf, listsHome, readHomeIndex } from '../core/home-index.js';
+import { isSameOrInsideFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
+import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
   checkIds,
@@ -25,12 +30,14 @@ import {
   schemaIds,
   values,
 } from '../names.js';
+import { roleForLayer } from '../recipes/software/recipe.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { findTokenPaths } from '../safety/secrets.js';
 import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
-import { blockTemplates } from '../templates/index.js';
+import { blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
+import { checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 
@@ -45,14 +52,15 @@ export interface DoctorOptions {
 }
 
 const MIN_NODE_MAJOR = 22;
-const MAX_PATH_ENTRIES = 256;
 
-/** Programs that later commands need. The text says which. */
+const UP_COMMAND = `"${commandText(commands.up)}" command`;
+
+/** Programs that commands need. The text says which. */
 const TOOLS: readonly { readonly name: string; readonly neededFor: string }[] = [
-  { name: 'git', neededFor: 'the state repository and the project checks' },
-  { name: 'tmux', neededFor: `the ${roles.lane} commands` },
-  { name: 'gh', neededFor: 'the GitHub commands' },
-  { name: 'claude', neededFor: 'the launch of sessions' },
+  { name: toolNames.git, neededFor: 'the state repository and the project checks' },
+  { name: toolNames.tmux, neededFor: `the ${UP_COMMAND}` },
+  { name: toolNames.gh, neededFor: 'the GitHub commands' },
+  { name: toolNames.claude, neededFor: 'the launch of sessions' },
 ];
 
 /** Patterns of Claude Code settings that skip the permission checks. */
@@ -125,10 +133,111 @@ export const checkState = (state: DocState<NodeState>): CheckResult => {
   }
 };
 
-export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
-  const problems = statuses.flatMap((status) =>
-    status.kind === 'intact' ? [] : [`${status.template.name} (${status.kind}, in ${status.file})`],
+/**
+ * The home is outside every git work tree and every other node home. When the config is valid, no project is the
+ * home or inside it. These are the rules that `init` enforces, checked again for a home that was moved or edited.
+ * `location` is the result of `checkHomeLocation` for this home.
+ */
+export const checkHome = async (
+  deps: Deps,
+  home: string,
+  state: DocState<FactoryConfig>,
+  location: CliResult<void>,
+): Promise<CheckResult> => {
+  if (!location.ok) return check(checkIds.home, 'fail', location.error.message);
+  const holdsNoRepo = await checkHomeHoldsNoRepo(deps, home);
+  if (!holdsNoRepo.ok) return check(checkIds.home, 'fail', holdsNoRepo.error.message);
+  const where = `the ${roles.node} home is outside every git work tree and every other ${roles.node} home, and holds no git repo one level down`;
+  if (state.kind !== 'valid') {
+    return check(checkIds.home, 'ok', `${where}; the projects are not checked, because ${files.config} is not valid`);
+  }
+  const projects = state.value.recipe.projects.map((project) => resolve(home, project.path));
+  const apart = await checkHomeApart(deps, home, projects);
+  return apart.ok
+    ? check(checkIds.home, 'ok', `${where}, and is apart from its projects`)
+    : check(checkIds.home, 'fail', apart.error.message);
+};
+
+/**
+ * The home index lets a command find a home from a project folder. An entry whose home is gone, and a file that
+ * cannot be read, are warnings: the index is a cache, and a command that needs it says so.
+ */
+export const checkIndex = async (deps: Deps, home: string): Promise<CheckResult> => {
+  const path = await indexPathOf(deps);
+  if (!path.ok) return check(checkIds.index, 'warn', path.error.message);
+  if (path.value === null) {
+    return check(checkIds.index, 'ok', `no home index is used: ${env.stateHome} and ${env.userHome} name no folder`);
+  }
+  const entries = await readHomeIndex(deps, path.value);
+  if (!entries.ok) return check(checkIds.index, 'warn', `${path.value} cannot be read: ${entries.error}`);
+  const problems: string[] = [];
+  const gone = await goneHomes(deps, entries.value);
+  if (gone.length > 0) {
+    problems.push(
+      `the home index lists ${gone.join(', ')}, with no ${files.config}. Remove the ${plural(gone.length, 'entry', 'entries')} from ${path.value}.`,
+    );
+  }
+  if (!(await listsHome(deps, entries.value, home))) {
+    problems.push(
+      `the home index does not list ${home}, so a command in a project folder cannot find it. Use ${flagText(flags.home)} DIR, or add an entry for this ${roles.node} home to ${path.value}.`,
+    );
+  }
+  if (problems.length > 0) return check(checkIds.index, 'warn', problems.join(' '));
+  const count = entries.value.length;
+  return check(checkIds.index, 'ok', `${count} ${plural(count, 'entry', 'entries')} in the home index, all present`);
+};
+
+/** Only the local tracker works in this version of factory. */
+export const checkTracker = (state: DocState<FactoryConfig>): CheckResult => {
+  if (state.kind !== 'valid') return notChecked(checkIds.tracker, `${files.config} is not valid`);
+  const kind = state.value.core.tracker.kind;
+  const name = `${keys.root.tracker}.${keys.tracker.kind}`;
+  return kind === values.trackerLocal
+    ? check(checkIds.tracker, 'ok', `${name} is ${kind}`)
+    : check(checkIds.tracker, 'warn', `${name} is ${kind}: its connector comes in a later version of ${program}`);
+};
+
+const plural = (count: number, one: string, many: string): string => (count === 1 ? one : many);
+
+/**
+ * Ping each child once. A child that does not answer is a warning, because a node can be off. A child on a layer other
+ * than the one below this node is a failure, because the config is wrong.
+ */
+export const checkChildren = async (deps: Deps, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+  if (state.kind !== 'valid') return notChecked(checkIds.children, `${files.config} is not valid`);
+  const { children, node } = state.value.core;
+  if (children.length === 0) return check(checkIds.children, 'ok', 'no child is configured');
+
+  const needed = node.layer - 1;
+  const rows = await probeChildren(fileTransport(deps), children);
+  const wrong = rows.flatMap((row) =>
+    row.status === 'ok' && row.layer !== needed
+      ? [`wrong layer: ${row.id} is on layer ${row.layer}, but layer ${needed} is needed`]
+      : [],
   );
+  const unknown = rows.flatMap((row) => (row.status === 'unknown' ? [`unknown: ${row.id} (${row.reason})`] : []));
+  const problems = [...wrong, ...unknown];
+  if (problems.length === 0) {
+    return check(
+      checkIds.children,
+      'ok',
+      `${rows.length} ${plural(rows.length, 'child answers', 'children answer')}, all on layer ${needed}`,
+    );
+  }
+  return check(checkIds.children, wrong.length > 0 ? 'fail' : 'warn', problems.join('; '));
+};
+
+/** A block that is not as the layer needs it. A block under the name of another layer is a role block that does not match. */
+const describeBlockProblem = (status: BlockStatus): string[] => {
+  const old = renamedFromOf(status);
+  if (old !== undefined) {
+    return [`${old} (${status.kind}, in ${status.file}): the layer of this ${roles.node} needs the block ${status.template.name}`];
+  }
+  return status.kind === 'intact' ? [] : [`${status.template.name} (${status.kind}, in ${status.file})`];
+};
+
+export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
+  const problems = statuses.flatMap(describeBlockProblem);
   return problems.length === 0
     ? check(checkIds.blocks, 'ok', `${statuses.length} managed blocks are intact`)
     : check(
@@ -136,6 +245,16 @@ export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
         'warn',
         `${problems.join('; ')}. Move edits out of the block, then run "${commandText(commands.upgrade)}".`,
       );
+};
+
+/** The layer of the node sets its role. A layer with no role template gets the safety block only. */
+export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
+  if (state.kind !== 'valid') return notChecked(checkIds.roles, `${files.config} is not valid`);
+  const { layer } = state.value.core.node;
+  const role = roleForLayer(layer);
+  return role === null
+    ? check(checkIds.roles, 'warn', `layer ${layer} has no role template: ${files.claudeMd} holds the safety block only`)
+    : check(checkIds.roles, 'ok', `layer ${layer} has the ${role.name} role template`);
 };
 
 export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
@@ -154,9 +273,14 @@ export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
 
 export const checkPermissionMode = async (deps: Deps, home: string): Promise<CheckResult> => {
   const settingsDir = join(home, dirs.claude);
-  const userDir = deps.env['HOME'] === undefined ? undefined : join(resolve(deps.env['HOME']), dirs.claude);
-  if (userDir !== undefined && resolve(settingsDir) === userDir) {
-    return notChecked(checkIds.permissionMode, `${settingsDir} holds the user settings of Claude Code`);
+  const userHome = deps.env[env.userHome];
+  if (userHome !== undefined) {
+    const userDir = join(resolve(userHome), dirs.claude);
+    const isUserDir = await isSameOrInsideFolder(deps, userDir, resolve(settingsDir));
+    if (!isUserDir.ok) return notChecked(checkIds.permissionMode, isUserDir.error.message);
+    if (isUserDir.value) {
+      return notChecked(checkIds.permissionMode, `${settingsDir} is, or is inside, the user settings folder of Claude Code`);
+    }
   }
   const folder = await deps.fs.stat(settingsDir);
   if (!folder.ok) return notChecked(checkIds.permissionMode, folder.error.message);
@@ -182,6 +306,18 @@ export const checkPermissionMode = async (deps: Deps, home: string): Promise<Che
     : notChecked(checkIds.permissionMode, `cannot read ${unreadable.join(', ')}`);
 };
 
+/** The blocks come from the layer of the node, so a config that is not valid gives no block list. */
+export const checkNodeBlocks = async (
+  deps: Deps,
+  home: string,
+  state: DocState<FactoryConfig>,
+): Promise<CheckResult> => {
+  if (state.kind !== 'valid') return notChecked(checkIds.blocks, `${files.config} is not valid`);
+  const { layer } = state.value.core.node;
+  const pending = { ...NO_PENDING_FILES, renames: roleBlockRenames(layer) };
+  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(layer), pending));
+};
+
 export const checkProxyEnv = (deps: Deps): CheckResult => {
   const value = deps.env[env.proxyBaseUrl];
   return value === undefined || value === ''
@@ -189,29 +325,33 @@ export const checkProxyEnv = (deps: Deps): CheckResult => {
     : check(checkIds.proxyEnv, 'warn', `${env.proxyBaseUrl} is set in the shell. ${program} clears it at launch.`);
 };
 
+/** Whether doctor may send a request to the URLs of the config. When it may not, `reason` says why. */
+export type ProxyRequestRule = { readonly may: true } | { readonly may: false; readonly reason: string };
+
+const NO_HOME_FLAG = `the ${roles.node} home does not come from ${flagText(flags.home)} and is not the current folder. Run with ${flagText(flags.home)} DIR to check the proxy.`;
+
 /**
- * One health request for each proxy in use. When `mayRequest` is false, the config does not come from a place the
- * user chose, so its URLs are not requested.
+ * The URLs of a config are requested only when the user chose the place of the config, and the home is a place that
+ * the up command accepts. A home inside a git work tree or inside another node home is not requested.
  */
+export const proxyRequestRule = (source: LocatedHome['source'], location: CliResult<void>): ProxyRequestRule => {
+  if (!location.ok) return { may: false, reason: `${location.error.message}, so ${program} sends no request` };
+  return source === 'flag' || source === 'cwd' ? { may: true } : { may: false, reason: NO_HOME_FLAG };
+};
+
+/** One health request for each proxy in use, when the rule allows it. */
 export const checkProxies = async (
   deps: Deps,
   state: DocState<FactoryConfig>,
-  mayRequest: boolean,
+  request: ProxyRequestRule,
 ): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
-  const config = state.value;
-  const inUse = new Set([config.session.proxy, ...Object.values(config.lanes).map((lane) => lane.proxy)]);
+  const { core } = state.value;
+  const inUse = new Set([core.session.proxy, ...Object.values(core.cells).map((cell) => cell.proxy)]);
   inUse.delete(values.noProxy);
-  const used = config.proxies.filter((proxy) => inUse.has(proxy.id));
+  const used = core.proxies.filter((proxy) => inUse.has(proxy.id));
   if (used.length === 0) return [check(checkIds.proxy, 'ok', 'no proxy is in use')];
-  if (!mayRequest) {
-    return [
-      notChecked(
-        checkIds.proxy,
-        `${files.config} was found in a parent folder. Run with ${flagText(flags.home)} DIR to check the proxy.`,
-      ),
-    ];
-  }
+  if (!request.may) return [notChecked(checkIds.proxy, request.reason)];
 
   return Promise.all(
     used.map(async (proxy): Promise<CheckResult> => {
@@ -226,14 +366,13 @@ export const checkProxies = async (
   );
 };
 
-/** True when an executable file with this name is in a folder of PATH. */
-const onPath = async (deps: Deps, name: string): Promise<boolean> => {
-  const folders = (deps.env['PATH'] ?? '').split(delimiter).filter((folder) => folder !== '');
-  for (const folder of folders.slice(0, MAX_PATH_ENTRIES)) {
-    const kind = await deps.fs.stat(join(folder, name));
-    if (kind.ok && kind.value === 'file') return true;
-  }
-  return false;
+/** The problem of the tmux that is on PATH, or null: its version is not known, or it is older than the up command needs. */
+const tmuxProblem = async (deps: Deps): Promise<string | null> => {
+  const version = await tmuxVersionOf(deps);
+  if (version === null) return `cannot read the version of ${toolNames.tmux}`;
+  if (isTmuxNewEnough(version)) return null;
+  const needed = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
+  return `${toolNames.tmux} ${version.major}.${version.minor} is older than ${needed} (the ${UP_COMMAND} needs ${needed} or newer)`;
 };
 
 export const checkTools = async (deps: Deps): Promise<CheckResult> => {
@@ -242,12 +381,17 @@ export const checkTools = async (deps: Deps): Promise<CheckResult> => {
     return check(checkIds.tools, 'fail', `Node.js ${MIN_NODE_MAJOR} or newer is needed, and this is Node.js ${major}`);
   }
   const missing: string[] = [];
+  let tmuxFound = false;
   for (const tool of TOOLS) {
     if (!(await onPath(deps, tool.name))) missing.push(`${tool.name} (${tool.neededFor})`);
+    else if (tool.name === toolNames.tmux) tmuxFound = true;
   }
-  return missing.length === 0
+  const problems = missing.length === 0 ? [] : [`missing: ${missing.join(', ')}`];
+  const oldTmux = tmuxFound ? await tmuxProblem(deps) : null;
+  if (oldTmux !== null) problems.push(oldTmux);
+  return problems.length === 0
     ? check(checkIds.tools, 'ok', `Node.js ${major}, git, tmux, gh and claude are available`)
-    : check(checkIds.tools, 'warn', `missing: ${missing.join(', ')}`);
+    : check(checkIds.tools, 'warn', problems.join('; '));
 };
 
 export const checkStateRepo = async (deps: Deps, home: string): Promise<CheckResult> => {
@@ -273,7 +417,7 @@ export const checkProjects = async (
   state: DocState<FactoryConfig>,
 ): Promise<CheckResult> => {
   if (state.kind !== 'valid') return notChecked(checkIds.projects, `${files.config} is not valid`);
-  const projects = state.value.projects;
+  const projects = state.value.recipe.projects;
   const bad: string[] = [];
   for (const project of projects) {
     if (!(await isWorkTreeRoot(deps, resolve(home, project.path)))) bad.push(`${project.id} (${project.path})`);
@@ -288,10 +432,14 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
   const { home, source } = located;
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
-  const blocks = await inspectBlocks(deps, home, blockTemplates);
-  const [permission, proxies, tools, stateRepo, projects] = await Promise.all([
+  const location = await checkHomeLocation(deps, home);
+  const [homeCheck, index, blocks, children, permission, proxies, tools, stateRepo, projects] = await Promise.all([
+    checkHome(deps, home, config, location),
+    checkIndex(deps, home),
+    checkNodeBlocks(deps, home, config),
+    checkChildren(deps, config),
     checkPermissionMode(deps, home),
-    checkProxies(deps, config, source !== 'parent'),
+    checkProxies(deps, config, proxyRequestRule(source, location)),
     checkTools(deps),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),
@@ -300,7 +448,12 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
     checkConfig(config),
     checkConfigVersion(config),
     checkState(state),
-    checkBlocks(blocks),
+    homeCheck,
+    index,
+    blocks,
+    checkRoles(config),
+    checkTracker(config),
+    children,
     checkSecrets(config),
     permission,
     checkProxyEnv(deps),
@@ -315,12 +468,9 @@ const count = (results: readonly CheckResult[], level: CheckLevel): number =>
   results.filter((result) => result.level === level).length;
 
 export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<CliResult<CommandOutput>> => {
-  const located = await locateHome(deps, options.home);
+  const located = await locateHomeFolder(deps, options.home);
   if (!located.ok) return located;
   const home = located.value.home;
-  const folder = await deps.fs.stat(home);
-  if (!folder.ok) return folder;
-  if (folder.value !== 'dir') return failure(`${home} is not a folder`);
 
   const results = await runChecks(deps, located.value);
   const summary = { ok: count(results, 'ok'), warn: count(results, 'warn'), fail: count(results, 'fail') };

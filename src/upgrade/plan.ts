@@ -1,13 +1,17 @@
-import type { BlockStatus } from '../blocks/status.js';
+import { join } from 'node:path';
+import { sha256Hex } from '../blocks/managed.js';
+import { renamedFromOf, type BlockStatus, type PendingFiles } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { stepsBetween, type FileStep } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
-import { planMigrations, type Migration } from '../migrate/runner.js';
-import { flags, flagText, program } from '../names.js';
-import type { BlockTemplate } from '../templates/index.js';
-import type { UpgradeFile, UpgradeSpec } from './spec.js';
+import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
+import { commands, commandText, dirs, flags, flagText, helpTopics, program } from '../names.js';
+import type { Layout } from '../state/layout.js';
+import type { BlockTemplate } from '../templates/types.js';
+import type { BlockSet, UpgradeFile, UpgradeSpec } from './spec.js';
 
 const MAX_DIFF_LINES = 3;
 const MAX_DIFF_WIDTH = 100;
@@ -60,6 +64,97 @@ export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Pro
   }
 };
 
+/** The config as it is after the migrations. A failing migration stops the upgrade here. */
+const migratedConfig = (config: FilePlan, upgrade: UpgradeSpec): CliResult<unknown> => {
+  const migrated = config.kind === 'migrate' ? runMigrations(config.raw, config.steps) : ok(config.raw);
+  return migrated.ok ? migrated : failure(`${upgrade.config.spec.file}: ${migrated.error.message}`);
+};
+
+/** The managed blocks of the node, as its config is after the migrations. */
+export const planBlockSet = (config: FilePlan, upgrade: UpgradeSpec): CliResult<BlockSet> => {
+  const migrated = migratedConfig(config, upgrade);
+  if (!migrated.ok) return migrated;
+  const set = upgrade.blocksOf(migrated.value);
+  return set.ok ? set : failure(`${upgrade.config.spec.file}: ${set.error.message}`);
+};
+
+/** The paths of the projects, as the config holds them after the migrations. */
+export const planProjectPaths = (config: FilePlan, upgrade: UpgradeSpec): CliResult<readonly string[]> => {
+  const migrated = migratedConfig(config, upgrade);
+  if (!migrated.ok) return migrated;
+  const paths = upgrade.projectPathsOf(migrated.value);
+  return paths.ok ? paths : failure(`${upgrade.config.spec.file}: ${paths.error.message}`);
+};
+
+/** A file or a folder that moves. `from` and `to` are paths inside the node home, for the output. */
+export interface MovePlan {
+  readonly from: string;
+  readonly to: string;
+  readonly fromPath: string;
+  readonly toPath: string;
+}
+
+/**
+ * A file that gets a new text. `path` is inside the node home, for the output. The file is replaced when it still holds
+ * the text that the old version wrote, and kept when anything else is in it.
+ */
+export interface ReplacePlan {
+  readonly path: string;
+  readonly filePath: string;
+  readonly action: 'replace' | 'keep';
+  readonly text: string;
+}
+
+export interface FilesPlan extends PendingFiles {
+  readonly moves: readonly MovePlan[];
+  readonly replaces: readonly ReplacePlan[];
+}
+
+export const NO_FILES_PLAN: FilesPlan = { moves: [], renames: [], replaces: [] };
+
+/**
+ * The file moves, the new file texts and the block renames of the steps that take the state to the current version.
+ * A source that does not exist is skipped. A target that exists stops the upgrade. A file to replace that does not
+ * exist is skipped, and one that a person edited is kept.
+ */
+export const planFiles = async (
+  deps: Deps,
+  layout: Layout,
+  state: FilePlan,
+  steps: readonly FileStep[],
+): Promise<CliResult<FilesPlan>> => {
+  if (state.kind !== 'migrate') return ok(NO_FILES_PLAN);
+  const chosen = stepsBetween(steps, state.from, state.to);
+  const moves: MovePlan[] = [];
+  for (const move of chosen.flatMap((step) => step.moves)) {
+    const from = join(dirs.state, move.from);
+    const to = join(dirs.state, move.to);
+    const fromPath = join(layout.stateDir, move.from);
+    const toPath = join(layout.stateDir, move.to);
+    const source = await deps.fs.stat(fromPath);
+    if (!source.ok) return source;
+    if (source.value === null) continue;
+    const target = await deps.fs.stat(toPath);
+    if (!target.ok) return target;
+    if (target.value !== null) {
+      return failure(`cannot move ${from} to ${to}: the target exists`, `Move or remove ${to}, then run the command again.`);
+    }
+    moves.push({ from, to, fromPath, toPath });
+  }
+  const replaces: ReplacePlan[] = [];
+  for (const replace of chosen.flatMap((step) => step.replaces)) {
+    const filePath = join(layout.stateDir, replace.path);
+    const kind = await deps.fs.stat(filePath);
+    if (!kind.ok) return kind;
+    if (kind.value !== 'file') continue;
+    const current = await deps.fs.readText(filePath);
+    if (!current.ok) return current;
+    const action = sha256Hex(current.value) === replace.oldSha256 ? 'replace' : 'keep';
+    replaces.push({ path: join(dirs.state, replace.path), filePath, action, text: replace.text });
+  }
+  return ok({ moves, renames: chosen.flatMap((step) => step.renames), replaces });
+};
+
 export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan => {
   const { template } = status;
   switch (status.kind) {
@@ -70,7 +165,9 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
     case 'intact':
     case 'edited': {
       const from = status.block.version;
-      if (from > template.version) {
+      const renamed = renamedFromOf(status) !== undefined;
+      // The version of a block under its old name has its own numbers, so it says nothing about the new block.
+      if (from > template.version && !renamed) {
         return {
           template,
           status,
@@ -80,7 +177,7 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
         };
       }
       if (status.kind === 'edited') return { template, status, action: overwrite ? 'replace' : 'refuse-edited', from };
-      return { template, status, action: from < template.version ? 'update' : 'current', from };
+      return { template, status, action: from < template.version || renamed ? 'update' : 'current', from };
     }
     default: {
       const unreachable: never = status;
@@ -101,6 +198,9 @@ const shortDiff = (found: string, wanted: string): string[] => {
   return [...removed.map((line) => `    file:     ${clip(line)}`), ...added.map((line) => `    template: ${clip(line)}`)];
 };
 
+/** The name that the file holds for the block: the old name, when the block is about to get a new name. */
+const labelOf = (plan: BlockPlan): string => renamedFromOf(plan.status) ?? plan.template.name;
+
 export const refusalOf = (blocks: readonly BlockPlan[]): CliResult<void> => {
   const other = blocks.filter((plan) => plan.action === 'refuse-other');
   if (other.length > 0) return failure(other.map((plan) => plan.reason ?? plan.template.name).join('\n'));
@@ -108,17 +208,23 @@ export const refusalOf = (blocks: readonly BlockPlan[]): CliResult<void> => {
   const edited = blocks.filter((plan) => plan.action === 'refuse-edited');
   if (edited.length === 0) return ok(undefined);
   const lines = edited.flatMap((plan) => [
-    `block ${plan.template.name} was edited. ${program} did not change it.`,
+    `block ${labelOf(plan)} was edited. ${program} did not change it.`,
     ...(plan.status.kind === 'edited' ? shortDiff(plan.status.block.body, plan.template.body) : []),
   ]);
   return safetyRefusal(
     lines.join('\n'),
-    `Use ${flagText(flags.overwrite)} ${edited.map((plan) => plan.template.name).join(' ')} to replace the text with the template. ` +
+    `Use ${flagText(flags.overwrite)} ${edited.map(labelOf).join(' ')} to replace the text with the template. ` +
       `Make a copy of your edits first.`,
   );
 };
 
-export const planLines = (config: FilePlan, state: FilePlan, blocks: readonly BlockPlan[], upgrade: UpgradeSpec): OutLine[] => {
+export const planLines = (
+  config: FilePlan,
+  state: FilePlan,
+  files: FilesPlan,
+  blocks: readonly BlockPlan[],
+  upgrade: UpgradeSpec,
+): OutLine[] => {
   const fileLine = (plan: FilePlan, file: UpgradeFile): OutLine =>
     plan.kind === 'current'
       ? { level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${plan.version} is current` }
@@ -128,13 +234,26 @@ export const planLines = (config: FilePlan, state: FilePlan, blocks: readonly Bl
         };
   const blockLine = (plan: BlockPlan): OutLine => {
     const { name, version } = plan.template;
+    const old = renamedFromOf(plan.status);
     switch (plan.action) {
       case 'current':
         return { level: 'ok', text: `block ${name}: version ${version} is current` };
       case 'update':
-        return { level: 'text', text: `block ${name}: version ${plan.from} to ${version}` };
+        return {
+          level: 'text',
+          text:
+            old === undefined
+              ? `block ${name}: version ${plan.from} to ${version}`
+              : `block ${old}: becomes block ${name}, version ${version}`,
+        };
       case 'replace':
-        return { level: 'text', text: `block ${name}: replace the edited text with version ${version}` };
+        return {
+          level: 'text',
+          text:
+            old === undefined
+              ? `block ${name}: replace the edited text with version ${version}`
+              : `block ${old}: replace the edited text with block ${name}, version ${version}`,
+        };
       case 'add':
         return { level: 'text', text: `block ${name}: add version ${version}` };
       case 'skip-missing':
@@ -143,7 +262,7 @@ export const planLines = (config: FilePlan, state: FilePlan, blocks: readonly Bl
           text: `block ${name} is missing. Use ${flagText(flags.overwrite)} ${name} to add it.`,
         };
       case 'refuse-edited':
-        return { level: 'fail', text: `block ${name} was edited` };
+        return { level: 'fail', text: `block ${old ?? name} was edited` };
       case 'refuse-other':
         return { level: 'fail', text: plan.reason ?? `block ${name} cannot change` };
       default: {
@@ -152,5 +271,21 @@ export const planLines = (config: FilePlan, state: FilePlan, blocks: readonly Bl
       }
     }
   };
-  return [fileLine(config, upgrade.config), fileLine(state, upgrade.state), ...blocks.map(blockLine)];
+  const moveLines = files.moves.map((move): OutLine => ({ level: 'text', text: `move ${move.from} to ${move.to}` }));
+  const replaceLine = (replace: ReplacePlan): OutLine =>
+    replace.action === 'replace'
+      ? { level: 'text', text: `replace ${replace.path} with the new text` }
+      : {
+          level: 'warn',
+          text:
+            `${replace.path} was edited, so ${program} keeps it. It can hold old names: ` +
+            `run "${commandText(commands.help)} ${helpTopics.words}" for the current names.`,
+        };
+  return [
+    fileLine(config, upgrade.config),
+    fileLine(state, upgrade.state),
+    ...moveLines,
+    ...files.replaces.map(replaceLine),
+    ...blocks.map(blockLine),
+  ];
 };

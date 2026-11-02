@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "created_with": "0.1.0",
+  "blocks": {
+    "coordinator": 1,
+    "safety": 1,
+    "protocol": 1
+  }
+}

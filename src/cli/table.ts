@@ -1,11 +1,25 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
 import { runInit } from '../commands/init.js';
+import { runNode } from '../commands/node.js';
+import { runUp } from '../commands/up.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, flags, flagShorts, flagText, program, roles } from '../names.js';
+import {
+  commands,
+  commandText,
+  env,
+  flags,
+  flagShorts,
+  flagText,
+  helpTopics,
+  nodeCommands,
+  program,
+  roles,
+  values,
+} from '../names.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import type { CommandOutput } from './output.js';
@@ -23,13 +37,18 @@ export interface Given {
   string(name: string): string | undefined;
   strings(name: string): readonly string[];
   bool(name: string): boolean;
+  /** The words that are not flags, in order. Only a command with `positionals` gets any. */
+  positionals(): readonly string[];
 }
 
 export interface Command {
   readonly name: string;
   readonly summary: string;
+  /** One line, or several lines for a command with subcommands. */
   readonly usage: string;
   readonly options: Readonly<Record<string, FlagOption>>;
+  /** True when the command takes words that are not flags, for example a subcommand and its argument. */
+  readonly positionals?: boolean;
   run(given: Given, deps: Deps): Promise<CliResult<CommandOutput>>;
 }
 
@@ -43,7 +62,9 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
 const foundHomeOption: FlagOption = {
   type: 'string',
   placeholder: 'DIR',
-  description: `The ${roles.node} folder. Default: the folder of the nearest config file above the current folder.`,
+  description:
+    `The ${roles.node} folder. Default: ${env.home}, else the folder of the nearest config file ` +
+    'above the current folder, else the home that lists the current folder in the home index.',
 };
 
 export const commandTable: readonly Command[] = [
@@ -51,13 +72,20 @@ export const commandTable: readonly Command[] = [
     name: commands.init,
     summary: `Create a ${roles.node} in a folder.`,
     usage:
-      `${commandText(commands.init)} [${flagText(flags.home)} DIR] [${flagText(flags.name)} ID] ` +
-      `[${flagText(flags.ownerName)} NAME] [${flagText(flags.ownerGithub)} LOGIN] [${flagText(flags.project)} PATH]...`,
+      `${commandText(commands.init)} [${flagText(flags.home)} DIR] [${flagText(flags.yes)}] ` +
+      `[${flagText(flags.name)} ID] [${flagText(flags.ownerName)} NAME] [${flagText(flags.ownerGithub)} LOGIN] ` +
+      `[${flagText(flags.project)} PATH|URL]... [${flagText(flags.layer)} N] [${flagText(flags.recipe)} ID]`,
     options: {
       [flags.home]: {
         type: 'string',
         placeholder: 'DIR',
-        description: `The ${roles.node} folder. Default: the current folder.`,
+        description:
+          `The ${roles.node} folder. Default: in a git work tree, a folder beside it; in a folder that holds git repos, ` +
+          'a folder inside it; in both cases after you confirm. Else the current folder.',
+      },
+      [flags.yes]: {
+        type: 'boolean',
+        description: `Use the proposed ${roles.node} folder. Ask no question.`,
       },
       [flags.name]: {
         type: 'string',
@@ -77,8 +105,20 @@ export const commandTable: readonly Command[] = [
       [flags.project]: {
         type: 'string',
         multiple: true,
-        placeholder: 'PATH',
-        description: 'A git work tree to manage. Repeat the flag for more projects.',
+        placeholder: 'PATH|URL',
+        description:
+          'A git work tree to manage, or the URL of a repo to clone next to the home folder ' +
+          '(https://, ssh:// or user@host:path). Repeat the flag for more projects.',
+      },
+      [flags.layer]: {
+        type: 'string',
+        placeholder: 'N',
+        description: `The layer of the ${roles.node}, from 1 to 16. Layer 1 manages ${roles.cell}s. Default: 1.`,
+      },
+      [flags.recipe]: {
+        type: 'string',
+        placeholder: 'ID',
+        description: `The ${roles.recipe} for the kind of work. One of: ${values.recipes.join(', ')}. Default: ${values.recipes[0]}.`,
       },
     },
     run: (given, deps) =>
@@ -88,7 +128,35 @@ export const commandTable: readonly Command[] = [
         ownerName: given.string(flags.ownerName),
         ownerGithub: given.string(flags.ownerGithub),
         projects: given.strings(flags.project),
+        yes: given.bool(flags.yes),
+        recipe: given.string(flags.recipe),
+        layer: given.string(flags.layer),
       }),
+  },
+  {
+    name: commands.up,
+    summary: `Start the session of the ${roles.node} in tmux, or attach to it.`,
+    usage: `${commandText(commands.up)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}]`,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.dryRun]: {
+        type: 'boolean',
+        description: 'Show the tmux calls and the launch. Start no session and change no file.',
+      },
+    },
+    run: (given, deps) => runUp(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }),
+  },
+  {
+    name: commands.node,
+    summary: `Show or change the children of the ${roles.node}.`,
+    usage: [
+      `${commandText(commands.node)} ${nodeCommands.children} [${flagText(flags.home)} DIR]`,
+      `${commandText(commands.node)} ${nodeCommands.addChild} PATH [${flagText(flags.home)} DIR]`,
+      `${commandText(commands.node)} ${nodeCommands.removeChild} ID [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }),
   },
   {
     name: commands.doctor,
@@ -137,7 +205,8 @@ const toDescriptor = (option: FlagOption): NonNullable<ParseArgsConfig['options'
   ...(option.short === undefined ? {} : { short: option.short }),
 });
 
-const toGiven = (values: Readonly<Record<string, ParsedValue>>): Given => ({
+const toGiven = (values: Readonly<Record<string, ParsedValue>>, words: readonly string[]): Given => ({
+  positionals: () => words,
   string: (name) => {
     const value = values[name];
     return typeof value === 'string' ? value : undefined;
@@ -153,13 +222,14 @@ const toGiven = (values: Readonly<Record<string, ParsedValue>>): Given => ({
 export const parseFlags = (
   args: readonly string[],
   options: Readonly<Record<string, FlagOption>>,
+  allowPositionals = false,
 ): CliResult<Given> => {
   const descriptors = Object.fromEntries(
     Object.entries(options).map(([name, option]) => [name, toDescriptor(option)]),
   );
   try {
-    const parsed = parseArgs({ args: [...args], options: descriptors, strict: true, allowPositionals: false });
-    return ok(toGiven(parsed.values));
+    const parsed = parseArgs({ args: [...args], options: descriptors, strict: true, allowPositionals });
+    return ok(toGiven(parsed.values, parsed.positionals));
   } catch (cause) {
     return usageError(cause instanceof Error ? cause.message : 'cannot read the flags');
   }
@@ -189,6 +259,7 @@ export const renderHelp = (): string =>
     ...flagBlock('Flags for all commands:', globalOptions),
     '',
     `Run "${program} <command> ${flagText(flags.help)}" to see the flags of one command.`,
+    `Run "${commandText(commands.help)} ${helpTopics.words}" to see what the words of ${program} mean.`,
     '',
   ].join('\n');
 

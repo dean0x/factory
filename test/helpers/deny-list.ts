@@ -8,6 +8,8 @@ export const DENY_PATTERNS: readonly { readonly name: string; readonly pattern: 
   { name: 'machine size', pattern: /\b\d+\s?(GB|MB|TB|CPUs?|cores?)\b/i },
   { name: 'session id', pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i },
   { name: 'date of an event', pattern: /\b20\d{2}-\d{2}-\d{2}\b/ },
+  /** Triage words of one workflow tool. The match is case-sensitive: the plain lower-case words stay allowed. */
+  { name: 'workflow triage word', pattern: /\b(?:FIX_NOW|ESCALATED|CHANGES REQUESTED)\b/ },
 ];
 
 export const denyMatches = (text: string): string[] =>

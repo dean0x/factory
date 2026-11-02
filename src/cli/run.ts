@@ -1,7 +1,7 @@
 import type { Deps } from '../core/deps.js';
-import { commands, commandText, flags, flagShorts, flagText, schemaIds } from '../names.js';
-import { exitCodeOf, type CliError } from './errors.js';
-import { detectStyle, renderJson, renderText, renderWarnings } from './output.js';
+import { commands, commandText, flags, flagShorts, flagText, helpTopics, program, schemaIds } from '../names.js';
+import { exitCodeOf, safetyRefusal } from './errors.js';
+import { detectStyle, renderError, renderJson, renderText, renderWarnings } from './output.js';
 import {
   commandTable,
   globalOptions,
@@ -9,6 +9,7 @@ import {
   renderCommandHelp,
   renderHelp,
 } from './table.js';
+import { wordsOutput } from './words.js';
 
 export interface Sink {
   stdout(text: string): Promise<void>;
@@ -20,14 +21,37 @@ const HELP_WORDS: readonly string[] = [commands.help, flagText(flags.help), `-${
 const EXIT_OK = 0;
 const EXIT_FAILURE = 1;
 const EXIT_USAGE = 2;
-
-const renderError = (error: CliError): string =>
-  `error: ${error.message}\n${error.hint === undefined ? '' : `${error.hint}\n`}`;
+/** The value of `process.platform` on native Windows, where the tmux and shell steps cannot work. */
+const NATIVE_WINDOWS = 'win32';
 
 const findCommand = (name: string) => commandTable.find((command) => command.name === name);
 
 export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): Promise<number> => {
+  if (deps.platform.os === NATIVE_WINDOWS) {
+    const refusal = safetyRefusal(`${program} runs on macOS and Linux`, `Use WSL; ${program} runs there as on Linux.`);
+    await sink.stderr(renderError(refusal.error));
+    return exitCodeOf[refusal.error.kind];
+  }
+
   const [first, ...rest] = argv;
+
+  if (first === commands.help && rest[0] === helpTopics.words) {
+    const parsed = parseFlags(rest.slice(1), globalOptions);
+    if (!parsed.ok) {
+      await sink.stderr(
+        renderError({ ...parsed.error, hint: `Run "${commandText(commands.help)} ${helpTopics.words}".` }),
+      );
+      return exitCodeOf[parsed.error.kind];
+    }
+    const output = wordsOutput();
+    if (parsed.value.bool(flags.json)) {
+      await sink.stdout(renderJson(output.json));
+    } else {
+      const style = detectStyle(deps.env, sink.isTTY, parsed.value.bool(flags.noColor));
+      await sink.stdout(renderText(output, style, parsed.value.bool(flags.quiet)));
+    }
+    return EXIT_OK;
+  }
 
   if (first === undefined || HELP_WORDS.includes(first)) {
     const topic = first === commands.help ? findCommand(rest[0] ?? '') : undefined;
@@ -37,11 +61,11 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
 
   const command = findCommand(first === flagText(flags.version) ? commands.version : first);
   if (command === undefined) {
-    await sink.stderr(`error: unknown command "${first}"\n\n${renderHelp()}`);
+    await sink.stderr(`${renderError({ kind: 'usage', message: `unknown command "${first}"` })}\n${renderHelp()}`);
     return EXIT_USAGE;
   }
 
-  const parsed = parseFlags(rest, { ...globalOptions, ...command.options });
+  const parsed = parseFlags(rest, { ...globalOptions, ...command.options }, command.positionals === true);
   if (!parsed.ok) {
     await sink.stderr(
       renderError({ ...parsed.error, hint: `Run "${commandText(command.name)} ${flagText(flags.help)}".` }),

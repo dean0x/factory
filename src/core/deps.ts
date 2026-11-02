@@ -2,18 +2,43 @@ import type { CliResult } from '../cli/errors.js';
 
 export type PathKind = 'file' | 'dir' | 'other';
 
+/** What a path is and who may use it. A link is followed. */
+export interface PathInfo {
+  readonly kind: PathKind;
+  /** The id of the user that owns the path. */
+  readonly uid: number;
+  /** The permission bits only: 0o777 at most. */
+  readonly mode: number;
+  /** The time of the last change of the content, in milliseconds since the epoch. */
+  readonly mtimeMs: number;
+}
+
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
+  /** Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. */
+  readTextLimited(path: string, maxBytes: number): Promise<CliResult<string>>;
   writeText(path: string, text: string): Promise<CliResult<void>>;
+  /**
+   * Create a file that does not exist, with `mode`, and write the text. The value is true when this call created the
+   * file, and false when the path exists already (a link counts, and it is not followed). Then nothing changes.
+   */
+  writeTextExclusive(path: string, text: string, mode: number): Promise<CliResult<boolean>>;
   /**
    * Write the text to a temporary file in the same folder, then rename it over the target.
    * A reader sees the old text or the new text, never a part. A failure leaves the target as it was.
+   * The file gets `mode` when it is given. Else it keeps the mode of the file it replaces.
    */
-  writeTextAtomic(path: string, text: string): Promise<CliResult<void>>;
+  writeTextAtomic(path: string, text: string, mode?: number): Promise<CliResult<void>>;
   /** The kind of the path, or null when it does not exist. */
   stat(path: string): Promise<CliResult<PathKind | null>>;
-  /** Create the folder and its parents. */
-  mkdir(path: string): Promise<CliResult<void>>;
+  /** The kind, the owner and the permission bits of the path, or null when it does not exist. */
+  statInfo(path: string): Promise<CliResult<PathInfo | null>>;
+  /** Set the permission bits of a file or a folder that exists. */
+  chmod(path: string, mode: number): Promise<CliResult<void>>;
+  /** The path with every link resolved. The path must exist. */
+  realpath(path: string): Promise<CliResult<string>>;
+  /** Create the folder and its parents. A folder that this call creates gets `mode` when it is given. */
+  mkdir(path: string, mode?: number): Promise<CliResult<void>>;
   /** The sorted names inside a folder. */
   list(path: string): Promise<CliResult<readonly string[]>>;
   rename(from: string, to: string): Promise<CliResult<void>>;
@@ -21,13 +46,22 @@ export interface Fs {
   remove(path: string): Promise<CliResult<void>>;
   /** Remove a folder that holds nothing. A folder with content is an error. A missing path is not an error. */
   removeEmptyDir(path: string): Promise<CliResult<void>>;
-  /** Copy a file or a folder tree. Paths in `skip` are not copied. */
+  /**
+   * Copy a file or a folder tree. Paths in `skip` are not copied. A link to a file as `from` is copied as a regular
+   * file with the content of its target. Any other link is an error.
+   */
   copyTree(from: string, to: string, skip: readonly string[]): Promise<CliResult<void>>;
 }
 
 export interface RunOptions {
   readonly cwd?: string;
   readonly timeoutMs?: number;
+  /**
+   * Run the program with the environment of this process as it is. By default the locale is C and git asks no question,
+   * so that the output is the same everywhere. A program that starts other programs, such as the tmux server,
+   * would pass that environment on to them.
+   */
+  readonly inheritEnv?: boolean;
 }
 
 export interface RunOutput {
@@ -45,15 +79,33 @@ export interface FetchStatus {
   readonly status: number;
 }
 
+/** The longest answer that `prompt` returns. A longer line is cut. */
+export const MAX_ANSWER_CHARS = 200;
+
 export interface Deps {
   readonly fs: Fs;
   /** Run a program. It never uses a shell. A non-zero exit code is not an error. */
   run(command: string, args: readonly string[], options?: RunOptions): Promise<CliResult<RunOutput>>;
+  /**
+   * Run a program with the terminal of this process: it reads the keys and draws on the screen.
+   * It never uses a shell. The result is the exit code of the program.
+   */
+  runAttached(command: string, args: readonly string[]): Promise<CliResult<number>>;
+  /** True when a person types at this process. */
+  readonly stdinIsTTY: boolean;
+  /** True when a person reads the output of this process on a terminal. */
+  readonly stdoutIsTTY: boolean;
+  /** Ask one question and read one line of the answer, at most `MAX_ANSWER_CHARS` characters. The question goes to stderr. */
+  prompt(question: string): Promise<CliResult<string>>;
   readonly env: Readonly<Record<string, string | undefined>>;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;
   now(): Date;
+  /** Wait for `ms` milliseconds. */
+  sleep(ms: number): Promise<void>;
   readonly platform: Platform;
   readonly cwd: string;
   readonly pid: number;
+  /** The id of the user that runs this process, or null on a platform that has no user ids. */
+  readonly uid: number | null;
 }

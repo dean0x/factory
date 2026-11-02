@@ -1,8 +1,8 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { makeSandbox, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 
@@ -13,6 +13,8 @@ beforeEach(async () => {
 afterEach(async () => {
   await box.remove();
 });
+
+afterAll(removeOpenSandboxes);
 
 const initNode = async (): Promise<void> => {
   const web = await box.makeProject('web', 'git@github.com:acme/web.git');
@@ -53,6 +55,12 @@ describe('factory doctor (built binary)', () => {
     expect(document.ok).toBe(true);
     expect(document.checks.find((check) => check.id === 'config')?.level).toBe('ok');
     expect(document.checks.every((check) => check.level !== 'fail')).toBe(true);
+    expect(document.checks.map((check) => check.id)).toEqual(
+      expect.arrayContaining(['home', 'tracker', 'children']),
+    );
+    for (const id of ['home', 'tracker', 'children']) {
+      expect(document.checks.find((check) => check.id === id)?.level).toBe('ok');
+    }
   });
 
   it('warns about an edited block and still exits 0', async () => {
@@ -90,9 +98,9 @@ describe('factory doctor (built binary)', () => {
     expect(result.stdout + result.stderr).not.toContain(secret);
   });
 
-  it('exits 1 when there is no config file above the folder', async () => {
+  it('exits 2 when there is no config file above the folder and no entry of the home index', async () => {
     const result = await box.run(['doctor'], { cwd: box.root });
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(2);
     expect(result.stderr).toContain('--home DIR');
   });
 

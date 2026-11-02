@@ -1,7 +1,7 @@
 {
   "name": "@dean0x/factory",
   "version": "0.1.0",
-  "description": "Set up and run a node of Claude Code lanes with safe defaults.",
+  "description": "Set up and run a node of Claude Code sessions with safe defaults.",
   "license": "MIT",
   "type": "module",
   "bin": {
@@ -26,6 +26,7 @@
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
+    "check:docs": "sh scripts/check-intent-docs.sh",
     "exit-check": "bash scripts/exit-check.sh"
   },
   "devDependencies": {

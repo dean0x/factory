@@ -1,14 +1,15 @@
-import { join, relative } from 'node:path';
-import { fileOfTarget } from '../blocks/status.js';
-import { appendBlocks, parseBlocks, renderBlock, replaceBlock } from '../blocks/managed.js';
+import { dirname, join, relative } from 'node:path';
+import { fileOfTarget, renamedFromOf } from '../blocks/status.js';
+import { appendBlocks, parseBlocks, renderBlock, replaceBlock, type ParsedBlock } from '../blocks/managed.js';
 import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { runMigrations } from '../migrate/runner.js';
+import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
+import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
 import { dirs, files, stateKeys } from '../names.js';
-import { layoutOf } from '../state/layout.js';
-import type { BlockPlan, FilePlan } from './plan.js';
-import type { UpgradeSpec } from './spec.js';
+import { layoutOf, type Layout } from '../state/layout.js';
+import type { BlockPlan, FilePlan, MovePlan } from './plan.js';
+import type { UpgradeFile, UpgradeSpec } from './spec.js';
 
 export interface Written {
   readonly path: string;
@@ -22,9 +23,6 @@ const readIfFile = async (deps: Deps, path: string): Promise<CliResult<string | 
   return kind.value === 'file' ? deps.fs.readText(path) : ok(null);
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /** The new text of a file that holds managed blocks. */
 const editBlockFile = (text: string, changes: readonly BlockPlan[]): CliResult<string> => {
   const parsed = parseBlocks(text);
@@ -36,22 +34,36 @@ const editBlockFile = (text: string, changes: readonly BlockPlan[]): CliResult<s
     rendered.set(change.template.name, block.value);
   }
 
+  // A block is found by its name in the file: the name of the template, or the old name when the block gets a new one.
+  const changeOf = (block: ParsedBlock): BlockPlan | undefined =>
+    changes.find(
+      (change) =>
+        change.action !== 'add' && (change.template.name === block.name || renamedFromOf(change.status) === block.name),
+    );
   const replaced = parsed.value
-    .filter((block) => changes.some((change) => change.template.name === block.name && change.action !== 'add'))
+    .filter((block) => changeOf(block) !== undefined)
     .sort((left, right) => right.start - left.start)
-    .reduce((current, block) => replaceBlock(current, block, rendered.get(block.name) ?? ''), text);
+    .reduce(
+      (current, block) => replaceBlock(current, block, rendered.get(changeOf(block)?.template.name ?? '') ?? ''),
+      text,
+    );
 
   const added = changes.filter((change) => change.action === 'add').map((change) => rendered.get(change.template.name) ?? '');
   return ok(added.length === 0 ? replaced : appendBlocks(replaced, added));
 };
 
-/** The new raw value of the state file: the migrated value and the versions of the changed blocks. */
+/**
+ * The new raw value of the state file: the migrated value and the versions of the changed blocks.
+ * A block that gets a new name leaves its old name.
+ */
 const nextStateRaw = (migrated: unknown, changes: readonly BlockPlan[]): CliResult<unknown> => {
   if (changes.length === 0) return ok(migrated);
   if (!isRecord(migrated)) return failure(`${stateKeys.blocks}: the migrated state is not a mapping`);
   const current = migrated[stateKeys.blocks];
   const versions = Object.fromEntries(changes.map((change) => [change.template.name, change.template.version]));
-  return ok({ ...migrated, [stateKeys.blocks]: { ...(isRecord(current) ? current : {}), ...versions } });
+  const oldNames = new Set(changes.flatMap((change) => renamedFromOf(change.status) ?? []));
+  const kept = Object.entries(isRecord(current) ? current : {}).filter(([name]) => !oldNames.has(name));
+  return ok({ ...migrated, [stateKeys.blocks]: { ...Object.fromEntries(kept), ...versions } });
 };
 
 const timestampOf = (deps: Deps): string => deps.now().toISOString().replace(/[:.]/g, '-');
@@ -60,19 +72,7 @@ const timestampOf = (deps: Deps): string => deps.now().toISOString().replace(/[:
 const BACKUP_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
 export const BACKUPS_KEPT = 5;
 
-/**
- * Copy the files that upgrade can change. The run-time folders `state/` and `locks/` are left out:
- * upgrade writes only the config file, CLAUDE.md, the protocol file and the state file, and it never writes into them.
- */
-export const backup = async (deps: Deps, home: string): Promise<CliResult<string>> => {
-  const layout = layoutOf(home);
-  const target = join(layout.backupsDir, timestampOf(deps));
-  const exists = await deps.fs.stat(target);
-  if (!exists.ok) return exists;
-  if (exists.value !== null) return failure(`the backup folder ${relative(home, target)} exists already`);
-  const made = await deps.fs.mkdir(target);
-  if (!made.ok) return made;
-
+const copyIntoBackup = async (deps: Deps, layout: Layout, target: string): Promise<CliResult<void>> => {
   const copies: readonly (readonly [string, string, readonly string[]])[] = [
     [layout.configFile, join(target, files.config), []],
     [layout.claudeMd, join(target, files.claudeMd), []],
@@ -85,7 +85,31 @@ export const backup = async (deps: Deps, home: string): Promise<CliResult<string
     const copied = await deps.fs.copyTree(from, to, skip);
     if (!copied.ok) return copied;
   }
-  return ok(target);
+  return ok(undefined);
+};
+
+/**
+ * Copy the files that upgrade can change. The run-time folders `state/` and `locks/` are left out:
+ * upgrade writes only the config file, CLAUDE.md, the worker file and the state file, and it never writes into them.
+ * A link to a file is copied as a regular file with the content of its target.
+ * If a copy fails, the folder that this run made is removed, so that no part-copied backup stays.
+ */
+export const backup = async (deps: Deps, home: string): Promise<CliResult<string>> => {
+  const layout = layoutOf(home);
+  const target = join(layout.backupsDir, timestampOf(deps));
+  const exists = await deps.fs.stat(target);
+  if (!exists.ok) return exists;
+  if (exists.value !== null) return failure(`the backup folder ${relative(home, target)} exists already`);
+  const made = await deps.fs.mkdir(target);
+  if (!made.ok) return made;
+
+  const copied = await copyIntoBackup(deps, layout, target);
+  if (copied.ok) return ok(target);
+  const removed = await deps.fs.remove(target);
+  if (removed.ok) return copied;
+  return failure(
+    `${copied.error.message}. The part-copied backup folder ${relative(home, target)} stays: ${removed.error.message}`,
+  );
 };
 
 /**
@@ -105,13 +129,59 @@ export const pruneBackups = async (deps: Deps, home: string, current: string): P
   return problems;
 };
 
-/** Put the old text back, newest change first. Returns the messages of the failures. */
-export const restore = async (deps: Deps, written: readonly Written[]): Promise<readonly string[]> => {
+/** A move that was done. The paths are absolute. */
+export interface Moved {
+  readonly from: string;
+  readonly to: string;
+  /** The folder that the move made for its target, or null when the folder was there. */
+  readonly madeDir: string | null;
+}
+
+/** Move the files and the folders. Each move goes to `moved` as soon as it is done. */
+export const applyMoves = async (deps: Deps, moves: readonly MovePlan[], moved: Moved[]): Promise<CliResult<void>> => {
+  for (const move of moves) {
+    const parent = dirname(move.toPath);
+    const parentKind = await deps.fs.stat(parent);
+    if (!parentKind.ok) return parentKind;
+    const made = await deps.fs.mkdir(parent);
+    if (!made.ok) return made;
+    const madeDir = parentKind.value === null ? parent : null;
+    const result = await deps.fs.rename(move.fromPath, move.toPath);
+    if (!result.ok) {
+      // The move did not happen, so the folder that it made is empty. Removing it is only tidiness.
+      if (madeDir !== null) await deps.fs.removeEmptyDir(madeDir);
+      return result;
+    }
+    moved.push({ from: move.fromPath, to: move.toPath, madeDir });
+  }
+  return ok(undefined);
+};
+
+/**
+ * Put the old state back, newest change first: the old texts, then the moves back, then the folders that a move made.
+ * Returns the messages of the failures.
+ */
+export const restore = async (
+  deps: Deps,
+  written: readonly Written[],
+  moved: readonly Moved[] = [],
+): Promise<readonly string[]> => {
   const problems: string[] = [];
   for (const entry of [...written].reverse()) {
     const result =
       entry.previous === null ? await deps.fs.remove(entry.path) : await deps.fs.writeTextAtomic(entry.path, entry.previous);
     if (!result.ok) problems.push(result.error.message);
+  }
+  for (const move of [...moved].reverse()) {
+    const back = await deps.fs.rename(move.to, move.from);
+    if (!back.ok) {
+      problems.push(back.error.message);
+      continue;
+    }
+    if (move.madeDir !== null) {
+      const removed = await deps.fs.removeEmptyDir(move.madeDir);
+      if (!removed.ok) problems.push(removed.error.message);
+    }
   }
   return problems;
 };
@@ -165,10 +235,41 @@ export const stateFileText = (state: FilePlan, upgrade: UpgradeSpec, changes: re
   return text.ok ? ok(text.value) : failure(`${upgrade.state.spec.file}: ${text.error.message}`);
 };
 
-export const configFileText = (config: FilePlan, upgrade: UpgradeSpec): CliResult<string | null> => {
+/** The text, when it parses and holds a valid value of the current schema. */
+const checkedText = (text: string, file: UpgradeFile): CliResult<string> => {
+  const raw = file.parse(text);
+  if (!raw.ok) return failure(`${file.spec.file} does not parse: ${raw.error}`);
+  const checked = requireValid(inspectParsed(raw.value, file.spec), file.spec.file);
+  return checked.ok ? ok(text) : checked;
+};
+
+/**
+ * The new text of the config file. When every step can work on the text, the steps edit the text of the owner, so that
+ * the comments and the order of the keys stay. Else the steps migrate the value and the file is written from it.
+ * Either way, the new text is checked before the caller writes it.
+ */
+export const configFileText = async (
+  deps: Deps,
+  path: string,
+  config: FilePlan,
+  upgrade: UpgradeSpec,
+): Promise<CliResult<string | null>> => {
   if (config.kind === 'current') return ok(null);
-  const migrated = runMigrations(config.raw, config.steps);
-  if (!migrated.ok) return failure(`${upgrade.config.spec.file}: ${migrated.error.message}`);
-  const text = upgrade.config.finish(migrated.value);
-  return text.ok ? ok(text.value) : failure(`${upgrade.config.spec.file}: ${text.error.message}`);
+  const file = upgrade.config;
+  const label = file.spec.file;
+
+  const textSteps = config.steps.filter(isTextMigration);
+  if (textSteps.length < config.steps.length) {
+    const migrated = runMigrations(config.raw, config.steps);
+    if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
+    const text = file.finish(migrated.value);
+    return text.ok ? ok(text.value) : failure(`${label}: ${text.error.message}`);
+  }
+
+  const original = await readIfFile(deps, path);
+  if (!original.ok) return original;
+  if (original.value === null) return failure(`${label} not found`);
+  const migrated = runTextMigrations(original.value, textSteps);
+  if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
+  return checkedText(migrated.value, file);
 };

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { stateKeys } from '../names.js';
 
-export const STATE_SCHEMA_VERSION = 1;
+export const STATE_SCHEMA_VERSION = 2;
 
 export const BLOCK_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 

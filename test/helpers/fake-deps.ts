@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
@@ -7,28 +8,66 @@ export interface RunCall {
   readonly command: string;
   readonly args: readonly string[];
   readonly cwd: string | undefined;
+  /** True when the caller asked for the environment of the process as it is. */
+  readonly inheritEnv?: boolean;
+  /** The time limit that the caller asked for. */
+  readonly timeoutMs?: number;
 }
 
 export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
 export type FetchHandler = (url: string) => CliResult<FetchStatus>;
 
+export type PromptHandler = (question: string) => CliResult<string>;
+export type AttachedHandler = (call: RunCall) => CliResult<number>;
+
 export interface FakeOptions {
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly nodeVersion?: string;
+  /** The value of `process.platform`. Default: linux. */
+  readonly os?: string;
   readonly run?: RunHandler;
   readonly fetch?: FetchHandler;
   readonly now?: Date;
   readonly pid?: number;
+  /** The id of the user of the process. Default: 1000. Null: a platform with no user ids. */
+  readonly uid?: number | null;
+  /** A person types at the process. Default: false. */
+  readonly stdinIsTTY?: boolean;
+  /** A person reads the output on a terminal. Default: false. */
+  readonly stdoutIsTTY?: boolean;
+  /** The answer to a question. Default: no answer. */
+  readonly prompt?: PromptHandler;
+  /** The result of a program that uses the terminal. Default: exit code 0. */
+  readonly runAttached?: AttachedHandler;
+  /** Links: a path under a key resolves to the same path under the value. */
+  readonly links?: Readonly<Record<string, string>>;
 }
 
 export interface FakeDeps extends Deps {
   readonly files: Map<string, string>;
   readonly dirs: Set<string>;
   readonly calls: RunCall[];
+  /** The programs that ran with the terminal, in order. */
+  readonly attached: RunCall[];
+  /** The questions that were asked, in order. */
+  readonly prompts: string[];
   readonly fetched: string[];
   /** The paths of the atomic writes, in order. */
   readonly atomicWrites: string[];
+  /**
+   * The mode that a write or a folder was created with, or that a chmod set, by path. A path with no mode is not in
+   * the map, and `statInfo` then gives 0o600 for a file and 0o700 for a folder.
+   */
+  readonly modes: Map<string, number>;
+  /** The owner of a path, by path. A path that is not in the map belongs to the user of the process. */
+  readonly owners: Map<string, number>;
+  /** The time of the last write of a file, in milliseconds, by path. A file that is not in the map changed just now. */
+  readonly mtimes: Map<string, number>;
+  /** The waits of `sleep`, in order. */
+  readonly sleeps: number[];
+  /** Move the clock on by `ms` milliseconds. `sleep` does the same. */
+  advance(ms: number): void;
   seed(path: string, text: string): void;
   seedDir(path: string): void;
 }
@@ -39,6 +78,11 @@ export const exited = (exitCode: number, stdout = '', stderr = ''): CliResult<Ru
 export const missingProgram = (command: string): CliResult<RunOutput> =>
   failure(`cannot run ${command}: ENOENT`);
 
+const DEFAULT_NOW = new Date('2030-01-02T03:04:05.678Z');
+const DEFAULT_UID = 1000;
+const PRIVATE_FILE_MODE = 0o600;
+const PRIVATE_DIR_MODE = 0o700;
+
 const enoent = (action: string, path: string): CliResult<never> =>
   failure(`cannot ${action} ${path}: ENOENT`);
 
@@ -46,8 +90,17 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const files = new Map<string, string>();
   const dirs = new Set<string>(['/']);
   const calls: RunCall[] = [];
+  const attached: RunCall[] = [];
+  const prompts: string[] = [];
   const fetched: string[] = [];
   const atomicWrites: string[] = [];
+  const modes = new Map<string, number>();
+  const owners = new Map<string, number>();
+  const mtimes = new Map<string, number>();
+  const sleeps: number[] = [];
+  const uid = options.uid === undefined ? DEFAULT_UID : options.uid;
+  let clock = (options.now ?? DEFAULT_NOW).getTime();
+  const touch = (path: string): void => void mtimes.set(path, clock);
 
   const ancestors = (path: string): string[] => {
     const found: string[] = [];
@@ -71,11 +124,21 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     files,
     dirs,
     calls,
+    attached,
+    prompts,
     fetched,
     atomicWrites,
+    modes,
+    owners,
+    mtimes,
+    sleeps,
+    advance: (ms) => {
+      clock += ms;
+    },
     seed: (path, text) => {
       addDir(posix.dirname(path));
       files.set(path, text);
+      touch(path);
     },
     seedDir: (path) => addDir(path),
     fs: {
@@ -83,19 +146,56 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         const text = files.get(path);
         return text === undefined ? enoent('read', path) : ok(text);
       },
+      readTextLimited: async (path, maxBytes) => {
+        const text = files.get(path);
+        if (text === undefined) return enoent('read', path);
+        return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text);
+      },
       writeText: async (path, text) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
         files.set(path, text);
+        touch(path);
         return ok(undefined);
       },
-      writeTextAtomic: async (path, text) => {
+      writeTextExclusive: async (path, text, mode) => {
+        if (!dirs.has(posix.dirname(path))) return enoent('write', path);
+        if (kindOf(path) !== null) return ok(false);
+        files.set(path, text);
+        modes.set(path, mode);
+        touch(path);
+        return ok(true);
+      },
+      writeTextAtomic: async (path, text, mode) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
         atomicWrites.push(path);
         files.set(path, text);
+        touch(path);
+        if (mode !== undefined) modes.set(path, mode);
         return ok(undefined);
       },
       stat: async (path) => ok(kindOf(path)),
-      mkdir: async (path) => {
+      statInfo: async (path) => {
+        const kind = kindOf(path);
+        if (kind === null) return ok(null);
+        return ok({
+          kind,
+          uid: owners.get(path) ?? uid ?? DEFAULT_UID,
+          mode: modes.get(path) ?? (kind === 'dir' ? PRIVATE_DIR_MODE : PRIVATE_FILE_MODE),
+          mtimeMs: mtimes.get(path) ?? clock,
+        });
+      },
+      chmod: async (path, mode) => {
+        if (kindOf(path) === null) return enoent('change the mode of', path);
+        modes.set(path, mode);
+        return ok(undefined);
+      },
+      realpath: async (path) => {
+        if (kindOf(path) === null) return enoent('resolve', path);
+        const link = Object.entries(options.links ?? {}).find(([from]) => under(from, path));
+        return ok(link === undefined ? path : link[1] + path.slice(link[0].length));
+      },
+      mkdir: async (path, mode) => {
+        if (mode !== undefined && !dirs.has(path)) modes.set(path, mode);
         addDir(path);
         return ok(undefined);
       },
@@ -149,19 +249,43 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       },
     },
     run: async (command: string, args: readonly string[], runOptions?: RunOptions) => {
-      const call: RunCall = { command, args, cwd: runOptions?.cwd };
+      const call: RunCall = {
+        command,
+        args,
+        cwd: runOptions?.cwd,
+        inheritEnv: runOptions?.inheritEnv === true,
+        ...(runOptions?.timeoutMs === undefined ? {} : { timeoutMs: runOptions.timeoutMs }),
+      };
       calls.push(call);
       return (options.run ?? (() => missingProgram(command)))(call);
+    },
+    runAttached: async (command: string, args: readonly string[]) => {
+      const call: RunCall = { command, args, cwd: undefined };
+      attached.push(call);
+      return (options.runAttached ?? (() => ok(0)))(call);
+    },
+    stdinIsTTY: options.stdinIsTTY ?? false,
+    stdoutIsTTY: options.stdoutIsTTY ?? false,
+    prompt: async (question: string) => {
+      prompts.push(question);
+      return (options.prompt ?? (() => failure('no answer was given')))(question);
     },
     env: options.env ?? {},
     fetch: async (url) => {
       fetched.push(url);
       return (options.fetch ?? (() => failure('no answer')))(url);
     },
-    now: () => options.now ?? new Date('2030-01-02T03:04:05.678Z'),
-    platform: { os: 'linux', nodeVersion: options.nodeVersion ?? 'v22.1.0' },
+    now: () => new Date(clock),
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      clock += ms;
+      // Other work that waits runs before this wait ends, as it does with a real wait.
+      await yieldTurn();
+    },
+    platform: { os: options.os ?? 'linux', nodeVersion: options.nodeVersion ?? 'v22.1.0' },
     cwd: options.cwd ?? '/work',
     pid: options.pid ?? 4242,
+    uid,
   };
   fake.seedDir(fake.cwd);
   return fake;
@@ -178,11 +302,11 @@ export const withFailingWrites = <T extends Deps>(
 ): T => {
   const attempts = new Map<string, number>();
   const guarded =
-    (write: Fs['writeText']): Fs['writeText'] =>
-    async (path, text) => {
+    (write: Fs['writeTextAtomic']): Fs['writeTextAtomic'] =>
+    async (path, text, mode) => {
       const attempt = (attempts.get(path) ?? 0) + 1;
       attempts.set(path, attempt);
-      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text);
+      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text, mode);
     };
   return {
     ...deps,

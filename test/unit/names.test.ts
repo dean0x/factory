@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  address,
   claudeSettings,
   commands,
   dirs,
@@ -10,15 +11,24 @@ import {
   flags,
   keys,
   marker,
+  nodeCommands,
   program,
   roles,
+  schema1,
   schemaIds,
   stateKeys,
   templateValues,
+  tmuxNames,
 } from '../../src/names.js';
+import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
+import { runInit } from '../../src/commands/init.js';
 import { fillTemplate } from '../../src/templates/fill.js';
-import { blockTemplates, fileTemplates } from '../../src/templates/index.js';
+import { fileTemplates } from '../../src/templates/index.js';
+import { allBlocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
+import { createFakeDeps } from '../helpers/fake-deps.js';
+import { gitHandler } from '../helpers/git-fake.js';
+import { oldWordsIn } from '../helpers/old-words.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
@@ -53,29 +63,58 @@ const flat = (...groups: readonly Record<string, unknown>[]): string[] =>
 const EXACT_NAMES = new Set([
   ...flat(
     commands,
+    nodeCommands,
     flags,
     keys.root,
     keys.node,
     keys.owner,
     keys.session,
     keys.proxy,
-    keys.lane,
+    keys.cell,
     keys.limits,
     keys.project,
     keys.gate,
-    keys.child,
+    keys.approval,
+    keys.tracker,
+    keys.recipe,
+    keys.link,
     stateKeys,
+    schema1.keys,
+    { windowView: tmuxNames.windowView, windowBench: tmuxNames.windowBench, slotBoard: tmuxNames.slotBoard },
   ),
 ]);
 
 /** Names that a string literal must never hold as a part, matched as whole words. */
-const WORD_NAMES = [program, ...flat(roles), dirs.profile, dirs.roadmaps, dirs.briefs, dirs.backups];
+const WORD_NAMES = [
+  program,
+  ...flat(roles),
+  dirs.profile,
+  dirs.roadmaps,
+  dirs.orders,
+  dirs.backups,
+  schema1.briefsDir,
+];
 
 /**
  * Names that a string literal must never hold as a part, matched as plain text.
  * The word "settings" (claudeSettings.prefix) is also plain prose, so it is not scanned.
  */
-const TEXT_NAMES = [...flat(files), dirs.state, dirs.claude, claudeSettings.suffix, env.proxyBaseUrl, marker.prefix];
+const TEXT_NAMES = [
+  ...flat(files),
+  schema1.protocolFile,
+  dirs.state,
+  dirs.claude,
+  claudeSettings.suffix,
+  env.proxyBaseUrl,
+  env.home,
+  env.session,
+  tmuxNames.optionHome,
+  tmuxNames.optionNode,
+  tmuxNames.optionSlot,
+  tmuxNames.optionCell,
+  marker.prefix,
+  address.scheme,
+];
 
 /** These files call git, so they hold the words of git, for example its init command and its --quiet flag. */
 const GIT_VOCABULARY_FILES = new Set([join(SRC, 'core', 'git.ts')]);
@@ -127,11 +166,80 @@ describe('names', () => {
     expect(violationsInText("const a = 'plain words';", path)).toEqual([]);
   });
 
-  it('finds a name literal in a file that is not names.ts', () => {
+  it('reads the string literals of a text, and leaves out comments, template expressions and placeholders', () => {
     const sample = (text: string): string[] => literalsOf(text);
     expect(sample("const a = 'factory.yaml';")).toEqual(['factory.yaml']);
-    expect(sample('const a = `x ${y} {{lane}} z`;')).toEqual(['x     z']);
+    expect(sample('const a = `x ${y} {{cell}} z`;')).toEqual(['x     z']);
     expect(sample("// a 'comment'\nconst a = 1;")).toEqual([]);
+  });
+});
+
+describe('words of the old names', () => {
+  it('finds an old word in a text, in any case and in a plural', () => {
+    expect(oldWordsIn('A Lane, two packs and a brief.')).toEqual(['Lane', 'packs', 'brief']);
+    expect(oldWordsIn('Brief the cell. It was briefed.')).toEqual(['Brief', 'briefed']);
+    expect(oldWordsIn('A package of plain words and a cell.')).toEqual([]);
+  });
+
+  it('keeps the old words out of the help of every command', () => {
+    const texts = [renderHelp(), ...commandTable.map(renderCommandHelp)];
+    expect(texts.flatMap(oldWordsIn)).toEqual([]);
+  });
+
+  it('keeps the old words out of package.json, which the npm page shows', () => {
+    const text = readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8');
+    expect(oldWordsIn(text)).toEqual([]);
+  });
+
+  it('keeps the old words out of every template', () => {
+    const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
+    expect(texts.flatMap(oldWordsIn)).toEqual([]);
+  });
+
+  it('keeps the old words out of the files that init writes', async () => {
+    const { handler } = gitHandler({ gh: 'some-login' });
+    const deps = createFakeDeps({ cwd: '/w', run: handler });
+    const result = await runInit(deps, {
+      home: '/w/node',
+      name: undefined,
+      ownerName: 'Test Owner',
+      ownerGithub: undefined,
+      projects: [],
+      yes: false,
+      recipe: undefined,
+      layer: undefined,
+    });
+    expect(result.ok).toBe(true);
+    expect(deps.files.size).toBeGreaterThan(10);
+    for (const [path, text] of deps.files) {
+      expect({ path, found: oldWordsIn(text) }).toEqual({ path, found: [] });
+    }
+  });
+});
+
+describe('the pane options of tmux', () => {
+  /** The pane option of FAC-M1 for a work track. The option of v2 is `@cell`. */
+  const OLD_PANE_OPTION = '@lane';
+
+  const allSourceFiles = (dir: string): string[] =>
+    readdirSync(dir).flatMap((entry) => {
+      const path = join(dir, entry);
+      if (statSync(path).isDirectory()) return allSourceFiles(path);
+      return path.endsWith('.ts') ? [path] : [];
+    });
+
+  it('names the pane options, the cell option among them', () => {
+    expect(tmuxNames.optionCell).toBe('@cell');
+    expect(tmuxNames.optionNode).toBe('@node');
+    expect(tmuxNames.optionSlot).toBe('@slot');
+    expect(tmuxNames.optionHome).toBe('@factory_home');
+  });
+
+  it('keeps the old pane option out of every file of src, names.ts and comments included', () => {
+    const files = allSourceFiles(SRC);
+    expect(files).toContain(NAMES_FILE);
+    const found = files.filter((path) => readFileSync(path, 'utf8').includes(OLD_PANE_OPTION));
+    expect(found.map((path) => relative(SRC, path))).toEqual([]);
   });
 });
 
@@ -147,14 +255,14 @@ describe('deny list', () => {
 
 describe('template placeholders', () => {
   it('leaves no placeholder in a filled template', () => {
-    const texts = [...blockTemplates.map((template) => template.body), ...Object.values(fileTemplates)];
+    const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
     for (const text of texts) {
       expect(text.match(/\{\{[^}]*\}\}/g) ?? []).toEqual([]);
     }
   });
 
   it('fills a placeholder and its capitalized form', () => {
-    expect(fillTemplate(['The {{lane}} and the {{Lane}}.'], { lane: 'worker' })).toBe('The worker and the Worker.');
+    expect(fillTemplate(['The {{cell}} and the {{Cell}}.'], { cell: 'worker' })).toBe('The worker and the Worker.');
   });
 
   it('leaves an unknown placeholder in the text', () => {
@@ -168,7 +276,7 @@ describe('template placeholders', () => {
   });
 
   it('puts the program name in the safety block', () => {
-    const safety = blockTemplates.find((template) => template.name === 'safety');
+    const safety = allBlocks.find((template) => template.name === 'safety');
     expect(safety?.body).toContain(`${program[0]?.toUpperCase()}${program.slice(1)} enforces them`);
   });
 });

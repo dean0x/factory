@@ -7,7 +7,17 @@ export interface Migration {
   readonly from: number;
   readonly to: number;
   apply(raw: unknown): CliResult<unknown>;
+  /**
+   * The same step on the text of a file that people edit, so that its comments, its blank lines and the order of
+   * its keys stay. It gives the same value as `apply`.
+   */
+  applyText?(text: string): CliResult<string>;
 }
+
+/** A step that works on the text of a file. */
+export type TextMigration = Migration & Required<Pick<Migration, 'applyText'>>;
+
+export const isTextMigration = (step: Migration): step is TextMigration => step.applyText !== undefined;
 
 /** Check that the chain from `current` to `target` has no gap, and return its steps. */
 export const planMigrations = (
@@ -37,6 +47,19 @@ export const runMigrations = (raw: unknown, steps: readonly Migration[]): CliRes
   let current = raw;
   for (const step of steps) {
     const next = step.apply(current);
+    if (!next.ok) {
+      return failure(`migration from version ${step.from} to ${step.to} failed: ${next.error.message}`);
+    }
+    current = next.value;
+  }
+  return ok(current);
+};
+
+/** Apply the steps in order to the text of a file. The first error stops the run. */
+export const runTextMigrations = (text: string, steps: readonly TextMigration[]): CliResult<string> => {
+  let current = text;
+  for (const step of steps) {
+    const next = step.applyText(current);
     if (!next.ok) {
       return failure(`migration from version ${step.from} to ${step.to} failed: ${next.error.message}`);
     }

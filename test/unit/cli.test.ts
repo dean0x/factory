@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { createStyle, detectStyle, renderJson, renderText, renderWarnings } from '../../src/cli/output.js';
+import {
+  createStyle,
+  detectStyle,
+  renderError,
+  renderInternalError,
+  renderJson,
+  renderText,
+  renderWarnings,
+} from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
-import { parseFlags } from '../../src/cli/table.js';
+import { commandTable, parseFlags } from '../../src/cli/table.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { captureSink } from '../helpers/sink.js';
@@ -73,6 +81,41 @@ describe('runCli', () => {
   });
 });
 
+describe('the refusal on Windows', () => {
+  const runOn = async (os: string, argv: readonly string[]) => {
+    const sink = captureSink();
+    const code = await runCli(argv, createFakeDeps({ os }), sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  const argvOfEachCommand: readonly (readonly string[])[] = [
+    [],
+    ['--help'],
+    ['--version'],
+    ['help'],
+    ['bogus'],
+    ...commandTable.flatMap((command) => [[command.name], [command.name, '--help'], [command.name, '--json']]),
+  ];
+
+  it.each(argvOfEachCommand.map((argv) => [argv.join(' ') || '(no arguments)', argv] as const))(
+    'exits 4 with the hint for "%s" on win32, and prints nothing else',
+    async (_name, argv) => {
+      const result = await runOn('win32', argv);
+      expect(result.code).toBe(4);
+      expect(result.out).toBe('');
+      expect(result.err).toBe(
+        'error: factory runs on macOS and Linux\nUse WSL; factory runs there as on Linux.\n',
+      );
+    },
+  );
+
+  it.each([['linux'], ['darwin']])('does not refuse on %s', async (os) => {
+    const result = await runOn(os, ['--version']);
+    expect(result.code).toBe(0);
+    expect(result.out.trim()).toBe(FACTORY_VERSION);
+  });
+});
+
 describe('parseFlags', () => {
   const options = {
     home: { type: 'string', description: 'x' },
@@ -96,6 +139,44 @@ describe('parseFlags', () => {
     const parsed = parseFlags(['--nope'], options);
     expect(parsed.ok).toBe(false);
     if (!parsed.ok) expect(parsed.error.kind).toBe('usage');
+  });
+
+  it('returns a usage error for a word that is not a flag, unless the command takes words', () => {
+    const refused = parseFlags(['add-child', 'x'], options);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error.kind).toBe('usage');
+
+    const allowed = parseFlags(['add-child', '--home', '/a', 'x'], options, true);
+    expect(allowed.ok).toBe(true);
+    if (!allowed.ok) return;
+    expect(allowed.value.positionals()).toEqual(['add-child', 'x']);
+    expect(allowed.value.string('home')).toBe('/a');
+  });
+
+  it('still refuses a flag that the command does not know, when it takes words', () => {
+    expect(parseFlags(['children', '--nope'], options, true).ok).toBe(false);
+  });
+});
+
+describe('the node command in the command line', () => {
+  it('shows one usage line for each subcommand', async () => {
+    const result = await run(['node', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Usage: factory node children [--home DIR]');
+    expect(result.out).toContain('       factory node add-child PATH [--home DIR]');
+    expect(result.out).toContain('       factory node remove-child ID [--home DIR]');
+  });
+
+  it('lists the command and the up command in the help', async () => {
+    const result = await run(['help']);
+    expect(result.out).toMatch(/\n {2}up {8}Start the session/);
+    expect(result.out).toMatch(/\n {2}node {6}Show or change the children/);
+  });
+
+  it('exits 2 for a node command without a subcommand', async () => {
+    const result = await run(['node']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('needs a subcommand');
   });
 });
 
@@ -177,5 +258,40 @@ describe('control characters in text output', () => {
     const doc = { schema: 'x/v1', path: 'a\u001bb' };
     expect(JSON.parse(renderJson(doc))).toEqual(doc);
     expect(renderJson(doc)).not.toContain('\u001b');
+  });
+});
+
+describe('control characters in error text', () => {
+  it('replaces them in the message and in the hint', () => {
+    const text = renderError({ kind: 'failure', message: 'bad \u001b[2J folder', hint: 'try \u0007 again\u009b' });
+    expect(text).toBe('error: bad ?[2J folder\ntry ? again?\n');
+  });
+
+  it('prints an error with no hint as one line', () => {
+    expect(renderError({ kind: 'usage', message: 'bad' })).toBe('error: bad\n');
+  });
+
+  it('replaces them in the message of an internal error', () => {
+    const text = renderInternalError(new Error('failed \u001b[2J in \u0007 file\u009b'));
+    expect(text).toBe('error: internal error: failed ?[2J in ? file?\n');
+  });
+
+  it('prints an internal error that is not an Error as unknown', () => {
+    expect(renderInternalError('\u001b[2J')).toBe('error: internal error: unknown\n');
+    expect(renderInternalError(undefined)).toBe('error: internal error: unknown\n');
+  });
+
+  it('replaces them in the error of a command', async () => {
+    const result = await run(['node', 'x\u001b[2Jy']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('unknown subcommand "x?[2Jy"');
+    expect(result.err).not.toContain('\u001b');
+  });
+
+  it('replaces them in the name of an unknown command', async () => {
+    const result = await run(['\u001b[2Jx']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('unknown command "?[2Jx"');
+    expect(result.err).not.toContain('\u001b');
   });
 });

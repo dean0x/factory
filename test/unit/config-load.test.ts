@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inspectConfig, loadConfig, parseYamlText } from '../../src/config/load.js';
+import { inspectConfig, loadConfig, parseConfigText, parseYamlText } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
 import { configSchema, type FactoryConfig } from '../../src/config/schema.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
@@ -8,12 +8,40 @@ import { sampleConfig } from '../helpers/sample-config.js';
 
 const HOME = '/node';
 
+/** The sample config with some core keys replaced. */
+const withCore = (core: Partial<FactoryConfig['core']>): FactoryConfig => {
+  const sample = sampleConfig();
+  return { ...sample, core: { ...sample.core, ...core } };
+};
+
 const withFile = (text: string | null) => {
   const deps = createFakeDeps();
   deps.seedDir(HOME);
   if (text !== null) deps.seed(`${HOME}/factory.yaml`, text);
   return deps;
 };
+
+describe('parseConfigText', () => {
+  it('gives the typed config for a valid text', () => {
+    const parsed = parseConfigText(renderConfig(sampleConfig()));
+    expect(parsed.ok && parsed.value.core.node.id).toBe('demo');
+  });
+
+  it('fails, and names the key, for a text that is not valid', () => {
+    const parsed = parseConfigText(renderConfig(sampleConfig()).replace('effort: high', 'effort: wild'));
+    expect(parsed).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!parsed.ok) expect(parsed.error.message).toContain('session.effort');
+  });
+
+  it('fails for a text that does not parse, and for an older schema', () => {
+    const broken = parseConfigText('a: [1\n');
+    expect(broken.ok).toBe(false);
+    if (!broken.ok) expect(broken.error.message).toContain('factory.yaml does not parse');
+    const older = parseConfigText('schema: 1\n');
+    expect(older.ok).toBe(false);
+    if (!older.ok) expect(older.error.message).toContain('factory upgrade');
+  });
+});
 
 describe('parseYamlText', () => {
   it('parses a mapping', () => {
@@ -56,7 +84,7 @@ describe('inspectConfig and loadConfig', () => {
     const state = await inspectConfig(deps, HOME);
     expect(state.kind).toBe('valid');
     const loaded = await loadConfig(deps, HOME);
-    expect(loaded.ok && loaded.value.node.id).toBe('demo');
+    expect(loaded.ok && loaded.value.core.node.id).toBe('demo');
   });
 
   it('reports a missing file', async () => {
@@ -78,11 +106,42 @@ describe('inspectConfig and loadConfig', () => {
   });
 
   it('reports a newer schema with the upgrade-factory message', async () => {
-    const state = await inspectConfig(withFile('schema: 2\n'), HOME);
-    expect(state).toMatchObject({ kind: 'newer', version: 2 });
-    const loaded = await loadConfig(withFile('schema: 2\n'), HOME);
+    const state = await inspectConfig(withFile('schema: 3\n'), HOME);
+    expect(state).toMatchObject({ kind: 'newer', version: 3 });
+    const loaded = await loadConfig(withFile('schema: 3\n'), HOME);
     expect(loaded).toMatchObject({ ok: false });
     if (!loaded.ok) expect(loaded.error.message).toContain('Upgrade factory.');
+  });
+
+  it('reports a schema 1 file as older and points to the upgrade command', async () => {
+    const state = await inspectConfig(withFile('schema: 1\n'), HOME);
+    expect(state).toMatchObject({ kind: 'older', version: 1 });
+    const loaded = await loadConfig(withFile('schema: 1\n'), HOME);
+    expect(loaded).toMatchObject({ ok: false });
+    if (!loaded.ok) expect(loaded.error.message).toContain('factory upgrade');
+  });
+
+  it('loads the core and the recipe apart, with the recipe typed', async () => {
+    const loaded = await loadConfig(withFile(renderConfig(sampleConfig())), HOME);
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    expect(loaded.value.core.tracker).toEqual({ kind: 'local' });
+    expect(loaded.value.recipe.projects.map((project) => project.id)).toEqual(['web']);
+    expect(Object.keys(loaded.value.core)).not.toContain('recipe');
+  });
+
+  it('names a key of the recipe block with the path of the block in the file', async () => {
+    const text = renderConfig(sampleConfig()).replace('path: "../web"', 'path: "/abs/web"');
+    const loaded = await loadConfig(withFile(text), HOME);
+    expect(loaded).toMatchObject({ ok: false });
+    if (!loaded.ok) expect(loaded.error.message).toContain('recipe.projects.0.path');
+  });
+
+  it('names the key of an address that is not a file address', async () => {
+    const config = withCore({ children: [{ id: 'far', address: 'ssh://host/srv/far-factory' }] });
+    const loaded = await loadConfig(withFile(renderConfig(config)), HOME);
+    expect(loaded).toMatchObject({ ok: false });
+    if (!loaded.ok) expect(loaded.error.message).toContain('children.0.address: factory runs on one machine');
   });
 
   it('reports a schema number below 1 as invalid', async () => {
@@ -109,11 +168,11 @@ describe('inspectConfig and loadConfig', () => {
 
   it('hides a key that looks like a token in the error', async () => {
     const unknownKey = await loadConfig(withFile(`${renderConfig(sampleConfig())}${FAKE_GITHUB_TOKEN}: 1\n`), HOME);
-    const lane = await loadConfig(
-      withFile(renderConfig({ ...sampleConfig(), lanes: { [FAKE_GITHUB_TOKEN]: { proxy: 'none' } } })),
+    const cell = await loadConfig(
+      withFile(renderConfig(withCore({ cells: { [FAKE_GITHUB_TOKEN]: { proxy: 'none' } } }))),
       HOME,
     );
-    for (const loaded of [unknownKey, lane]) {
+    for (const loaded of [unknownKey, cell]) {
       expect(loaded.ok).toBe(false);
       if (!loaded.ok) {
         expect(loaded.error.message).toContain('factory.yaml is invalid');
@@ -124,7 +183,7 @@ describe('inspectConfig and loadConfig', () => {
   });
 
   it('keeps the raw document of an invalid file for the secret scan', async () => {
-    const state = await inspectConfig(withFile('schema: 1\nextra: ghp_x\n'), HOME);
+    const state = await inspectConfig(withFile('schema: 2\nextra: ghp_x\n'), HOME);
     expect(state.kind).toBe('invalid');
     if (state.kind === 'invalid') expect(state.raw).toMatchObject({ extra: 'ghp_x' });
   });
@@ -134,7 +193,44 @@ describe('renderConfig', () => {
   const roundTrip = (config: FactoryConfig): FactoryConfig => {
     const parsed = parseYamlText(renderConfig(config));
     expect(parsed.ok).toBe(true);
-    return configSchema.parse(parsed.ok ? parsed.value : null);
+    const checked = configSchema.safeParse(parsed.ok ? parsed.value : null);
+    if (!checked.success) throw new Error('the rendered config does not parse');
+    return checked.data;
+  };
+
+  const full = (): FactoryConfig => {
+    const sample = sampleConfig();
+    return {
+      core: {
+        ...sample.core,
+        owner: { ...sample.core.owner, display: 'Name: "quoted" # not a comment', github: 'some-login' },
+        session: { permission_mode: 'auto', effort: 'max', model: 'a model', proxy: 'local' },
+        proxies: [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: 'direct' }],
+        cells: { 'web-cell': { proxy: 'none' }, no: { proxy: 'local' } },
+        limits: { ...sample.core.limits, load_max: 7.5 },
+        approval: { land: 'approved-work' },
+        tracker: { kind: 'jira', items: 'ACME', decisions: 'ACME-DEC', watch_interval: '2h' },
+        parent: { id: 'acme', address: 'file:///srv/nodes/acme-factory' },
+        children: [{ id: 'web', address: 'file:///srv/nodes/web-factory' }],
+      },
+      recipe: {
+        id: 'software',
+        variant: 'plain',
+        projects: [
+          {
+            id: '123',
+            repo: 'acme/web',
+            path: 'sub/web',
+            default_branch: 'release/1.x',
+            merge_method: 'rebase',
+            variant: 'plain',
+            gate: { checks: ['npm run lint', 'say "hi"'] },
+            heavy_test: 'npm test',
+          },
+          { ...sample.recipe.projects[0]!, id: 'true' },
+        ],
+      },
+    };
   };
 
   it('round-trips the sample config', () => {
@@ -142,38 +238,45 @@ describe('renderConfig', () => {
   });
 
   it('round-trips a full config', () => {
-    const full: FactoryConfig = {
-      ...sampleConfig(),
-      owner: { ...sampleConfig().owner, display: 'Name: "quoted" # not a comment', github: 'some-login' },
-      session: { permission_mode: 'auto', effort: 'max', model: 'a model', proxy: 'local' },
-      proxies: [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: 'direct' }],
-      lanes: { 'web-lane': { proxy: 'none' }, no: { proxy: 'local' } },
-      limits: { ...sampleConfig().limits, load_max: 7.5 },
-      projects: [
-        {
-          id: '123',
-          repo: 'acme/web',
-          path: 'sub/web',
-          default_branch: 'release/1.x',
-          merge_method: 'rebase',
-          pack: 'plain',
-          gate: { checks: ['npm run lint', 'say "hi"'] },
-          heavy_test: 'npm test',
-        },
-        { ...sampleConfig().projects[0]!, id: 'true' },
-      ],
-      children: [{ id: 'acme', address: 'acme/node' }],
-    };
-    expect(roundTrip(full)).toEqual(full);
+    expect(roundTrip(full())).toEqual(full());
+  });
+
+  it('round-trips a local tracker, a parent of null and no project', () => {
+    const empty: FactoryConfig = { ...sampleConfig(), recipe: { ...sampleConfig().recipe, projects: [] } };
+    expect(roundTrip(empty)).toEqual(empty);
   });
 
   it('writes comments and the empty sections', () => {
     const text = renderConfig(sampleConfig());
     expect(text).toContain('# factory.yaml: the configuration of this node.');
+    expect(text).toContain('schema: 2');
     expect(text).toContain('proxies: []');
-    expect(text).toContain('lanes: {}');
+    expect(text).toContain('cells: {}');
+    expect(text).toContain('parent: null');
     expect(text).toContain('children: []');
     expect(text.endsWith('\n')).toBe(true);
+  });
+
+  it('writes the schema 2 sections in the order of the design', () => {
+    const text = renderConfig(sampleConfig());
+    const order = ['\nnode:', '\nowner:', '\nsession:', '\nproxies:', '\ncells:', '\nlimits:', '\napproval:', '\ntracker:', '\nrecipe:', '\nparent:', '\nchildren:'];
+    const positions = order.map((key) => text.indexOf(key));
+    expect(positions.every((position) => position > 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+  });
+
+  it('writes the recipe block with its id, its variant and its projects', () => {
+    const text = renderConfig(sampleConfig());
+    expect(text).toContain('recipe:\n  id: software\n  variant: plain');
+    expect(text).toContain('  projects:\n    - id: web\n      path: "../web"');
+    expect(text).toContain('tracker:\n  kind: local');
+    expect(text).toContain('approval:\n  land: each');
+  });
+
+  it('writes a parent as a block and a child as a list item', () => {
+    const text = renderConfig(full());
+    expect(text).toContain('parent:\n  id: acme\n  address: "file:///srv/nodes/acme-factory"');
+    expect(text).toContain('children:\n  - id: web\n    address: "file:///srv/nodes/web-factory"');
   });
 
   it('omits the optional keys that are not set', () => {

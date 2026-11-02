@@ -28,6 +28,22 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Install tmux (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+
+      - name: Install tmux (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: brew install tmux
+
+      - name: Check the tmux version
+        run: tmux -V
+
       - name: Install the dependencies
         run: npm ci
 

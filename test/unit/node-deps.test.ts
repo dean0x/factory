@@ -1,9 +1,10 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmod, lstat, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PassThrough } from 'node:stream';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 
 const deps = createNodeDeps();
@@ -46,6 +47,123 @@ describe('node deps: run', () => {
     const result = await deps.run('pwd', [], { cwd: dir });
     expect(result.ok && result.value.stdout.trim().endsWith(dir.split('/').pop() ?? '?')).toBe(true);
   });
+
+  describe('the environment of the program', () => {
+    const show = ['-e', 'process.stdout.write([process.env.LC_ALL, process.env.GIT_TERMINAL_PROMPT].join(","))'];
+    const saved = { LC_ALL: process.env['LC_ALL'], GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] };
+
+    beforeEach(() => {
+      process.env['LC_ALL'] = 'en_US.UTF-8';
+      process.env['GIT_TERMINAL_PROMPT'] = '1';
+    });
+
+    afterEach(() => {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    });
+
+    it('sets the C locale and no git prompt by default', async () => {
+      const result = await deps.run('node', show);
+      expect(result.ok && result.value.stdout).toBe('C,0');
+    });
+
+    it('keeps the environment of this process when the caller asks for it', async () => {
+      const result = await deps.run('node', show, { inheritEnv: true });
+      expect(result.ok && result.value.stdout).toBe('en_US.UTF-8,1');
+    });
+  });
+});
+
+describe('node deps: run with the terminal', () => {
+  it('gives the exit code of the program as a value', async () => {
+    expect(await deps.runAttached('node', ['-e', 'process.exit(0)'])).toEqual({ ok: true, value: 0 });
+    expect(await deps.runAttached('node', ['-e', 'process.exit(3)'])).toEqual({ ok: true, value: 3 });
+  });
+
+  it('passes arguments without a shell', async () => {
+    const result = await deps.runAttached('node', ['-e', 'process.exit(process.argv[1] === "a; exit 9" ? 0 : 1)', 'a; exit 9']);
+    expect(result).toEqual({ ok: true, value: 0 });
+  });
+
+  it('returns an error when the program does not exist', async () => {
+    const result = await deps.runAttached('factory-no-such-program', []);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('cannot run factory-no-such-program');
+  });
+
+  it('returns an error when a signal ends the program', async () => {
+    const result = await deps.runAttached('node', ['-e', 'process.kill(process.pid, "SIGTERM")']);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('SIGTERM');
+  });
+});
+
+describe('node deps: the terminal', () => {
+  it('tells whether a person types and reads', () => {
+    expect(typeof deps.stdinIsTTY).toBe('boolean');
+    expect(typeof deps.stdoutIsTTY).toBe('boolean');
+  });
+
+  describe('prompt', () => {
+    const realStdin = process.stdin;
+    let input = new PassThrough();
+    let written = '';
+
+    beforeEach(() => {
+      input = new PassThrough();
+      written = '';
+      Object.defineProperty(process, 'stdin', { value: input, configurable: true });
+      vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+        written += String(chunk);
+        return true;
+      });
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      Object.defineProperty(process, 'stdin', { value: realStdin, configurable: true });
+    });
+
+    it('writes the question to stderr and returns the line without its line break', async () => {
+      const answer = createNodeDeps().prompt('Go on? [y/N] ');
+      input.write('yes\nsecond line\n');
+      expect(await answer).toEqual({ ok: true, value: 'yes' });
+      expect(written).toContain('Go on? [y/N] ');
+    });
+
+    it('cuts a long answer to 200 characters', async () => {
+      const answer = createNodeDeps().prompt('?');
+      input.write(`${'a'.repeat(500)}\n`);
+      expect(await answer).toEqual({ ok: true, value: 'a'.repeat(200) });
+    });
+
+    it('returns an error when the input ends with no answer', async () => {
+      const answer = createNodeDeps().prompt('?');
+      input.end();
+      const result = await answer;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toBe('no answer was given');
+    });
+  });
+});
+
+describe('node deps: realpath', () => {
+  it('resolves a link', async () => {
+    const target = fresh('target');
+    const link = fresh('link');
+    await writeFile(target, 'x');
+    await symlink(target, link);
+    const result = await deps.fs.realpath(link);
+    expect(result).toEqual({ ok: true, value: await realpath(target) });
+  });
+
+  it('returns an error with the code for a path that does not exist', async () => {
+    const result = await deps.fs.realpath(fresh('missing'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
 });
 
 describe('node deps: fs', () => {
@@ -64,6 +182,35 @@ describe('node deps: fs', () => {
     const result = await deps.fs.readText(join(dir, 'missing.txt'));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
+
+  describe('a read with a size limit', () => {
+    it('reads a file that is exactly as large as the limit', async () => {
+      const file = fresh('limit-exact.txt');
+      await writeFile(file, 'abcde', 'utf8');
+      expect(await deps.fs.readTextLimited(file, 5)).toEqual({ ok: true, value: 'abcde' });
+    });
+
+    it('fails for a file that is one byte over the limit, and says that it is too large', async () => {
+      const file = fresh('limit-over.txt');
+      await writeFile(file, 'abcdef', 'utf8');
+      const result = await deps.fs.readTextLimited(file, 5);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('larger than 5 bytes');
+    });
+
+    it('counts bytes and not characters', async () => {
+      const file = fresh('limit-bytes.txt');
+      await writeFile(file, 'ééé', 'utf8');
+      expect((await deps.fs.readTextLimited(file, 5)).ok).toBe(false);
+      expect(await deps.fs.readTextLimited(file, 6)).toEqual({ ok: true, value: 'ééé' });
+    });
+
+    it('returns an error with the code for a missing file', async () => {
+      const result = await deps.fs.readTextLimited(fresh('limit-missing.txt'), 5);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOENT');
+    });
   });
 
   it('copies a tree into a folder inside the tree, and leaves out the skipped folder', async () => {
@@ -88,6 +235,60 @@ describe('node deps: fs', () => {
     expect(await deps.fs.readText(join(dir, 'two.txt'))).toEqual({ ok: true, value: 'one' });
   });
 
+  describe('a link as the path to copy', () => {
+    it('copies the content of a link to a file as a regular file', async () => {
+      const target = fresh('link-target.txt');
+      await writeFile(target, 'shared text', 'utf8');
+      const link = fresh('link.txt');
+      await symlink(target, link);
+      const copy = fresh('link-copy.txt');
+
+      expect((await deps.fs.copyTree(link, copy, [])).ok).toBe(true);
+
+      expect((await lstat(copy)).isFile()).toBe(true);
+      expect(await readFile(copy, 'utf8')).toBe('shared text');
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    });
+
+    it('fails for a link whose target does not exist', async () => {
+      const link = fresh('dangling.txt');
+      await symlink(fresh('no-target.txt'), link);
+      const copy = fresh('dangling-copy.txt');
+
+      const result = await deps.fs.copyTree(link, copy, []);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOENT');
+      expect(await deps.fs.stat(copy)).toEqual({ ok: true, value: null });
+    });
+
+    it('fails for a link to a folder', async () => {
+      const folder = fresh('link-folder');
+      await deps.fs.mkdir(folder);
+      await deps.fs.writeText(join(folder, 'a.txt'), 'a');
+      const link = fresh('link-to-folder');
+      await symlink(folder, link);
+
+      const result = await deps.fs.copyTree(link, fresh('link-folder-copy'), []);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOTSUP');
+    });
+
+    it('fails for a link inside the tree', async () => {
+      const source = fresh('tree-with-link');
+      await deps.fs.mkdir(source);
+      const target = fresh('inner-target.txt');
+      await writeFile(target, 'x', 'utf8');
+      await symlink(target, join(source, 'inner.txt'));
+
+      const result = await deps.fs.copyTree(source, fresh('tree-with-link-copy'), []);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOTSUP');
+    });
+  });
+
   it('renames, copies with a skip list, and removes a tree', async () => {
     const source = join(dir, 'tree');
     await deps.fs.mkdir(join(source, 'keep'));
@@ -106,6 +307,95 @@ describe('node deps: fs', () => {
     expect((await deps.fs.remove(moved)).ok).toBe(true);
     expect((await deps.fs.remove(moved)).ok).toBe(true);
     expect(await deps.fs.stat(moved)).toEqual({ ok: true, value: null });
+  });
+});
+
+describe('node deps: owner and mode', () => {
+  it('tells the kind, the owner and the permission bits of a file and of a folder', async () => {
+    const file = fresh('info.txt');
+    await writeFile(file, 'x', 'utf8');
+    await chmod(file, 0o640);
+    const uid = process.getuid?.() ?? null;
+    expect(await deps.fs.statInfo(file)).toEqual({
+      ok: true,
+      value: { kind: 'file', uid, mode: 0o640, mtimeMs: (await stat(file)).mtimeMs },
+    });
+    await chmod(dir, 0o700);
+    expect(await deps.fs.statInfo(dir)).toMatchObject({ ok: true, value: { kind: 'dir', uid, mode: 0o700 } });
+  });
+
+  it('tells the time of the last change of a file', async () => {
+    const file = fresh('mtime.txt');
+    const before = Date.now();
+    await writeFile(file, 'x', 'utf8');
+    const result = await deps.fs.statInfo(file);
+    expect(result.ok && result.value !== null && Math.abs(result.value.mtimeMs - before) < 5_000).toBe(true);
+    await utimes(file, new Date(1_000_000), new Date(1_000_000));
+    expect(await deps.fs.statInfo(file)).toMatchObject({ ok: true, value: { mtimeMs: 1_000_000 } });
+  });
+
+  it('gives null for a path that does not exist', async () => {
+    expect(await deps.fs.statInfo(fresh('none'))).toEqual({ ok: true, value: null });
+  });
+
+  it('knows the user id of the process', () => {
+    expect(deps.uid).toBe(process.getuid?.() ?? null);
+  });
+
+  it('sets the permission bits of a file and of a folder', async () => {
+    const folder = fresh('chmod');
+    await deps.fs.mkdir(folder);
+    const file = join(folder, 'f.txt');
+    await writeFile(file, 'x', 'utf8');
+    expect((await deps.fs.chmod(file, 0o600)).ok).toBe(true);
+    expect((await deps.fs.chmod(folder, 0o700)).ok).toBe(true);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+  });
+
+  it('returns an error with the code for a path that does not exist', async () => {
+    const result = await deps.fs.chmod(fresh('chmod-missing'), 0o600);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
+});
+
+describe('node deps: exclusive write', () => {
+  it('creates a file with the text and the mode, and says that it did', async () => {
+    const file = fresh('exclusive.lock');
+    expect(await deps.fs.writeTextExclusive(file, '123\n', 0o600)).toEqual({ ok: true, value: true });
+    expect(await readFile(file, 'utf8')).toBe('123\n');
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+  });
+
+  it('leaves a file that exists as it was, and says that it did not create it', async () => {
+    const file = fresh('exclusive-held.lock');
+    await writeFile(file, 'other process', 'utf8');
+    expect(await deps.fs.writeTextExclusive(file, 'mine', 0o600)).toEqual({ ok: true, value: false });
+    expect(await readFile(file, 'utf8')).toBe('other process');
+  });
+
+  it('does not follow a link: the target stays as it was', async () => {
+    const victim = fresh('exclusive-victim.txt');
+    const link = fresh('exclusive-link.lock');
+    await writeFile(victim, 'victim text', 'utf8');
+    await symlink(victim, link);
+    expect(await deps.fs.writeTextExclusive(link, 'mine', 0o600)).toEqual({ ok: true, value: false });
+    expect(await readFile(victim, 'utf8')).toBe('victim text');
+  });
+
+  it('returns an error with the code when the folder does not exist', async () => {
+    const result = await deps.fs.writeTextExclusive(join(fresh('no-folder'), 'x.lock'), 'x', 0o600);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
+});
+
+describe('node deps: sleep', () => {
+  it('waits at least the time that the caller asks for', async () => {
+    const start = Date.now();
+    await deps.sleep(40);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(35);
   });
 });
 
@@ -138,6 +428,26 @@ describe('node deps: atomic write', () => {
     expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
 
+  it('gives a new file the mode that the caller asks for, and replaces the mode of an old file', async () => {
+    const folder = fresh('given-mode');
+    await deps.fs.mkdir(folder);
+    const created = join(folder, 'new.json');
+    expect((await deps.fs.writeTextAtomic(created, '{}', 0o600)).ok).toBe(true);
+    expect((await stat(created)).mode & 0o777).toBe(0o600);
+
+    const old = join(folder, 'old.json');
+    await writeFile(old, '{}', 'utf8');
+    await chmod(old, 0o644);
+    expect((await deps.fs.writeTextAtomic(old, '{"a":1}', 0o600)).ok).toBe(true);
+    expect((await stat(old)).mode & 0o777).toBe(0o600);
+  });
+
+  it('creates a folder with the mode that the caller asks for', async () => {
+    const folder = fresh('private-folder');
+    expect((await deps.fs.mkdir(folder, 0o700)).ok).toBe(true);
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+  });
+
   it('writes through a link and keeps the link', async () => {
     const folder = fresh('link');
     await deps.fs.mkdir(folder);
@@ -157,6 +467,30 @@ describe('node deps: atomic write', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
     expect(await deps.fs.stat(folder)).toEqual({ ok: true, value: null });
+  });
+
+  it('does not follow a link at the old temporary name, and leaves the link as it was', async () => {
+    const folder = fresh('planted');
+    await deps.fs.mkdir(folder);
+    const victim = join(folder, 'victim.txt');
+    const target = join(folder, 'homes.json');
+    await writeFile(victim, 'victim text', 'utf8');
+    await symlink(victim, `${target}.tmp-${process.pid}`);
+    expect((await deps.fs.writeTextAtomic(target, 'new text', 0o600)).ok).toBe(true);
+    expect(await readFile(victim, 'utf8')).toBe('victim text');
+    expect(await readFile(target, 'utf8')).toBe('new text');
+    expect(await readlink(`${target}.tmp-${process.pid}`)).toBe(victim);
+  });
+
+  it('does not touch a file at the old temporary name, and leaves only the target and that file', async () => {
+    const folder = fresh('planted-file');
+    await deps.fs.mkdir(folder);
+    const target = join(folder, 'homes.json');
+    const planted = `${target}.tmp-${process.pid}`;
+    await writeFile(planted, 'planted text', 'utf8');
+    expect((await deps.fs.writeTextAtomic(target, 'new text', 0o600)).ok).toBe(true);
+    expect(await readFile(planted, 'utf8')).toBe('planted text');
+    expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['homes.json', `homes.json.tmp-${process.pid}`] });
   });
 
   it('keeps the old text and leaves no temporary file when the target is a folder', async () => {

@@ -1,8 +1,8 @@
 import { LineCounter, parseDocument } from 'yaml';
-import type { CliResult } from '../cli/errors.js';
+import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { err, ok, type Result } from '../core/result.js';
-import { inspectFile, requireValid, type DocState, type VersionSpec } from '../migrate/inspect.js';
+import { inspectFile, inspectParsed, requireValid, type DocState, type VersionSpec } from '../migrate/inspect.js';
 import { files, keys } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { CONFIG_SCHEMA_VERSION, configSchema, type FactoryConfig } from './schema.js';
@@ -32,6 +32,13 @@ export const CONFIG_SPEC: VersionSpec<FactoryConfig> = {
   key: keys.root.schema,
   supported: CONFIG_SCHEMA_VERSION,
   schema: configSchema,
+};
+
+/** The config from its text: the YAML, the version, the core and the recipe. */
+export const parseConfigText = (text: string): CliResult<FactoryConfig> => {
+  const raw = parseYamlText(text);
+  if (!raw.ok) return failure(`${CONFIG_LABEL} does not parse: ${raw.error}`);
+  return requireValid(inspectParsed(raw.value, CONFIG_SPEC), CONFIG_LABEL);
 };
 
 export const inspectConfig = (deps: Deps, home: string): Promise<DocState<FactoryConfig>> =>
