@@ -157,11 +157,15 @@ const takeLock = async (deps: Deps, lockPath: string): Promise<Result<void, stri
   return err(`another ${program} command holds the lock ${lockPath}. Run the command again, or remove that file when no such command runs.`);
 };
 
-/** Read the index, add the entry and write the file. The caller holds the lock. */
+/**
+ * Read the index, add the entry and write the file. The caller holds the lock. When the index has no room for the
+ * entry, the entries whose home is gone are dropped first. A home that cannot be checked stays.
+ */
 const addEntry = async (deps: Deps, path: string, entry: HomeEntry): Promise<Result<void, string>> => {
   const entries = await readHomeIndex(deps, path);
   if (!entries.ok) return err(`${path} cannot be read: ${entries.error}`);
-  const next = withEntry(entries.value, entry);
+  const added = withEntry(entries.value, entry);
+  const next = added.length > homeIndex.maxHomes ? withEntry(await withoutGoneHomes(deps, entries.value), entry) : added;
   if (next.length > homeIndex.maxHomes) return err(`the index lists the most homes that it can: ${homeIndex.maxHomes}`);
 
   const text = `${JSON.stringify({ [homeIndex.keys.schema]: homeIndex.schema, [homeIndex.keys.homes]: next }, null, 2)}\n`;
@@ -198,10 +202,25 @@ export const listsHome = async (deps: Deps, entries: readonly HomeEntry[], home:
   return entries.some((entry) => wanted.includes(comparable(deps, entry[homeIndex.keys.home])));
 };
 
-/** True when the folder of the home still holds its config file. */
-const homeExists = async (deps: Deps, home: string): Promise<boolean> => {
+/** Whether the folder of the home holds its config file. 'unknown' is a home that cannot be checked. */
+type HomeState = 'present' | 'gone' | 'unknown';
+
+const homeStateOf = async (deps: Deps, home: string): Promise<HomeState> => {
   const kind = await deps.fs.stat(join(home, files.config));
-  return kind.ok && kind.value === 'file';
+  if (!kind.ok) return 'unknown';
+  return kind.value === 'file' ? 'present' : 'gone';
+};
+
+/** True when the folder of the home still holds its config file. */
+const homeExists = async (deps: Deps, home: string): Promise<boolean> => (await homeStateOf(deps, home)) === 'present';
+
+/** The entries whose home is not known to be gone. Each home is checked once. */
+const withoutGoneHomes = async (deps: Deps, entries: readonly HomeEntry[]): Promise<readonly HomeEntry[]> => {
+  const kept: HomeEntry[] = [];
+  for (const candidate of entries) {
+    if ((await homeStateOf(deps, candidate[homeIndex.keys.home])) !== 'gone') kept.push(candidate);
+  }
+  return kept;
 };
 
 /** The homes of the entries that no longer hold a config file. Each home is checked once. */

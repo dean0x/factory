@@ -404,13 +404,89 @@ describe('home index: recording a home', () => {
     expect(deps.atomicWrites).toEqual([]);
   });
 
-  it('refuses a 201st home and changes nothing', async () => {
+  describe('when the index is full', () => {
+    const fullIndex = (deps: FakeDeps, present: (index: number) => boolean = () => true): HomeEntry[] => {
+      const homes = Array.from({ length: 200 }, (_, i) => entry(`/h/h${i}`, []));
+      deps.seed(INDEX, indexText(homes));
+      homes.forEach((home, i) => {
+        if (present(i)) deps.seed(`${home.home}/factory.yaml`, 'schema: 2\n');
+      });
+      return homes;
+    };
+    const homesOf = (deps: FakeDeps): string[] =>
+      (stored(deps) as { homes: { home: string }[] }).homes.map((candidate) => candidate.home);
+
+    it('refuses a 201st home and changes nothing, when every home in it is present', async () => {
+      const deps = fresh();
+      const homes = fullIndex(deps);
+      const result = await recordHome(deps, INDEX, entry(HOME_A, []));
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('200') });
+      expect(stored(deps)).toEqual({ schema: 1, homes });
+    });
+
+    it('drops the entries whose home is gone, and records the new home', async () => {
+      const deps = fresh();
+      fullIndex(deps, (i) => i % 50 !== 0);
+      const result = await recordHome(deps, INDEX, entry(HOME_A, ['/w/web']));
+      expect(result.ok).toBe(true);
+      const kept = homesOf(deps);
+      expect(kept).toHaveLength(197);
+      expect(kept).not.toContain('/h/h0');
+      expect(kept).not.toContain('/h/h150');
+      expect(kept).toContain('/h/h1');
+      expect(kept[kept.length - 1]).toBe(HOME_A);
+    });
+
+    it('keeps the entries of a home that it cannot check', async () => {
+      const deps = fresh();
+      fullIndex(deps, (i) => i >= 10);
+      const unreadable: Deps = {
+        ...deps,
+        fs: {
+          ...deps.fs,
+          stat: async (path) =>
+            path === '/h/h3/factory.yaml' ? failure('cannot stat /h/h3/factory.yaml: EIO') : deps.fs.stat(path),
+        },
+      };
+      expect((await recordHome(unreadable, INDEX, entry(HOME_A, []))).ok).toBe(true);
+      const kept = homesOf(deps);
+      expect(kept).toContain('/h/h3');
+      expect(kept).not.toContain('/h/h4');
+      expect(kept).toHaveLength(192);
+    });
+
+    it('refuses the home when every home that is not present cannot be checked', async () => {
+      const deps = fresh();
+      const homes = fullIndex(deps, () => false);
+      const unreadable: Deps = {
+        ...deps,
+        fs: { ...deps.fs, stat: async (path) => failure(`cannot stat ${path}: EIO`) },
+      };
+      const result = await recordHome(unreadable, INDEX, entry(HOME_A, []));
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('200') });
+      expect(stored(deps)).toEqual({ schema: 1, homes });
+    });
+
+    it('does not drop the new home, also when its config file is not there', async () => {
+      const deps = fresh();
+      fullIndex(deps, () => false);
+      expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+      expect(homesOf(deps)).toEqual([HOME_A]);
+    });
+
+    it('replaces the entry of a home that is in the index, with no need to drop anything', async () => {
+      const deps = fresh();
+      fullIndex(deps, () => false);
+      expect((await recordHome(deps, INDEX, entry('/h/h7', ['/w/web']))).ok).toBe(true);
+      expect(homesOf(deps)).toHaveLength(200);
+    });
+  });
+
+  it('keeps the entries of homes that are gone while the index has room', async () => {
     const deps = fresh();
-    const homes = Array.from({ length: 200 }, (_, i) => entry(`/h/h${i}`, []));
-    deps.seed(INDEX, indexText(homes));
-    const result = await recordHome(deps, INDEX, entry(HOME_A, []));
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('200') });
-    expect(stored(deps)).toEqual({ schema: 1, homes });
+    deps.seed(INDEX, indexText([entry(HOME_B, [], 'api')]));
+    expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+    expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_B, [], 'api'), entry(HOME_A, [])] });
   });
 
   it('refuses an entry with more than 200 projects', async () => {
