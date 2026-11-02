@@ -53,7 +53,7 @@ import { roleForLayer } from '../recipes/software/recipe.js';
 import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
-import { MAX_PROJECTS, planProjects, runClones, undoClones } from './init-clone.js';
+import { checkProjectCount, planProjects, runClones, undoClones } from './init-clone.js';
 import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
 
 export interface InitOptions {
@@ -155,7 +155,8 @@ const describeProjects = async (
   home: string,
   arguments_: readonly string[],
 ): Promise<CliResult<readonly unknown[]>> => {
-  if (arguments_.length > MAX_PROJECTS) return usageError(`at most ${MAX_PROJECTS} projects are allowed`);
+  const counted = checkProjectCount(arguments_.length);
+  if (!counted.ok) return counted;
   const realHome = await realPathOf(deps, home);
   if (!realHome.ok) return realHome;
   const projects: unknown[] = [];
@@ -482,15 +483,14 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   // that this run made are removed again. A folder that was there before the run is never removed.
   const projects = await planProjects(deps, home, options.projects);
   if (!projects.ok) return projects;
+  const allProjects = projectsOf(deps, projects.value.paths, found);
+  const counted = checkProjectCount(allProjects.length);
+  if (!counted.ok) return counted;
   const cloned = await runClones(deps, projects.value.clones);
   if (!cloned.ok) return cloned;
   const made = cloned.value;
 
-  const plan = await planChecked(
-    deps,
-    { ...options, home, projects: projectsOf(deps, projects.value.paths, found) },
-    checked.value,
-  );
+  const plan = await planChecked(deps, { ...options, home, projects: allProjects }, checked.value);
   if (!plan.ok) return undoClones(deps, made, plan.error);
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, applied.error);

@@ -79,6 +79,10 @@ const isPresentClone = async (deps: Deps, url: string, target: string): Promise<
   );
 };
 
+/** The count of the projects of one command: the repos that it found and the values of the project flag. */
+export const checkProjectCount = (count: number): CliResult<void> =>
+  count > MAX_PROJECTS ? usageError(`at most ${MAX_PROJECTS} projects are allowed`) : ok(undefined);
+
 export interface ProjectPlan {
   /** The value of each project flag as a path: a URL is replaced by the folder of its clone. */
   readonly paths: readonly string[];
@@ -96,7 +100,8 @@ export const planProjects = async (
   home: string,
   projects: readonly string[],
 ): Promise<CliResult<ProjectPlan>> => {
-  if (projects.length > MAX_PROJECTS) return usageError(`at most ${MAX_PROJECTS} projects are allowed`);
+  const counted = checkProjectCount(projects.length);
+  if (!counted.ok) return counted;
   const folder = dirname(resolve(deps.cwd, home));
   const paths: string[] = [];
   const clones: PlannedClone[] = [];

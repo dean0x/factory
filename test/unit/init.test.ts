@@ -957,6 +957,40 @@ describe('init: a workspace folder that holds several repos', () => {
     const result = await runInit(deps, withHome({ yes: true }));
     expect(result.ok && result.value.warnings.join('\n')).toContain('Only the first 200 entries');
   });
+
+  /** A workspace folder with 60 repos, and `count` URLs. A URL target is a clone already when `cloned` is true. */
+  const crowded = (count: number, cloned: boolean) => {
+    const found = Array.from({ length: 60 }, (_, i) => `/ws/r${String(i).padStart(2, '0')}`);
+    const urls = Array.from({ length: count }, (_, i) => `https://host/acme/p${String(i).padStart(2, '0')}.git`);
+    const targets = urls.map((url, i) => [`/ws/p${String(i).padStart(2, '0')}`, url] as const);
+    const repos = Object.fromEntries([
+      ...found.map((path) => [path, {}]),
+      ...(cloned ? targets.map(([path, origin]) => [path, { origin }]) : []),
+    ]);
+    const { handler, log } = gitHandler({ repos });
+    const deps = createFakeDeps({ cwd: WS, run: handler });
+    for (const path of found) deps.seedDir(`${path}/.git`);
+    if (cloned) for (const [path] of targets) deps.seedDir(`${path}/.git`);
+    return { deps, log, urls };
+  };
+
+  it('counts the repos of the folder and the --project values together, and runs no clone above 100', async () => {
+    const { deps, log, urls } = crowded(41, false);
+    const before = snapshot(deps);
+
+    const result = await runInit(deps, withHome({ yes: true, projects: urls }));
+
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('at most 100 projects are allowed');
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('accepts exactly 100 projects in all', async () => {
+    const { deps, urls } = crowded(40, true);
+    const result = await runInit(deps, withHome({ yes: true, projects: urls }));
+    expect(result.ok && result.value.json['home']).toBe(PROPOSAL);
+  });
 });
 
 describe('init: a project URL', () => {
