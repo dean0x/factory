@@ -199,7 +199,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   Each test runs three times: with a direct assignment, with an assignment by a second decision, and with an assignee or `worker:<id>` label set by the owner's account. Each run merges.
 - [ ] Release proof. Test: with `release: delegated`, `release check` refuses (exit 4) when no owner-approved release scope names the version.
 - [ ] Desk extension points. Test: the event file and `report --json` of a fixture node hold the fields that design §4.14 lists. A sample reader outside `src/` (in `examples/`) reads the event file and `report --json` of the fixture node and prints one line per work item. The test runs it.
-- [ ] Delegation control outside factory. Test: the session settings that factory renders hold deny rules for the record commands and for the store path, and a test reads the rendered settings. Design §6 keeps the limit text until this control exists.
+- [ ] Delegation control outside factory. Test: the session settings that factory renders hold deny rules for the record commands and for the store path, and a test reads the rendered settings. Design §6 keeps the limit text. The deny rules make the gap smaller. They do not close it.
 - [ ] Shared check commands. Test: a check command from the shared file does not run before the owner accepts it, and runs after the acceptance.
 - [ ] `pr merge` refuses, with a message that names the proof that is absent, in these cases:
   - approval with no assignment;
@@ -378,6 +378,7 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - Answered (D-59, F-14): the glossary words. Dean chose worker, request and coordinator, and queue, check and release check. The rename comes in the design v3 PR, not in FAC-M2.
 - Answered (D-57): the release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope. FAC-M5 builds the check (design §6.2).
 - Before FAC-M3 (after the workspace move in FAC-M7): which private repo holds the decision store of this workspace, and which private git remote holds the state repo (`state.remote`) for a second machine.
+- Before the milestone that builds each watch command (FAC-M3 for `factory watch`, FAC-M4 for `worker watch`, FAC-M5 for `pr watch`): the bound of each command. The design gives no value for the number of reads per run of `factory watch`, and none for the maximum wait of `worker watch` and `pr watch`. It also gives no result when the bound or the wait ends. Each value is a named number in `src/names.ts`.
 - Before FAC-M10: the old local paths in the git history. The owner decides; the history is not rewritten (D-7 A).
 - Before FAC-M10: the first publish and the public visibility of the repo. The owner writes a decision id in `docs/release-approval.md`.
 
