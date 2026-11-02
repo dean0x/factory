@@ -11,6 +11,7 @@ import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fak
 
 const HOME = '/w/node';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
+const REMOVE_PROXY_VARIABLE = 'set-environment -t =demo -r ANTHROPIC_BASE_URL';
 const LAUNCH_BASE = [
   'env',
   '-u',
@@ -94,6 +95,7 @@ describe('up: a new session', () => {
       '-V',
       'has-session -t =demo',
       `new-session -d -s demo -n view -c /w/node -- ${[...LAUNCH_BASE, '--add-dir', '/w/web'].join(' ')}`,
+      REMOVE_PROXY_VARIABLE,
       'set-option -w -t =demo:view remain-on-exit on',
       'set-option -p -t =demo:view.{left} @node demo',
       'set-option -t =demo: @factory_home /w/node',
@@ -101,6 +103,28 @@ describe('up: a new session', () => {
       'set-option -p -t =demo:view.{right} @slot board',
       'new-window -d -t =demo: -n bench -c /w/node',
     ]);
+  });
+
+  it('removes the proxy variable from the environment of the session only, before any other window or pane exists', async () => {
+    const { deps, tmux } = make();
+    await succeeded(deps);
+    const commands = tmux.commands();
+    const removal = commands.indexOf(REMOVE_PROXY_VARIABLE);
+    expect(removal).toBe(commands.findIndex((line) => line.startsWith('new-session')) + 1);
+    expect(removal).toBeLessThan(commands.findIndex((line) => line.startsWith('split-window')));
+    expect(removal).toBeLessThan(commands.findIndex((line) => line.startsWith('new-window')));
+    const environmentCalls = tmux.calls.filter((call) => call.args[0] === 'set-environment' || call.args[0] === 'setenv');
+    expect(environmentCalls.map((call) => call.args)).toEqual([['set-environment', '-t', '=demo', '-r', 'ANTHROPIC_BASE_URL']]);
+    expect(tmux.calls.some((call) => call.args.includes('-g'))).toBe(false);
+  });
+
+  it('removes the variable from the session also when the config names a proxy, and never sets it there', async () => {
+    const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers });
+    await succeeded(deps);
+    expect(tmux.commands()).toContain(REMOVE_PROXY_VARIABLE);
+    const environmentCalls = tmux.calls.filter((call) => call.args[0] === 'set-environment');
+    expect(environmentCalls).toHaveLength(1);
+    expect(JSON.stringify(environmentCalls)).not.toContain('127.0.0.1');
   });
 
   it('runs every tmux call with the environment of the process, so the panes get the locale of the person', async () => {
@@ -316,6 +340,15 @@ describe('up: a step that fails', () => {
     expect(tmux.sessions().has('demo')).toBe(false);
   });
 
+  it('removes the session when the removal of the proxy variable fails, before any other window exists', async () => {
+    const { deps, tmux } = make({ tmux: { failing: 'set-environment' } });
+    const result = await up(deps);
+    expect(result.ok).toBe(false);
+    expect(tmux.commands().at(-1)).toBe('kill-session -t =demo');
+    expect(tmux.commands().some((line) => line.startsWith('split-window') || line.startsWith('new-window'))).toBe(false);
+    expect(tmux.sessions().has('demo')).toBe(false);
+  });
+
   it('removes nothing when the first step fails, because no session exists', async () => {
     const { deps, tmux } = make({ tmux: { failing: 'new-session' } });
     const result = await up(deps);
@@ -347,6 +380,15 @@ describe('up: --dry-run', () => {
     expect(text).toContain(`tmux new-session -d -s demo -n view -c /w/node -- ${[...LAUNCH_BASE, '--add-dir', '/w/web'].join(' ')}`);
     expect(text).toContain('tmux new-window -d -t =demo: -n bench -c /w/node');
     expect(output.json).toMatchObject({ schema: 'factory.up/v1', session: 'demo', started: false, attached: false, dryRun: true });
+  });
+
+  it('shows the removal of the proxy variable from the session, right after the new session', async () => {
+    const { deps } = make();
+    const output = await succeeded(deps, { dryRun: true });
+    const calls = output.json['calls'];
+    expect(Array.isArray(calls)).toBe(true);
+    expect((calls as readonly string[])[0]).toContain('tmux new-session');
+    expect((calls as readonly string[])[1]).toBe(`tmux ${REMOVE_PROXY_VARIABLE}`);
   });
 
   it('works without tmux and without claude, and says that a real run stops', async () => {

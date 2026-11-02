@@ -1,5 +1,5 @@
 import { toolNames } from '../core/tools.js';
-import { tmuxNames } from '../names.js';
+import { env, tmuxNames } from '../names.js';
 
 export type TmuxArgs = readonly string[];
 
@@ -41,6 +41,9 @@ export const attachHint = (id: string): string => `${toolNames.tmux} attach -t $
  * The tmux calls that start the session of a node, in order. Each call is an argument list for a program that runs with no shell.
  * The view window holds the coordinator and the slot. The bench window holds the cells, which come in a later version.
  * The coordinator pane stays when its program ends, so that a person can read why it ended.
+ * The first pane runs the launch with no shell, and the launch clears the proxy variable. The call after `new-session`
+ * removes the variable from the environment of the session, so the shell of every later pane and window gets none.
+ * The call names the session and never the server: other sessions keep their environment.
  */
 export const startSteps = (input: {
   readonly id: string;
@@ -51,6 +54,7 @@ export const startSteps = (input: {
   const view = windowTarget(id, tmuxNames.windowView);
   return [
     ['new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', home, '--', ...launch],
+    ['set-environment', '-t', sessionTarget(id), '-r', env.proxyBaseUrl],
     ['set-option', '-w', '-t', view, 'remain-on-exit', 'on'],
     ['set-option', '-p', '-t', `${view}.${LEFT_PANE}`, tmuxNames.optionNode, id],
     ['set-option', '-t', windowTarget(id, ''), tmuxNames.optionHome, home],
