@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
-import { commitAll, gitClone, listRepoChildren, MAX_SCAN_ENTRIES, withoutUserinfo } from '../../src/core/git.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import {
+  commitAll,
+  commitPaths,
+  gitClone,
+  headOf,
+  listRepoChildren,
+  MAX_SCAN_ENTRIES,
+  statusOf,
+  unstagePaths,
+  withoutUserinfo,
+} from '../../src/core/git.js';
+import { createFakeDeps, exited, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type FakeRepo, type GitFixture } from '../helpers/git-fake.js';
 
 const WS = '/ws';
@@ -157,6 +167,105 @@ describe('git: the commit of a new state repo', () => {
       'add -A',
       '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: first',
     ]);
+  });
+});
+
+describe('git: the commit of chosen paths', () => {
+  const DIR = '/w/node/.factory';
+  const paths = { present: ['node.json', 'roles/worker.md'], gone: ['protocol.md'] };
+
+  it('stages the removal of the moved paths and the named paths only, then commits with the hooks off', async () => {
+    const { handler, log } = gitHandler();
+    const result = await commitPaths(createFakeDeps({ cwd: WS, run: handler }), DIR, paths, 'chore: upgrade the state');
+    expect(result.ok).toBe(true);
+    expect(log.commands()).toEqual([
+      'rm -r -q --cached --ignore-unmatch -- protocol.md',
+      'add -A -- node.json roles/worker.md',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
+    ]);
+  });
+
+  it('runs no removal when no path moved', async () => {
+    const { handler, log } = gitHandler();
+    await commitPaths(createFakeDeps({ cwd: WS, run: handler }), DIR, { present: ['node.json'], gone: [] }, 'm');
+    expect(log.commands().map((command) => command.split(' ')[0])).toEqual(['add', '-c']);
+  });
+
+  it('does not commit when the staging fails', async () => {
+    const { handler, log } = gitHandler();
+    const deps = createFakeDeps({ cwd: WS, run: (call) => (call.args.includes('add') ? exited(128) : handler(call)) });
+    const result = await commitPaths(deps, DIR, paths, 'm');
+    expect(result).toMatchObject({ ok: false, error: { message: 'cannot stage the state files: git exited with 128' } });
+    expect(log.commands().some((command) => command.includes('commit'))).toBe(false);
+  });
+
+  it('clears only the named paths from the index', async () => {
+    const { handler, log } = gitHandler();
+    const result = await unstagePaths(createFakeDeps({ cwd: WS, run: handler }), DIR, paths);
+    expect(result.ok).toBe(true);
+    expect(log.commands()).toEqual(['reset -q -- node.json roles/worker.md protocol.md']);
+  });
+});
+
+describe('git: the commit that HEAD names', () => {
+  const head = (run: RunHandler) => headOf(createFakeDeps({ cwd: WS, run }), '/w/node/.factory');
+
+  it('is the commit id when the repo has a commit', async () => {
+    expect(await head(() => exited(0, 'abc123\n'))).toEqual({ ok: true, value: 'abc123' });
+  });
+
+  it('is null when the repo has no commit', async () => {
+    expect(await head(() => exited(128))).toEqual({ ok: true, value: null });
+  });
+
+  it('is an error when git cannot run', async () => {
+    expect(await head(() => failure('cannot run git: SIGTERM'))).toMatchObject({ ok: false });
+  });
+});
+
+describe('git: the status of a repo', () => {
+  const status = (run: RunHandler) => statusOf(createFakeDeps({ cwd: WS, run }), '/w/node/.factory');
+
+  it('asks for every untracked file one by one, with names that git does not quote', async () => {
+    const { handler, log } = gitHandler();
+    await statusOf(createFakeDeps({ cwd: WS, run: handler }), '/w/node/.factory');
+    expect(log.commands()).toEqual(['status --porcelain -z --untracked-files=all']);
+  });
+
+  it('reads the state of the index and of the work tree for each path', async () => {
+    const result = await status(() => exited(0, 'M  a.md\0 M dir/b.md\0?? c.md\0 D d.md\0'));
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { index: 'M', tree: ' ', path: 'a.md' },
+        { index: ' ', tree: 'M', path: 'dir/b.md' },
+        { index: '?', tree: '?', path: 'c.md' },
+        { index: ' ', tree: 'D', path: 'd.md' },
+      ],
+    });
+  });
+
+  it('reads a path with a space, and skips the old name of a rename', async () => {
+    const result = await status(() => exited(0, 'R  new name.md\0old name.md\0 M e.md\0'));
+    expect(result).toEqual({
+      ok: true,
+      value: [
+        { index: 'R', tree: ' ', path: 'new name.md' },
+        { index: ' ', tree: 'M', path: 'e.md' },
+      ],
+    });
+  });
+
+  it('is empty for a clean repo', async () => {
+    expect(await status(() => exited(0, ''))).toEqual({ ok: true, value: [] });
+  });
+
+  it('is an error when git exits with a code or cannot run', async () => {
+    expect(await status(() => exited(128))).toMatchObject({
+      ok: false,
+      error: { message: 'cannot read the changes of the state repository: git exited with 128' },
+    });
+    expect(await status(() => failure('cannot run git: SIGTERM'))).toMatchObject({ ok: false });
   });
 });
 

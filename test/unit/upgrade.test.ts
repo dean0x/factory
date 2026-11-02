@@ -16,7 +16,7 @@ import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
-import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { schema1Doc, schema1Paths, seedSchema1Node } from '../helpers/schema1.js';
 
@@ -82,7 +82,9 @@ const refusal = (result: UpgradeResult): CliError => {
 
 /** The git commands that write: reads of the config and of the work tree do not count. */
 const gitWrites = (commands: readonly string[]): string[] =>
-  commands.filter((command) => !command.startsWith('config') && !command.startsWith('rev-parse'));
+  commands.filter(
+    (command) => !command.startsWith('config') && !command.startsWith('rev-parse') && !command.startsWith('status'),
+  );
 
 const text = (deps: FakeDeps, path: string): string => deps.files.get(path) ?? '';
 const snapshot = (deps: FakeDeps): Map<string, string> => new Map(deps.files);
@@ -207,8 +209,10 @@ describe('upgrade: managed blocks', () => {
     });
     expect(output.lines.at(-1)?.text).toBe('Changed 2 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ changed: true, committed: true, backup: '.factory/backups/2030-01-02T03-04-05-678Z' });
-    expect(gitSince()).toEqual(expect.arrayContaining(['add -A']));
-    expect(gitSince().some((command) => command.endsWith('chore: upgrade the state'))).toBe(true);
+    expect(gitWrites(gitSince())).toEqual([
+      'add -A -- node.json',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
+    ]);
 
     const statuses = await inspectBlocks(deps, HOME, withBlock('coordinator', 'New coordinator text.'));
     expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
@@ -610,7 +614,7 @@ describe('upgrade: when a step fails after the backup', () => {
     expect(error.message).toContain('cannot commit the state files');
     expect(text(deps, CLAUDE)).toBe(before.get(CLAUDE));
     expect(text(deps, NODE_JSON)).toBe(before.get(NODE_JSON));
-    expect(gitSince()).toEqual(expect.arrayContaining(['add -A', 'reset -q']));
+    expect(gitSince()).toEqual(expect.arrayContaining(['add -A -- node.json', 'reset -q -- node.json']));
   });
 
   it('writes each changed file and puts it back with the atomic write', async () => {
@@ -657,7 +661,7 @@ describe('upgrade: when a step fails after the backup', () => {
     });
     const before = snapshot(deps);
     const error = refusal(await upgrade(deps, newer));
-    expect(gitSince()).toEqual(expect.arrayContaining(['add -A', 'reset -q']));
+    expect(gitSince()).toEqual(expect.arrayContaining(['add -A -- node.json', 'reset -q -- node.json']));
     expect(error.message).toContain('cannot commit the state files');
     expect(error.message).not.toContain('The files are as they were');
     expect(error.message).toContain('cannot clear the staged files');
@@ -672,6 +676,94 @@ describe('upgrade: when a step fails after the backup', () => {
     deps.files.delete(WORKER);
     refusal(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
     expect(deps.files.has(WORKER)).toBe(false);
+  });
+
+  it('touches the index of the owner only after it staged, and never before', async () => {
+    const { deps, gitSince } = await makeNode();
+    const failing = withFailingWrites(deps, (path, attempt) => path === NODE_JSON && attempt === 1);
+    refusal(await upgrade(failing, newer));
+    expect(gitWrites(gitSince())).toEqual([]);
+  });
+
+  it('clears the index when the staging fails, only for the paths that it stages', async () => {
+    const { deps, gitSince } = await makeNode({
+      run: (inner) => (call) => (call.args.includes('add') ? exited(128) : inner(call)),
+    });
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, newer));
+    expect(error.message).toContain('cannot stage the state files');
+    expect(text(deps, NODE_JSON)).toBe(before.get(NODE_JSON));
+    expect(gitWrites(gitSince())).toEqual(['add -A -- node.json', 'reset -q -- node.json']);
+  });
+
+  describe('when git is cut off after it wrote the commit', () => {
+    /** A git that writes the commit and then fails, as git does when the time limit stops it: HEAD moves on. */
+    const cutOff =
+      (afterwards: (call: RunCall) => ReturnType<RunHandler>) =>
+      (inner: RunHandler): RunHandler => {
+        let committed = false;
+        return (call) => {
+          if (call.args.includes('commit')) {
+            committed = true;
+            return failure('cannot run git: SIGTERM');
+          }
+          if (committed && call.args.includes('HEAD')) return afterwards(call);
+          return call.args.includes('HEAD') ? exited(0, 'abc123\n') : inner(call);
+        };
+      };
+
+    it('keeps the new files, because the commit holds them, and says what to do', async () => {
+      const { deps, gitSince } = await makeNode({ run: cutOff(() => exited(0, 'def456\n')) });
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(deps, newer));
+      expect(error.message).toContain('cannot commit the state files: cannot run git: SIGTERM');
+      expect(error.message).toContain('The upgrade commit was made in .factory, so the files stay upgraded.');
+      expect(error.message).toContain('"git log -1 --stat" in .factory');
+      expect(error.message).toContain('"factory upgrade" again');
+      expect(error.message).toContain('.factory/backups/2030-01-02T03-04-05-678Z');
+      expect(error.message).not.toContain('The files are as they were');
+      expect(text(deps, NODE_JSON)).not.toBe(before.get(NODE_JSON));
+      expect(text(deps, CLAUDE)).not.toBe(before.get(CLAUDE));
+      expect(gitSince().some((command) => command.startsWith('reset'))).toBe(false);
+    });
+
+    it('keeps the new files when the commit is the first commit of the repo', async () => {
+      const { deps } = await makeNode({
+        run: (inner) => {
+          let committed = false;
+          return (call) => {
+            if (call.args.includes('commit')) {
+              committed = true;
+              return failure('cannot run git: SIGTERM');
+            }
+            if (call.args.includes('HEAD')) return committed ? exited(0, 'def456\n') : exited(128);
+            return inner(call);
+          };
+        },
+      });
+      const before = snapshot(deps);
+      expect(refusal(await upgrade(deps, newer)).message).toContain('The upgrade commit was made in .factory');
+      expect(text(deps, NODE_JSON)).not.toBe(before.get(NODE_JSON));
+    });
+
+    it('keeps the new files and names the backup when it cannot read the last commit', async () => {
+      const { deps, gitSince } = await makeNode({ run: cutOff(() => failure('cannot run git: SIGTERM')) });
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(deps, newer));
+      expect(error.message).toContain('cannot read the last commit');
+      expect(error.message).toContain('"git log -1 --stat" in .factory');
+      expect(error.message).toContain('restore the files from .factory/backups/2030-01-02T03-04-05-678Z');
+      expect(text(deps, NODE_JSON)).not.toBe(before.get(NODE_JSON));
+      expect(gitSince().some((command) => command.startsWith('reset'))).toBe(false);
+    });
+
+    it('puts the files back when the commit did not move HEAD', async () => {
+      const { deps } = await makeNode({ run: cutOff(() => exited(0, 'abc123\n')) });
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(deps, newer));
+      expect(error.message).toContain('The files are as they were.');
+      for (const [path, body] of before) expect(text(deps, path)).toBe(body);
+    });
   });
 });
 
@@ -781,6 +873,78 @@ describe('upgrade: before it changes anything', () => {
     });
     const none = await runUpgrade(createFakeDeps({ cwd: '/empty' }), { home: undefined, dryRun: false, overwrite: [] }, currentSpec);
     expect(refusal(none).hint).toContain('--home DIR');
+  });
+});
+
+describe('upgrade: when the state repo holds changes of the owner', () => {
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+
+  /** A git that answers the status of the state repo with this text, in the form of `git status --porcelain -z`. */
+  const statusIs =
+    (...entries: readonly string[]) =>
+    (inner: RunHandler): RunHandler =>
+    (call) =>
+      call.args.includes('status') ? exited(0, entries.map((entry) => `${entry}\0`).join('')) : inner(call);
+
+  const refusedWith = async (entries: readonly string[], spec: UpgradeSpec = newer) => {
+    const { deps, gitSince } = await makeNode({ run: statusIs(...entries) });
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, spec));
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+    return error;
+  };
+
+  it('refuses before any change when a change is staged, and names the file', async () => {
+    const error = await refusedWith(['M  board.md']);
+    expect(error.kind).toBe('failure');
+    expect(error.message).toBe('.factory has staged changes: board.md');
+    expect(error.hint).toContain('Commit them');
+    expect(error.hint).toContain('factory upgrade');
+  });
+
+  it('refuses when a new file is staged', async () => {
+    expect((await refusedWith(['A  notes.md'])).message).toBe('.factory has staged changes: notes.md');
+  });
+
+  it.each([
+    ['a file with a change that is not staged', ' M node.json'],
+    ['a file that git does not track', '?? node.json'],
+    ['a file that the owner deleted', ' D node.json'],
+  ])('refuses before any change for %s, when the upgrade changes that file', async (_name, entry) => {
+    const error = await refusedWith([entry]);
+    expect(error.message).toBe('.factory has changes in files that the upgrade changes: node.json');
+    expect(error.hint).toContain('factory upgrade');
+  });
+
+  it('shows at most 5 paths', async () => {
+    const entries = Array.from({ length: 8 }, (_, index) => `M  file${index}.md`);
+    expect((await refusedWith(entries)).message).toBe(
+      '.factory has staged changes: file0.md, file1.md, file2.md, file3.md, file4.md and 3 more',
+    );
+  });
+
+  it('does not take a change that the upgrade does not touch, and commits only its own files', async () => {
+    const { deps, gitSince } = await makeNode({ run: statusIs(' M board.md', '?? notes/idea.md') });
+    const output = success(await upgrade(deps, newer));
+    expect(output.json).toMatchObject({ committed: true });
+    expect(gitWrites(gitSince())).toEqual([
+      'add -A -- node.json',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
+    ]);
+  });
+
+  it('does not look at the state repo in a dry run', async () => {
+    const { deps, gitSince } = await makeNode({ run: statusIs('M  board.md') });
+    expect(success(await upgrade(deps, newer, { dryRun: true })).json).toMatchObject({ changed: true, dryRun: true });
+    expect(gitSince().some((command) => command.startsWith('status'))).toBe(false);
+  });
+
+  it('stops when git cannot give the status', async () => {
+    const { deps } = await makeNode({ run: (inner) => (call) => (call.args.includes('status') ? exited(128) : inner(call)) });
+    const before = snapshot(deps);
+    expect(refusal(await upgrade(deps, newer)).message).toContain('cannot read the changes of the state repository');
+    expect(snapshot(deps)).toEqual(before);
   });
 });
 
@@ -933,10 +1097,27 @@ describe('upgrade: a node of schema 1', () => {
 
     expect(output.lines.at(-1)?.text).toBe('Changed 6 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S } });
-    expect(gitSince().filter((command) => command === 'add -A')).toHaveLength(1);
-    expect(gitSince().some((command) => command.endsWith('chore: upgrade the state'))).toBe(true);
+    expect(gitWrites(gitSince())).toEqual([
+      'rm -r -q --cached --ignore-unmatch -- protocol.md briefs',
+      'add -A -- roles/worker.md node.json orders',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
+    ]);
     expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
     expect(deps.files.has(`${BACKUP}/.factory/briefs/.gitkeep`)).toBe(true);
+  });
+
+  it.each([
+    ['a file that moves', ' M protocol.md', 'protocol.md'],
+    ['a file below a folder that moves', '?? briefs/today.md', 'briefs/today.md'],
+  ])('refuses before any change for a change in %s', async (_name, entry, path) => {
+    const { deps, gitSince } = makeOldNode({
+      run: (inner) => (call) => (call.args.includes('status') ? exited(0, `${entry}\0 M board.md\0`) : inner(call)),
+    });
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps));
+    expect(error.message).toBe(`.factory has changes in files that the upgrade changes: ${path}`);
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
   });
 
   it('keeps the comments and the order of the keys of a config that the owner edited', async () => {
@@ -1148,7 +1329,7 @@ describe('upgrade: a node of schema 1', () => {
     expect(error.message).toContain('The files are as they were.');
     expect(live(deps)).toEqual(before);
     expect(deps.dirs.has(ROLES)).toBe(false);
-    expect(gitSince()).toContain('reset -q');
+    expect(gitWrites(gitSince())).toEqual([]);
   });
 
   it('puts the first move back when the second move fails', async () => {

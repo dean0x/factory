@@ -195,6 +195,82 @@ export const commitAll = async (deps: Deps, dir: string, message: string): Promi
   return staged.ok ? commitStaged(deps, dir, message) : staged;
 };
 
-/** Remove the staged changes from the index. The files keep their text. */
-export const unstageAll = (deps: Deps, dir: string): Promise<CliResult<void>> =>
-  gitStep(deps, dir, ['reset', '-q'], 'clear the staged files');
+/** Paths in a repo, relative to its top folder. */
+export interface RepoPaths {
+  /** Paths that exist: the files that changed, and the target of each move. */
+  readonly present: readonly string[];
+  /** Paths that a move left. The commit records their removal. */
+  readonly gone: readonly string[];
+}
+
+/**
+ * Stage `paths` and commit them, with the hooks off. Nothing else of the working tree is staged.
+ * The caller checks the identity first, and that the index holds no other staged change.
+ */
+export const commitPaths = async (
+  deps: Deps,
+  dir: string,
+  paths: RepoPaths,
+  message: string,
+): Promise<CliResult<void>> => {
+  if (paths.gone.length > 0) {
+    // `--ignore-unmatch`: a path that git never tracked has no removal to record.
+    const removed = await gitStep(
+      deps,
+      dir,
+      ['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', ...paths.gone],
+      'stage the state files',
+    );
+    if (!removed.ok) return removed;
+  }
+  const added = await gitStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
+  return added.ok ? commitStaged(deps, dir, message) : added;
+};
+
+/** Remove the staged changes of `paths` from the index. The files keep their text, and other staged changes stay. */
+export const unstagePaths = (deps: Deps, dir: string, paths: RepoPaths): Promise<CliResult<void>> =>
+  gitStep(deps, dir, ['reset', '-q', '--', ...paths.present, ...paths.gone], 'clear the staged files');
+
+/** The id of the commit that HEAD names, or null when the repo has no commit. It is an error when git cannot run. */
+export const headOf = async (deps: Deps, dir: string): Promise<CliResult<string | null>> => {
+  const result = await deps.run('git', ['-C', dir, 'rev-parse', '--verify', 'HEAD'], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot read the last commit of ${dir}: ${result.error.message}`);
+  return ok(result.value.exitCode === 0 ? result.value.stdout.trim() : null);
+};
+
+/** One path of `git status`: its state in the index, its state in the work tree, and the path in the repo. */
+export interface StatusEntry {
+  /** A space for no change; `?` for a file that git does not track. */
+  readonly index: string;
+  readonly tree: string;
+  readonly path: string;
+}
+
+/** The characters before the path in an entry of the porcelain form: two states and a space. */
+const STATUS_PREFIX_LENGTH = 3;
+/** A rename or a copy puts a second path, the old one, after its entry. */
+const WITH_OLD_PATH = ['R', 'C'];
+
+const parseStatus = (stdout: string): readonly StatusEntry[] => {
+  const parts = stdout.split('\0');
+  const entries: StatusEntry[] = [];
+  for (let at = 0; at < parts.length; at += 1) {
+    const part = parts[at] ?? '';
+    if (part.length <= STATUS_PREFIX_LENGTH) continue;
+    const entry = { index: part.charAt(0), tree: part.charAt(1), path: part.slice(STATUS_PREFIX_LENGTH) };
+    entries.push(entry);
+    if (WITH_OLD_PATH.includes(entry.index) || WITH_OLD_PATH.includes(entry.tree)) at += 1;
+  }
+  return entries;
+};
+
+/** The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. */
+export const statusOf = async (deps: Deps, dir: string): Promise<CliResult<readonly StatusEntry[]>> => {
+  const result = await deps.run('git', ['-C', dir, 'status', '--porcelain', '-z', '--untracked-files=all'], {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
+  const what = 'cannot read the changes of the state repository';
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  return ok(parseStatus(result.value.stdout));
+};
