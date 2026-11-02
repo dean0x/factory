@@ -183,6 +183,7 @@ describe('up: attach', () => {
     expect(deps.attached).toEqual([{ command: 'tmux', args: ['attach', '-t', '=demo'], cwd: undefined }]);
     expect(tmux.commands().some((line) => line.startsWith('switch-client'))).toBe(false);
     expect(output.json).toMatchObject({ started: true, attached: true });
+    expect(output.lines.at(-1)?.text).toBe('Left the session demo. It still runs.');
   });
 
   it('switches the tmux client when it runs inside tmux', async () => {
@@ -191,6 +192,7 @@ describe('up: attach', () => {
     expect(deps.attached).toEqual([]);
     expect(tmux.commands().at(-1)).toBe('switch-client -t =demo');
     expect(output.json).toMatchObject({ attached: true });
+    expect(output.lines.at(-1)?.text).toBe('Switched to the session demo.');
   });
 
   it('only prints when the output is not a terminal, also when the input is one', async () => {

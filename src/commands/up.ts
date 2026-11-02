@@ -217,6 +217,13 @@ const startSession = async (deps: Deps, id: string, steps: readonly TmuxArgs[]):
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 
+/** The last line of the output: where the person is now, or how to get to the session. */
+const arrivalText = (how: Reach, arrived: boolean, id: string): string => {
+  if (!arrived) return `Session ${id} runs. Attach with: ${attachHint(id)}`;
+  if (how === 'switch') return `Switched to the session ${id}.`;
+  return `Left the session ${id}. It still runs.`;
+};
+
 const dryRunOutput = (input: {
   readonly home: string;
   readonly id: string;
@@ -291,17 +298,12 @@ export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<C
   const attached = await reach(deps, how, id);
   if (!attached.ok) return attached;
 
-  const arrival = !attached.value
-    ? `Session ${id} runs. Attach with: ${attachHint(id)}`
-    : how === 'switch'
-      ? `Switched to the session ${id}.`
-      : `Left the session ${id}. It still runs.`;
   return ok({
     lines: [
       ...(planned === null
         ? []
         : [text(`Started the session ${id} in ${home}. The ${roles.coordinator} runs in the window ${tmuxNames.windowView}.`)]),
-      text(arrival),
+      text(arrivalText(how, attached.value, id)),
     ],
     json: {
       schema: schemaIds.up,
