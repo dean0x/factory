@@ -35,6 +35,29 @@ export const commands = {
   help: 'help',
 } as const;
 
+/** The topics of `help`. */
+export const helpTopics = { words: 'words' } as const;
+
+/**
+ * The factory words that have a plain description in `src/glossary.ts` and in `docs/glossary.md`:
+ * the concepts of the design and the shop-floor words that factory uses. A test fails for a term with no entry.
+ */
+export const terms = [
+  'node',
+  'owner',
+  'project',
+  'layer',
+  'cell',
+  'recipe',
+  'variant',
+  'andon',
+  'work order',
+  'changeover',
+  'staging',
+  'inspect',
+  'ship',
+] as const;
+
 /** The subcommands of `node`. */
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
@@ -248,6 +271,7 @@ export const schemaIds = {
   init: `${program}.init/v1`,
   up: `${program}.up/v1`,
   nodeChildren: `${program}.node-children/v1`,
+  words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   upgrade: `${program}.upgrade/v1`,
   version: `${program}.version/v1`,
@@ -285,6 +309,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   worker: roles.worker,
   owner: roles.owner,
   recipe: roles.recipe,
+  variant: roles.variant,
   childrenKey: keys.root.children,
   configFile: files.config,
   stateDir: dirs.state,

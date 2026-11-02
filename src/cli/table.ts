@@ -14,6 +14,7 @@ import {
   flags,
   flagShorts,
   flagText,
+  helpTopics,
   nodeCommands,
   program,
   roles,
@@ -258,6 +259,7 @@ export const renderHelp = (): string =>
     ...flagBlock('Flags for all commands:', globalOptions),
     '',
     `Run "${program} <command> ${flagText(flags.help)}" to see the flags of one command.`,
+    `Run "${commandText(commands.help)} ${helpTopics.words}" to see what the words of ${program} mean.`,
     '',
   ].join('\n');
 

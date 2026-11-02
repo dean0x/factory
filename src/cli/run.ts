@@ -1,5 +1,5 @@
 import type { Deps } from '../core/deps.js';
-import { commands, commandText, flags, flagShorts, flagText, program, schemaIds } from '../names.js';
+import { commands, commandText, flags, flagShorts, flagText, helpTopics, program, schemaIds } from '../names.js';
 import { exitCodeOf, safetyRefusal, type CliError } from './errors.js';
 import { detectStyle, renderJson, renderText, renderWarnings } from './output.js';
 import {
@@ -9,6 +9,7 @@ import {
   renderCommandHelp,
   renderHelp,
 } from './table.js';
+import { wordsOutput } from './words.js';
 
 export interface Sink {
   stdout(text: string): Promise<void>;
@@ -36,6 +37,24 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
   }
 
   const [first, ...rest] = argv;
+
+  if (first === commands.help && rest[0] === helpTopics.words) {
+    const parsed = parseFlags(rest.slice(1), globalOptions);
+    if (!parsed.ok) {
+      await sink.stderr(
+        renderError({ ...parsed.error, hint: `Run "${commandText(commands.help)} ${helpTopics.words}".` }),
+      );
+      return exitCodeOf[parsed.error.kind];
+    }
+    const output = wordsOutput();
+    if (parsed.value.bool(flags.json)) {
+      await sink.stdout(renderJson(output.json));
+    } else {
+      const style = detectStyle(deps.env, sink.isTTY, parsed.value.bool(flags.noColor));
+      await sink.stdout(renderText(output, style, parsed.value.bool(flags.quiet)));
+    }
+    return EXIT_OK;
+  }
 
   if (first === undefined || HELP_WORDS.includes(first)) {
     const topic = first === commands.help ? findCommand(rest[0] ?? '') : undefined;
