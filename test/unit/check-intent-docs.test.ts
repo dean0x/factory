@@ -8,17 +8,24 @@ const ROOT = join(__dirname, '..', '..');
 const SCRIPT = join(ROOT, 'scripts', 'check-intent-docs.sh');
 const DOC_FILES = ['design.md', 'intent-trace.md', 'roadmap-v2.md', 'token-budget.md'];
 
+/** The files above the docs folder that check 8 also reads. */
+const TOP_FILES = ['README.md', 'CHANGELOG.md'];
+
+let base: string;
 let copy: string;
 
-/** A copy of the docs that the check reads, in a folder of its own. */
+/** A copy of the docs that the check reads, in a folder of its own, with the README and the CHANGELOG above it. */
 beforeEach(async () => {
-  copy = await mkdtemp(join(tmpdir(), 'factory-docs-'));
+  base = await mkdtemp(join(tmpdir(), 'factory-docs-'));
+  copy = join(base, 'docs');
+  await mkdir(copy);
   for (const name of DOC_FILES) await cp(join(ROOT, 'docs', name), join(copy, name));
   await cp(join(ROOT, 'docs', 'research'), join(copy, 'research'), { recursive: true });
+  for (const name of TOP_FILES) await cp(join(ROOT, name), join(base, name));
 });
 
 afterEach(async () => {
-  await rm(copy, { recursive: true, force: true });
+  await rm(base, { recursive: true, force: true });
 });
 
 const check = (dir: string = copy) => {
@@ -27,8 +34,8 @@ const check = (dir: string = copy) => {
 };
 
 /** Changes one file of the copy. The change must alter the text, so a change of the docs fails the test loudly. */
-const change = async (name: string, edit: (text: string) => string): Promise<void> => {
-  const path = join(copy, name);
+const change = async (name: string, edit: (text: string) => string, folder: string = copy): Promise<void> => {
+  const path = join(folder, name);
   const before = await readFile(path, 'utf8');
   const after = edit(before);
   expect(after).not.toBe(before);
@@ -42,7 +49,7 @@ describe('scripts/check-intent-docs.sh', () => {
   it('passes on the docs of the repo', () => {
     const result = check(join(ROOT, 'docs'));
     expect({ code: result.code, err: result.err }).toEqual({ code: 0, err: '' });
-    expect(result.out).toContain('all 7 checks passed');
+    expect(result.out).toContain('all 8 checks passed');
     expect(failedChecks(result.out)).toEqual([]);
   });
 
@@ -146,5 +153,82 @@ describe('scripts/check-intent-docs.sh', () => {
     const result = check();
     expect(result.code).toBe(1);
     expect(result.out).toContain(`the file ${join(copy, 'token-budget.md')} is missing`);
+  });
+});
+
+/** Synthetic local paths. The only name that check 8 accepts is `example`, so these use another name. */
+const LOCAL_PATHS: ReadonlyArray<{ kind: string; text: string }> = [
+  { kind: 'a user folder path', text: 'The work is in /Users/other/work/acme.' },
+  { kind: 'a user folder path', text: 'The rule bans `/Users/` in a template.' },
+  { kind: 'a home path with a name', text: '"address": "file:///home/other/work/acme"' },
+  { kind: 'a private path', text: 'The files are in /private/tmp/work.' },
+  { kind: 'a temp Claude path', text: 'The scratch folder is /tmp/claude-501/scratch.' },
+];
+
+/** Where check 8 reads: the docs folder, a sub-folder of it, and the two files above it. */
+const PLACES: ReadonlyArray<{ place: string; folder: () => string; name: string }> = [
+  { place: 'a doc', folder: () => copy, name: 'design.md' },
+  { place: 'a doc in a sub-folder', folder: () => join(copy, 'research'), name: 'extra.md' },
+  { place: 'the README', folder: () => base, name: 'README.md' },
+  { place: 'the CHANGELOG', folder: () => base, name: 'CHANGELOG.md' },
+];
+
+describe('scripts/check-intent-docs.sh, check 8: no local machine paths', () => {
+  describe.each(PLACES)('in $place', ({ folder, name }) => {
+    const put = async (text: string): Promise<void> => {
+      await mkdir(folder(), { recursive: true });
+      const path = join(folder(), name);
+      const before = await readFile(path, 'utf8').catch(() => '');
+      await writeFile(path, `${before}\n${text}\n`);
+    };
+
+    it.each(LOCAL_PATHS)('exits 1 for $kind', async ({ kind, text }) => {
+      await put(text);
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['8']);
+      expect(result.out).toMatch(new RegExp(`${name}:\\d+ holds ${kind}`));
+    });
+
+    it('accepts the neutral name, a home form, a relative path and a path that is not local', async () => {
+      await put(
+        [
+          'The neutral names are /Users/example/work and file:///home/example/work/acme.',
+          'A home form is ~/work/acme or ~/.claude/projects.',
+          'A relative path is docs/private/notes.md or src/Users/list.ts.',
+          'A tool path is /opt/homebrew/bin and a name is /home-made.',
+        ].join('\n'),
+      );
+      expect(check().code).toBe(0);
+    });
+  });
+
+  it('exits 1 for a name that only starts with the neutral name', async () => {
+    await change('design.md', (text) => `${text}\nSee /Users/example2/work.\n`);
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['8']);
+  });
+
+  it('names the file and the line, and never the path', async () => {
+    await change('design.md', (text) => `${text}\nSee /Users/someone/work.\n`);
+    const result = check();
+    expect(result.out).toMatch(/design\.md:\d+ holds a user folder path/);
+    expect(result.out).not.toContain('someone');
+  });
+
+  it('names only the first failure of the check', async () => {
+    await change('design.md', (text) => `${text}\nSee /Users/first/work and /Users/second/work.\n`);
+    await change('README.md', (text) => `${text}\nSee /private/tmp/third.\n`, base);
+    const result = check();
+    expect(result.out).toContain('design.md:');
+    expect(result.out).not.toContain('README.md:');
+    expect(result.out).not.toContain('private');
+  });
+
+  it('passes when the README and the CHANGELOG are not above the docs folder', async () => {
+    await rm(join(base, 'README.md'));
+    await rm(join(base, 'CHANGELOG.md'));
+    expect(check().code).toBe(0);
   });
 });

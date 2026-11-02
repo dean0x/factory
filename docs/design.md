@@ -63,15 +63,15 @@ An independent check compared this design with every note from Dean. `docs/inten
 
 This section describes the workspace setup as it is today. It uses the workspace words (lane, Orchestrator, On Dean), because those are the names in the files.
 
-Paths are relative to `/Users/dean/Sandbox/.devflow/` unless they start with `/`.
+Paths are relative to `~/Sandbox/.devflow/` unless they start with `~/` or `/`.
 Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, accounts, paths), **M** machine-specific.
 
 ### 1.1 Parts
 
 | Part | Job | Class | What ties it (file:line) |
 |---|---|---|---|
-| `/Users/dean/Sandbox/CLAUDE.md` | Orchestrator rules §1–§13 | G, D, P, M | "Dean", `dean0x` §13; founder prefix §12; `/Users/dean/Sandbox/.devflow` (`--add-dir`); session names `orchestrator:lanes`, `orchestrator:bench`; "10 CPUs, 64 GB", `lockf`, `pbcopy`, `sysctl`, `memory_pressure`; `/devflow:*` in §5 and §7 |
-| `docs/orchestration/protocol.md` | Lane protocol: escalation, test lock, disk, context, PRs, style | G, D, P, M | `/Users/dean/Sandbox/.devflow/...` (L19–34); Node 24 and `/opt/homebrew/bin` (L34, devflow tests only); `vitest` (L25); devflow timeout rule (L54) |
+| `~/Sandbox/CLAUDE.md` | Orchestrator rules §1–§13 | G, D, P, M | "Dean", `dean0x` §13; founder prefix §12; `~/Sandbox/.devflow` (`--add-dir`); session names `orchestrator:lanes`, `orchestrator:bench`; "10 CPUs, 64 GB", `lockf`, `pbcopy`, `sysctl`, `memory_pressure`; `/devflow:*` in §5 and §7 |
+| `docs/orchestration/protocol.md` | Lane protocol: escalation, test lock, disk, context, PRs, style | G, D, P, M | `~/Sandbox/.devflow/...` (L19–34); Node 24 and `/opt/homebrew/bin` (L34, devflow tests only); `vitest` (L25); devflow timeout rule (L54) |
 | `docs/orchestration/status.md` | Status layout | G, P | "Waiting on Dean" (L42) |
 | `docs/orchestration/respawn-map.md` | Lane, pane, folder and session-id table, plus the restart steps | G (steps), P, M (data) | pane ids, UUIDs, `--add-dir` path (L14), reads `~/.claude/sessions` (L16) |
 | `docs/orchestration/orchestrator-resume.md` | The Orchestrator's resume block | instance data | devflow PR numbers |
@@ -91,7 +91,7 @@ Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, ac
 | `scripts/layout.sh`, `lane-summon.sh`, `md-view.sh` | View and bench windows, pinned summon, glow viewer | G, M | session `orchestrator`; `/bin/zsh`; `glow` |
 | `scripts/lanes-refresh.sh`, `lanes-table.py`, `live_boxes.py` | Live lanes table every 30 s; machine box | G, M | reads `~/.claude/projects/*.jsonl` (lanes-table L64); status-line regex `Context\s+\S+\s+(\d{1,3})%` (L82); `memory_pressure`, `pmset` (live_boxes L105–106); `pyenv` |
 | `scripts/tmux-save-map.sh`, `tmux-restore-lanes.sh` | tmux-resurrect hooks: save the pane map, resume lanes | G, M | reads `~/.claude/sessions/*.json` (save-map L14); restore forces `--permission-mode auto` and `env -u ANTHROPIC_BASE_URL` (restore L20, L58) |
-| `scripts/tmux.conf` | Mouse, lane names on borders, resurrect, continuum | P, M | `/Users/dean/...` paths (L2, L3, L25, L26, L32) |
+| `scripts/tmux.conf` | Mouse, lane names on borders, resurrect, continuum | P, M | absolute paths in the user folder (L2, L3, L25, L26, L32) |
 | `scripts/test-*` | Tests with fixtures and a separate tmux server | G | none |
 | `priorities/apply-labels.sh` | One-time label script | P | `R=dean0x/devflow`; fixed issue list |
 | `decision-profile/` | Founder decision wiki: index, format, log, principles, records | G (format), P (content) | "Dean" throughout; some principles scoped `devflow` |
@@ -112,7 +112,7 @@ I checked each of these on the file. factory takes one answer for each.
 3. **Where lanes live.** The respawn map put lanes in the view window. CLAUDE.md §12 puts them on the bench. factory uses the bench (F-8, §4.11). The respawn map line is fixed.
 4. **Context budget.** `protocol.md` used 250k/350k tokens. CLAUDE.md §12 uses 30–35% and 40% of the window. factory uses the percent rule, because it works for every window size.
 5. **Reads under `~/.claude`.** CLAUDE.md §1 told lanes to avoid them, but three scripts read there. factory replaces every read with the heartbeat hook (F-9, §4.6).
-6. **The coordinator instructions reach every lane.** Claude Code loads every CLAUDE.md from the session folder up to the root. The Orchestrator instructions are in `/Users/dean/Sandbox/CLAUDE.md`, and every lane checkout is under `/Users/dean/Sandbox`. So each lane also loads them. factory puts the node home next to the checkouts, never above them (F-3, §4.3).
+6. **The coordinator instructions reach every lane.** Claude Code loads every CLAUDE.md from the session folder up to the root. The Orchestrator instructions are in `~/Sandbox/CLAUDE.md`, and every lane checkout is under `~/Sandbox`. So each lane also loads them. factory puts the node home next to the checkouts, never above them (F-3, §4.3).
 
 ## 2. The devflow connection
 
@@ -129,8 +129,8 @@ devflow (npm `devflow-kit`, MIT) installs commands, agents, skills, hooks and ru
 | `/devflow:release` | CLAUDE.md §7 | A `release` stage. The plain variant uses the repo's own release script, named in `factory.yaml`. |
 | Triage words (FIX_NOW, ESCALATED, CHANGES REQUESTED) | board-detail.md | Neutral words `blocker`, `fix`, `defer`, `ask`, `ready`. A variant maps its words to them. |
 | Agent types Code, Validate, Test | protocol L32 | Agent kinds: implementer, verifier, tester, reviewer. A variant maps them to its agent types. ("Role" now means the role of a layer, §5.) |
-| State folder named `.devflow` | CLAUDE.md §11–§12; respawn-map | `.factory/`. Proof of the clash: devflow already wrote `/Users/dean/Sandbox/.devflow/.devflow/{curation,docs,features,memory}`. |
-| `--add-dir /Users/dean/Sandbox/.devflow` | CLAUDE.md §12; restore L20 | `--add-dir <node home>/.factory`, from the config. |
+| State folder named `.devflow` | CLAUDE.md §11–§12; respawn-map | `.factory/`. Proof of the clash: devflow already wrote `~/Sandbox/.devflow/.devflow/{curation,docs,features,memory}`. |
+| `--add-dir ~/Sandbox/.devflow` | CLAUDE.md §12; restore L20 | `--add-dir <node home>/.factory`, from the config. |
 | Lane name examples `devflow-*` | CLAUDE.md §4 | Keep the `<project>-<track>` form for cells; use neutral examples. |
 | Default repo `dean0x/devflow` | board-set L91; boardlib L13, L240; render-dean L69 | `recipe.projects[].repo` in `factory.yaml`. A bare issue number is refused when the node has more than one project. |
 | Rules in `~/.claude/rules/devflow/` (STE, read economy, quality) | HOME CLAUDE.md | factory writes its own short rules into the role templates. It never writes to `~/.claude/rules/`. |
@@ -621,7 +621,7 @@ Every node has the same mechanics: `factory.yaml` and `node.json`, the report di
 ```json
 { "id": "acme-web", "layer": 1,
   "owner": { "display": "Ana", "github": "ana-x" },
-  "parent": { "address": "file:///home/ana/work/acme-factory", "id": "acme" },
+  "parent": { "address": "file:///home/example/work/acme-factory", "id": "acme" },
   "children": [
     { "kind": "cell", "id": "web-checkout", "pane": "@cell=web-checkout" },
     { "kind": "cell", "id": "web-search", "pane": "@cell=web-search" }
@@ -789,9 +789,9 @@ Dean found 11 words for the physical layout of a factory. The list ends with the
 
 ## 8. Migration of this workspace
 
-`factory adopt /Users/dean/Sandbox` imports the current setup into a node. A dry run comes first. The adopt runs only when all lanes are idle and pushed. It does these steps (FAC-M7):
-1. It makes a node home next to the projects, for example `/Users/dean/Sandbox/sandbox-factory`. The Orchestrator moves there from the workspace root.
-2. It moves the Orchestrator text of `/Users/dean/Sandbox/CLAUDE.md` into the `CLAUDE.md` of the new home, and keeps a copy in `.factory/backups/`. It leaves no coordinator text in any `CLAUDE.md` on the path from a cell checkout to the root: the old file is removed, or it keeps only lines that every cell may read. The dry run shows this change, and the owner confirms it. Only then do the lanes stop loading the Orchestrator instructions (F-3). Without this step, they still load them, because the file sits above every checkout.
+`factory adopt ~/Sandbox` imports the current setup into a node. A dry run comes first. The adopt runs only when all lanes are idle and pushed. It does these steps (FAC-M7):
+1. It makes a node home next to the projects, for example `~/Sandbox/sandbox-factory`. The Orchestrator moves there from the workspace root.
+2. It moves the Orchestrator text of `~/Sandbox/CLAUDE.md` into the `CLAUDE.md` of the new home, and keeps a copy in `.factory/backups/`. It leaves no coordinator text in any `CLAUDE.md` on the path from a cell checkout to the root: the old file is removed, or it keeps only lines that every cell may read. The dry run shows this change, and the owner confirms it. Only then do the lanes stop loading the Orchestrator instructions (F-3). Without this step, they still load them, because the file sits above every checkout.
 3. It moves `decision-profile/` and the roadmaps to `.factory/`, keeps the git history (a `git mv` in the state repo), and writes `factory.yaml` from the facts in CLAUDE.md §13.
 4. It imports the board and the On Dean items into the `local` tracker files. The review page and its scripts stay as the owner view, and the owner can still answer there. FAC-M3 moves the items into GitHub issues with a private repo as the decision store (F-2), and retires the page and its scripts.
 5. It sets `approval.land: approved-work` (D-52).
@@ -805,7 +805,7 @@ Each part of the setup of today (§1.1) has an owner in factory: a command, a mi
 
 | Part (§1.1) | In factory | Milestone | Status |
 |---|---|---|---|
-| `/Users/dean/Sandbox/CLAUDE.md` | The `coordinator` and `safety` blocks of the home `CLAUDE.md`; `adopt` moves the text (step 2) | FAC-M2, FAC-M7 | planned |
+| `~/Sandbox/CLAUDE.md` | The `coordinator` and `safety` blocks of the home `CLAUDE.md`; `adopt` moves the text (step 2) | FAC-M2, FAC-M7 | planned |
 | `protocol.md` | The worker role template `.factory/roles/worker.md` | FAC-M2 | planned |
 | `status.md` | The output of `factory status` | FAC-M5 | planned |
 | `respawn-map.md` | The heartbeat files, `cell restart --all` and the restore of §4.11 | FAC-M4 | planned |

@@ -4,6 +4,7 @@
 #
 # Usage: sh scripts/check-intent-docs.sh [DOCS_DIR]
 # DOCS_DIR is the docs folder to check. The default is the docs folder of this repo.
+# Check 8 also reads README.md and CHANGELOG.md in the folder above DOCS_DIR, when they exist.
 #
 # Exit code 0: every check passes. Exit code 1: a check fails. The output names the first failure of each check.
 
@@ -215,8 +216,55 @@ else
 fi
 report 7 "no file under docs/research holds the word lane" "$first"
 
+# 8. No file of the docs folder (down five levels), no README.md and no CHANGELOG.md above it holds a local machine path.
+# A local path is a user folder path (/Users/<name>/), a home path with a name (/home/<name>/), a private path (/private/)
+# or a temp Claude path (/tmp/claude). The name "example" is the only name that is accepted. A marker that follows a
+# letter, a digit or one of _ . ~ - is part of a longer relative path (docs/private/), so it is not a local path.
+# The output names the file, the line and the kind of path, never the path.
+set --
+for file in "$docs"/* "$docs"/*/* "$docs"/*/*/* "$docs"/*/*/*/* "$docs"/*/*/*/*/* "$docs/../README.md" "$docs/../CHANGELOG.md"; do
+  [ -f "$file" ] || continue
+  set -- "$@" "$file"
+done
+first=$(awk '
+  BEGIN {
+    marker[1] = "/Users/";     kind[1] = "a user folder path";      named[1] = 1
+    marker[2] = "/home/";      kind[2] = "a home path with a name"; named[2] = 1
+    marker[3] = "/private/";   kind[3] = "a private path";          named[3] = 0
+    marker[4] = "/tmp/claude"; kind[4] = "a temp Claude path";      named[4] = 0
+    count = 4
+  }
+  function local_path(line,   n, pos, at, before, rest, name) {
+    for (n = 1; n <= count; n++) {
+      pos = 1
+      while ((at = index(substr(line, pos), marker[n])) > 0) {
+        at += pos - 1
+        before = at > 1 ? substr(line, at - 1, 1) : ""
+        if (before !~ /[A-Za-z0-9_.~-]/) {
+          if (!named[n]) return kind[n]
+          rest = substr(line, at + length(marker[n]))
+          match(rest, /^[A-Za-z0-9._-]*/)
+          name = substr(rest, 1, RLENGTH)
+          sub(/\.+$/, "", name)
+          if (name != "example") return kind[n]
+        }
+        pos = at + 1
+      }
+    }
+    return ""
+  }
+  {
+    found = local_path($0)
+    if (found != "") {
+      printf "%s:%d holds %s\n", FILENAME, FNR, found
+      exit
+    }
+  }
+' "$@")
+report 8 "the docs, the README and the CHANGELOG hold no local machine path" "$first"
+
 if [ "$failed" -ne 0 ]; then
-  printf '%s of 7 checks failed\n' "$failed"
+  printf '%s of 8 checks failed\n' "$failed"
   exit 1
 fi
-printf 'all 7 checks passed\n'
+printf 'all 8 checks passed\n'
