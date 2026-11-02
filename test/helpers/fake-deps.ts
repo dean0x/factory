@@ -50,6 +50,8 @@ export interface FakeDeps extends Deps {
   readonly fetched: string[];
   /** The paths of the atomic writes, in order. */
   readonly atomicWrites: string[];
+  /** The mode that a write or a folder was created with, by path. A path with no mode is not in the map. */
+  readonly modes: Map<string, number>;
   seed(path: string, text: string): void;
   seedDir(path: string): void;
 }
@@ -71,6 +73,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const prompts: string[] = [];
   const fetched: string[] = [];
   const atomicWrites: string[] = [];
+  const modes = new Map<string, number>();
 
   const ancestors = (path: string): string[] => {
     const found: string[] = [];
@@ -98,6 +101,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     prompts,
     fetched,
     atomicWrites,
+    modes,
     seed: (path, text) => {
       addDir(posix.dirname(path));
       files.set(path, text);
@@ -113,10 +117,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         files.set(path, text);
         return ok(undefined);
       },
-      writeTextAtomic: async (path, text) => {
+      writeTextAtomic: async (path, text, mode) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
         atomicWrites.push(path);
         files.set(path, text);
+        if (mode !== undefined) modes.set(path, mode);
         return ok(undefined);
       },
       stat: async (path) => ok(kindOf(path)),
@@ -125,7 +130,8 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         const link = Object.entries(options.links ?? {}).find(([from]) => under(from, path));
         return ok(link === undefined ? path : link[1] + path.slice(link[0].length));
       },
-      mkdir: async (path) => {
+      mkdir: async (path, mode) => {
+        if (mode !== undefined && !dirs.has(path)) modes.set(path, mode);
         addDir(path);
         return ok(undefined);
       },
@@ -219,11 +225,11 @@ export const withFailingWrites = <T extends Deps>(
 ): T => {
   const attempts = new Map<string, number>();
   const guarded =
-    (write: Fs['writeText']): Fs['writeText'] =>
-    async (path, text) => {
+    (write: Fs['writeTextAtomic']): Fs['writeTextAtomic'] =>
+    async (path, text, mode) => {
       const attempt = (attempts.get(path) ?? 0) + 1;
       attempts.set(path, attempt);
-      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text);
+      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text, mode);
     };
   return {
     ...deps,

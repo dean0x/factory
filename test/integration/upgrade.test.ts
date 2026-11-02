@@ -95,9 +95,9 @@ describe('factory upgrade (built binary)', () => {
     expect(result.stderr).toContain('unknown block nope');
   });
 
-  it('exits 1 when there is no config file above the folder', async () => {
+  it('exits 2 when there is no config file above the folder and no entry of the home index', async () => {
     const result = await box.run(['upgrade'], { cwd: box.root });
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(2);
     expect(result.stderr).toContain('--home DIR');
   });
 });

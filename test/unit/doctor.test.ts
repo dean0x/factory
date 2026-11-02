@@ -8,6 +8,7 @@ import {
   checkConfig,
   checkConfigVersion,
   checkHome,
+  checkIndex,
   checkNodeBlocks,
   checkPermissionMode,
   checkProjects,
@@ -635,6 +636,64 @@ describe('doctor: the home', () => {
   });
 });
 
+describe('doctor: the home index', () => {
+  const INDEX = '/state/factory/homes.json';
+  const env = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+  const indexOf = (...homes: string[]): string =>
+    JSON.stringify({ schema: 1, homes: homes.map((home, i) => ({ home, id: `h${i}`, projects: ['/w/web'] })) });
+
+  it('is ok when no variable names a folder for the index', async () => {
+    expect(await checkIndex(makeDeps())).toMatchObject({ id: 'index', level: 'ok', text: expect.stringContaining('no home index is used') });
+  });
+
+  it('is ok when there is no index file yet, and when every home in it is present', async () => {
+    const deps = makeDeps({ env });
+    expect(await checkIndex(deps)).toMatchObject({ level: 'ok', text: '0 entries in the home index, all present' });
+    deps.seed(INDEX, indexOf(HOME));
+    deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
+    expect(await checkIndex(deps)).toMatchObject({ level: 'ok', text: '1 entry in the home index, all present' });
+  });
+
+  it('warns on an entry whose home is gone, and names the home and the file', async () => {
+    const deps = makeDeps({ env });
+    deps.seed(INDEX, indexOf(HOME, '/w/gone'));
+    deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
+    const result = await checkIndex(deps);
+    expect(result).toMatchObject({ level: 'warn' });
+    expect(result.text).toContain('/w/gone');
+    expect(result.text).not.toContain(`${HOME},`);
+    expect(result.text).toContain(INDEX);
+  });
+
+  it('warns when the file cannot be read', async () => {
+    const deps = makeDeps({ env });
+    deps.seed(INDEX, 'broken');
+    expect(await checkIndex(deps)).toMatchObject({ level: 'warn', text: expect.stringContaining(`${INDEX} cannot be read`) });
+  });
+
+  it('warns when the place of the index is inside the folder of Claude Code', async () => {
+    const deps = makeDeps({ env: { HOME: '/users/me', XDG_STATE_HOME: '/users/me/.claude/state' } });
+    expect(await checkIndex(deps)).toMatchObject({ level: 'warn' });
+  });
+
+  it('runs from a project folder through the index, and sends no network request', async () => {
+    const config = (await initialized()).files.get(`${HOME}/factory.yaml`) ?? '';
+    const deps = makeDeps({ env, cwd: '/w/web/src', fetch: () => ok({ status: 200 }) });
+    deps.seedDir('/w/web/src');
+    deps.seed(INDEX, indexOf(HOME));
+    deps.seed(
+      `${HOME}/factory.yaml`,
+      config.replace('proxy: none', 'proxy: local').replace('proxies: []', 'proxies:\n  - id: local\n    base_url: "http://127.0.0.1:8787"\n    health: /health\n    on_fail: stop'),
+    );
+    const result = await runDoctor(deps, { home: undefined });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.json['home']).toBe(HOME);
+    expect(deps.fetched).toEqual([]);
+    expect(levelOf(result.value.json['checks'] as CheckResult[], 'proxy')).toBe('warn');
+  });
+});
+
 describe('doctor: the tracker', () => {
   const hosted = (kind: 'github' | 'jira'): FactoryConfig => {
     const config = sampleConfig();
@@ -800,6 +859,7 @@ describe('doctor: the command', () => {
       'config-version',
       'state',
       'home',
+      'index',
       'blocks',
       'tracker',
       'children',
@@ -811,7 +871,7 @@ describe('doctor: the command', () => {
       'state-repo',
       'projects',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('14 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('15 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -834,7 +894,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(14);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(15);
   });
 
   it('finds the node by walking up from the current folder', async () => {
@@ -849,7 +909,7 @@ describe('doctor: the command', () => {
 
   it('fails when no config file is found and no home is given', async () => {
     const result = await runDoctor(createFakeDeps({ cwd: '/empty' }), { home: undefined });
-    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (!result.ok) expect(result.error.hint).toContain('--home DIR');
   });
 

@@ -821,6 +821,78 @@ describe('init: rollback', () => {
   });
 });
 
+describe('init: the home index', () => {
+  const INDEX = '/state/factory/homes.json';
+  const env = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+  const repos = { '/w/web': {}, '/w/api': {} };
+  const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
+
+  it('records the home, its id and the real path of each project after it writes the node', async () => {
+    const { deps } = setup({ repos }, { env });
+    const result = await runInit(deps, options({ projects: ['/w/web', '/w/api'] }));
+    expect(result.ok && result.value.warnings).toEqual([]);
+    expect(stored(deps)).toEqual({ schema: 1, homes: [{ home: HOME, id: 'node', projects: ['/w/web', '/w/api'] }] });
+    expect(deps.modes.get(INDEX)).toBe(0o600);
+    expect(deps.modes.get('/state/factory')).toBe(0o700);
+  });
+
+  it('records the real paths when the folders are behind a link', async () => {
+    const { deps } = setup({ repos: { '/w/via/proj': {} } }, { env, links: { '/w/via': '/w/real' } });
+    deps.seedDir('/w/via/proj');
+    deps.seedDir('/w/real');
+    await runInit(deps, options({ home: '/w/real/node', projects: ['/w/via/proj'] }));
+    expect(stored(deps)).toEqual({ schema: 1, homes: [{ home: '/w/real/node', id: 'node', projects: ['/w/real/proj'] }] });
+  });
+
+  it('replaces the entry of the same home and keeps the entries of other homes', async () => {
+    const { deps } = setup({ repos }, { env });
+    deps.seed(INDEX, JSON.stringify({ schema: 1, homes: [{ home: '/h/other', id: 'other', projects: ['/h/x'] }] }));
+    await runInit(deps, options({ projects: ['/w/web'] }));
+    expect(stored(deps)).toEqual({
+      schema: 1,
+      homes: [
+        { home: '/h/other', id: 'other', projects: ['/h/x'] },
+        { home: HOME, id: 'node', projects: ['/w/web'] },
+      ],
+    });
+  });
+
+  it('warns and still creates the node when neither variable names a folder for the index', async () => {
+    const { deps } = setup({ repos });
+    const result = await runInit(deps, options({ projects: ['/w/web'] }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.warnings.join('\n')).toContain('The home index was not updated');
+    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
+  });
+
+  it('warns, keeps the file as it was and still creates the node when the index cannot be read', async () => {
+    const { deps } = setup({ repos }, { env });
+    deps.seed(INDEX, 'broken');
+    const result = await runInit(deps, options({ projects: ['/w/web'] }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.warnings.join('\n')).toContain(`The home index ${INDEX} was not updated`);
+    expect(deps.files.get(INDEX)).toBe('broken');
+    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
+  });
+
+  it('refuses with exit 4 an index path under the folder of Claude Code, before it writes anything', async () => {
+    const { deps } = setup({ repos }, { env: { HOME: '/users/me', XDG_STATE_HOME: '/users/me/.claude/state' } });
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ projects: ['/w/web'] }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('lists the warning in the JSON document', async () => {
+    const { deps } = setup({}, { env });
+    deps.seed(INDEX, 'broken');
+    const result = await runInit(deps, options());
+    expect(result.ok && result.value.json['warnings']).toEqual([expect.stringContaining('was not updated')]);
+  });
+});
+
 describe('init: output', () => {
   it('prints a summary and a JSON document with a schema field', async () => {
     const { deps } = setup();

@@ -96,9 +96,9 @@ describe('factory doctor (built binary)', () => {
     expect(result.stdout + result.stderr).not.toContain(secret);
   });
 
-  it('exits 1 when there is no config file above the folder', async () => {
+  it('exits 2 when there is no config file above the folder and no entry of the home index', async () => {
     const result = await box.run(['doctor'], { cwd: box.root });
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(2);
     expect(result.stderr).toContain('--home DIR');
   });
 

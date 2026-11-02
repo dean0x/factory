@@ -9,6 +9,7 @@ import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder, type LocatedHome } from '../core/home.js';
+import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { ok } from '../core/result.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import type { DocState } from '../migrate/inspect.js';
@@ -148,6 +149,30 @@ export const checkHome = async (deps: Deps, home: string, state: DocState<Factor
     : check(checkIds.home, 'fail', apart.error.message);
 };
 
+/**
+ * The home index lets a command find a home from a project folder. An entry whose home is gone, and a file that
+ * cannot be read, are warnings: the index is a cache, and a command that needs it says so.
+ */
+export const checkIndex = async (deps: Deps): Promise<CheckResult> => {
+  const path = indexPathOf(deps.env);
+  if (!path.ok) return check(checkIds.index, 'warn', path.error.message);
+  if (path.value === null) {
+    return check(checkIds.index, 'ok', `no home index is used: ${env.stateHome} and ${env.userHome} name no folder`);
+  }
+  const entries = await readHomeIndex(deps, path.value);
+  if (!entries.ok) return check(checkIds.index, 'warn', `${path.value} cannot be read: ${entries.error}`);
+  const gone = await goneHomes(deps, entries.value);
+  if (gone.length > 0) {
+    return check(
+      checkIds.index,
+      'warn',
+      `the home index lists ${gone.join(', ')}, with no ${files.config}. Remove the ${plural(gone.length, 'entry', 'entries')} from ${path.value}.`,
+    );
+  }
+  const count = entries.value.length;
+  return check(checkIds.index, 'ok', `${count} ${plural(count, 'entry', 'entries')} in the home index, all present`);
+};
+
 /** Only the local tracker works in this version of factory. */
 export const checkTracker = (state: DocState<FactoryConfig>): CheckResult => {
   if (state.kind !== 'valid') return notChecked(checkIds.tracker, `${files.config} is not valid`);
@@ -224,7 +249,8 @@ export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
 
 export const checkPermissionMode = async (deps: Deps, home: string): Promise<CheckResult> => {
   const settingsDir = join(home, dirs.claude);
-  const userDir = deps.env['HOME'] === undefined ? undefined : join(resolve(deps.env['HOME']), dirs.claude);
+  const userHome = deps.env[env.userHome];
+  const userDir = userHome === undefined ? undefined : join(resolve(userHome), dirs.claude);
   if (userDir !== undefined && resolve(settingsDir) === userDir) {
     return notChecked(checkIds.permissionMode, `${settingsDir} holds the user settings of Claude Code`);
   }
@@ -375,8 +401,9 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
   const { home, source } = located;
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
-  const [homeCheck, blocks, children, permission, proxies, tools, stateRepo, projects] = await Promise.all([
+  const [homeCheck, index, blocks, children, permission, proxies, tools, stateRepo, projects] = await Promise.all([
     checkHome(deps, home, config),
+    checkIndex(deps),
     checkNodeBlocks(deps, home, config),
     checkChildren(deps, config),
     checkPermissionMode(deps, home),
@@ -390,6 +417,7 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
     checkConfigVersion(config),
     checkState(state),
     homeCheck,
+    index,
     blocks,
     checkTracker(config),
     children,

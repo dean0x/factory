@@ -256,6 +256,26 @@ describe('node deps: atomic write', () => {
     expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
 
+  it('gives a new file the mode that the caller asks for, and replaces the mode of an old file', async () => {
+    const folder = fresh('given-mode');
+    await deps.fs.mkdir(folder);
+    const created = join(folder, 'new.json');
+    expect((await deps.fs.writeTextAtomic(created, '{}', 0o600)).ok).toBe(true);
+    expect((await stat(created)).mode & 0o777).toBe(0o600);
+
+    const old = join(folder, 'old.json');
+    await writeFile(old, '{}', 'utf8');
+    await chmod(old, 0o644);
+    expect((await deps.fs.writeTextAtomic(old, '{"a":1}', 0o600)).ok).toBe(true);
+    expect((await stat(old)).mode & 0o777).toBe(0o600);
+  });
+
+  it('creates a folder with the mode that the caller asks for', async () => {
+    const folder = fresh('private-folder');
+    expect((await deps.fs.mkdir(folder, 0o700)).ok).toBe(true);
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+  });
+
   it('writes through a link and keeps the link', async () => {
     const folder = fresh('link');
     await deps.fs.mkdir(folder);

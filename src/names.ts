@@ -73,6 +73,7 @@ export const files = {
   profileLog: 'log.md',
   openQuestions: 'open-questions.md',
   roadmapsReadme: 'README.md',
+  homeIndex: 'homes.json',
 } as const;
 
 export const dirs = {
@@ -92,7 +93,27 @@ export const dirs = {
 /** The settings files of Claude Code in a project: `<prefix>*<suffix>` inside the `.claude` folder. */
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
 
-export const env = { proxyBaseUrl: 'ANTHROPIC_BASE_URL', home: 'FACTORY_HOME', session: 'FACTORY_SESSION' } as const;
+export const env = {
+  proxyBaseUrl: 'ANTHROPIC_BASE_URL',
+  home: 'FACTORY_HOME',
+  session: 'FACTORY_SESSION',
+  /** The folder of the per-user state. The home index lives below it. */
+  stateHome: 'XDG_STATE_HOME',
+  userHome: 'HOME',
+} as const;
+
+/**
+ * The per-user index of node homes (design 4.3): the number of its schema, its keys, its default place
+ * below the user home, and its bounds. A command finds a home from a project folder through it.
+ */
+export const homeIndex = {
+  schema: 1,
+  keys: { schema: 'schema', homes: 'homes', home: 'home', id: 'id', projects: 'projects' },
+  defaultStateHome: ['.local', 'state'],
+  maxHomes: 200,
+  maxProjects: 200,
+  maxBytes: 1_048_576,
+} as const;
 
 /**
  * The names that factory gives to the tmux session of a node: two windows, and options that tell
@@ -188,6 +209,7 @@ export const checkIds = {
   configVersion: 'config-version',
   state: 'state',
   home: 'home',
+  index: 'index',
   blocks: 'blocks',
   tracker: 'tracker',
   children: 'children',

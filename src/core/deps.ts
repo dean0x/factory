@@ -8,14 +8,15 @@ export interface Fs {
   /**
    * Write the text to a temporary file in the same folder, then rename it over the target.
    * A reader sees the old text or the new text, never a part. A failure leaves the target as it was.
+   * The file gets `mode` when it is given. Else it keeps the mode of the file it replaces.
    */
-  writeTextAtomic(path: string, text: string): Promise<CliResult<void>>;
+  writeTextAtomic(path: string, text: string, mode?: number): Promise<CliResult<void>>;
   /** The kind of the path, or null when it does not exist. */
   stat(path: string): Promise<CliResult<PathKind | null>>;
   /** The path with every link resolved. The path must exist. */
   realpath(path: string): Promise<CliResult<string>>;
-  /** Create the folder and its parents. */
-  mkdir(path: string): Promise<CliResult<void>>;
+  /** Create the folder and its parents. A folder that this call creates gets `mode` when it is given. */
+  mkdir(path: string, mode?: number): Promise<CliResult<void>>;
   /** The sorted names inside a folder. */
   list(path: string): Promise<CliResult<readonly string[]>>;
   rename(from: string, to: string): Promise<CliResult<void>>;

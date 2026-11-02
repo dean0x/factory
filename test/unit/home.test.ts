@@ -51,6 +51,7 @@ describe('home: the order', () => {
     const result = await locateHome(createFakeDeps({ cwd: '/empty' }), undefined);
     expect(result.ok).toBe(false);
     if (!result.ok) {
+      expect(result.error.kind).toBe('usage');
       expect(result.error.message).toContain('no factory.yaml found');
       expect(result.error.hint).toContain('--home DIR');
     }
@@ -59,6 +60,45 @@ describe('home: the order', () => {
   it('gives the same home to resolveHome', async () => {
     const deps = nodeAt('/w', { FACTORY_HOME: HOME });
     expect(await resolveHome(deps, undefined)).toEqual({ ok: true, value: HOME });
+  });
+});
+
+describe('home: the index', () => {
+  const INDEX_HOME = '/w/web-factory';
+  const indexed = (cwd: string, env: Record<string, string | undefined> = {}): FakeDeps => {
+    const deps = createFakeDeps({ cwd, env: { XDG_STATE_HOME: '/state', ...env } });
+    deps.seed('/state/factory/homes.json', JSON.stringify({ schema: 1, homes: [{ home: INDEX_HOME, id: 'web', projects: ['/w/web'] }] }));
+    deps.seed(`${INDEX_HOME}/factory.yaml`, 'schema: 2\n');
+    deps.seedDir(cwd);
+    return deps;
+  };
+
+  it('takes the home from the index when no flag, variable or config file names one', async () => {
+    expect(await located(indexed('/w/web/src'))).toEqual({ home: INDEX_HOME, source: 'index' });
+    expect(await resolveHome(indexed('/w/web'), undefined)).toEqual({ ok: true, value: INDEX_HOME });
+  });
+
+  it('asks the index last: the flag, the variable and a config file above the folder come first', async () => {
+    expect(await located(indexed('/w/web'), '/flag')).toEqual({ home: '/flag', source: 'flag' });
+    expect(await located(indexed('/w/web', { FACTORY_HOME: '/elsewhere' }))).toEqual({ home: '/elsewhere', source: 'env' });
+    const deps = indexed('/w/web/src');
+    deps.seed('/w/web/factory.yaml', 'schema: 2\n');
+    expect(await located(deps)).toEqual({ home: '/w/web', source: 'ancestor' });
+  });
+
+  it('fails with exit 2 and the hint when the index has no entry for the folder', async () => {
+    const result = await locateHome(indexed('/w/other'), undefined);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    if (result.ok) return;
+    expect(result.error.hint).toContain('Run "factory init" here, or use --home DIR');
+  });
+
+  it('fails with exit 2 when the index cannot be read, and names the file', async () => {
+    const deps = indexed('/w/web');
+    deps.seed('/state/factory/homes.json', 'broken');
+    const result = await locateHome(deps, undefined);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    if (!result.ok) expect(result.error.message).toContain('/state/factory/homes.json');
   });
 });
 

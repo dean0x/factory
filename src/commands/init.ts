@@ -21,6 +21,7 @@ import {
   hasIdentity,
   isWorkTreeRoot,
 } from '../core/git.js';
+import { indexPathOf, recordHome } from '../core/home-index.js';
 import { err, ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import {
@@ -28,9 +29,11 @@ import {
   commandText,
   defaultOwnerPrefix,
   dirs,
+  env,
   files,
   flags,
   flagText,
+  homeIndex,
   keys,
   roles,
   schemaIds,
@@ -433,7 +436,28 @@ const projectsOf = (deps: Deps, options: InitOptions, firstProject: string | nul
     ? options.projects
     : [firstProject, ...options.projects.filter((argument) => resolve(deps.cwd, argument) !== firstProject)];
 
+/**
+ * Put the new node in the home index, so that a command finds it from a project folder. The node exists already,
+ * so a problem here is a warning and not a failure.
+ */
+const indexNode = async (deps: Deps, indexPath: string | null, plan: InitPlan): Promise<readonly string[]> => {
+  if (indexPath === null) {
+    return [`The home index was not updated: ${env.stateHome} and ${env.userHome} name no folder.`];
+  }
+  const realHome = await realPathOf(deps, plan.home);
+  if (!realHome.ok) return [`The home index ${indexPath} was not updated: ${realHome.error.message}`];
+  const recorded = await recordHome(deps, indexPath, {
+    [homeIndex.keys.home]: realHome.value,
+    [homeIndex.keys.id]: plan.config.core.node.id,
+    [homeIndex.keys.projects]: plan.config.recipe.projects.map((project) => resolve(realHome.value, project.path)),
+  });
+  return recorded.ok ? [] : [`The home index ${indexPath} was not updated: ${recorded.error}`];
+};
+
 export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResult<CommandOutput>> => {
+  // The place of the index is checked before init writes anything.
+  const indexPath = indexPathOf(deps.env);
+  if (!indexPath.ok) return indexPath;
   const chosen = await chooseHome(deps, options);
   if (!chosen.ok) return chosen;
   const plan = await planInit(deps, {
@@ -444,6 +468,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!plan.ok) return plan;
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return applied;
+  const warnings = [...applied.value.warnings, ...(await indexNode(deps, indexPath.value, plan.value))];
 
   const written = [files.config, files.claudeMd, `${dirs.state}/`];
   return ok({
@@ -461,9 +486,9 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
       nodeId: plan.value.config.core.node.id,
       files: written,
       committed: applied.value.committed,
-      warnings: applied.value.warnings,
+      warnings,
     },
-    warnings: applied.value.warnings,
+    warnings,
     failed: false,
   });
 };

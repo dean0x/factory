@@ -39,7 +39,7 @@ const guard = async <T>(action: string, path: string, work: () => Promise<T>): P
 };
 
 /** Write beside the target, then rename. A link is followed, so the link stays and its target changes. */
-const writeAtomic = async (path: string, text: string): Promise<void> => {
+const writeAtomic = async (path: string, text: string, mode: number | undefined): Promise<void> => {
   const target = await realpath(path).catch((cause: unknown) => {
     if (errorCode(cause) === 'ENOENT') return path;
     throw cause;
@@ -48,7 +48,8 @@ const writeAtomic = async (path: string, text: string): Promise<void> => {
   try {
     const info = await stat(target).catch(() => null);
     await writeFile(temporary, text, 'utf8');
-    if (info?.isFile() === true) await chmod(temporary, info.mode & 0o777);
+    if (mode !== undefined) await chmod(temporary, mode);
+    else if (info?.isFile() === true) await chmod(temporary, info.mode & 0o777);
     await rename(temporary, target);
   } catch (cause) {
     await rm(temporary, { force: true }).catch(() => undefined);
@@ -81,7 +82,7 @@ const copyEntry = async (from: string, to: string, skip: readonly string[], dept
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
-  writeTextAtomic: (path, text) => guard('write', path, () => writeAtomic(path, text)),
+  writeTextAtomic: (path, text, mode) => guard('write', path, () => writeAtomic(path, text, mode)),
   stat: async (path) => {
     try {
       const info = await stat(path);
@@ -92,7 +93,8 @@ const nodeFs: Fs = {
     }
   },
   realpath: (path) => guard('resolve', path, () => realpath(path)),
-  mkdir: (path) => guard('create', path, async () => void (await mkdir(path, { recursive: true }))),
+  mkdir: (path, mode) =>
+    guard('create', path, async () => void (await mkdir(path, mode === undefined ? { recursive: true } : { recursive: true, mode }))),
   list: (path) => guard('list', path, async () => (await readdir(path)).sort()),
   rename: (from, to) => guard('rename', from, () => rename(from, to)),
   remove: (path) => guard('remove', path, () => rm(path, { recursive: true, force: true })),

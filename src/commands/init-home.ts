@@ -1,8 +1,9 @@
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { workTreeTop } from '../core/git.js';
 import { findNearestConfig } from '../core/home.js';
+import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { flags, flagText, program, roles } from '../names.js';
 
@@ -72,12 +73,6 @@ export const realPathOf = async (deps: Deps, path: string): Promise<CliResult<st
   if (!nearest.ok) return nearest;
   const real = await deps.fs.realpath(nearest.value.dir);
   return real.ok ? ok(join(real.value, ...nearest.value.below)) : real;
-};
-
-/** True when `child` is `parent` or a path inside it. Both paths are absolute and clean. */
-export const isSameOrInside = (parent: string, child: string): boolean => {
-  const path = relative(parent, child);
-  return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 };
 
 /**
