@@ -30,7 +30,7 @@ An independent check compared this design with every note from Dean. `docs/inten
 4. The proofs of D-52 are listed (§6.1). Releases get the key `approval.ship`, with `each` as the only value until D-57 is decided (§4.4, §6.2).
 5. Each layer has its own role template. Layer 3 gets its own template in FAC-M8 (§4.9, §5.2).
 6. The main session is a Claude Code session. A node names its agent command in the config (§4.6).
-7. The coordinator reads comments, label changes and open or close changes from the tracker. `factory up` starts `factory watch` (§4.10, §4.11).
+7. The coordinator reads comments, label changes, assignee changes and open or close changes from the tracker. `factory up` starts `factory watch` (§4.10, §4.11).
 8. The communication module has its own section. It is the only code that types into a pane (§4.12, §5.3).
 9. A parity table maps each part of today's setup to a command, a milestone or "retired". The adopt moves the coordinator text out of the folder above the checkouts (§8).
 10. The state repo can push to a private remote, for a second machine of the same owner (§4.3).
@@ -439,6 +439,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 - **Restore and restart.** `cell resume`, `cell restart` and the restore after a reboot (§4.11) use the same launch code, so they apply the same proxy rules and the same check.
 - **Heartbeat hook (decided, D-47).** `factory cell new` writes a hook into the checkout's `.claude/settings.local.json`. `factory up` writes the same hook for the coordinator in the home. Claude Code calls the hook on SessionStart, Stop (the end of each turn) and PreCompact, and the status line command calls it too. The hook writes one line to `<home>/.factory/state/heartbeat/<session>`: the session id, the event, the time and the context percent. The context percent comes from the status line JSON that Claude Code passes, not from the screen text.
 - **The status line is a user setting.** An entry in `settings.local.json` replaces the status line of the owner in that checkout. So factory writes only a wrapper, `factory hook statusline`. It records the percent from the JSON on its stdin, runs the command named in `session.statusline` with the same stdin, and prints the output of that command unchanged. With no `session.statusline`, it prints one short line, `context N%`. factory never reads the settings of the owner to find the command (§6), so the owner names it in the config. If the status line JSON has no percent field in the installed Claude Code, this section names the other source before the hook ships.
+- **Consent for every settings write.** factory never edits user-level Claude Code settings. Before it writes the hook or the status line wrapper, the command (`init`, `up` or `cell new`) prints the exact change and the target file. The target is project or local scope only: `.claude/settings.json` or `.claude/settings.local.json` in the home or the checkout. The write needs a yes on a TTY, or `--yes`. With no TTY and no `--yes`, the command writes nothing, prints the change, and exits 2. A status line command that the owner set before keeps working, because the wrapper passes its output through.
 - **Fixtures from the real program.** FAC-M4 captures one payload for each hook event and one status line payload from the installed Claude Code. It commits them as test fixtures. The hook tests parse these fixtures, so the claim "the percent comes from the status line" rests on a real payload, not on a made-up one.
 - **No reads under `~/.claude`.** The heartbeat file gives every fact that the scripts read under `~/.claude` today: the last activity (working, idle, stopped), the session id (to resume a cell after a restart) and the context percent. So no factory code and no role template reads or copies a file under `~/.claude`. The instruction "avoid reads under ~/.claude" is not necessary, and the templates do not contain it. A static test fails on any code path that opens a file there.
 
@@ -542,7 +543,7 @@ factory does not build its own review desk. The board, the andon items and the d
 - item: add, update, move (change the state), close;
 - decision: ask (an item with the options), read the answer;
 - doc: attach a file, or link a repo file;
-- changes: read comments, label changes and open or close changes since a cursor, each with its author.
+- changes: read comments, label changes, assignee changes and open or close changes since a cursor, each with its author.
 
 **Adapters.**
 - `github` (the default): issues plus a Projects board, through `gh`. factory already needs `gh` for the `software` recipe.
@@ -563,7 +564,7 @@ factory does not build its own review desk. The board, the andon items and the d
 - a label added or removed, for example `choose:<option>` or `ready` (a work item is ready);
 - an issue or item opened or closed.
 
-An event counts only when its author is the owner's tracker account. An event from another account wakes nobody, and the digest counts it as "other". A card moved on a Projects board and an assignee change are not read, because trackers do not give them as stable events. The owner uses a label for the same signal. `watch` calls no model. For each new owner event, it writes one record into `.factory/inbox/` and rings one constant doorbell line in the coordinator pane (§4.12). `factory up` starts `factory watch` in the window `ops` (§4.11).
+An event counts only when its author is the owner's tracker account. An event from another account wakes nobody, and the digest counts it as "other". An assignee change is read, because it is a proof of assignment (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new owner event, it writes one record into `.factory/inbox/` and rings one constant doorbell line in the coordinator pane (§4.12). `factory up` starts `factory watch` in the window `ops` (§4.11).
 
 **Privacy.** An issue in a public repo is public. Decision items can hold private facts. So the default decision store is a private repo, or private draft items in a private Project. `factory doctor` fails when the decision store is public, and warns when it is not set. The `local` store is private: it is the node's own state repo, with no remote.
 
@@ -711,11 +712,18 @@ factory never reads or writes under `~/.claude/` (settings, rules, skills, trans
 With `approval.land: approved-work`, `pr merge` needs two proofs: the owner approved the work, and the owner assigned it to a cell or a track. The proof of approval is one of three forms:
 1. **A decision.** A record in `decision-log.json` with `by: owner` that approves the work. The record names the work: a PR, an item or a track.
 2. **An ask.** An ask item (§4.10) for the PR or the work item, with the answer `approve` from the owner's account. With `github`, the answer is the comment `/choose approve` or the label `choose:approve`. With `local`, the owner types `factory decide <D-n> approve` in a terminal outside any factory session.
-3. **An approved plan.** A plan file in the project with the line `Status: approved`, set by a commit whose author is the owner's account (`owner.github`).
+3. **An approved plan.** An ask or a decision item that names the plan file (its path and its commit SHA), answered `approve` through the owner channel. With `github`, the answer is a comment or a label by the owner's account, read through the adapter. With `local`, it is `factory decide` from a TTY outside a factory session. The plan text itself proves nothing.
 
-The assignment is direct or by a decision. Direct: the proof of approval names the cell or the track. By a decision: a second record by the owner names the cell or the track for that work.
+The assignment is direct, by a decision, or by the tracker:
+- Direct: the proof of approval names the cell or the track.
+- By a decision: a second record by the owner names the cell or the track for that work.
+- By the tracker: the owner's account sets the assignee or a `cell:<id>` label on the work item. `factory watch` reads the change through the adapter (§4.10).
 
-These do not count: chat text, an answer or a label from another account, and a record that names another PR or head SHA. An approval in chat becomes a proof when the owner records it in one of the three forms. With `approval.land: each`, only a decision or an answered ask for that PR and head SHA counts; a plan does not.
+These do not count:
+- chat text;
+- an answer, a label or an assignee change from another account;
+- a record that names another PR or head SHA;
+- a commit author or a `Status:` line in a file. Agents can commit with the owner's own account, so a commit author proves nothing. An approval in chat becomes a proof when the owner records it in one of the three forms. With `approval.land: each`, only a decision or an answered ask for that PR and head SHA counts; a plan does not.
 
 An open question of the owner blocks the merge (D-52). `factory inspect` gives `NOT READY` while the PR has an open ask or an open andon item.
 
@@ -853,11 +861,11 @@ An independent check of the design against Dean's notes found open points. The O
 | Id | Decision |
 |---|---|
 | OD-1 | The review page of today and its scripts stay as the owner view until FAC-M3. FAC-M7 keeps them. FAC-M3 retires them (§4.10, §8). |
-| OD-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. The assignment is direct or by a decision. `inspect` gives NOT READY while a PR has an open ask or andon item (§6.1). |
+| OD-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. A plan counts only through an ask or decision item answered `approve` by the owner; a commit author is no proof. The assignment is direct, by a decision, or by an assignee or `cell:<id>` label that the owner's account sets. `inspect` gives NOT READY while a PR has an open ask or andon item (§6.1). |
 | OD-3 | Releases: `approval.ship: each`, the only value. D-57 stays open (§6.2). |
 | OD-4 | "Codex" in note F-3: factory starts Claude Code. The config names one agent command for each node, and only `claude` is built (§4.6). |
 | OD-5 | Each layer has its own role template. FAC-M8 ships the template of layer 3. `doctor` warns when a layer has no template (§5.2). |
-| OD-6 | The tracker adapter reads comments, label changes and open or close changes. `up` starts `watch` (§4.10, §4.11). |
+| OD-6 | The tracker adapter reads comments, label changes, assignee changes and open or close changes. Card moves stay out for now. `up` starts `watch` (§4.10, §4.11). |
 | OD-7 | The tracker scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira has `site` and `key` (§4.4, §4.10). |
 | OD-8 | The word list of Dean ends with the heading "machinery and automation hardware". A table in §7.1 maps each of his 11 words. |
 | OD-9 | The state repo can push to a private git remote that the owner names. `init --state-from` clones it on a second machine (§4.3). |

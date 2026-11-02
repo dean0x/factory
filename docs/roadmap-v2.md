@@ -133,6 +133,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] Every launch test asserts auto mode, and a proxy only from the config with the check before the launch.
 - [ ] Fixture tests: each hook payload fixture has a session id and an event name, and the status line fixture has a context percent. The hook parses the fixtures and writes the heartbeat line with those values.
 - [ ] Status line wrapper test: with `session.statusline` set to a fake command that prints a marker, `factory hook statusline` prints exactly the output of that command and writes the heartbeat line. With the key unset, it prints `context N%`.
+- [ ] Settings consent test (fake TTY and no TTY): `cell new` and `up` print the exact hook and status line change and its target file before any write. With no TTY and no `--yes`, they write nothing and exit 2. With `--yes`, they write only `.claude/settings.json` or `.claude/settings.local.json` in the home or the checkout. A test HOME shows that no file under `$HOME/.claude` changes. An existing status line command still prints its output through the wrapper.
 - [ ] Integration test: the hook writes the heartbeat line on each event (fake hook input).
 - [ ] Static test: no source file opens a path under `~/.claude`, and no template contains such a path.
 - [ ] `cell relay` types the owner prefix only for a decision with `by: owner` in the log; a test covers the refusal. The test uses a fixture decision log, because `factory decide` comes in FAC-M5.
@@ -178,14 +179,15 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] `pr merge` tests with `approval.land: approved-work`. There is one test for each proof of design §6.1:
   - (a) a decision with `by: owner`;
   - (b) an ask answered `approve` from the owner's account;
-  - (c) a plan file with `Status: approved` in a commit by the owner (a fake `gh api` gives the author).
+  - (c) an approved plan: an ask or decision item that names the plan path and commit SHA, answered `approve` by the owner's account (`local`: `factory decide` from a fake TTY with no `FACTORY_SESSION`).
 
-  Each test runs once with a direct assignment and once with an assignment by a second decision. Each run merges.
+  Each test runs three times: with a direct assignment, with an assignment by a second decision, and with an assignee or `cell:<id>` label set by the owner's account. Each run merges.
 - [ ] `pr merge` refuses, with a message that names the proof that is absent, in these cases:
   - approval with no assignment;
   - a decision by another account;
   - a record for another PR or head;
-  - a plan commit by another author;
+  - a plan file with `Status: approved` in a commit by the owner's account, with no answered ask or decision item;
+  - an assignee or label set by another account;
   - chat text with no record.
 - [ ] Config test: `approval.ship: each` loads, and an absent key means `each`. Any other value fails and names the key. `ship check|verify` only read; a test asserts that they run no publish command.
 - [ ] `checkout clean` is a dry run by default, and refuses a worktree with unpushed work or a path that a cell or resume file names. `factory clean` does not exist as a second command.
@@ -246,7 +248,7 @@ The import into GitHub issues is not here: it is FAC-M3.
 **Goal.** The board, the andon items and the decisions of this workspace move from the `local` tracker to GitHub. A script reads the owner's answers. The user picks the tracker at setup. The old page and scripts are retired. A second machine of the owner gets the profile.
 
 **Scope.**
-1. The `github` adapter (issues plus a Projects board, through `gh`) behind the FAC-M5 contract. The contract has the `doc` operation (attach a file, link a repo file) and `changes read` (comments, label changes, open or close changes, each with its author).
+1. The `github` adapter (issues plus a Projects board, through `gh`) behind the FAC-M5 contract. The contract has the `doc` operation (attach a file, link a repo file) and `changes read` (comments, label changes, assignee changes, open or close changes, each with its author; card moves are out for now).
 2. The commands `decide ask|read` and `watch`. `up` starts `watch` in the window `ops` when the tracker is not `local`.
 3. The choice of the tracker: `init --tracker --items --decisions`, the question on a TTY, `tracker set`, `tracker status`, and the per-project override (design §4.10).
 4. `item import` from the `local` files into a team tracker, and the move of this workspace's items into GitHub issues with a private decision store. The retirement of the old page and scripts.
@@ -258,7 +260,7 @@ The import into GitHub issues is not here: it is FAC-M3.
 - [ ] `decide read` records an answer `/choose B` or a label `choose:B` from the owner's account. It ignores the same answer from another account. Tests cover both cases.
 - [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
 - [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
-- [ ] Wake test on a separate tmux server with a fake `gh`. An owner comment `/choose B`, a label change and an issue close each cause one record in `.factory/inbox/` and one constant doorbell line in the coordinator pane. The same events from another account cause none. A fake `claude` on PATH records no call during `watch`.
+- [ ] Wake test on a separate tmux server with a fake `gh`. An owner comment `/choose B`, a label change, an assignee change and an issue close each cause one record in `.factory/inbox/` and one constant doorbell line in the coordinator pane. The same events from another account cause none. A fake `claude` on PATH records no call during `watch`.
 - [ ] `up --dry-run` with `github` lists the window `ops` with `factory watch`. With `local`, it lists no `ops` window.
 - [ ] Tracker choice, tests with a fake `gh`: `init --tracker github --items acme/web --decisions acme/decisions --yes` makes a node, and `factory doctor` exits 0. When the fake says that the decision repo is public, `init` exits 4 and writes no file, and `doctor` fails on such a config. `tracker status` prints `github`.
 - [ ] Override test: a node with the default `github` and a project with `kind: local`. `item add --project P` goes to the `local` files, and an item with no project goes to the fake `gh`. `tracker status` prints both.

@@ -49,7 +49,7 @@ How to read the table:
 | D-45d | Fix the six conflicts of design §1.3 | §1.3 | Conflicts 1, 2, 3, 5, 6: rows F-6, F-7, F-8, F-9, F-3c. Conflict 4 (context in percent): FAC-M4 `cell list` marks `PREPARE` and `MAX` | covered |
 | D-47 | The heartbeat hook comes with the cell control milestone | §4.6 | FAC-M4: hook test and static test | covered |
 | D-52a | Approved and assigned work lands with no ask for each PR; `--admin` only at the pinned head | §6 | FAC-M5: head-changed refusal test | covered |
-| D-52b | What counts as approval and assignment | §6.1 | FAC-M5: one test for each proof (decision, ask, approved plan), with direct and decision assignment | covered |
+| D-52b | What counts as approval and assignment | §6.1 | FAC-M5: one test for each proof (decision, ask, plan approved through an ask), with direct, decision and tracker assignment; a commit author is refused | covered |
 | D-52c | Unapproved work, or a PR with a question for the owner, still waits | §6.1 | FAC-M5: refusal tests; `inspect` exits 3 while the PR has an open ask or andon item | covered |
 | D-52d | Releases are not in D-52; they wait for his go | §6.2 | FAC-M5: `ship` no-publish test and the `approval.ship` config test | covered |
 | D-52e | factory offers the rule as an owner choice | §4.4 | FAC-M5: `pr merge` tests for `each` and `approved-work` | covered |
@@ -84,7 +84,7 @@ How to read the table:
 | V-F-1d | Keep node, owner, project; Dean is unsure what they mean | §4.1 | FAC-M2: glossary test (node, owner, project). Dean's yes or no to the glossary is in "Decisions needed" | covered |
 | V-F-1e | His 11 shop-floor words and the heading with no items | §7.1 | FAC-M2: `scripts/check-intent-docs.sh` counts 11 rows in the table | covered |
 | V-F-2a | Maybe do not create an own review desk | §4.10 | None. See F-2b | not applicable: the ask is to not build it |
-| V-F-2b | Use the tracker UI and CLI; listen on comments and more from the board | §4.10 | FAC-M3: wake test (comment, label change and issue close each cause one record and one doorbell line; another account causes none; `watch` calls no model) | covered |
+| V-F-2b | Use the tracker UI and CLI; listen on comments and more from the board | §4.10 | FAC-M3: wake test (comment, label change, assignee change and issue close each cause one record and one doorbell line; another account causes none; `watch` calls no model) | covered |
 | V-F-2c | The user picks the tracker, as in devflow | §4.10, §4.4 | FAC-M3: tracker choice test and override test. FAC-M9: `site` and `key` tests and the mixed test | covered |
 | V-F-3a | The main session of "Codex" | §4.6 | FAC-M4: `session.agent: claude` loads and another value fails; static test on agent starts | covered |
 | V-F-3b | Which folder: the root of the repo, or the root of the folder where he starts | §4.3 | FAC-M2: workspace folder test (two repos and a worktree) and the home index test | covered |
@@ -101,7 +101,7 @@ How to read the table:
 |---|---|---|---|---|
 | Gap 1 | Find the home from a project folder | §4.3 | FAC-M2: home index test | covered |
 | Gap 2 | The owner has a view and a way to answer in the `local` period | §4.10, §8 | FAC-M7: `scripts/check-owner-view.sh` and the owner answer pty test. FAC-M3 retires the old scripts | covered |
-| Gap 3 | The proof of approval follows D-52 | §6.1 | FAC-M5: one test for each proof; `inspect` exits 3 on an open ask | covered |
+| Gap 3 | The proof of approval follows D-52 | §6.1 | FAC-M5: one test for each proof, all through the owner channel; `inspect` exits 3 on an open ask | covered |
 | Gap 4 | The release question is open | §6.2, §4.4 | FAC-M5: `approval.ship` config test. D-57 is in "Decisions needed" | covered; D-57 is open with Dean |
 | Gap 5 | The user picks the tracker at setup | §4.10 | FAC-M3: tracker choice test with a fake `gh` | covered |
 | Gap 6 | The adopt moves the coordinator text out of the folder above the checkouts | §8 | FAC-M7: `scripts/check-cell-paths.sh` | covered |
