@@ -87,7 +87,11 @@ export const printable = (text: string): string => text.replace(CONTROL_CHARACTE
 export const renderError = (error: CliError): string =>
   `error: ${printable(error.message)}\n${error.hint === undefined ? '' : `${printable(error.hint)}\n`}`;
 
-export const renderText = (output: CommandOutput, style: Style, quiet: boolean): string => {
+/** The text for an error that no command handled. Its message is filtered like any other error text. */
+export const renderInternalError = (cause: unknown): string =>
+  `error: internal error: ${printable(cause instanceof Error ? cause.message : 'unknown')}\n`;
+
+export const renderText =(output: CommandOutput, style: Style, quiet: boolean): string => {
   const shown = output.lines.filter((line) => !quiet || line.level === 'warn' || line.level === 'fail');
   return shown.map((line) => `${style.paint(line.level, printable(line.text))}\n`).join('');
 };

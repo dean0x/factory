@@ -46,7 +46,7 @@ Platforms and help
 
 - Every command exits with code 4 on native Windows, and prints the hint to use WSL. macOS and Linux are the supported systems. `factory up` needs tmux 3.0 or newer and `claude` on the PATH.
 - New command `factory help words`. It prints one plain sentence for each word that factory uses. `--json` prints the same list.
-- Error messages, hints and the question of `init` show a control character as `?`, as the other text output does.
+- Error messages, hints, the text of an internal error and the question of `init` show a control character as `?`, as the other text output does.
 - `factory doctor` runs 16 checks. New checks: `home`, `index`, `roles`, `tracker` and `children`. The checks `blocks` and `tools` know the new rules.
 - The `permission-mode` check does not read the user settings folder of Claude Code. It skips that folder also when the settings folder of the home is a link to it, is inside it, or has other letter case on macOS.
 

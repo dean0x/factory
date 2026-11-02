@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { createStyle, detectStyle, renderError, renderJson, renderText, renderWarnings } from '../../src/cli/output.js';
+import {
+  createStyle,
+  detectStyle,
+  renderError,
+  renderInternalError,
+  renderJson,
+  renderText,
+  renderWarnings,
+} from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags } from '../../src/cli/table.js';
 import { FACTORY_VERSION } from '../../src/version.js';
@@ -261,6 +269,16 @@ describe('control characters in error text', () => {
 
   it('prints an error with no hint as one line', () => {
     expect(renderError({ kind: 'usage', message: 'bad' })).toBe('error: bad\n');
+  });
+
+  it('replaces them in the message of an internal error', () => {
+    const text = renderInternalError(new Error('failed \u001b[2J in \u0007 file\u009b'));
+    expect(text).toBe('error: internal error: failed ?[2J in ? file?\n');
+  });
+
+  it('prints an internal error that is not an Error as unknown', () => {
+    expect(renderInternalError('\u001b[2J')).toBe('error: internal error: unknown\n');
+    expect(renderInternalError(undefined)).toBe('error: internal error: unknown\n');
   });
 
   it('replaces them in the error of a command', async () => {
