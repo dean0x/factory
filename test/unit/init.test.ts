@@ -1226,6 +1226,67 @@ describe('init: a project URL', () => {
   });
 });
 
+describe('init: the checks before a clone', () => {
+  const URL_API = 'https://host/acme/api.git';
+
+  /** Run init with a URL project and the given options. The result, the git log and the change of the file system. */
+  const initWithUrl = async (extra: Partial<InitOptions>, fixture: GitFixture = {}, prepare?: (deps: FakeDeps) => void) => {
+    const { deps, log } = setup(fixture);
+    prepare?.(deps);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ projects: [URL_API], ...extra }));
+    return { result, log, changed: snapshot(deps) !== before };
+  };
+
+  it.each([['0'], ['17'], ['x'], ['1.5']])('gives the error of --layer %s and runs no clone', async (layer) => {
+    const { result, log, changed } = await initWithUrl({ layer });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('--layer');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('gives the error of --recipe and runs no clone', async () => {
+    const { result, log, changed } = await initWithUrl({ recipe: 'no-such-recipe' });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('--recipe');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('gives the error for a missing owner name and runs no clone', async () => {
+    const { result, log, changed } = await initWithUrl({ ownerName: undefined }, { identity: false });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('--owner-name');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('refuses a home inside a git work tree and runs no clone', async () => {
+    const { result, log, changed } = await initWithUrl({ home: '/w/web/node' }, { repos: { '/w/web': {} } }, (deps) =>
+      deps.seedDir('/w/web'),
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('/w/web/node is inside the git work tree /w/web');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('refuses a home inside another node home and runs no clone', async () => {
+    const { result, log, changed } = await initWithUrl({}, {}, (deps) => deps.seed('/w/factory.yaml', 'schema: 2\n'));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('is inside another node home');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
+  it('still clones when every value is good', async () => {
+    const { result, log } = await initWithUrl({ layer: '1', recipe: 'software' }, { repos: { '/w/api': { origin: URL_API } } });
+    expect(result.ok).toBe(true);
+    expect(log.clones()).toHaveLength(1);
+  });
+});
+
 describe('init: the home index', () => {
   const INDEX = '/state/factory/homes.json';
   const env = { XDG_STATE_HOME: '/state', HOME: '/users/me' };

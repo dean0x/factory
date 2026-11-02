@@ -245,13 +245,44 @@ const blockTexts = async (
   });
 };
 
-/** Read the system and decide what init writes. This function writes nothing. */
-export const planInit = async (deps: Deps, options: InitOptions): Promise<CliResult<InitPlan>> => {
-  const layerFlag = parseLayer(options.layer);
-  if (!layerFlag.ok) return layerFlag;
-  const layer = layerFlag.value;
+/** The values of the flags that a clone does not change. */
+interface CheckedOptions {
+  readonly layer: number;
+  readonly recipe: (typeof values.recipes)[number];
+  readonly ownerName: string;
+}
+
+/**
+ * Check the layer, the recipe, the home location and the owner name. They need no project, so a bad value
+ * is found before any clone runs. This function writes nothing.
+ */
+const checkOptions = async (deps: Deps, options: InitOptions, home: string): Promise<CliResult<CheckedOptions>> => {
+  const layer = parseLayer(options.layer);
+  if (!layer.ok) return layer;
   const recipe = parseRecipe(options.recipe);
   if (!recipe.ok) return recipe;
+  const location = await checkHomeLocation(deps, home);
+  if (!location.ok) return location;
+  const ownerName = (options.ownerName ?? (await configValue(deps, deps.cwd, 'user.name')) ?? '').trim();
+  if (ownerName === '') {
+    return usageError(
+      `no ${roles.owner} name`,
+      `Pass ${flagText(flags.ownerName)} NAME, or set git config user.name.`,
+    );
+  }
+  return ok({ layer: layer.value, recipe: recipe.value, ownerName });
+};
+
+/** Read the system and decide what init writes. This function writes nothing. */
+export const planInit = async (deps: Deps, options: InitOptions): Promise<CliResult<InitPlan>> => {
+  const checked = await checkOptions(deps, options, resolve(deps.cwd, options.home ?? '.'));
+  if (!checked.ok) return checked;
+  return planChecked(deps, options, checked.value);
+};
+
+/** The plan, after `checkOptions` has passed. */
+const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOptions): Promise<CliResult<InitPlan>> => {
+  const { layer, recipe, ownerName } = checked;
   const home = resolve(deps.cwd, options.home ?? '.');
   const layout = layoutOf(home);
 
@@ -274,19 +305,9 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
   const createdRoot = homeKind.value === null ? await topMissingFolder(deps, home) : ok(null);
   if (!createdRoot.ok) return createdRoot;
 
-  const location = await checkHomeLocation(deps, home);
-  if (!location.ok) return location;
-
   const id = options.name ?? slugify(basename(home));
   if (id === null) {
     return usageError(`cannot make a ${roles.node} id from the folder name`, `Pass ${flagText(flags.name)} ID.`);
-  }
-  const ownerName = (options.ownerName ?? (await configValue(deps, deps.cwd, 'user.name')) ?? '').trim();
-  if (ownerName === '') {
-    return usageError(
-      `no ${roles.owner} name`,
-      `Pass ${flagText(flags.ownerName)} NAME, or set git config user.name.`,
-    );
   }
   const github = options.ownerGithub ?? (await detectGithubLogin(deps));
 
@@ -321,7 +342,7 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
     [keys.root.approval]: { [keys.approval.land]: values.landModes[0] },
     [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },
     [keys.root.recipe]: {
-      [keys.recipe.id]: recipe.value,
+      [keys.recipe.id]: recipe,
       [keys.recipe.variant]: values.variants[0],
       [keys.recipe.projects]: projects.value,
     },
@@ -473,6 +494,10 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!chosen.ok) return chosen;
   const { home, found, skipped, truncated } = chosen.value;
 
+  // A bad value must give its error before any clone runs, because a clone costs time and disk.
+  const checked = await checkOptions(deps, options, home);
+  if (!checked.ok) return checked;
+
   // The clones come before the plan, because the plan reads each project. When a later step fails, the clones
   // that this run made are removed again. A folder that was there before the run is never removed.
   const projects = await planProjects(deps, home, options.projects);
@@ -481,11 +506,11 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!cloned.ok) return cloned;
   const made = cloned.value;
 
-  const plan = await planInit(deps, {
-    ...options,
-    home,
-    projects: projectsOf(deps, projects.value.paths, found),
-  });
+  const plan = await planChecked(
+    deps,
+    { ...options, home, projects: projectsOf(deps, projects.value.paths, found) },
+    checked.value,
+  );
   if (!plan.ok) return undoClones(deps, made, plan.error);
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, applied.error);
