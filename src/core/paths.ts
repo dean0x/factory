@@ -37,3 +37,23 @@ export const realPathOf = async (deps: Deps, path: string): Promise<CliResult<st
   const real = await deps.fs.realpath(nearest.value.dir);
   return real.ok ? ok(join(real.value, ...nearest.value.below)) : real;
 };
+
+/** The value of `process.platform` on macOS. */
+const MACOS = 'darwin';
+
+/** The path in the form that is compared: macOS has a file system that ignores the case of letters. */
+export const comparable = (deps: Deps, path: string): string => (deps.platform.os === MACOS ? path.toLowerCase() : path);
+
+/**
+ * True when `path` is `folder` or inside it. The two paths are compared as they are written, and again with their
+ * links resolved. On macOS the comparison ignores the case of letters. A link that cannot be resolved is an error.
+ */
+export const isSameOrInsideFolder = async (deps: Deps, folder: string, path: string): Promise<CliResult<boolean>> => {
+  const [realPath, realFolder] = [await realPathOf(deps, path), await realPathOf(deps, folder)];
+  if (!realPath.ok) return realPath;
+  if (!realFolder.ok) return realFolder;
+  return ok(
+    isSameOrInside(comparable(deps, folder), comparable(deps, path)) ||
+      isSameOrInside(comparable(deps, realFolder.value), comparable(deps, realPath.value)),
+  );
+};

@@ -10,6 +10,7 @@ import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder, type LocatedHome } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
+import { isSameOrInsideFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import type { DocState } from '../migrate/inspect.js';
@@ -263,9 +264,13 @@ export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
 export const checkPermissionMode = async (deps: Deps, home: string): Promise<CheckResult> => {
   const settingsDir = join(home, dirs.claude);
   const userHome = deps.env[env.userHome];
-  const userDir = userHome === undefined ? undefined : join(resolve(userHome), dirs.claude);
-  if (userDir !== undefined && resolve(settingsDir) === userDir) {
-    return notChecked(checkIds.permissionMode, `${settingsDir} holds the user settings of Claude Code`);
+  if (userHome !== undefined) {
+    const userDir = join(resolve(userHome), dirs.claude);
+    const isUserDir = await isSameOrInsideFolder(deps, userDir, resolve(settingsDir));
+    if (!isUserDir.ok) return notChecked(checkIds.permissionMode, isUserDir.error.message);
+    if (isUserDir.value) {
+      return notChecked(checkIds.permissionMode, `${settingsDir} is, or is inside, the user settings folder of Claude Code`);
+    }
   }
   const folder = await deps.fs.stat(settingsDir);
   if (!folder.ok) return notChecked(checkIds.permissionMode, folder.error.message);

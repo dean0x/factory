@@ -47,6 +47,8 @@ interface Setup {
   readonly fetch?: FetchHandler;
   readonly tools?: readonly string[];
   readonly cwd?: string;
+  readonly os?: string;
+  readonly links?: Record<string, string>;
 }
 
 const makeDeps = (setup: Setup = {}): FakeDeps => {
@@ -58,6 +60,8 @@ const makeDeps = (setup: Setup = {}): FakeDeps => {
     run: (call) => (call.command === 'tmux' ? tmux.handler(call) : git.handler(call)),
     nodeVersion: setup.nodeVersion ?? 'v22.5.0',
     ...(setup.fetch === undefined ? {} : { fetch: setup.fetch }),
+    ...(setup.os === undefined ? {} : { os: setup.os }),
+    ...(setup.links === undefined ? {} : { links: setup.links }),
   });
   for (const tool of setup.tools ?? TOOLS) deps.seed(`/bin/${tool}`, '');
   return deps;
@@ -301,6 +305,77 @@ describe('doctor: permission mode', () => {
     const result = await checkPermissionMode(deps, HOME);
     expect(result.level).toBe('warn');
     expect(result.text).toContain('not checked');
+  });
+
+  describe('the user settings folder of Claude Code, written in another way', () => {
+    const USER_SETTINGS = '/users/me/.claude';
+    const BYPASS = '{"permissions":{"defaultMode":"bypassPermissions"}}';
+
+    /** Deps that count every list and read inside a settings folder. */
+    const watched = (deps: FakeDeps) => {
+      const touched: string[] = [];
+      const guarded = {
+        ...deps,
+        fs: {
+          ...deps.fs,
+          list: async (path: string) => {
+            touched.push(path);
+            return deps.fs.list(path);
+          },
+          readText: async (path: string) => {
+            touched.push(path);
+            return deps.fs.readText(path);
+          },
+        },
+      };
+      return { guarded, touched };
+    };
+
+    it('skips a settings folder that is a link to the user settings folder', async () => {
+      const deps = makeDeps({ env: { HOME: '/users/me' }, links: { [`${HOME}/.claude`]: USER_SETTINGS } });
+      deps.seedDir(`${HOME}/.claude`);
+      deps.seed(`${USER_SETTINGS}/settings.json`, BYPASS);
+      const { guarded, touched } = watched(deps);
+      const result = await checkPermissionMode(guarded, HOME);
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('not checked');
+      expect(touched).toEqual([]);
+    });
+
+    it('skips a settings folder in other letter case on macOS', async () => {
+      const deps = makeDeps({ env: { HOME: '/users/me' }, os: 'darwin' });
+      deps.seed(`/Users/Me/.claude/settings.json`, BYPASS);
+      const { guarded, touched } = watched(deps);
+      const result = await checkPermissionMode(guarded, '/Users/Me');
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('not checked');
+      expect(touched).toEqual([]);
+    });
+
+    it('compares the letters exactly on the other platforms', async () => {
+      const deps = makeDeps({ env: { HOME: '/users/me' }, os: 'linux' });
+      deps.seed(`/Users/Me/.claude/settings.json`, BYPASS);
+      expect((await checkPermissionMode(deps, '/Users/Me')).level).toBe('fail');
+    });
+
+    it('skips a settings folder below the user settings folder', async () => {
+      const deps = makeDeps({ env: { HOME: '/users/me' } });
+      deps.seed(`${USER_SETTINGS}/node/.claude/settings.json`, BYPASS);
+      const result = await checkPermissionMode(deps, `${USER_SETTINGS}/node`);
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('not checked');
+    });
+
+    it('warns and reads nothing when it cannot resolve the links of the paths', async () => {
+      const deps = makeDeps({ env: { HOME: '/users/me' } });
+      deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
+      const denied = { ...deps, fs: { ...deps.fs, realpath: async () => failure('cannot resolve /: EACCES') } };
+      const { guarded, touched } = watched(denied as FakeDeps);
+      const result = await checkPermissionMode(guarded, HOME);
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('EACCES');
+      expect(touched).toEqual([]);
+    });
   });
 
   it('warns when it cannot tell whether the settings folder exists', async () => {

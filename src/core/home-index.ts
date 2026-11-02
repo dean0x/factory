@@ -5,13 +5,11 @@ import { slug } from '../config/primitives.js';
 import { dirs, env, files, flagText, flags, homeIndex, program, roles } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps, PathInfo } from './deps.js';
-import { isSameOrInside, realPathOf } from './paths.js';
+import { isSameOrInside, isSameOrInsideFolder } from './paths.js';
 import { err, ok, type Result } from './result.js';
 import { describeIssues } from './zod.js';
 
 const MAX_PATH_CHARS = 4096;
-/** The value of `process.platform` on macOS. */
-const MACOS = 'darwin';
 /** The folder of the index is private to the user, and so is the file. */
 const FOLDER_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -46,9 +44,6 @@ const absoluteEnv = (environment: Environment, name: string): string | undefined
   return value !== undefined && value !== '' && isAbsolute(value) ? resolve(value) : undefined;
 };
 
-/** The path in the form that is compared: macOS has a file system that ignores the case of letters. */
-const comparable = (deps: Deps, path: string): string => (deps.platform.os === MACOS ? path.toLowerCase() : path);
-
 /**
  * The index file: below the state home when that variable holds an absolute path, else below `.local/state`
  * of the user home. It is null when neither variable names a folder. A path inside the folder of Claude Code
@@ -65,13 +60,9 @@ export const indexPathOf = async (deps: Deps): Promise<CliResult<string | null>>
   const path = join(stateHome, program, files.homeIndex);
   if (userHome === undefined) return ok(path);
   const claudeDir = join(userHome, dirs.claude);
-  const [realPath, realClaudeDir] = [await realPathOf(deps, path), await realPathOf(deps, claudeDir)];
-  if (!realPath.ok) return realPath;
-  if (!realClaudeDir.ok) return realClaudeDir;
-  const inside =
-    isSameOrInside(comparable(deps, claudeDir), comparable(deps, path)) ||
-    isSameOrInside(comparable(deps, realClaudeDir.value), comparable(deps, realPath.value));
-  if (inside) {
+  const inside = await isSameOrInsideFolder(deps, claudeDir, path);
+  if (!inside.ok) return inside;
+  if (inside.value) {
     return safetyRefusal(
       `the home index would be ${path}, inside ${claudeDir}`,
       `Claude Code owns that folder. Set ${env.stateHome} to another absolute folder.`,
