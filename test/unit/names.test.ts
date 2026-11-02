@@ -186,6 +186,11 @@ describe('words of the old names', () => {
     expect(texts.flatMap(oldWordsIn)).toEqual([]);
   });
 
+  it('keeps the old words out of package.json, which the npm page shows', () => {
+    const text = readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8');
+    expect(oldWordsIn(text)).toEqual([]);
+  });
+
   it('keeps the old words out of every template', () => {
     const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
     expect(texts.flatMap(oldWordsIn)).toEqual([]);

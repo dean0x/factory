@@ -158,8 +158,21 @@ scan "a date" '20[0-9]{2}-[0-9]{2}-[0-9]{2}'
 # The triage words of one workflow tool. Their case counts: the lower-case words stay allowed.
 scan "a workflow triage word" '(^|[^[:alnum:]_])(FIX_NOW|ESCALATED|CHANGES REQUESTED)([^[:alnum:]_]|$)' exact
 # The words that v2 replaced, as in OLD_WORDS of test/unit/names.test.ts: whole words, also in the plural or in the past tense.
-scan "an old word (lane, pack or brief)" '(^|[^[:alnum:]_])(lane|pack|brief)(s|ed)?([^[:alnum:]_]|$)'
+old_words='(^|[^[:alnum:]_])(lane|pack|brief)(s|ed)?([^[:alnum:]_]|$)'
+scan "an old word (lane, pack or brief)" "$old_words"
 printf 'no generated file and no help text holds a name from the deny list or an old word\n'
+
+# The npm page shows the package.json of the package. The installed copy holds no old word.
+package_json="$npm_config_prefix/lib/node_modules/@dean0x/factory/package.json"
+[ -f "$package_json" ] || fail "the installed package has no package.json"
+code=0
+grep -Eiq -e "$old_words" "$package_json" || code=$?
+if [ "$code" -eq 0 ]; then
+  fail "the package.json of the package holds an old word (lane, pack or brief)"
+elif [ "$code" -ne 1 ]; then
+  fail "the search of the package.json of the package failed"
+fi
+printf 'the package.json of the package holds no old word\n'
 
 # A read-only look at the real folders. A change here is a warning: another program may have written it.
 touched=""
