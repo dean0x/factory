@@ -421,7 +421,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 | (none) | `tracker.kind: local`. The owner moves to a team tracker later with `factory item import` |
 | (none) | `approval.land: each` |
 | (none) | `parent: null` |
-| `children[].address` (any text) | the same value, only when it is a valid `file://` address. Else the migration stops and names the child (F-13) |
+| `children[]` with entries | The migration stops and changes nothing, because the children of layer 1 are cells. A child whose address is not a valid `file://` address is named (F-13). The owner removes the entries, or sets `node.layer: 2` after the upgrade and adds the nodes with `factory node add-child` |
 | `.factory/protocol.md` (block `protocol`) | `.factory/roles/worker.md` (block `worker`) |
 | `.factory/briefs/` | `.factory/orders/` |
 | `.factory/board.json`, `waiting.json` | kept in place: they are the files of the `local` tracker |

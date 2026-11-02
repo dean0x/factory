@@ -77,12 +77,16 @@ describe('config migration, schema 1 to 2', () => {
     expect(migrated.schema).toBe(2);
   });
 
-  it('keeps a file address of a child as it is', () => {
+  it('stops when a node on layer 1 lists a child, also with a file address, and gives the remedy', () => {
     const doc = schema1Doc();
     doc.children = [{ id: 'team-a', address: 'file:///work/team-a' }];
-    const migrated = valueOf(migrateConfig(doc));
-    expect(migrated.children).toEqual([{ id: 'team-a', address: 'file:///work/team-a' }]);
-    expect(configSchema.safeParse(migrated).success).toBe(true);
+    const message = messageOf(migrateConfig(doc));
+    expect(message).toContain('children');
+    expect(message).toContain('cells');
+    expect(message).toContain('node.layer');
+    expect(message).toContain('factory node add-child');
+    expect(message).not.toContain('team-a');
+    expect(message).not.toContain('/work/');
   });
 
   it.each([
@@ -108,7 +112,7 @@ describe('config migration, schema 1 to 2', () => {
 
   it('does not change its input', () => {
     const doc = schema1Doc();
-    doc.children = [{ id: 'team-a', address: 'file:///work/team-a' }];
+    doc.lanes = { 'cell-a': { proxy: 'none' } };
     const before = JSON.parse(JSON.stringify(doc)) as unknown;
     migrateConfig(doc);
     expect(doc).toEqual(before);

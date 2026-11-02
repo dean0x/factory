@@ -12,7 +12,7 @@ Config schema 2 and the migration
 
 - `factory.yaml` has schema 2. The projects are now in `recipe.projects`, and `recipe.id` names the recipe. New keys: `tracker`, `approval`, `parent` and `children`. The only tracker is `local`. The other tracker kinds parse, and `doctor` warns that their connector comes later.
 - `factory upgrade` migrates a node of version 0.1.0 to schema 2 in one step. It keeps the comments, the blank lines and the order of the keys in `factory.yaml`. It moves the files, renames the managed block, backs up first, and restores the files when a step fails. It refuses an edited `protocol` block unless you name it with `--overwrite`. After the upgrade, `factory doctor` passes.
-- A node link (`parent` and `children`) accepts only a `file://` address on this machine. An `ssh://`, `https://` or relative address is refused. A child with such an address stops the migration and changes nothing.
+- A node link (`parent` and `children`) accepts only a `file://` address on this machine. An `ssh://`, `https://` or relative address is refused. A node on layer 1 with entries in `children` stops the migration and changes nothing, because the children of layer 1 are cells. The message gives the remedy.
 
 Home, `init` and `up`
 

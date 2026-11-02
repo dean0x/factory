@@ -4,7 +4,7 @@ import { checkFileAddress } from '../comms/address.js';
 import { configDocumentText, parseConfigDocument } from '../config/edit.js';
 import { isSlug } from '../config/primitives.js';
 import { ok } from '../core/result.js';
-import { keys, roles, schema1, values } from '../names.js';
+import { commands, commandText, keys, nodeCommands, roles, schema1, values } from '../names.js';
 import type { Migration } from './runner.js';
 
 const FROM = 1;
@@ -86,7 +86,10 @@ const migrateProjects = (root: YAMLMap): CliResult<YAMLSeq | undefined> => {
   return ok(projects);
 };
 
-/** F-13: the address of a child must be a file address. The error names the child and never repeats the address. */
+/**
+ * The children of a node on layer 1 are cells, and a cell is not a node link. So the list must be empty.
+ * F-13: the address of a child must be a file address. The error names the child and never repeats the address.
+ */
 const checkChildren = (root: YAMLMap): CliResult<void> => {
   const children = root.get(keys.root.children, true);
   if (children === undefined) return ok(undefined);
@@ -102,7 +105,13 @@ const checkChildren = (root: YAMLMap): CliResult<void> => {
       return failure(`${keys.root.children}[${index}]${who}: ${keys.link.address}: ${checked.error}`);
     }
   }
-  return ok(undefined);
+  if (children.items.length === 0) return ok(undefined);
+  return failure(
+    `${keys.root.children}: a ${roles.node} on layer ${COORDINATOR_LAYER} has ${roles.cell}s as its children, ` +
+      `so this list must be empty. Remove the entries and run the command again. ` +
+      `To manage other ${roles.node}s, set ${keys.root.node}.${keys.node.layer} to 2 after the upgrade, ` +
+      `and add them with "${commandText(commands.node)} ${nodeCommands.addChild}".`,
+  );
 };
 
 const migrateDocument = (doc: Document): CliResult<void> => {

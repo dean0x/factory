@@ -1036,6 +1036,20 @@ describe('upgrade: a node of schema 1', () => {
     expect(live(deps)).toEqual(before);
   });
 
+  it('stops on a child with a file address, because the children of layer 1 are cells, and changes nothing', async () => {
+    const doc = schema1Doc();
+    doc.children = [{ id: 'team-a', address: 'file:///work/team-a' }];
+    const { deps } = makeOldNode({ doc });
+    const before = live(deps);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.message).toContain('factory.yaml: migration from version 1 to 2 failed');
+      expect(error.message).toContain('this list must be empty');
+      expect(error.message).toContain('factory node add-child');
+    }
+    expect(live(deps)).toEqual(before);
+  });
+
   it('restores the moved files and the written files when a write fails in the middle', async () => {
     const { deps, gitSince } = makeOldNode();
     const before = live(deps);
