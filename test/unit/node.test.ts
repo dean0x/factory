@@ -5,6 +5,7 @@ import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { expectShortOutput, plainText } from '../helpers/short-output.js';
 
 const HOME = '/w/mgr';
 const CONFIG_PATH = `${HOME}/factory.yaml`;
@@ -78,6 +79,18 @@ describe('node children', () => {
       { id: 'api', address: 'file:///w/api-factory', layer: null, status: 'unknown', reason: 'no factory.yaml found there' },
     ]);
     expect(output.failed).toBe(false);
+  });
+
+  it('prints a short output, with and without a child', async () => {
+    expectShortOutput(plainText(await succeeded(make(), 'children')));
+    const deps = make({
+      children: [
+        { id: 'web', address: 'file:///w/web-factory' },
+        { id: 'api', address: 'file:///w/api-factory' },
+      ],
+      homes: { ...webHome, '/w/api-factory': null },
+    });
+    expectShortOutput(plainText(await succeeded(deps, 'children')));
   });
 
   it('pads the ids to one width', async () => {

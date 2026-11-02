@@ -68,6 +68,10 @@ git config --file "$GIT_CONFIG_GLOBAL" user.email "test.owner@example.com"
 git config --file "$GIT_CONFIG_GLOBAL" init.defaultBranch main
 export PATH="$npm_config_prefix/bin:$PATH"
 
+step "docs check"
+logged docs sh "$root/scripts/check-intent-docs.sh"
+tail -n 1 "$tmp/docs.log"
+
 step "pack"
 pack() { (cd "$root" && npm pack --silent --ignore-scripts --pack-destination "$tmp/pack"); }
 logged pack pack

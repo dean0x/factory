@@ -6,6 +6,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
@@ -109,6 +110,11 @@ describe('up: a new session', () => {
     expect(output.failed).toBe(false);
   });
 
+  it('prints a short output', async () => {
+    const { deps } = make();
+    expectShortOutput(plainText(await succeeded(deps)));
+  });
+
   it('adds one --add-dir for each project, with the absolute path', async () => {
     const config = sampleConfig();
     const second = { ...config.recipe.projects[0]!, id: 'api', path: '../api' };
@@ -185,6 +191,7 @@ describe('up: a session that runs already', () => {
     const { deps } = make({ tmux: { sessions: { demo: HOME } } });
     const output = await succeeded(deps);
     expect(output.lines).toEqual([{ level: 'text', text: 'Session demo runs. Attach with: tmux attach -t demo' }]);
+    expectShortOutput(plainText(output));
   });
 
   it('knows the home through a link', async () => {
