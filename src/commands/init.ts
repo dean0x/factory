@@ -490,6 +490,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!applied.ok) return undoClones(deps, made, applied.error);
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
   const warnings = [
+    ...projects.value.warnings,
     ...plan.value.warnings,
     ...applied.value.warnings,
     ...notes,

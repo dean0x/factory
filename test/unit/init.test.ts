@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import { applyInit, planInit, runInit, type InitOptions } from '../../src/commands/init.js';
 import { checkHomeHoldsNoRepo } from '../../src/commands/init-home.js';
 import { loadConfig } from '../../src/config/load.js';
@@ -14,6 +15,7 @@ import { layer2Blocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { captureSink } from '../helpers/sink.js';
 
 const HOME = '/w/node';
 
@@ -1119,6 +1121,99 @@ describe('init: a project URL', () => {
       expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
       expect(messageOf(result)).toContain('These clones could not be removed: /w/api (cannot remove /w/api: EBUSY).');
       expect(messageOf(result)).not.toContain('Removed the clone');
+    });
+  });
+
+  describe('a URL with credentials', () => {
+    const TOKEN = 'ghp_S3cretT0kenValue';
+    const URL_TOKEN = `https://${TOKEN}@github.com/acme/api.git`;
+    const URL_SHOWN = 'https://github.com/acme/api.git';
+    const INDEX = '/state/factory/homes.json';
+    const env = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+    const echoed = { cloneExit: 128, cloneStderr: `fatal: unable to access '${URL_TOKEN}/': The requested URL returned error: 403\n` };
+
+    /** Every text that the command shows or keeps: its result, and each file and folder of the file system. */
+    const everythingOf = (deps: FakeDeps, result: unknown): string =>
+      JSON.stringify([result, [...deps.files.entries()], [...deps.dirs]]);
+
+    const initCli = async (fixture: GitFixture, json: boolean) => {
+      const { deps } = setup(fixture, { env });
+      const sink = captureSink();
+      const argv = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--project', URL_TOKEN, ...(json ? ['--json'] : [])];
+      const code = await runCli(argv, deps, sink);
+      return { deps, code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+
+    it('keeps the token out of the result and the written files, and warns without naming it', async () => {
+      const { deps, done } = run({ repos: { '/w/api': { origin: URL_TOKEN } } }, [URL_TOKEN], { env });
+      const result = await done;
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(deps.files.get(`${HOME}/factory.yaml`)).toContain('acme/api');
+      expect(deps.files.has(INDEX)).toBe(true);
+      expect(everythingOf(deps, result)).not.toContain(TOKEN);
+      expect(result.value.warnings).toHaveLength(1);
+      expect(result.value.warnings[0]).toContain('.git/config');
+      expect(result.value.warnings[0]).toContain('gh auth login');
+      expect(result.value.warnings[0]).not.toContain(TOKEN);
+    });
+
+    it.each(['ssh://git@github.com/acme/api.git', 'git@github.com:acme/api.git', URL_SHOWN])(
+      'does not warn for %s, which holds no credentials',
+      async (url) => {
+        const { done } = run({ repos: { '/w/api': { origin: url } } }, [url], { env });
+        const result = await done;
+        expect(result.ok && result.value.warnings).toEqual([]);
+      },
+    );
+
+    it('prints the token on neither stdout nor stderr, and prints the warning on stderr', async () => {
+      const { code, out, err } = await initCli({ repos: { '/w/api': { origin: URL_TOKEN } } }, false);
+      expect(code).toBe(0);
+      expect(`${out}${err}`).not.toContain(TOKEN);
+      expect(err).toContain('warning: ');
+      expect(err).toContain('gh auth login');
+    });
+
+    it('puts the warning in the JSON document, with no token', async () => {
+      const { code, out, err } = await initCli({ repos: { '/w/api': { origin: URL_TOKEN } } }, true);
+      expect(code).toBe(0);
+      expect(`${out}${err}`).not.toContain(TOKEN);
+      expect(out).toContain('gh auth login');
+    });
+
+    it('shows the token nowhere when the clone fails, also when git repeats the URL', async () => {
+      const { deps, done } = run(echoed, [URL_TOKEN], { env });
+      const result = await done;
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(messageOf(result)).toContain(`cannot clone ${URL_SHOWN}`);
+      expect(everythingOf(deps, result)).not.toContain(TOKEN);
+      expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
+    });
+
+    it('prints the token on neither stdout nor stderr when the clone fails, in text and in JSON', async () => {
+      for (const json of [false, true]) {
+        const { code, out, err } = await initCli(echoed, json);
+        expect(code).toBe(1);
+        expect(`${out}${err}`).not.toContain(TOKEN);
+        expect(err).toContain(`cannot clone ${URL_SHOWN}`);
+      }
+    });
+
+    it('shows the token nowhere when the target holds a clone of another URL', async () => {
+      const { deps } = setup({ repos: { '/w/api': { origin: 'https://host/other/api.git' } } }, { env });
+      deps.seedDir('/w/api');
+      const result = await runInit(deps, options({ projects: [URL_TOKEN] }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(result)).toContain(`is not a clone of ${URL_SHOWN}`);
+      expect(everythingOf(deps, result)).not.toContain(TOKEN);
+    });
+
+    it('refuses the user:password form and does not repeat it', async () => {
+      const { done } = run({}, ['https://user:tok3n@host/acme/api.git'], { env });
+      const result = await done;
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(JSON.stringify(result)).not.toContain('tok3n');
     });
   });
 

@@ -13,6 +13,16 @@ const MAX_STDERR_CHARS = 200;
 const GITHUB_URL =
   /^(?:https?:\/\/(?:[^@/\s]+@)?github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)([A-Za-z0-9][A-Za-z0-9-]{0,38})\/([A-Za-z0-9_][A-Za-z0-9._-]{0,99}?)(?:\.git)?\/?$/;
 
+/** The start of a URL with a scheme, up to and including the `@` that ends its userinfo. */
+const URL_USERINFO = /([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/]*@/g;
+
+/**
+ * The text with the userinfo of every `scheme://` URL in it removed: the scheme, the host and the path stay.
+ * Every text that holds a URL of a person goes through this function before it is shown or written.
+ * The form `user@host:path` has no scheme and holds no secret, so it stays as it is.
+ */
+export const withoutUserinfo = (text: string): string => text.replace(URL_USERINFO, '$1');
+
 /** `owner/name` of a GitHub remote URL, or null. Only the owner and the name are kept. */
 const parseGithubRepo = (url: string): string | null => {
   const match = GITHUB_URL.exec(url.trim());
@@ -151,10 +161,11 @@ const gitStep = async (deps: Deps, dir: string, args: readonly string[], what: s
 /** Clone the repo at `url` into the folder `target`. The `--` keeps a URL from acting as an option. */
 export const gitClone = async (deps: Deps, url: string, target: string): Promise<CliResult<void>> => {
   const result = await deps.run('git', ['clone', '--', url, target], { timeoutMs: CLONE_TIMEOUT_MS });
-  if (!result.ok) return failure(`cannot clone ${url}: ${result.error.message}`);
+  const shown = withoutUserinfo(url);
+  if (!result.ok) return failure(`cannot clone ${shown}: ${withoutUserinfo(result.error.message)}`);
   if (result.value.exitCode === 0) return ok(undefined);
-  const detail = result.value.stderr.trim().split('\n').at(-1)?.slice(0, MAX_STDERR_CHARS) ?? '';
-  return failure(`cannot clone ${url}: git exited with ${result.value.exitCode}${detail === '' ? '' : ` (${detail})`}`);
+  const detail = withoutUserinfo(result.value.stderr.trim().split('\n').at(-1) ?? '').slice(0, MAX_STDERR_CHARS);
+  return failure(`cannot clone ${shown}: git exited with ${result.value.exitCode}${detail === '' ? '' : ` (${detail})`}`);
 };
 
 export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>

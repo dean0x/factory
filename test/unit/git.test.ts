@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { gitClone, listRepoChildren, MAX_SCAN_ENTRIES } from '../../src/core/git.js';
+import { gitClone, listRepoChildren, MAX_SCAN_ENTRIES, withoutUserinfo } from '../../src/core/git.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler, type FakeRepo, type GitFixture } from '../helpers/git-fake.js';
 
@@ -107,5 +107,45 @@ describe('git: clone', () => {
       expect(result.error.message).toContain('git exited with 128');
       expect(result.error.message).toContain('could not read from the remote repository');
     }
+  });
+
+  it('shows no userinfo of the URL in its error, also when git repeats the URL', async () => {
+    const url = 'https://user:tok3n@host/acme/api.git';
+    const { handler } = gitHandler({
+      cloneExit: 128,
+      cloneStderr: "fatal: unable to access 'https://user:tok3n@host/acme/api.git/': The requested URL returned error: 403\n",
+    });
+    const result = await gitClone(createFakeDeps({ cwd: WS, run: handler }), url, '/w/api');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).not.toContain('tok3n');
+      expect(result.error.message).not.toContain('user:');
+      expect(result.error.message).toContain('cannot clone https://host/acme/api.git: git exited with 128');
+      expect(result.error.message).toContain("unable to access 'https://host/acme/api.git/'");
+    }
+  });
+});
+
+describe('git: the userinfo of a URL', () => {
+  it.each([
+    ['a token as the user', 'https://tok3n@host/acme/api.git', 'https://host/acme/api.git'],
+    ['a user and a password', 'https://user:tok3n@host:8443/acme/api.git', 'https://host:8443/acme/api.git'],
+    ['an @ inside the userinfo', 'https://us@er:tok3n@host/acme/api.git', 'https://host/acme/api.git'],
+    ['an ssh:// user', 'ssh://git@host/acme/api.git', 'ssh://host/acme/api.git'],
+    ['a URL with no userinfo', 'https://host/acme/api.git', 'https://host/acme/api.git'],
+    ['an @ in the path', 'https://host/acme/a@b.git', 'https://host/acme/a@b.git'],
+    ['the user@host:path form, which holds no secret', 'git@host:acme/api.git', 'git@host:acme/api.git'],
+    [
+      'a URL inside a message',
+      "fatal: unable to access 'https://user:tok3n@host/acme/api.git/': 403",
+      "fatal: unable to access 'https://host/acme/api.git/': 403",
+    ],
+    [
+      'two URLs in one text',
+      'https://a@h1/x and ssh://b:c@h2/y',
+      'https://h1/x and ssh://h2/y',
+    ],
+  ])('removes it from %s', (_name, text, expected) => {
+    expect(withoutUserinfo(text)).toBe(expected);
   });
 });

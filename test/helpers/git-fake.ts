@@ -24,6 +24,8 @@ export interface GitFixture {
   readonly userName?: string;
   /** The exit code of `git clone`. Default: 0. */
   readonly cloneExit?: number;
+  /** What a failed `git clone` prints on stderr. Default: a line with no URL. */
+  readonly cloneStderr?: string;
 }
 
 export interface GitLog {
@@ -57,7 +59,9 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     }
     if (call.command === 'git' && call.args[0] === 'clone') {
       const code = fixture.cloneExit ?? 0;
-      return code === 0 ? exited(0) : exited(code, '', 'fatal: could not read from the remote repository\n');
+      return code === 0
+        ? exited(0)
+        : exited(code, '', fixture.cloneStderr ?? 'fatal: could not read from the remote repository\n');
     }
     if (call.command !== 'git' || call.args[0] !== '-C') return missingProgram(call.command);
     const dir = call.args[1] ?? '';

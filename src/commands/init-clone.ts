@@ -1,7 +1,7 @@
 import { dirname, join, resolve } from 'node:path';
 import { safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
-import { gitClone, isWorkTreeRoot, originUrlOf } from '../core/git.js';
+import { gitClone, isWorkTreeRoot, originUrlOf, withoutUserinfo } from '../core/git.js';
 import { err, ok } from '../core/result.js';
 import { flags, flagText, program, roles } from '../names.js';
 
@@ -15,6 +15,13 @@ const SSH_URL = new RegExp(`^ssh://(?:${USER}@)?${HOST}(?::\\d{1,5})?/${URL_PATH
 const SCP_URL = new RegExp(`^${USER}@${HOST}:${URL_PATH}$`);
 const OTHER_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 const GIT_SUFFIX = '.git';
+/** An https URL with a userinfo part. The other forms hold no credentials: ssh uses a key, never a URL secret. */
+const HTTPS_USERINFO = /^https:\/\/[^\s/]*@/;
+
+/** The warning for a project URL with credentials. It names neither the user nor the token. */
+export const URL_CREDENTIALS_WARNING =
+  'A project URL holds credentials. Git keeps them in the file .git/config of the clone. ' +
+  'Use "gh auth login" or an SSH key instead.';
 
 export interface RepoUrl {
   readonly url: string;
@@ -64,7 +71,7 @@ const isPresentClone = async (deps: Deps, url: string, target: string): Promise<
     return ok(true);
   }
   return safetyRefusal(
-    `${target} exists and is not a clone of ${url}`,
+    `${target} exists and is not a clone of ${withoutUserinfo(url)}`,
     `${program} clones only into a folder that does not exist. Move the folder, or choose another repo.`,
   );
 };
@@ -73,6 +80,8 @@ export interface ProjectPlan {
   /** The value of each project flag as a path: a URL is replaced by the folder of its clone. */
   readonly paths: readonly string[];
   readonly clones: readonly PlannedClone[];
+  /** Things that a person should know before the clones run. */
+  readonly warnings: readonly string[];
 }
 
 /**
@@ -107,7 +116,8 @@ export const planProjects = async (
     clones.push({ ...parsed.value, target, present: present.value });
     paths.push(target);
   }
-  return ok({ paths, clones });
+  const warnings = clones.some((clone) => HTTPS_USERINFO.test(clone.url)) ? [URL_CREDENTIALS_WARNING] : [];
+  return ok({ paths, clones, warnings });
 };
 
 /**
