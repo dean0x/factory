@@ -128,6 +128,14 @@ describe('scripts/check-intent-docs.sh', () => {
     expect(result.out).toContain(`${join(copy, 'research', 'notes', 'extra.md')}:2 holds the word lane`);
   });
 
+  it('exits 1 for the plural lanes under docs/research', async () => {
+    await writeFile(join(copy, 'research', 'extra.md'), 'Two lanes of work.\n');
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['7']);
+    expect(result.out).toContain(`${join(copy, 'research', 'extra.md')}:1 holds the word lane`);
+  });
+
   it('accepts a word that only contains lane', async () => {
     await writeFile(join(copy, 'research', 'extra.md'), 'The plane has a laneway and a Planet.\n');
     expect(check().code).toBe(0);

@@ -199,14 +199,14 @@ first=$(awk '
 ' "$budget")
 report 6 "token-budget.md has one row for each of the 17 jobs" "$first"
 
-# 7. No file under docs/research holds the whole word lane. The search goes down five levels.
+# 7. No file under docs/research holds the whole word lane or lanes. The search goes down five levels.
 first=""
 if [ ! -d "$research" ]; then
   first="the folder $research is missing"
 else
   for file in "$research"/* "$research"/*/* "$research"/*/*/* "$research"/*/*/*/* "$research"/*/*/*/*/*; do
     [ -f "$file" ] || continue
-    hit=$(grep -n -i -E '(^|[^[:alnum:]_])lane($|[^[:alnum:]_])' "$file" | awk 'NR == 1 { print; exit }')
+    hit=$(grep -n -i -E '(^|[^[:alnum:]_])lanes?($|[^[:alnum:]_])' "$file" | awk 'NR == 1 { print; exit }')
     if [ -n "$hit" ]; then
       first="${file}:${hit%%:*} holds the word lane"
       break
