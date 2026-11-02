@@ -984,7 +984,7 @@ The setup uses Dean's name and devflow's words in many places. factory uses thes
 | board, `board.json` | board items |
 | merge order | queue |
 | brief | assignment (`.factory/orders/`) |
-| clear or compact between phases | session reset |
+| clear or compact between phases | session reset (commands `worker reset` and `self reset`) |
 | merge gate | `factory check` |
 | release check and verify | `factory release check|verify` |
 | Orchestrator | coordinator (the layer-1 role); the session name is the node id |

@@ -16,7 +16,12 @@ export interface PlainWordRow {
 }
 
 export const PLAIN_WORDS: readonly PlainWordRow[] = [
-  { term: 'changeover', plain: 'session reset', scan: 'scanned', note: 'a clear or a compact between two phases' },
+  {
+    term: 'changeover',
+    plain: 'session reset',
+    scan: 'scanned',
+    note: 'a clear or a compact between two phases; the commands are `worker reset` and `self reset`',
+  },
   {
     term: 'work order',
     plain: 'assignment',

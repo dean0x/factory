@@ -24,7 +24,7 @@ Text that a user reads uses the plain word of this table (decision D-11). Code i
 
 | Term | Plain word in user text | Scan | Note |
 |---|---|---|---|
-| changeover | session reset | scanned | a clear or a compact between two phases |
+| changeover | session reset | scanned | a clear or a compact between two phases; the commands are `worker reset` and `self reset` |
 | work order | assignment | scanned | a written assignment for a worker or a child node; "work item" stays the unit of work, and "task" is not used |
 | variant | setup | by hand | the key `variant` stays until FAC-M6, when the setup folder replaces the variant; so both name one thing |
 | heartbeat | last seen | scanned | the file name stays |
