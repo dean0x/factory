@@ -50,6 +50,7 @@ import {
 } from '../state/files.js';
 import { layoutOf, stagingDirOf, stateRel } from '../state/layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
+import { roleForLayer } from '../recipes/software/recipe.js';
 import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
@@ -85,6 +86,8 @@ export interface InitPlan {
   readonly claudeOriginal: string | null;
   readonly claudeText: string;
   readonly stateFiles: readonly StateFile[];
+  /** Things that a person should know before the files are written, for example a layer with no role template. */
+  readonly warnings: readonly string[];
 }
 
 export interface InitResult {
@@ -342,6 +345,10 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
     claudeOriginal: blocks.value.original,
     claudeText: blocks.value.claudeText,
     stateFiles: stateFiles.value,
+    warnings:
+      roleForLayer(layer) === null
+        ? [`Layer ${layer} has no role template: ${files.claudeMd} holds the safety block only.`]
+        : [],
   });
 };
 
@@ -481,7 +488,12 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return applied;
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
-  const warnings = [...applied.value.warnings, ...notes, ...(await indexNode(deps, indexPath.value, plan.value))];
+  const warnings = [
+    ...plan.value.warnings,
+    ...applied.value.warnings,
+    ...notes,
+    ...(await indexNode(deps, indexPath.value, plan.value)),
+  ];
 
   const written = [files.config, files.claudeMd, `${dirs.state}/`];
   const made = projects.value.clones.filter((clone) => !clone.present).map((clone) => clone.target);

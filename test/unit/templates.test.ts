@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
 import { roleForLayer } from '../../src/recipes/software/recipe.js';
 import { blockTemplatesFor, fileTemplates, roleBlockRenames } from '../../src/templates/index.js';
+import type { BlockTemplate } from '../../src/templates/types.js';
 import { allBlocks, layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
 
@@ -66,11 +67,15 @@ describe('block templates', () => {
     ]);
   });
 
-  it.each([2, 3, 16])('gives layer %i the manager and safety blocks and no worker block', (layer) => {
-    expect(summary(blockTemplatesFor(layer))).toEqual([
+  it('gives layer 2 the manager and safety blocks and no worker block', () => {
+    expect(summary(blockTemplatesFor(2))).toEqual([
       ['manager', 1, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
     ]);
+  });
+
+  it.each([3, 4, 16])('gives layer %i, which has no role template, the safety block only', (layer) => {
+    expect(summary(blockTemplatesFor(layer))).toEqual([['safety', 2, 'claudeFile']]);
   });
 
   it('gives every role the same safety block', () => {
@@ -117,14 +122,18 @@ describe('role templates', () => {
   const headingsOf = (body: string): string[] =>
     body.split('\n').filter((line) => line.startsWith('## ')).map((line) => line.slice(3));
 
-  it('maps layer 0 to the worker, layer 1 to the coordinator and every layer above to the manager', () => {
-    expect([0, 1, 2, 3, 16].map((layer) => roleForLayer(layer).name)).toEqual([
-      'worker',
-      'coordinator',
-      'manager',
-      'manager',
-      'manager',
-    ]);
+  const roleOf = (layer: number): BlockTemplate => {
+    const role = roleForLayer(layer);
+    if (role === null) throw new Error(`layer ${layer} has no role template`);
+    return role;
+  };
+
+  it('maps layer 0 to the worker, layer 1 to the coordinator and layer 2 to the manager', () => {
+    expect([0, 1, 2].map((layer) => roleForLayer(layer)?.name)).toEqual(['worker', 'coordinator', 'manager']);
+  });
+
+  it.each([3, 4, 16])('gives layer %i no role template', (layer) => {
+    expect(roleForLayer(layer)).toBeNull();
   });
 
   it.each([
@@ -132,22 +141,26 @@ describe('role templates', () => {
     ['coordinator', 1, ['Role', 'Owner authority', 'Merges and releases', 'Cells', 'State files']],
     ['manager', 2, ['Role', 'Children', 'Priorities and capacity', 'Owner items', 'Limits']],
   ])('gives the %s template its required sections', (_name, layer, sections) => {
-    const headings = headingsOf(roleForLayer(layer).body);
+    const headings = headingsOf(roleOf(layer).body);
     for (const section of sections) expect(headings).toContain(section);
   });
 
   it('keeps the role template in the file of its role: the worker file for a worker, CLAUDE.md for the rest', () => {
-    expect([0, 1, 2].map((layer) => roleForLayer(layer).target)).toEqual(['workerFile', 'claudeFile', 'claudeFile']);
+    expect([0, 1, 2].map((layer) => roleOf(layer).target)).toEqual(['workerFile', 'claudeFile', 'claudeFile']);
   });
 
   it('names, for a layer, the role block of the other home layer as the old name of its role block', () => {
     expect(roleBlockRenames(1)).toEqual([{ from: 'manager', to: 'coordinator' }]);
     expect(roleBlockRenames(2)).toEqual([{ from: 'coordinator', to: 'manager' }]);
-    expect(roleBlockRenames(5)).toEqual([{ from: 'coordinator', to: 'manager' }]);
+  });
+
+  it('names no old role block for a layer with no role template', () => {
+    expect(roleBlockRenames(3)).toEqual([]);
+    expect(roleBlockRenames(16)).toEqual([]);
   });
 
   it('keeps the work at the level of pull requests out of the manager template', () => {
-    expect(roleForLayer(2).body).toContain('does no work at the level of pull requests');
+    expect(roleOf(2).body).toContain('does no work at the level of pull requests');
   });
 });
 

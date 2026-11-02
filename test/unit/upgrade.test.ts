@@ -484,6 +484,15 @@ describe('upgrade: the blocks of a layer', () => {
     expect((await inspectBlocks(deps, HOME, layer2Blocks)).map((status) => status.kind)).toEqual(['intact', 'intact']);
   });
 
+  it('lists the safety block only when the layer is 3, which has no role template', async () => {
+    const { deps } = await makeNode();
+    setLayer(deps, 3);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output).filter((line) => line.startsWith('block '))).toEqual([
+      `block safety: version ${versionOf('safety')} is current`,
+    ]);
+  });
+
   it('swaps an intact manager block for the coordinator block when the layer is 1', async () => {
     const { deps } = await makeNode();
     setLayer(deps, 2);

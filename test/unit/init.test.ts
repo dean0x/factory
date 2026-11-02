@@ -450,9 +450,33 @@ describe('init: the layer and the recipe', () => {
     expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact']);
   });
 
+  it('makes a node on layer 3 with the safety block only, no worker file, and a warning that names the layer', async () => {
+    const { deps } = setup();
+    const result = await runInit(deps, options({ layer: '3' }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.core.node.layer).toBe(3);
+    expect(claudeBlocks(deps)).toEqual(['safety']);
+    expect(files(deps)).not.toContain('.factory/roles/worker.md');
+    const state = await loadState(deps, HOME);
+    expect(state.ok && state.value.blocks).toEqual({ safety: 2 });
+    expect(result.value.warnings).toContain('Layer 3 has no role template: CLAUDE.md holds the safety block only.');
+    expect(result.value.json['warnings']).toEqual(result.value.warnings);
+  });
+
+  it('gives no role warning for layers 1 and 2', async () => {
+    for (const layer of ['1', '2']) {
+      const { deps } = setup();
+      const result = await runInit(deps, options({ layer }));
+      expect(result.ok && result.value.warnings.filter((text) => text.includes('role template'))).toEqual([]);
+    }
+  });
+
   it('makes a node on the highest layer', async () => {
     const { deps } = setup();
-    expect((await runInit(deps, options({ layer: '16' }))).ok).toBe(true);
+    const result = await runInit(deps, options({ layer: '16' }));
+    expect(result.ok && result.value.warnings.join('\n')).toContain('Layer 16 has no role template');
     const config = await loadConfig(deps, HOME);
     expect(config.ok && config.value.core.node.layer).toBe(16);
   });

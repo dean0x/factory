@@ -210,6 +210,22 @@ describe('factory init: the home rules (built binary)', () => {
     expect(doctor.stdout).toContain('2 managed blocks are intact');
   });
 
+  it('makes a node on layer 3 with the safety block only, warns and names the layer, and doctor warns the same', async () => {
+    const result = await box.run(initArgs(['--layer', '3']));
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('Layer 3 has no role template');
+    const claude = await box.read(join(box.node, 'CLAUDE.md'));
+    expect(claude).toContain('factory:begin safety');
+    expect(claude).not.toContain('factory:begin coordinator');
+    expect(claude).not.toContain('factory:begin manager');
+    expect(existsSync(join(box.node, '.factory', 'roles', 'worker.md'))).toBe(false);
+
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(0);
+    expect(doctor.stdout).toContain('layer 3 has no role template');
+    expect(doctor.stdout).toContain('1 managed blocks are intact');
+  });
+
   it.each(['0', '17', 'x'])('exits 2 for the layer "%s"', async (layer) => {
     const result = await box.run(initArgs(['--layer', layer]));
     expect(result.code).toBe(2);

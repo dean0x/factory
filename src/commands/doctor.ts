@@ -29,6 +29,7 @@ import {
   schemaIds,
   values,
 } from '../names.js';
+import { roleForLayer } from '../recipes/software/recipe.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { findTokenPaths } from '../safety/secrets.js';
 import { layoutOf } from '../state/layout.js';
@@ -235,6 +236,16 @@ export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
       );
 };
 
+/** The layer of the node sets its role. A layer with no role template gets the safety block only. */
+export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
+  if (state.kind !== 'valid') return notChecked(checkIds.roles, `${files.config} is not valid`);
+  const { layer } = state.value.core.node;
+  const role = roleForLayer(layer);
+  return role === null
+    ? check(checkIds.roles, 'warn', `layer ${layer} has no role template: ${files.claudeMd} holds the safety block only`)
+    : check(checkIds.roles, 'ok', `layer ${layer} has the ${role.name} role template`);
+};
+
 export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
   if (state.kind === 'missing' || state.kind === 'unparsable') {
     return notChecked(checkIds.secrets, `${files.config} does not parse`);
@@ -421,6 +432,7 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
     homeCheck,
     index,
     blocks,
+    checkRoles(config),
     checkTracker(config),
     children,
     checkSecrets(config),

@@ -14,6 +14,9 @@ export const CELL_LAYER = 0;
 /** The layer of the node that manages cells. */
 export const COORDINATOR_LAYER = 1;
 
+/** The layer of the node that manages coordinators. It is the highest layer that has a role template. */
+export const MANAGER_LAYER = 2;
+
 /** The highest layer of a node. */
 export const MAX_LAYER = 16;
 

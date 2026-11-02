@@ -211,6 +211,7 @@ export const checkIds = {
   home: 'home',
   index: 'index',
   blocks: 'blocks',
+  roles: 'roles',
   tracker: 'tracker',
   children: 'children',
   secrets: 'secrets',

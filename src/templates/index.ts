@@ -19,20 +19,22 @@ const safety: BlockTemplate = {
 /**
  * The managed blocks of a node on this layer: its role block, the safety block, and, on layer 1,
  * the worker block. A cell has no home, so the node just above the cells holds the instructions that the cells follow.
+ * A layer with no role template has the safety block only.
  */
-export const blockTemplatesFor = (layer: number): readonly BlockTemplate[] => [
-  roleForLayer(layer),
-  safety,
-  ...(layer === COORDINATOR_LAYER ? [roleForLayer(CELL_LAYER)] : []),
-];
+export const blockTemplatesFor = (layer: number): readonly BlockTemplate[] => {
+  const role = roleForLayer(layer);
+  const worker = layer === COORDINATOR_LAYER ? roleForLayer(CELL_LAYER) : null;
+  return [role, safety, worker].filter((template): template is BlockTemplate => template !== null);
+};
 
 /**
  * The role blocks that another layer would hold, each as the old name of the role block of this layer.
- * A node whose layer was changed by hand holds one of them.
+ * A node whose layer was changed by hand holds one of them. A layer with no role template renames nothing.
  */
 export const roleBlockRenames = (layer: number): readonly BlockRename[] => {
-  const { name } = roleForLayer(layer);
-  return homeRoleBlockNames.filter((other) => other !== name).map((from) => ({ from, to: name }));
+  const role = roleForLayer(layer);
+  if (role === null) return [];
+  return homeRoleBlockNames.filter((other) => other !== role.name).map((from) => ({ from, to: role.name }));
 };
 
 export const fileTemplates = {

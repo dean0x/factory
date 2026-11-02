@@ -1,4 +1,4 @@
-import { CELL_LAYER, COORDINATOR_LAYER } from '../../config/schema.js';
+import { CELL_LAYER, COORDINATOR_LAYER, MANAGER_LAYER } from '../../config/schema.js';
 import { blockNames } from '../../names.js';
 import { fillTemplate } from '../../templates/fill.js';
 import type { BlockTemplate } from '../../templates/types.js';
@@ -28,12 +28,14 @@ const manager: BlockTemplate = {
 };
 
 /**
- * The role template of a layer: the worker for a cell (layer 0), the coordinator for layer 1,
- * and the manager for every layer above. This is the only lookup of a role. The caller passes a layer that the config checked.
+ * The role template of a layer: the worker for a cell (layer 0), the coordinator for layer 1, and the manager
+ * for layer 2. A layer above 2 has no template, because each layer has its own role and the manager text does
+ * not fit another layer. This is the only lookup of a role. The caller passes a layer that the config checked.
  */
-export const roleForLayer = (layer: number): BlockTemplate => {
+export const roleForLayer = (layer: number): BlockTemplate | null => {
   if (layer <= CELL_LAYER) return worker;
-  return layer === COORDINATOR_LAYER ? coordinator : manager;
+  if (layer === COORDINATOR_LAYER) return coordinator;
+  return layer === MANAGER_LAYER ? manager : null;
 };
 
 /** The role blocks that a node home can hold in its CLAUDE.md. */

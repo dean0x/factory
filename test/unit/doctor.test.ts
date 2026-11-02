@@ -14,6 +14,7 @@ import {
   checkProjects,
   checkProxies,
   checkProxyEnv,
+  checkRoles,
   checkSecrets,
   checkState,
   checkStateRepo,
@@ -654,6 +655,51 @@ describe('doctor: the home', () => {
   });
 });
 
+describe('doctor: the role of the layer', () => {
+  const stateWithLayer = async (layer: number) => {
+    const deps = await initialized();
+    const config = sampleConfig();
+    writeConfig(deps, { ...config, core: { ...config.core, node: { id: 'demo', layer } } });
+    return inspectConfig(deps, HOME);
+  };
+
+  it.each([
+    [1, 'coordinator'],
+    [2, 'manager'],
+  ])('is ok for layer %i, and names the role template', async (layer, role) => {
+    expect(checkRoles(await stateWithLayer(layer))).toEqual({
+      id: 'roles',
+      level: 'ok',
+      text: `layer ${layer} has the ${role} role template`,
+    });
+  });
+
+  it.each([3, 16])('warns for layer %i, which has no role template, and names the layer', async (layer) => {
+    const result = checkRoles(await stateWithLayer(layer));
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(`layer ${layer} has no role template`);
+    expect(result.text).toContain('safety block only');
+  });
+
+  it('is not checked when the config is not valid', async () => {
+    const deps = await initialized();
+    deps.files.set(`${HOME}/factory.yaml`, 'x: 1\n');
+    expect(checkRoles(await inspectConfig(deps, HOME))).toMatchObject({ level: 'warn', text: expect.stringContaining('not checked') });
+  });
+
+  it('shows in the doctor run of a layer-3 node as a warning, not as a failure', async () => {
+    const deps = await initialized({ git: { committed: [`${HOME}/.factory`] } });
+    deps.seedDir(`${HOME}/.factory/.git`);
+    const text = deps.files.get(`${HOME}/factory.yaml`) ?? '';
+    expect(text).toContain('layer: 1');
+    deps.files.set(`${HOME}/factory.yaml`, text.replace('layer: 1', 'layer: 3'));
+    const output = await doctor(deps);
+    const checks = output.json['checks'] as CheckResult[];
+    expect(levelOf(checks, 'roles')).toBe('warn');
+    expect(output.failed).toBe(false);
+  });
+});
+
 describe('doctor: the home index', () => {
   const INDEX = '/state/factory/homes.json';
   const env = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
@@ -879,6 +925,7 @@ describe('doctor: the command', () => {
       'home',
       'index',
       'blocks',
+      'roles',
       'tracker',
       'children',
       'secrets',
@@ -889,7 +936,7 @@ describe('doctor: the command', () => {
       'state-repo',
       'projects',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('15 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('16 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -912,7 +959,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(15);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(16);
   });
 
   it('finds the node by walking up from the current folder', async () => {
