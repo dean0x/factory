@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..');
@@ -29,8 +29,8 @@ afterEach(async () => {
   await rm(base, { recursive: true, force: true });
 });
 
-const check = (dir: string = copy) => {
-  const result = spawnSync('sh', [SCRIPT, dir], { encoding: 'utf8' });
+const check = (dir: string = copy, env: NodeJS.ProcessEnv = process.env) => {
+  const result = spawnSync('sh', [SCRIPT, dir], { encoding: 'utf8', env });
   return { code: result.status, out: result.stdout, err: result.stderr };
 };
 
@@ -180,6 +180,68 @@ describe('scripts/check-intent-docs.sh', () => {
   });
 });
 
+/** A process that runs as root can read a file with mode 000, so the tests of an unreadable file do not apply to it. */
+const isRoot = process.getuid?.() === 0;
+
+describe.skipIf(isRoot)('scripts/check-intent-docs.sh, a file or a folder that cannot be read', () => {
+  it.each(DOC_FILES)('exits 1 for the doc %s that cannot be read, and names it', async (name) => {
+    const path = join(copy, name);
+    await chmod(path, 0o000);
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(result.out).toContain(`the file ${path} cannot be read`);
+    expect(result.out).not.toContain('all 10 checks passed');
+  });
+
+  it('fails check 7 and check 8 for a file under docs/research that cannot be read, and never prints its content', async () => {
+    const path = join(copy, 'research', 'closed.md');
+    await writeFile(path, 'See /Users/someone/work and the lane.\n');
+    await chmod(path, 0o000);
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['7', '8']);
+    expect(result.out).toContain(`the file ${path} cannot be read`);
+    expect(result.out).not.toContain('someone');
+  });
+
+  it('fails check 8 for a README that cannot be read', async () => {
+    const path = join(base, 'README.md');
+    await chmod(path, 0o000);
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['8']);
+    expect(result.out).toContain(`the file ${copy}/../README.md cannot be read`);
+  });
+
+  it('fails check 8 for a sub-folder of the docs that cannot be read', async () => {
+    const folder = join(copy, 'research', 'closed');
+    await mkdir(folder);
+    await writeFile(join(folder, 'extra.md'), 'See /Users/someone/work.\n');
+    await chmod(folder, 0o000);
+    try {
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toContain('8');
+      expect(result.out).toContain(`the folder ${folder} cannot be read`);
+    } finally {
+      await chmod(folder, 0o755);
+    }
+  });
+});
+
+describe('scripts/check-intent-docs.sh, an awk that stops with an error', () => {
+  it('fails every check, so a check that did not run never shows as ok', async () => {
+    const bin = join(base, 'bin');
+    await mkdir(bin);
+    await writeFile(join(bin, 'awk'), '#!/bin/sh\nexit 2\n', { mode: 0o755 });
+    const result = check(copy, { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}` });
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']);
+    expect(result.out).toContain('the check did not run');
+    expect(result.out).not.toContain('all 10 checks passed');
+  });
+});
+
 /** Synthetic local paths. The only name that check 8 accepts is `example`, so these use another name. */
 const LOCAL_PATHS: ReadonlyArray<{ kind: string; text: string }> = [
   { kind: 'a user folder path', text: 'The work is in /Users/other/work/acme.' },
@@ -253,6 +315,96 @@ describe('scripts/check-intent-docs.sh, check 8: no local machine paths', () => 
   it('passes when the README and the CHANGELOG are not above the docs folder', async () => {
     await rm(join(base, 'README.md'));
     await rm(join(base, 'CHANGELOG.md'));
+    expect(check().code).toBe(0);
+  });
+});
+
+/** More forms of a local path. Each text holds the name `someone`, which the output must never show. */
+const MORE_LOCAL_PATHS: ReadonlyArray<{ form: string; kind: string; text: string }> = [
+  { form: 'the encoded folder of a Claude project', kind: 'an encoded user folder path', text: 'The notes are in ~/.claude/projects/-Users-someone-work-acme/memory.' },
+  { form: 'a WSL path', kind: 'a user folder path', text: 'The disk is /mnt/c/Users/someone/work.' },
+  { form: 'a path under /var/home', kind: 'a home path with a name', text: 'The folder is /var/home/someone/work.' },
+  { form: 'a Windows path', kind: 'a user folder path', text: String.raw`The folder is C:\Users\someone\work.` },
+  { form: 'a Windows path with doubled backslashes', kind: 'a user folder path', text: String.raw`"path": "C:\\Users\\someone\\work"` },
+  { form: 'a lower-case user folder path', kind: 'a user folder path', text: 'The folder is /users/someone/work.' },
+  { form: 'a macOS temp folder', kind: 'a macOS temp path', text: 'The temp folder is /var/folders/ab/cdef/T/someone.' },
+  { form: 'a plain temp path', kind: 'a temp path', text: 'The scratch file is /tmp/someone.txt.' },
+];
+
+describe('scripts/check-intent-docs.sh, check 8: more forms of a local path', () => {
+  it.each(MORE_LOCAL_PATHS)('exits 1 for $form, and never prints the path', async ({ kind, text }) => {
+    await change('design.md', (before) => `${before}\n${text}\n`);
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['8']);
+    expect(result.out).toMatch(new RegExp(`design\\.md:\\d+ holds ${kind}`));
+    expect(result.out).not.toContain('someone');
+  });
+
+  it('accepts the neutral name in each form, and a relative path that holds a form', async () => {
+    await change(
+      'design.md',
+      (before) =>
+        `${before}\n${[
+          'The neutral names are -Users-example-work, /mnt/c/Users/example/work, /var/home/example/work and /users/example/work.',
+          String.raw`A Windows form is C:\Users\example\work and "C:\\Users\\example\\work".`,
+          'A relative path is src/users/list.ts, docs/tmp/notes.md, lib/var/folders/x or a word like list-Users-view.',
+        ].join('\n')}\n`,
+    );
+    expect(check().code).toBe(0);
+  });
+
+  it('exits 1 for a name that only starts with the neutral name, in the encoded form', async () => {
+    await change('design.md', (before) => `${before}\nThe notes are in -Users-example2-work.\n`);
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['8']);
+  });
+});
+
+/** The folders below the docs folder, one inside the other, and the file in the last one. */
+const nested = (folders: number, name = 'extra.md'): string => join(copy, ...Array.from({ length: folders }, (_, index) => `level${index + 1}`), name);
+
+const putAt = async (path: string, text: string): Promise<void> => {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, text);
+};
+
+describe('scripts/check-intent-docs.sh, check 8: every level and every dot file', () => {
+  it.each([4, 5, 10])('finds a local path in a file %d folders below the docs folder', async (folders) => {
+    await putAt(nested(folders), 'See /Users/someone/work.\n');
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['8']);
+    expect(result.out).toContain(`extra.md:1 holds a user folder path`);
+  });
+
+  it('exits 1 and names a folder that is deeper than 10 levels, because it does not read it', async () => {
+    await putAt(nested(11), 'See /Users/someone/work.\n');
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['8']);
+    expect(result.out).toContain('deeper than 10 levels');
+    expect(result.out).not.toContain('someone');
+  });
+
+  it('finds a local path in a dot file of the docs folder', async () => {
+    await putAt(join(copy, '.notes.md'), 'See /Users/someone/work.\n');
+    const result = check();
+    expect(failedChecks(result.out)).toEqual(['8']);
+    expect(result.out).toContain('.notes.md:1 holds a user folder path');
+  });
+
+  it('finds a local path in a file of a dot folder', async () => {
+    await putAt(join(copy, 'research', '.hidden', 'extra.md'), 'See /Users/someone/work.\n');
+    const result = check();
+    expect(failedChecks(result.out)).toEqual(['8']);
+    expect(result.out).toContain('extra.md:1 holds a user folder path');
+  });
+
+  it('passes for a deep tree and a dot file that hold no local path', async () => {
+    await putAt(nested(10), 'No path here.\n');
+    await putAt(join(copy, '.notes.md'), 'No path here.\n');
     expect(check().code).toBe(0);
   });
 });
@@ -421,6 +573,52 @@ describe('scripts/check-intent-docs.sh, check 2: the label "Design v3 PR"', () =
     await change('intent-trace.md', (text) => text.split(LABEL).join('a later PR'));
     await change('roadmap-v2.md', (text) => text.replace(LABEL_HEADING, '## Another section (after FAC-M2)'));
     expect(check().code).toBe(0);
+  });
+});
+
+/** Puts lines at the start of the core command block of design 4.2. A `#` line in a fence is a shell comment, not a heading. */
+const withCoreLines = (text: string, lines: string): string => text.replace(/(\*\*Core commands\*\*[^\n]*\n\n```\n)/, `$1${lines}\n`);
+
+describe('scripts/check-intent-docs.sh, a comment or a heading in fenced code does not end a section', () => {
+  it('check 3 still reads the software recipe commands after a comment line in the core block', async () => {
+    await change('design.md', (text) => withCoreLines(text, '# a comment'));
+    await change('roadmap-v2.md', (text) => text.replace(/^\| `check`.*\n/m, ''));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['3']);
+    expect(result.out).toContain('the command check of design.md 4.2 has no row in the Command map of roadmap-v2.md');
+  });
+
+  it('check 3 still finds a desk row after a comment line in the core block', async () => {
+    await change('design.md', (text) => withCoreLines(text, '# a comment\nfactory desk render'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['3']);
+    expect(result.out).toMatch(/design\.md 4\.2 has a desk row \(line \d+\)/);
+  });
+
+  it('check 10 still finds a recipe word after a comment line in the core block', async () => {
+    await change('design.md', (text) => withCoreLines(text, '# a comment\nfactory merge it'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toContain('10');
+    expect(result.out).toMatch(/design\.md line \d+: the core command table holds the software recipe word "merge"/);
+  });
+
+  it('check 2 keeps the label section open over a heading line in fenced code', async () => {
+    await change('roadmap-v2.md', (text) => text.replace(LABEL_HEADING, `${LABEL_HEADING}\n\n\`\`\`\n## Another section\n\`\`\``));
+    expect(check().code).toBe(0);
+  });
+
+  it.each([
+    ['docs', 'Docs PR'],
+    ['code', 'Code PR'],
+  ])('check 2 does not count the checkbox for the %s PR when it is only in fenced code', async (kind, title) => {
+    await change('roadmap-v2.md', (text) => text.replace(new RegExp(`^(- \\[ \\] ${title} .*\\n)`, 'm'), '```\n$1```\n'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['2']);
+    expect(result.out).toContain(`has no checkbox for the ${kind} PR`);
   });
 });
 

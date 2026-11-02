@@ -9,6 +9,7 @@
 # Check 10 reads the fenced block under "**Core commands**" in design 4.2 and stops at "**Software recipe commands**".
 #
 # Exit code 0: every check passes. Exit code 1: a check fails. The output names the first failure of each check.
+# A check that did not run is a failure, never ok: a file or a folder that cannot be read, and an awk that stops with an error.
 
 # The awk programs are in single quotes on purpose: the shell must not expand their $1 and their backticks.
 # shellcheck disable=SC2016
@@ -30,6 +31,7 @@ LC_ALL=C
 export LC_ALL
 
 failed=0
+awk_failed='the check did not run: awk stopped with an error'
 
 report() {
   if [ -z "$3" ]; then
@@ -43,6 +45,10 @@ report() {
 for file in "$design" "$trace" "$roadmap" "$budget"; do
   if [ ! -f "$file" ]; then
     printf 'FAIL the file %s is missing\n' "$file"
+    exit 1
+  fi
+  if [ ! -r "$file" ]; then
+    printf 'FAIL the file %s cannot be read\n' "$file"
     exit 1
   fi
 done
@@ -71,7 +77,7 @@ first=$(awk '
       }
     }
   }
-' "$design" "$trace")
+' "$design" "$trace") || first=$awk_failed
 report 1 "each section in intent-trace.md is a heading of design.md" "$first"
 
 # 2. Each milestone id of the trace is named in the roadmap. Each milestone from FAC-M2 up has a heading there.
@@ -136,7 +142,7 @@ first=$(awk '
       if (!codebox) { print "roadmap-v2.md: the heading \"Design v3 PR\" has no checkbox for the code PR"; exit }
     }
   }
-' "$roadmap" "$trace")
+' "$roadmap" "$trace") || first=$awk_failed
 report 2 "each milestone and each label of the trace is in roadmap-v2.md, with a heading" "$first"
 
 # 3. The first word of each command line in the code block of design 4.2 has a row in the Command map of the roadmap.
@@ -172,7 +178,7 @@ first=$(awk '
       }
     }
   }
-' "$design" "$roadmap")
+' "$design" "$roadmap") || first=$awk_failed
 report 3 "each command of design 4.2 has a row in the Command map" "$first"
 
 # 4. The table of design 7.1 has 11 rows.
@@ -181,7 +187,7 @@ first=$(awk '
   inside && /^#/ { inside = 0 }
   inside && /^\| *[0-9]+ *\|/ { rows++ }
   END { if (rows != 11) printf "design.md 7.1 has %d table rows, expected 11\n", rows }
-' "$design")
+' "$design") || first=$awk_failed
 report 4 "the table of design 7.1 has 11 rows" "$first"
 
 # 5. The Status column of the parity table in design 8.1 holds only planned, done or retired.
@@ -204,7 +210,7 @@ first=$(awk '
     }
   }
   END { if (rows == 0) print "design.md 8.1 has no parity table rows" }
-' "$design")
+' "$design") || first=$awk_failed
 report 5 "the Status column of the parity table holds only planned, done or retired" "$first"
 
 # 6. The token budget has one row for each of the 17 jobs, numbered 1 to 17.
@@ -219,17 +225,26 @@ first=$(awk '
     }
   }
   END { if (!bad && rows != 17) printf "token-budget.md has %d job rows, expected 17\n", rows }
-' "$budget")
+' "$budget") || first=$awk_failed
 report 6 "token-budget.md has one row for each of the 17 jobs" "$first"
 
 # 7. No file under docs/research holds the whole word lane or lanes. The search goes down five levels.
 first=""
 if [ ! -d "$research" ]; then
   first="the folder $research is missing"
+elif [ ! -r "$research" ] || [ ! -x "$research" ]; then
+  first="the folder $research cannot be read"
 else
   for file in "$research"/* "$research"/*/* "$research"/*/*/* "$research"/*/*/*/* "$research"/*/*/*/*/*; do
     [ -f "$file" ] || continue
-    hit=$(grep -n -i -E '(^|[^[:alnum:]_])lanes?($|[^[:alnum:]_])' "$file" | awk 'NR == 1 { print; exit }')
+    if [ ! -r "$file" ]; then
+      first="the file $file cannot be read"
+      break
+    fi
+    hit=$(grep -n -i -E '(^|[^[:alnum:]_])lanes?($|[^[:alnum:]_])' "$file" | awk 'NR == 1 { print; exit }') || {
+      first=$awk_failed
+      break
+    }
     if [ -n "$hit" ]; then
       first="${file}:${hit%%:*} holds the word lane"
       break
@@ -238,51 +253,108 @@ else
 fi
 report 7 "no file under docs/research holds the word lane" "$first"
 
-# 8. No file of the docs folder (down five levels), no README.md and no CHANGELOG.md above it holds a local machine path.
-# A local path is a user folder path (/Users/<name>/), a home path with a name (/home/<name>/), a private path (/private/)
-# or a temp Claude path (/tmp/claude). The name "example" is the only name that is accepted. A marker that follows a
-# letter, a digit or one of _ . ~ - is part of a longer relative path (docs/private/), so it is not a local path.
-# The output names the file, the line and the kind of path, never the path.
-set --
-for file in "$docs"/* "$docs"/*/* "$docs"/*/*/* "$docs"/*/*/*/* "$docs"/*/*/*/*/* "$docs/../README.md" "$docs/../CHANGELOG.md"; do
-  [ -f "$file" ] || continue
-  set -- "$@" "$file"
-done
-first=$(awk '
-  BEGIN {
-    marker[1] = "/Users/";     kind[1] = "a user folder path";      named[1] = 1
-    marker[2] = "/home/";      kind[2] = "a home path with a name"; named[2] = 1
-    marker[3] = "/private/";   kind[3] = "a private path";          named[3] = 0
-    marker[4] = "/tmp/claude"; kind[4] = "a temp Claude path";      named[4] = 0
-    count = 4
-  }
-  function local_path(line,   n, pos, at, before, rest, name) {
-    for (n = 1; n <= count; n++) {
-      pos = 1
-      while ((at = index(substr(line, pos), marker[n])) > 0) {
-        at += pos - 1
-        before = at > 1 ? substr(line, at - 1, 1) : ""
-        if (before !~ /[A-Za-z0-9_.~-]/) {
-          if (!named[n]) return kind[n]
-          rest = substr(line, at + length(marker[n]))
-          match(rest, /^[A-Za-z0-9._-]*/)
-          name = substr(rest, 1, RLENGTH)
-          sub(/\.+$/, "", name)
-          if (name != "example") return kind[n]
+# 8. No file of the docs folder (all levels, dot files too), no README.md and no CHANGELOG.md above it holds a local
+# machine path. A local path is a user folder path (/Users/<name>/ in any letter case, C:\Users\<name>\ and
+# /mnt/c/Users/<name>/), the encoded folder name of a Claude project (-Users-<name>-), a home path with a name
+# (/home/<name>/ and /var/home/<name>/), a private path (/private/), a macOS temp path (/var/folders/), a temp Claude path
+# (/tmp/claude) or a temp path (/tmp/). The name "example" is the only name that is accepted. A marker that follows a
+# letter, a digit or one of _ . ~ - is part of a longer relative path (docs/private/), so it is not a local path; the
+# drive letter of a WSL path is the only exception. The output names the file, the line and the kind of path, never the
+# path. A file or a folder that cannot be read, and a folder deeper than the depth limit, are a failure.
+max_depth=10
+
+# Sets $first to the first local path of the file $1, and returns 1, or to the reason that the file was not read.
+scan_file() {
+  if [ ! -r "$1" ]; then
+    first="the file $1 cannot be read"
+    return 1
+  fi
+  hit=$(awk '
+    BEGIN {
+      marker[1] = "/Users/";        kind[1] = "a user folder path";          named[1] = 1; fold[1] = 1
+      marker[2] = "\\Users\\";      kind[2] = "a user folder path";          named[2] = 1; fold[2] = 1
+      marker[3] = "-Users-";        kind[3] = "an encoded user folder path"; named[3] = 1; dash[3] = 1
+      marker[4] = "/home/";         kind[4] = "a home path with a name";     named[4] = 1
+      marker[5] = "/var/home/";     kind[5] = "a home path with a name";     named[5] = 1
+      marker[6] = "/private/";      kind[6] = "a private path"
+      marker[7] = "/tmp/claude";    kind[7] = "a temp Claude path"
+      marker[8] = "/var/folders/";  kind[8] = "a macOS temp path"
+      marker[9] = "/tmp/";          kind[9] = "a temp path"
+      count = 9
+    }
+    function local_path(line,   n, text, key, pattern, pos, at, before, wsl, rest, name) {
+      for (n = 1; n <= count; n++) {
+        text = fold[n] ? tolower(line) : line
+        key = fold[n] ? tolower(marker[n]) : marker[n]
+        pattern = dash[n] ? "^[A-Za-z0-9._]*" : "^[A-Za-z0-9._-]*"
+        pos = 1
+        while ((at = index(substr(text, pos), key)) > 0) {
+          at += pos - 1
+          before = at > 1 ? substr(line, at - 1, 1) : ""
+          wsl = (n == 1 && before ~ /[A-Za-z]/ && at > 6 && substr(text, at - 6, 5) == "/mnt/")
+          if (before !~ /[A-Za-z0-9_.~-]/ || wsl) {
+            if (!named[n]) return kind[n]
+            rest = substr(line, at + length(key))
+            sub(/^\\+/, "", rest)
+            match(rest, pattern)
+            name = substr(rest, 1, RLENGTH)
+            sub(/\.+$/, "", name)
+            if (name != "example") return kind[n]
+          }
+          pos = at + 1
         }
-        pos = at + 1
+      }
+      return ""
+    }
+    {
+      found = local_path($0)
+      if (found != "") {
+        printf "%s:%d holds %s\n", FILENAME, FNR, found
+        exit
       }
     }
-    return ""
+  ' "$1") || {
+    first=$awk_failed
+    return 1
   }
-  {
-    found = local_path($0)
-    if (found != "") {
-      printf "%s:%d holds %s\n", FILENAME, FNR, found
-      exit
-    }
-  }
-' "$@")
+  if [ -n "$hit" ]; then
+    first=$hit
+    return 1
+  fi
+  return 0
+}
+
+# Reads the files of the folder $1, then each folder in it. $2 is the depth of $1: the docs folder is at depth 0. A link
+# to a folder is followed, and the depth limit ends a loop of links.
+scan_folder() {
+  if [ ! -r "$1" ] || [ ! -x "$1" ]; then
+    first="the folder $1 cannot be read"
+    return 1
+  fi
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    if [ -f "$entry" ]; then
+      scan_file "$entry" || return 1
+    fi
+  done
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    if [ -d "$entry" ]; then
+      if [ "$2" -ge "$max_depth" ]; then
+        first="the folder $entry is deeper than $max_depth levels"
+        return 1
+      fi
+      scan_folder "$entry" $(($2 + 1)) || return 1
+    fi
+  done
+  return 0
+}
+
+first=""
+scan_folder "$docs" 0
+for file in "$docs/../README.md" "$docs/../CHANGELOG.md"; do
+  if [ -z "$first" ] && [ -f "$file" ]; then
+    scan_file "$file"
+  fi
+done
 report 8 "the docs, the README and the CHANGELOG hold no local machine path" "$first"
 
 # 9. design.md has the headings "Core and setup" and "Extension points". A heading may start with a section number, with
@@ -296,7 +368,7 @@ first=$(awk '
     if (!core) print "design.md has no heading \"Core and setup\""
     else if (!points) print "design.md has no heading \"Extension points\""
   }
-' "$design")
+' "$design") || first=$awk_failed
 report 9 "design.md has the headings for core and setup and for extension points" "$first"
 
 # 10. The fenced block under "**Core commands**" in design 4.2 holds no word of the software recipe list: merge, pull
@@ -336,7 +408,7 @@ first=$(awk '
     if (!found) print "design.md 4.2 has no core command table"
     else if (!corelines) print "design.md 4.2 has no fenced code under \"**Core commands**\""
   }
-' "$design")
+' "$design") || first=$awk_failed
 report 10 "the core command table of design 4.2 holds no word of the software recipe" "$first"
 
 if [ "$failed" -ne 0 ]; then
