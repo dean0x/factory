@@ -8,11 +8,10 @@ import { parseConfigText } from '../config/load.js';
 import { COORDINATOR_LAYER, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
-import { isSameOrInside } from '../core/paths.js';
+import { isSameOrInside, realPathOf } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
 import { commands, commandText, flags, flagText, nodeCommands, program, roles, schemaIds } from '../names.js';
 import { layoutOf } from '../state/layout.js';
-import { realPathOf } from './init-home.js';
 
 export interface NodeOptions {
   readonly home: string | undefined;

@@ -1,13 +1,12 @@
 import { basename, dirname, join, resolve } from 'node:path';
-import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { listRepoChildren, workTreeTop, type SkippedFolder } from '../core/git.js';
 import { findNearestConfig } from '../core/home.js';
-import { isSameOrInside } from '../core/paths.js';
+import { isSameOrInside, nearestExisting, realPathOf } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { dirs, flags, flagText, program, roles } from '../names.js';
 
-const MAX_PARENT_LEVELS = 64;
 const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
 export interface HomeChoice {
@@ -114,33 +113,6 @@ export const checkHomeHoldsNoRepo = async (deps: Deps, home: string): Promise<Cl
     `the ${roles.node} home ${home} holds the git repo ${basename(repo)} one level down`,
     `A ${roles.node} home must hold no git repo. Choose another folder with ${flagText(flags.home)} DIR.`,
   );
-};
-
-/** The nearest folder on the way up from `path` that exists, and the names of the folders below it. */
-const nearestExisting = async (
-  deps: Deps,
-  path: string,
-): Promise<CliResult<{ readonly dir: string; readonly below: readonly string[] }>> => {
-  const below: string[] = [];
-  let current = path;
-  for (let level = 0; level < MAX_PARENT_LEVELS; level += 1) {
-    const kind = await deps.fs.stat(current);
-    if (!kind.ok) return kind;
-    if (kind.value !== null) return ok({ dir: current, below });
-    below.unshift(basename(current));
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return failure(`no folder above ${path} exists`);
-};
-
-/** The path with its links resolved. The part that does not exist yet is added as it is. */
-export const realPathOf = async (deps: Deps, path: string): Promise<CliResult<string>> => {
-  const nearest = await nearestExisting(deps, path);
-  if (!nearest.ok) return nearest;
-  const real = await deps.fs.realpath(nearest.value.dir);
-  return real.ok ? ok(join(real.value, ...nearest.value.below)) : real;
 };
 
 /**

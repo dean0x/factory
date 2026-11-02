@@ -5,11 +5,13 @@ import { slug } from '../config/primitives.js';
 import { dirs, env, files, flagText, flags, homeIndex, program, roles } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
-import { isSameOrInside } from './paths.js';
+import { isSameOrInside, realPathOf } from './paths.js';
 import { err, ok, type Result } from './result.js';
 import { describeIssues } from './zod.js';
 
 const MAX_PATH_CHARS = 4096;
+/** The value of `process.platform` on macOS. */
+const MACOS = 'darwin';
 /** The folder of the index is private to the user, and so is the file. */
 const FOLDER_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -42,21 +44,32 @@ const absoluteEnv = (environment: Environment, name: string): string | undefined
   return value !== undefined && value !== '' && isAbsolute(value) ? resolve(value) : undefined;
 };
 
+/** The path in the form that is compared: macOS has a file system that ignores the case of letters. */
+const comparable = (deps: Deps, path: string): string => (deps.platform.os === MACOS ? path.toLowerCase() : path);
+
 /**
  * The index file: below the state home when that variable holds an absolute path, else below `.local/state`
  * of the user home. It is null when neither variable names a folder. A path inside the folder of Claude Code
- * is refused.
+ * is refused. The two paths are compared as they are written, and again with their links resolved. On macOS
+ * the comparison ignores the case of letters. A link that cannot be resolved is an error.
  */
-export const indexPathOf = (environment: Environment): CliResult<string | null> => {
-  const userHome = absoluteEnv(environment, env.userHome);
+export const indexPathOf = async (deps: Deps): Promise<CliResult<string | null>> => {
+  const userHome = absoluteEnv(deps.env, env.userHome);
   const stateHome =
-    absoluteEnv(environment, env.stateHome) ??
+    absoluteEnv(deps.env, env.stateHome) ??
     (userHome === undefined ? undefined : join(userHome, ...homeIndex.defaultStateHome));
   if (stateHome === undefined) return ok(null);
 
   const path = join(stateHome, program, files.homeIndex);
-  const claudeDir = userHome === undefined ? undefined : join(userHome, dirs.claude);
-  if (claudeDir !== undefined && isSameOrInside(claudeDir, path)) {
+  if (userHome === undefined) return ok(path);
+  const claudeDir = join(userHome, dirs.claude);
+  const [realPath, realClaudeDir] = [await realPathOf(deps, path), await realPathOf(deps, claudeDir)];
+  if (!realPath.ok) return realPath;
+  if (!realClaudeDir.ok) return realClaudeDir;
+  const inside =
+    isSameOrInside(comparable(deps, claudeDir), comparable(deps, path)) ||
+    isSameOrInside(comparable(deps, realClaudeDir.value), comparable(deps, realPath.value));
+  if (inside) {
     return safetyRefusal(
       `the home index would be ${path}, inside ${claudeDir}`,
       `Claude Code owns that folder. Set ${env.stateHome} to another absolute folder.`,
@@ -161,7 +174,7 @@ const unusable = (path: string, reason: string): CliResult<never> =>
  * An index that cannot be read, and a tie between two homes, are errors that name the file or the homes.
  */
 export const findHomeInIndex = async (deps: Deps): Promise<CliResult<string | null>> => {
-  const path = indexPathOf(deps.env);
+  const path = await indexPathOf(deps);
   if (!path.ok) return path;
   if (path.value === null) return ok(null);
   const entries = await readHomeIndex(deps, path.value);

@@ -23,6 +23,7 @@ import {
   MAX_SCAN_ENTRIES,
 } from '../core/git.js';
 import { indexPathOf, recordHome } from '../core/home-index.js';
+import { realPathOf } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import {
@@ -55,7 +56,7 @@ import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
 import { MAX_PROJECTS, planProjects, runClones, undoClones } from './init-clone.js';
-import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation, realPathOf } from './init-home.js';
+import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
 
 export interface InitOptions {
   readonly home: string | undefined;
@@ -466,7 +467,7 @@ const indexNode = async (deps: Deps, indexPath: string | null, plan: InitPlan): 
 
 export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResult<CommandOutput>> => {
   // The place of the index is checked before init writes anything.
-  const indexPath = indexPathOf(deps.env);
+  const indexPath = await indexPathOf(deps);
   if (!indexPath.ok) return indexPath;
   const chosen = await chooseHome(deps, options);
   if (!chosen.ok) return chosen;

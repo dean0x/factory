@@ -70,7 +70,7 @@ A command finds the node home in this order:
 3. The nearest `factory.yaml` above the current folder.
 4. The home index.
 
-The home is beside the repo, so a walk up from the repo finds no `factory.yaml`. `init` writes the home index for this case: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The index holds paths only, and it is never under `~/.claude`. The deepest project folder that holds the current folder decides. If no entry fits, the command exits with code 2 and prints a hint. If two homes list the same project, it exits with code 2 and names both homes.
+The home is beside the repo, so a walk up from the repo finds no `factory.yaml`. `init` writes the home index for this case: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The index holds paths only, and it is never under `~/.claude`. The check resolves links, and on macOS it ignores the case of letters. The deepest project folder that holds the current folder decides. If no entry fits, the command exits with code 2 and prints a hint. If two homes list the same project, it exits with code 2 and names both homes.
 
 ### Start a node
 

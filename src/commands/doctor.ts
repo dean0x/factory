@@ -157,7 +157,7 @@ export const checkHome = async (deps: Deps, home: string, state: DocState<Factor
  * cannot be read, are warnings: the index is a cache, and a command that needs it says so.
  */
 export const checkIndex = async (deps: Deps): Promise<CheckResult> => {
-  const path = indexPathOf(deps.env);
+  const path = await indexPathOf(deps);
   if (!path.ok) return check(checkIds.index, 'warn', path.error.message);
   if (path.value === null) {
     return check(checkIds.index, 'ok', `no home index is used: ${env.stateHome} and ${env.userHome} name no folder`);
