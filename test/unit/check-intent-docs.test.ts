@@ -437,6 +437,9 @@ const DESIGN_V3_ASKS = [
   'D-57', 'D-59', 'D-60',
 ] as const;
 
+/** A milestone cell of a row names a milestone or the label. A cell that starts with "None." names neither. */
+const MILESTONE_OR_LABEL = /FAC-M\d+|Design v3 PR/;
+
 /** The rows of the tables of the trace, by ask id, as five cells each. */
 const traceRows = (text: string): Map<string, string[]> => {
   const rows = new Map<string, string[]>();
@@ -461,7 +464,7 @@ describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
 
   it.each(DESIGN_V3_ASKS)('gives the row %s a design section, a milestone or the label, and a status', (id) => {
     expect(cell(id, 2), 'no design section').toMatch(/§\d|"(?:Core and setup|Extension points)"/);
-    expect(cell(id, 3), 'no milestone and no label').toMatch(/FAC-M\d+|Design v3 PR|^None\./);
+    expect(cell(id, 3), 'no milestone and no label').toMatch(MILESTONE_OR_LABEL);
     expect(cell(id, 4)).toMatch(/^(?:covered|not applicable: .+)$/);
   });
 
@@ -477,6 +480,14 @@ describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
   ] as const)('names in the row %s: %j', (id, words) => {
     const text = `${cell(id, 3)} ${cell(id, 4)}`;
     for (const word of words) expect(text).toContain(word);
+  });
+
+  it('refuses a milestone cell that names no milestone and no label', () => {
+    const oldCell = 'None. D-60 replaces this ask: see F-18a';
+    const mutated = traceRows(trace.replace(cell('F-15b', 3), oldCell));
+    expect(mutated.get('F-15b')?.[3]).toBe(oldCell);
+    expect(mutated.get('F-15b')?.[3]).not.toMatch(MILESTONE_OR_LABEL);
+    expect(cell('F-15b', 3)).toMatch(MILESTONE_OR_LABEL);
   });
 
   it('names no command, script or key of the setup of today in a code span', () => {
