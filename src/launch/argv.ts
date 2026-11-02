@@ -12,6 +12,11 @@ export interface LaunchInput {
   readonly model: string;
   /** The base URL of the proxy, or null when the session uses no proxy. */
   readonly proxyBaseUrl: string | null;
+  /**
+   * The PATH of the process that starts the session, or null for none. The launch sets it, so that the programs of the
+   * session do not depend on the PATH of a tmux server that started before.
+   */
+  readonly path: string | null;
   /** The project folders to add to the session: absolute paths. */
   readonly projects: readonly string[];
 }
@@ -34,6 +39,7 @@ const refuse = (what: string): Result<never, string> => err(`the launch refuses 
 export const launchArgv = (input: LaunchInput): Result<readonly string[], string> => {
   if (!isAbsolute(input.home)) return refuse(`a ${roles.node} home that is not an absolute path`);
   if (!input.projects.every(isAbsolute)) return refuse('a project path that is not an absolute path');
+  if (input.path === '') return refuse('an empty PATH');
   if (!values.efforts.some((effort) => effort === input.effort)) {
     return refuse(`an effort that is not one of: ${values.efforts.join(', ')}`);
   }
@@ -45,6 +51,7 @@ export const launchArgv = (input: LaunchInput): Result<readonly string[], string
     '-u',
     env.proxyBaseUrl,
     ...(input.proxyBaseUrl === null ? [] : [`${env.proxyBaseUrl}=${input.proxyBaseUrl}`]),
+    ...(input.path === null ? [] : [`${env.path}=${input.path}`]),
     `${env.home}=${input.home}`,
     `${env.session}=${input.sessionId}`,
     toolNames.claude,

@@ -19,7 +19,20 @@ import {
   switchArgs,
   type TmuxArgs,
 } from '../launch/tmux.js';
-import { capitalize, commands, commandText, flags, flagText, keys, program, roles, schemaIds, tmuxNames, values } from '../names.js';
+import {
+  capitalize,
+  commands,
+  commandText,
+  env,
+  flags,
+  flagText,
+  keys,
+  program,
+  roles,
+  schemaIds,
+  tmuxNames,
+  values,
+} from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { checkHomeLocation } from './init-home.js';
 
@@ -155,6 +168,7 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
   const proxy = await chooseProxy(deps, config);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
+  const path = deps.env[env.path];
   const stepsFor = (proxyBaseUrl: string | null): CliResult<readonly TmuxArgs[]> => {
     const launch = launchArgv({
       home,
@@ -162,6 +176,7 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
       effort: core.session.effort,
       model: core.session.model,
       proxyBaseUrl,
+      path: path === undefined || path === '' ? null : path,
       projects: recipe.projects.map((project) => resolve(home, project.path)),
     });
     return launch.ok ? ok(startSteps({ id: core.node.id, home, launch: launch.value })) : failure(launch.error);
@@ -207,16 +222,27 @@ const reach = async (deps: Deps, how: Reach, id: string): Promise<CliResult<bool
   return attached.value === 0 ? ok(true) : failure(`${toolNames.tmux} attach ended with exit code ${attached.value}`);
 };
 
+/** Remove the session after a failed step, and say what happened. A session that is gone needs no removal. */
+const cleanUpSession = async (deps: Deps, id: string): Promise<string> => {
+  if (!(await sessionExists(deps, id))) {
+    return (
+      `The session ${id} is gone. The ${roles.coordinator} probably ended at once, or the ${toolNames.tmux} server stopped. ` +
+      `Run ${toolNames.claude} in this shell to read its error.`
+    );
+  }
+  const removed = await tmuxStep(deps, killSessionArgs(id));
+  return removed.ok
+    ? `The session ${id} was removed.`
+    : `The session ${id} stays: remove it with "${commandLine(killSessionArgs(id))}".`;
+};
+
 /** Run the start steps. After the first step the session exists, so a later failure removes it again. */
 const startSession = async (deps: Deps, id: string, steps: readonly TmuxArgs[]): Promise<CliResult<void>> => {
   for (const [index, args] of steps.entries()) {
     const done = await tmuxStep(deps, args);
     if (done.ok) continue;
     if (index === 0) return done;
-    const removed = await tmuxStep(deps, killSessionArgs(id));
-    const outcome = removed.ok
-      ? `The session ${id} was removed.`
-      : `The session ${id} stays: remove it with "${commandLine(killSessionArgs(id))}".`;
+    const outcome = await cleanUpSession(deps, id);
     return err({ ...done.error, message: `${done.error.message}. ${outcome}` });
   }
   return ok(undefined);

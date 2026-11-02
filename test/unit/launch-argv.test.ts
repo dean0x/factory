@@ -7,6 +7,7 @@ const input = (change: Partial<LaunchInput> = {}): LaunchInput => ({
   effort: 'high',
   model: 'default',
   proxyBaseUrl: null,
+  path: null,
   projects: ['/w/web'],
   ...change,
 });
@@ -44,6 +45,30 @@ describe('launch argument list', () => {
       'ANTHROPIC_BASE_URL=http://127.0.0.1:8080',
       'FACTORY_HOME=/w/demo-factory',
     ]);
+  });
+
+  it('sets PATH after it clears the proxy variable, and before claude, when it has a PATH', () => {
+    const argv = argvOf({ path: '/opt/claude/bin:/usr/bin', proxyBaseUrl: 'http://127.0.0.1:8080' });
+    expect(argv.slice(0, 8)).toEqual([
+      'env',
+      '-u',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_BASE_URL=http://127.0.0.1:8080',
+      'PATH=/opt/claude/bin:/usr/bin',
+      'FACTORY_HOME=/w/demo-factory',
+      'FACTORY_SESSION=demo',
+      'claude',
+    ]);
+  });
+
+  it('keeps the PATH as one argument, whatever it holds', () => {
+    const argv = argvOf({ path: '/a b:/c;$(x):--dangerously-skip-permissions' });
+    expect(argv).toContain('PATH=/a b:/c;$(x):--dangerously-skip-permissions');
+    expect(argv.filter((arg) => arg === '--dangerously-skip-permissions')).toEqual([]);
+  });
+
+  it('refuses an empty PATH', () => {
+    expect(launchArgv(input({ path: '' })).ok).toBe(false);
   });
 
   it('adds one --add-dir for each project, in the order of the config', () => {
@@ -86,7 +111,7 @@ describe('launch argument list', () => {
     const known = ['--permission-mode', '--effort', '--model', '--add-dir'];
     const hostile = ['--dangerously-skip-permissions', '--permission-mode=bypassPermissions', 'bypassPermissions'];
     for (const value of hostile) {
-      for (const change of [{ model: value }, { effort: value }, { projects: [value] }, { home: value }]) {
+      for (const change of [{ model: value }, { effort: value }, { projects: [value] }, { home: value }, { path: value }]) {
         const result = launchArgv(input(change));
         if (result.ok) {
           expect(result.value.filter((arg) => arg.startsWith('-') && !known.includes(arg) && arg !== '-u')).toEqual([]);

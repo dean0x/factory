@@ -118,6 +118,8 @@ export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
 
 export const env = {
   proxyBaseUrl: 'ANTHROPIC_BASE_URL',
+  /** The folders where the shell looks for a program. */
+  path: 'PATH',
   home: 'FACTORY_HOME',
   session: 'FACTORY_SESSION',
   /** The folder of the per-user state. The home index lives below it. */

@@ -10,15 +10,44 @@ export interface TmuxFixture {
   readonly failing?: string;
   /** Sessions whose coordinator program has ended. The pane stays, because of remain-on-exit. */
   readonly endedCoordinators?: readonly string[];
+  /**
+   * The program of a new session ends at once. Like tmux, the fake then ends the session too, unless the same call sets
+   * remain-on-exit for the window. With remain-on-exit the session stays, and its coordinator counts as ended.
+   */
+  readonly programEndsAtOnce?: boolean;
 }
 
 export interface TmuxLog {
   readonly calls: RunCall[];
-  /** The tmux commands as one line each, for example `has-session -t =demo`. */
+  /** The tmux commands as one line each, for example `has-session -t =demo`. A command chain keeps its `;` words. */
   commands(): string[];
   /** The sessions that run now, with the node home of their option. */
   sessions(): Map<string, string | null>;
 }
+
+/** The commands that fail for a session that does not exist. */
+const NEEDS_SESSION = new Set([
+  'set-environment',
+  'set-option',
+  'split-window',
+  'new-window',
+  'switch-client',
+  'kill-session',
+  'display-message',
+]);
+
+/** A command chain is a list of commands in one argument list, separated by the argument `;`. */
+const chainOf = (args: readonly string[]): readonly (readonly string[])[] => {
+  const commands: string[][] = [[]];
+  for (const arg of args) {
+    if (arg === ';') commands.push([]);
+    else commands.at(-1)?.push(arg);
+  }
+  return commands.filter((command) => command.length > 0);
+};
+
+const keepsPaneOnExit = (command: readonly string[]): boolean =>
+  command[0] === 'set-option' && command.includes('remain-on-exit') && command.includes('on');
 
 /** A fake of the tmux program: it knows sessions and their home option, and records every call. */
 export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; log: TmuxLog } => {
@@ -32,22 +61,20 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
     return target.replace(/^=/, '').split(':')[0] ?? '';
   };
 
-  const handler: RunHandler = (call) => {
-    calls.push(call);
-    if (call.command !== 'tmux' || version === null) return missingProgram(call.command);
-    const [word, ...rest] = call.args;
+  const execute = (command: readonly string[]) => {
+    const [word, ...rest] = command;
     if (word === '-V') return exited(0, `${version}\n`);
     if (word === fixture.failing) return exited(1, '', `${word} failed\n`);
+    if (word !== undefined && NEEDS_SESSION.has(word) && !sessions.has(targetSession(command))) {
+      return exited(1, '', "can't find session\n");
+    }
     switch (word) {
       case 'has-session':
-        return sessions.has(targetSession(call.args)) ? exited(0) : exited(1, '', "can't find session\n");
+        return sessions.has(targetSession(command)) ? exited(0) : exited(1, '', "can't find session\n");
       case 'show-options':
-        return exited(0, `${sessions.get(targetSession(call.args)) ?? ''}\n`);
-      case 'display-message': {
-        const session = targetSession(call.args);
-        if (!sessions.has(session)) return exited(1, '', "can't find session\n");
-        return exited(0, `${endedCoordinators.has(session) ? 1 : 0}\n`);
-      }
+        return exited(0, `${sessions.get(targetSession(command)) ?? ''}\n`);
+      case 'display-message':
+        return exited(0, `${endedCoordinators.has(targetSession(command)) ? 1 : 0}\n`);
       case 'new-session': {
         const name = rest[rest.indexOf('-s') + 1] ?? '';
         if (sessions.has(name)) return exited(1, '', 'duplicate session\n');
@@ -55,16 +82,34 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
         return exited(0);
       }
       case 'set-option':
-        if (call.args.includes(tmuxNames.optionHome)) {
-          sessions.set(targetSession(call.args), call.args.at(-1) ?? null);
+        if (command.includes(tmuxNames.optionHome)) {
+          sessions.set(targetSession(command), command.at(-1) ?? null);
         }
         return exited(0);
       case 'kill-session':
-        sessions.delete(targetSession(call.args));
+        sessions.delete(targetSession(command));
         return exited(0);
       default:
         return exited(0);
     }
+  };
+
+  const handler: RunHandler = (call) => {
+    calls.push(call);
+    if (call.command !== 'tmux' || version === null) return missingProgram(call.command);
+    const chain = chainOf(call.args);
+    let result = exited(0);
+    for (const command of chain) {
+      result = execute(command);
+      if (!result.ok || result.value.exitCode !== 0) return result;
+    }
+    const created = chain.find((command) => command[0] === 'new-session');
+    if (fixture.programEndsAtOnce === true && created !== undefined) {
+      const name = created[created.indexOf('-s') + 1] ?? '';
+      if (chain.some(keepsPaneOnExit)) endedCoordinators.add(name);
+      else sessions.delete(name);
+    }
+    return result;
   };
   return {
     handler,

@@ -12,6 +12,9 @@ export const sessionTarget = (id: string): string => `=${id}`;
  */
 const windowTarget = (id: string, window: string): string => `${sessionTarget(id)}:${window}`;
 
+/** In an argument list, this word ends a tmux command and starts the next one. */
+const NEXT_COMMAND = ';';
+
 /** The left pane of the view window is the coordinator, the right pane is the slot. */
 const LEFT_PANE = '{left}';
 const RIGHT_PANE = '{right}';
@@ -23,8 +26,8 @@ export const hasSessionArgs = (id: string): TmuxArgs => ['has-session', '-t', se
 
 /**
  * Asks whether the program of the coordinator pane has ended. The output is `1` for an ended program and `0` for a program
- * that runs. The pane stays after its program ended, because of remain-on-exit. `display-message` takes a pane target,
- * but `list-panes` takes a window target, which cannot name one pane.
+ * that runs. The pane stays after its program ended, because of remain-on-exit. `display-message` names the one pane
+ * exactly, so the answer never comes from the slot pane.
  */
 export const coordinatorEndedArgs = (id: string): TmuxArgs => [
   'display-message',
@@ -56,8 +59,11 @@ export const attachHint = (id: string): string => `${toolNames.tmux} attach -t $
 /**
  * The tmux calls that start the session of a node, in order. Each call is an argument list for a program that runs with no shell.
  * The view window holds the coordinator and the slot. The bench window holds the cells, which come in a later version.
- * The coordinator pane stays when its program ends, so that a person can read why it ended.
- * The first pane runs the launch with no shell, and the launch clears the proxy variable. The call after `new-session`
+ * The coordinator pane stays when its program ends, so that a person can read why it ended. The first call sets this
+ * option after `new-session`, as a second command in the same argument list. A separate call would come too late for a
+ * program that ends at once, and tmux would remove the session with it. The server runs both commands of one call before
+ * it handles the end of a program.
+ * The first pane runs the launch with no shell, and the launch clears the proxy variable. The call after the first one
  * removes the variable from the environment of the session, so the shell of every later pane and window gets none.
  * The call names the session and never the server: other sessions keep their environment.
  */
@@ -69,9 +75,26 @@ export const startSteps = (input: {
   const { id, home, launch } = input;
   const view = windowTarget(id, tmuxNames.windowView);
   return [
-    ['new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', home, '--', ...launch],
+    [
+      'new-session',
+      '-d',
+      '-s',
+      id,
+      '-n',
+      tmuxNames.windowView,
+      '-c',
+      home,
+      '--',
+      ...launch,
+      NEXT_COMMAND,
+      'set-option',
+      '-w',
+      '-t',
+      view,
+      'remain-on-exit',
+      'on',
+    ],
     ['set-environment', '-t', sessionTarget(id), '-r', env.proxyBaseUrl],
-    ['set-option', '-w', '-t', view, 'remain-on-exit', 'on'],
     ['set-option', '-p', '-t', coordinatorPane(id), tmuxNames.optionNode, id],
     ['set-option', '-t', windowTarget(id, ''), tmuxNames.optionHome, home],
     ['split-window', '-d', '-h', '-t', view, '-c', home],

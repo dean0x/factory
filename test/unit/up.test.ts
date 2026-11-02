@@ -12,10 +12,12 @@ import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fak
 const HOME = '/w/node';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
 const REMOVE_PROXY_VARIABLE = 'set-environment -t =demo -r ANTHROPIC_BASE_URL';
+const KEEP_PANE = 'set-option -w -t =demo:view remain-on-exit on';
 const LAUNCH_BASE = [
   'env',
   '-u',
   'ANTHROPIC_BASE_URL',
+  'PATH=/bin',
   'FACTORY_HOME=/w/node',
   'FACTORY_SESSION=demo',
   'claude',
@@ -94,15 +96,41 @@ describe('up: a new session', () => {
     expect(tmux.commands()).toEqual([
       '-V',
       'has-session -t =demo',
-      `new-session -d -s demo -n view -c /w/node -- ${[...LAUNCH_BASE, '--add-dir', '/w/web'].join(' ')}`,
+      `new-session -d -s demo -n view -c /w/node -- ${[...LAUNCH_BASE, '--add-dir', '/w/web'].join(' ')} ; ${KEEP_PANE}`,
       REMOVE_PROXY_VARIABLE,
-      'set-option -w -t =demo:view remain-on-exit on',
       'set-option -p -t =demo:view.{left} @node demo',
       'set-option -t =demo: @factory_home /w/node',
       'split-window -d -h -t =demo:view -c /w/node',
       'set-option -p -t =demo:view.{right} @slot board',
       'new-window -d -t =demo: -n bench -c /w/node',
     ]);
+  });
+
+  it('sets remain-on-exit in the call that starts the session, so the pane cannot end before the option applies', async () => {
+    const { deps, tmux } = make();
+    await succeeded(deps);
+    const keeping = tmux.calls.filter((call) => call.args.includes('remain-on-exit'));
+    expect(keeping).toHaveLength(1);
+    expect(keeping[0]?.args[0]).toBe('new-session');
+    const args = keeping[0]?.args ?? [];
+    expect(args.slice(args.indexOf(';'))).toEqual([';', 'set-option', '-w', '-t', '=demo:view', 'remain-on-exit', 'on']);
+  });
+
+  it('keeps the session and finishes the start when the program of the coordinator ends at once', async () => {
+    const { deps, tmux } = make({ tmux: { programEndsAtOnce: true } });
+    const output = await succeeded(deps);
+    expect(tmux.sessions().has('demo')).toBe(true);
+    expect(tmux.commands().some((line) => line.startsWith('kill-session'))).toBe(false);
+    expect(tmux.commands().at(-1)).toBe('new-window -d -t =demo: -n bench -c /w/node');
+    expect(output.json).toMatchObject({ started: true });
+  });
+
+  it('gives the PATH of this process to the launch, so the PATH of the tmux server does not matter', async () => {
+    const { deps, tmux } = make({ env: { PATH: '/opt/claude/bin:/bin' } });
+    await succeeded(deps);
+    const launch = tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
+    expect(launch).toContain('PATH=/opt/claude/bin:/bin');
+    expect(launch.indexOf('PATH=/opt/claude/bin:/bin')).toBeLessThan(launch.indexOf('claude'));
   });
 
   it('removes the proxy variable from the environment of the session only, before any other window or pane exists', async () => {
@@ -153,7 +181,8 @@ describe('up: a new session', () => {
     const second = { ...config.recipe.projects[0]!, id: 'api', path: '../api' };
     const { deps, tmux } = make({ config: { ...config, recipe: { ...config.recipe, projects: [...config.recipe.projects, second] } } });
     await succeeded(deps);
-    const launch = tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
+    const call = tmux.calls.find((candidate) => candidate.args[0] === 'new-session')?.args ?? [];
+    const launch = call.slice(call.indexOf('--') + 1, call.indexOf(';'));
     expect(launch.slice(launch.indexOf('--add-dir'))).toEqual(['--add-dir', '/w/web', '--add-dir', '/w/api']);
   });
 
@@ -398,6 +427,27 @@ describe('up: a step that fails', () => {
     expect(tmux.sessions().has('demo')).toBe(false);
   });
 
+  it('does not say that the session stays when the session is gone, and names the likely cause', async () => {
+    const { deps, tmux } = make();
+    const ended = {
+      ...deps,
+      run: async (command: string, args: readonly string[], runOptions?: Parameters<typeof deps.run>[2]) => {
+        if (args[0] === 'set-environment') tmux.sessions().delete('demo');
+        return deps.run(command, args, runOptions);
+      },
+    };
+    const result = await runUp(ended, { home: HOME, dryRun: false });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!result.ok) {
+      expect(result.error.message).toBe(
+        "tmux set-environment failed (exit code 1): can't find session. The session demo is gone. " +
+          'The coordinator probably ended at once, or the tmux server stopped. Run claude in this shell to read its error.',
+      );
+    }
+    expect(tmux.commands().at(-1)).toBe('has-session -t =demo');
+    expect(tmux.commands().some((line) => line.startsWith('kill-session'))).toBe(false);
+  });
+
   it('removes nothing when the first step fails, because no session exists', async () => {
     const { deps, tmux } = make({ tmux: { failing: 'new-session' } });
     const result = await up(deps);
@@ -406,7 +456,7 @@ describe('up: a step that fails', () => {
   });
 
   it('tells the person how to remove the session when the removal fails too', async () => {
-    const { deps } = make({ tmux: { failing: 'set-option' } });
+    const { deps } = make({ tmux: { failing: 'split-window' } });
     const broken = {
       ...deps,
       run: async (command: string, args: readonly string[], runOptions?: Parameters<typeof deps.run>[2]) =>
