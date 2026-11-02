@@ -87,19 +87,34 @@ export const checkHomeIsNew = async (deps: Deps, home: string): Promise<CliResul
   return ok(undefined);
 };
 
-/** The folder is no node home, and no folder above it is one. A folder that is one gets the error of a home that exists. */
+/** No folder above the home holds a node config. The home is then outside every other node home. */
+const checkInsideNoNodeHome = async (deps: Deps, home: string): Promise<CliResult<void>> => {
+  const parentConfig = await findNearestConfig(deps, dirname(home));
+  if (!parentConfig.ok) return parentConfig;
+  if (parentConfig.value !== null) {
+    return safetyRefusal(
+      `the ${roles.node} home ${home} is inside another ${roles.node} home: ${parentConfig.value} exists`,
+      `A ${roles.node} home must be outside every other ${roles.node} home. Choose another folder with ${flagText(flags.home)} DIR.`,
+    );
+  }
+  return ok(undefined);
+};
+
+/**
+ * The folder is no node home, and no folder above it is one. A folder that is one gets the error of a home that exists
+ * (exit 1). A folder inside one gets the safety refusal (exit 4).
+ */
 const checkNoNodeAround = async (deps: Deps, folder: string): Promise<CliResult<void>> => {
   const own = await checkHomeIsNew(deps, folder);
   if (!own.ok) return own;
-  const above = await findNearestConfig(deps, dirname(folder));
-  if (!above.ok) return above;
-  return above.value === null ? ok(undefined) : nodeExists(dirname(above.value));
+  return checkInsideNoNodeHome(deps, folder);
 };
 
 /**
  * Choose the node home. The home flag wins. Else, in a git work tree, the proposal is a folder beside the work tree.
- * Else, in a folder that is a node home or is inside one, the command stops: that node exists. Else, in a folder that
- * holds git repos one level down, the proposal is a folder inside it, and each repo is a project.
+ * Else, in a folder that is a node home, the command stops: that node exists. Else, in a folder inside a node home, the
+ * command stops with the safety refusal. Else, in a folder that holds git repos one level down, the proposal is a
+ * folder inside it, and each repo is a project.
  * A person confirms the proposal on a terminal, or the yes flag confirms it. Else the home is the current folder.
  */
 export const chooseHome = async (
@@ -175,15 +190,7 @@ export const checkHomeLocation = async (deps: Deps, home: string): Promise<CliRe
     );
   }
 
-  const parentConfig = await findNearestConfig(deps, dirname(home));
-  if (!parentConfig.ok) return parentConfig;
-  if (parentConfig.value !== null) {
-    return safetyRefusal(
-      `the ${roles.node} home ${home} is inside another ${roles.node} home: ${parentConfig.value} exists`,
-      `A ${roles.node} home must be outside every other ${roles.node} home. Choose another folder with ${flagText(flags.home)} DIR.`,
-    );
-  }
-  return ok(undefined);
+  return checkInsideNoNodeHome(deps, home);
 };
 
 /** The home is not a project folder, and no project is inside it. The paths are compared after their links are resolved. */

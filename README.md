@@ -50,7 +50,7 @@ The home rules decide where the node home is:
 3. In a folder that holds git repos, the proposal is a folder inside it: `./<folder>-factory`. Each repo is a project. A folder that is a linked worktree of a listed repo is skipped, and `init` names it.
 4. Else the home is the current folder.
 
-In a folder that is a node home, or is inside one, `init` makes no proposal. It stops with exit code 1 and says that `factory.yaml` already exists.
+With no `--home`, `init` makes no proposal in a folder that is a node home. It stops with exit code 1 and says that `factory.yaml` already exists. In a folder inside a node home, it makes no proposal either, and it refuses with exit code 4.
 
 In cases 2 and 3, `init` asks you to confirm the proposal. With `--yes`, it uses the proposal and asks nothing. With no terminal and no `--yes`, it prints the proposal and exits with code 2.
 

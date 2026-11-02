@@ -1029,13 +1029,47 @@ describe('init: a workspace folder that holds several repos', () => {
       expect(messageOf(result)).toContain('.factory already exists in /ws');
     });
 
-    it('exits 1 for a folder below a node home, and names that home', async () => {
+    it.each([[false], [true]])(
+      'exits 4 for a folder below a node home, names that home and proposes nothing, with --yes %s',
+      async (yes) => {
+        const deps = inNode('/ws/sub', { ...terminal, prompt: () => ok('y') });
+        const before = snapshot(deps);
+
+        const result = await runInit(deps, withHome({ yes }));
+
+        expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+        expect(messageOf(result)).toContain('/ws/sub is inside another node home: /ws/factory.yaml exists');
+        expect(messageOf(result)).not.toContain('already exists');
+        expect(messageOf(result)).not.toContain('proposed');
+        expect(deps.prompts).toEqual([]);
+        expect(snapshot(deps)).toBe(before);
+      },
+    );
+
+    it('exits 4 for a folder below a node home before it scans the folder for repos', async () => {
+      const deps = inWorkspace({ ...terminal, cwd: '/ws/sub', prompt: () => ok('y') }, { repos: { '/ws/sub/app': {} } });
+      deps.seed('/ws/factory.yaml', 'schema: 2\n');
+      const before = snapshot(deps);
+
+      const result = await runInit(deps, withHome({ yes: true }));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(result)).toContain('is inside another node home');
+      expect(deps.prompts).toEqual([]);
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it.each([
+      ['a config file', (deps: FakeDeps) => deps.seed('/ws/sub/factory.yaml', 'schema: 2\n'), 'factory.yaml already exists in /ws/sub'],
+      ['a state folder', (deps: FakeDeps) => deps.seedDir('/ws/sub/.factory'), '.factory already exists in /ws/sub'],
+    ])('exits 1 for a folder that holds %s, also when a folder above it is a node home', async (_name, prepare, text) => {
       const deps = inNode('/ws/sub');
+      prepare(deps);
 
       const result = await runInit(deps, withHome({ yes: true }));
 
       expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
-      expect(messageOf(result)).toContain('factory.yaml already exists in /ws');
+      expect(messageOf(result)).toContain(text);
       expect(deps.prompts).toEqual([]);
     });
   });
