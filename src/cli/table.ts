@@ -64,7 +64,7 @@ const foundHomeOption: FlagOption = {
   placeholder: 'DIR',
   description:
     `The ${roles.node} folder. Default: ${env.home}, else the folder of the nearest config file ` +
-    'above the current folder.',
+    'above the current folder, else the home that lists the current folder in the home index.',
 };
 
 export const commandTable: readonly Command[] = [
