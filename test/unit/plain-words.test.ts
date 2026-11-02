@@ -176,6 +176,60 @@ describe('the docs scan: what it skips', () => {
     expect(scanDoc('design.md', `${quoted}\n`).length).toBeGreaterThan(0);
     expect(scanDoc('intent-trace.md', '| F-9 | A cell stops | §4.11 | FAC-M4 | covered |\n')).toHaveLength(1);
   });
+
+  it.each(['F-1a', 'F-14b', 'V-F-1b', 'V-F-1c'])('skips only the quote cell of the allowed trace row %s', (id) => {
+    expect(scanDoc('intent-trace.md', `| ${id} | The note says lane and andon. | §4.1 | FAC-M2 | covered |\n`)).toEqual([]);
+  });
+
+  it.each([
+    ['design section', 3],
+    ['milestone', 4],
+    ['status', 5],
+  ] as const)('reads the %s cell of an allowed trace row', (_name, position) => {
+    const cells = ['', ' F-1a ', ' The note says lane. ', ' §4.1 ', ' FAC-M2 ', ' covered ', ''];
+    const row = cells.map((cell, index) => (index === position ? ' A cell works. ' : cell)).join('|');
+    expect(scanDoc('intent-trace.md', `${row}\n`)).toEqual([
+      { file: 'intent-trace.md', line: 1, word: 'cell', kind: 'old word' },
+    ]);
+  });
+
+  it('reads a jargon word in the milestone cell of an allowed trace row', () => {
+    const row = '| F-14b | The note says lane. | §7 | Design v3 PR: the heartbeat file | covered |\n';
+    expect(scanDoc('intent-trace.md', row).map((hit) => hit.kind)).toEqual(['jargon']);
+  });
+
+  it('skips the whole line of a glossary entry, also after the first bar', () => {
+    expect(scanDoc('glossary.md', '- **cell**: A cell | a lane and a heartbeat.\n')).toEqual([]);
+  });
+});
+
+describe('the docs scan: fenced code', () => {
+  it('finds a fence that does not close, at the line of the opening fence', () => {
+    const text = ['Before.', '```bash', 'factory cell new', 'After.', ''].join('\n');
+    expect(scanDoc('design.md', text)).toEqual([{ file: 'design.md', line: 2, word: '```', kind: 'open fence' }]);
+  });
+
+  it('finds an open fence after a fence that closes', () => {
+    const text = ['```', 'a lane', '```', 'A cell after it.', '```', 'a lane', ''].join('\n');
+    expect(scanDoc('design.md', text)).toEqual([
+      { file: 'design.md', line: 4, word: 'cell', kind: 'old word' },
+      { file: 'design.md', line: 5, word: '```', kind: 'open fence' },
+    ]);
+  });
+
+  it('gives no open fence when each fence closes', () => {
+    const text = ['```', 'a lane', '```', '```bash', 'a cell', '```', ''].join('\n');
+    expect(scanDoc('design.md', text)).toEqual([]);
+  });
+
+  it('accepts a fence only at the start of a line, as the checks of the docs script do', () => {
+    const text = ['- A list item.', '  ```', '  a lane of work', '  ```', ''].join('\n');
+    expect(scanDoc('design.md', text).map((hit) => [hit.line, hit.kind])).toEqual([[3, 'old word']]);
+  });
+
+  it('gives no open fence for a lone indented fence line', () => {
+    expect(scanDoc('design.md', 'Text.\n  ```\nMore text.\n')).toEqual([]);
+  });
 });
 
 describe('the allow list', () => {
@@ -186,9 +240,19 @@ describe('the allow list', () => {
       expect(entry?.reason.length ?? 0).toBeGreaterThan(20);
       const lines = readDoc(file).split('\n').filter((line) => line.startsWith(startsWith));
       expect(lines, 'the line is not in the doc, or it is there twice').toHaveLength(1);
-      expect(scanDoc('other.md', `${lines[0] ?? ''}\n`).length, 'the line holds no old word: remove it from the list').toBeGreaterThan(0);
+      expect(
+        scanDoc('other.md', `${lines[0] ?? ''}\n`).length,
+        'the line holds no old word and no jargon word: remove it from the list',
+      ).toBeGreaterThan(0);
     },
   );
+
+  it('skips only the quote cell of a trace entry, and the whole line of a glossary entry', () => {
+    for (const entry of ALLOWED_LINES) {
+      const expected = entry.file === 'intent-trace.md' ? 'quote cell' : 'whole line';
+      expect(entry.skips, `${entry.file} ${entry.startsWith}`).toBe(expected);
+    }
+  });
 });
 
 describe('the docs that the docs change reads', () => {

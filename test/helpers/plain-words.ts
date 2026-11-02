@@ -278,11 +278,15 @@ export const JARGON_PATTERNS: readonly JargonPattern[] = [
 /** The docs that the scan reads in the docs change. */
 export const SCANNED_DOCS = ['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md'] as const;
 
+/** The part of an allowed line that the scan skips: the whole line, or only the quote cell (the second column) of a row. */
+export type AllowedSkip = 'whole line' | 'quote cell';
+
 /** A line that keeps an old word on purpose. The docs review reads this list. */
 export interface AllowedLine {
   readonly file: string;
   /** The line starts with this text. */
   readonly startsWith: string;
+  readonly skips: AllowedSkip;
   readonly reason: string;
 }
 
@@ -290,29 +294,29 @@ const GLOSSARY_SYNC =
   'the entry must equal the text of src/glossary.ts, and the glossary test checks that; the code change renames the term and removes this line from the list';
 
 const OWNER_NOTE =
-  'the row quotes a note of the owner, and the note holds the old word; the intent check compares the row with his own words';
+  'the row quotes a note of the owner, and the note holds the old word; the intent check compares the row with his own words; the scan reads the other cells of the row';
 
 /** The lines of the docs that keep an old word, each with its reason. */
 export const ALLOWED_LINES: readonly AllowedLine[] = [
-  { file: 'intent-trace.md', startsWith: '| F-1a |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| F-14b |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| V-F-1b |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| V-F-1c |', reason: OWNER_NOTE },
-  { file: 'glossary.md', startsWith: '- **layer**:', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **cell**:', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **andon**:', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **work order**:', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **changeover**:', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **staging**:', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **inspect**:', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **ship**:', reason: GLOSSARY_SYNC },
+  { file: 'intent-trace.md', startsWith: '| F-1a |', skips: 'quote cell', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| F-14b |', skips: 'quote cell', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| V-F-1b |', skips: 'quote cell', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| V-F-1c |', skips: 'quote cell', reason: OWNER_NOTE },
+  { file: 'glossary.md', startsWith: '- **layer**:', skips: 'whole line', reason: GLOSSARY_SYNC },
+  { file: 'glossary.md', startsWith: '- **cell**:', skips: 'whole line', reason: GLOSSARY_SYNC },
+  { file: 'glossary.md', startsWith: '- **andon**:', skips: 'whole line', reason: GLOSSARY_SYNC },
+  { file: 'glossary.md', startsWith: '- **work order**:', skips: 'whole line', reason: GLOSSARY_SYNC },
+  { file: 'glossary.md', startsWith: '- **changeover**:', skips: 'whole line', reason: GLOSSARY_SYNC },
+  { file: 'glossary.md', startsWith: '- **staging**:', skips: 'whole line', reason: GLOSSARY_SYNC },
+  { file: 'glossary.md', startsWith: '- **inspect**:', skips: 'whole line', reason: GLOSSARY_SYNC },
+  { file: 'glossary.md', startsWith: '- **ship**:', skips: 'whole line', reason: GLOSSARY_SYNC },
 ];
 
 export interface DocHit {
   readonly file: string;
   readonly line: number;
   readonly word: string;
-  readonly kind: 'old word' | 'jargon';
+  readonly kind: 'old word' | 'jargon' | 'open fence';
 }
 
 /** The header of the plain-words table in `docs/glossary.md`. */
@@ -321,19 +325,51 @@ export const TABLE_HEADER = '| Term | Plain word in user text | Scan | Note |';
 /** Removes the code spans of one line: text between backticks, also between double backticks. */
 const withoutCodeSpans = (line: string): string => line.replace(/(`+)[^`]*?\1/g, ' ');
 
+/** Removes the quote cell of a table row: the second column, after the id cell. The line keeps its other cells. */
+const withoutQuoteCell = (line: string): string =>
+  line
+    .split('|')
+    .map((cell, index) => (index === 2 ? ' ' : cell))
+    .join('|');
+
+/** The part of a line that the scan reads, or `undefined` when the allow list skips the whole line. */
+const readablePart = (raw: string, allowed: AllowedLine | undefined): string | undefined => {
+  if (allowed === undefined) return raw;
+  switch (allowed.skips) {
+    case 'whole line':
+      return undefined;
+    case 'quote cell':
+      return withoutQuoteCell(raw);
+    default: {
+      const unreachable: never = allowed.skips;
+      return unreachable;
+    }
+  }
+};
+
+/**
+ * A fence starts at column 0, the same rule as the awk checks of `scripts/check-intent-docs.sh`. An indented fence line
+ * is text.
+ */
+const FENCE_LINE = /^```/;
+
 /**
  * The hits of one doc: an old word or a scanned jargon word outside fenced code, outside code spans, outside the mapping
- * tables of design 7 and 7.1 and outside the plain-words table. A line of the allow list is skipped.
+ * tables of design 7 and 7.1 and outside the plain-words table. A fence that does not close is a hit at the line of its
+ * opening fence, because the scan would otherwise skip every line after it. The allow list skips the whole line of a
+ * glossary entry and only the quote cell of a trace row.
  */
 export const scanDoc = (file: string, text: string): DocHit[] => {
   const hits: DocHit[] = [];
   const lines = text.split('\n');
   let fenced = false;
+  let openFenceLine = 0;
   let inGeneric = false;
   let inPlainWords = false;
   lines.forEach((raw, index) => {
-    if (/^\s*```/.test(raw)) {
+    if (FENCE_LINE.test(raw)) {
       fenced = !fenced;
+      if (fenced) openFenceLine = index + 1;
       return;
     }
     if (fenced) return;
@@ -343,8 +379,10 @@ export const scanDoc = (file: string, text: string): DocHit[] => {
     else if (inPlainWords && !raw.startsWith('|')) inPlainWords = false;
     if (inPlainWords) return;
     if (file === 'design.md' && inGeneric && raw.startsWith('|')) return;
-    if (ALLOWED_LINES.some((allowed) => allowed.file === file && raw.startsWith(allowed.startsWith))) return;
-    const line = withoutCodeSpans(raw);
+    const allowed = ALLOWED_LINES.find((entry) => entry.file === file && raw.startsWith(entry.startsWith));
+    const readable = readablePart(raw, allowed);
+    if (readable === undefined) return;
+    const line = withoutCodeSpans(readable);
     for (const word of line.match(OLD_WORDS_DESIGN_SCAN) ?? []) {
       hits.push({ file, line: index + 1, word, kind: 'old word' });
     }
@@ -352,5 +390,6 @@ export const scanDoc = (file: string, text: string): DocHit[] => {
       for (const word of line.match(pattern) ?? []) hits.push({ file, line: index + 1, word, kind: 'jargon' });
     }
   });
+  if (fenced) hits.push({ file, line: openFenceLine, word: '```', kind: 'open fence' });
   return hits;
 };
