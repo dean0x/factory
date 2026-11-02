@@ -166,7 +166,7 @@ describe('names', () => {
     expect(violationsInText("const a = 'plain words';", path)).toEqual([]);
   });
 
-  it('finds a name literal in a file that is not names.ts', () => {
+  it('reads the string literals of a text, and leaves out comments, template expressions and placeholders', () => {
     const sample = (text: string): string[] => literalsOf(text);
     expect(sample("const a = 'factory.yaml';")).toEqual(['factory.yaml']);
     expect(sample('const a = `x ${y} {{cell}} z`;')).toEqual(['x     z']);
