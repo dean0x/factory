@@ -53,6 +53,12 @@ describe('factory doctor (built binary)', () => {
     expect(document.ok).toBe(true);
     expect(document.checks.find((check) => check.id === 'config')?.level).toBe('ok');
     expect(document.checks.every((check) => check.level !== 'fail')).toBe(true);
+    expect(document.checks.map((check) => check.id)).toEqual(
+      expect.arrayContaining(['home', 'tracker', 'children']),
+    );
+    for (const id of ['home', 'tracker', 'children']) {
+      expect(document.checks.find((check) => check.id === id)?.level).toBe('ok');
+    }
   });
 
   it('warns about an edited block and still exits 0', async () => {

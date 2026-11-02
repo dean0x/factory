@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createStyle, detectStyle, renderJson, renderText, renderWarnings } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
-import { parseFlags } from '../../src/cli/table.js';
+import { commandTable, parseFlags } from '../../src/cli/table.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { captureSink } from '../helpers/sink.js';
@@ -70,6 +70,41 @@ describe('runCli', () => {
     expect(result.code).toBe(0);
     expect(result.out).toContain('Usage: factory version');
     expect(result.out).toContain('--json');
+  });
+});
+
+describe('the refusal on Windows', () => {
+  const runOn = async (os: string, argv: readonly string[]) => {
+    const sink = captureSink();
+    const code = await runCli(argv, createFakeDeps({ os }), sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  const argvOfEachCommand: readonly (readonly string[])[] = [
+    [],
+    ['--help'],
+    ['--version'],
+    ['help'],
+    ['bogus'],
+    ...commandTable.flatMap((command) => [[command.name], [command.name, '--help'], [command.name, '--json']]),
+  ];
+
+  it.each(argvOfEachCommand.map((argv) => [argv.join(' ') || '(no arguments)', argv] as const))(
+    'exits 4 with the hint for "%s" on win32, and prints nothing else',
+    async (_name, argv) => {
+      const result = await runOn('win32', argv);
+      expect(result.code).toBe(4);
+      expect(result.out).toBe('');
+      expect(result.err).toBe(
+        'error: factory runs on macOS and Linux\nUse WSL; factory runs there as on Linux.\n',
+      );
+    },
+  );
+
+  it.each([['linux'], ['darwin']])('does not refuse on %s', async (os) => {
+    const result = await runOn(os, ['--version']);
+    expect(result.code).toBe(0);
+    expect(result.out.trim()).toBe(FACTORY_VERSION);
   });
 });
 

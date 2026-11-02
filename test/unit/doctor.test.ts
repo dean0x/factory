@@ -4,8 +4,10 @@ import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import {
   checkBlocks,
+  checkChildren,
   checkConfig,
   checkConfigVersion,
+  checkHome,
   checkNodeBlocks,
   checkPermissionMode,
   checkProjects,
@@ -15,6 +17,7 @@ import {
   checkState,
   checkStateRepo,
   checkTools,
+  checkTracker,
   runDoctor,
   type CheckResult,
 } from '../../src/commands/doctor.js';
@@ -27,6 +30,7 @@ import { inspectState } from '../../src/state/load.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
@@ -36,6 +40,7 @@ const TOOLS = ['git', 'tmux', 'gh', 'claude'];
 interface Setup {
   readonly env?: Record<string, string | undefined>;
   readonly git?: GitFixture;
+  readonly tmux?: TmuxFixture;
   readonly nodeVersion?: string;
   readonly fetch?: FetchHandler;
   readonly tools?: readonly string[];
@@ -43,11 +48,12 @@ interface Setup {
 }
 
 const makeDeps = (setup: Setup = {}): FakeDeps => {
-  const { handler } = gitHandler(setup.git ?? {});
+  const git = gitHandler(setup.git ?? {});
+  const tmux = tmuxHandler(setup.tmux);
   const deps = createFakeDeps({
     cwd: setup.cwd ?? '/w',
     env: { PATH: '/bin', ...setup.env },
-    run: handler,
+    run: (call) => (call.command === 'tmux' ? tmux.handler(call) : git.handler(call)),
     nodeVersion: setup.nodeVersion ?? 'v22.5.0',
     ...(setup.fetch === undefined ? {} : { fetch: setup.fetch }),
   });
@@ -524,15 +530,206 @@ describe('doctor: tools', () => {
   it('warns for a missing program and names the commands that need it', async () => {
     const result = await checkTools(makeDeps({ tools: ['git', 'claude'] }));
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('tmux (the cell commands)');
+    expect(result.text).toContain('tmux (the "factory up" command)');
     expect(result.text).toContain('gh (the GitHub commands)');
     expect(result.text).not.toContain('git (');
+  });
+
+  it.each([['tmux 3.0'], ['tmux 3.5a'], ['tmux next-3.7'], ['tmux 4.1']])('is ok for %s', async (version) => {
+    expect(await checkTools(makeDeps({ tmux: { version } }))).toMatchObject({ id: 'tools', level: 'ok' });
+  });
+
+  it.each([
+    ['tmux 2.9a', 'tmux 2.9'],
+    ['tmux 1.8', 'tmux 1.8'],
+    ['tmux 2.99', 'tmux 2.99'],
+  ])('warns for %s and names the up command', async (version, shown) => {
+    const result = await checkTools(makeDeps({ tmux: { version } }));
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(`${shown} is older than 3.0`);
+    expect(result.text).toContain('"factory up"');
+  });
+
+  it('warns when the version of tmux cannot be read', async () => {
+    const result = await checkTools(makeDeps({ tmux: { version: 'tmux master' } }));
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('cannot read the version of tmux');
+  });
+
+  it('does not read the version of a tmux that is missing, and names it once', async () => {
+    const result = await checkTools(makeDeps({ tools: ['git', 'gh', 'claude'] }));
+    expect(result.text.match(/tmux/g)).toHaveLength(1);
+  });
+
+  it('keeps the failure for Node.js older than 22 before any other result', async () => {
+    const result = await checkTools(makeDeps({ nodeVersion: 'v20.1.0', tmux: { version: 'tmux 1.8' } }));
+    expect(result.level).toBe('fail');
   });
 
   it('warns for every program when PATH is empty', async () => {
     const result = await checkTools(makeDeps({ env: { PATH: undefined } }));
     expect(result.level).toBe('warn');
     expect(result.text).toContain('git (');
+  });
+});
+
+describe('doctor: the home', () => {
+  const validConfig = (deps: FakeDeps) => inspectConfig(deps, HOME);
+
+  /** A node that init made, seen by a git that finds a work tree at /w. Init refuses this place, so the files are copied. */
+  const inRepo = async (): Promise<FakeDeps> => {
+    const made = await initialized();
+    const deps = makeDeps({ git: { repos: { '/w': {} } } });
+    for (const dir of made.dirs) deps.seedDir(dir);
+    for (const [path, text] of made.files) deps.seed(path, text);
+    return deps;
+  };
+
+  it('is ok for a home outside every work tree and every other home, apart from the projects', async () => {
+    const deps = await initialized();
+    expect(await checkHome(deps, HOME, await validConfig(deps))).toEqual({
+      id: 'home',
+      level: 'ok',
+      text: 'the node home is outside every git work tree and every other node home, and apart from its projects',
+    });
+  });
+
+  it('fails when the home is inside a git work tree', async () => {
+    const deps = await inRepo();
+    const result = await checkHome(deps, HOME, await validConfig(deps));
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('is inside the git work tree /w');
+  });
+
+  it('fails when the home is inside another node home', async () => {
+    const deps = await initialized();
+    deps.seed('/w/factory.yaml', 'schema: 2\n');
+    const result = await checkHome(deps, HOME, await validConfig(deps));
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('is inside another node home');
+  });
+
+  it.each([
+    ['a project inside the home', 'sub'],
+    ['the home as a project', '.'],
+  ])('fails for %s', async (_name, path) => {
+    const deps = await initialized();
+    const config = sampleConfig();
+    const project = { ...config.recipe.projects[0]!, path };
+    writeConfig(deps, { ...config, recipe: { ...config.recipe, projects: [project] }, core: { ...config.core, node: { id: 'demo', layer: 1 } } });
+    const result = await checkHome(deps, HOME, await validConfig(deps));
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('is the project folder');
+  });
+
+  it('checks the place of the home when the config is not valid, and says that the projects are not checked', async () => {
+    const deps = await initialized();
+    deps.files.set(`${HOME}/factory.yaml`, 'x: 1\n');
+    expect(await checkHome(deps, HOME, await validConfig(deps))).toMatchObject({
+      level: 'ok',
+      text: expect.stringContaining('the projects are not checked'),
+    });
+    const inside = await inRepo();
+    inside.files.set(`${HOME}/factory.yaml`, 'x: 1\n');
+    expect((await checkHome(inside, HOME, await validConfig(inside))).level).toBe('fail');
+  });
+});
+
+describe('doctor: the tracker', () => {
+  const hosted = (kind: 'github' | 'jira'): FactoryConfig => {
+    const config = sampleConfig();
+    return { ...config, core: { ...config.core, tracker: { kind, items: 'acme/items', decisions: 'acme/decisions', watch_interval: '5m' } } };
+  };
+
+  it('is ok for the local tracker', async () => {
+    const deps = await initialized();
+    expect(checkTracker(await inspectConfig(deps, HOME))).toEqual({
+      id: 'tracker',
+      level: 'ok',
+      text: 'tracker.kind is local',
+    });
+  });
+
+  it.each([['github'], ['jira']] as const)('warns for %s: its connector comes in a later version', async (kind) => {
+    const deps = await initialized();
+    writeConfig(deps, hosted(kind));
+    const result = checkTracker(await inspectConfig(deps, HOME));
+    expect(result.level).toBe('warn');
+    expect(result.text).toBe(`tracker.kind is ${kind}: its connector comes in a later version of factory`);
+  });
+
+  it('warns that it cannot check when the config is not valid', async () => {
+    const deps = await initialized();
+    deps.files.set(`${HOME}/factory.yaml`, 'x: 1\n');
+    expect(checkTracker(await inspectConfig(deps, HOME)).level).toBe('warn');
+  });
+});
+
+describe('doctor: the children', () => {
+  const layer2With = (children: FactoryConfig['core']['children']): FactoryConfig => {
+    const config = sampleConfig();
+    return { ...config, core: { ...config.core, node: { id: 'mgr', layer: 2 }, children } };
+  };
+
+  const childAt = (deps: FakeDeps, path: string, id: string, layer: number): void => {
+    const config = sampleConfig();
+    deps.seed(`${path}/factory.yaml`, renderConfig({ ...config, core: { ...config.core, node: { id, layer } } }));
+  };
+
+  const probe = async (deps: FakeDeps) => checkChildren(deps, await inspectConfig(deps, HOME));
+
+  it('is ok for a node without children', async () => {
+    const deps = await initialized();
+    expect(await probe(deps)).toEqual({ id: 'children', level: 'ok', text: 'no child is configured' });
+  });
+
+  it('is ok when each child answers and is on the layer below', async () => {
+    const deps = makeDeps();
+    writeConfig(deps, layer2With([{ id: 'web', address: 'file:///w/web-factory' }, { id: 'api', address: 'file:///w/api-factory' }]));
+    childAt(deps, '/w/web-factory', 'web', 1);
+    childAt(deps, '/w/api-factory', 'api', 1);
+    expect(await probe(deps)).toEqual({ id: 'children', level: 'ok', text: '2 children answer, all on layer 1' });
+  });
+
+  it('warns for a child that is unknown, and names the child and the reason', async () => {
+    const deps = makeDeps();
+    writeConfig(deps, layer2With([{ id: 'web', address: 'file:///w/web-factory' }]));
+    const result = await probe(deps);
+    expect(result.level).toBe('warn');
+    expect(result.text).toBe('unknown: web (no factory.yaml found there)');
+  });
+
+  it('fails for a child on the wrong layer, and names the layer that is needed', async () => {
+    const deps = makeDeps();
+    writeConfig(deps, layer2With([{ id: 'web', address: 'file:///w/web-factory' }]));
+    childAt(deps, '/w/web-factory', 'web', 3);
+    const result = await probe(deps);
+    expect(result.level).toBe('fail');
+    expect(result.text).toBe('wrong layer: web is on layer 3, but layer 1 is needed');
+  });
+
+  it('fails and lists both problems when one child has the wrong layer and another is unknown', async () => {
+    const deps = makeDeps();
+    writeConfig(deps, layer2With([{ id: 'web', address: 'file:///w/web-factory' }, { id: 'api', address: 'file:///w/api-factory' }]));
+    childAt(deps, '/w/web-factory', 'web', 2);
+    const result = await probe(deps);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('wrong layer: web is on layer 2');
+    expect(result.text).toContain('unknown: api (');
+  });
+
+  it('fails for a child on layer 1 under a node on layer 1, because cells are layer 0', async () => {
+    const deps = makeDeps();
+    const config = sampleConfig();
+    writeConfig(deps, { ...config, core: { ...config.core, children: [{ id: 'web', address: 'file:///w/web-factory' }] } });
+    childAt(deps, '/w/web-factory', 'web', 1);
+    expect((await probe(deps)).level).toBe('fail');
+  });
+
+  it('warns that it cannot check when the config is not valid', async () => {
+    const deps = makeDeps();
+    deps.seed(`${HOME}/factory.yaml`, 'x: 1\n');
+    expect((await probe(deps)).level).toBe('warn');
   });
 });
 
@@ -602,7 +799,10 @@ describe('doctor: the command', () => {
       'config',
       'config-version',
       'state',
+      'home',
       'blocks',
+      'tracker',
+      'children',
       'secrets',
       'permission-mode',
       'proxy-env',
@@ -611,7 +811,7 @@ describe('doctor: the command', () => {
       'state-repo',
       'projects',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('11 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('14 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -634,7 +834,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(11);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(14);
   });
 
   it('finds the node by walking up from the current folder', async () => {

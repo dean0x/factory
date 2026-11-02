@@ -21,6 +21,8 @@ export interface FakeOptions {
   readonly cwd?: string;
   readonly env?: Readonly<Record<string, string | undefined>>;
   readonly nodeVersion?: string;
+  /** The value of `process.platform`. Default: linux. */
+  readonly os?: string;
   readonly run?: RunHandler;
   readonly fetch?: FetchHandler;
   readonly now?: Date;
@@ -198,7 +200,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       return (options.fetch ?? (() => failure('no answer')))(url);
     },
     now: () => options.now ?? new Date('2030-01-02T03:04:05.678Z'),
-    platform: { os: 'linux', nodeVersion: options.nodeVersion ?? 'v22.1.0' },
+    platform: { os: options.os ?? 'linux', nodeVersion: options.nodeVersion ?? 'v22.1.0' },
     cwd: options.cwd ?? '/work',
     pid: options.pid ?? 4242,
   };

@@ -2,13 +2,15 @@ import { join, resolve } from 'node:path';
 import { inspectBlocks, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import type { CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
+import { probeChildren } from '../comms/children.js';
+import { fileTransport } from '../comms/transport.js';
 import { inspectConfig } from '../config/load.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder, type LocatedHome } from '../core/home.js';
 import { ok } from '../core/result.js';
-import { onPath } from '../core/tools.js';
+import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
   checkIds,
@@ -32,6 +34,7 @@ import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
 import { blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
+import { checkHomeApart, checkHomeLocation } from './init-home.js';
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 
@@ -47,12 +50,14 @@ export interface DoctorOptions {
 
 const MIN_NODE_MAJOR = 22;
 
-/** Programs that later commands need. The text says which. */
+const UP_COMMAND = `"${commandText(commands.up)}" command`;
+
+/** Programs that commands need. The text says which. */
 const TOOLS: readonly { readonly name: string; readonly neededFor: string }[] = [
-  { name: 'git', neededFor: 'the state repository and the project checks' },
-  { name: 'tmux', neededFor: `the ${roles.cell} commands` },
-  { name: 'gh', neededFor: 'the GitHub commands' },
-  { name: 'claude', neededFor: 'the launch of sessions' },
+  { name: toolNames.git, neededFor: 'the state repository and the project checks' },
+  { name: toolNames.tmux, neededFor: `the ${UP_COMMAND}` },
+  { name: toolNames.gh, neededFor: 'the GitHub commands' },
+  { name: toolNames.claude, neededFor: 'the launch of sessions' },
 ];
 
 /** Patterns of Claude Code settings that skip the permission checks. */
@@ -123,6 +128,64 @@ export const checkState = (state: DocState<NodeState>): CheckResult => {
       return unreachable;
     }
   }
+};
+
+/**
+ * The home is outside every git work tree and every other node home. When the config is valid, no project is the
+ * home or inside it. These are the rules that `init` enforces, checked again for a home that was moved or edited.
+ */
+export const checkHome = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+  const location = await checkHomeLocation(deps, home);
+  if (!location.ok) return check(checkIds.home, 'fail', location.error.message);
+  const where = `the ${roles.node} home is outside every git work tree and every other ${roles.node} home`;
+  if (state.kind !== 'valid') {
+    return check(checkIds.home, 'ok', `${where}; the projects are not checked, because ${files.config} is not valid`);
+  }
+  const projects = state.value.recipe.projects.map((project) => resolve(home, project.path));
+  const apart = await checkHomeApart(deps, home, projects);
+  return apart.ok
+    ? check(checkIds.home, 'ok', `${where}, and apart from its projects`)
+    : check(checkIds.home, 'fail', apart.error.message);
+};
+
+/** Only the local tracker works in this version of factory. */
+export const checkTracker = (state: DocState<FactoryConfig>): CheckResult => {
+  if (state.kind !== 'valid') return notChecked(checkIds.tracker, `${files.config} is not valid`);
+  const kind = state.value.core.tracker.kind;
+  const name = `${keys.root.tracker}.${keys.tracker.kind}`;
+  return kind === values.trackerLocal
+    ? check(checkIds.tracker, 'ok', `${name} is ${kind}`)
+    : check(checkIds.tracker, 'warn', `${name} is ${kind}: its connector comes in a later version of ${program}`);
+};
+
+const plural = (count: number, one: string, many: string): string => (count === 1 ? one : many);
+
+/**
+ * Ping each child once. A child that does not answer is a warning, because a node can be off. A child on a layer other
+ * than the one below this node is a failure, because the config is wrong.
+ */
+export const checkChildren = async (deps: Deps, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+  if (state.kind !== 'valid') return notChecked(checkIds.children, `${files.config} is not valid`);
+  const { children, node } = state.value.core;
+  if (children.length === 0) return check(checkIds.children, 'ok', 'no child is configured');
+
+  const needed = node.layer - 1;
+  const rows = await probeChildren(fileTransport(deps), children);
+  const wrong = rows.flatMap((row) =>
+    row.status === 'ok' && row.layer !== needed
+      ? [`wrong layer: ${row.id} is on layer ${row.layer}, but layer ${needed} is needed`]
+      : [],
+  );
+  const unknown = rows.flatMap((row) => (row.status === 'unknown' ? [`unknown: ${row.id} (${row.reason})`] : []));
+  const problems = [...wrong, ...unknown];
+  if (problems.length === 0) {
+    return check(
+      checkIds.children,
+      'ok',
+      `${rows.length} ${plural(rows.length, 'child answers', 'children answer')}, all on layer ${needed}`,
+    );
+  }
+  return check(checkIds.children, wrong.length > 0 ? 'fail' : 'warn', problems.join('; '));
 };
 
 /** A block that is not as the layer needs it. A block under the name of another layer is a role block that does not match. */
@@ -246,18 +309,32 @@ export const checkProxies = async (
   );
 };
 
+/** The problem of the tmux that is on PATH, or null: its version is not known, or it is older than the up command needs. */
+const tmuxProblem = async (deps: Deps): Promise<string | null> => {
+  const version = await tmuxVersionOf(deps);
+  if (version === null) return `cannot read the version of ${toolNames.tmux}`;
+  if (isTmuxNewEnough(version)) return null;
+  const needed = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
+  return `${toolNames.tmux} ${version.major}.${version.minor} is older than ${needed} (the ${UP_COMMAND} needs ${needed} or newer)`;
+};
+
 export const checkTools = async (deps: Deps): Promise<CheckResult> => {
   const major = Number(/^v?(\d+)/.exec(deps.platform.nodeVersion)?.[1] ?? '0');
   if (major < MIN_NODE_MAJOR) {
     return check(checkIds.tools, 'fail', `Node.js ${MIN_NODE_MAJOR} or newer is needed, and this is Node.js ${major}`);
   }
   const missing: string[] = [];
+  let tmuxFound = false;
   for (const tool of TOOLS) {
     if (!(await onPath(deps, tool.name))) missing.push(`${tool.name} (${tool.neededFor})`);
+    else if (tool.name === toolNames.tmux) tmuxFound = true;
   }
-  return missing.length === 0
+  const problems = missing.length === 0 ? [] : [`missing: ${missing.join(', ')}`];
+  const oldTmux = tmuxFound ? await tmuxProblem(deps) : null;
+  if (oldTmux !== null) problems.push(oldTmux);
+  return problems.length === 0
     ? check(checkIds.tools, 'ok', `Node.js ${major}, git, tmux, gh and claude are available`)
-    : check(checkIds.tools, 'warn', `missing: ${missing.join(', ')}`);
+    : check(checkIds.tools, 'warn', problems.join('; '));
 };
 
 export const checkStateRepo = async (deps: Deps, home: string): Promise<CheckResult> => {
@@ -298,8 +375,10 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
   const { home, source } = located;
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
-  const [blocks, permission, proxies, tools, stateRepo, projects] = await Promise.all([
+  const [homeCheck, blocks, children, permission, proxies, tools, stateRepo, projects] = await Promise.all([
+    checkHome(deps, home, config),
     checkNodeBlocks(deps, home, config),
+    checkChildren(deps, config),
     checkPermissionMode(deps, home),
     checkProxies(deps, config, source === 'flag' || source === 'cwd'),
     checkTools(deps),
@@ -310,7 +389,10 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
     checkConfig(config),
     checkConfigVersion(config),
     checkState(state),
+    homeCheck,
     blocks,
+    checkTracker(config),
+    children,
     checkSecrets(config),
     permission,
     checkProxyEnv(deps),
