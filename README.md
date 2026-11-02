@@ -167,7 +167,7 @@ The hash lets `factory` find out that a person edited a block. Text outside the 
 | --- | --- |
 | 0 | Success. Warnings keep exit code 0. |
 | 1 | The command failed, or a check failed. |
-| 2 | The command line is wrong. |
+| 2 | The command line is wrong, or the command finds no node home. |
 | 3 | Not ready. No command uses this code yet. |
 | 4 | A safety rule refused the action. |
 

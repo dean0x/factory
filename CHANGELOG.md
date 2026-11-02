@@ -32,6 +32,7 @@ Home, `init` and `up`
 - The home index file has mode 0600, and its folder has mode 0700. `factory` refuses an index file or index folder that another user owns or that a group or other user can write. The error names the path.
 - Two `init` runs at the same time both keep their entry in the home index. A lock file `homes.json.lock` beside the index lets one run write at a time. A run tries 20 times, 50 ms apart, then stops with an error. A lock older than 5 seconds is taken over.
 - When the home index lists 200 homes, `init` first drops the entries whose home has no config file. It keeps an entry whose home it cannot check.
+- A command that finds no node home exits with code 2 (usage) and prints a hint. Version 0.1.0 exited with code 1.
 - The `index` check of `doctor` warns when the home index does not list the current home.
 - `factory doctor` sends no proxy request for a home inside a git work tree or inside another node home. The `proxy` check says that it did not run, and the `home` check fails.
 - The `secrets` check of `doctor` accepts a long `file://` address in `parent` and `children`. An address that holds a known token prefix or a hex run of 40 characters or more fails the check.
