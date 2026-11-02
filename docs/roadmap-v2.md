@@ -87,12 +87,19 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] Unit tests: the config refuses an `ssh://`, `https://` or relative address in `parent` and in `children`, and names the key.
 - [ ] Home index, integration test with a temp HOME and a temp `XDG_STATE_HOME`: after `init --yes` in the repo `web`, `factory up --dry-run` from `web/` and from `web/src` finds `web-factory` and exits 0. From a folder that is in no entry, it exits 2 and prints the hint. Two homes that list the same project give exit 2 and name both homes. The index file is under `XDG_STATE_HOME`, a static test finds no path under `~/.claude`, and a home that no longer exists is ignored.
 - [ ] Workspace folder, integration test: a temp folder holds the git repos `web/` and `api/`, and `web-search/` as a linked worktree of `web`. `init --yes` there makes `./<folder>-factory`, lists `web` and `api`, names `web-search` as skipped, and exits 0. `init --home .` there exits 4 and names the rule. With no TTY and no `--yes`, `init` prints the proposal and exits 2.
-- [ ] Clone path, unit test with a fake `git`: `init --project https://host/acme/api.git` runs `git clone -- <url> <folder of the home>/api`. A target that exists and has another origin gives exit 4. A URL whose name has `..` or starts with `-` gives exit 2.
+- [ ] Clone path, unit test with a fake `git`: `init --project https://host/acme/api.git` runs `git clone -- <url> <folder of the home>/api`. A target that exists and has another origin gives exit 4. A URL whose repo name has `..` or starts with `-` gives exit 2.
 - [ ] Glossary test: every term in the list `terms` of `src/names.ts` has an entry in `docs/glossary.md` and in `factory help words`. An entry has at most 25 words. The two texts are equal. The output has no deny-list word.
 - [ ] The deny-list test has the patterns `FIX_NOW`, `ESCALATED` and `CHANGES REQUESTED`. No template and no file that `init` writes contains one.
-- [ ] Helper test: the short-output helper accepts 20 lines with the verdict on line 1, and fails on 21 lines and on a verdict that is not on line 1. `up --dry-run` and `node children` pass it.
+- [ ] Helper test: the short-output helper accepts 20 lines with the verdict on line 1, and fails on 21 lines and on a verdict that is not on line 1. The default output of `factory up` (with no `--dry-run`) and of `node children` passes it.
 - [ ] `scripts/check-review-scope.sh docs/reviews/fac-m2-review-summary.md` exits 0. It fails when the summary does not list `src/commands/init.ts`, `src/commands/upgrade.ts`, `src/commands/doctor.ts` and the files under `src/upgrade/`.
-- [ ] `scripts/check-intent-docs.sh` exits 0. It checks that every design section named in `docs/intent-trace.md` is a heading of `docs/design.md`, that every milestone id of the trace is in this roadmap, that every command word of the §4.2 block has a row in the command map, that the shop-floor table of design §7.1 has 11 rows, and that the parity table of design §8.1 holds no Status but `planned`, `done` and `retired`.
+- [ ] `scripts/check-intent-docs.sh` exits 0. It exits 1 when one of these checks fails:
+  - a design section named in `docs/intent-trace.md` is not a heading of `docs/design.md`;
+  - a milestone id of the trace is not named in this roadmap, or a milestone from FAC-M2 up has no heading here;
+  - a command word of the §4.2 block has no row in the command map;
+  - the shop-floor table of design §7.1 does not have 11 rows;
+  - the parity table of design §8.1 holds a Status that is not `planned`, `done` or `retired`;
+  - `docs/token-budget.md` does not have 17 job rows;
+  - a file under `docs/research/` holds the whole word `lane`.
 - [ ] `npm run exit-check` passes with the v2 flow: `init`, `up --dry-run`, `doctor`, deny list, and the docs check.
 
 ### FAC-M4: Cell control
@@ -118,7 +125,10 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 **Exit criteria.**
 - [ ] `docs/session-stop.md` has the rule for "safe" before the table, and one row for each way and each case (idle and busy), with the four facts and the verdict. `scripts/check-session-stop.sh` exits 0 only when the rule and all 12 rows are there (a `/quit` row may say "not available"). `factory cell stop` uses the way that the table marks safe for the case, and a test with a fake session checks it. A busy cell with no safe way gives exit 3 and names what runs (test).
-- [ ] Tests on a separate tmux server: `cell new` makes a pane on the bench with the pane option `@cell`; `cell summon` shows it in the view slot and returns the board after the time; `cell restart --all` resumes each cell with its session id from the heartbeat file.
+- [ ] Tests on a separate tmux server:
+  - `cell new` makes a pane on the bench with the pane option `@cell`;
+  - `cell summon` shows the pane in the view slot, and the slot shows the board again after the time;
+  - `cell restart --all` resumes each cell with its session id from the heartbeat file.
 - [ ] Reboot test on a separate tmux server: start a node with two cells (fake `claude`), run `tmux kill-server` for that server, then run `factory up`. The coordinator starts, and each cell resumes with the session id from its heartbeat file (the fake records `--resume <id>`).
 - [ ] Every launch test asserts auto mode, and a proxy only from the config with the check before the launch.
 - [ ] Fixture tests: each hook payload fixture has a session id and an event name, and the status line fixture has a context percent. The hook parses the fixtures and writes the heartbeat line with those values.
@@ -165,8 +175,18 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] `inspect` gives the same verdict as the manual gate on 3 merged PRs, from recorded fixtures.
 - [ ] `inspect` exits 3 with `NOT READY` while the PR has an open ask or an open andon item, and gives `READY` after the item closes (tests).
 - [ ] `pr merge` tests with `approval.land: each`: it refuses with no owner decision or answered ask for that PR and head; it refuses when the head changed after `inspect`.
-- [ ] `pr merge` tests with `approval.land: approved-work`, one test for each proof of design §6.1: (a) a decision with `by: owner`; (b) an ask answered `approve` from the owner's account; (c) a plan file with `Status: approved` in a commit by the owner (fake `gh api` gives the author). Each test runs once with a direct assignment and once with an assignment by a second decision, and merges.
-- [ ] `pr merge` refuses, with a message that names the proof that is absent, for: approval with no assignment; a decision by another account; a record for another PR or head; a plan commit by another author; chat text with no record.
+- [ ] `pr merge` tests with `approval.land: approved-work`. There is one test for each proof of design §6.1:
+  - (a) a decision with `by: owner`;
+  - (b) an ask answered `approve` from the owner's account;
+  - (c) a plan file with `Status: approved` in a commit by the owner (a fake `gh api` gives the author).
+
+  Each test runs once with a direct assignment and once with an assignment by a second decision. Each run merges.
+- [ ] `pr merge` refuses, with a message that names the proof that is absent, in these cases:
+  - approval with no assignment;
+  - a decision by another account;
+  - a record for another PR or head;
+  - a plan commit by another author;
+  - chat text with no record.
 - [ ] Config test: `approval.ship: each` loads, and an absent key means `each`. Any other value fails and names the key. `ship check|verify` only read; a test asserts that they run no publish command.
 - [ ] `checkout clean` is a dry run by default, and refuses a worktree with unpushed work or a path that a cell or resume file names. `factory clean` does not exist as a second command.
 - [ ] `checkout list` and `checkout status` give the right rows and counts on fixture repos with linked worktrees: clean, dirty, unpushed, branch not on the remote. They ask git, never a `.git` folder test.
@@ -196,9 +216,17 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 **Goal.** This workspace runs on factory with the `local` tracker. The old review page and its scripts stay as the owner view until FAC-M3 retires them.
 
-**Scope.** `factory adopt` (design §8): a node home next to the projects; the move of the coordinator text out of the folder above the checkouts; the import of the board and the items that wait on the owner into the `local` tracker files; `approval.land: approved-work`; the devflow variant for the devflow projects; cells on the bench; `session.statusline` set to the status line command of the owner; one cell run through the real Subswitch. The import into GitHub issues is not here: it is FAC-M3.
+**Scope.** `factory adopt` (design §8):
+- a node home next to the projects;
+- the move of the coordinator text out of the folder above the checkouts;
+- the import of the board and the items that wait on the owner into the `local` tracker files;
+- `approval.land: approved-work`, and the devflow variant for the devflow projects;
+- cells on the bench, and `session.statusline` set to the status line command of the owner;
+- one cell run through the real Subswitch.
 
-**Owner view in the `local` period.** The review page and its scripts of today keep working. They read the `local` files, which have the same format. The owner answers a decision in the page or with `factory decide <D-n> <option>` in a terminal outside any factory session. FAC-M7 does not retire the scripts. FAC-M3 does.
+The import into GitHub issues is not here: it is FAC-M3.
+
+**Owner view in the `local` period.** The review page and its scripts of today stay in use. They read the `local` files, which have the same format. The owner answers a decision in the page or with `factory decide <D-n> <option>` in a terminal outside any factory session. FAC-M7 does not retire the scripts. FAC-M3 does.
 
 **Exit criteria.**
 - [ ] `factory adopt --dry-run` prints the plan, and a test checks it against a fixture copy of the workspace. The plan shows the move of the coordinator text.
@@ -230,7 +258,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] `decide read` records an answer `/choose B` or a label `choose:B` from the owner's account. It ignores the same answer from another account. Tests cover both cases.
 - [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
 - [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
-- [ ] Wake test on a separate tmux server with a fake `gh`: an owner comment `/choose B`, a label change and an issue close each cause one record in `.factory/inbox/` and one constant doorbell line in the coordinator pane. The same events from another account cause none. During `watch`, a fake `claude` on PATH records no call.
+- [ ] Wake test on a separate tmux server with a fake `gh`. An owner comment `/choose B`, a label change and an issue close each cause one record in `.factory/inbox/` and one constant doorbell line in the coordinator pane. The same events from another account cause none. A fake `claude` on PATH records no call during `watch`.
 - [ ] `up --dry-run` with `github` lists the window `ops` with `factory watch`. With `local`, it lists no `ops` window.
 - [ ] Tracker choice, tests with a fake `gh`: `init --tracker github --items acme/web --decisions acme/decisions --yes` makes a node, and `factory doctor` exits 0. When the fake says that the decision repo is public, `init` exits 4 and writes no file, and `doctor` fails on such a config. `tracker status` prints `github`.
 - [ ] Override test: a node with the default `github` and a project with `kind: local`. `item add --project P` goes to the `local` files, and an item with no project goes to the fake `gh`. `tracker status` prints both.

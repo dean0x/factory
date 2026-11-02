@@ -15,8 +15,16 @@ Exit check (`scripts/exit-check.sh`, extended):
 The criteria of roadmap-v2 FAC-M2 are the acceptance list. §12 maps each one to a test.
 
 ## Scope
-In: the renames (F-1); the home rules, `init` and `factory up` (F-3); the role templates, `node.layer` and the `node` child commands (F-4); the native Windows refusal (F-5); config schema 2 with the recipe split (F-10); the schema 1 → 2 migration; `file://` addresses only (F-13). The intent fixes of §13a: the home index, the rule for a folder that holds several repos and the clone path of `--project URL`, the glossary and `factory help words`, the three triage words in the deny list, the pane option `@cell`, the role of each layer, the short-output helper, the docs check, and the D-51 review scope.
-Out (later milestones, in the build order of D-56): cells, `layout`, the board in the view slot, the heartbeat hook, the doorbell inbox (FAC-M4); the `local` tracker, `item`, `andon`, `decide`, `staging`, `inspect`, `pr`, `ship`, `checkout`, the report core (FAC-M5); the devflow variant (FAC-M6); `adopt` (FAC-M7); the `github` adapter, `watch`, `tracker` and `state` (FAC-M3); the rollup, `deliver`, `node tree` (FAC-M8). Later milestones add optional config keys with no schema bump, because old configs stay valid: `session.agent` and `session.statusline` (FAC-M4), `approval.ship` (FAC-M5), the tracker keys `site` and `key`, `recipe.projects[].tracker` and `state.remote` (FAC-M3, FAC-M9).
+In: the renames (F-1); the home rules, `init` and `factory up` (F-3); the role templates, `node.layer` and the `node` child commands (F-4); the native Windows refusal (F-5); config schema 2 with the recipe split (F-10); the schema 1 → 2 migration; `file://` addresses only (F-13).
+Also in, from the intent check (§13a): the home index; the rule for a folder that holds several repos; the clone path of `--project URL`; the role of each layer; the glossary and `factory help words`; the three triage words in the deny list; the pane option `@cell`; the short-output helper; the docs check; the D-51 review scope.
+Out (later milestones, in the build order of D-56):
+- cells, `layout`, the board in the view slot, the heartbeat hook, the doorbell inbox (FAC-M4);
+- the `local` tracker, `item`, `andon`, `decide`, `staging`, `inspect`, `pr`, `ship`, `checkout`, the report core (FAC-M5);
+- the devflow variant (FAC-M6); `adopt` (FAC-M7);
+- the `github` adapter, `watch`, `tracker` and `state` (FAC-M3);
+- the rollup, `deliver`, `node tree` (FAC-M8).
+
+Later milestones add optional config keys with no schema bump, because old configs stay valid: `session.agent` and `session.statusline` (FAC-M4), `approval.ship` (FAC-M5), the tracker keys `site` and `key`, `recipe.projects[].tracker` and `state.remote` (FAC-M3, FAC-M9).
 
 One PR (roadmap rule). There is no split: the renames and the schema change touch every module, and the roadmap keeps them in one PR so that the names test sees all of them at once.
 
@@ -251,7 +259,7 @@ Test runs: a single test file runs without the lock. The full suite runs under t
 
 ## 13a. Intent fixes (part A)
 
-An independent check of the design against Dean's notes found gaps that belong to this PR. The roadmap FAC-M2 has the matching exit criteria. These steps come after §13 step 5 and before the review. Each step is its own commit. A step lists its files, its behavior and its test. The design sections hold the full rules.
+An independent check of the design against Dean's notes found gaps that belong to this PR. The roadmap FAC-M2 has the related exit criteria. These steps come after §13 step 5 and before the review. Each step is its own commit. A step lists its files, its behavior and its test. The design sections hold the full rules.
 
 ### 5.1 Home index (F-3b, design §4.3)
 Files: `src/core/home-index.ts` (new), `src/core/home.ts`, `src/commands/init.ts`, `src/commands/doctor.ts`, `src/names.ts`, `test/unit/home-index.test.ts` (new), `test/integration/up.test.ts` (the case is added in step 6).
@@ -275,7 +283,7 @@ Behavior:
 - The refusal "the home holds a git repo one level down" uses the same list. It applies to `--home DIR` and to rule 4.
 - `--project URL`: the accepted forms are `https://`, `ssh://` and `user@host:path`. The repo name is the last part of the URL without `.git`. It must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`. Else exit 2. The target is `<folder of the home>/<repo name>`. `gitClone` runs `git clone -- <url> <target>` through `deps.run` with a time limit of 300 s. If the target exists and is a git repo with the same `remote.origin.url`, `init` reuses it. If it exists in any other way, exit 4 and name the path. The project path in the config is relative to the home (`../<repo name>`).
 
-Test: integration test (the roadmap criterion): a temp folder with the git repos `web/` and `api/`, and `web-search/` as a linked worktree of `web`. `init --yes` makes `./<folder>-factory` and lists `web` and `api`, and names `web-search` as skipped. `init --home .` there exits 4 and names the rule. Without a TTY and without `--yes`, exit 2 with the proposal. Unit test with a fake `run`: the clone argument list has `--` before the URL; the target is next to the home; an existing target with another origin gives exit 4; a name with `..` or a leading `-` gives exit 2.
+Test: integration test (the roadmap criterion): a temp folder with the git repos `web/` and `api/`, and `web-search/` as a linked worktree of `web`. `init --yes` makes `./<folder>-factory` and lists `web` and `api`, and names `web-search` as skipped. `init --home .` there exits 4 and names the rule. Without a TTY and without `--yes`, exit 2 with the proposal. Unit test with a fake `run`: the clone argument list has `--` before the URL; the target is next to the home; a target that exists and has another origin gives exit 4; a name with `..` or with `-` as its first character gives exit 2.
 
 ### 5.3 Role of each layer (decision OD-5, design §4.9 and §5.2)
 Files: `src/recipes/software/recipe.ts`, `src/recipes/software/roles/manager.ts`, `src/commands/init.ts`, `src/upgrade/spec.ts`, `src/commands/doctor.ts`, `test/unit/templates.test.ts`, `test/unit/doctor.test.ts`, `test/integration/init.test.ts`.
@@ -312,8 +320,15 @@ Test: the names test asserts the value `@cell` and fails when any file under `sr
 Files: `test/helpers/short-output.ts` (new), `test/unit/short-output.test.ts` (new), `docs/token-budget.md` (the text is ready), `scripts/check-intent-docs.sh` (new), `scripts/exit-check.sh`, `package.json`.
 
 Behavior:
-- `expectShortOutput(text)` fails when the output has more than 20 lines, when the first line is empty, or when the first line has more than 120 characters. Tests of a job command call it. In FAC-M2 it applies to `up --dry-run` and `node children`.
-- `scripts/check-intent-docs.sh` uses POSIX shell with `grep` and `awk`, and no other tool. It exits 1 and names the first failure for each of these checks: (1) each `§n` or `§n.m` in the column "Design section" of `docs/intent-trace.md` is a heading of `docs/design.md`; (2) each `FAC-M<n>` in the trace is a heading or a table row of `docs/roadmap-v2.md`; (3) the first word of each command line in the §4.2 code block of the design has a row in the "Command map" of the roadmap; (4) the table of design §7.1 has 11 rows; (5) the Status column of the parity table in design §8.1 holds only `planned`, `done` or `retired`; (6) `docs/token-budget.md` has one row for each of the 17 jobs of design §3.
+- `expectShortOutput(text)` fails when the output has more than 20 lines, when the first line is empty, or when the first line has more than 120 characters. Tests of a job command call it. In FAC-M2 it applies to the default output of `up` (not the dry run, which prints the plan) and of `node children`.
+- `scripts/check-intent-docs.sh` uses POSIX shell with `grep` and `awk`, and no other tool. It exits 1 and names the first failure of each check:
+  1. Each `§n` or `§n.m` in `docs/intent-trace.md` is a heading of `docs/design.md`.
+  2. Each `FAC-M<n>` in the trace is named in `docs/roadmap-v2.md`. Each milestone from FAC-M2 up has a heading there.
+  3. The first word of each command line in the §4.2 code block of the design has a row in the "Command map" of the roadmap.
+  4. The table of design §7.1 has 11 rows.
+  5. The Status column of the parity table in design §8.1 holds only `planned`, `done` or `retired`.
+  6. `docs/token-budget.md` has one row for each of the 17 jobs of design §3.
+  7. No file under `docs/research/` holds the whole word `lane`.
 - `exit-check.sh` runs the script.
 
 Test: the unit test for the helper (20 lines pass, 21 lines fail, an empty first line fails, a first line of 121 characters fails). The docs check runs in `exit-check.sh` and in CI. A fixture copy of the docs with one broken reference shows exit 1.
