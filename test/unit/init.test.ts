@@ -958,6 +958,51 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(result.ok && result.value.warnings.join('\n')).toContain('Only the first 200 entries');
   });
 
+  describe('in a folder that is a node home already', () => {
+    const inNode = (cwd: string = WS, extra: FakeOptions = {}) => {
+      const deps = inWorkspace({ ...extra, cwd }, { repos: { ...repos, '/ws/.factory': {} } });
+      deps.seed('/ws/factory.yaml', 'schema: 2\n');
+      deps.seedDir('/ws/sub');
+      return deps;
+    };
+
+    it.each([[false], [true]])('exits 1 with "already exists" and proposes no home, with --yes %s', async (yes) => {
+      const deps = inNode(WS, { ...terminal, prompt: () => ok('y') });
+      const before = snapshot(deps);
+
+      const result = await runInit(deps, withHome({ yes }));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(messageOf(result)).toContain('factory.yaml already exists in /ws');
+      expect(messageOf(result)).toContain('factory doctor');
+      expect(messageOf(result)).not.toContain('proposed');
+      expect(deps.prompts).toEqual([]);
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it('exits 1 for a folder that holds a state folder and no config file', async () => {
+      const { handler } = gitHandler({ repos: { '/ws/web': {}, '/ws/.factory': {} } });
+      const deps = createFakeDeps({ cwd: WS, run: handler });
+      deps.seedDir('/ws/web/.git');
+      deps.seedDir('/ws/.factory/.git');
+
+      const result = await runInit(deps, withHome({ yes: true }));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(messageOf(result)).toContain('.factory already exists in /ws');
+    });
+
+    it('exits 1 for a folder below a node home, and names that home', async () => {
+      const deps = inNode('/ws/sub');
+
+      const result = await runInit(deps, withHome({ yes: true }));
+
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(messageOf(result)).toContain('factory.yaml already exists in /ws');
+      expect(deps.prompts).toEqual([]);
+    });
+  });
+
   /** A workspace folder with 60 repos, and `count` URLs. A URL target is a clone already when `cloned` is true. */
   const crowded = (count: number, cloned: boolean) => {
     const found = Array.from({ length: 60 }, (_, i) => `/ws/r${String(i).padStart(2, '0')}`);

@@ -54,7 +54,7 @@ import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
 import { checkProjectCount, makeCloneParents, planProjects, runClones, undoClones } from './init-clone.js';
-import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
+import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeIsNew, checkHomeLocation } from './init-home.js';
 
 export interface InitOptions {
   readonly home: string | undefined;
@@ -269,22 +269,8 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
   const home = resolve(deps.cwd, options.home ?? '.');
   const layout = layoutOf(home);
 
-  const configKind = await deps.fs.stat(layout.configFile);
-  if (!configKind.ok) return configKind;
-  if (configKind.value !== null) {
-    return failure(
-      `${files.config} already exists in ${home}`,
-      `This folder is already a ${roles.node}. Run "${commandText(commands.doctor)}".`,
-    );
-  }
-  const stateKind = await deps.fs.stat(layout.stateDir);
-  if (!stateKind.ok) return stateKind;
-  if (stateKind.value !== null) {
-    return failure(`${dirs.state} already exists in ${home}`, 'Remove it, or use another folder.');
-  }
-  const homeKind = await deps.fs.stat(home);
-  if (!homeKind.ok) return homeKind;
-  if (homeKind.value !== null && homeKind.value !== 'dir') return failure(`${home} is not a folder`);
+  const fresh = await checkHomeIsNew(deps, home);
+  if (!fresh.ok) return fresh;
   const missing = await missingFolders(deps, home);
   if (!missing.ok) return missing;
 

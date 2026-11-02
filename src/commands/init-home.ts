@@ -1,11 +1,12 @@
 import { basename, dirname, join, resolve } from 'node:path';
-import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { listRepoChildren, workTreeTop, type SkippedFolder } from '../core/git.js';
 import { findNearestConfig } from '../core/home.js';
 import { isSameOrInside, nearestExisting, realPathOf } from '../core/paths.js';
 import { ok } from '../core/result.js';
-import { dirs, flags, flagText, program, roles } from '../names.js';
+import { commands, commandText, dirs, files, flags, flagText, program, roles } from '../names.js';
+import { layoutOf } from '../state/layout.js';
 
 const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
@@ -62,9 +63,42 @@ const proposedName = (folder: string): string | null => {
   return name === '' ? null : `${name}-${program}`;
 };
 
+const nodeExists = (home: string): CliResult<never> =>
+  failure(
+    `${files.config} already exists in ${home}`,
+    `That folder is already a ${roles.node}. Run "${commandText(commands.doctor)}".`,
+  );
+
+/** The folder holds no node: no config file, no state folder, and it is a folder or does not exist. */
+export const checkHomeIsNew = async (deps: Deps, home: string): Promise<CliResult<void>> => {
+  const layout = layoutOf(home);
+  const configKind = await deps.fs.stat(layout.configFile);
+  if (!configKind.ok) return configKind;
+  if (configKind.value !== null) return nodeExists(home);
+  const stateKind = await deps.fs.stat(layout.stateDir);
+  if (!stateKind.ok) return stateKind;
+  if (stateKind.value !== null) {
+    return failure(`${dirs.state} already exists in ${home}`, 'Remove it, or use another folder.');
+  }
+  const homeKind = await deps.fs.stat(home);
+  if (!homeKind.ok) return homeKind;
+  if (homeKind.value !== null && homeKind.value !== 'dir') return failure(`${home} is not a folder`);
+  return ok(undefined);
+};
+
+/** The folder is no node home, and no folder above it is one. A folder that is one gets the error of a home that exists. */
+const checkNoNodeAround = async (deps: Deps, folder: string): Promise<CliResult<void>> => {
+  const own = await checkHomeIsNew(deps, folder);
+  if (!own.ok) return own;
+  const above = await findNearestConfig(deps, dirname(folder));
+  if (!above.ok) return above;
+  return above.value === null ? ok(undefined) : nodeExists(dirname(above.value));
+};
+
 /**
  * Choose the node home. The home flag wins. Else, in a git work tree, the proposal is a folder beside the work tree.
- * Else, in a folder that holds git repos one level down, the proposal is a folder inside it, and each repo is a project.
+ * Else, in a folder that is a node home or is inside one, the command stops: that node exists. Else, in a folder that
+ * holds git repos one level down, the proposal is a folder inside it, and each repo is a project.
  * A person confirms the proposal on a terminal, or the yes flag confirms it. Else the home is the current folder.
  */
 export const chooseHome = async (
@@ -84,6 +118,8 @@ export const chooseHome = async (
   }
 
   const folder = resolve(deps.cwd);
+  const around = await checkNoNodeAround(deps, folder);
+  if (!around.ok) return around;
   const scan = await listRepoChildren(deps, folder);
   if (!scan.ok) return scan;
   if (scan.value.repos.length === 0) return ok({ home: folder, ...NOT_PROPOSED });
