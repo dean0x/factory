@@ -23,9 +23,9 @@ Fix Issue 1 first. Fix the other Blocking issues in the same cycle. Then run the
 ## Blocking Issues
 
 Each issue gives its location, its confidence and its source focus. The agent reports give the full text and the code samples:
-- /Users/dean/Sandbox/factory/.devflow/docs/reviews/fac-m1-skeleton/2026-11-01_1608/security.md
-- /Users/dean/Sandbox/factory/.devflow/docs/reviews/fac-m1-skeleton/2026-11-01_1608/reliability.md
-- /Users/dean/Sandbox/factory/.devflow/docs/reviews/fac-m1-skeleton/2026-11-01_1608/testing.md
+- .devflow/docs/reviews/fac-m1-skeleton/2026-11-01_1608/security.md
+- .devflow/docs/reviews/fac-m1-skeleton/2026-11-01_1608/reliability.md
+- .devflow/docs/reviews/fac-m1-skeleton/2026-11-01_1608/testing.md
 
 ### HIGH
 

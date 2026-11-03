@@ -6,8 +6,9 @@ export const MAX_OUTPUT_LINES = 20;
 export const MAX_FIRST_LINE_CHARS = 120;
 
 /**
- * Fails when the output of a job command is not short: more than 20 lines, an empty first line,
- * or a first line of more than 120 characters. The first line must say what happened.
+ * Fails when the output of a job command is not short. It has three checks: at most 20 lines, a
+ * non-empty first line, and a first line of at most 120 characters. It does not read the words of
+ * the first line.
  */
 export const expectShortOutput = (text: string): void => {
   const lines = text.replace(/\n$/, '').split('\n');

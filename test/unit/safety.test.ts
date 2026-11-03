@@ -63,7 +63,7 @@ describe('findTokenPaths', () => {
   });
 
   describe('the address of a node link', () => {
-    const LONG_ADDRESS = 'file:///Users/Dean/Work/payments-team-factory-2';
+    const LONG_ADDRESS = 'file:///Users/example/Work/payments-team-factory-2';
 
     it('is not a token when it is a long path with upper case, lower case and digits', () => {
       expect(findTokenPaths({ parent: { id: 'up', address: LONG_ADDRESS } })).toEqual([]);
@@ -81,17 +81,17 @@ describe('findTokenPaths', () => {
       const hex = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
       expect(
         findTokenPaths({
-          parent: { id: 'up', address: `file:///Users/Dean/${FAKE_GITHUB_TOKEN}` },
+          parent: { id: 'up', address: `file:///Users/example/${FAKE_GITHUB_TOKEN}` },
           children: [
-            { id: 'a', address: `file:///Users/Dean/${hex}` },
-            { id: 'b', address: 'file:///Users/Dean/sk-ant-api03-abcdefgh' },
+            { id: 'a', address: `file:///Users/example/${hex}` },
+            { id: 'b', address: 'file:///Users/example/sk-ant-api03-abcdefgh' },
           ],
         }),
       ).toEqual(['parent.address', 'children.0.address', 'children.1.address']);
     });
 
     it('keeps the base64 test for an address that is not a file address', () => {
-      expect(findTokenPaths({ parent: { id: 'up', address: 'https://host/Users/Dean/Work/payments-team-factory-2' } })).toEqual([
+      expect(findTokenPaths({ parent: { id: 'up', address: 'https://host/Users/example/Work/payments-team-factory-2' } })).toEqual([
         'parent.address',
       ]);
     });

@@ -153,7 +153,7 @@ Identity, owner, parent and children live only in `factory.yaml`, so they are no
   - `protocol`: the lane protocol (escalation, milestones, denial is final, context budget in percent, heavy-test lock, disk, writing style), with no devflow-specific rules.
   - `decision-profile/README-format.md`: the format, with no content.
   - `roadmaps/README.md`: the roadmap format.
-- **Deny list:** no template or generated file contains `dean`, `Dean`, `dean0x`, `/Users/`, `Sandbox`, `devflow`, `Subswitch`, a machine size, or a session id. A unit test checks every template. The exit check checks the generated files. The owner's own name comes only from the flags or from git.
+- **Deny list:** no template or generated file contains `dean`, `Dean`, `dean0x`, a user folder path, `Sandbox`, `devflow`, `Subswitch`, a machine size, or a session id. A unit test checks every template. The exit check checks the generated files. The owner's own name comes only from the flags or from git.
 
 ## 7. Doctor checks (FAC-M1)
 Each check has an id, a level (`ok`, `warn`, `fail`) and one line of text. No check prints a value from the environment or a secret.
