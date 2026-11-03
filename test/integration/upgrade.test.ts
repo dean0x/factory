@@ -1,7 +1,10 @@
 import { chmod, cp, lstat, mkdir, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
+import { setupAcceptance } from '../../src/names.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
 
@@ -24,6 +27,37 @@ const initNode = async (): Promise<void> => {
 
 const COORDINATOR_FILE = ['coordinator', 'CLAUDE.md'] as const;
 
+interface StoredAcceptance {
+  manifest: unknown;
+  hash: string;
+}
+
+/**
+ * Record the acceptance of the setup files as they are on disk now. The owner does this in a terminal window with `start`
+ * or `upgrade`, and the built binary has no terminal window, so the test writes the record of that step by hand.
+ */
+const acceptSetupFiles = async (): Promise<void> => {
+  const store = join(box.root, 'home', '.local', 'state', 'factory', 'setup-acceptances.json');
+  const stored = JSON.parse(await box.read(store)) as { acceptances: StoredAcceptance[] };
+  const entries: ManifestEntry[] = [];
+  for (const path of setupAcceptance.setupTextFiles) {
+    const text = await box.read(join(box.node, path));
+    entries.push({
+      path,
+      type: 'file',
+      size: Buffer.byteLength(text, 'utf8'),
+      sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+      blob: null,
+    });
+  }
+  const record = stored.acceptances[0];
+  expect(record).toBeDefined();
+  if (record === undefined) return;
+  record.manifest = entries;
+  record.hash = manifestHash(entries);
+  await writeFile(store, JSON.stringify(stored));
+};
+
 const editCoordinator = async (): Promise<string> => {
   const path = join(box.node, ...COORDINATOR_FILE);
   const text = await box.read(path);
@@ -44,6 +78,7 @@ describe('factory upgrade (built binary)', () => {
   it('renders a changed setup text into the setup block, and a changed prefix into the safety block (TP-76, TP-102)', async () => {
     await initNode();
     await writeFile(join(box.node, 'setup', 'coordinator.md'), 'Our team rules.\n');
+    await acceptSetupFiles();
     const local = join(box.node, 'factory.local.yaml');
     const before = await box.read(local);
     expect(before).toContain('typed by');
@@ -62,6 +97,24 @@ describe('factory upgrade (built binary)', () => {
     expect(doctor.code).toBe(0);
     expect(doctor.stdout).toContain('5 managed blocks are intact');
     expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
+  });
+
+  it('exits 4 for a setup text that changed after the acceptance, with no terminal window, and writes nothing (TP-177)', async () => {
+    await initNode();
+    await writeFile(join(box.node, 'setup', 'coordinator.md'), 'Our team rules.\n');
+    const claude = await box.read(join(box.node, ...COORDINATOR_FILE));
+    for (const args of [
+      ['upgrade', '--home', box.node],
+      ['upgrade', '--home', box.node, '--yes'],
+      ['upgrade', '--home', box.node, '--dry-run'],
+    ]) {
+      const result = await box.run(args);
+      expect(result.code).toBe(4);
+      expect(result.stderr).toContain('setup/coordinator.md');
+      expect(result.stderr).toContain('Run "factory start" or "factory upgrade" in a terminal window outside a factory session.');
+    }
+    expect(await box.read(join(box.node, ...COORDINATOR_FILE))).toBe(claude);
+    expect(existsSync(join(box.node, '.factory', 'backups'))).toBe(false);
   });
 
   it('exits 1 for a setup text that holds a marker line, and writes nothing (TP-102)', async () => {

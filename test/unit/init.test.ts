@@ -3243,7 +3243,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     expect(deps.files.has(ACCEPTANCES)).toBe(false);
   });
 
-  it('writes no acceptance in a factory session, still succeeds, and warns', async () => {
+  it('writes no acceptance in a factory session on a new root, still succeeds, and warns (TP-83)', async () => {
     const { deps } = setup({}, person({ ...terminal, env: inSession }));
     const result = await runInit(deps, options());
     expect(result.ok).toBe(true);
@@ -3256,7 +3256,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     ['the coordinator text', { [COORDINATOR]: 'My own rules.\n' }],
     ['the worker text', { [WORKER]: 'My own worker rules.\n' }],
     ['both texts', { [COORDINATOR]: 'My own rules.\n', [WORKER]: 'My own worker rules.\n' }],
-  ])('does not accept a setup file that was there before the run (%s): no acceptance, a warning that names the command', async (_name, before) => {
+  ])('does not accept a setup file that was there before the run (%s): no acceptance, a warning that names the command (TP-157)', async (_name, before) => {
     const { deps } = setup();
     for (const [path, text] of Object.entries(before)) deps.seed(`${HOME}/${path}`, text);
     const result = await runInit(deps, options({ yes: true }));

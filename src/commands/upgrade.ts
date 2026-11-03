@@ -15,7 +15,7 @@ import {
   type RepoPaths,
 } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
-import { indexPathOf, recordNode, type Origin } from '../core/home-index.js';
+import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
@@ -37,7 +37,7 @@ import {
   schemaIds,
 } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
-import { readSetupTexts } from '../state/setup-text.js';
+import type { SetupTexts } from '../templates/types.js';
 import {
   applyMoves,
   backup,
@@ -69,6 +69,7 @@ import {
   type FilesPlan,
 } from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
+import { acceptReason, checkRootSetup, settleSetup } from './setup-check.js';
 
 export interface UpgradeOptions {
   readonly home: string | undefined;
@@ -161,6 +162,31 @@ const requireRegistrationConsent = async (
   return ACCEPT_ANSWER.test(answer.value.trim()) ? ok(undefined) : usageError(`${home} was not registered. Nothing changed`, again);
 };
 
+const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };
+
+/**
+ * The setup texts that this run may render. The text goes into session instructions, so it needs the owner's acceptance
+ * before the run renders it. The check comes before any plan or write, also in a dry run. A first acceptance belongs to
+ * `init`, and a change is accepted here only by the owner on a terminal window.
+ * A folder that the factory list does not list yet is a FAC-M1 folder: it holds no setup text, and the files that its git
+ * repo tracks get their acceptance from `init` once the upgrade has made the layout. A config that names no node id fails
+ * the plan with its own message, and until then the run renders no setup text.
+ */
+const acceptedSetupTexts = async (
+  deps: Deps,
+  home: string,
+  unregistered: boolean,
+  dryRun: boolean,
+): Promise<CliResult<SetupTexts>> => {
+  const identity = await readNodeIdentity(deps, home);
+  if (!identity.ok) return ok(NO_SETUP_TEXTS);
+  const node = identity.value.id;
+  const received = !unregistered && (await originOfHome(deps, home)) === homeIndex.origins.received;
+  const check = await checkRootSetup(deps, { home, node, received });
+  const settled = await settleSetup(deps, { home, node, check, dryRun, reason: acceptReason(commands.upgrade) });
+  return settled.ok ? ok(settled.value.texts) : settled;
+};
+
 export const runUpgrade = async (
   deps: Deps,
   options: UpgradeOptions,
@@ -185,7 +211,7 @@ export const runUpgrade = async (
   // The link rule comes first, also in a dry run: no read or write below goes through a link.
   const plain = await requireNoRootLinks(deps, layout);
   if (!plain.ok) return plain;
-  const setup = await readSetupTexts(deps, layout);
+  const setup = await acceptedSetupTexts(deps, home, located.value.unregistered, options.dryRun);
   if (!setup.ok) return setup;
 
   const config = await planFile(deps, layout.configFile, upgrade.config);

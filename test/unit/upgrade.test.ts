@@ -11,7 +11,7 @@ import { runInit } from '../../src/commands/init.js';
 import { runUpgrade } from '../../src/commands/upgrade.js';
 import { parseConfigTexts, parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
-import { setupBlockNames } from '../../src/names.js';
+import { env, setupBlockNames } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -24,6 +24,7 @@ import { fileTemplates } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, registerRoot, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
+import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import {
@@ -1723,7 +1724,7 @@ describe('upgrade: a node of schema 1', () => {
 
     it('asks nothing for a folder that the factory list lists', async () => {
       const { deps } = makeOldNode();
-      registerRoot(deps, HOME, 'demo');
+      registerRoot(deps, HOME, 'demo', [], 'own');
       const output = success(await upgradeAsOwner(deps));
       expect(output.json).toMatchObject({ changed: true });
       expect(deps.prompts).toEqual([]);
@@ -2493,11 +2494,20 @@ describe('upgrade: the setup text (TP-102)', () => {
     const end = file.indexOf(`<!-- factory:end ${name} -->`);
     return start < 0 || end < 0 ? '' : file.slice(file.indexOf('\n', start) + 1, end).trimEnd();
   };
+  /** The owner accepts the setup text as it is now: the files that are there and not empty. */
+  const accept = (deps: FakeDeps): Promise<void> =>
+    acceptFiles(
+      deps,
+      HOME,
+      'demo',
+      ['setup/coordinator.md', 'setup/roles/worker.md'].filter((path) => deps.files.has(`${HOME}/${path}`)),
+    );
 
   it('renders a changed setup file again into coordinator/CLAUDE.md, after the core blocks, and keeps the core blocks as they are', async () => {
     const { deps } = await makeNode();
     const before = text(deps, CLAUDE);
     deps.files.set(SETUP, 'My shared rules.\nSecond rule.\n');
+    await accept(deps);
     const output = success(await upgrade(deps));
     const after = text(deps, CLAUDE);
     expect(blockBody(after, 'setup')).toBe('My shared rules.\nSecond rule.');
@@ -2511,6 +2521,7 @@ describe('upgrade: the setup text (TP-102)', () => {
   it('renders a changed worker text into the worker file', async () => {
     const { deps } = await makeNode();
     deps.files.set(SETUP_WORKER, 'Every worker keeps notes.\n');
+    await accept(deps);
     success(await upgrade(deps));
     expect(blockBody(text(deps, WORKER), 'setup-worker')).toBe('Every worker keeps notes.');
     expect(text(deps, WORKER)).toContain('factory:begin worker v');
@@ -2519,6 +2530,7 @@ describe('upgrade: the setup text (TP-102)', () => {
   it('shows the render in a dry run and changes no file', async () => {
     const { deps } = await makeNode();
     deps.files.set(SETUP, 'Dry rules.\n');
+    await accept(deps);
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
     expect(lineTexts(output)).toContain('block setup: render the text again, because the package or a setting changed it');
@@ -2529,6 +2541,7 @@ describe('upgrade: the setup text (TP-102)', () => {
     const { deps } = await makeNode();
     deps.files.set(CLAUDE, `My own rules.\n\n${text(deps, CLAUDE)}\nMore of mine.\n`);
     deps.files.set(SETUP, 'Changed.\n');
+    await accept(deps);
     success(await upgrade(deps));
     expect(text(deps, CLAUDE).startsWith('My own rules.\n')).toBe(true);
     expect(text(deps, CLAUDE).endsWith('\nMore of mine.\n')).toBe(true);
@@ -2549,6 +2562,7 @@ describe('upgrade: the setup text (TP-102)', () => {
     absent.deps.files.delete(SETUP);
     const claude = text(absent.deps, CLAUDE);
     absent.deps.files.set(CLAUDE, claude.slice(0, claude.indexOf('<!-- factory:begin setup')));
+    await accept(absent.deps);
     const none = success(await upgrade(absent.deps));
     expect(lineTexts(none).filter((line) => line.startsWith('block setup'))).toEqual(['block setup-worker: version 1 is current']);
     expect(text(absent.deps, CLAUDE)).not.toContain('factory:begin setup');
@@ -2557,6 +2571,7 @@ describe('upgrade: the setup text (TP-102)', () => {
     empty.deps.files.set(SETUP, '\n  \n');
     const emptyClaude = text(empty.deps, CLAUDE);
     empty.deps.files.set(CLAUDE, emptyClaude.slice(0, emptyClaude.indexOf('<!-- factory:begin setup')));
+    await accept(empty.deps);
     success(await upgrade(empty.deps));
     expect(text(empty.deps, CLAUDE)).not.toContain('factory:begin setup');
   });
@@ -2595,10 +2610,237 @@ describe('upgrade: the setup text (TP-102)', () => {
   it('has nothing to do the second time', async () => {
     const { deps } = await makeNode();
     deps.files.set(SETUP, 'Once.\n');
+    await accept(deps);
     success(await upgrade(deps));
     await deps.fs.remove(`${HOME}/.factory/backups`);
     const second = success(await upgrade(deps));
     expect(second.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+  });
+});
+
+describe('upgrade: the setup text needs the owner (TP-128, TP-129, TP-173, TP-176, TP-177, TP-178)', () => {
+  const SETUP = `${HOME}/setup/coordinator.md`;
+  const ACCEPT_COMMAND = 'Run "factory start" or "factory upgrade" in a terminal window outside a factory session.';
+  const INIT_COMMAND = 'Run "factory init" in a terminal window and accept the files.';
+  const blockBody = (file: string, name: string): string => {
+    const start = file.indexOf(`<!-- factory:begin ${name} `);
+    const end = file.indexOf(`<!-- factory:end ${name} -->`);
+    return start < 0 || end < 0 ? '' : file.slice(file.indexOf('\n', start) + 1, end).trimEnd();
+  };
+
+  /** A node that init made, whose setup text a pull changed afterwards. */
+  const changedNode = async (): Promise<Node> => {
+    const made = await makeNode();
+    made.deps.files.set(SETUP, 'Second rules.\n');
+    return made;
+  };
+
+  /** The same deps with a person at a terminal window who gives this answer, and every question in `deps.prompts`. */
+  const asking = (deps: FakeDeps, answer: string, extra: Partial<FakeDeps> = {}): FakeDeps => ({
+    ...deps,
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    prompt: async (question: string) => {
+      deps.prompts.push(question);
+      return ok(answer);
+    },
+    ...extra,
+  });
+
+  const storeOf = (deps: FakeDeps): string => text(deps, ACCEPTANCES);
+  const hashesOf = (deps: FakeDeps): string[] =>
+    (JSON.parse(storeOf(deps) || '{"acceptances":[]}') as { acceptances: { hash: string }[] }).acceptances.map((record) => record.hash);
+
+  /** A run that must stop before any write: exit 4, one remedy line, no question, and no file or record changed. */
+  const stoppedBeforeAnyWrite = async (
+    deps: FakeDeps,
+    run: FakeDeps,
+    hint: string,
+    options: { dryRun?: boolean; yes?: boolean } = {},
+  ): Promise<void> => {
+    const before = wholeState(deps);
+    const error = refusal(await upgrade(run, currentSpec, options));
+    expect(error.kind).toBe('safety');
+    expect(error.hint).toBe(hint);
+    expect(error.hint).not.toContain('\n');
+    expect(deps.prompts).toEqual([]);
+    expect(wholeState(deps)).toEqual(before);
+    expect([...deps.files.keys()].some((file) => file.includes('/backups/'))).toBe(false);
+  };
+
+  describe('a change after an older acceptance', () => {
+    it('shows the old and the new hash and the change on a terminal window, records the new hash after a yes and renders the text (TP-128)', async () => {
+      const { deps } = await changedNode();
+      const [oldHash] = hashesOf(deps);
+      const output = success(await upgrade(asking(deps, 'y')));
+      expect(deps.prompts).toHaveLength(1);
+      const question = deps.prompts[0] ?? '';
+      expect(question).toContain('Changed files:\n  setup/coordinator.md');
+      expect(question).toContain('Second rules.');
+      expect(question).toContain(`Hash of the files that you accepted before: ${oldHash}`);
+      expect(hashesOf(deps)).toHaveLength(1);
+      expect(hashesOf(deps)[0]).not.toBe(oldHash);
+      expect(question).toContain(`Hash of all files: ${hashesOf(deps)[0]}`);
+      expect(blockBody(text(deps, CLAUDE), 'setup')).toBe('Second rules.');
+      expect(output.json).toMatchObject({ changed: true });
+    });
+
+    it('renders the text from the bytes that it hashed, also when the file changes while the owner reads', async () => {
+      const { deps } = await changedNode();
+      const run = asking(deps, 'y', {
+        prompt: async (question: string) => {
+          deps.prompts.push(question);
+          deps.files.set(SETUP, 'Third rules.\n');
+          return ok('y');
+        },
+      });
+      success(await upgrade(run));
+      expect(blockBody(text(deps, CLAUDE), 'setup')).toBe('Second rules.');
+    });
+
+    it('asks no more once the owner accepted the change', async () => {
+      const { deps } = await changedNode();
+      success(await upgrade(asking(deps, 'y')));
+      deps.prompts.length = 0;
+      await deps.fs.remove(`${HOME}/.factory/backups`);
+      expect(success(await upgrade(asking(deps, 'y'))).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+      expect(deps.prompts).toEqual([]);
+    });
+
+    it.each(['n', ''])('stops with exit 4 and one remedy line after the answer "%s", before any write', async (answer) => {
+      const { deps } = await changedNode();
+      const before = wholeState(deps);
+      const error = refusal(await upgrade(asking(deps, answer)));
+      expect(error.kind).toBe('safety');
+      expect(error.hint).toBe(ACCEPT_COMMAND);
+      expect(deps.prompts).toHaveLength(1);
+      expect(wholeState(deps)).toEqual(before);
+    });
+
+    it('asks nothing in a factory session, also with yes, and writes no record (TP-129)', async () => {
+      const { deps } = await changedNode();
+      const run = asking(deps, 'y', { env: { ...deps.env, [env.session]: 'demo' } });
+      for (const yes of [true, false]) await stoppedBeforeAnyWrite(deps, run, ACCEPT_COMMAND, { yes });
+    });
+
+    it('asks nothing in a dry run, writes no record and names the accept command (TP-176)', async () => {
+      const { deps } = await changedNode();
+      await stoppedBeforeAnyWrite(deps, asking(deps, 'y'), ACCEPT_COMMAND, { dryRun: true });
+    });
+
+    it('stops before any write with no terminal window, also with yes (TP-177, TP-128)', async () => {
+      const { deps } = await changedNode();
+      for (const yes of [true, false]) await stoppedBeforeAnyWrite(deps, deps, ACCEPT_COMMAND, { yes });
+    });
+
+    it.each([
+      ['a terminal window for input and none for output', { stdoutIsTTY: false }],
+      ['a terminal window for output and none for input', { stdinIsTTY: false }],
+    ])('shows no prompt with %s and writes no record (TP-178)', async (_name, window) => {
+      const { deps } = await changedNode();
+      await stoppedBeforeAnyWrite(deps, asking(deps, 'y', window), ACCEPT_COMMAND);
+    });
+
+    it('stops before any plan when a dry run meets a change, so the dry run reports what the real run refuses', async () => {
+      const { deps } = await changedNode();
+      deps.files.set(LOCAL, text(deps, LOCAL).replace('typed by', 'sent by'));
+      await stoppedBeforeAnyWrite(deps, deps, ACCEPT_COMMAND, { dryRun: true });
+    });
+  });
+
+  describe('no acceptance at all (TP-173)', () => {
+    it.each([
+      ['no terminal window', (deps: FakeDeps) => deps, {}],
+      ['no terminal window and yes', (deps: FakeDeps) => deps, { yes: true }],
+      ['a terminal window and a yes', (deps: FakeDeps) => asking(deps, 'y'), {}],
+      ['a dry run', (deps: FakeDeps) => asking(deps, 'y'), { dryRun: true }],
+    ])('exits 4 and names init in a terminal window, with %s, and writes no acceptance', async (_name, window, options) => {
+      const { deps } = await makeNode();
+      await deps.fs.remove(ACCEPTANCES);
+      await stoppedBeforeAnyWrite(deps, window(deps), INIT_COMMAND, options);
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
+    });
+  });
+
+  describe('a subject that needs no acceptance', () => {
+    it('changes nothing about a node whose setup text is accepted as it is', async () => {
+      const { deps } = await makeNode();
+      expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+      expect(deps.prompts).toEqual([]);
+    });
+
+    it('runs for a node with no setup file, and asks nothing', async () => {
+      const { deps } = await makeNode();
+      await deps.fs.remove(SETUP);
+      await deps.fs.remove(`${HOME}/setup/roles/worker.md`);
+      await deps.fs.remove(ACCEPTANCES);
+      expect(success(await upgrade(asking(deps, 'y'), currentSpec, { dryRun: true })).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+      expect(deps.prompts).toEqual([]);
+    });
+  });
+
+  describe('a root that came from another machine', () => {
+    const FILE = 'scripts/run.sh';
+
+    /** A node that the list holds as received, whose git repo tracks a script, and whose script the owner accepted. */
+    const receivedNode = async (): Promise<Node> => {
+      const made = await makeNode();
+      const { deps } = made;
+      const index = parseJsonText(text(deps, INDEX));
+      const homes = index.ok ? (index.value as { homes: object[] }).homes : [];
+      deps.seed(INDEX, JSON.stringify({ schema: 1, homes: homes.map((entry) => ({ ...entry, origin: 'received' })) }));
+      deps.seed(`${HOME}/${FILE}`, 'echo one\n');
+      await acceptFiles(deps, HOME, 'demo', [FILE, 'setup/coordinator.md', 'setup/roles/worker.md']);
+      return made;
+    };
+
+    /** The same deps, with a git that lists the tracked files of the root. */
+    const tracking = (deps: FakeDeps, tracked: readonly string[]): FakeDeps => {
+      const git = gitHandler({ repos: { [HOME]: {} }, tracked: { [HOME]: tracked } });
+      return {
+        ...deps,
+        run: async (command, args, options) =>
+          args[0] === '-C' && args[1] === HOME && (args[2] === 'ls-files' || args[2] === 'rev-parse')
+            ? git.handler({ command, args, cwd: options?.cwd })
+            : deps.run(command, args, options),
+      };
+    };
+
+    const TRACKED = [FILE, 'setup/coordinator.md', 'setup/roles/worker.md', 'factory.yaml'];
+
+    it('upgrades when the owner accepted every file that git tracks', async () => {
+      const { deps } = await receivedNode();
+      expect(success(await upgrade(tracking(deps, TRACKED))).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    });
+
+    it('stops before any write when a listed file changed and no terminal window can ask, and names the accept command', async () => {
+      const { deps } = await receivedNode();
+      deps.seed(`${HOME}/${FILE}`, 'echo two\n');
+      await stoppedBeforeAnyWrite(deps, tracking(deps, TRACKED), ACCEPT_COMMAND);
+    });
+
+    it('asks on a terminal window when a listed file changed, and records the new hash after a yes', async () => {
+      const { deps } = await receivedNode();
+      deps.seed(`${HOME}/${FILE}`, 'echo two\n');
+      const [before] = hashesOf(deps);
+      success(await upgrade(asking(tracking(deps, TRACKED), 'y')));
+      expect(deps.prompts[0]).toContain(`Changed files:\n  ${FILE}`);
+      expect(hashesOf(deps)[0]).not.toBe(before);
+    });
+
+    it('stops with the same remedy when git can not list the files of a root from another machine', async () => {
+      const { deps } = await receivedNode();
+      const noGit: FakeDeps = {
+        ...deps,
+        run: async (command, args, options) =>
+          args[0] === '-C' && args[1] === HOME && (args[2] === 'ls-files' || args[2] === 'rev-parse')
+            ? exited(128, '', 'fatal: not a git repository\n')
+            : deps.run(command, args, options),
+      };
+      const error = refusal(await upgrade(noGit));
+      expect(error.kind).toBe('safety');
+      expect(error.message).toContain('not the top folder of a git work tree');
+    });
   });
 });
 

@@ -38,15 +38,18 @@ import {
   program,
   roles,
   schemaIds,
+  setupFileOf,
   tmuxNames,
   values,
 } from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
 import { safetyTemplateFor } from '../templates/index.js';
+import type { SetupTexts } from '../templates/types.js';
 import { planBlock } from '../upgrade/plan.js';
-import { writeBlockPlans } from '../upgrade/render.js';
-import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
+import { renderSetupText, writeBlockPlans } from '../upgrade/render.js';
+import { failsOnlyOnSetup, requireRootClean, rootNotices, scanRoot, withSetupAccepted } from './root-content.js';
+import { acceptReason, settleSetup } from './setup-check.js';
 
 export interface StartOptions {
   readonly home: string | undefined;
@@ -253,6 +256,28 @@ const requireSafetyBlock = async (
   }
 };
 
+/**
+ * Render the setup blocks again after the owner accepted a change: the texts are the bytes that the acceptance hashed. A
+ * setup block that a person edited stays, and a notice names the command that puts the text back.
+ */
+const renderAcceptedSetup = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  texts: SetupTexts,
+): Promise<CliResult<void>> => {
+  const rendered = await renderSetupText(deps, home, config, await effectiveModes(deps, home, config), texts);
+  if (!rendered.ok) return rendered;
+  if (rendered.value.wrote) deps.warn('Rendered the setup text again from the files that you accepted.');
+  for (const name of rendered.value.kept) {
+    deps.warn(
+      `The block ${name} differs from ${setupFileOf(name)}, and ${program} kept it. ` +
+        `Run "${commandText(commands.upgrade)}" to put the accepted text back. It keeps the old text in a backup file.`,
+    );
+  }
+  return ok(undefined);
+};
+
 /** The tmux calls that start the session, once with the real proxy URL and once with the label of the proxy. */
 const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<StartPlan>> => {
   const { coordinatorDir, stateDir } = layoutOf(home);
@@ -416,11 +441,22 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
   // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.
   const scan = await scanRoot(deps, home, loaded.value);
   for (const notice of rootNotices(scan)) deps.warn(notice);
-  const clean = requireRootClean(scan);
+  // A change of the setup text is the one stop that a question can end: when it is the only failure, the owner on a terminal
+  // window accepts it here. Every other case stops with the line that names the accept command.
+  const settled = scan.setup.kind === 'changed' && failsOnlyOnSetup(scan)
+    ? await settleSetup(deps, { home, node: id, check: scan.setup, dryRun, reason: acceptReason(commands.start) })
+    : null;
+  if (settled !== null && !settled.ok) return settled;
+  const clean = requireRootClean(settled === null ? scan : withSetupAccepted(scan));
   if (!clean.ok) return clean;
   // The safety block comes after the root checks and before any tool check, proxy request or launch, also in a dry run.
   const safety = await requireSafetyBlock(deps, home, loaded.value, dryRun);
   if (!safety.ok) return safety;
+  // The setup blocks come after the link rule of the coordinator file, from the bytes that the acceptance hashed.
+  if (settled !== null) {
+    const rendered = await renderAcceptedSetup(deps, home, loaded.value, settled.value.texts);
+    if (!rendered.ok) return rendered;
+  }
 
   const problems = await toolProblems(deps, !dryRun);
   if (!dryRun && problems.length > 0) {

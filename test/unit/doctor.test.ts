@@ -44,6 +44,7 @@ import { oldWordsIn } from '../helpers/old-words.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 
 const HOME = '/w/node';
 const CLAUDE_MD = `${HOME}/coordinator/CLAUDE.md`;
@@ -535,14 +536,67 @@ describe('doctor: root checks and the settings of the session folders', () => {
     expect(output.failed).toBe(true);
   });
 
-  it('fails when the tracked files of a received root have no setup acceptance', async () => {
+  it('fails when the tracked files of a received root have no setup acceptance at all, and names init (TP-173)', async () => {
+    const deps = await initialized({ git: { tracked: { [HOME]: ['scripts/run.sh', 'factory.yaml'] } } });
+    registerRoot(deps, HOME, 'demo', [], 'received');
+    deps.seed(`${HOME}/scripts/run.sh`, 'echo hi\n');
+    await deps.fs.remove(ACCEPTANCES);
+    const results = await checksOf(deps);
+    expect(levelOf(results, 'root-repo')).toBe('fail');
+    expect(textOfCheck(results, 'root-repo')).toContain('Run "factory init" in a terminal window');
+    expect(textOfCheck(results, 'root-repo')).toContain('scripts/run.sh');
+  });
+
+  it('fails when the tracked files of a received root changed after an older acceptance, and names the accept command', async () => {
     const deps = await initialized({ git: { tracked: { [HOME]: ['scripts/run.sh', 'factory.yaml'] } } });
     registerRoot(deps, HOME, 'demo', [], 'received');
     deps.seed(`${HOME}/scripts/run.sh`, 'echo hi\n');
     const results = await checksOf(deps);
     expect(levelOf(results, 'root-repo')).toBe('fail');
-    expect(textOfCheck(results, 'root-repo')).toContain('factory init');
+    expect(textOfCheck(results, 'root-repo')).toContain(
+      'Run "factory start" or "factory upgrade" in a terminal window outside a factory session.',
+    );
     expect(textOfCheck(results, 'root-repo')).toContain('scripts/run.sh');
+  });
+
+  it.each([
+    ['a changed tracked file', 'scripts/run.sh', 'echo one\n', 'echo two\n'],
+    ['a changed tracked MCP config file (TP-165)', '.mcp.json', '{"mcpServers":{}}\n', '{"mcpServers":{"a":{}}}\n'],
+  ])('fails for %s on a received root and never accepts it, also on a terminal window (TP-158)', async (_name, path, before, after) => {
+    const deps = await initialized({ git: { tracked: { [HOME]: [path, 'factory.yaml'] } } });
+    registerRoot(deps, HOME, 'demo', [], 'received');
+    deps.seed(`${HOME}/${path}`, before);
+    await acceptFiles(deps, HOME, 'demo', [path]);
+    deps.seed(`${HOME}/${path}`, after);
+    const stored = deps.files.get(ACCEPTANCES);
+    const asking = { ...deps, stdinIsTTY: true, stdoutIsTTY: true, prompt: async () => ok('y') };
+    const results = (await runDoctor(asking, { home: HOME }).then((result) => (result.ok ? result.value : null)))?.json['checks'] as CheckResult[];
+    expect(levelOf(results, 'root-repo')).toBe('fail');
+    expect(textOfCheck(results, 'root-repo')).toContain(path);
+    expect(textOfCheck(results, 'root-repo')).toContain('Run "factory start" or "factory upgrade"');
+    expect(deps.prompts).toEqual([]);
+    expect(deps.files.get(ACCEPTANCES)).toBe(stored);
+  });
+
+  it('fails for a change of the setup text of an own root with the same line, and for a text with no acceptance at all', async () => {
+    const deps = await initialized();
+    deps.seed(`${HOME}/setup/coordinator.md`, 'A changed rule.\n');
+    const changed = await checksOf(deps);
+    expect(levelOf(changed, 'root-repo')).toBe('fail');
+    expect(textOfCheck(changed, 'root-repo')).toContain('the setup text changed since the owner accepted it: setup/coordinator.md');
+    expect(textOfCheck(changed, 'root-repo')).toContain('Run "factory start" or "factory upgrade" in a terminal window outside a factory session.');
+    await deps.fs.remove(ACCEPTANCES);
+    const none = await checksOf(deps);
+    expect(textOfCheck(none, 'root-repo')).toContain('the owner has not accepted the setup text');
+    expect(textOfCheck(none, 'root-repo')).toContain('Run "factory init" in a terminal window and accept the files.');
+  });
+
+  it('passes for the setup text that init accepted, and for a root with no setup text', async () => {
+    const deps = await initialized();
+    expect(levelOf(await checksOf(deps), 'root-repo')).toBe('ok');
+    await deps.fs.remove(`${HOME}/setup`);
+    await deps.fs.remove(ACCEPTANCES);
+    expect(levelOf(await checksOf(deps), 'root-repo')).toBe('ok');
   });
 
   it('prints the mode of each approval point on the delegations line', async () => {
@@ -1346,8 +1400,11 @@ describe('doctor: a pulled change in the shared file of a registered root (S-S1)
     expect(deps.fetched).toEqual([]);
     expect(checks.find((check) => check.id === 'proxy')).toMatchObject({
       level: 'warn',
-      text: 'not checked: factory.yaml is not valid',
+      text: 'not checked: a root check failed, so no health request went to a proxy',
     });
+    expect(checks.find((check) => check.id === 'root-repo')?.text).toContain(
+      'the setup text cannot be checked against the setup acceptance, because factory.yaml is not valid',
+    );
     expect(checks.some((check) => check.id.startsWith('proxy:'))).toBe(false);
     const everything = JSON.stringify(output) + output.lines.map((line) => line.text).join('\n');
     expect(everything).not.toContain(ADDRESS);

@@ -23,7 +23,6 @@ import {
   trackedSetOf,
   trackedUnder,
 } from '../core/root-paths.js';
-import { acceptanceState, manifestChange } from '../core/setup-acceptance.js';
 import {
   acceptEditsMode,
   address,
@@ -44,8 +43,8 @@ import {
 } from '../names.js';
 import { textHasToken } from '../safety/secrets.js';
 import { analyzeSettings } from '../safety/settings.js';
-import { collectSetup } from './init-received.js';
 import { leftoverTempFolders } from './init-home.js';
+import { checkRootSetup, checkSetupSet, notListedStop, type SetupCheck } from './setup-check.js';
 
 /**
  * The checks of the root repo and of the settings of every session folder (design 4.4, F-17c): only a security boundary
@@ -66,6 +65,10 @@ export interface RootFinding {
 export interface RootScan {
   readonly origin: Origin;
   readonly findings: readonly RootFinding[];
+  /** What the store of the setup acceptances says about the subject of the acceptance. */
+  readonly setup: SetupCheck;
+  /** The finding of `findings` that the setup check gave, or null when the check gave none. */
+  readonly setupFinding: RootFinding | null;
   /** The mode of each approval point and the active delegations, or null when the config is not valid. */
   readonly delegations: DelegationReport | null;
 }
@@ -95,8 +98,6 @@ const NUL = '\u0000';
 const USER_FOLDER_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^\s/\\]+|\/home\/[^\s/\\]+|[A-Za-z]:\\Users\\[^\s\\]+)/;
 
 const doctorAgain = `run "${commandText(commands.doctor)}"`;
-const ACCEPT_REMEDY = `Run "${commandText(commands.init)}" in a terminal window and accept the files.`;
-const STORE_REMEDY = `Fix the problem that the message names, then run "${commandText(commands.init)}" in a terminal window.`;
 const NOT_VALID = `${files.config} is not valid`;
 
 const finding = (id: string, level: FindingLevel, text: string, remedy = ''): RootFinding => ({ id, level, text, remedy });
@@ -134,6 +135,14 @@ interface RepoScan {
   readonly tracked: readonly string[] | null;
   /** True when the list reached its cap. */
   readonly capped: boolean;
+  /** The check of the files that the owner must accept, or null when a stop before it made the check useless. */
+  readonly setup: SetupScan | null;
+}
+
+/** The setup check, and the finding that it gave. */
+interface SetupScan {
+  readonly check: SetupCheck;
+  readonly finding: RootFinding | null;
 }
 
 const listTracked = async (deps: Deps, home: string): Promise<TrackedList | null> => {
@@ -199,64 +208,17 @@ const scanIgnoreRules = async (
   ];
 };
 
-/** The files of a received root that the owner must accept: they go into the instructions of the sessions. */
-const scanAcceptance = async (
-  deps: Deps,
-  home: string,
-  set: readonly string[],
-  config: FactoryConfig | null,
-): Promise<readonly RootFinding[]> => {
-  const id = checkIds.rootRepo;
-  if (set.length === 0) return [];
-  if (config === null) {
-    return [
-      finding(
-        id,
-        'fail',
-        `the files that git tracks cannot be checked against the setup acceptance, because ${NOT_VALID}`,
-        `Fix ${files.config}, then ${doctorAgain}.`,
-      ),
-    ];
-  }
-  const collected = await collectSetup(deps, home, set);
-  if (!collected.ok) return [failureFrom(id, collected.error, ACCEPT_REMEDY)];
-  const { entries, hash } = collected.value.collected.manifest;
-  if (entries.length === 0) return [];
-  const state = await acceptanceState(deps, { root: home, node: config.core.node.id, hash });
-  if (!state.ok) return [failureFrom(id, state.error, STORE_REMEDY)];
-  const accepted = state.value;
-  switch (accepted.state) {
-    case 'accepted':
-      return [];
-    case 'none':
-      return [
-        finding(
-          id,
-          'fail',
-          `the ${roles.owner} has not accepted the files that git tracks: ${namedItems(entries.map((entry) => shownPath(entry.path)))}`,
-          ACCEPT_REMEDY,
-        ),
-      ];
-    case 'changed': {
-      const change = manifestChange(accepted.record.manifest, entries);
-      const paths = [...change.changed, ...change.added, ...change.removed].map(shownPath);
-      return [
-        finding(
-          id,
-          'fail',
-          paths.length === 0
-            ? `the ${roles.owner} accepted these files for another ${roles.node} id`
-            : `the files that git tracks changed since the ${roles.owner} accepted them: ${namedItems(paths)}`,
-          ACCEPT_REMEDY,
-        ),
-      ];
-    }
-    default: {
-      const unreachable: never = accepted;
-      return unreachable;
-    }
-  }
-};
+/**
+ * The finding of a setup check: a failure for every state that is not accepted. A first acceptance and a change are a
+ * stop for the commands that start a session or render the setup text, and `doctor` fails with the same line.
+ */
+const setupScanOf = (check: SetupCheck): SetupScan => ({
+  check,
+  finding:
+    check.kind === 'empty' || check.kind === 'accepted'
+      ? null
+      : finding(checkIds.rootRepo, 'fail', check.stop.text, check.stop.remedy),
+});
 
 const scanRepo = async (
   deps: Deps,
@@ -269,19 +231,16 @@ const scanRepo = async (
   const received = origin === homeIndex.origins.received;
   const list = await listTracked(deps, home);
   if (list === null) {
+    const stop = notListedStop(home);
     return {
       findings: [
         received
-          ? finding(
-              id,
-              'fail',
-              `${home} is not the top folder of a git work tree, or git cannot list its files, so ${program} cannot list the files that git tracks`,
-              `Get the ${places.folder} with "git clone", then run "${commandText(commands.init)}" in the cloned folder.`,
-            )
+          ? finding(id, 'fail', stop.text, stop.remedy)
           : notChecked(id, `git cannot list the files that git tracks in ${home}`),
       ],
       tracked: null,
       capped: false,
+      setup: null,
     };
   }
   const tracked = list.paths;
@@ -335,10 +294,12 @@ const scanRepo = async (
   }
 
   findings.push(...(await scanIgnoreRules(deps, home, tracked, projectPaths)));
+  let setup: SetupScan | null = null;
   if (received && !capStop && !linkStop && stops.length === 0) {
-    findings.push(...(await scanAcceptance(deps, home, set, config)));
+    setup = setupScanOf(await checkSetupSet(deps, { home, set, node: config?.core.node.id ?? null, received }));
+    if (setup.finding !== null) findings.push(setup.finding);
   }
-  return { findings, tracked, capped: list.reachedCap };
+  return { findings, tracked, capped: list.reachedCap, setup };
 };
 
 // ---- The tracked text files: tokens, file URLs and user folder paths ----
@@ -658,12 +619,44 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
   const projects = await scanProjects(deps, home, config);
   const settings = await scanSettings(deps, home, projectPaths, repo.tracked ?? []);
   const delegations = config === null ? null : await delegationReport(deps, home, config);
+  // A received root checked its files in the scan of the repo. An own root accepts its setup text, which is there whether
+  // git tracks it or not.
+  const setup =
+    repo.setup ??
+    (received
+      ? setupScanOf({ kind: 'empty' })
+      : setupScanOf(await checkRootSetup(deps, { home, node: config?.core.node.id ?? null, received })));
   return {
     origin,
-    findings: [...repo.findings, ...texts, ...capNote, ...projects, ...settings, ...(delegations === null ? [] : delegationFindings(delegations))],
+    findings: [
+      ...repo.findings,
+      ...(received || setup.finding === null ? [] : [setup.finding]),
+      ...texts,
+      ...capNote,
+      ...projects,
+      ...settings,
+      ...(delegations === null ? [] : delegationFindings(delegations)),
+    ],
+    setup: setup.check,
+    setupFinding: setup.finding,
     delegations,
   };
 };
+
+/**
+ * True when the setup acceptance is the only failure. A failure of another check stops first, with every reason named and
+ * no question, because an accept step cannot make the run go on.
+ */
+export const failsOnlyOnSetup = (scan: RootScan): boolean =>
+  scan.setupFinding !== null && scan.findings.every((entry) => entry.level !== 'fail' || entry === scan.setupFinding);
+
+/** The scan after the owner accepted the change of the setup: the stop for the setup is gone. */
+export const withSetupAccepted = (scan: RootScan): RootScan => ({
+  ...scan,
+  setup: scan.setup.kind === 'changed' ? { kind: 'accepted', setup: scan.setup.setup } : scan.setup,
+  setupFinding: null,
+  findings: scan.findings.filter((entry) => entry !== scan.setupFinding),
+});
 
 const OK_TEXT: Readonly<Record<string, string>> = {
   [checkIds.rootRepo]: `the root repo tracks no path that must stay on this machine, and git ignores ${files.localConfig} and ${dirs.state}/`,

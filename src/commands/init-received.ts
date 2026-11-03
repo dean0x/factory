@@ -222,7 +222,11 @@ const isSetupText = (path: string): boolean => setupAcceptance.setupTextFiles.so
 export const collectSetup = async (deps: Deps, home: string, set: readonly string[]): Promise<CliResult<CollectedSetup>> => {
   const read = await collectManifest(deps, home, set, new Map(), { textLimit: maxSetupTextBytes });
   if (!read.ok) return read;
-  const blank = (path: string): boolean => renderableSetupText(read.value.texts.get(path) ?? null) === null;
+  // A text over the bound for a setup text is not blank: it stays in the set, and `textOf` refuses it.
+  const blank = (path: string): boolean => {
+    const raw = read.value.texts.get(path);
+    return raw !== undefined && raw !== null && renderableSetupText(raw) === null;
+  };
   const entries: readonly ManifestEntry[] = read.value.manifest.entries.filter((entry) => !(isSetupText(entry.path) && blank(entry.path)));
   const textOf = (path: string): CliResult<string | null> => {
     if (!entries.some((entry) => entry.path === path)) return ok(null);

@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  failsOnlyOnSetup,
   hasRootFailure,
   requireRootClean,
   rootCheckResults,
   rootNotices,
   scanRoot,
   scanTrackedTexts,
+  withSetupAccepted,
   type RootFinding,
   type RootScan,
 } from '../../src/commands/root-content.js';
@@ -24,7 +26,7 @@ import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-dep
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
-import { ACCEPTANCES, acceptTracked as acceptSet } from '../helpers/setup-acceptance.js';
+import { ACCEPTANCES, acceptFiles, acceptTracked as acceptSet } from '../helpers/setup-acceptance.js';
 
 const HOME = '/w/node';
 const STATE_HOME = '/state';
@@ -328,9 +330,11 @@ describe('root repo: the files of a received root (TP-45, TP-166)', () => {
     expect(textOf(found, checkIds.rootRepo)).toContain('cannot be used');
   });
 
-  it('asks for no acceptance on an own root', async () => {
-    const found = await scan(make({ origin: 'own', tracked: ['setup/coordinator.md', 'scripts/run.sh'] }));
+  it('asks for no acceptance of the listed files on an own root', async () => {
+    const found = await scan(make({ origin: 'own', tracked: ['scripts/run.sh', 'factory.yaml'] }));
     expect(found.findings).toEqual([]);
+    expect(found.setup).toEqual({ kind: 'empty' });
+    expect(found.setupFinding).toBeNull();
   });
 
   it('fails when the config is not valid and the set is not empty: the acceptance can not be matched', async () => {
@@ -371,6 +375,125 @@ describe('root repo: the files of a received root (TP-45, TP-166)', () => {
     const text = textOf(await scan(deps), checkIds.rootRepo);
     expect(text).not.toContain('\u001b');
     expect(text).toContain('\\x1b');
+  });
+});
+
+describe('root repo: the setup text of an own root (TP-128, TP-173)', () => {
+  const SETUP_PATH = 'setup/coordinator.md';
+  const SETUP_FILE = `${HOME}/${SETUP_PATH}`;
+  const INIT_COMMAND = 'Run "factory init" in a terminal window and accept the files.';
+  const ACCEPT_COMMAND = 'Run "factory start" or "factory upgrade" in a terminal window outside a factory session.';
+
+  it('fails for a setup text with no acceptance at all, names the file and the command that makes the first acceptance', async () => {
+    const deps = make({ origin: 'own' });
+    deps.seed(SETUP_FILE, 'Rules.\n');
+    const found = await scan(deps);
+    expect(of(found, checkIds.rootRepo)).toEqual([
+      { id: checkIds.rootRepo, level: 'fail', text: `the owner has not accepted the setup text: ${SETUP_PATH}`, remedy: INIT_COMMAND },
+    ]);
+    expect(found.setup.kind).toBe('unaccepted');
+    expect(found.setupFinding).toBe(of(found, checkIds.rootRepo)[0]);
+  });
+
+  it('reads the setup text whether git tracks it or not', async () => {
+    const tracked = make({ origin: 'own', tracked: [SETUP_PATH] });
+    tracked.seed(SETUP_FILE, 'Rules.\n');
+    const loose = make({ origin: 'own' });
+    loose.seed(SETUP_FILE, 'Rules.\n');
+    for (const deps of [tracked, loose]) expect(levelsOf(await scan(deps), checkIds.rootRepo)).toEqual(['fail']);
+  });
+
+  it('has no finding once the owner accepted the text, and gives the accepted texts', async () => {
+    const deps = make({ origin: 'own' });
+    deps.seed(SETUP_FILE, 'Rules.\n');
+    await acceptFiles(deps, HOME, 'demo', [SETUP_PATH]);
+    const found = await scan(deps);
+    expect(found.findings).toEqual([]);
+    expect(found.setup.kind === 'accepted' && found.setup.setup.texts).toEqual({ coordinator: 'Rules.\n', worker: null });
+  });
+
+  it('fails for a change after an older acceptance, and names the accept command', async () => {
+    const deps = make({ origin: 'own' });
+    deps.seed(SETUP_FILE, 'Rules.\n');
+    await acceptFiles(deps, HOME, 'demo', [SETUP_PATH]);
+    deps.seed(SETUP_FILE, 'Other rules.\n');
+    const found = await scan(deps);
+    expect(of(found, checkIds.rootRepo)).toEqual([
+      { id: checkIds.rootRepo, level: 'fail', text: `the setup text changed since the owner accepted it: ${SETUP_PATH}`, remedy: ACCEPT_COMMAND },
+    ]);
+    expect(found.setup.kind).toBe('changed');
+  });
+
+  it('asks for nothing when the setup file holds only white space', async () => {
+    const deps = make({ origin: 'own' });
+    deps.seed(SETUP_FILE, ' \n');
+    expect((await scan(deps)).findings).toEqual([]);
+  });
+
+  it('fails when the config is not valid and a setup file is there: the acceptance can not be matched', async () => {
+    const deps = make({ origin: 'own', config: null });
+    deps.seed(SETUP_FILE, 'Rules.\n');
+    const found = await scan(deps, null);
+    expect(textOf(found, checkIds.rootRepo)).toContain('factory.yaml is not valid');
+    expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
+  });
+
+  it('stops a start with the accept command, and with the first-acceptance command when nothing was accepted', async () => {
+    const deps = make({ origin: 'own' });
+    deps.seed(SETUP_FILE, 'Rules.\n');
+    const none = requireRootClean(await scan(deps));
+    expect(none).toMatchObject({ ok: false, error: { kind: 'safety', hint: INIT_COMMAND } });
+    await acceptFiles(deps, HOME, 'demo', [SETUP_PATH]);
+    deps.seed(SETUP_FILE, 'Other rules.\n');
+    expect(requireRootClean(await scan(deps))).toMatchObject({ ok: false, error: { kind: 'safety', hint: ACCEPT_COMMAND } });
+  });
+
+  it('stops for a link at the setup file (exit 4)', async () => {
+    const links: Record<string, string> = {};
+    const deps = make({ origin: 'own', links });
+    deps.seed(SETUP_FILE, 'Rules.\n');
+    links[SETUP_FILE] = '/elsewhere/coordinator.md';
+    const found = await scan(deps);
+    expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
+    expect(textOf(found, checkIds.rootRepo)).toContain(`${SETUP_PATH} is a link`);
+  });
+
+  describe('failsOnlyOnSetup and withSetupAccepted', () => {
+    const changed = async (extra: Partial<Setup> = {}): Promise<FakeDeps> => {
+      const deps = make({ origin: 'own', ...extra });
+      deps.seed(SETUP_FILE, 'Rules.\n');
+      await acceptFiles(deps, HOME, 'demo', [SETUP_PATH]);
+      deps.seed(SETUP_FILE, 'Other rules.\n');
+      return deps;
+    };
+
+    it('is true when the setup text is the only failure, and false for a root with no failure', async () => {
+      expect(failsOnlyOnSetup(await scan(await changed()))).toBe(true);
+      expect(failsOnlyOnSetup(await scan(make({ origin: 'own' })))).toBe(false);
+    });
+
+    it('is false when another check fails as well, so no question is asked', async () => {
+      const deps = await changed({ tracked: ['factory.local.yaml'] });
+      const found = await scan(deps);
+      expect(found.setup.kind).toBe('changed');
+      expect(failsOnlyOnSetup(found)).toBe(false);
+    });
+
+    it('is false for a warning only', async () => {
+      const deps = make({ origin: 'own', tracked: ['AGENTS.md'] });
+      expect(failsOnlyOnSetup(await scan(deps))).toBe(false);
+    });
+
+    it('takes only the stop for the setup text away', async () => {
+      const found = await scan(await changed());
+      const accepted = withSetupAccepted(found);
+      expect(accepted.findings).toEqual([]);
+      expect(accepted.setupFinding).toBeNull();
+      expect(accepted.setup.kind).toBe('accepted');
+      expect(requireRootClean(accepted).ok).toBe(true);
+      const other = await scan(await changed({ tracked: ['factory.local.yaml'] }));
+      expect(requireRootClean(withSetupAccepted(other)).ok).toBe(false);
+    });
   });
 });
 

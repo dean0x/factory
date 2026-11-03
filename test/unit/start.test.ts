@@ -2,6 +2,7 @@ import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { renderBlock } from '../../src/blocks/managed.js';
 import { failure } from '../../src/cli/errors.js';
+import { collectSetup } from '../../src/commands/init-received.js';
 import { runStart, type StartOptions } from '../../src/commands/start.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
@@ -17,11 +18,12 @@ import {
   withFailingWrites,
   type FakeDeps,
   type FetchHandler,
+  type PromptHandler,
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
-import { acceptTracked } from '../helpers/setup-acceptance.js';
+import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
@@ -80,6 +82,8 @@ interface Setup {
   readonly origin?: 'own' | 'received';
   /** True: the home is the top folder of no git work tree, so git can not list its files. */
   readonly noRepo?: boolean;
+  /** The answer to a question. Default: no answer, so a question fails the command. */
+  readonly prompt?: PromptHandler;
 }
 
 /**
@@ -123,6 +127,7 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
     run: (call) => (call.command === 'git' ? git(call) : handler(call)),
     stdinIsTTY: tty,
     stdoutIsTTY: setup.stdoutTty ?? tty,
+    ...(setup.prompt === undefined ? {} : { prompt: setup.prompt }),
     ...(setup.fetch === undefined ? {} : { fetch: setup.fetch }),
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
@@ -1116,6 +1121,287 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     const { deps } = make({ origin: 'own' });
     await succeeded(deps);
     expect(deps.warned).toEqual([]);
+  });
+});
+
+describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, TP-153, TP-158, TP-160, TP-165, TP-173, TP-174, TP-175, TP-178, TP-182, TP-183)', () => {
+  const SETUP_FILE = `${HOME}/setup/coordinator.md`;
+  const SETUP_PATH = 'setup/coordinator.md';
+  const ACCEPT_COMMAND = 'Run "factory start" or "factory upgrade" in a terminal window outside a factory session.';
+  const INIT_COMMAND = 'Run "factory init" in a terminal window and accept the files.';
+  const yes: PromptHandler = () => ok('y');
+  const no: PromptHandler = () => ok('n');
+
+  /** An own root whose setup text the owner accepted, and that a pull changed afterwards. */
+  const changed = async (setup: Setup = {}) => {
+    const made = make({ origin: 'own', ...setup });
+    made.deps.seed(SETUP_FILE, 'First rules.\n');
+    await acceptFiles(made.deps, HOME, 'demo', [SETUP_PATH]);
+    made.deps.seed(SETUP_FILE, 'Second rules.\n');
+    return made;
+  };
+
+  const storeOf = (deps: FakeDeps): string => deps.files.get(ACCEPTANCES) ?? '';
+
+  const hashOf = async (deps: FakeDeps, paths: readonly string[]): Promise<string> => {
+    const set = await collectSetup(deps, HOME, paths);
+    if (!set.ok) throw new Error(set.error.message);
+    return set.value.collected.manifest.hash;
+  };
+
+  const recordsOf = (deps: FakeDeps): { hash: string; node: string }[] =>
+    (JSON.parse(storeOf(deps) || '{"acceptances":[]}') as { acceptances: { hash: string; node: string }[] }).acceptances;
+
+  /** A run that must stop with exit 4: one reason, one remedy line, and no call of tmux. */
+  const stopped = async (made: { deps: FakeDeps; tmux: TmuxLog }, options: Partial<StartOptions> = {}) => {
+    const result = await startFactory(made.deps, options);
+    if (result.ok) throw new Error('expected a stop');
+    expect(result.error.kind).toBe('safety');
+    expect(result.error.hint).toBeDefined();
+    expect(result.error.hint).not.toContain('\n');
+    expect(result.error.message).not.toContain('\n');
+    expect(made.tmux.calls).toEqual([]);
+    return result.error;
+  };
+
+  describe('the text is accepted, or there is no text', () => {
+    it('starts, asks nothing and writes nothing when the owner accepted the setup text as it is', async () => {
+      const made = make({ origin: 'own', tty: true, prompt: yes });
+      made.deps.seed(SETUP_FILE, 'First rules.\n');
+      await acceptFiles(made.deps, HOME, 'demo', [SETUP_PATH]);
+      const before = storeOf(made.deps);
+      expect((await succeeded(made.deps)).json).toMatchObject({ started: true });
+      expect(made.deps.prompts).toEqual([]);
+      expect(storeOf(made.deps)).toBe(before);
+    });
+
+    it('needs no acceptance for an empty subject: a setup file that holds only white space', async () => {
+      const made = make({ origin: 'own' });
+      made.deps.seed(SETUP_FILE, '\n  \n');
+      expect((await succeeded(made.deps)).json).toMatchObject({ started: true });
+    });
+  });
+
+  describe('no acceptance at all for the root (TP-173, TP-183, TP-145, TP-182)', () => {
+    it.each([
+      ['no terminal window', {}, {}],
+      ['a terminal window', { tty: true }, {}],
+      ['a terminal window and a dry run', { tty: true }, { dryRun: true }],
+    ])('exits 4 and names init in a terminal window, with %s, asks nothing and writes no acceptance', async (_name, setup, options) => {
+      const made = make({ origin: 'own', prompt: yes, ...setup });
+      made.deps.seed(SETUP_FILE, 'First rules.\n');
+      const error = await stopped(made, options);
+      expect(error.message).toContain(SETUP_PATH);
+      expect(error.hint).toBe(INIT_COMMAND);
+      expect(made.deps.prompts).toEqual([]);
+      expect(made.deps.files.has(ACCEPTANCES)).toBe(false);
+    });
+
+    it('exits 4 for the worker text alone, because the worker text goes into session instructions too', async () => {
+      const made = make({ origin: 'own', tty: true, prompt: yes });
+      made.deps.seed(`${HOME}/setup/roles/worker.md`, 'Worker rules.\n');
+      const error = await stopped(made);
+      expect(error.message).toContain('setup/roles/worker.md');
+      expect(made.deps.files.has(ACCEPTANCES)).toBe(false);
+    });
+
+    it('exits 4 on a moved root that tracks only the config, the ignore file and the setup file, also on a terminal window (TP-145)', async () => {
+      const made = make({
+        origin: 'received',
+        tty: true,
+        prompt: yes,
+        tracked: ['factory.yaml', '.gitignore', SETUP_PATH],
+      });
+      made.deps.seed(SETUP_FILE, 'Moved rules.\n');
+      const error = await stopped(made);
+      expect(error.message).toContain(SETUP_PATH);
+      expect(error.hint).toBe(INIT_COMMAND);
+      expect(made.deps.prompts).toEqual([]);
+      expect(made.deps.files.has(ACCEPTANCES)).toBe(false);
+    });
+
+    it('exits 4 for a received root with an empty setup file and a tracked instruction file (TP-182)', async () => {
+      const made = make({ origin: 'received', tty: true, prompt: yes, tracked: [SETUP_PATH, 'CLAUDE.md'] });
+      made.deps.seed(SETUP_FILE, '');
+      const error = await stopped(made);
+      expect(error.message).toContain('CLAUDE.md');
+      expect(error.message).not.toContain(SETUP_PATH);
+      expect(error.hint).toBe(INIT_COMMAND);
+      expect(made.deps.prompts).toEqual([]);
+    });
+
+    it('does not ask after a no at init: start exits 4 and names the same command (TP-183)', async () => {
+      const made = make({ origin: 'received', tty: true, prompt: yes, tracked: ['scripts/run.sh'] });
+      const error = await stopped(made);
+      expect(error.hint).toBe(INIT_COMMAND);
+      expect(made.deps.prompts).toEqual([]);
+    });
+  });
+
+  describe('a change after an older acceptance', () => {
+    it('shows the old and the new hash and the change, and with a yes records the new hash and goes on (TP-151)', async () => {
+      const made = await changed({ tty: true, prompt: yes });
+      const oldHash = recordsOf(made.deps)[0]?.hash ?? '';
+      const newHash = await hashOf(made.deps, [SETUP_PATH]);
+      const output = await succeeded(made.deps);
+      expect(output.json).toMatchObject({ started: true });
+      expect(made.deps.prompts).toHaveLength(1);
+      const question = made.deps.prompts[0] ?? '';
+      expect(question).toContain(`Hash of all files: ${newHash}`);
+      expect(question).toContain(`Hash of the files that you accepted before: ${oldHash}`);
+      expect(question).toContain(`Changed files:\n  ${SETUP_PATH}`);
+      expect(question).toContain('Second rules.');
+      expect(recordsOf(made.deps)).toEqual([expect.objectContaining({ node: 'demo', hash: newHash })]);
+      expect(newHash).not.toBe(oldHash);
+    });
+
+    it('asks no more after the yes: the next start has nothing to accept', async () => {
+      const made = await changed({ tty: true, prompt: yes });
+      await succeeded(made.deps);
+      made.deps.prompts.length = 0;
+      await succeeded(made.deps);
+      expect(made.deps.prompts).toEqual([]);
+    });
+
+    it('renders the setup block again from the bytes that it hashed, also when the file changes while the owner reads', async () => {
+      const made = await changed({
+        tty: true,
+        prompt: () => {
+          made.deps.seed(SETUP_FILE, 'Third rules.\n');
+          return ok('y');
+        },
+      });
+      const hashed = await hashOf(made.deps, [SETUP_PATH]);
+      await succeeded(made.deps);
+      expect(made.deps.files.get(CLAUDE_FILE)).toContain('Second rules.');
+      expect(made.deps.files.get(CLAUDE_FILE)).not.toContain('Third rules.');
+      expect(recordsOf(made.deps)[0]?.hash).toBe(hashed);
+    });
+
+    it('keeps the safety block and the role block as they are when it renders the setup block', async () => {
+      const made = await changed({ tty: true, prompt: yes });
+      const before = made.deps.files.get(CLAUDE_FILE) ?? '';
+      await succeeded(made.deps);
+      const after = made.deps.files.get(CLAUDE_FILE) ?? '';
+      expect(after.startsWith(before.trimEnd())).toBe(true);
+      expect(after).toContain('<!-- factory:begin setup v');
+    });
+
+    it('keeps a setup block that a person edited, and names the command that puts the text back', async () => {
+      const made = await changed({ tty: true, prompt: yes });
+      const rendered = renderBlock({ name: 'setup', version: 1, body: 'First rules.' });
+      if (!rendered.ok) throw new Error(rendered.error.message);
+      const edited = rendered.value.replace('First rules.', 'Edited by hand.');
+      made.deps.seed(CLAUDE_FILE, `${made.deps.files.get(CLAUDE_FILE) ?? ''}\n${edited}\n`);
+      await succeeded(made.deps);
+      expect(made.deps.files.get(CLAUDE_FILE)).toContain('Edited by hand.');
+      expect(made.deps.warned.join('\n')).toContain('factory upgrade');
+    });
+
+    it('writes nothing through a link at the coordinator file when the owner accepts the change', async () => {
+      const links: Record<string, string> = {};
+      const made = await changed({ tty: true, prompt: yes, links });
+      links[CLAUDE_FILE] = '/elsewhere/CLAUDE.md';
+      const before = made.deps.files.get(CLAUDE_FILE);
+      const error = await stopped(made);
+      expect(error.message).toContain('coordinator/CLAUDE.md is a link');
+      expect(made.deps.files.get(CLAUDE_FILE)).toBe(before);
+      expect(made.deps.files.has('/elsewhere/CLAUDE.md')).toBe(false);
+    });
+
+    it('exits 4 with one remedy line on a no, and writes no acceptance (TP-152)', async () => {
+      const made = await changed({ tty: true, prompt: no });
+      const before = storeOf(made.deps);
+      const error = await stopped(made);
+      expect(error.hint).toBe(ACCEPT_COMMAND);
+      expect(made.deps.prompts).toHaveLength(1);
+      expect(storeOf(made.deps)).toBe(before);
+    });
+
+    it('takes an empty answer as a no', async () => {
+      const made = await changed({ tty: true, prompt: () => ok('') });
+      const before = storeOf(made.deps);
+      await stopped(made);
+      expect(storeOf(made.deps)).toBe(before);
+    });
+
+    it.each([
+      ['a terminal window in a factory session (TP-153)', { tty: true, env: { FACTORY_SESSION: 'demo' } }, {}],
+      ['a terminal window in a dry run (TP-174)', { tty: true }, { dryRun: true }],
+      ['no terminal window (TP-175)', {}, {}],
+      ['a terminal window for input and none for output (TP-178)', { tty: true, stdoutTty: false }, {}],
+      ['a terminal window for output and none for input (TP-178)', { tty: false, stdoutTty: true }, {}],
+    ])('asks nothing, exits 4, names the accept command and writes no acceptance, with %s', async (_name, setup, options) => {
+      const made = await changed({ prompt: yes, ...setup });
+      const before = storeOf(made.deps);
+      const error = await stopped(made, options);
+      expect(error.hint).toBe(ACCEPT_COMMAND);
+      expect(error.message).toContain(SETUP_PATH);
+      expect(made.deps.prompts).toEqual([]);
+      expect(storeOf(made.deps)).toBe(before);
+    });
+
+    it('stops without a question when another check fails, too, and lists both reasons', async () => {
+      const made = await changed({ tty: true, prompt: yes, tracked: ['docs/notes.md'] });
+      made.deps.seed(`${HOME}/docs/notes.md`, `key ${FAKE_GITHUB_TOKEN}\n`);
+      const error = await stopped(made);
+      expect(error.message).toContain('docs/notes.md');
+      expect(error.message).toContain(SETUP_PATH);
+      expect(`${error.message} ${error.hint}`).not.toContain(FAKE_GITHUB_TOKEN);
+      expect(made.deps.prompts).toEqual([]);
+    });
+
+    it('exits 4 and names the accept command when the acceptance is for another node id', async () => {
+      const made = make({ origin: 'own', tty: true, prompt: yes });
+      made.deps.seed(SETUP_FILE, 'First rules.\n');
+      await acceptFiles(made.deps, HOME, 'other', [SETUP_PATH]);
+      const error = await stopped(made, { dryRun: true });
+      expect(error.hint).toBe(ACCEPT_COMMAND);
+    });
+  });
+
+  describe('the files of a received root (TP-158, TP-160, TP-165)', () => {
+    const received = async (path: string, before: string, after: string, setup: Setup = {}) => {
+      const made = make({ origin: 'received', tracked: [path], ...setup });
+      made.deps.seed(`${HOME}/${path}`, before);
+      await acceptTracked(made.deps, HOME, 'demo', [path]);
+      made.deps.seed(`${HOME}/${path}`, after);
+      return made;
+    };
+
+    it('exits 4 with the accept command when an accepted tracked file changed and no terminal window can ask (TP-158)', async () => {
+      const made = await received('scripts/run.sh', 'echo one\n', 'echo two\n');
+      const error = await stopped(made);
+      expect(error.message).toContain('scripts/run.sh');
+      expect(error.hint).toBe(ACCEPT_COMMAND);
+    });
+
+    it('exits 4 with the accept command when the tracked MCP config file changed (TP-165)', async () => {
+      const made = await received('.mcp.json', '{"mcpServers":{}}\n', '{"mcpServers":{"a":{}}}\n');
+      const error = await stopped(made);
+      expect(error.message).toContain('.mcp.json');
+      expect(error.hint).toBe(ACCEPT_COMMAND);
+    });
+
+    it('names the settings file as changed and shows its change, and a no writes no acceptance (TP-160)', async () => {
+      const made = await received('.claude/settings.json', '{"model":"sonnet"}\n', '{"model":"opus"}\n', {
+        tty: true,
+        prompt: no,
+      });
+      const before = storeOf(made.deps);
+      const error = await stopped(made);
+      expect(error.hint).toBe(ACCEPT_COMMAND);
+      const question = made.deps.prompts[0] ?? '';
+      expect(question).toContain('Changed files:\n  .claude/settings.json');
+      expect(question).toContain('"model":"opus"');
+      expect(storeOf(made.deps)).toBe(before);
+    });
+
+    it('records the new hash after a yes and starts', async () => {
+      const made = await received('scripts/run.sh', 'echo one\n', 'echo two\n', { tty: true, prompt: yes });
+      expect((await succeeded(made.deps)).json).toMatchObject({ started: true });
+      expect(recordsOf(made.deps)[0]?.hash).toBe(await hashOf(made.deps, ['scripts/run.sh']));
+    });
   });
 });
 
