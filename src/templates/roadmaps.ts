@@ -11,7 +11,7 @@ export const ROADMAPS_README_LINES: readonly string[] = [
   '- **The {{worker}} that owns the track keeps it current.** Update it at each milestone event: done, re-scoped, blocked, or a new decision. Rewrite sections in place. The Done table keeps the history.',
   '- **The {{coordinator}} checks it** at each session start, before each status to the {{owner}}, and when a {{worker}} reports a milestone. Every board item names its track and milestone, for example `API-M2`.',
   '- **Dates:** only real external dates, for example a conference, a user commitment or a scheduled run. Other milestones say "after M<n>".',
-  '- **Exit criteria are checkable** on a primary source: a merged pull request, a published version, a configuration value or a stored record. "Looks done" is not an exit criterion.',
+  '- **Exit criteria are checkable** on a primary source: an approved output, a published version, a configuration value or a stored record. "Looks done" is not an exit criterion.',
   '- **Keep it short:** at most about 150 lines. Details live in issues, pull requests and the files of the {{worker}}. The roadmap links to them.',
   '',
   '## Template',

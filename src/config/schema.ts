@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { checkFileAddress } from '../comms/address.js';
 import type { SchemaParser } from '../migrate/inspect.js';
 import { keys, prefixPlaceholders, values } from '../names.js';
-import { recipeSchemas, type RecipeConfig } from '../recipes/index.js';
+import { recipes, type RecipeConfig } from '../recipes/index.js';
 import { parseProxyUrl } from '../safety/proxy.js';
 import { githubLogin, slug, uniqueIds } from './primitives.js';
 
@@ -203,7 +203,7 @@ export const configSchema: SchemaParser<FactoryConfig> = {
     const core = coreSchema.safeParse(raw);
     if (!core.success) return { success: false, error: core.error };
     const { [keys.root.recipe]: block, ...rest } = core.data;
-    const recipe = recipeSchemas[block.id].safeParse(block);
+    const recipe = recipes[block.id].schema.safeParse(block);
     if (!recipe.success) {
       const issues = recipe.error.issues.map((issue) => ({ ...issue, path: [keys.root.recipe, ...issue.path] }));
       return { success: false, error: new z.ZodError(issues) };

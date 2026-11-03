@@ -49,7 +49,8 @@ import {
 } from '../state/files.js';
 import { layoutOf, stagingDirOf, stateRel } from '../state/layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
-import { roleForLayer } from '../recipes/software/recipe.js';
+import { ownerModes, recipes } from '../recipes/index.js';
+import { roleNameForLayer } from '../recipes/software/recipe.js';
 import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
@@ -313,7 +314,7 @@ const checkOptions = async (deps: Deps, options: InitOptions, home: string): Pro
   const base = { layer: layer.value, recipe: recipe.value, ownerName, id };
   const settings = parseSettings(settingsOf(base, options.ownerGithub, []));
   if (!settings.ok) return settings;
-  const templates = blockTemplatesFor(layer.value);
+  const templates = blockTemplatesFor(layer.value, ownerModes(recipes[recipe.value].approvalPoints));
   const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
   if (!blocks.ok) return blocks;
   return ok({ ...base, templates, blocks: blocks.value });
@@ -376,7 +377,7 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
     claudeText: blocks.claudeText,
     stateFiles: stateFiles.value,
     warnings:
-      roleForLayer(layer) === null
+      roleNameForLayer(layer) === null
         ? [`Layer ${layer} has no role template: ${files.claudeMd} holds the safety block only.`]
         : [],
   });

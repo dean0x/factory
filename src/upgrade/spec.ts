@@ -10,7 +10,8 @@ import { fileSteps, type BlockRename, type FileStep } from '../migrate/files.js'
 import type { SchemaParser, TextParser, VersionSpec } from '../migrate/inspect.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
-import { keys } from '../names.js';
+import { keys, values } from '../names.js';
+import { ownerModes, recipes } from '../recipes/index.js';
 import { jsonText } from '../state/files.js';
 import { STATE_SPEC, parseJsonText } from '../state/load.js';
 import { nodeStateSchema } from '../state/schema.js';
@@ -51,14 +52,21 @@ export const finisher =
     return parsed.success ? ok(render(parsed.data)) : failure(describeIssues(parsed.error));
   };
 
-const layerSchema = z.looseObject({ [keys.root.node]: nodeSchema });
+const blocksSchema = z.looseObject({
+  [keys.root.node]: nodeSchema,
+  [keys.root.recipe]: z.looseObject({ [keys.recipe.id]: z.enum(values.recipes) }),
+});
 
-/** The blocks come from the layer of the node: the layer sets the role. */
-const blocksOfLayer = (config: unknown): CliResult<BlockSet> => {
-  const parsed = layerSchema.safeParse(config);
+/**
+ * The blocks come from the layer of the node, which sets the role, and from the approval points of its recipe.
+ * Every point waits for the owner here. The effective modes come in a later step.
+ */
+const blocksOfNode = (config: unknown): CliResult<BlockSet> => {
+  const parsed = blocksSchema.safeParse(config);
   if (!parsed.success) return failure(describeIssues(parsed.error));
   const { layer } = parsed.data[keys.root.node];
-  return ok({ templates: blockTemplatesFor(layer), renames: roleBlockRenames(layer) });
+  const modes = ownerModes(recipes[parsed.data[keys.root.recipe][keys.recipe.id]].approvalPoints);
+  return ok({ templates: blockTemplatesFor(layer, modes), renames: roleBlockRenames(layer) });
 };
 
 const projectsSchema = z.looseObject({
@@ -87,6 +95,6 @@ export const currentSpec: UpgradeSpec = {
     finish: finisher(nodeStateSchema, jsonText),
   },
   files: fileSteps,
-  blocksOf: blocksOfLayer,
+  blocksOf: blocksOfNode,
   projectPathsOf: projectPathsOfRecipe,
 };

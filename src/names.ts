@@ -232,6 +232,8 @@ export const values = {
   variants: ['plain'],
   recipes: ['software'],
   landModes: ['each', 'approved-work'],
+  /** The mode of an approval point of any recipe. The first one is the default: the point waits for the owner. */
+  approvalModes: [roles.owner, 'delegated'],
   trackerLocal: 'local',
   trackerHosted: ['github', 'jira', 'linear'],
   defaultWatchInterval: '5m',

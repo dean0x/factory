@@ -3,7 +3,7 @@ import { isSlug, slugify } from '../../src/config/primitives.js';
 import { configSchema } from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
 import { values } from '../../src/names.js';
-import { recipeSchemas } from '../../src/recipes/index.js';
+import { recipes } from '../../src/recipes/index.js';
 import { parseProxyUrl } from '../../src/safety/proxy.js';
 import { sampleObject } from '../helpers/sample-config.js';
 
@@ -236,8 +236,12 @@ describe('config schema 2', () => {
       expect(message).not.toContain('recipe.projects');
     });
 
-    it('has one parser in the registry for each recipe id that the core accepts', () => {
-      expect(Object.keys(recipeSchemas)).toEqual([...values.recipes]);
+    it('has one entry in the registry for each recipe id that the core accepts, with a parser and a list of approval points', () => {
+      expect(Object.keys(recipes)).toEqual([...values.recipes]);
+      for (const entry of Object.values(recipes)) {
+        expect(typeof entry.schema.safeParse).toBe('function');
+        expect(entry.approvalPoints.length).toBeGreaterThan(0);
+      }
     });
 
     it('accepts an empty list of projects', () => {

@@ -20,10 +20,12 @@ import {
   templateValues,
   terms,
   tmuxNames,
+  values,
 } from '../../src/names.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
 import { runInit } from '../../src/commands/init.js';
 import { glossary } from '../../src/glossary.js';
+import { recipes } from '../../src/recipes/index.js';
 import { fillTemplate } from '../../src/templates/fill.js';
 import { fileTemplates } from '../../src/templates/index.js';
 import { allBlocks } from '../helpers/blocks.js';
@@ -96,7 +98,15 @@ const EXACT_NAMES = new Set([
     schema1.keys,
     { windowView: tmuxNames.windowView, windowBench: tmuxNames.windowBench, slotBoard: tmuxNames.slotBoard },
   ),
+  ...values.approvalModes,
 ]);
+
+/**
+ * The approval point ids of every recipe. They are config keys, so no file may hold one as a literal,
+ * except the approval file of a recipe (`src/recipes/<id>/approval.ts`), which owns the names of its recipe.
+ */
+const POINT_IDS = new Set(Object.values(recipes).flatMap((entry) => entry.approvalPoints.map((point) => point.id)));
+const RECIPE_APPROVAL_FILE = /[\\/]recipes[\\/][^\\/]+[\\/]approval\.ts$/;
 
 /** Names that a string literal must never hold as a part, matched as whole words. */
 const WORD_NAMES = [
@@ -137,6 +147,7 @@ const violationsInText = (source: string, path: string): string[] => {
   const found: string[] = [];
   for (const literal of literalsOf(source)) {
     if (IMPORT_PATH.test(literal)) continue;
+    if (POINT_IDS.has(literal) && !RECIPE_APPROVAL_FILE.test(path)) found.push(`"${literal}" is an approval point id`);
     if (!GIT_VOCABULARY_FILES.has(path)) {
       if (EXACT_NAMES.has(literal)) found.push(`"${literal}" is a name`);
       for (const flag of flat(flags)) {
@@ -478,5 +489,95 @@ describe('template placeholders', () => {
   it('puts the program name in the safety block', () => {
     const safety = allBlocks.find((template) => template.name === 'safety');
     expect(safety?.body).toContain(`${program[0]?.toUpperCase()}${program.slice(1)} enforces them`);
+  });
+});
+
+describe('the approval points of a recipe', () => {
+  const CORE_FOLDERS = ['core', 'config', 'templates'].map((folder) => join(SRC, folder));
+  const APPROVAL_FILE = join(SRC, 'recipes', 'software', 'approval.ts');
+  /** The forms merge, merges, merged, release, releases and released, as whole words, in any case. */
+  const RECIPE_WORD = /\b(?:merge[sd]?|release[sd]?)\b/gi;
+  /** An import of `approval.ts` inside a folder of a recipe, from any place. */
+  const APPROVAL_IMPORT = /(?:^|\/)[^/.][^/]*\/approval(?:\.js)?$/;
+
+  /** The lines of a source text that hold a recipe word, in a string or in a comment. */
+  const recipeWordLines = (source: string): string[] =>
+    source.split('\n').flatMap((line, index) => (line.match(RECIPE_WORD) === null ? [] : [`line ${index + 1}: ${line.trim()}`]));
+
+  /** The module path of every import, re-export and dynamic import of a source text. */
+  const importPathsOf = (source: string): string[] =>
+    [...source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]/g)].map((match) => match[1] ?? '');
+
+  const filesIn = (folders: readonly string[]): string[] => folders.flatMap(allSourceFiles);
+
+  it('finds no merge or release word in any string or comment of src/core, src/config or src/templates', () => {
+    const found = filesIn(CORE_FOLDERS).flatMap((path) =>
+      recipeWordLines(readFileSync(path, 'utf8')).map((line) => `${relative(SRC, path)} ${line}`),
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('scans the three core folders', () => {
+    const scanned = filesIn(CORE_FOLDERS).map((path) => relative(SRC, path));
+    expect(scanned).toEqual(expect.arrayContaining(['core/result.ts', 'config/schema.ts', 'templates/index.ts']));
+  });
+
+  it('finds the recipe words in all their forms, and leaves longer words alone', () => {
+    for (const text of ['A merge.', "// 'Merges'", 'a merged change', 'the Release', 'two RELEASES', 'it released']) {
+      expect(recipeWordLines(text), text).toHaveLength(1);
+    }
+    for (const text of ['merge_method', 'mergeMethod', 'releasing', 'merging', 'the unreleased', 'prerelease']) {
+      expect(recipeWordLines(text), text).toEqual([]);
+    }
+  });
+
+  it('lets no file of src/core or src/config import the approval file of a recipe', () => {
+    const found = filesIn([join(SRC, 'core'), join(SRC, 'config')]).filter((path) =>
+      importPathsOf(readFileSync(path, 'utf8')).some((importPath) => APPROVAL_IMPORT.test(importPath)),
+    );
+    expect(found.map((path) => relative(SRC, path))).toEqual([]);
+  });
+
+  it('reads the module path of each form of import', () => {
+    const source = [
+      "import { a } from '../recipes/software/approval.js';",
+      "export { b } from '../recipes/software/approval';",
+      "const c = await import('../recipes/software/approval.js');",
+      "import '../recipes/software/approval.js';",
+      "import { d } from '../recipes/index.js';",
+    ].join('\n');
+    const paths = importPathsOf(source);
+    expect(paths).toHaveLength(5);
+    expect(paths.filter((path) => APPROVAL_IMPORT.test(path))).toHaveLength(4);
+  });
+
+  it('keeps the approval file apart: it imports only the names file, and the registry imports it', () => {
+    const imports = importPathsOf(readFileSync(APPROVAL_FILE, 'utf8'));
+    expect(imports.filter((path) => !path.endsWith('/names.js'))).toEqual([]);
+    const registry = readFileSync(join(SRC, 'recipes', 'index.ts'), 'utf8');
+    expect(importPathsOf(registry).some((path) => APPROVAL_IMPORT.test(path))).toBe(true);
+  });
+
+  it('accepts the approval point ids in the approval file of a recipe, and refuses them in other files', () => {
+    const ids = [...POINT_IDS];
+    expect(ids).toEqual(expect.arrayContaining(['merge', 'release']));
+    for (const id of ids) {
+      expect(violationsInText(`const a = '${id}';`, APPROVAL_FILE)).toEqual([]);
+      expect(violationsInText(`const a = '${id}';`, join(SRC, 'sample.ts'))).toEqual([
+        `sample.ts: "${id}" is an approval point id`,
+      ]);
+      expect(violationsInText(`const a = '${id}';`, join(SRC, 'recipes', 'software', 'recipe.ts'))).toHaveLength(1);
+    }
+  });
+
+  it('still scans the approval file for the other names', () => {
+    expect(violationsInText(`const a = '${commands.init}';`, APPROVAL_FILE)).toEqual([
+      'recipes/software/approval.ts: "init" is a name',
+    ]);
+  });
+
+  it('names the two modes of an approval point in the names file', () => {
+    expect(values.approvalModes).toEqual(['owner', 'delegated']);
+    expect(violationsInText("const a = 'delegated';", join(SRC, 'sample.ts'))).toEqual(['sample.ts: "delegated" is a name']);
   });
 });

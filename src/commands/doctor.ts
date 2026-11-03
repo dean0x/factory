@@ -30,7 +30,8 @@ import {
   schemaIds,
   values,
 } from '../names.js';
-import { roleForLayer } from '../recipes/software/recipe.js';
+import { ownerModes, recipes } from '../recipes/index.js';
+import { roleNameForLayer } from '../recipes/software/recipe.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { findTokenPaths } from '../safety/secrets.js';
 import { layoutOf } from '../state/layout.js';
@@ -251,10 +252,10 @@ export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
 export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
   if (state.kind !== 'valid') return notChecked(checkIds.roles, `${files.config} is not valid`);
   const { layer } = state.value.core.node;
-  const role = roleForLayer(layer);
+  const role = roleNameForLayer(layer);
   return role === null
     ? check(checkIds.roles, 'warn', `layer ${layer} has no role template: ${files.claudeMd} holds the safety block only`)
-    : check(checkIds.roles, 'ok', `layer ${layer} has the ${role.name} role template`);
+    : check(checkIds.roles, 'ok', `layer ${layer} has the ${role} role template`);
 };
 
 export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
@@ -315,7 +316,8 @@ export const checkNodeBlocks = async (
   if (state.kind !== 'valid') return notChecked(checkIds.blocks, `${files.config} is not valid`);
   const { layer } = state.value.core.node;
   const pending = { ...NO_PENDING_FILES, renames: roleBlockRenames(layer) };
-  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(layer), pending));
+  const modes = ownerModes(recipes[state.value.recipe.id].approvalPoints);
+  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(layer, modes), pending));
 };
 
 export const checkProxyEnv = (deps: Deps): CheckResult => {

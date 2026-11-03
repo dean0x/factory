@@ -142,7 +142,7 @@ export const renderConfig = (config: FactoryConfig): string => {
       1,
       keys.approval.land,
       core.approval.land,
-      `${values.landModes.join(' or ')}: with ${values.landModes[0]}, every merge waits for the ${roles.owner}`,
+      `${values.landModes.join(' or ')}: with ${values.landModes[0]}, every approval point waits for the ${roles.owner}`,
     ),
     '',
     `${keys.root.tracker}:`,
