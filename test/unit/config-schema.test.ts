@@ -1,24 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import { isSlug, slugify } from '../../src/config/primitives.js';
-import { configSchema } from '../../src/config/schema.js';
+import {
+  localConfigSchema,
+  mergeConfig,
+  parseConfig,
+  sharedConfigSchema,
+  splitConfigValue,
+} from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
-import { values } from '../../src/names.js';
+import { files, values } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { parseProxyUrl } from '../../src/safety/proxy.js';
-import { sampleObject } from '../helpers/sample-config.js';
+import { parseMixed, sampleConfig, sampleFiles, sampleObject } from '../helpers/sample-config.js';
 
 type Raw = Record<string, any>;
 type Mutate = (raw: Raw) => void;
 
+/** The id of an approval point of the sample recipe. */
+const POINT = Object.keys(sampleConfig().core.approval)[0] ?? '';
+
 const check = (mutate: Mutate) => {
   const raw = sampleObject();
   mutate(raw);
-  const parsed = configSchema.safeParse(raw);
+  const parsed = parseMixed(raw);
   return parsed.success ? null : describeIssues(parsed.error);
 };
 
 const parsedOf = (raw: Raw) => {
-  const parsed = configSchema.safeParse(raw);
+  const parsed = parseMixed(raw);
   if (!parsed.success) throw new Error(describeIssues(parsed.error));
   return parsed.data;
 };
@@ -29,7 +38,7 @@ const hosted = (raw: Raw, extra: Raw = {}): void => {
 
 describe('config schema 2', () => {
   it('accepts the sample config and returns the core and the recipe apart', () => {
-    const parsed = configSchema.safeParse(sampleObject());
+    const parsed = parseMixed(sampleObject());
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.core.node).toEqual({ id: 'demo', layer: 1 });
@@ -41,15 +50,43 @@ describe('config schema 2', () => {
 
   it('fills the defaults of the optional keys', () => {
     const raw = sampleObject();
-    for (const key of ['proxies', 'workers', 'children', 'parent', 'approval']) delete raw[key];
-    const parsed = configSchema.safeParse(raw);
+    for (const key of ['proxies', 'workers', 'children', 'parent', 'approval', 'sources', 'session']) delete raw[key];
+    raw['session'] = { permission_mode: 'auto', effort: 'high', model: 'default' };
+    const parsed = parseMixed(raw);
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.core.proxies).toEqual([]);
     expect(parsed.data.core.workers).toEqual({});
     expect(parsed.data.core.children).toEqual([]);
     expect(parsed.data.core.parent).toBeNull();
-    expect(parsed.data.core.approval).toEqual({ land: 'each' });
+    expect(parsed.data.core.sources).toEqual({});
+    expect(parsed.data.core.session).toMatchObject({ proxy: 'none', statusline: null });
+  });
+
+  it('fills owner for each approval point that the local file does not name, and keeps a named point', () => {
+    const raw = sampleObject();
+    raw['approval'] = { [POINT]: 'delegated' };
+    const modes = parsedOf(raw).core.approval;
+    expect(modes[POINT]).toBe('delegated');
+    const others = Object.entries(modes).filter(([id]) => id !== POINT);
+    expect(others.length).toBeGreaterThan(0);
+    expect(others.every(([, mode]) => mode === 'owner')).toBe(true);
+    expect(Object.keys(modes).sort()).toEqual(recipes.software.approvalPoints.map((point) => point.id).sort());
+  });
+
+  it('refuses an approval point that the recipe does not list, names the key, and puts the issue in the local file', () => {
+    const raw = sampleObject();
+    raw['approval'] = { 'not-a-point': 'owner' };
+    const parsed = parseMixed(raw);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.file).toBe(files.localConfig);
+    expect(describeIssues(parsed.error)).toContain('approval.not-a-point');
+    expect(describeIssues(parsed.error)).toContain(POINT);
+  });
+
+  it('refuses a mode that is not owner or delegated', () => {
+    expect(check((raw) => (raw['approval'][POINT] = 'never'))).toContain(`approval.${POINT}:`);
   });
 
   it('accepts a full config with proxies, workers, links, a hosted tracker and a numeric load', () => {
@@ -61,7 +98,9 @@ describe('config schema 2', () => {
       raw['parent'] = { id: 'acme', address: 'file:///srv/nodes/acme-factory' };
       raw['children'] = [{ id: 'web', address: 'file:///srv/nodes/web-factory' }];
       raw['owner'].github = 'some-login';
-      raw['approval'] = { land: 'approved-work' };
+      raw['approval'] = { [POINT]: 'delegated' };
+      raw['sources'] = { api: '~/code/api' };
+      raw['session'].statusline = 'my-status --short';
       hosted(raw, { watch_interval: '2h' });
       raw['recipe'].projects[0].repo = 'acme/web';
       raw['recipe'].projects[0].heavy_test = 'npm test';
@@ -84,7 +123,6 @@ describe('config schema 2', () => {
       ['owner', (raw: Raw) => (raw['owner'].extra = 1), 'owner.extra: unknown key'],
       ['session', (raw: Raw) => (raw['session'].extra = 1), 'session.extra: unknown key'],
       ['limits', (raw: Raw) => (raw['limits'].extra = 1), 'limits.extra: unknown key'],
-      ['approval', (raw: Raw) => (raw['approval'].extra = 1), 'approval.extra: unknown key'],
       ['local tracker', (raw: Raw) => (raw['tracker'].extra = 1), 'tracker.extra: unknown key'],
       ['hosted tracker', (raw: Raw) => (hosted(raw), (raw['tracker'].extra = 1)), 'tracker.extra: unknown key'],
       ['recipe', (raw: Raw) => (raw['recipe'].extra = 1), 'recipe.extra: unknown key'],
@@ -147,7 +185,6 @@ describe('config schema 2', () => {
       ['prepare pct 0', (raw: Raw) => (raw['limits'].context_prepare_pct = 0), 'limits.context_prepare_pct:'],
       ['max pct 101', (raw: Raw) => (raw['limits'].context_max_pct = 101), 'limits.context_max_pct:'],
       ['prepare >= max', (raw: Raw) => (raw['limits'].context_prepare_pct = 40), 'limits.context_prepare_pct:'],
-      ['approval.land', (raw: Raw) => (raw['approval'].land = 'never'), 'approval.land:'],
       ['missing key', (raw: Raw) => delete raw['limits'], 'limits:'],
       ['missing tracker', (raw: Raw) => delete raw['tracker'], 'tracker:'],
       ['missing recipe', (raw: Raw) => delete raw['recipe'], 'recipe:'],
@@ -404,7 +441,7 @@ describe('config schema 2', () => {
         raw['session'].permission_mode = secret;
         raw['node'].id = secret;
         raw['limits'].load_max = secret;
-        raw['approval'].land = secret;
+        raw['approval'][POINT] = secret;
         raw['owner'].github = secret;
       });
       expect(message).not.toBeNull();
@@ -423,6 +460,138 @@ describe('config schema 2', () => {
       expect(recipe).not.toContain('SECRET');
       expect(check((raw) => (raw['recipe'].id = secret))).not.toContain('SECRET');
     });
+  });
+});
+
+describe('the shared file and the local file (design 4.4)', () => {
+  const sharedOf = (change: Mutate = () => undefined) => {
+    const raw = sampleFiles().shared;
+    change(raw);
+    return sharedConfigSchema.safeParse(raw);
+  };
+  const localOf = (change: Mutate = () => undefined) => {
+    const raw = sampleFiles().local;
+    change(raw);
+    return localConfigSchema.safeParse(raw);
+  };
+  const messageOf = (parsed: { success: boolean; error?: Parameters<typeof describeIssues>[0] }): string =>
+    parsed.success || parsed.error === undefined ? '' : describeIssues(parsed.error);
+
+  it('accepts the shared part of the sample and the local part of the sample', () => {
+    expect(sharedOf().success).toBe(true);
+    expect(localOf().success).toBe(true);
+  });
+
+  it('keeps the tracker, the project list, the session way of working and the limits in the shared file', () => {
+    const raw = sampleFiles().shared;
+    expect(Object.keys(raw).sort()).toEqual(['limits', 'node', 'recipe', 'schema', 'session', 'tracker']);
+    expect(Object.keys(raw['session']).sort()).toEqual(['effort', 'model', 'permission_mode']);
+    expect(
+      sharedOf((shared) => {
+        shared['tracker'] = { kind: 'github', items: 'acme/web', decisions: 'acme/decisions' };
+        shared['session'] = { permission_mode: 'auto', effort: 'max', model: 'opus' };
+      }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    ['owner', 'owner', (raw: Raw) => (raw['owner'] = { display: 'x', prefix: '{owner}' })],
+    ['session.proxy', 'session.proxy', (raw: Raw) => (raw['session'].proxy = 'none')],
+    ['session.statusline', 'session.statusline', (raw: Raw) => (raw['session'].statusline = null)],
+    ['state.remote', 'state.remote', (raw: Raw) => (raw['state'] = { remote: null })],
+    ['proxies', 'proxies', (raw: Raw) => (raw['proxies'] = [])],
+    ['workers', 'workers', (raw: Raw) => (raw['workers'] = {})],
+    ['approval', 'approval', (raw: Raw) => (raw['approval'] = {})],
+    ['parent', 'parent', (raw: Raw) => (raw['parent'] = null)],
+    ['children', 'children', (raw: Raw) => (raw['children'] = [])],
+    ['sources', 'sources', (raw: Raw) => (raw['sources'] = {})],
+  ])('refuses %s in the shared file, and names the key and the local file', (_name, path, change) => {
+    const message = messageOf(sharedOf(change));
+    expect(message).toContain(`${path}: is a local key`);
+    expect(message).toContain(files.localConfig);
+    expect(message).toContain(files.config);
+  });
+
+  it('names every local key that it finds, not only the first', () => {
+    const message = messageOf(
+      sharedOf((raw) => {
+        raw['proxies'] = [];
+        raw['owner'] = {};
+      }),
+    );
+    expect(message).toContain('proxies: is a local key');
+    expect(message).toContain('owner: is a local key');
+  });
+
+  it('refuses a pulled proxy entry in the shared file before it reads the entry', () => {
+    const message = messageOf(
+      sharedOf((raw) => {
+        raw['proxies'] = [{ id: 'pulled', base_url: 'http://203.0.113.9:8080', health: '/health' }];
+      }),
+    );
+    expect(message).toContain('proxies: is a local key');
+    expect(message).not.toContain('203.0.113.9');
+  });
+
+  it('refuses a permission mode that is not auto, and accepts the model, the effort and the limits', () => {
+    expect(messageOf(sharedOf((raw) => (raw['session'].permission_mode = 'default')))).toContain('session.permission_mode:');
+    expect(messageOf(sharedOf((raw) => (raw['session'].effort = 'wild')))).toContain('session.effort:');
+    expect(sharedOf((raw) => (raw['limits'].load_max = 4)).success).toBe(true);
+  });
+
+  it('takes only the proxy and the status line in the session block of the local file', () => {
+    expect(localOf((raw) => (raw['session'] = { proxy: 'none', statusline: 'my-status' })).success).toBe(true);
+    for (const key of ['model', 'effort', 'permission_mode']) {
+      expect(messageOf(localOf((raw) => (raw['session'][key] = 'auto')))).toContain(`session.${key}: unknown key`);
+    }
+  });
+
+  it('refuses a shared key in the local file', () => {
+    for (const key of ['node', 'tracker', 'limits', 'recipe']) {
+      expect(messageOf(localOf((raw) => (raw[key] = sampleFiles().shared[key])))).toContain(`${key}: unknown key`);
+    }
+  });
+
+  it('gives each file its own schema key and version', () => {
+    expect(messageOf(sharedOf((raw) => (raw['schema'] = 1)))).toContain('schema:');
+    expect(messageOf(localOf((raw) => (raw['schema'] = 2)))).toContain('schema:');
+    expect(sampleFiles().local['schema']).toBe(1);
+    expect(sampleFiles().shared['schema']).toBe(2);
+  });
+
+  it('refuses a status line over one line, and a source with a line break', () => {
+    expect(messageOf(localOf((raw) => (raw['session'].statusline = 'a\nb')))).toContain('session.statusline:');
+    expect(messageOf(localOf((raw) => (raw['sources'] = { api: '/a\n/b' })))).toContain('sources.api:');
+  });
+
+  it('refuses the keys of the older layout with the remake message, and names init', () => {
+    const cells = messageOf(sharedOf((raw) => (raw['cells'] = {})));
+    expect(cells).toContain('cells: is from an older layout');
+    expect(cells).toContain('factory init');
+    const land = messageOf(sharedOf((raw) => (raw['approval'] = { land: 'each' })));
+    expect(land).toContain('approval.land: is from an older layout');
+    expect(land).not.toContain('is a local key');
+  });
+
+  it('merges the two files into the config that the commands use', () => {
+    const { shared, local } = splitConfigValue(sampleObject());
+    const parsed = parseConfig(shared, local);
+    expect(parsed.success && parsed.data).toEqual(sampleConfig());
+  });
+
+  it('names the file that holds the first problem', () => {
+    const { shared, local } = sampleFiles();
+    const badShared = parseConfig({ ...shared, tracker: { kind: 'nope' } }, local);
+    expect(!badShared.success && badShared.file).toBe(files.config);
+    const badLocal = parseConfig(shared, { ...local, parent: { id: 'Bad', address: 'file:///a' } });
+    expect(!badLocal.success && badLocal.file).toBe(files.localConfig);
+  });
+
+  it('merges nothing when the local file names a point that the recipe does not list', () => {
+    const shared = sharedConfigSchema.safeParse(sampleFiles().shared);
+    const local = localConfigSchema.safeParse({ ...sampleFiles().local, approval: { nope: 'owner' } });
+    if (!shared.success || !local.success) throw new Error('the sample must parse');
+    expect(mergeConfig(shared.data, local.data).success).toBe(false);
   });
 });
 

@@ -9,8 +9,8 @@ import { failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runInit } from '../../src/commands/init.js';
 import { runUpgrade } from '../../src/commands/upgrade.js';
-import { parseYamlText } from '../../src/config/load.js';
-import { CONFIG_SCHEMA_VERSION, configSchema } from '../../src/config/schema.js';
+import { parseConfigTexts, parseYamlText } from '../../src/config/load.js';
+import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -36,6 +36,7 @@ const CLAUDE = `${HOME}/CLAUDE.md`;
 const WORKER = `${HOME}/.factory/roles/worker.md`;
 const NODE_JSON = `${HOME}/.factory/node.json`;
 const CONFIG = `${HOME}/factory.yaml`;
+const LOCAL = `${HOME}/factory.local.yaml`;
 const BACKUP = `${HOME}/.factory/backups/2030-01-02T03-04-05-678Z`;
 const COORDINATOR_LINE = 'Coordinate. Do not produce.';
 /** The variables that name the folder of the home index. */
@@ -375,10 +376,8 @@ describe('upgrade: migrations', () => {
   it('migrates the state and records the new block versions in one file', async () => {
     const { deps } = await makeNode();
     const spec: UpgradeSpec = {
-      config: currentSpec.config,
+      ...currentSpec,
       state: stateAt(S + 1, [step('schema_version', S, { note: 'x' })]),
-      files: currentSpec.files,
-      projectPathsOf: currentSpec.projectPathsOf,
       ...fixedBlocks(withBlock('safety', 'New safety text.')),
     };
     const output = success(await upgrade(deps, spec));
@@ -395,10 +394,9 @@ describe('upgrade: migrations', () => {
     const { deps } = await makeNode();
     const first = deps.atomicWrites.length;
     const spec: UpgradeSpec = {
+      ...currentSpec,
       config: configAt(C + 1, [step('schema', C)]),
       state: stateAt(S + 1, [step('schema_version', S)]),
-      files: currentSpec.files,
-      projectPathsOf: currentSpec.projectPathsOf,
       ...fixedBlocks(withBlock('coordinator', 'New coordinator text.')),
     };
     success(await upgrade(deps, spec));
@@ -958,7 +956,7 @@ describe('upgrade: when the state repo holds changes of the owner', () => {
   });
 });
 
-/** A config of schema 1 that the owner edited: comments on top, inline and between the keys, and an own key order. */
+/** A config of schema 1 that the owner edited: notes on top, inline and between the keys, and an own key order. */
 const OWNER_CONFIG = `# My factory config.
 schema: 1
 
@@ -1004,20 +1002,6 @@ projects:
 # The note on the children.
 children: []
 `;
-
-const OWNER_COMMENTS: readonly string[] = [
-  '# My factory config.',
-  '# The note on the node.',
-  '# The inline note on the id.',
-  '# The inline note on the role.',
-  '# The note on the limits.',
-  '# The note on the lanes.',
-  '# The note on the prefix.',
-  '# The note on the projects.',
-  '# The note inside the project.',
-  '# The inline note on the path.',
-  '# The note on the children.',
-];
 
 describe('upgrade: a node of schema 1', () => {
   const OLD = schema1Paths(HOME);
@@ -1098,16 +1082,26 @@ describe('upgrade: a node of schema 1', () => {
       'intact',
     ]);
 
-    const config = parseYamlText(text(deps, CONFIG));
-    expect(config.ok && configSchema.safeParse(config.value).success).toBe(true);
-    expect(config.ok && config.value).toMatchObject({
+    expect(parseConfigTexts(text(deps, CONFIG), text(deps, LOCAL)).ok).toBe(true);
+    const shared = parseYamlText(text(deps, CONFIG));
+    expect(shared.ok && shared.value).toMatchObject({
       schema: C,
       node: { id: 'demo', layer: 1 },
       tracker: { kind: 'local' },
-      approval: { land: 'each' },
-      parent: null,
       recipe: { id: 'software', variant: 'plain' },
     });
+    const local = parseYamlText(text(deps, LOCAL));
+    expect(local.ok && local.value).toMatchObject({
+      schema: 1,
+      owner: { display: 'Test Owner' },
+      session: { proxy: 'none' },
+      approval: {},
+      parent: null,
+      children: [],
+    });
+    expect(deps.modes.get(LOCAL)).toBe(0o600);
+    expect(text(deps, `${BACKUP}/factory.yaml`)).toContain('schema: 1');
+    expect(deps.files.has(`${BACKUP}/factory.local.yaml`)).toBe(false);
     const state = parseJsonText(text(deps, NODE_JSON));
     expect(state.ok && state.value).toEqual({
       schema_version: S,
@@ -1115,7 +1109,7 @@ describe('upgrade: a node of schema 1', () => {
       blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
     });
 
-    expect(output.lines.at(-1)?.text).toBe('Changed 7 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+    expect(output.lines.at(-1)?.text).toBe('Changed 8 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S } });
     expect(gitWrites(gitSince())).toEqual([
       'rm -r -q --cached --ignore-unmatch -- protocol.md briefs',
@@ -1155,7 +1149,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(note?.level).toBe('warn');
       expect(note?.text).toContain('factory help words');
       expect(output.warnings).toEqual([note?.text]);
-      expect(output.lines.at(-1)?.text).toBe('Changed 6 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+      expect(output.lines.at(-1)?.text).toBe('Changed 7 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
       expect(gitWrites(gitSince())[1]).toBe('add -A -- roles/worker.md node.json orders');
     });
 
@@ -1283,34 +1277,48 @@ describe('upgrade: a node of schema 1', () => {
     });
   });
 
-  it('keeps the comments and the order of the keys of a config that the owner edited', async () => {
+  it('splits a config that the owner edited into a shared file and a local file, with every value in its file', async () => {
     const { deps } = makeOldNode();
     deps.files.set(CONFIG, OWNER_CONFIG);
     success(await upgrade(deps));
 
-    const written = text(deps, CONFIG);
-    for (const comment of OWNER_COMMENTS) expect(written).toContain(comment);
-    const parsed = parseYamlText(written);
-    expect(parsed.ok && configSchema.safeParse(parsed.value).success).toBe(true);
-    const value = parsed.ok ? (parsed.value as Record<string, Record<string, unknown>>) : {};
-    expect(Object.keys(value)).toEqual([
+    expect(parseConfigTexts(text(deps, CONFIG), text(deps, LOCAL)).ok).toBe(true);
+    const shared = parseYamlText(text(deps, CONFIG));
+    const sharedValue = shared.ok ? (shared.value as Record<string, Record<string, unknown>>) : {};
+    expect(Object.keys(sharedValue)).toEqual(['schema', 'node', 'session', 'limits', 'tracker', 'recipe']);
+    expect(Object.keys(sharedValue['node'] ?? {})).toEqual(['id', 'layer']);
+    expect(Object.keys(sharedValue['session'] ?? {})).toEqual(['permission_mode', 'effort', 'model']);
+    expect(sharedValue['recipe']).toMatchObject({ projects: [{ id: 'web', path: '../web' }] });
+
+    const local = parseYamlText(text(deps, LOCAL));
+    const localValue = local.ok ? (local.value as Record<string, Record<string, unknown>>) : {};
+    expect(Object.keys(localValue)).toEqual([
       'schema',
-      'node',
-      'limits',
-      'workers',
       'owner',
       'session',
       'proxies',
-      'recipe',
-      'children',
-      'tracker',
+      'workers',
       'approval',
+      'sources',
       'parent',
+      'children',
     ]);
-    expect(Object.keys(value['node'] ?? {})).toEqual(['id', 'layer']);
-    expect(Object.keys(value['owner'] ?? {})).toEqual(['display', 'prefix']);
-    expect(written.indexOf('# The note on the limits.')).toBeLessThan(written.indexOf('limits:'));
-    expect(written.indexOf('limits:')).toBeLessThan(written.indexOf('session:'));
+    expect(Object.keys(localValue['owner'] ?? {})).toEqual(['display', 'prefix']);
+    expect(Object.keys(localValue['session'] ?? {})).toEqual(['proxy', 'statusline']);
+  });
+
+  it('writes no local key into the shared file, and no shared key into the local file', async () => {
+    const { deps } = makeOldNode();
+    success(await upgrade(deps));
+    const sharedText = text(deps, CONFIG);
+    for (const key of ['owner:', 'proxies:', 'workers:', 'approval:', 'parent:', 'children:', 'sources:', 'proxy:', 'statusline:']) {
+      expect(sharedText).not.toContain(`\n${key}`);
+      expect(sharedText).not.toContain(`  ${key}`);
+    }
+    const localText = text(deps, LOCAL);
+    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'effort', 'model']) {
+      expect(localText).not.toMatch(new RegExp(`^\\s*${key}:`, 'm'));
+    }
   });
 
   it('checks the new text of the config with the schema before it writes, also in a dry run, and changes no file', async () => {
@@ -1320,8 +1328,7 @@ describe('upgrade: a node of schema 1', () => {
     const before = live(deps);
     for (const dryRun of [false, true]) {
       const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
-      expect(error.message).toContain('factory.yaml is invalid');
-      expect(error.message).toContain('extra');
+      expect(error.message).toContain('factory.yaml: extra');
     }
     expect(live(deps)).toEqual(before);
   });
@@ -1661,5 +1668,153 @@ describe('upgrade: the backup on a real disk', () => {
     if (!result.ok) expect(result.error.message).toContain('ENOTSUP');
     expect(await readdir(join(home, '.factory', 'backups'))).toEqual([OLDER]);
     expect(await readFile(join(home, '.factory', 'backups', OLDER, 'factory.yaml'), 'utf8')).toBe('old backup');
+  });
+});
+
+describe('upgrade: the two config files', () => {
+  /** The local file at another version, with its own steps. */
+  const localAt = (target: number, migrations: readonly Migration[]): UpgradeFile => {
+    const schema = z.looseObject({ schema: z.literal(target) });
+    return {
+      spec: { file: 'factory.local.yaml', key: 'schema', supported: target, schema },
+      parse: parseYamlText,
+      migrations,
+      finish: finisher(schema, (value) => `${JSON.stringify(value)}\n`),
+    };
+  };
+
+  const L = 1;
+
+  /** A node from before the split: one config file of schema 1. */
+  const makeOldNodeForTwoFiles = (): Node => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin', ...INDEX_ENV }, run: handler });
+    seedSchema1Node(deps, HOME);
+    const first = deps.calls.length;
+    return { deps, gitSince: () => deps.calls.slice(first).map((call) => call.args.slice(2).join(' ')) };
+  };
+
+  it('exits 2, names init and writes nothing for a root of the current schema with no local file, also in a dry run', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.delete(LOCAL);
+    const before = snapshot(deps);
+    const written = deps.atomicWrites.length;
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.kind).toBe('usage');
+      expect(error.message).toBe('factory.local.yaml not found');
+      expect(error.hint).toContain('factory init');
+    }
+    expect(snapshot(deps)).toEqual(before);
+    expect(deps.files.has(LOCAL)).toBe(false);
+    expect(deps.atomicWrites.slice(written)).toEqual([]);
+    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+  });
+
+  it('plans the shared file and the local file apart: only the local file migrates, and it is written with mode 600', async () => {
+    const { deps } = await makeNode();
+    const sharedBefore = text(deps, CONFIG);
+    const original = text(deps, LOCAL);
+    const first = deps.atomicWrites.length;
+    const spec: UpgradeSpec = { ...currentSpec, local: localAt(L + 1, [step('schema', L, { added: true })]) };
+    const output = success(await upgrade(deps, spec));
+    expect(lineTexts(output)).toContain(`factory.local.yaml: schema ${L} to ${L + 1} (1 step)`);
+    expect(lineTexts(output)).toContain(`factory.yaml: schema ${C} is current`);
+    expect(output.json).toMatchObject({ config: { from: C, to: C }, local: { from: L, to: L + 1 }, changed: true });
+    expect(text(deps, CONFIG)).toBe(sharedBefore);
+    expect(deps.atomicWrites.slice(first)).not.toContain(CONFIG);
+    expect(deps.atomicWrites.slice(first)).toContain(LOCAL);
+    const written = parseJsonText(text(deps, LOCAL));
+    expect(written.ok && written.value).toMatchObject({ schema: L + 1, added: true });
+    expect(deps.modes.get(LOCAL)).toBe(0o600);
+    expect(text(deps, `${BACKUP}/factory.local.yaml`)).toBe(original);
+  });
+
+  it('plans the shared file alone when only the shared file migrates, and keeps the local file as it is', async () => {
+    const { deps } = await makeNode();
+    const localBefore = text(deps, LOCAL);
+    const first = deps.atomicWrites.length;
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]) };
+    const output = success(await upgrade(deps, spec));
+    expect(output.json).toMatchObject({ config: { from: C, to: C + 1 }, local: { from: L, to: L } });
+    expect(lineTexts(output)).toContain(`factory.local.yaml: schema ${L} is current`);
+    expect(text(deps, LOCAL)).toBe(localBefore);
+    expect(deps.atomicWrites.slice(first)).not.toContain(LOCAL);
+  });
+
+  it('writes the local file before the shared file', async () => {
+    const { deps } = await makeNode();
+    const first = deps.atomicWrites.length;
+    const spec: UpgradeSpec = {
+      ...currentSpec,
+      config: configAt(C + 1, [step('schema', C)]),
+      local: localAt(L + 1, [step('schema', L)]),
+    };
+    success(await upgrade(deps, spec));
+    const writes = deps.atomicWrites.slice(first);
+    expect(writes.indexOf(LOCAL)).toBeGreaterThan(-1);
+    expect(writes.indexOf(LOCAL)).toBeLessThan(writes.indexOf(CONFIG));
+  });
+
+  it('shows the new local file of a root of schema 1 in a dry run, with mode 600, and writes nothing', async () => {
+    const { deps } = makeOldNodeForTwoFiles();
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain(
+      'factory.local.yaml: new file, with mode 600, from the local keys of factory.yaml',
+    );
+    expect(output.json).toMatchObject({ local: { from: null, to: L }, dryRun: true });
+    expect(snapshot(deps)).toEqual(before);
+    expect(deps.files.has(LOCAL)).toBe(false);
+  });
+
+  it('stops for a root of schema 1 when a local file is there already, and changes nothing', async () => {
+    const { deps } = makeOldNodeForTwoFiles();
+    deps.seed(LOCAL, 'schema: 1\n');
+    const before = snapshot(deps);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.kind).toBe('failure');
+      expect(error.message).toBe('factory.local.yaml exists already, but factory.yaml has schema 1');
+    }
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  describe('the mode and the owner of the local file', () => {
+    it('sets a mode that others can read back to 600, with a notice, in a real run', async () => {
+      const { deps } = await makeNode();
+      deps.modes.set(LOCAL, 0o644);
+      const output = success(await upgrade(deps));
+      expect(deps.modes.get(LOCAL)).toBe(0o600);
+      expect(output.warnings.join('\n')).toContain('factory.local.yaml');
+      expect(output.warnings.join('\n')).toContain('644');
+    });
+
+    it('warns, names the chmod command and changes no mode in a dry run', async () => {
+      const { deps } = await makeNode();
+      deps.modes.set(LOCAL, 0o644);
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(deps.modes.get(LOCAL)).toBe(0o644);
+      expect(output.warnings.join('\n')).toContain('chmod 600 factory.local.yaml');
+    });
+
+    it.each([
+      ['a group write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o660)],
+      ['an other write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o602)],
+      ['another owner', (deps: FakeDeps) => deps.owners.set(LOCAL, 0)],
+    ])('stops with exit 4 and one remedy line for a local file with %s, and changes nothing', async (_name, change) => {
+      const { deps, gitSince } = await makeNode();
+      change(deps);
+      const mode = deps.modes.get(LOCAL);
+      const before = snapshot(deps);
+      for (const dryRun of [false, true]) {
+        const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+        expect(error.kind).toBe('safety');
+        expect(error.hint).toContain('chmod 600 factory.local.yaml');
+      }
+      expect(deps.modes.get(LOCAL)).toBe(mode);
+      expect(snapshot(deps)).toEqual(before);
+      expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    });
   });
 });

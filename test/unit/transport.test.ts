@@ -14,7 +14,7 @@ const withConfig = (text: string | null): { deps: FakeDeps; transport: Transport
 };
 
 const childConfig = (change: (config: ReturnType<typeof sampleConfig>) => unknown = (config) => config): string =>
-  renderConfig(change(sampleConfig()) as ReturnType<typeof sampleConfig>);
+  renderConfig(change(sampleConfig()) as ReturnType<typeof sampleConfig>).shared;
 
 describe('file transport: ping', () => {
   it('gives the id, the layer and the schema of a child that has a valid config', async () => {
@@ -22,6 +22,12 @@ describe('file transport: ping', () => {
       childConfig((config) => ({ ...config, core: { ...config.core, node: { id: 'web', layer: 1 } } })),
     );
     expect(await transport.ping(`file://${CHILD}`)).toEqual({ kind: 'known', id: 'web', layer: 1, schema: 2 });
+  });
+
+  it('needs no local file of the child: a ping reads only the shared file', async () => {
+    const { deps, transport } = withConfig(childConfig());
+    expect(deps.files.has(`${CHILD}/factory.local.yaml`)).toBe(false);
+    expect((await transport.ping(`file://${CHILD}`)).kind).toBe('known');
   });
 
   it('accepts an address with a trailing slash', async () => {

@@ -74,7 +74,7 @@ children:
 
 describe('add a child to the config text', () => {
   it('turns the empty list of a fresh config into a block list with the child', () => {
-    const original = renderConfig(sampleConfig());
+    const original = renderConfig(sampleConfig()).local;
     const text = added(original);
     expect(childrenOf(text)).toEqual([WEB]);
     expect(text).toContain('children:\n  - id: web\n    address: "file:///srv/web-factory"\n');
@@ -101,13 +101,13 @@ describe('add a child to the config text', () => {
   });
 
   it('writes the address as a quoted text, as the render does', () => {
-    expect(added(renderConfig(sampleConfig()), { id: 'a', address: 'file:///x/y' })).toContain('address: "file:///x/y"');
+    expect(added(renderConfig(sampleConfig()).local, { id: 'a', address: 'file:///x/y' })).toContain('address: "file:///x/y"');
   });
 
   it('writes a long address on one line', () => {
     const address = `file:///${'long-folder-name/'.repeat(10)}web-factory`;
     expect(address.length).toBeGreaterThan(100);
-    const text = added(renderConfig(sampleConfig()), { id: 'web', address });
+    const text = added(renderConfig(sampleConfig()).local, { id: 'web', address });
     expect(text).toContain(`    address: "${address}"\n`);
     expect(childrenOf(text)).toEqual([{ id: 'web', address }]);
   });
@@ -145,13 +145,13 @@ describe('remove a child from the config text', () => {
   });
 
   it('leaves an empty list when the last child goes', () => {
-    const text = removed(added(renderConfig(sampleConfig())), 'web');
+    const text = removed(added(renderConfig(sampleConfig()).local), 'web');
     expect(childrenOf(text)).toEqual([]);
     expect(text).toContain('children: []');
   });
 
   it('gives back the original text of a fresh config after an add and a remove', () => {
-    const original = renderConfig(sampleConfig());
+    const original = renderConfig(sampleConfig()).local;
     expect(removed(added(original), 'web')).toBe(normalized(original));
   });
 

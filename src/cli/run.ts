@@ -97,5 +97,5 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
     await sink.stdout(renderText(result.value, style, given.bool(flags.quiet)));
     await sink.stderr(renderWarnings(result.value.warnings));
   }
-  return result.value.failed ? EXIT_FAILURE : EXIT_OK;
+  return result.value.failed ? (result.value.exitCode ?? EXIT_FAILURE) : EXIT_OK;
 };

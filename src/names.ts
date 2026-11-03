@@ -83,6 +83,8 @@ export const flagShorts = { help: 'h' } as const;
 
 export const files = {
   config: 'factory.yaml',
+  /** The config of one person on one machine: git ignores it, and it has mode 600. */
+  localConfig: 'factory.local.yaml',
   claudeMd: 'CLAUDE.md',
   nodeState: 'node.json',
   worker: 'worker.md',
@@ -168,7 +170,13 @@ export const tmuxNames = {
   slotBoard: 'board',
 } as const;
 
-/** The keys of the config file. */
+/**
+ * The permission bits of the local config file (design 4.4). The file has mode 600. A group or other read bit gets
+ * fixed with a notice. A group or other write bit, or another owner, stops the command.
+ */
+export const localFileModes = { private: 0o600, groupOtherRead: 0o044, groupOtherWrite: 0o022 } as const;
+
+/** The keys of the config files: the shared file and the local file. */
 export const keys = {
   root: {
     schema: 'schema',
@@ -183,10 +191,19 @@ export const keys = {
     recipe: 'recipe',
     parent: 'parent',
     children: 'children',
+    sources: 'sources',
+    state: 'state',
   },
   node: { id: 'id', layer: 'layer' },
   owner: { display: 'display', github: 'github', prefix: 'prefix' },
-  session: { permissionMode: 'permission_mode', effort: 'effort', model: 'model', proxy: 'proxy' },
+  session: {
+    permissionMode: 'permission_mode',
+    effort: 'effort',
+    model: 'model',
+    proxy: 'proxy',
+    statusline: 'statusline',
+  },
+  state: { remote: 'remote' },
   proxy: { id: 'id', baseUrl: 'base_url', health: 'health', onFail: 'on_fail' },
   worker: { proxy: 'proxy' },
   limits: {
@@ -207,7 +224,6 @@ export const keys = {
     heavyTest: 'heavy_test',
   },
   gate: { checks: 'checks' },
-  approval: { land: 'land' },
   tracker: { kind: 'kind', items: 'items', decisions: 'decisions', watchInterval: 'watch_interval' },
   recipe: { id: 'id', variant: 'variant', projects: 'projects' },
   /** A link to another node: the parent or one child. */
@@ -231,7 +247,6 @@ export const values = {
   mergeMethods: ['squash', 'merge', 'rebase'],
   variants: ['plain'],
   recipes: ['software'],
-  landModes: ['each', 'approved-work'],
   /** The mode of an approval point of any recipe. The first one is the default: the point waits for the owner. */
   approvalModes: [roles.owner, 'delegated'],
   trackerLocal: 'local',
@@ -246,6 +261,7 @@ export const address = { scheme: 'file://' } as const;
 export const checkIds = {
   config: 'config',
   configVersion: 'config-version',
+  localFile: 'local-file',
   state: 'state',
   home: 'home',
   index: 'index',
@@ -280,6 +296,12 @@ export const schema1 = {
   /** The sha256, as hex, of `roadmaps/README.md` as `init` of version 0.1.0 wrote it. */
   roadmapsReadmeSha256: '2f9168abccda69f6ed71c8c1339ee899ad39e20c606838c750bae4d5346fad2c',
 } as const;
+
+/**
+ * The names of a FAC-M2 config that the current layout does not use. Only the refusal of that layout reads them: a
+ * `factory.yaml` with one of them was made before the split into a shared file and a local file.
+ */
+export const schema2 = { workersKey: 'cells', approvalKey: 'land' } as const;
 
 /** Markers of managed blocks: `<!-- factory:begin <name> v<n> sha256=<hex> -->` and `<!-- factory:end <name> -->`. */
 export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash: 'sha256' } as const;

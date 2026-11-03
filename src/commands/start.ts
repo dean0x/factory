@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
-import { loadConfig } from '../config/load.js';
+import { loadConfig, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
@@ -273,8 +273,10 @@ const dryRunOutput = (input: {
   readonly how: Reach;
   readonly problems: readonly string[];
   readonly plan: StartPlan | null;
+  /** Notes about the files of the config, for example a local file that others can read. */
+  readonly notes: readonly string[];
 }): CommandOutput => {
-  const { home, id, exists, how, problems, plan } = input;
+  const { home, id, exists, how, problems, plan, notes } = input;
   const last = reachArgs(how, id);
   const shown = [...(plan?.shown ?? []), ...(last === null ? [] : [last])].map(commandLine);
   const proxy = plan?.proxy.label ?? null;
@@ -294,7 +296,7 @@ const dryRunOutput = (input: {
         : [text('Calls:'), ...shown.map((line) => text(`  ${line}`))]),
     ],
     json: { schema: schemaIds.start, session: id, started: false, attached: false, proxy, dryRun: true, calls: shown },
-    warnings: plan?.proxy.warning === undefined ? [] : [plan.proxy.warning],
+    warnings: [...notes, ...(plan?.proxy.warning === undefined ? [] : [plan.proxy.warning])],
     failed: false,
   };
 };
@@ -311,6 +313,9 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
   if (!loaded.ok) return loaded;
   const id = loaded.value.core.node.id;
   const { dryRun } = options;
+  // A real run sets a wide mode of the local file back to 600 before it uses the file. A dry run only names the command.
+  const notes = await settleLocalMode(deps, home, !dryRun);
+  if (!notes.ok) return notes;
 
   const problems = await toolProblems(deps, !dryRun);
   if (!dryRun && problems.length > 0) {
@@ -331,7 +336,7 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
 
-  if (dryRun) return ok(dryRunOutput({ home, id, exists, how, problems, plan: planned }));
+  if (dryRun) return ok(dryRunOutput({ home, id, exists, how, problems, plan: planned, notes: notes.value }));
 
   if (planned !== null) {
     const started = await startSession(deps, id, planned.steps);
@@ -358,7 +363,7 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
       proxy: planned?.proxy.label ?? null,
       ...(ended ? { coordinatorEnded: true } : {}),
     },
-    warnings: planned?.proxy.warning === undefined ? [] : [planned.proxy.warning],
+    warnings: [...notes.value, ...(planned?.proxy.warning === undefined ? [] : [planned.proxy.warning])],
     failed: false,
   });
 };

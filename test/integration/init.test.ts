@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
@@ -33,12 +34,24 @@ describe('factory init (built binary)', () => {
     const result = await box.run(initArgs(['--project', web]));
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Created the node "demo"');
-    for (const name of ['factory.yaml', 'CLAUDE.md', '.factory/node.json', '.factory/roles/worker.md']) {
+    for (const name of ['factory.yaml', 'factory.local.yaml', 'CLAUDE.md', '.factory/node.json', '.factory/roles/worker.md']) {
       expect(existsSync(join(box.node, name))).toBe(true);
     }
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('repo: "acme/web"');
     expect(config).toContain('path: "../web"');
+  });
+
+  it('writes factory.local.yaml with mode 600 and keeps the personal keys out of factory.yaml', async () => {
+    expect((await box.run(initArgs(['--owner-github', 'some-login']))).code).toBe(0);
+    const path = join(box.node, 'factory.local.yaml');
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    const local = await box.read(path);
+    expect(local).toContain('display: "Test Owner"');
+    expect(local).toContain('github: "some-login"');
+    const shared = await box.read(join(box.node, 'factory.yaml'));
+    expect(shared).not.toContain('some-login');
+    expect(shared).not.toMatch(/^owner:/m);
   });
 
   it('makes the first commit in the state repository', async () => {

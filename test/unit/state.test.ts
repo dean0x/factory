@@ -117,6 +117,7 @@ describe('layout', () => {
     expect(layout).toEqual({
       home: '/h/node',
       configFile: '/h/node/factory.yaml',
+      localConfigFile: '/h/node/factory.local.yaml',
       claudeMd: '/h/node/CLAUDE.md',
       stateDir: '/h/node/.factory',
       nodeJson: '/h/node/.factory/node.json',

@@ -7,8 +7,9 @@ import { renderConfig } from '../config/render.js';
 import {
   CONFIG_SCHEMA_VERSION,
   COORDINATOR_LAYER,
+  LOCAL_SCHEMA_VERSION,
   MAX_LAYER,
-  configSchema,
+  parseConfig,
   type FactoryConfig,
 } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
@@ -35,6 +36,7 @@ import {
   flags,
   flagText,
   keys,
+  localFileModes,
   roles,
   schemaIds,
   stateKeys,
@@ -81,7 +83,10 @@ export interface InitPlan {
   /** The topmost folder that init creates (the home or one of its parents), or null when the home exists. */
   readonly createdRoot: string | null;
   readonly config: FactoryConfig;
+  /** The text of the shared file. */
   readonly configText: string;
+  /** The text of the local file. Init writes it with mode 600. */
+  readonly localConfigText: string;
   /** The text of CLAUDE.md before init, or null when the file does not exist. */
   readonly claudeOriginal: string | null;
   readonly claudeText: string;
@@ -250,40 +255,50 @@ interface CheckedOptions extends CheckedValues {
   readonly blocks: BlockTexts;
 }
 
-/** The settings of the config. The projects are the described projects of the command. */
-const settingsOf = (checked: CheckedValues, github: string | undefined, projects: readonly unknown[]): unknown => ({
-  [keys.root.schema]: CONFIG_SCHEMA_VERSION,
-  [keys.root.node]: { [keys.node.id]: checked.id, [keys.node.layer]: checked.layer },
-  [keys.root.owner]: {
-    [keys.owner.display]: checked.ownerName,
-    ...(github === undefined ? {} : { [keys.owner.github]: github }),
-    [keys.owner.prefix]: defaultOwnerPrefix,
+/** The settings of the two config files. The projects are the described projects of the command. */
+const settingsOf = (
+  checked: CheckedValues,
+  github: string | undefined,
+  projects: readonly unknown[],
+): { readonly shared: unknown; readonly local: unknown } => ({
+  shared: {
+    [keys.root.schema]: CONFIG_SCHEMA_VERSION,
+    [keys.root.node]: { [keys.node.id]: checked.id, [keys.node.layer]: checked.layer },
+    [keys.root.session]: {
+      [keys.session.permissionMode]: values.permissionMode,
+      [keys.session.effort]: values.efforts[2],
+      [keys.session.model]: DEFAULT_MODEL,
+    },
+    [keys.root.limits]: DEFAULT_LIMITS,
+    [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },
+    [keys.root.recipe]: {
+      [keys.recipe.id]: checked.recipe,
+      [keys.recipe.variant]: values.variants[0],
+      [keys.recipe.projects]: projects,
+    },
   },
-  [keys.root.session]: {
-    [keys.session.permissionMode]: values.permissionMode,
-    [keys.session.effort]: values.efforts[2],
-    [keys.session.model]: DEFAULT_MODEL,
-    [keys.session.proxy]: values.noProxy,
+  local: {
+    [keys.root.schema]: LOCAL_SCHEMA_VERSION,
+    [keys.root.owner]: {
+      [keys.owner.display]: checked.ownerName,
+      ...(github === undefined ? {} : { [keys.owner.github]: github }),
+      [keys.owner.prefix]: defaultOwnerPrefix,
+    },
+    [keys.root.session]: { [keys.session.proxy]: values.noProxy, [keys.session.statusline]: null },
+    [keys.root.proxies]: [],
+    [keys.root.workers]: {},
+    [keys.root.approval]: {},
+    [keys.root.parent]: null,
+    [keys.root.children]: [],
+    [keys.root.sources]: {},
   },
-  [keys.root.proxies]: [],
-  [keys.root.workers]: {},
-  [keys.root.limits]: DEFAULT_LIMITS,
-  [keys.root.approval]: { [keys.approval.land]: values.landModes[0] },
-  [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },
-  [keys.root.recipe]: {
-    [keys.recipe.id]: checked.recipe,
-    [keys.recipe.variant]: values.variants[0],
-    [keys.recipe.projects]: projects,
-  },
-  [keys.root.parent]: null,
-  [keys.root.children]: [],
 });
 
-const parseSettings = (input: unknown): CliResult<FactoryConfig> => {
-  const parsed = configSchema.safeParse(input);
+const parseSettings = (input: { readonly shared: unknown; readonly local: unknown }): CliResult<FactoryConfig> => {
+  const parsed = parseConfig(input.shared, input.local);
   return parsed.success
     ? ok(parsed.data)
-    : usageError(`invalid settings: ${describeIssues(parsed.error)}`, 'Check the flags.');
+    : usageError(`invalid settings: ${parsed.file}: ${describeIssues(parsed.error)}`, 'Check the flags.');
 };
 
 /**
@@ -368,11 +383,13 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
   const stateFiles = stateFilesOf(templates, blocks.workerText);
   if (!stateFiles.ok) return stateFiles;
 
+  const texts = renderConfig(config.value);
   return ok({
     home,
     createdRoot: missing.value.at(-1) ?? null,
     config: config.value,
-    configText: renderConfig(config.value),
+    configText: texts.shared,
+    localConfigText: texts.local,
     claudeOriginal: blocks.original,
     claudeText: blocks.claudeText,
     stateFiles: stateFiles.value,
@@ -401,7 +418,7 @@ const createdFolders = (home: string, createdRoot: string | null): readonly stri
 export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<InitResult>> => {
   const layout = layoutOf(plan.home);
   const staging = stagingDirOf(plan.home, deps.pid);
-  const touched = { state: false, claude: false, config: false };
+  const touched = { state: false, claude: false, local: false, config: false };
 
   /** Undo only what this run made. A step that fails is named in the message. */
   const rollback = async (cause: CliError): Promise<CliResult<InitResult>> => {
@@ -420,6 +437,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
       );
     }
     if (touched.config) await undo(deps.fs.remove(layout.configFile));
+    if (touched.local) await undo(deps.fs.remove(layout.localConfigFile));
     for (const folder of createdFolders(plan.home, plan.createdRoot)) await undo(deps.fs.removeEmptyDir(folder));
     return err({
       ...cause,
@@ -455,6 +473,11 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   const claude = await deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeText);
   if (!claude.ok) return rollback(claude.error);
   touched.claude = true;
+
+  // The local file comes before the shared file, which marks the home as a node. The local file has mode 600 from the start.
+  const local = await deps.fs.writeTextAtomic(layout.localConfigFile, plan.localConfigText, localFileModes.private);
+  if (!local.ok) return rollback(local.error);
+  touched.local = true;
 
   const config = await deps.fs.writeTextAtomic(layout.configFile, plan.configText);
   if (!config.ok) return rollback(config.error);
@@ -522,7 +545,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
     })),
   ];
 
-  const written = [files.config, files.claudeMd, `${dirs.state}/`];
+  const written = [files.config, files.localConfig, files.claudeMd, `${dirs.state}/`];
   return ok({
     lines: [
       { level: 'text', text: `Created the ${roles.node} "${plan.value.config.core.node.id}" in ${plan.value.home}.` },

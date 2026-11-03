@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import { runStart, type StartOptions } from '../../src/commands/start.js';
-import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
-import { sampleConfig } from '../helpers/sample-config.js';
+import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
@@ -74,7 +73,7 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
   for (const tool of setup.tools ?? ['tmux', 'claude']) deps.seed(`/bin/${tool}`, '');
-  deps.seed(`${HOME}/factory.yaml`, renderConfig(setup.config ?? sampleConfig()));
+  seedConfig(deps, HOME, setup.config ?? sampleConfig());
   return { deps, tmux: log };
 };
 
@@ -583,10 +582,93 @@ describe('start:the home and the config', () => {
 
   it('refuses with exit 4 a home inside another node home, and starts nothing', async () => {
     const { deps, tmux } = make();
-    deps.seed('/w/factory.yaml', renderConfig(sampleConfig()));
+    seedConfig(deps, '/w');
     const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (!result.ok) expect(result.error.message).toContain('inside another node home');
     expect(tmux.calls).toEqual([]);
+  });
+});
+
+describe('start:the two config files', () => {
+  const LOCAL = `${HOME}/factory.local.yaml`;
+
+  it('exits 2 and names init when factory.yaml has no factory.local.yaml next to it, and starts nothing', async () => {
+    const { deps, tmux } = make();
+    deps.files.delete(LOCAL);
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    if (!result.ok) {
+      expect(result.error.message).toContain('factory.local.yaml not found');
+      expect(result.error.hint).toContain('factory init');
+    }
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('fails the load, and makes no tmux call, when a pulled change adds a proxy entry to factory.yaml', async () => {
+    const { deps, tmux } = make({ fetch: answers });
+    const shared = deps.files.get(`${HOME}/factory.yaml`) ?? '';
+    deps.seed(
+      `${HOME}/factory.yaml`,
+      `${shared}proxies:\n  - id: pulled\n    base_url: "http://203.0.113.9:8080"\n    health: /health\n`,
+    );
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!result.ok) {
+      expect(result.error.message).toContain('proxies');
+      expect(result.error.message).toContain('factory.local.yaml');
+    }
+    expect(tmux.calls).toEqual([]);
+    expect(deps.fetched).toEqual([]);
+  });
+
+  it('sets a local file that others can read back to mode 600, prints a notice, and goes on', async () => {
+    const { deps } = make();
+    deps.modes.set(LOCAL, 0o644);
+    const output = await succeeded(deps);
+    expect(deps.modes.get(LOCAL)).toBe(0o600);
+    expect(output.warnings.join(' ')).toContain('factory.local.yaml');
+    expect(output.warnings.join(' ')).toContain('644');
+    expect(output.json['started']).toBe(true);
+  });
+
+  it('warns and names the chmod command, and changes no mode, in a dry run', async () => {
+    const { deps } = make();
+    deps.modes.set(LOCAL, 0o640);
+    const output = await succeeded(deps, { dryRun: true });
+    expect(deps.modes.get(LOCAL)).toBe(0o640);
+    expect(output.warnings.join(' ')).toContain('chmod 600 factory.local.yaml');
+  });
+
+  it.each([
+    ['a group write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o660)],
+    ['an other write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o602)],
+    ['another owner', (deps: FakeDeps) => deps.owners.set(LOCAL, 0)],
+  ])('exits 4 with one remedy line, changes no mode and starts nothing for %s', async (_name, change) => {
+    const { deps, tmux } = make({ fetch: answers });
+    change(deps);
+    const before = deps.modes.get(LOCAL);
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    if (!result.ok) {
+      expect(result.error.message).toContain('factory.local.yaml');
+      expect(result.error.hint).toContain('chmod 600 factory.local.yaml');
+    }
+    expect(deps.modes.get(LOCAL)).toBe(before);
+    expect(tmux.calls).toEqual([]);
+    expect(deps.fetched).toEqual([]);
+  });
+
+  it('exits 4 also in a dry run for a local file that others can write', async () => {
+    const { deps } = make();
+    deps.modes.set(LOCAL, 0o666);
+    expect(await startFactory(deps, { dryRun: true })).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+
+  it('takes the proxy of the session from the local file only', async () => {
+    const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers });
+    await succeeded(deps);
+    expect(deps.fetched).toEqual([`${PROXY_URL}/health`]);
+    expect(tmux.calls.length).toBeGreaterThan(0);
   });
 });

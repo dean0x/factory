@@ -1,7 +1,6 @@
 import { Document, isMap, isScalar, isSeq, Scalar, type Pair, type YAMLMap, type YAMLSeq } from 'yaml';
 import { failure, type CliResult } from '../cli/errors.js';
 import { checkFileAddress } from '../comms/address.js';
-import { configDocumentText, parseConfigDocument } from '../config/edit.js';
 import { isSlug } from '../config/primitives.js';
 import { ok } from '../core/result.js';
 import { commands, commandText, keys, nodeCommands, roles, schema1, values } from '../names.js';
@@ -131,7 +130,6 @@ const migrateDocument = (doc: Document): CliResult<void> => {
   const lanes = pairOf(root, schema1.keys.lanes);
   if (lanes !== undefined) rename(lanes, keys.root.workers);
   addSection(doc, root, keys.root.tracker, { [keys.tracker.kind]: values.trackerLocal });
-  addSection(doc, root, keys.root.approval, { [keys.approval.land]: values.landModes[0] });
 
   // The projects stay where they are: their key becomes `recipe`, and they move under it.
   const projectsPair = pairOf(root, schema1.keys.projects);
@@ -150,6 +148,10 @@ const migrateDocument = (doc: Document): CliResult<void> => {
   return ok(undefined);
 };
 
+/**
+ * A pure step on one value. The value holds the keys of both files: the upgrade splits it into the shared file and the
+ * local file, so this step does not edit the text of the owner.
+ */
 const configSchema1To2: Migration = {
   from: FROM,
   to: TO,
@@ -157,12 +159,6 @@ const configSchema1To2: Migration = {
     const doc = new Document(raw);
     const migrated = migrateDocument(doc);
     return migrated.ok ? ok(doc.toJS()) : migrated;
-  },
-  applyText: (text) => {
-    const parsed = parseConfigDocument(text);
-    if (!parsed.ok) return failure(parsed.error);
-    const migrated = migrateDocument(parsed.value);
-    return migrated.ok ? ok(configDocumentText(parsed.value)) : migrated;
   },
 };
 

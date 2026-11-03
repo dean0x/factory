@@ -1,8 +1,14 @@
 import { z } from 'zod';
 import { failure, type CliResult } from '../cli/errors.js';
-import { CONFIG_SPEC, parseYamlText } from '../config/load.js';
-import { renderConfig } from '../config/render.js';
-import { configSchema, nodeSchema } from '../config/schema.js';
+import { LOCAL_SPEC, parseYamlText, SHARED_SPEC } from '../config/load.js';
+import { renderLocalConfig, renderSharedConfig } from '../config/render.js';
+import {
+  localConfigSchema,
+  nodeSchema,
+  sharedConfigSchema,
+  splitConfigValue,
+  type SharedConfig,
+} from '../config/schema.js';
 import { ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
@@ -35,13 +41,21 @@ export interface BlockSet {
 }
 
 export interface UpgradeSpec {
+  /** The shared file. */
   readonly config: UpgradeFile;
+  /** The local file. It is the only writer of that file. */
+  readonly local: UpgradeFile;
   readonly state: UpgradeFile;
   /** The files that move, and the blocks that get a new name, when the state migrates. */
   readonly files: readonly FileStep[];
-  /** The managed blocks of the node that a config value describes. The value has the current schema version. */
+  /** The value of the local file, taken from a migrated config value that holds the keys of both files. */
+  localPartOf(config: unknown): unknown;
+  /**
+   * The managed blocks of the node that a config value describes. The value holds the keys of both files, in the
+   * current schema versions.
+   */
   blocksOf(config: unknown): CliResult<BlockSet>;
-  /** The paths of the projects that a config value lists, as the value holds them. The value has the current schema version. */
+  /** The paths of the projects that a config value lists, as the value holds them. The value holds the keys of both files. */
   projectPathsOf(config: unknown): CliResult<readonly string[]>;
 }
 
@@ -81,12 +95,23 @@ const projectPathsOfRecipe = (config: unknown): CliResult<readonly string[]> => 
   return ok(parsed.data[keys.root.recipe][keys.recipe.projects].map((project) => project[keys.project.path]));
 };
 
+/** A migrated value holds the keys of both files. The shared file takes its part of them. */
+const sharedPartSchema: SchemaParser<SharedConfig> = {
+  safeParse: (raw) => sharedConfigSchema.safeParse(splitConfigValue(raw).shared),
+};
+
 export const currentSpec: UpgradeSpec = {
   config: {
-    spec: CONFIG_SPEC,
+    spec: SHARED_SPEC,
     parse: parseYamlText,
     migrations: configMigrations,
-    finish: finisher(configSchema, renderConfig),
+    finish: finisher(sharedPartSchema, renderSharedConfig),
+  },
+  local: {
+    spec: LOCAL_SPEC,
+    parse: parseYamlText,
+    migrations: [],
+    finish: finisher(localConfigSchema, renderLocalConfig),
   },
   state: {
     spec: STATE_SPEC,
@@ -95,6 +120,7 @@ export const currentSpec: UpgradeSpec = {
     finish: finisher(nodeStateSchema, jsonText),
   },
   files: fileSteps,
+  localPartOf: (config) => splitConfigValue(config).local,
   blocksOf: blocksOfNode,
   projectPathsOf: projectPathsOfRecipe,
 };

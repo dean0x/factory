@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { runNode, type NodeOptions } from '../../src/commands/node.js';
-import { parseConfigText } from '../../src/config/load.js';
+import { parseConfigTexts } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
-import { sampleConfig } from '../helpers/sample-config.js';
+import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 
 const HOME = '/w/mgr';
 const CONFIG_PATH = `${HOME}/factory.yaml`;
+/** The children of a node are in the local file: the commands of `node` change only this file. */
+const LOCAL_PATH = `${HOME}/factory.local.yaml`;
 
 const configOf = (id: string, layer: number, children: FactoryConfig['core']['children'] = []): FactoryConfig => {
   const config = sampleConfig();
@@ -21,15 +23,20 @@ const make = (
     readonly layer?: number;
     readonly children?: FactoryConfig['core']['children'];
     readonly homes?: Readonly<Record<string, FactoryConfig | string | null>>;
-    readonly text?: string;
+    readonly sharedText?: string;
+    readonly localText?: string;
     readonly cwd?: string;
   } = {},
 ): FakeDeps => {
   const deps = createFakeDeps({ cwd: options.cwd ?? '/w' });
-  deps.seed(CONFIG_PATH, options.text ?? renderConfig(configOf('mgr', options.layer ?? 2, options.children)));
+  seedConfig(deps, HOME, configOf('mgr', options.layer ?? 2, options.children));
+  if (options.sharedText !== undefined) deps.seed(CONFIG_PATH, options.sharedText);
+  if (options.localText !== undefined) deps.seed(LOCAL_PATH, options.localText);
   for (const [path, config] of Object.entries(options.homes ?? {})) {
     deps.seedDir(path);
-    if (config !== null) deps.seed(`${path}/factory.yaml`, typeof config === 'string' ? config : renderConfig(config));
+    if (config === null) continue;
+    if (typeof config === 'string') deps.seed(`${path}/factory.yaml`, config);
+    else seedConfig(deps, path, config);
   }
   return deps;
 };
@@ -48,7 +55,7 @@ const succeeded = async (deps: FakeDeps, ...words: string[]) => {
 const webHome = { '/w/web-factory': configOf('web', 1) };
 
 const childrenInFile = (deps: FakeDeps): unknown => {
-  const parsed = parseConfigText(deps.files.get(CONFIG_PATH) ?? '');
+  const parsed = parseConfigTexts(deps.files.get(CONFIG_PATH) ?? '', deps.files.get(LOCAL_PATH) ?? '');
   if (!parsed.ok) throw new Error(parsed.error.message);
   return parsed.value.core.children;
 };
@@ -115,7 +122,7 @@ describe('node add-child', () => {
     const deps = make({ homes: webHome });
     const output = await succeeded(deps, 'add-child', '/w/web-factory');
     expect(childrenInFile(deps)).toEqual([{ id: 'web', address: 'file:///w/web-factory' }]);
-    expect(deps.atomicWrites).toEqual([CONFIG_PATH]);
+    expect(deps.atomicWrites).toEqual([LOCAL_PATH]);
     expect(output.lines[0]).toEqual({ level: 'text', text: 'Added the child web (layer 1).' });
     expect(output.json).toMatchObject({
       schema: 'factory.node-children/v1',
@@ -137,57 +144,59 @@ describe('node add-child', () => {
   });
 
   it('keeps the comments of the owner in the config file', async () => {
-    const text = renderConfig(configOf('mgr', 2)).replace('children: []', '# my children, one for each shop\nchildren: []');
-    const deps = make({ homes: webHome, text });
+    const localText = renderConfig(configOf('mgr', 2)).local.replace('children: []', '# my children, one for each shop\nchildren: []');
+    const deps = make({ homes: webHome, localText });
+    const shared = deps.files.get(CONFIG_PATH);
     await succeeded(deps, 'add-child', '/w/web-factory');
-    const after = deps.files.get(CONFIG_PATH) ?? '';
+    const after = deps.files.get(LOCAL_PATH) ?? '';
     expect(after).toContain('# my children, one for each shop\nchildren:\n  - id: web');
-    expect(after).toContain('# People edit this file.');
+    expect(after).toContain('# factory.local.yaml: the configuration of one person on this machine.');
+    expect(deps.files.get(CONFIG_PATH)).toBe(shared);
   });
 
   it('refuses on layer 1, because the children of a coordinator are workers', async () => {
     const deps = make({ layer: 1, homes: webHome });
-    const before = deps.files.get(CONFIG_PATH);
+    const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', '/w/web-factory');
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (!result.ok) expect(result.error.message).toContain('its children are workers');
-    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
   it('refuses a child on a layer that is not the layer below, and names both layers', async () => {
     for (const layer of [2, 3]) {
       const deps = make({ homes: { '/w/other': configOf('other', layer) } });
-      const before = deps.files.get(CONFIG_PATH);
+      const before = deps.files.get(LOCAL_PATH);
       const result = await node(deps, 'add-child', '/w/other');
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
       if (!result.ok) {
         expect(result.error.message).toBe(`the child is on layer ${layer}, but a node on layer 2 takes children on layer 1`);
       }
-      expect(deps.files.get(CONFIG_PATH)).toBe(before);
+      expect(deps.files.get(LOCAL_PATH)).toBe(before);
     }
   });
 
   it('refuses a child that is more than one layer below, and changes nothing', async () => {
     const deps = make({ layer: 3, homes: { '/w/low': configOf('low', 1) } });
-    const before = deps.files.get(CONFIG_PATH);
+    const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', '/w/low');
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (!result.ok) {
       expect(result.error.message).toBe('the child is on layer 1, but a node on layer 3 takes children on layer 2');
     }
-    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
   it('refuses a child with the id of this node, tells how to fix it, and changes nothing', async () => {
     const deps = make({ homes: { '/w/same': configOf('mgr', 1) } });
-    const before = deps.files.get(CONFIG_PATH);
+    const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', '/w/same');
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (!result.ok) {
       expect(result.error.message).toBe('the child has the id mgr, which is the id of this node');
       expect(result.error.hint).toContain('Change the id in the factory.yaml of the child');
     }
-    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
   it('refuses a child whose folder does not exist, and says why', async () => {
@@ -197,7 +206,7 @@ describe('node add-child', () => {
   });
 
   it('refuses a child whose config is not valid, and says why', async () => {
-    const broken = renderConfig(configOf('bad', 1)).replace('effort: high', 'effort: wild');
+    const broken = renderConfig(configOf('bad', 1)).shared.replace('effort: high', 'effort: wild');
     const result = await node(make({ homes: { '/w/bad': broken } }), 'add-child', '/w/bad');
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (!result.ok) expect(result.error.message).toContain('factory.yaml is invalid');
@@ -245,7 +254,7 @@ describe('node add-child', () => {
 
   it('compares real paths, so a link to this home is refused', async () => {
     const deps = createFakeDeps({ cwd: '/w', links: { '/w/link': HOME } });
-    deps.seed(CONFIG_PATH, renderConfig(configOf('mgr', 2)));
+    seedConfig(deps, HOME, configOf('mgr', 2));
     deps.seedDir('/w/link');
     const result = await node(deps, 'add-child', '/w/link');
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
@@ -258,21 +267,21 @@ describe('node add-child', () => {
     ['a .. segment', 'file:///w/../w/web-factory'],
   ])('refuses %s as a usage error and changes nothing', async (_name, argument) => {
     const deps = make({ homes: webHome });
-    const before = deps.files.get(CONFIG_PATH);
+    const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', argument);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
-    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
     expect(deps.atomicWrites).toEqual([]);
   });
 
   it('keeps the config as it was when the new config would not be valid', async () => {
     const full = Array.from({ length: 200 }, (_value, index) => ({ id: `c${index}`, address: `file:///w/c${index}` }));
     const deps = make({ children: full, homes: webHome });
-    const before = deps.files.get(CONFIG_PATH);
+    const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', '/w/web-factory');
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) expect(result.error.message).toContain('Nothing was changed');
-    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
   it('needs one argument', async () => {
@@ -297,7 +306,7 @@ describe('node remove-child', () => {
     expect(childrenInFile(deps)).toEqual([{ id: 'api', address: 'file:///w/api-factory' }]);
     expect(output.lines[0]).toEqual({ level: 'text', text: 'Removed the child web. Its files stay as they are.' });
     expect(output.json).toMatchObject({ change: { action: 'remove', id: 'web' } });
-    expect(deps.atomicWrites).toEqual([CONFIG_PATH]);
+    expect(deps.atomicWrites).toEqual([LOCAL_PATH]);
   });
 
   it('never touches the files of the child', async () => {
@@ -311,11 +320,11 @@ describe('node remove-child', () => {
 
   it('refuses an id that is not a child, with a usage error, and changes nothing', async () => {
     const deps = twoChildren();
-    const before = deps.files.get(CONFIG_PATH);
+    const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'remove-child', 'nobody');
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (!result.ok) expect(result.error.message).toBe('nobody is not a child of this node');
-    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
   it('works on a layer 1 node, where a person added children by hand', async () => {
@@ -341,6 +350,64 @@ describe('node: the subcommand and the home', () => {
     const missing = createFakeDeps({ cwd: '/w' });
     missing.seedDir(HOME);
     expect(await node(missing, 'children')).toMatchObject({ ok: false, error: { kind: 'failure' } });
-    expect(await node(make({ text: 'schema: 2\n' }), 'children')).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(await node(make({ sharedText: 'schema: 2\n' }), 'children')).toMatchObject({ ok: false, error: { kind: 'failure' } });
+  });
+
+  it('exits 2, and names init, when the local file is missing', async () => {
+    const deps = make();
+    deps.files.delete(LOCAL_PATH);
+    const result = await node(deps, 'children');
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage', message: 'factory.local.yaml not found' } });
+    if (!result.ok) expect(result.error.hint).toContain('factory init');
+    expect(await node(deps, 'add-child', '/w/web-factory')).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(deps.atomicWrites).toEqual([]);
+  });
+});
+
+describe('node: the local file', () => {
+  it.each([
+    ['a group write bit', (deps: FakeDeps) => deps.modes.set(LOCAL_PATH, 0o660)],
+    ['an other write bit', (deps: FakeDeps) => deps.modes.set(LOCAL_PATH, 0o602)],
+    ['another owner', (deps: FakeDeps) => deps.owners.set(LOCAL_PATH, 0)],
+  ])('refuses all three subcommands for a local file with %s, and changes nothing', async (_name, change) => {
+    const deps = make({
+      children: [{ id: 'web', address: 'file:///w/web-factory' }],
+      homes: { ...webHome, '/w/api-factory': configOf('api', 1) },
+    });
+    change(deps);
+    const before = deps.files.get(LOCAL_PATH);
+    const mode = deps.modes.get(LOCAL_PATH);
+    for (const words of [['children'], ['add-child', '/w/api-factory'], ['remove-child', 'web']]) {
+      const result = await node(deps, ...words);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (!result.ok) expect(result.error.hint).toContain('chmod 600 factory.local.yaml');
+    }
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
+    expect(deps.modes.get(LOCAL_PATH)).toBe(mode);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('sets a mode that others can read back to 600, with a notice, and then does the work', async () => {
+    const deps = make({ homes: webHome });
+    deps.modes.set(LOCAL_PATH, 0o644);
+    const output = await succeeded(deps, 'add-child', '/w/web-factory');
+    expect(deps.modes.get(LOCAL_PATH)).toBe(0o600);
+    expect(JSON.stringify(output.warnings)).toContain('factory.local.yaml');
+    expect(childrenInFile(deps)).toEqual([{ id: 'web', address: 'file:///w/web-factory' }]);
+  });
+
+  it('keeps the mode 600 of the local file after a change of the children', async () => {
+    const deps = make({ homes: webHome });
+    await succeeded(deps, 'add-child', '/w/web-factory');
+    expect(deps.modes.get(LOCAL_PATH) ?? 0o600).toBe(0o600);
+  });
+
+  it('never changes the shared file', async () => {
+    const deps = make({ homes: webHome });
+    const before = deps.files.get(CONFIG_PATH);
+    await succeeded(deps, 'add-child', '/w/web-factory');
+    await succeeded(deps, 'remove-child', 'web');
+    expect(deps.files.get(CONFIG_PATH)).toBe(before);
+    expect(deps.atomicWrites).not.toContain(CONFIG_PATH);
   });
 });

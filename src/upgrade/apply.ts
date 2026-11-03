@@ -8,7 +8,7 @@ import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
 import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
 import { dirs, files, stateKeys } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
-import type { BlockPlan, FilePlan, MovePlan } from './plan.js';
+import type { BlockPlan, FilePlan, LocalPlan, MovePlan } from './plan.js';
 import type { UpgradeFile, UpgradeSpec } from './spec.js';
 
 export interface Written {
@@ -75,6 +75,7 @@ export const BACKUPS_KEPT = 5;
 const copyIntoBackup = async (deps: Deps, layout: Layout, target: string): Promise<CliResult<void>> => {
   const copies: readonly (readonly [string, string, readonly string[]])[] = [
     [layout.configFile, join(target, files.config), []],
+    [layout.localConfigFile, join(target, files.localConfig), []],
     [layout.claudeMd, join(target, files.claudeMd), []],
     [layout.stateDir, join(target, dirs.state), [layout.backupsDir, layout.runtimeDir, layout.locksDir]],
   ];
@@ -189,6 +190,8 @@ export const restore = async (
 export interface NewFile {
   readonly path: string;
   readonly text: string;
+  /** The mode of a file that the write makes. Else the file keeps the mode of the file it replaces. */
+  readonly mode?: number;
 }
 
 /** Write the files whose text changes. Each old text goes to `written` first. */
@@ -198,7 +201,7 @@ export const writeAll = async (deps: Deps, newFiles: readonly NewFile[], written
     if (!previous.ok) return previous;
     if (previous.value === file.text) continue;
     written.push({ path: file.path, previous: previous.value });
-    const result = await deps.fs.writeTextAtomic(file.path, file.text);
+    const result = await deps.fs.writeTextAtomic(file.path, file.text, file.mode);
     if (!result.ok) return result;
   }
   return ok(undefined);
@@ -272,4 +275,34 @@ export const configFileText = async (
   const migrated = runTextMigrations(original.value, textSteps);
   if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
   return checkedText(migrated.value, file);
+};
+
+/**
+ * The new text of the local file, or null when the file stays. A root of schema 1 gets the local keys of its migrated
+ * config. The local file never gets a text that holds a key of the shared file: the parser of the local file refuses it.
+ */
+export const localFileText = (config: FilePlan, local: LocalPlan, upgrade: UpgradeSpec): CliResult<string | null> => {
+  const file = upgrade.local;
+  const label = file.spec.file;
+  switch (local.kind) {
+    case 'current':
+      return ok(null);
+    case 'create': {
+      if (config.kind !== 'migrate') return failure(`${label}: the shared file has no migration, so no local file is made`);
+      const migrated = runMigrations(config.raw, config.steps);
+      if (!migrated.ok) return failure(`${upgrade.config.spec.file}: ${migrated.error.message}`);
+      const text = file.finish(upgrade.localPartOf(migrated.value));
+      return text.ok ? ok(text.value) : failure(`${label}: ${text.error.message}`);
+    }
+    case 'migrate': {
+      const migrated = runMigrations(local.raw, local.steps);
+      if (!migrated.ok) return failure(`${label}: ${migrated.error.message}`);
+      const text = file.finish(migrated.value);
+      return text.ok ? ok(text.value) : failure(`${label}: ${text.error.message}`);
+    }
+    default: {
+      const unreachable: never = local;
+      return unreachable;
+    }
+  }
 };

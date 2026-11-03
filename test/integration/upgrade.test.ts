@@ -1,4 +1,5 @@
-import { cp, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { oldWordsIn } from '../helpers/old-words.js';
@@ -36,6 +37,40 @@ describe('factory upgrade (built binary)', () => {
     const result = await box.run(['upgrade', '--home', box.node]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Nothing to upgrade.');
+  });
+
+  it('exits 2, names init and writes nothing when factory.yaml has no factory.local.yaml next to it', async () => {
+    await initNode();
+    await rm(join(box.node, 'factory.local.yaml'));
+    const before = await box.read(join(box.node, 'factory.yaml'));
+    for (const args of [['upgrade', '--home', box.node], ['upgrade', '--home', box.node, '--dry-run']]) {
+      const result = await box.run(args);
+      expect(result.code).toBe(2);
+      expect(result.stderr).toContain('factory.local.yaml not found');
+      expect(result.stderr).toContain('factory init');
+    }
+    expect(await box.read(join(box.node, 'factory.yaml'))).toBe(before);
+    expect(existsSync(join(box.node, 'factory.local.yaml'))).toBe(false);
+  });
+
+  it('exits 4 for a local file that others can write, names the chmod command and changes no mode', async () => {
+    await initNode();
+    const path = join(box.node, 'factory.local.yaml');
+    await chmod(path, 0o660);
+    const result = await box.run(['upgrade', '--home', box.node]);
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('chmod 600 factory.local.yaml');
+    expect((await stat(path)).mode & 0o777).toBe(0o660);
+  });
+
+  it('sets a local file that others can read back to mode 600 with a notice, and goes on', async () => {
+    await initNode();
+    const path = join(box.node, 'factory.local.yaml');
+    await chmod(path, 0o644);
+    const result = await box.run(['upgrade', '--home', box.node]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('factory.local.yaml');
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
   });
 
   it('prints one JSON document with its schema id', async () => {
@@ -167,15 +202,19 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const state = await prepareOldNode();
     const upgraded = await box.run(['upgrade', '--home', box.node]);
     expect(upgraded.code).toBe(0);
-    expect(upgraded.stdout).toContain('Changed 7 files.');
+    expect(upgraded.stdout).toContain('Changed 8 files.');
 
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('schema: 2');
     expect(config).toContain('layer: 1');
     expect(config).toContain('tracker:\n  kind: local');
     expect(config).toContain('recipe:\n  id: software');
-    expect(config).toContain('parent: null');
-    expect(config).not.toMatch(/^\s*(?:role|lanes|pack):/m);
+    expect(config).not.toMatch(/^\s*(?:role|lanes|pack|owner|parent|children|proxies):/m);
+    const local = await box.read(join(box.node, 'factory.local.yaml'));
+    expect(local).toContain('schema: 1');
+    expect(local).toContain('parent: null');
+    expect(local).toContain('owner:');
+    expect((await stat(join(box.node, 'factory.local.yaml'))).mode & 0o777).toBe(0o600);
 
     const names = (await readdir(state)).sort();
     expect(names).not.toContain('protocol.md');
@@ -224,7 +263,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
 
     const upgraded = await box.run(['upgrade', '--home', box.node]);
     expect(upgraded.code).toBe(0);
-    expect(upgraded.stdout).toContain('Changed 6 files.');
+    expect(upgraded.stdout).toContain('Changed 7 files.');
     expect(upgraded.stderr).toContain('.factory/roadmaps/README.md was edited, so factory keeps it');
     expect(upgraded.stderr).toContain('factory help words');
     expect(await box.read(path)).toBe(edited);

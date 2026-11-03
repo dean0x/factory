@@ -21,6 +21,7 @@ export const stateRel = {
 export interface Layout {
   readonly home: string;
   readonly configFile: string;
+  readonly localConfigFile: string;
   readonly claudeMd: string;
   readonly stateDir: string;
   readonly nodeJson: string;
@@ -37,6 +38,7 @@ export const layoutOf = (home: string): Layout => {
   return {
     home,
     configFile: join(home, files.config),
+    localConfigFile: join(home, files.localConfig),
     claudeMd: join(home, files.claudeMd),
     stateDir,
     nodeJson: join(stateDir, stateRel.nodeJson),

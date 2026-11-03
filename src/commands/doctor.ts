@@ -1,10 +1,10 @@
 import { join, resolve } from 'node:path';
 import { inspectBlocks, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
-import type { CliResult } from '../cli/errors.js';
+import { exitCodeOf, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { probeChildren } from '../comms/children.js';
 import { fileTransport } from '../comms/transport.js';
-import { inspectConfig } from '../config/load.js';
+import { inspectConfig, localFileAccess, wideModeNote } from '../config/load.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
@@ -76,19 +76,34 @@ const check = (id: string, level: CheckLevel, text: string): CheckResult => ({ i
 
 const notChecked = (id: string, reason: string): CheckResult => check(id, 'warn', `not checked: ${reason}`);
 
+/** The file that a state that is not valid is about. The shared file is the default. */
+const fileOf = (state: Exclude<DocState<unknown>, { kind: 'valid' }>): string => state.file ?? files.config;
+
+/** True when the shared file is there and the local file is not. A command that needs both exits 2 and names `init`. */
+export const isLocalFileMissing = (state: DocState<FactoryConfig>): boolean =>
+  state.kind === 'missing' && state.file === files.localConfig;
+
 export const checkConfig = (state: DocState<FactoryConfig>): CheckResult => {
   switch (state.kind) {
     case 'missing':
-      return check(checkIds.config, 'fail', `${files.config} not found`);
+      return isLocalFileMissing(state)
+        ? check(
+            checkIds.config,
+            'fail',
+            `${files.localConfig} not found. Run "${commandText(commands.init)} ${flagText(flags.home)} DIR" for the home of this ${roles.node}.`,
+          )
+        : check(checkIds.config, 'fail', `${files.config} not found`);
     case 'unparsable':
-      return check(checkIds.config, 'fail', `${files.config} does not parse: ${state.message}`);
+      return check(checkIds.config, 'fail', `${fileOf(state)} does not parse: ${state.message}`);
     case 'invalid':
-      return check(checkIds.config, 'fail', `${files.config} is invalid: ${state.message}`);
+      return check(checkIds.config, 'fail', `${fileOf(state)} is invalid: ${state.message}`);
+    case 'unsafe':
+      return check(checkIds.config, 'fail', `${state.message}.${state.hint === undefined ? '' : ` ${state.hint}`}`);
     case 'valid':
-      return check(checkIds.config, 'ok', `${files.config} is valid`);
+      return check(checkIds.config, 'ok', `${files.config} and ${files.localConfig} are valid`);
     case 'older':
     case 'newer':
-      return check(checkIds.config, 'ok', `${files.config} parses; ${checkIds.configVersion} checks its version`);
+      return check(checkIds.config, 'ok', `${fileOf(state)} parses; ${checkIds.configVersion} checks its version`);
     default: {
       const unreachable: never = state;
       return unreachable;
@@ -106,9 +121,34 @@ export const checkConfigVersion = (state: DocState<FactoryConfig>): CheckResult 
     case 'missing':
     case 'unparsable':
     case 'invalid':
-      return notChecked(checkIds.configVersion, `${files.config} is not valid`);
+    case 'unsafe':
+      return notChecked(checkIds.configVersion, `${fileOf(state)} is not valid`);
     default: {
       const unreachable: never = state;
+      return unreachable;
+    }
+  }
+};
+
+/**
+ * The local file: mode 600, and the owner of the process owns it. A file of another account, or one that others can
+ * write, fails. A file that others can read is a warning, and doctor changes no mode: it names the command.
+ */
+export const checkLocalFile = async (deps: Deps, home: string): Promise<CheckResult> => {
+  const access = await localFileAccess(deps, home);
+  if (!access.ok) {
+    const { message, hint } = access.error;
+    return check(checkIds.localFile, 'fail', `${message}.${hint === undefined ? '' : ` ${hint}`}`);
+  }
+  switch (access.value.kind) {
+    case 'absent':
+      return notChecked(checkIds.localFile, `${files.localConfig} not found`);
+    case 'wide':
+      return check(checkIds.localFile, 'warn', wideModeNote(access.value.mode, false));
+    case 'private':
+      return check(checkIds.localFile, 'ok', `${files.localConfig} has no group or other access`);
+    default: {
+      const unreachable: never = access.value;
       return unreachable;
     }
   }
@@ -124,6 +164,7 @@ export const checkState = (state: DocState<NodeState>): CheckResult => {
       return check(checkIds.state, 'fail', `${STATE_LABEL} is invalid: ${state.message}`);
     case 'older':
     case 'newer':
+    case 'unsafe':
       return check(checkIds.state, 'fail', state.message);
     case 'valid':
       return check(checkIds.state, 'ok', `${keys.root.schema} ${STATE_SCHEMA_VERSION} is current`);
@@ -259,16 +300,17 @@ export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
 };
 
 export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
-  if (state.kind === 'missing' || state.kind === 'unparsable') {
-    return notChecked(checkIds.secrets, `${files.config} does not parse`);
+  if (state.kind === 'missing' || state.kind === 'unparsable' || state.kind === 'unsafe') {
+    return notChecked(checkIds.secrets, `${fileOf(state)} does not parse`);
   }
+  const where = `${files.config} or ${files.localConfig}`;
   const paths = findTokenPaths(state.raw);
   return paths.length === 0
-    ? check(checkIds.secrets, 'ok', `no value in ${files.config} looks like a token`)
+    ? check(checkIds.secrets, 'ok', `no value in ${where} looks like a token`)
     : check(
         checkIds.secrets,
         'fail',
-        `${paths.join(', ')} in ${files.config} look${paths.length === 1 ? 's' : ''} like a token. Remove it.`,
+        `${paths.join(', ')} in ${where} look${paths.length === 1 ? 's' : ''} like a token. Remove it.`,
       );
 };
 
@@ -430,12 +472,15 @@ export const checkProjects = async (
     : check(checkIds.projects, 'fail', `not a git work tree: ${bad.join(', ')}`);
 };
 
-const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly CheckResult[]> => {
+const runChecks = async (
+  deps: Deps,
+  located: LocatedHome,
+): Promise<{ readonly results: readonly CheckResult[]; readonly localMissing: boolean }> => {
   const { home, source } = located;
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
   const location = await checkHomeLocation(deps, home);
-  const [homeCheck, index, blocks, children, permission, proxies, tools, stateRepo, projects] = await Promise.all([
+  const [homeCheck, index, blocks, children, permission, proxies, tools, stateRepo, projects, localFile] = await Promise.all([
     checkHome(deps, home, config, location),
     checkIndex(deps, home),
     checkNodeBlocks(deps, home, config),
@@ -445,10 +490,12 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
     checkTools(deps),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),
+    checkLocalFile(deps, home),
   ]);
-  return [
+  const results = [
     checkConfig(config),
     checkConfigVersion(config),
+    localFile,
     checkState(state),
     homeCheck,
     index,
@@ -464,6 +511,7 @@ const runChecks = async (deps: Deps, located: LocatedHome): Promise<readonly Che
     stateRepo,
     projects,
   ];
+  return { results, localMissing: isLocalFileMissing(config) };
 };
 
 const count = (results: readonly CheckResult[], level: CheckLevel): number =>
@@ -474,7 +522,7 @@ export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<Cli
   if (!located.ok) return located;
   const home = located.value.home;
 
-  const results = await runChecks(deps, located.value);
+  const { results, localMissing } = await runChecks(deps, located.value);
   const summary = { ok: count(results, 'ok'), warn: count(results, 'warn'), fail: count(results, 'fail') };
   const width = Math.max(...results.map((result) => result.id.length));
   const lines: OutLine[] = [
@@ -490,5 +538,7 @@ export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<Cli
     json: { schema: schemaIds.doctor, home, ok: summary.fail === 0, summary, checks: results },
     warnings: [],
     failed: summary.fail > 0,
+    // The check names `init`: the person has to run it, so this is a usage problem and not a failed check of a good setup.
+    ...(localMissing ? { exitCode: exitCodeOf.usage } : {}),
   });
 };

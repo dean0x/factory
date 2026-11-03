@@ -1,6 +1,7 @@
 import { basename, dirname, join, resolve } from 'node:path';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { printable } from '../cli/output.js';
+import { localFileAccess } from '../config/load.js';
 import type { Deps } from '../core/deps.js';
 import { listRepoChildren, workTreeTop, type SkippedFolder } from '../core/git.js';
 import { findNearestConfig } from '../core/home.js';
@@ -76,6 +77,13 @@ export const checkHomeIsNew = async (deps: Deps, home: string): Promise<CliResul
   const configKind = await deps.fs.stat(layout.configFile);
   if (!configKind.ok) return configKind;
   if (configKind.value !== null) return nodeExists(home);
+  // A local file with no shared file next to it is not ours to replace: it can hold values of a person.
+  // The command stops with exit 4 when another account owns it or others can write it, as every command does.
+  const localAccess = await localFileAccess(deps, home);
+  if (!localAccess.ok) return localAccess;
+  if (localAccess.value.kind !== 'absent') {
+    return failure(`${files.localConfig} already exists in ${home}`, 'Move it away, or use another folder.');
+  }
   const stateKind = await deps.fs.stat(layout.stateDir);
   if (!stateKind.ok) return stateKind;
   if (stateKind.value !== null) {

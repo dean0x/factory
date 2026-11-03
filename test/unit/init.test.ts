@@ -16,6 +16,7 @@ import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 
 const HOME = '/w/node';
@@ -54,6 +55,7 @@ describe('init: the files', () => {
 
     const expected = [
       'factory.yaml',
+      'factory.local.yaml',
       'CLAUDE.md',
       '.factory/node.json',
       '.factory/roles/worker.md',
@@ -68,6 +70,27 @@ describe('init: the files', () => {
     ];
     expect([...deps.files.keys()].sort()).toEqual(expected.map((name) => `${HOME}/${name}`).sort());
     expect([...deps.dirs].some((dir) => dir.includes('.tmp-'))).toBe(false);
+  });
+
+  it('writes factory.local.yaml with mode 600, and the local keys in it only', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options({ ownerGithub: 'some-login' }))).ok).toBe(true);
+    expect(deps.modes.get(`${HOME}/factory.local.yaml`)).toBe(0o600);
+    const local = deps.files.get(`${HOME}/factory.local.yaml`) ?? '';
+    const shared = deps.files.get(`${HOME}/factory.yaml`) ?? '';
+    expect(local).toContain('schema: 1');
+    expect(local).toContain('display: "Test Owner"');
+    expect(local).toContain('github: "some-login"');
+    expect(local).toContain('proxy: none');
+    expect(local).toContain('children: []');
+    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'effort', 'model']) {
+      expect(local).not.toMatch(new RegExp(`^\\s*${key}:`, 'm'));
+    }
+    expect(shared).toContain('schema: 2');
+    for (const key of ['owner:', 'proxies:', 'workers:', 'approval:', 'parent:', 'children:', 'sources:', 'proxy:', 'statusline:']) {
+      expect(shared).not.toContain(key);
+    }
+    expect(shared).not.toContain('some-login');
   });
 
   it('writes a config that loads, with the owner from the flag and the node id from the folder', async () => {
@@ -90,10 +113,9 @@ describe('init: the files', () => {
     const config = await loadConfig(deps, HOME);
     expect(config.ok).toBe(true);
     if (!config.ok) return;
-    expect(config.value.core.schema).toBe(2);
     expect(config.value.core.node.layer).toBe(1);
     expect(config.value.core.tracker).toEqual({ kind: 'local' });
-    expect(config.value.core.approval).toEqual({ land: 'each' });
+    expect(config.value.core.approval).toEqual(sampleConfig().core.approval);
     expect(config.value.core.parent).toBeNull();
     expect(config.value.core.children).toEqual([]);
     expect(config.value.core.workers).toEqual({});
@@ -745,7 +767,33 @@ describe('init: rollback', () => {
     const { deps } = setup();
     deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
     expect((await runInit(deps, options())).ok).toBe(true);
-    expect(deps.atomicWrites).toEqual([`${HOME}/CLAUDE.md`, `${HOME}/factory.yaml`]);
+    expect(deps.atomicWrites).toEqual([`${HOME}/CLAUDE.md`, `${HOME}/factory.local.yaml`, `${HOME}/factory.yaml`]);
+  });
+
+  it('removes the local file and restores CLAUDE.md when the shared file cannot be written', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const result = await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
+    expect(result.ok).toBe(false);
+    expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(false);
+    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
+    expect(deps.files.get(`${HOME}/CLAUDE.md`)).toBe('Owner text.\n');
+  });
+
+  it('writes no shared file, and leaves no local file, when the local file cannot be written', async () => {
+    const { deps } = setup();
+    const before = snapshot(deps);
+    const plan = await planInit(deps, options({ home: '/w/fresh/home' }));
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const result = await applyInit(failingWrite(deps, '/factory.local.yaml'), plan.value);
+    expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain('nothing was changed');
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.files.has('/w/fresh/home/factory.yaml')).toBe(false);
   });
 
   it('puts the old CLAUDE.md back with the atomic write', async () => {
@@ -755,7 +803,7 @@ describe('init: rollback', () => {
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
     await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
-    expect(deps.atomicWrites).toEqual([`${HOME}/CLAUDE.md`, `${HOME}/CLAUDE.md`]);
+    expect(deps.atomicWrites).toEqual([`${HOME}/CLAUDE.md`, `${HOME}/factory.local.yaml`, `${HOME}/CLAUDE.md`]);
     expect(deps.files.get(`${HOME}/CLAUDE.md`)).toBe('Owner text.\n');
   });
 
@@ -1726,9 +1774,41 @@ describe('init: output', () => {
       schema: 'factory.init/v1',
       home: HOME,
       nodeId: 'node',
-      files: ['factory.yaml', 'CLAUDE.md', '.factory/'],
+      files: ['factory.yaml', 'factory.local.yaml', 'CLAUDE.md', '.factory/'],
       committed: true,
     });
     expect(result.value.lines.map((line) => line.text).join('\n')).toContain('factory doctor --home /w/node');
+  });
+});
+
+describe('init: a local file that is there already', () => {
+  const LOCAL = `${HOME}/factory.local.yaml`;
+
+  it('stops, and changes nothing, for a local file with no shared file next to it', async () => {
+    const { deps } = setup();
+    deps.seed(LOCAL, 'schema: 1\n');
+    const before = snapshot(deps);
+    const result = await runInit(deps, options());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain('factory.local.yaml already exists');
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it.each([
+    ['a group write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o660)],
+    ['an other write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o602)],
+    ['another owner', (deps: FakeDeps) => deps.owners.set(LOCAL, 0)],
+  ])('stops with exit 4 and one remedy line for a local file with %s, and changes no mode', async (_name, change) => {
+    const { deps } = setup();
+    deps.seed(LOCAL, 'schema: 1\n');
+    change(deps);
+    const mode = deps.modes.get(LOCAL);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('chmod 600 factory.local.yaml');
+    expect(deps.modes.get(LOCAL)).toBe(mode);
+    expect(snapshot(deps)).toBe(before);
   });
 });

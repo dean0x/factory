@@ -17,6 +17,8 @@ export interface CommandOutput {
   readonly json: JsonDoc;
   readonly warnings: readonly string[];
   readonly failed: boolean;
+  /** The exit code of a failed command, when it is not the common failure code. */
+  readonly exitCode?: number;
 }
 
 export interface Style {

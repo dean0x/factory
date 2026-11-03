@@ -3,19 +3,20 @@ import { fileOfTarget, inspectBlocks, renamedFromOf, type BlockStatus } from '..
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
-import { loadConfig } from '../config/load.js';
+import { loadConfig, settleLocalMode } from '../config/load.js';
 import { commitPaths, hasIdentity, headOf, statusOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { resolveHome } from '../core/home.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, dirs, flags, flagText, roles, schemaIds } from '../names.js';
+import { commands, commandText, dirs, flags, flagText, localFileModes, roles, schemaIds } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import {
   applyMoves,
   backup,
   blockFileTexts,
   configFileText,
+  localFileText,
   pruneBackups,
   restore,
   stateFileText,
@@ -31,9 +32,11 @@ import {
   planFile,
   planFiles,
   planLines,
+  planLocal,
   planProjectPaths,
   refusalOf,
   type FilePlan,
+  type LocalPlan,
 } from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
 import { checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
@@ -117,9 +120,10 @@ const homeRuleLines = async (
   deps: Deps,
   home: string,
   config: FilePlan,
+  local: LocalPlan,
   upgrade: UpgradeSpec,
 ): Promise<CliResult<readonly OutLine[]>> => {
-  const paths = planProjectPaths(config, upgrade);
+  const paths = planProjectPaths(config, local, upgrade);
   if (!paths.ok) return paths;
   const projects = paths.value.map((path) => resolve(home, path));
   const remedy =
@@ -155,11 +159,16 @@ export const runUpgrade = async (
 
   const config = await planFile(deps, layout.configFile, upgrade.config);
   if (!config.ok) return config;
+  const local = await planLocal(deps, layout, config.value, upgrade);
+  if (!local.ok) return local;
+  // A real run sets a wide mode of the local file back to 600. A dry run only names the command.
+  const modeNotes = await settleLocalMode(deps, home, !options.dryRun);
+  if (!modeNotes.ok) return modeNotes;
   const state = await planFile(deps, layout.nodeJson, upgrade.state);
   if (!state.ok) return state;
   const files = await planFiles(deps, layout, state.value, upgrade.files);
   if (!files.ok) return files;
-  const blockSet = planBlockSet(config.value, upgrade);
+  const blockSet = planBlockSet(config.value, local.value, upgrade);
   if (!blockSet.ok) return blockSet;
 
   const known = blockSet.value.templates.map((template) => template.name);
@@ -181,21 +190,32 @@ export const runUpgrade = async (
   if (!refused.ok) return refused;
 
   const changes = blocks.filter(isChange);
-  const changed = config.value.kind === 'migrate' || state.value.kind === 'migrate' || changes.length > 0;
+  const changed =
+    config.value.kind === 'migrate' || local.value.kind !== 'current' || state.value.kind === 'migrate' || changes.length > 0;
 
   // The new texts come from pure functions. The dry run makes them too, so that it reports what the real run refuses.
   const stateText = stateFileText(state.value, upgrade, changes);
   if (!stateText.ok) return stateText;
   const configText = await configFileText(deps, layout.configFile, config.value, upgrade);
   if (!configText.ok) return configText;
+  const localText = localFileText(config.value, local.value, upgrade);
+  if (!localText.ok) return localText;
 
-  const homeLines = changed ? await homeRuleLines(deps, home, config.value, upgrade) : ok<readonly OutLine[]>([]);
+  const homeLines = changed ? await homeRuleLines(deps, home, config.value, local.value, upgrade) : ok<readonly OutLine[]>([]);
   if (!homeLines.ok) return homeLines;
 
-  const lines = [...planLines(config.value, state.value, files.value, blocks, upgrade), ...homeLines.value];
+  const lines: OutLine[] = [
+    ...planLines(config.value, local.value, state.value, files.value, blocks, upgrade),
+    ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
+    ...homeLines.value,
+  ];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
   const summary = {
     config: { from: config.value.kind === 'current' ? config.value.version : config.value.from, to: upgrade.config.spec.supported },
+    local: {
+      from: local.value.kind === 'current' ? local.value.version : local.value.kind === 'create' ? null : local.value.from,
+      to: upgrade.local.spec.supported,
+    },
     state: { from: state.value.kind === 'current' ? state.value.version : state.value.from, to: upgrade.state.spec.supported },
     moves: files.value.moves.map((move) => ({ from: move.from, to: move.to })),
     replaces: files.value.replaces.map((replace) => ({ path: replace.path, action: replace.action })),
@@ -297,6 +317,11 @@ export const runUpgrade = async (
     ...blockTexts.value,
     ...replacements.map((replace) => ({ path: replace.filePath, text: replace.text })),
     ...(stateText.value === null ? [] : [{ path: layout.nodeJson, text: stateText.value }]),
+    // The local file comes before the shared file, which is the last to change. A run that stops between the two leaves
+    // the old shared file with all its keys.
+    ...(localText.value === null
+      ? []
+      : [{ path: layout.localConfigFile, text: localText.value, mode: localFileModes.private }]),
     ...(configText.value === null ? [] : [{ path: layout.configFile, text: configText.value }]),
   ];
   const wrote = await writeAll(deps, newFiles, written);

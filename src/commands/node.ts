@@ -4,7 +4,7 @@ import { childTarget } from '../comms/address.js';
 import { probeChildren, type ChildRow } from '../comms/children.js';
 import { fileTransport } from '../comms/transport.js';
 import { addChildText, removeChildText } from '../config/edit.js';
-import { parseConfigText } from '../config/load.js';
+import { loadConfig, parseConfigTexts, settleLocalMode } from '../config/load.js';
 import { COORDINATOR_LAYER, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
@@ -19,11 +19,15 @@ export interface NodeOptions {
   readonly words: readonly string[];
 }
 
+/** A node with its two config files. The command edits the local file and never the shared file. */
 interface OpenNode {
   readonly home: string;
-  readonly configFile: string;
-  readonly configText: string;
+  readonly sharedText: string;
+  readonly localFile: string;
+  readonly localText: string;
   readonly config: FactoryConfig;
+  /** Notes about the files, for example a local file that others could read. */
+  readonly notes: readonly string[];
 }
 
 type Change = { readonly action: 'add' | 'remove'; readonly id: string };
@@ -37,11 +41,24 @@ const openNode = async (deps: Deps, homeFlag: string | undefined): Promise<CliRe
   const located = await locateHomeFolder(deps, homeFlag);
   if (!located.ok) return located;
   const home = located.value.home;
-  const configFile = layoutOf(home).configFile;
-  const configText = await deps.fs.readText(configFile);
-  if (!configText.ok) return configText;
-  const config = parseConfigText(configText.value);
-  return config.ok ? ok({ home, configFile, configText: configText.value, config: config.value }) : config;
+  // The loader checks the owner and the mode of the local file, and a missing local file is a usage error.
+  const config = await loadConfig(deps, home);
+  if (!config.ok) return config;
+  const notes = await settleLocalMode(deps, home, true);
+  if (!notes.ok) return notes;
+  const layout = layoutOf(home);
+  const sharedText = await deps.fs.readText(layout.configFile);
+  if (!sharedText.ok) return sharedText;
+  const localText = await deps.fs.readText(layout.localConfigFile);
+  if (!localText.ok) return localText;
+  return ok({
+    home,
+    sharedText: sharedText.value,
+    localFile: layout.localConfigFile,
+    localText: localText.value,
+    config: config.value,
+    notes: notes.value,
+  });
 };
 
 const rowLines = (rows: readonly ChildRow[]): OutLine[] => {
@@ -60,7 +77,7 @@ const rowLines = (rows: readonly ChildRow[]): OutLine[] => {
 
 const childrenOutput = async (
   deps: Deps,
-  node: { readonly home: string; readonly config: FactoryConfig },
+  node: { readonly home: string; readonly config: FactoryConfig; readonly notes: readonly string[] },
   intro: readonly OutLine[],
   change?: Change,
 ): Promise<CommandOutput> => {
@@ -74,21 +91,24 @@ const childrenOutput = async (
       ...(change === undefined ? {} : { change }),
       children: rows,
     },
-    warnings: [],
+    warnings: node.notes,
     failed: false,
   };
 };
 
-/** Check the edited text as a whole config, then write it. A config that would not be valid is not written. */
+/**
+ * Check the edited local text together with the shared text as a whole config, then write the local file.
+ * A config that would not be valid is not written. The file keeps its mode.
+ */
 const writeEdited = async (
   deps: Deps,
   node: OpenNode,
   edited: Result<string, string>,
 ): Promise<CliResult<FactoryConfig>> => {
   if (!edited.ok) return failure(edited.error);
-  const checked = parseConfigText(edited.value);
+  const checked = parseConfigTexts(node.sharedText, edited.value);
   if (!checked.ok) return err({ ...checked.error, message: `${checked.error.message}. Nothing was changed.` });
-  const written = await deps.fs.writeTextAtomic(node.configFile, edited.value);
+  const written = await deps.fs.writeTextAtomic(node.localFile, edited.value);
   return written.ok ? ok(checked.value) : written;
 };
 
@@ -146,11 +166,16 @@ const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): 
     return safetyRefusal(`${answer.id} is a child of this ${roles.node} already`);
   }
 
-  const edited = addChildText(node.value.configText, { id: answer.id, address: target.value.address });
+  const edited = addChildText(node.value.localText, { id: answer.id, address: target.value.address });
   const written = await writeEdited(deps, node.value, edited);
   if (!written.ok) return written;
   const intro: OutLine[] = [{ level: 'text', text: `Added the child ${answer.id} (layer ${answer.layer}).` }];
-  return ok(await childrenOutput(deps, { home, config: written.value }, intro, { action: 'add', id: answer.id }));
+  return ok(
+    await childrenOutput(deps, { home, config: written.value, notes: node.value.notes }, intro, {
+      action: 'add',
+      id: answer.id,
+    }),
+  );
 };
 
 const runRemoveChild = async (deps: Deps, options: NodeOptions, id: string): Promise<CliResult<CommandOutput>> => {
@@ -163,10 +188,17 @@ const runRemoveChild = async (deps: Deps, options: NodeOptions, id: string): Pro
     );
   }
 
-  const written = await writeEdited(deps, node.value, removeChildText(node.value.configText, id));
+  const written = await writeEdited(deps, node.value, removeChildText(node.value.localText, id));
   if (!written.ok) return written;
   const intro: OutLine[] = [{ level: 'text', text: `Removed the child ${id}. Its files stay as they are.` }];
-  return ok(await childrenOutput(deps, { home: node.value.home, config: written.value }, intro, { action: 'remove', id }));
+  return ok(
+    await childrenOutput(
+      deps,
+      { home: node.value.home, config: written.value, notes: node.value.notes },
+      intro,
+      { action: 'remove', id },
+    ),
+  );
 };
 
 export const runNode = async (deps: Deps, options: NodeOptions): Promise<CliResult<CommandOutput>> => {

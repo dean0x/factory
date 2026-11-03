@@ -10,11 +10,12 @@ import { sampleObject } from './sample-config.js';
 /** The config of a FAC-M1 node (schema 1), as a person writes it. */
 export const schema1Doc = (): Record<string, any> => {
   const sample = sampleObject();
+  const { statusline: _statusline, ...session } = sample.session;
   return {
     schema: 1,
     node: { id: sample.node.id, role: 'coordinator' },
     owner: sample.owner,
-    session: sample.session,
+    session,
     proxies: sample.proxies,
     lanes: {},
     limits: sample.limits,

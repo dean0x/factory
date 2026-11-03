@@ -9,6 +9,7 @@ import {
   checkConfigVersion,
   checkHome,
   checkIndex,
+  checkLocalFile,
   checkNodeBlocks,
   checkPermissionMode,
   checkProjects,
@@ -38,7 +39,7 @@ import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { sampleConfig } from '../helpers/sample-config.js';
+import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 
 const HOME = '/w/node';
 const TOOLS = ['git', 'tmux', 'gh', 'claude'];
@@ -91,7 +92,7 @@ const levelOf = (results: readonly CheckResult[], id: string): string | undefine
   results.find((result) => result.id === id)?.level;
 
 const writeConfig = (deps: FakeDeps, config: FactoryConfig): void => {
-  deps.files.set(`${HOME}/factory.yaml`, renderConfig(config));
+  seedConfig(deps, HOME, config);
 };
 
 const doctor = async (deps: FakeDeps) => {
@@ -104,7 +105,7 @@ describe('doctor: config, version and state', () => {
   it('reports a valid config and current versions', async () => {
     const deps = await initialized();
     const config = await inspectConfig(deps, HOME);
-    expect(checkConfig(config)).toEqual({ id: 'config', level: 'ok', text: 'factory.yaml is valid' });
+    expect(checkConfig(config)).toEqual({ id: 'config', level: 'ok', text: 'factory.yaml and factory.local.yaml are valid' });
     expect(checkConfigVersion(config)).toMatchObject({ id: 'config-version', level: 'ok' });
     expect(checkState(await inspectState(deps, HOME))).toMatchObject({ id: 'state', level: 'ok' });
   });
@@ -117,10 +118,41 @@ describe('doctor: config, version and state', () => {
     deps.files.set(`${HOME}/factory.yaml`, 'a: [1\n');
     expect(checkConfig(await inspectConfig(deps, HOME))).toMatchObject({ level: 'fail' });
 
-    deps.files.set(`${HOME}/factory.yaml`, renderConfig(sampleConfig()).replace('effort: high', 'effort: wild'));
+    deps.files.set(`${HOME}/factory.yaml`, renderConfig(sampleConfig()).shared.replace('effort: high', 'effort: wild'));
     const invalid = checkConfig(await inspectConfig(deps, HOME));
     expect(invalid.level).toBe('fail');
     expect(invalid.text).toContain('session.effort');
+  });
+
+  it('fails, and names init, when the local file is missing next to the shared file', async () => {
+    const deps = await initialized();
+    deps.files.delete(`${HOME}/factory.local.yaml`);
+    const state = await inspectConfig(deps, HOME);
+    const result = checkConfig(state);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('factory.local.yaml not found');
+    expect(result.text).toContain('factory init');
+    expect(checkConfigVersion(state)).toMatchObject({ level: 'warn', text: 'not checked: factory.local.yaml is not valid' });
+  });
+
+  it('fails, and names the local file, when the local file is invalid', async () => {
+    const deps = await initialized();
+    const path = `${HOME}/factory.local.yaml`;
+    deps.files.set(path, (deps.files.get(path) ?? '').replace('proxy: none', 'proxy: nowhere'));
+    const result = checkConfig(await inspectConfig(deps, HOME));
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('factory.local.yaml is invalid');
+    expect(result.text).toContain('session.proxy');
+  });
+
+  it('fails, and names the key and the local file, for a local key in the shared file', async () => {
+    const deps = await initialized();
+    const path = `${HOME}/factory.yaml`;
+    deps.files.set(path, `${deps.files.get(path) ?? ''}proxies: []\n`);
+    const result = checkConfig(await inspectConfig(deps, HOME));
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('proxies: is a local key');
+    expect(result.text).toContain('factory.local.yaml');
   });
 
   it('fails the version check for a schema that is newer, and warns when it cannot check', async () => {
@@ -700,7 +732,7 @@ describe('doctor: proxies', () => {
 
       it('reports that no proxy is in use when none is, even for a refused home', async () => {
         const deps = await inWorkTree(HOME);
-        deps.files.set(`${HOME}/factory.yaml`, renderConfig(sampleConfig()));
+        writeConfig(deps, sampleConfig());
         const output = await run(deps, undefined);
         const checks = output.json['checks'] as CheckResult[];
         expect(checks.find((result) => result.id === 'proxy')).toEqual({ id: 'proxy', level: 'ok', text: 'no proxy is in use' });
@@ -1010,13 +1042,16 @@ describe('doctor: the home index', () => {
   });
 
   it('runs from a project folder through the index, and sends no network request', async () => {
-    const config = (await initialized()).files.get(`${HOME}/factory.yaml`) ?? '';
+    const initializedDeps = await initialized();
+    const shared = initializedDeps.files.get(`${HOME}/factory.yaml`) ?? '';
+    const local = initializedDeps.files.get(`${HOME}/factory.local.yaml`) ?? '';
     const deps = makeDeps({ env, cwd: '/w/web/src', fetch: () => ok({ status: 200 }) });
     deps.seedDir('/w/web/src');
     deps.seed(INDEX, indexOf(HOME));
+    deps.seed(`${HOME}/factory.yaml`, shared);
     deps.seed(
-      `${HOME}/factory.yaml`,
-      config.replace('proxy: none', 'proxy: local').replace('proxies: []', 'proxies:\n  - id: local\n    base_url: "http://127.0.0.1:8787"\n    health: /health\n    on_fail: stop'),
+      `${HOME}/factory.local.yaml`,
+      local.replace('proxy: none', 'proxy: local').replace('proxies: []', 'proxies:\n  - id: local\n    base_url: "http://127.0.0.1:8787"\n    health: /health\n    on_fail: stop'),
     );
     const result = await runDoctor(deps, { home: undefined });
     expect(result.ok).toBe(true);
@@ -1065,7 +1100,7 @@ describe('doctor: the children', () => {
 
   const childAt = (deps: FakeDeps, path: string, id: string, layer: number): void => {
     const config = sampleConfig();
-    deps.seed(`${path}/factory.yaml`, renderConfig({ ...config, core: { ...config.core, node: { id, layer } } }));
+    seedConfig(deps, path, { ...config, core: { ...config.core, node: { id, layer } } });
   };
 
   const probe = async (deps: FakeDeps) => checkChildren(deps, await inspectConfig(deps, HOME));
@@ -1190,6 +1225,7 @@ describe('doctor: the command', () => {
     expect(ids).toEqual([
       'config',
       'config-version',
+      'local-file',
       'state',
       'home',
       'index',
@@ -1205,7 +1241,7 @@ describe('doctor: the command', () => {
       'state-repo',
       'projects',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('16 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('17 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1228,7 +1264,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(16);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(17);
   });
 
   it('finds the node by walking up from the current folder', async () => {
@@ -1267,5 +1303,88 @@ describe('doctor: the command', () => {
     if (!result.ok) return;
     expect(levelOf(result.value.json['checks'] as CheckResult[], 'state-repo')).toBe('warn');
     expect(result.value.failed).toBe(false);
+  });
+});
+
+describe('doctor: the local file', () => {
+  const LOCAL = `${HOME}/factory.local.yaml`;
+
+  it('is ok for a file with mode 600 that the account owns', async () => {
+    const deps = await initialized();
+    expect(await checkLocalFile(deps, HOME)).toEqual({
+      id: 'local-file',
+      level: 'ok',
+      text: 'factory.local.yaml has no group or other access',
+    });
+  });
+
+  it('warns for a file that others can read, names the chmod command and changes no mode', async () => {
+    const deps = await initialized({ git: { committed: [`${HOME}/.factory`] } });
+    deps.seedDir(`${HOME}/.factory/.git`);
+    deps.modes.set(LOCAL, 0o644);
+    const result = await checkLocalFile(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('chmod 600 factory.local.yaml');
+    expect(deps.modes.get(LOCAL)).toBe(0o644);
+    const run = await doctor(deps);
+    expect(levelOf(run.json['checks'] as CheckResult[], 'local-file')).toBe('warn');
+    expect(run.failed).toBe(false);
+    expect(deps.modes.get(LOCAL)).toBe(0o644);
+  });
+
+  it.each([
+    ['a group write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o660)],
+    ['an other write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o602)],
+    ['another owner', (deps: FakeDeps) => deps.owners.set(LOCAL, 0)],
+  ])('fails for a file with %s, and names the chmod command', async (_name, change) => {
+    const deps = await initialized();
+    change(deps);
+    const result = await checkLocalFile(deps, HOME);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('factory.local.yaml');
+    expect(result.text).toContain('chmod 600 factory.local.yaml');
+    const run = await doctor(deps);
+    expect(levelOf(run.json['checks'] as CheckResult[], 'config')).toBe('fail');
+    expect(levelOf(run.json['checks'] as CheckResult[], 'local-file')).toBe('fail');
+    expect(run.failed).toBe(true);
+  });
+
+  it('exits 2 when the shared file is there and the local file is not, and names init', async () => {
+    const deps = await initialized();
+    deps.files.delete(LOCAL);
+    const run = await doctor(deps);
+    expect(run.exitCode).toBe(2);
+    expect(run.failed).toBe(true);
+    const checks = run.json['checks'] as CheckResult[];
+    expect(checks.find((result) => result.id === 'config')?.text).toContain('factory init');
+    expect(levelOf(checks, 'local-file')).toBe('warn');
+  });
+
+  it('sets no exit code for a config that is intact, or that fails for another reason', async () => {
+    const intact = await doctor(await initialized());
+    expect(intact.exitCode).toBeUndefined();
+    const broken = await initialized();
+    broken.files.set(`${HOME}/factory.yaml`, 'a: [1\n');
+    const run = await doctor(broken);
+    expect(run.failed).toBe(true);
+    expect(run.exitCode).toBeUndefined();
+  });
+
+  it('never reads or prints the content of a local file that it refuses', async () => {
+    const deps = await initialized();
+    deps.files.set(LOCAL, `${deps.files.get(LOCAL) ?? ''}extra: ${FAKE_GITHUB_TOKEN}\n`);
+    deps.modes.set(LOCAL, 0o666);
+    const run = await doctor(deps);
+    expect(JSON.stringify(run)).not.toContain(FAKE_GITHUB_TOKEN);
+  });
+
+  it('names the local file when a token is in it, never the value', async () => {
+    const deps = await initialized();
+    deps.files.set(LOCAL, deps.files.get(LOCAL)?.replace('sources: {}', `sources:\n  api: ${FAKE_GITHUB_TOKEN}`) ?? '');
+    const result = checkSecrets(await inspectConfig(deps, HOME));
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('sources.api');
+    expect(result.text).toContain('factory.local.yaml');
+    expect(result.text).not.toContain('ghp_');
   });
 });

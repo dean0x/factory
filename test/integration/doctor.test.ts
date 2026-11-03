@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises';
+import { chmod, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
@@ -94,8 +94,37 @@ describe('factory doctor (built binary)', () => {
     await writeFile(path, `${await box.read(path)}\nnote: ${secret}\n`);
     const result = await box.run(['doctor', '--home', box.node]);
     expect(result.code).toBe(1);
-    expect(result.stdout).toContain('note in factory.yaml looks like a token');
+    expect(result.stdout).toContain('note in factory.yaml or factory.local.yaml looks like a token');
     expect(result.stdout + result.stderr).not.toContain(secret);
+  });
+
+  it('exits 2 and names init when factory.yaml has no factory.local.yaml next to it', async () => {
+    await initNode();
+    await rm(join(box.node, 'factory.local.yaml'));
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(2);
+    expect(result.stdout).toContain('factory.local.yaml not found');
+    expect(result.stdout).toContain('factory init');
+  });
+
+  it('warns for a local file that others can read, names the chmod command, and changes no mode', async () => {
+    await initNode();
+    const path = join(box.node, 'factory.local.yaml');
+    await chmod(path, 0o644);
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('chmod 600 factory.local.yaml');
+    expect((await stat(path)).mode & 0o777).toBe(0o644);
+  });
+
+  it('fails for a local file that others can write', async () => {
+    await initNode();
+    const path = join(box.node, 'factory.local.yaml');
+    await chmod(path, 0o662);
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('chmod 600 factory.local.yaml');
+    expect((await stat(path)).mode & 0o777).toBe(0o662);
   });
 
   it('exits 2 when there is no config file above the folder and no entry of the home index', async () => {

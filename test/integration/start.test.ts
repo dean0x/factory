@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
@@ -148,6 +148,38 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(argv.join(' ')).not.toMatch(/dangerously|bypass/i);
     expect(await readFile(join(outDir, 'home'), 'utf8')).toBe(box.node);
     expect(await readFile(join(outDir, 'session'), 'utf8')).toBe('demo');
+  });
+
+  it('exits 2, names init and starts no session when factory.yaml has no factory.local.yaml next to it', async () => {
+    await initNode();
+    await rm(join(box.node, 'factory.local.yaml'));
+    const result = await startFactory();
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('factory.local.yaml not found');
+    expect(result.stderr).toContain('factory init');
+    expect((await tmux(['-S', socket, 'has-session', '-t', '=demo'])).code).not.toBe(0);
+  });
+
+  it('exits 4 for a local file that others can write, changes no mode and starts no session', async () => {
+    await initNode();
+    const path = join(box.node, 'factory.local.yaml');
+    await chmod(path, 0o664);
+    const result = await startFactory();
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('chmod 600 factory.local.yaml');
+    expect((await stat(path)).mode & 0o777).toBe(0o664);
+    expect((await tmux(['-S', socket, 'has-session', '-t', '=demo'])).code).not.toBe(0);
+  });
+
+  it('sets a local file that others can read back to mode 600, prints a notice and starts the session', async () => {
+    await initNode();
+    const path = join(box.node, 'factory.local.yaml');
+    await chmod(path, 0o644);
+    const result = await startFactory();
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('factory.local.yaml');
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    await waitForLaunch();
   });
 
   it('passes a project folder that ends in a semicolon to claude as one value', async () => {

@@ -1,22 +1,28 @@
 import type { z } from 'zod';
-import { failure, type CliError, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok, type Err, type Result } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { commands, commandText, maxFileBytes, program } from '../names.js';
 
-/** What a versioned file holds, after the version check and the schema check. */
+/**
+ * What a versioned file holds, after the version check and the schema check. A state that is not valid can name the
+ * file that holds the problem, when the value comes from more than one file. A file that cannot be used safely
+ * (`unsafe`) is not read at all.
+ */
 export type DocState<T> =
-  | { readonly kind: 'missing' }
-  | { readonly kind: 'unparsable'; readonly message: string }
+  | { readonly kind: 'missing'; readonly file?: string }
+  | { readonly kind: 'unparsable'; readonly message: string; readonly file?: string }
   | { readonly kind: 'valid'; readonly raw: unknown; readonly version: number; readonly value: T }
   | {
       readonly kind: 'older' | 'newer';
       readonly raw: unknown;
       readonly version: number;
       readonly message: string;
+      readonly file?: string;
     }
-  | { readonly kind: 'invalid'; readonly raw: unknown; readonly message: string };
+  | { readonly kind: 'invalid'; readonly raw: unknown; readonly message: string; readonly file?: string }
+  | { readonly kind: 'unsafe'; readonly message: string; readonly hint?: string; readonly file?: string };
 
 /** What a versioned file needs from its schema: the value, or an error with the key paths. A Zod schema fits. */
 export interface SchemaParser<T> {
@@ -92,14 +98,16 @@ export const inspectFile = async <T>(
 export const refuse = (state: Exclude<DocState<unknown>, { kind: 'valid' }>, file: string): Err<CliError> => {
   switch (state.kind) {
     case 'missing':
-      return failure(`${file} not found`);
+      return failure(`${state.file ?? file} not found`);
     case 'unparsable':
-      return failure(`${file} does not parse: ${state.message}`);
+      return failure(`${state.file ?? file} does not parse: ${state.message}`);
     case 'invalid':
-      return failure(`${file} is invalid: ${state.message}`);
+      return failure(`${state.file ?? file} is invalid: ${state.message}`);
     case 'older':
     case 'newer':
       return failure(state.message);
+    case 'unsafe':
+      return safetyRefusal(state.message, state.hint);
     default: {
       const unreachable: never = state;
       return unreachable;

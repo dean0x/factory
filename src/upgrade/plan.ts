@@ -5,6 +5,8 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { localFileAccess, requireInit } from '../config/load.js';
+import { mixConfigValue, SPLIT_SCHEMA_VERSION } from '../config/schema.js';
 import { stepsBetween, type FileStep } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
@@ -56,6 +58,7 @@ export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Pro
     case 'unparsable':
     case 'invalid':
     case 'newer':
+    case 'unsafe':
       return refuse(state, file.spec.file);
     default: {
       const unreachable: never = state;
@@ -64,23 +67,66 @@ export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Pro
   }
 };
 
+/**
+ * What the upgrade does with the local file. A root from before the split has no local file: the upgrade makes one
+ * from the local keys of its config. A root from after the split must have one, and the upgrade never makes it.
+ */
+export type LocalPlan = FilePlan | { readonly kind: 'create' };
+
+/**
+ * Plan the local file. A local file that another account owns, or that others can write, stops the upgrade (exit 4).
+ * A missing local file next to a current shared file stops it too (exit 2), and nothing is written.
+ */
+export const planLocal = async (
+  deps: Deps,
+  layout: Layout,
+  config: FilePlan,
+  upgrade: UpgradeSpec,
+): Promise<CliResult<LocalPlan>> => {
+  const access = await localFileAccess(deps, layout.home);
+  if (!access.ok) return access;
+  if (config.kind === 'migrate' && config.from < SPLIT_SCHEMA_VERSION) {
+    return access.value.kind === 'absent'
+      ? ok({ kind: 'create' })
+      : failure(
+          `${upgrade.local.spec.file} exists already, but ${upgrade.config.spec.file} has ${upgrade.config.spec.key} ${config.from}`,
+          `Move ${upgrade.local.spec.file} away, then run the command again.`,
+        );
+  }
+  return access.value.kind === 'absent' ? requireInit() : planFile(deps, layout.localConfigFile, upgrade.local);
+};
+
 /** The config as it is after the migrations. A failing migration stops the upgrade here. */
-const migratedConfig = (config: FilePlan, upgrade: UpgradeSpec): CliResult<unknown> => {
-  const migrated = config.kind === 'migrate' ? runMigrations(config.raw, config.steps) : ok(config.raw);
-  return migrated.ok ? migrated : failure(`${upgrade.config.spec.file}: ${migrated.error.message}`);
+const migratedFile = (plan: FilePlan, file: UpgradeFile): CliResult<unknown> => {
+  const migrated = plan.kind === 'migrate' ? runMigrations(plan.raw, plan.steps) : ok(plan.raw);
+  return migrated.ok ? migrated : failure(`${file.spec.file}: ${migrated.error.message}`);
+};
+
+/** The keys of both files in one value, as they are after the migrations. */
+const migratedConfig = (config: FilePlan, local: LocalPlan, upgrade: UpgradeSpec): CliResult<unknown> => {
+  const shared = migratedFile(config, upgrade.config);
+  if (!shared.ok) return shared;
+  // A root of schema 1 migrates as one value that holds the keys of both files.
+  if (local.kind === 'create') return shared;
+  const localValue = migratedFile(local, upgrade.local);
+  return localValue.ok ? ok(mixConfigValue(shared.value, localValue.value)) : localValue;
 };
 
 /** The managed blocks of the node, as its config is after the migrations. */
-export const planBlockSet = (config: FilePlan, upgrade: UpgradeSpec): CliResult<BlockSet> => {
-  const migrated = migratedConfig(config, upgrade);
+export const planBlockSet = (config: FilePlan, local: LocalPlan, upgrade: UpgradeSpec): CliResult<BlockSet> => {
+  const migrated = migratedConfig(config, local, upgrade);
   if (!migrated.ok) return migrated;
   const set = upgrade.blocksOf(migrated.value);
   return set.ok ? set : failure(`${upgrade.config.spec.file}: ${set.error.message}`);
 };
 
 /** The paths of the projects, as the config holds them after the migrations. */
-export const planProjectPaths = (config: FilePlan, upgrade: UpgradeSpec): CliResult<readonly string[]> => {
-  const migrated = migratedConfig(config, upgrade);
+export const planProjectPaths = (
+  config: FilePlan,
+  local: LocalPlan,
+  upgrade: UpgradeSpec,
+): CliResult<readonly string[]> => {
+  const migrated = migratedConfig(config, local, upgrade);
   if (!migrated.ok) return migrated;
   const paths = upgrade.projectPathsOf(migrated.value);
   return paths.ok ? paths : failure(`${upgrade.config.spec.file}: ${paths.error.message}`);
@@ -220,18 +266,32 @@ export const refusalOf = (blocks: readonly BlockPlan[]): CliResult<void> => {
 
 export const planLines = (
   config: FilePlan,
+  local: LocalPlan,
   state: FilePlan,
   files: FilesPlan,
   blocks: readonly BlockPlan[],
   upgrade: UpgradeSpec,
 ): OutLine[] => {
-  const fileLine = (plan: FilePlan, file: UpgradeFile): OutLine =>
-    plan.kind === 'current'
-      ? { level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${plan.version} is current` }
-      : {
+  const fileLine = (plan: LocalPlan, file: UpgradeFile): OutLine => {
+    switch (plan.kind) {
+      case 'current':
+        return { level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${plan.version} is current` };
+      case 'create':
+        return {
+          level: 'text',
+          text: `${file.spec.file}: new file, with mode 600, from the local keys of ${upgrade.config.spec.file}`,
+        };
+      case 'migrate':
+        return {
           level: 'text',
           text: `${file.spec.file}: ${file.spec.key} ${plan.from} to ${plan.to} (${plan.steps.length} ${plan.steps.length === 1 ? 'step' : 'steps'})`,
         };
+      default: {
+        const unreachable: never = plan;
+        return unreachable;
+      }
+    }
+  };
   const blockLine = (plan: BlockPlan): OutLine => {
     const { name, version } = plan.template;
     const old = renamedFromOf(plan.status);
@@ -283,6 +343,7 @@ export const planLines = (
         };
   return [
     fileLine(config, upgrade.config),
+    fileLine(local, upgrade.local),
     fileLine(state, upgrade.state),
     ...moveLines,
     ...files.replaces.map(replaceLine),

@@ -90,7 +90,6 @@ const EXACT_NAMES = new Set([
     keys.limits,
     keys.project,
     keys.gate,
-    keys.approval,
     keys.tracker,
     keys.recipe,
     keys.link,

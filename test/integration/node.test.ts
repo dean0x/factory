@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MANAGER_LAYER } from '../../src/config/schema.js';
@@ -42,9 +42,12 @@ describe('factory node (built binary)', () => {
   it('adds a child of the layer below, lists it, and removes it again, with the comments of the owner kept', async () => {
     await initNode(shop, 'web', 1);
     await initNode(manager, 'mgr', 2);
-    const configFile = join(manager, 'factory.yaml');
+    // The children of a node are in the local file. The command edits that file only.
+    const configFile = join(manager, 'factory.local.yaml');
+    const sharedFile = join(manager, 'factory.yaml');
     const withNote = (await readFile(configFile, 'utf8')).replace('children: []', '# my shops\nchildren: []');
     await writeFile(configFile, withNote);
+    const sharedBefore = await readFile(sharedFile, 'utf8');
     const shopConfig = await readFile(join(shop, 'factory.yaml'), 'utf8');
 
     const added = await node('add-child', shop);
@@ -54,6 +57,8 @@ describe('factory node (built binary)', () => {
     const text = await readFile(configFile, 'utf8');
     expect(text).toContain(`# my shops\nchildren:\n  - id: web\n    address: "file://${shop}"\n`);
     expect(text).toContain('# People edit this file.');
+    expect(await readFile(sharedFile, 'utf8')).toBe(sharedBefore);
+    expect((await stat(configFile)).mode & 0o777).toBe(0o600);
     expect(await childrenJson()).toEqual([{ id: 'web', address: `file://${shop}`, layer: 1, status: 'ok', reason: null }]);
 
     const listed = await node('children');
@@ -118,6 +123,25 @@ describe('factory node (built binary)', () => {
     const result = await node('add-child', 'ssh://owner@host/srv/web-factory');
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('factory runs on one machine: use a file:// address');
+  });
+
+  it('exits 2 and names init when factory.yaml has no factory.local.yaml next to it', async () => {
+    await initNode(manager, 'mgr', 2);
+    await rm(join(manager, 'factory.local.yaml'));
+    const result = await node('children');
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('factory.local.yaml not found');
+    expect(result.stderr).toContain('factory init');
+  });
+
+  it('exits 4 for a local file that others can write, and changes no mode', async () => {
+    await initNode(manager, 'mgr', 2);
+    const path = join(manager, 'factory.local.yaml');
+    await chmod(path, 0o666);
+    const result = await node('children');
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('chmod 600 factory.local.yaml');
+    expect((await stat(path)).mode & 0o777).toBe(0o666);
   });
 
   it('shows a child as unknown when its config is of an older schema', async () => {
