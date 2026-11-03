@@ -36,7 +36,7 @@ After v2, F-13 (2026-11-02): **one machine only for now.** The `ssh://` transpor
 
 ## Changes after the intent check (2026-11-02)
 
-An independent check compared this design with every note from Dean. `docs/intent-trace.md` lists each note with its design section and its milestone. The check found gaps. The Orchestrator decided the open points (§9, table OD). The design now changes as follows:
+An independent check compared this design with every note from Dean. `docs/intent-trace.md` lists each note with its design section and its milestone. The check found gaps. The Orchestrator decided the open points (§9, table IF). The design now changes as follows:
 1. A command finds the factory folder, and a per-user list outside `~/.claude` registers it (§4.2, §4.3).
 2. `init` in a folder that holds several repos proposes a factory folder next to them. A project URL clones into the factory folder (§4.3).
 3. The user picks the board at `init` and changes it with `factory tracker set`. A project can override the board of the node (§4.4, §4.10).
@@ -1173,22 +1173,22 @@ Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the
 
 **D-57 is answered (v3).** F-6 asked whether "a-z" includes releases. The release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope (§6.2). FAC-M5 builds the release check.
 
-### Intent fixes (2026-11-02, table OD)
+### Intent fixes (2026-11-02, table IF)
 
 An independent check of the design against Dean's notes found open points. The Orchestrator decided them. The decisions are final until Dean changes them.
 
 | Id | Decision |
 |---|---|
-| OD-1 | The review page of today and its scripts stay as the owner view until FAC-M3. FAC-M7 keeps them. FAC-M3 retires them (§4.10, §8). |
-| OD-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. A plan counts only through an ask or decision item answered `approve` by the owner; a commit author is no proof. The assignment is direct, by a decision, or by an assignee or `worker:<id>` label that the owner's account sets. `check` gives NOT READY while a PR has an open ask or an open request (§6.1). |
-| OD-3 | Releases have their own approval point, `release`, with the values `owner` and `delegated`. D-57 is answered (§6.2). |
-| OD-4 | "Codex" in note F-3: factory starts Claude Code. The config names one agent command for each node, and only `claude` is built (§4.6). |
-| OD-5 | Each layer has its own role template. FAC-M8 adds the template of layer 3. `doctor` warns when a layer has no template (§5.2). |
-| OD-6 | The board connector reads comments, label changes, assignee changes and open or close changes. Card moves stay out for now. `start` starts `watch` (§4.10, §4.11). |
-| OD-7 | The board scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira has `site` and `key` (§4.4, §4.10). |
-| OD-8 | The word list of Dean ends with the heading "machinery and automation hardware". A table in §7.1 maps each of his 11 words. |
-| OD-9 | The state repo can push to a private git remote that the owner names. `init --state-from` clones it on a second machine (§4.3). |
-| OD-10 | A board event proves the owner only when the agents use another identity (`tracker.agent_account`). With a shared account, `doctor` warns and only `factory decide` from a terminal window outside a factory session counts (§4.10, §6.1). |
+| IF-1 | The review page of today and its scripts stay as the owner view until FAC-M3. FAC-M7 keeps them. FAC-M3 retires them (§4.10, §8). |
+| IF-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. A plan counts only through an ask or decision item answered `approve` by the owner; a commit author is no proof. The assignment is direct, by a decision, or by an assignee or `worker:<id>` label that the owner's account sets. `check` gives NOT READY while a PR has an open ask or an open request (§6.1). |
+| IF-3 | Releases have their own approval point, `release`, with the values `owner` and `delegated`. D-57 is answered (§6.2). |
+| IF-4 | "Codex" in note F-3: factory starts Claude Code. The config names one agent command for each node, and only `claude` is built (§4.6). |
+| IF-5 | Each layer has its own role template. FAC-M8 adds the template of layer 3. `doctor` warns when a layer has no template (§5.2). |
+| IF-6 | The board connector reads comments, label changes, assignee changes and open or close changes. Card moves stay out for now. `start` starts `watch` (§4.10, §4.11). |
+| IF-7 | The board scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira has `site` and `key` (§4.4, §4.10). |
+| IF-8 | The word list of Dean ends with the heading "machinery and automation hardware". A table in §7.1 maps each of his 11 words. |
+| IF-9 | The state repo can push to a private git remote that the owner names. `init --state-from` clones it on a second machine (§4.3). |
+| IF-10 | A board event proves the owner only when the agents use another identity (`tracker.agent_account`). With a shared account, `doctor` warns and only `factory decide` from a terminal window outside a factory session counts (§4.10, §6.1). |
 
 ### v3 (2026-11-02)
 
