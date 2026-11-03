@@ -560,7 +560,7 @@ approval:                    # the mode of each approval point of the recipe (§
   merge: owner               # owner (default) | delegated
   release: owner
 sources:                     # the local source of a project with no shareable URL
-  ../api: /srv/code/api      # the key is a listed project path; the value is an absolute path or a file URL
+  web: /srv/code/web         # the key is a listed project path (one folder name); the value is an absolute path or a file URL
 state:                       # FAC-M3
   remote: null               # the private place of the work state of one owner
 parent: null                 # or { id, address }; the address is file:// only (§5.3)
