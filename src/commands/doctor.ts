@@ -1,6 +1,6 @@
 import { join, resolve } from 'node:path';
 import { linesOutsideBlocks, parseBlocks } from '../blocks/managed.js';
-import { inspectBlocks, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
+import { inspectBlocks, isSafetyStop, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { exitCodeOf, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { probeChildren } from '../comms/children.js';
@@ -17,8 +17,10 @@ import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
+import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
+  blockNames,
   checkIds,
   commandText,
   commands,
@@ -35,6 +37,7 @@ import {
   roles,
   schemaIds,
   setupBlockNames,
+  setupFileOf,
   shareListLabel,
   values,
 } from '../names.js';
@@ -288,6 +291,23 @@ interface BlockProblem {
 const UPGRADE_REMEDY = `Run "${commandText(commands.upgrade)}".`;
 
 /**
+ * The remedy for an edited block. The safety block is a fixed rule: the owner replaces it, and the old text stays in a
+ * backup file. The text of a setup block comes from its setup file, so `upgrade` puts the file text back by itself.
+ */
+const editedRemedy = (name: string): string => {
+  if (name === blockNames.safety) {
+    return `Run "${overwriteCommand(name)}" to replace the text. It keeps the old text in a backup file.`;
+  }
+  if (setupBlockNames.includes(name)) {
+    return (
+      `Move your edit to ${setupFileOf(name)}, then run "${commandText(commands.upgrade)}". ` +
+      'It puts back the text of that file and keeps the old text in a backup file.'
+    );
+  }
+  return `Move your edits to the setup folder, then run "${overwriteCommand(name)}" to replace the text.`;
+};
+
+/**
  * A block that is not as the layer needs it. A block under the name of another layer is a role block that does not
  * match. An intact block whose text differs from the rendered text is out of date: `upgrade` renders it again. An edited
  * block stays as it is until the person names it with `--overwrite`.
@@ -297,7 +317,9 @@ const describeBlockProblem = (status: BlockStatus): BlockProblem[] => {
   const where = `${status.kind}, in ${status.file}`;
   const old = renamedFromOf(status);
   if (old !== undefined) {
-    return [{ text: `${old} (${where}): the layer of this ${roles.node} needs the block ${name}`, remedy: UPGRADE_REMEDY }];
+    // An edited block under an old name stays until a person names it, so `upgrade` alone does not fix it.
+    const remedy = status.kind === 'edited' ? `Run "${overwriteCommand(old)}" to replace it.` : UPGRADE_REMEDY;
+    return [{ text: `${old} (${where}): the layer of this ${roles.node} needs the block ${name}`, remedy }];
   }
   switch (status.kind) {
     case 'intact':
@@ -305,12 +327,7 @@ const describeBlockProblem = (status: BlockStatus): BlockProblem[] => {
         ? []
         : [{ text: `${name} (out of date, in ${status.file})`, remedy: UPGRADE_REMEDY }];
     case 'edited':
-      return [
-        {
-          text: `${name} (${where})`,
-          remedy: `Move your edits to the setup folder, then run "${overwriteCommand(name)}" to replace the text.`,
-        },
-      ];
+      return [{ text: `${name} (${where})`, remedy: editedRemedy(name) }];
     case 'missing':
       return [
         {
@@ -327,13 +344,14 @@ const describeBlockProblem = (status: BlockStatus): BlockProblem[] => {
   }
 };
 
+/** A safety block that is edited, missing or malformed fails the check. Any other block problem is a warning. */
 export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
   const problems = statuses.flatMap(describeBlockProblem);
   return problems.length === 0
     ? check(checkIds.blocks, 'ok', `${statuses.length} managed blocks are intact`)
     : check(
         checkIds.blocks,
-        'warn',
+        statuses.some(isSafetyStop) ? 'fail' : 'warn',
         `${problems.map((problem) => problem.text).join('; ')}. ${[...new Set(problems.map((problem) => problem.remedy))].join(' ')}`,
       );
 };
@@ -394,7 +412,7 @@ export const checkNodeBlocks = async (
   const setup = await readSetupTexts(deps, layout);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
   const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value));
-  const pending = { ...NO_PENDING_FILES, renames: roleBlockRenames(input.layer) };
+  const pending = { ...NO_PENDING_FILES, renames: [...blockRenamesOf(fileSteps), ...roleBlockRenames(input.layer)] };
   return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending));
 };
 

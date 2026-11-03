@@ -420,6 +420,175 @@ describe('upgrade: managed blocks', () => {
   });
 });
 
+describe('upgrade: a replaced block keeps its old text in a backup file (TP-107, TP-131, TP-132, TP-142)', () => {
+  const BACKUPS = `${HOME}/.factory/backups`;
+  const STAMP = '2030-01-02T03-04-05-678Z';
+  const SAFETY_BACKUP = `${BACKUPS}/${STAMP}-block-safety.md`;
+
+  const editSafety = (deps: FakeDeps): void => {
+    const claude = text(deps, CLAUDE);
+    const safetyStart = claude.indexOf('<!-- factory:begin safety');
+    expect(safetyStart).toBeGreaterThan(-1);
+    deps.files.set(CLAUDE, `${claude.slice(0, safetyStart)}${claude.slice(safetyStart).replace(/\n([^<\n][^\n]*)\n/, '\nEdited safety line.\n')}`);
+  };
+
+  const inSession = (deps: FakeDeps): FakeDeps => ({ ...deps, env: { ...deps.env, FACTORY_SESSION: 'demo' } });
+
+  const blockBackups = (deps: FakeDeps): string[] =>
+    [...deps.files.keys()].filter((path) => path.startsWith(`${BACKUPS}/`) && path.includes('-block-')).sort();
+
+  it('replaces an edited safety block that is named, and keeps the old text in a new file with the time in its name', async () => {
+    const { deps } = await makeNode();
+    editSafety(deps);
+    const output = success(await upgrade(deps, currentSpec, { overwrite: ['safety'] }));
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
+    expect(text(deps, CLAUDE)).not.toContain('Edited safety line.');
+    expect(text(deps, SAFETY_BACKUP)).toContain('Edited safety line.');
+    expect(deps.modes.get(SAFETY_BACKUP)).toBe(0o600);
+    expect(blockBackups(deps)).toEqual([SAFETY_BACKUP]);
+    expect(lineTexts(output)).toContain(`Kept the old text of block safety in .factory/backups/${STAMP}-block-safety.md.`);
+    expect(output.json).toMatchObject({ blockBackups: [`.factory/backups/${STAMP}-block-safety.md`] });
+  });
+
+  it('keeps the old text of an edited role block and of an edited setup block that are named', async () => {
+    const { deps } = await makeNode();
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    edit(deps, CLAUDE, 'Write your own text', 'Changed by hand');
+    success(await upgrade(deps, currentSpec, { overwrite: ['coordinator', 'setup'] }));
+    expect(blockBackups(deps)).toEqual([`${BACKUPS}/${STAMP}-block-coordinator.md`, `${BACKUPS}/${STAMP}-block-setup.md`]);
+    expect(text(deps, `${BACKUPS}/${STAMP}-block-coordinator.md`)).toContain('Do as you like.');
+    expect(text(deps, `${BACKUPS}/${STAMP}-block-setup.md`)).toContain('Changed by hand');
+  });
+
+  it('writes the old text without the marker lines, as it was in the block', async () => {
+    const { deps } = await makeNode();
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    success(await upgrade(deps, currentSpec, { overwrite: ['coordinator'] }));
+    const saved = text(deps, `${BACKUPS}/${STAMP}-block-coordinator.md`);
+    expect(saved).not.toContain('<!-- factory:');
+    expect(saved).toContain('Do as you like.');
+  });
+
+  it.each([
+    ['coordinator/CLAUDE.md', 'setup', CLAUDE, 'setup/coordinator.md'],
+    ['.factory/roles/worker.md', 'setup-worker', WORKER, 'setup/roles/worker.md'],
+  ])('puts back the text of an edited setup block in %s with no flag, and keeps the old text in a backup file (TP-142)', async (_file, name, path, setupFile) => {
+    const { deps } = await makeNode();
+    edit(deps, path, 'Write your own text', 'Changed by hand');
+    const dry = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(dry)).toContain(
+      `block ${name}: put back the text of ${setupFile}. The edited text goes to a backup file.`,
+    );
+    expect(blockBackups(deps)).toEqual([]);
+
+    const output = success(await upgrade(deps));
+    expect(text(deps, path)).toContain('Write your own text');
+    expect(text(deps, path)).not.toContain('Changed by hand');
+    expect(text(deps, `${BACKUPS}/${STAMP}-block-${name}.md`)).toContain('Changed by hand');
+    expect(output.warnings).toEqual([]);
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
+  });
+
+  it('writes no backup file in a dry run', async () => {
+    const { deps } = await makeNode();
+    editSafety(deps);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true, overwrite: ['safety'] }));
+    expect(lineTexts(output)).toContain(`block safety: replace the edited text with version ${versionOf('safety')}`);
+    expect(snapshot(deps)).toEqual(before);
+    expect(output.json).toMatchObject({ blockBackups: [] });
+  });
+
+  it('writes no backup file for a block that it adds, renders again or updates', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(LOCAL, text(deps, LOCAL).replace('typed by', 'sent by'));
+    const claude = text(deps, CLAUDE);
+    deps.files.set(CLAUDE, claude.slice(0, claude.indexOf('<!-- factory:begin setup')));
+    success(await upgrade(deps, blocksSpec(withBlock('worker', 'New worker text.'))));
+    expect(blockBackups(deps)).toEqual([]);
+  });
+
+  it('keeps at most 10 backup files of blocks, removes the oldest, and leaves every other file in the folder', async () => {
+    const { deps } = await makeNode();
+    const stamps = Array.from({ length: 10 }, (_unused, index) => `2029-01-${String(index + 1).padStart(2, '0')}T00-00-00-000Z`);
+    for (const stamp of stamps) deps.seed(`${BACKUPS}/${stamp}-block-safety.md`, 'old');
+    deps.seed(`${BACKUPS}/notes-block-safety.md`, 'mine');
+    deps.seed(`${BACKUPS}/2029-01-01T00-00-00-000Z-block-safety.md.keep`, 'mine');
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    success(await upgrade(deps, currentSpec, { overwrite: ['coordinator'] }));
+    const kept = blockBackups(deps).filter((path) => /\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-block-[a-z-]+\.md$/.test(path));
+    expect(kept).toHaveLength(10);
+    expect(kept).toContain(`${BACKUPS}/${STAMP}-block-coordinator.md`);
+    expect(deps.files.has(`${BACKUPS}/${stamps[0]}-block-safety.md`)).toBe(false);
+    expect(deps.files.has(`${BACKUPS}/notes-block-safety.md`)).toBe(true);
+    expect(deps.files.has(`${BACKUPS}/2029-01-01T00-00-00-000Z-block-safety.md.keep`)).toBe(true);
+  });
+
+  it('keeps every older backup file when the upgrade fails', async () => {
+    const { deps } = await makeNode();
+    for (let index = 1; index <= 10; index += 1) deps.seed(`${BACKUPS}/2029-01-${String(index).padStart(2, '0')}T00-00-00-000Z-block-safety.md`, 'old');
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    const failing = withFailingWrites(deps, (path) => path === CLAUDE);
+    expect((await upgrade(failing, currentSpec, { overwrite: ['coordinator'] })).ok).toBe(false);
+    expect(blockBackups(deps).filter((path) => path.includes('2029-'))).toHaveLength(10);
+  });
+
+  it('stops with exit 4 and writes nothing when a link stands at the backup file (TP-131)', async () => {
+    const links = { [SAFETY_BACKUP]: '/outside/stolen.md' };
+    const { deps } = await makeNode({ links });
+    editSafety(deps);
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['safety'] }));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain(`${STAMP}-block-safety.md`);
+    expect(deps.files.has('/outside/stolen.md')).toBe(false);
+    expect(text(deps, CLAUDE)).toBe(before.get(CLAUDE));
+  });
+
+  it('stops with exit 4 and writes nothing when the backups folder is a link (TP-131)', async () => {
+    const { deps } = await makeNode({ links: { [BACKUPS]: '/outside/backups' } });
+    editSafety(deps);
+    const before = snapshot(deps);
+    expect(refusal(await upgrade(deps, currentSpec, { overwrite: ['safety'] })).kind).toBe('safety');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  describe('the owner action', () => {
+    it.each([
+      ['with yes', { yes: true }],
+      ['without yes', { yes: false }],
+      ['in a dry run', { dryRun: true }],
+    ])('exits 4 inside a factory session for the safety block, %s, and writes nothing', async (_label, options) => {
+      const { deps, gitSince } = await makeNode();
+      editSafety(deps);
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(inSession(deps), currentSpec, { overwrite: ['safety'], ...options }));
+      expect(error.kind).toBe('safety');
+      expect(error.message).toContain('factory session');
+      expect(error.hint).toBe('Run "factory upgrade --overwrite safety" in a terminal window outside a factory session.');
+      expect(snapshot(deps)).toEqual(before);
+      expect(gitSince()).toEqual([]);
+    });
+
+    it('exits 4 inside a factory session when the safety block is named with other blocks', async () => {
+      const { deps } = await makeNode();
+      expect(refusal(await upgrade(inSession(deps), currentSpec, { overwrite: ['coordinator', 'safety'] })).kind).toBe('safety');
+    });
+
+    it('still replaces another named block inside a factory session', async () => {
+      const { deps } = await makeNode();
+      edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+      success(await upgrade(inSession(deps), currentSpec, { overwrite: ['coordinator'] }));
+      expect(text(deps, CLAUDE)).toContain(COORDINATOR_LINE);
+    });
+
+    it('does not stop an upgrade that names no block inside a factory session', async () => {
+      const { deps } = await makeNode();
+      expect(success(await upgrade(inSession(deps))).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    });
+  });
+});
+
 describe('upgrade: migrations', () => {
   it('runs a chain of two steps, writes the config and keeps the other keys', async () => {
     const { deps, gitSince } = await makeNode();
@@ -1718,6 +1887,57 @@ describe('upgrade: a node of schema 1', () => {
     expect((await inspectBlocks(deps, HOME, coreBlocks)).every((status) => status.kind === 'intact')).toBe(true);
   });
 
+  describe('a protocol block that the first run kept because a person edited it', () => {
+    const keepWarning = 'block protocol was edited, so factory keeps it. Run "factory upgrade --overwrite protocol" to replace it.';
+
+    const keptNode = async (): Promise<Node> => {
+      const node = makeOldNode();
+      edit(node.deps, OLD.protocol, workerLine, 'My own rule for the workers.');
+      success(await upgrade(node.deps));
+      expect(text(node.deps, WORKER)).toContain('<!-- factory:begin protocol');
+      // The backup folder is named by the time, so the next run needs a later time.
+      node.deps.advance(1000);
+      return node;
+    };
+
+    it('is still the edited block of the worker file in the next run, and the output names the flag', async () => {
+      const { deps } = await keptNode();
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps));
+      expect(output.warnings).toEqual([keepWarning]);
+      expect(lineTexts(output).some((line) => line.includes('is missing'))).toBe(false);
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('is named by the dry run of the next run with the same warning', async () => {
+      const { deps } = await keptNode();
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(output.lines).toContainEqual({ level: 'warn', text: keepWarning });
+    });
+
+    it.each(['protocol', 'worker'])('is replaced in the next run when %s is named', async (name) => {
+      const { deps } = await keptNode();
+      success(await upgrade(deps, currentSpec, { overwrite: [name] }));
+      expect(text(deps, WORKER)).toContain(workerLine);
+      expect(text(deps, WORKER)).not.toContain('My own rule for the workers.');
+      expect(text(deps, WORKER)).not.toContain('<!-- factory:begin protocol');
+      expect((await inspectBlocks(deps, HOME, coreBlocks)).every((status) => status.kind === 'intact')).toBe(true);
+      expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    });
+
+    it('becomes the worker block in the next run when a person put the intact text back under the old name', async () => {
+      const { deps } = makeOldNode();
+      success(await upgrade(deps));
+      deps.advance(1000);
+      const old = renderBlock({ name: 'protocol', version: 1, body: workerBody });
+      if (!old.ok) throw new Error(old.error.message);
+      deps.files.set(WORKER, `${old.value}\n`);
+      success(await upgrade(deps));
+      expect(text(deps, WORKER)).toContain('<!-- factory:begin worker');
+      expect(text(deps, WORKER)).not.toContain('<!-- factory:begin protocol');
+    });
+  });
+
   it('keeps the text around the protocol block', async () => {
     const { deps } = makeOldNode();
     deps.files.set(OLD.protocol, `My notes.\n\n${text(deps, OLD.protocol)}\nMore notes.\n`);
@@ -2362,17 +2582,14 @@ describe('upgrade: the setup text (TP-102)', () => {
     expect(refusal(await upgrade(deps)).message).toBe('setup/coordinator.md is not plain text: it holds a control character');
   });
 
-  it('keeps an edited setup block with a warning that names the overwrite command, and replaces it when it is named', async () => {
+  it('puts back an edited setup block with no flag and no warning, and keeps the edit in a backup file (TP-142)', async () => {
     const { deps } = await makeNode();
     deps.files.set(CLAUDE, text(deps, CLAUDE).replace('Write your own text', 'Changed by hand'));
-    const kept = success(await upgrade(deps));
-    expect(kept.warnings).toContain(
-      'block setup was edited, so factory keeps it. Run "factory upgrade --overwrite setup" to replace it.',
-    );
-    expect(text(deps, CLAUDE)).toContain('Changed by hand');
-    success(await upgrade(deps, currentSpec, { overwrite: ['setup'] }));
+    const output = success(await upgrade(deps));
+    expect(output.warnings).toEqual([]);
     expect(text(deps, CLAUDE)).not.toContain('Changed by hand');
     expect(text(deps, CLAUDE)).toContain('Write your own text');
+    expect(text(deps, `${HOME}/.factory/backups/2030-01-02T03-04-05-678Z-block-setup.md`)).toContain('Changed by hand');
   });
 
   it('has nothing to do the second time', async () => {

@@ -7,6 +7,12 @@ import {
   sha256Hex,
   verifyBlock,
 } from '../../src/blocks/managed.js';
+import { inspectBlocks, safetyStateOf } from '../../src/blocks/status.js';
+import { blockNames } from '../../src/names.js';
+import { blockInputOf, safetyTemplateFor } from '../../src/templates/index.js';
+import { noSetupTexts, softwareOwnerModes } from '../helpers/blocks.js';
+import { createFakeDeps } from '../helpers/fake-deps.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 
 const rendered = (name: string, version: number, body: string): string => {
   const result = renderBlock({ name, version, body });
@@ -155,5 +161,57 @@ describe('appendBlocks', () => {
 
   it('adds a newline when the owner text has none at the end', () => {
     expect(appendBlocks('My rules.', [a])).toBe(`My rules.\n\n${a}\n`);
+  });
+});
+
+describe('safetyStateOf (TP-43, TP-77, TP-125)', () => {
+  const HOME = '/w/node';
+  const CLAUDE = `${HOME}/coordinator/CLAUDE.md`;
+  const config = sampleConfig();
+  const safety = safetyTemplateFor(config, softwareOwnerModes);
+  const stateWith = async (text: string | null, template = safety) => {
+    const deps = createFakeDeps();
+    if (text !== null) deps.seed(CLAUDE, text);
+    const [status] = await inspectBlocks(deps, HOME, [template]);
+    if (status === undefined) throw new Error('no status');
+    return safetyStateOf(status);
+  };
+
+  it('is built from the config, the modes and the prefix, and does not depend on the setup texts', () => {
+    const blocks = blockInputOf(config, noSetupTexts, softwareOwnerModes);
+    expect(safety.name).toBe(blockNames.safety);
+    expect(safety.target).toBe('claudeFile');
+    expect(safety.body).toContain(blocks.ownerPrefix);
+  });
+
+  it('is equal for an intact block with the rendered text', async () => {
+    expect(await stateWith(`${rendered(safety.name, safety.version, safety.body)}\n`)).toBe('equal');
+  });
+
+  it('is different for an intact block whose hash matches another text', async () => {
+    expect(await stateWith(`${rendered(safety.name, safety.version, `${safety.body}\nAn extra rule.`)}\n`)).toBe('different');
+  });
+
+  it('is different for an intact block after a change of the owner prefix', async () => {
+    const other = safetyTemplateFor({ ...config, core: { ...config.core, owner: { ...config.core.owner, prefix: '[From {owner}, other]' } } }, softwareOwnerModes);
+    expect(await stateWith(`${rendered(safety.name, safety.version, safety.body)}\n`, other)).toBe('different');
+  });
+
+  it('is edited when the text does not match the hash of its marker', async () => {
+    const text = rendered(safety.name, safety.version, safety.body).replace('Never skip permissions', 'Skip permissions');
+    expect(text).not.toContain('Never skip permissions');
+    expect(await stateWith(`${text}\n`)).toBe('edited');
+  });
+
+  it('is missing when the file holds no safety block', async () => {
+    expect(await stateWith(`${rendered('coordinator', 1, 'Text.')}\n`)).toBe('missing');
+  });
+
+  it('is missing when the file is not there', async () => {
+    expect(await stateWith(null)).toBe('missing');
+  });
+
+  it('is malformed when the markers of the file are broken', async () => {
+    expect(await stateWith('<!-- factory:begin safety v2 sha256=zz -->\n')).toBe('malformed');
   });
 });

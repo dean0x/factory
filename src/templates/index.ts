@@ -21,6 +21,15 @@ const safetyFor = (input: BlockInput): BlockTemplate => ({
   body: fillTemplate(safetyLines(approvalRules(input.modes)), coordinatorValuesFor(input)),
 });
 
+const NO_SETUP: SetupTexts = { coordinator: null, worker: null };
+
+/**
+ * The safety block as this package renders it for the config and the effective modes. The setup texts do not change it,
+ * so a caller that checks the safety block alone needs none.
+ */
+export const safetyTemplateFor = (config: FactoryConfig, modes: ApprovalModes): BlockTemplate =>
+  safetyFor(blockInputOf(config, NO_SETUP, modes));
+
 /** The block of a setup text, or none when the text is absent or empty. The body is the text as it is. */
 const setupBlock = (name: string, target: BlockTemplate['target'], text: string | null): readonly BlockTemplate[] =>
   text === null ? [] : [{ name, version: 1, target, body: text }];

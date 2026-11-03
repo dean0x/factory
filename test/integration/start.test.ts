@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
@@ -199,15 +199,72 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(paths.stdout.trim().split('\n')).toEqual([folder, folder, folder]);
   });
 
-  it('exits 1 and starts no session when the coordinator folder is missing, because tmux would use another folder', async () => {
+  it('exits 4 and starts no session when the coordinator folder is missing, because the safety block is missing (TP-43)', async () => {
     await initNode();
     await rm(join(box.node, 'coordinator'), { recursive: true });
     const result = await startFactory();
-    expect(result.code).toBe(1);
-    expect(result.stderr).toContain('the coordinator folder coordinator is missing');
-    expect(result.stderr).toContain('factory upgrade --overwrite coordinator --overwrite safety');
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('the block safety is missing in coordinator/CLAUDE.md');
+    expect(result.stderr).toContain('factory upgrade --overwrite safety');
     expect((await tmux(['-S', socket, 'has-session', '-t', '=demo'])).code).not.toBe(0);
     expect(existsSync(socket)).toBe(false);
+  });
+
+  it('exits 4 for an edited safety block, and goes on after upgrade --overwrite safety kept the old text in a backup file (TP-43, TP-107)', async () => {
+    await initNode();
+    const path = join(box.node, 'coordinator', 'CLAUDE.md');
+    const text = await readFile(path, 'utf8');
+    const at = text.indexOf('<!-- factory:begin safety');
+    expect(at).toBeGreaterThan(-1);
+    const edited = `${text.slice(0, at)}${text.slice(at).replace('Never skip permissions', 'Skip permissions')}`;
+    expect(edited).not.toBe(text);
+    await writeFile(path, edited);
+
+    const stopped = await startFactory();
+    expect(stopped.code).toBe(4);
+    expect(stopped.stderr).toContain('factory upgrade --overwrite safety');
+    expect((await tmux(['-S', socket, 'has-session', '-t', '=demo'])).code).not.toBe(0);
+    expect(existsSync(socket)).toBe(false);
+
+    const upgraded = await box.run(['upgrade', '--home', box.node, '--overwrite', 'safety']);
+    expect(upgraded.code).toBe(0);
+    expect(await readFile(path, 'utf8')).toBe(text);
+    const saved = (await readdir(join(box.node, '.factory', 'backups'))).filter((name) => name.endsWith('-block-safety.md'));
+    expect(saved).toHaveLength(1);
+    expect(upgraded.stdout).toContain(`Kept the old text of block safety in .factory/backups/${saved[0]}.`);
+    expect(await readFile(join(box.node, '.factory', 'backups', saved[0] ?? '?'), 'utf8')).toContain('Skip permissions');
+
+    const started = await startFactory();
+    expect(started.code).toBe(0);
+    expect(await waitForLaunch()).toEqual(['launched']);
+  });
+
+  it('renders an intact safety block again with a notice on stderr when the prefix changed, and goes on (TP-125)', async () => {
+    await initNode();
+    const local = join(box.node, 'factory.local.yaml');
+    const before = await readFile(local, 'utf8');
+    expect(before).toContain('typed by');
+    await writeFile(local, before.replace('typed by', 'sent by'));
+    const result = await startFactory();
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('Rendered the block safety in coordinator/CLAUDE.md again');
+    expect(await readFile(join(box.node, 'coordinator', 'CLAUDE.md'), 'utf8')).toContain('sent by');
+    expect(await waitForLaunch()).toEqual(['launched']);
+  });
+
+  it('exits 4 for a link at coordinator/CLAUDE.md, and starts no session (TP-131)', async () => {
+    await initNode();
+    const path = join(box.node, 'coordinator', 'CLAUDE.md');
+    const text = await readFile(path, 'utf8');
+    const elsewhere = join(box.root, 'elsewhere.md');
+    await writeFile(elsewhere, text);
+    await rm(path);
+    await symlink(elsewhere, path);
+    const result = await startFactory();
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('coordinator/CLAUDE.md is a link');
+    expect((await tmux(['-S', socket, 'has-session', '-t', '=demo'])).code).not.toBe(0);
+    expect(await readFile(elsewhere, 'utf8')).toBe(text);
   });
 
   it('exits 2, names init and starts no session when factory.yaml has no factory.local.yaml next to it', async () => {

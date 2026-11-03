@@ -532,6 +532,12 @@ export const blockNames = {
 /** The blocks whose text a person writes in the setup folder. A missing one is added by `upgrade`. */
 export const setupBlockNames: readonly string[] = [blockNames.setup, blockNames.setupWorker];
 
+/** The setup file that the text of a setup block comes from, written from the node home. */
+export const setupFileOf = (block: string): string =>
+  block === blockNames.setupWorker
+    ? `${dirs.setup}/${dirs.roles}/${files.worker}`
+    : `${dirs.setup}/${files.setupCoordinator}`;
+
 /** The most bytes of a setup text that `init` and `upgrade` render into a session instruction file. A larger file is refused. */
 export const maxSetupTextBytes = 65_536;
 

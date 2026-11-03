@@ -1,12 +1,24 @@
 import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { renderBlock } from '../../src/blocks/managed.js';
 import { failure } from '../../src/cli/errors.js';
 import { runStart, type StartOptions } from '../../src/commands/start.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
+import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { env } from '../../src/names.js';
-import { createFakeDeps, exited, registerRoot, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
+import { safetyTemplateFor } from '../../src/templates/index.js';
+import { claudeFileText, softwareOwnerModes } from '../helpers/blocks.js';
+import {
+  createFakeDeps,
+  exited,
+  registerRoot,
+  withFailingWrites,
+  type FakeDeps,
+  type FetchHandler,
+  type RunCall,
+} from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { acceptTracked } from '../helpers/setup-acceptance.js';
@@ -15,6 +27,7 @@ import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers
 
 const HOME = '/w/node';
 const COORDINATOR = '/w/node/coordinator';
+const CLAUDE_FILE = '/w/node/coordinator/CLAUDE.md';
 const STATE_DIR = '/w/node/.factory';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
 const REMOVE_PROXY_VARIABLE = 'set-environment -t =demo -r ANTHROPIC_BASE_URL';
@@ -55,6 +68,8 @@ interface Setup {
   readonly registered?: boolean;
   /** False: the home has no coordinator folder. Default: true. */
   readonly coordinatorFolder?: boolean;
+  /** The text of coordinator/CLAUDE.md. Default: the blocks as the package renders them for the config. False: no file. */
+  readonly claudeFile?: string | false;
   /** The paths of the project folders that exist in the home. Default: the folder of each project of the config. */
   readonly projectFolders?: readonly string[];
   /** The paths that git tracks in the home. Default: none. */
@@ -115,6 +130,9 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
   if (setup.coordinatorFolder !== false) deps.seedDir(COORDINATOR);
+  if (setup.coordinatorFolder !== false && setup.claudeFile !== false) {
+    deps.seed(CLAUDE_FILE, setup.claudeFile ?? claudeFileText(config));
+  }
   for (const path of setup.projectFolders ?? config.recipe.projects.map((project) => project.path)) {
     deps.seedDir(`${HOME}/${path}`);
   }
@@ -163,29 +181,6 @@ describe('start:a new session', () => {
     expect(added).toEqual([STATE_DIR, '/w/node/web']);
     expect(added).not.toContain(HOME);
     expect(tmux.commands()).toContain('set-option -t =demo: @factory_home /w/node');
-  });
-
-  it('stops before any proxy check or tmux call when the coordinator folder is missing', async () => {
-    const fetched: string[] = [];
-    const { deps, tmux } = make({
-      coordinatorFolder: false,
-      config: withProxy('stop'),
-      fetch: (url) => {
-        fetched.push(url);
-        return ok({ status: 200 });
-      },
-    });
-    const result = await startFactory(deps);
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        kind: 'failure',
-        message: 'the coordinator folder coordinator is missing',
-        hint: 'Run "factory upgrade --overwrite coordinator --overwrite safety" to write it.',
-      },
-    });
-    expect(fetched).toEqual([]);
-    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
   });
 
   it('sets remain-on-exit in the call that starts the session, so the pane cannot end before the option applies', async () => {
@@ -774,7 +769,7 @@ describe('start:the registration check', () => {
     const other = { ...sampleConfig(), core: { ...sampleConfig().core, node: { id: 'other', layer: 1 } } };
     seedConfig(deps, '/w/other', other);
     registerRoot(deps, '/w/other', 'other');
-    deps.seedDir('/w/other/coordinator');
+    deps.seed('/w/other/coordinator/CLAUDE.md', claudeFileText(other));
     deps.seedDir(`${HOME}/deep`);
     deps.seedDir('/w/other/deep');
     const first = await runStart(deps, { home: undefined, dryRun: true });
@@ -1098,6 +1093,8 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
       '/state/factory/owner-records.json',
       JSON.stringify({ schema: 1, records: [{ kind: 'delegation', node: 'demo', root: HOME, point: 'merge', mode: 'delegated', at: '2030-01-02T03:04:05.678Z' }] }),
     );
+    // The safety block of the file follows the effective modes, which the record changes.
+    deps.seed(CLAUDE_FILE, claudeFileText(delegated, await effectiveModes(deps, HOME, delegated)));
     const seen: number[] = [];
     const watched: FakeDeps = {
       ...deps,
@@ -1119,5 +1116,184 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     const { deps } = make({ origin: 'own' });
     await succeeded(deps);
     expect(deps.warned).toEqual([]);
+  });
+});
+
+describe('start:the safety block (TP-43, TP-77, TP-107, TP-125, TP-131)', () => {
+  const STORE = '/state/factory/owner-records.json';
+  const REMEDY = 'factory upgrade --overwrite safety';
+  const RENDERED_NOTICE = 'Rendered the block safety in coordinator/CLAUDE.md again, because the package or a setting changed its text.';
+
+  const withPrefix = (prefix: string): FactoryConfig => {
+    const config = sampleConfig();
+    return { ...config, core: { ...config.core, owner: { ...config.core.owner, prefix } } };
+  };
+
+  const delegatedMerge = (): FactoryConfig => {
+    const config = sampleConfig();
+    return { ...config, core: { ...config.core, approval: { ...config.core.approval, merge: 'delegated' as const } } };
+  };
+
+  const delegationRecord = JSON.stringify({
+    schema: 1,
+    records: [{ kind: 'delegation', node: 'demo', root: HOME, point: 'merge', mode: 'delegated', at: '2030-01-02T03:04:05.678Z' }],
+  });
+
+  const rendered = claudeFileText(sampleConfig());
+  const editedSafety = rendered.replace('Never skip permissions', 'Skip permissions');
+  const withoutSafety = (text: string): string =>
+    text.slice(0, text.indexOf('<!-- factory:begin safety')) +
+    text.slice(text.indexOf('<!-- factory:end safety -->') + '<!-- factory:end safety -->'.length);
+
+  /** The result of a run that the safety block stops: exit 4, one remedy line, and nothing started. */
+  const stopOf = async (setup: Setup, options: Partial<StartOptions> = {}) => {
+    const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers, ...setup });
+    const before = new Map(deps.files);
+    const result = await startFactory(deps, options);
+    if (result.ok) throw new Error('expected a stop');
+    expect(result.error.kind).toBe('safety');
+    expect(result.error.hint).not.toContain('\n');
+    expect(deps.fetched).toEqual([]);
+    expect(tmux.calls).toEqual([]);
+    expect(deps.files).toEqual(before);
+    return result.error;
+  };
+
+  it('goes on and writes nothing when the block equals the text that the package renders', async () => {
+    const { deps } = make();
+    const output = await succeeded(deps);
+    expect(output.json).toMatchObject({ started: true });
+    expect(deps.files.get(CLAUDE_FILE)).toBe(rendered);
+    expect(deps.atomicWrites).toEqual([]);
+    expect(deps.warned.join(' ')).not.toContain('safety');
+  });
+
+  it('exits 4 for an edited block, in a real run and in a dry run, and names the command (TP-43)', async () => {
+    for (const dryRun of [false, true]) {
+      const error = await stopOf({ claudeFile: editedSafety }, { dryRun });
+      expect(error.message).toBe('the block safety in coordinator/CLAUDE.md was edited');
+      expect(error.hint).toBe(`Run "${REMEDY}" to replace the text. It keeps the old text in a backup file.`);
+    }
+  });
+
+  it('exits 4 for a safety block that is not in the file (TP-43)', async () => {
+    const error = await stopOf({ claudeFile: `Notes of mine.\n\n${withoutSafety(rendered)}` });
+    expect(error.message).toBe('the block safety is missing in coordinator/CLAUDE.md');
+    expect(error.hint).toBe(`Run "${REMEDY}" to add it.`);
+  });
+
+  it.each([
+    ['the file is not there', { claudeFile: false as const }],
+    ['the coordinator folder is not there', { coordinatorFolder: false }],
+  ])('exits 4 when %s (TP-43)', async (_name, setup) => {
+    const error = await stopOf(setup);
+    expect(error.message).toBe('the block safety is missing in coordinator/CLAUDE.md');
+    expect(error.hint).toBe(`Run "${REMEDY}" to add it.`);
+  });
+
+  it('exits 4 when the markers of the file do not parse, and names the file to fix', async () => {
+    const error = await stopOf({ claudeFile: '<!-- factory:begin safety v2 sha256=zz -->\n' });
+    expect(error.message).toContain('the block safety in coordinator/CLAUDE.md can not be read');
+    expect(error.hint).toBe('Fix the marker lines in coordinator/CLAUDE.md, then run "factory doctor".');
+  });
+
+  it('exits 4 for an edited prefix line, because the owner prefix is part of the block (TP-125)', async () => {
+    const text = rendered.replace(/- The owner prefix is `[^`]*`/, '- The owner prefix is `[From anyone]`');
+    expect(text).not.toBe(rendered);
+    const error = await stopOf({ claudeFile: text });
+    expect(error.message).toContain('was edited');
+  });
+
+  it('checks the block of a session that runs already, too', async () => {
+    const error = await stopOf({ claudeFile: editedSafety, tty: true, tmux: { sessions: { demo: HOME } } });
+    expect(error.hint).toContain(REMEDY);
+  });
+
+  it('renders an intact block again with a notice after a new prefix value in the local file, and goes on (TP-125)', async () => {
+    const config = withPrefix('[From {owner}, sent by {node}, {date}]');
+    const { deps } = make({ config, claudeFile: `My own rules.\n\n${claudeFileText(sampleConfig())}\nMore of my rules.\n` });
+    const output = await succeeded(deps);
+    expect(output.json).toMatchObject({ started: true });
+    expect(deps.files.get(CLAUDE_FILE)).toBe(`My own rules.\n\n${claudeFileText(config)}\nMore of my rules.\n`);
+    expect(deps.files.get(CLAUDE_FILE)).toContain('sent by');
+    expect(deps.warned).toContain(RENDERED_NOTICE);
+  });
+
+  it('renders the block again, with a notice, after a delegation record goes away (TP-77)', async () => {
+    const config = delegatedMerge();
+    const { deps } = make({ config });
+    deps.seed(STORE, delegationRecord);
+    const delegatedModes = await effectiveModes(deps, HOME, config);
+    const safetyOf = (modes: typeof delegatedModes): string => {
+      const block = renderBlock(safetyTemplateFor(config, modes));
+      if (!block.ok) throw new Error(block.error.message);
+      return block.value;
+    };
+    expect(safetyOf(delegatedModes)).not.toBe(safetyOf(softwareOwnerModes));
+    deps.seed(CLAUDE_FILE, claudeFileText(config, delegatedModes));
+    deps.files.delete(STORE);
+    const output = await succeeded(deps);
+    expect(output.json).toMatchObject({ started: true });
+    // Only the safety block is rendered again; the role block is the business of upgrade.
+    expect(deps.files.get(CLAUDE_FILE)).toContain(safetyOf(softwareOwnerModes));
+    expect(deps.files.get(CLAUDE_FILE)).not.toContain(safetyOf(delegatedModes));
+    expect(deps.warned).toContain(RENDERED_NOTICE);
+  });
+
+  it('renders the block again, with a notice, when the package renders another text (TP-77)', async () => {
+    const other = renderBlock({ name: 'safety', version: 2, body: 'An older text of the package.' });
+    if (!other.ok) throw new Error(other.error.message);
+    const { deps } = make({ claudeFile: `${withoutSafety(rendered).trimEnd()}\n\n${other.value}\n` });
+    await succeeded(deps);
+    expect(deps.files.get(CLAUDE_FILE)).toContain('Never skip permissions');
+    expect(deps.files.get(CLAUDE_FILE)).not.toContain('An older text of the package.');
+    expect(deps.warned).toContain(RENDERED_NOTICE);
+  });
+
+  it('writes nothing in a dry run, and reports that a real run renders the block again', async () => {
+    const config = withPrefix('[From {owner}, sent by {node}, {date}]');
+    const { deps } = make({ config, claudeFile: claudeFileText(sampleConfig()) });
+    const before = deps.files.get(CLAUDE_FILE);
+    const output = await succeeded(deps, { dryRun: true });
+    expect(deps.files.get(CLAUDE_FILE)).toBe(before);
+    expect(deps.atomicWrites).toEqual([]);
+    expect(output.warnings).toContain('The block safety in coordinator/CLAUDE.md is out of date. A real run renders it again.');
+  });
+
+  it('renders the safety block only: another block that differs stays as it is', async () => {
+    const other = renderBlock({ name: 'coordinator', version: 1, body: 'An older coordinator text.' });
+    if (!other.ok) throw new Error(other.error.message);
+    const claudeFile = `${other.value}\n\n${rendered.slice(rendered.indexOf('<!-- factory:begin safety'))}`;
+    const { deps } = make({ claudeFile });
+    await succeeded(deps);
+    expect(deps.files.get(CLAUDE_FILE)).toBe(claudeFile);
+    expect(deps.warned).not.toContain(RENDERED_NOTICE);
+  });
+
+  it('stops with a failure, and starts nothing, when the new text can not be written', async () => {
+    const config = withPrefix('[From {owner}, sent by {node}, {date}]');
+    const { deps, tmux } = make({ config, claudeFile: claudeFileText(sampleConfig()) });
+    const result = await startFactory(withFailingWrites(deps, (path) => path === CLAUDE_FILE));
+    expect(result.ok).toBe(false);
+    expect(tmux.calls.some((call) => call.args[0] === 'new-session')).toBe(false);
+  });
+
+  it('exits 4 for a link at coordinator/CLAUDE.md, and reads nothing through it (TP-131)', async () => {
+    const error = await stopOf({ links: { [CLAUDE_FILE]: '/outside/CLAUDE.md' } });
+    expect(error.message).toBe('coordinator/CLAUDE.md is a link, so factory does not use it');
+    expect(error.hint).toContain('Replace the link with a plain file');
+  });
+
+  it('exits 4 for a link at the coordinator folder (TP-131)', async () => {
+    const error = await stopOf({ links: { [COORDINATOR]: '/outside' } });
+    expect(error.message).toBe('coordinator is a link, so factory does not use it');
+  });
+
+  it('does not write through a link when the text differs', async () => {
+    const config = withPrefix('[From {owner}, sent by {node}, {date}]');
+    const { deps } = make({ config, claudeFile: claudeFileText(sampleConfig()), links: { [CLAUDE_FILE]: '/outside/CLAUDE.md' } });
+    const result = await startFactory(deps);
+    expect(result.ok).toBe(false);
+    expect(deps.files.has('/outside/CLAUDE.md')).toBe(false);
   });
 });

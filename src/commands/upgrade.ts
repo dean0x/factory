@@ -20,7 +20,9 @@ import { effectiveModes } from '../core/owner-record.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
+import { blockRenamesOf } from '../migrate/files.js';
 import {
+  blockNames,
   commands,
   commandText,
   dirs,
@@ -28,6 +30,7 @@ import {
   flagText,
   homeIndex,
   localFileModes,
+  overwriteCommand,
   places,
   program,
   roles,
@@ -38,13 +41,16 @@ import { readSetupTexts } from '../state/setup-text.js';
 import {
   applyMoves,
   backup,
+  backupBlocks,
   blockFileTexts,
   configFileText,
   localFileText,
   pruneBackups,
+  pruneBlockBackups,
   restore,
   stateFileText,
   writeAll,
+  type BlockBackup,
   type Moved,
   type NewFile,
   type Written,
@@ -160,6 +166,13 @@ export const runUpgrade = async (
   options: UpgradeOptions,
   upgrade: UpgradeSpec = currentSpec,
 ): Promise<CliResult<CommandOutput>> => {
+  // The safety rules are a security boundary, so only the owner replaces the block, outside a session, also with yes.
+  if (inFactorySession(deps) && options.overwrite.includes(blockNames.safety)) {
+    return safetyRefusal(
+      `a ${places.session} can not replace the ${blockNames.safety} block`,
+      `Run "${overwriteCommand(blockNames.safety)}" in a terminal window outside a ${places.session}.`,
+    );
+  }
   const located = await locateHomeFolder(deps, options.home, readNodeIdentity, { allowUnregisteredSchema1: true });
   if (!located.ok) return located;
   const home = located.value.home;
@@ -196,8 +209,9 @@ export const runUpgrade = async (
   if (!blockSet.ok) return blockSet;
 
   const known = blockSet.value.templates.map((template) => template.name);
-  const oldNames = [...upgrade.files.flatMap((step) => step.renames), ...blockSet.value.renames].map((rename) => rename.from);
-  const unknown = options.overwrite.filter((name) => !known.includes(name) && !oldNames.includes(name));
+  // A block can hold an old name from an earlier run, so the old names of every step count, not those of this run only.
+  const renames = [...blockRenamesOf(upgrade.files), ...blockSet.value.renames];
+  const unknown = options.overwrite.filter((name) => !known.includes(name) && !renames.some((rename) => rename.from === name));
   if (unknown.length > 0) {
     return usageError(`${flagText(flags.overwrite)}: unknown block ${unknown.join(', ')}`, `The blocks are: ${known.join(', ')}.`);
   }
@@ -205,7 +219,7 @@ export const runUpgrade = async (
   // A block that gets a new name is named by its old name or its new name.
   const named = (status: BlockStatus): boolean =>
     options.overwrite.some((name) => name === status.template.name || name === renamedFromOf(status));
-  const pending = { ...files, renames: [...files.renames, ...blockSet.value.renames] };
+  const pending = { moves: files.moves, renames };
   const blocks = settleSetupBlocks(
     (await inspectBlocks(deps, home, blockSet.value.templates, pending)).map((status) => planBlock(status, named(status))),
   );
@@ -251,10 +265,24 @@ export const runUpgrade = async (
       renamedFrom: renamedFromOf(plan.status) ?? null,
     })),
   };
-  const done = (extra: readonly OutLine[], backupPath: string | null, committed: boolean): CliResult<CommandOutput> =>
+  const done = (
+    extra: readonly OutLine[],
+    backupPath: string | null,
+    committed: boolean,
+    blockBackups: readonly BlockBackup[] = [],
+  ): CliResult<CommandOutput> =>
     ok({
       lines: [...lines, ...extra],
-      json: { schema: schemaIds.upgrade, home, dryRun: options.dryRun, changed, ...summary, backup: backupPath, committed },
+      json: {
+        schema: schemaIds.upgrade,
+        home,
+        dryRun: options.dryRun,
+        changed,
+        ...summary,
+        backup: backupPath,
+        blockBackups: blockBackups.map((saved) => saved.path),
+        committed,
+      },
       warnings: [...warnings, ...extra.filter((line) => line.level === 'warn').map((line) => line.text)],
       failed: false,
     });
@@ -290,6 +318,9 @@ export const runUpgrade = async (
   const backupDir = await backup(deps, home);
   if (!backupDir.ok) return backupDir;
   const backupPath = relative(home, backupDir.value);
+  // The old text of a block that this run replaces is kept before the first write. A stop here changed no file.
+  const savedBlocks = await backupBlocks(deps, home, changes);
+  if (!savedBlocks.ok) return savedBlocks;
 
   const written: Written[] = [];
   const moved: Moved[] = [];
@@ -368,10 +399,14 @@ export const runUpgrade = async (
   }
 
   const count = written.length + moved.length;
-  const pruned = await pruneBackups(deps, home, backupDir.value);
+  const pruned = [...(await pruneBackups(deps, home, backupDir.value)), ...(await pruneBlockBackups(deps, home))];
   const indexed = await indexUpgraded(deps, home, origin);
   return done(
     [
+      ...savedBlocks.value.map((saved): OutLine => ({
+        level: 'ok',
+        text: `Kept the old text of block ${saved.block} in ${saved.path}.`,
+      })),
       { level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` },
       ...(pruned.length === 0
         ? []
@@ -380,5 +415,6 @@ export const runUpgrade = async (
     ],
     backupPath,
     stateChanged,
+    savedBlocks.value,
   );
 };

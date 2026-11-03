@@ -1,12 +1,12 @@
 import { dirname, join, relative } from 'node:path';
 import { fileOfTarget, renamedFromOf } from '../blocks/status.js';
 import { appendBlocks, parseBlocks, renderBlock, replaceBlock, type ParsedBlock } from '../blocks/managed.js';
-import { failure, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
 import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
-import { dirs, files, stateKeys } from '../names.js';
+import { commands, commandText, dirs, files, localFileModes, program, stateKeys } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import type { BlockPlan, FilePlan, LocalPlan, MovePlan } from './plan.js';
 import type { UpgradeFile, UpgradeSpec } from './spec.js';
@@ -68,9 +68,15 @@ const nextStateRaw = (migrated: unknown, changes: readonly BlockPlan[]): CliResu
 
 const timestampOf = (deps: Deps): string => deps.now().toISOString().replace(/[:.]/g, '-');
 
+const STAMP_PATTERN = '\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z';
+
 /** The name of a backup folder: a timestamp. Any other name in the backups folder is not ours. */
-const BACKUP_NAME = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/;
+const BACKUP_NAME = new RegExp(`^${STAMP_PATTERN}$`);
 export const BACKUPS_KEPT = 5;
+
+/** The name of the backup file of a block: the timestamp, the word block and the name of the block. */
+const BLOCK_BACKUP_NAME = new RegExp(`^${STAMP_PATTERN}-block-[a-z][a-z0-9-]{0,31}\\.md$`);
+export const BLOCK_BACKUPS_KEPT = 10;
 
 const copyIntoBackup = async (deps: Deps, layout: Layout, target: string): Promise<CliResult<void>> => {
   const copies: readonly (readonly [string, string, readonly string[]])[] = [
@@ -128,6 +134,62 @@ export const pruneBackups = async (deps: Deps, home: string, current: string): P
   const older = names.value.filter((name) => BACKUP_NAME.test(name) && join(backupsDir, name) !== current);
   const problems: string[] = [];
   for (const name of older.slice(0, Math.max(0, older.length - (BACKUPS_KEPT - 1)))) {
+    const removed = await deps.fs.remove(join(backupsDir, name));
+    if (!removed.ok) problems.push(removed.error.message);
+  }
+  return problems;
+};
+
+/** The backup file of one block: the name that the file held for the block, and the path relative to the home. */
+export interface BlockBackup {
+  readonly block: string;
+  readonly path: string;
+}
+
+/**
+ * Keep the old text of each edited block that the upgrade replaces, one new file for each block in the backups folder,
+ * before anything is written. The create-only write never replaces a file and never follows a link, so a file or a link at
+ * the path is a stop (exit 4). The text is the body, as it was in the block.
+ */
+export const backupBlocks = async (
+  deps: Deps,
+  home: string,
+  plans: readonly BlockPlan[],
+): Promise<CliResult<readonly BlockBackup[]>> => {
+  const { backupsDir } = layoutOf(home);
+  const stamp = timestampOf(deps);
+  const saved: BlockBackup[] = [];
+  for (const plan of plans) {
+    if (plan.action !== 'replace' || plan.status.kind !== 'edited') continue;
+    const block = renamedFromOf(plan.status) ?? plan.template.name;
+    const path = join(backupsDir, `${stamp}-block-${block}.md`);
+    const folder = await deps.fs.mkdir(backupsDir);
+    if (!folder.ok) return folder;
+    const created = await deps.fs.writeTextExclusive(path, `${plan.status.block.body}\n`, localFileModes.private);
+    if (!created.ok) return created;
+    if (!created.value) {
+      return safetyRefusal(
+        `${relative(home, path)} exists already, or is a link, so ${program} does not write the backup there`,
+        `Move it away, then run "${commandText(commands.upgrade)}" again.`,
+      );
+    }
+    saved.push({ block, path: relative(home, path) });
+  }
+  return ok(saved);
+};
+
+/**
+ * Remove the oldest backup files of blocks, so that at most `BLOCK_BACKUPS_KEPT` stay. A file with another name stays.
+ * Returns the messages of the failures.
+ */
+export const pruneBlockBackups = async (deps: Deps, home: string): Promise<readonly string[]> => {
+  const { backupsDir } = layoutOf(home);
+  const names = await deps.fs.list(backupsDir);
+  if (!names.ok) return [names.error.message];
+  // The timestamp comes first in the name, so the sorted names run from the oldest to the newest.
+  const ours = names.value.filter((name) => BLOCK_BACKUP_NAME.test(name)).sort();
+  const problems: string[] = [];
+  for (const name of ours.slice(0, Math.max(0, ours.length - BLOCK_BACKUPS_KEPT))) {
     const removed = await deps.fs.remove(join(backupsDir, name));
     if (!removed.ok) problems.push(removed.error.message);
   }

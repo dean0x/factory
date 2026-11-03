@@ -214,6 +214,51 @@ describe('factory upgrade (built binary)', () => {
     expect(await box.read(path)).toBe(edited);
   });
 
+  it('exits 4 for the safety block with FACTORY_SESSION set, also with yes, and writes nothing (TP-132)', async () => {
+    await initNode();
+    const path = join(box.node, ...COORDINATOR_FILE);
+    const text = await box.read(path);
+    const at = text.indexOf('<!-- factory:begin safety');
+    const edited = `${text.slice(0, at)}${text.slice(at).replace('Never skip permissions', 'Skip permissions')}`;
+    expect(edited).not.toBe(text);
+    await writeFile(path, edited);
+    const backups = join(box.node, '.factory', 'backups');
+    const before = existsSync(backups) ? (await readdir(backups)).sort() : [];
+
+    for (const extra of [[], ['--yes'], ['--dry-run']]) {
+      const result = await box.run(['upgrade', '--home', box.node, '--overwrite', 'safety', ...extra], {
+        env: { FACTORY_SESSION: 'demo' },
+      });
+      expect(result.code).toBe(4);
+      expect(result.stderr).toContain('factory upgrade --overwrite safety');
+      expect(result.stderr).toContain('terminal window');
+    }
+    expect(await box.read(path)).toBe(edited);
+    expect(existsSync(backups) ? (await readdir(backups)).sort() : []).toEqual(before);
+  });
+
+  it('puts back an edited setup block with no flag, and keeps the old text in a backup file (TP-142)', async () => {
+    await initNode();
+    const path = join(box.node, ...COORDINATOR_FILE);
+    const text = await box.read(path);
+    const edited = text.replace('Write your own text', 'Changed by hand');
+    expect(edited).not.toBe(text);
+    await writeFile(path, edited);
+
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(0);
+    expect(doctor.stdout).toContain('setup (edited');
+    expect(doctor.stdout).toContain('setup/coordinator.md');
+
+    const upgraded = await box.run(['upgrade', '--home', box.node]);
+    expect(upgraded.code).toBe(0);
+    expect(await box.read(path)).toBe(text);
+    const saved = (await readdir(join(box.node, '.factory', 'backups'))).filter((name) => name.endsWith('-block-setup.md'));
+    expect(saved).toHaveLength(1);
+    expect(await box.read(join(box.node, '.factory', 'backups', saved[0] ?? '?'))).toContain('Changed by hand');
+    expect((await box.run(['doctor', '--home', box.node])).stdout).toContain('5 managed blocks are intact');
+  });
+
   it('replaces the edited block when it is named, and the doctor finds all blocks intact', async () => {
     await initNode();
     await editCoordinator();
@@ -240,7 +285,8 @@ describe('factory upgrade (built binary)', () => {
     const upgraded = await box.run(['upgrade', '--home', box.node, '--overwrite', 'coordinator']);
     expect(upgraded.code).toBe(0);
 
-    const names = (await readdir(join(stateDir, 'backups'))).sort();
+    // The backup file of the replaced block is not a backup folder, and the count of 5 does not cover it.
+    const names = (await readdir(join(stateDir, 'backups'))).filter((name) => !name.includes('-block-')).sort();
     expect(names).toHaveLength(5);
     expect(names.slice(0, 4)).toEqual([3, 4, 5, 6].map((day) => `2020-01-0${day}T00-00-00-000Z`));
     const saved = await readdir(join(stateDir, 'backups', names[4] ?? '?', '.factory'));
@@ -462,6 +508,27 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     await editProtocol(state);
 
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes', '--overwrite', 'protocol']);
+    expect(upgraded.code).toBe(0);
+    expect(await box.read(join(state, 'roles', 'worker.md'))).not.toContain('My own rule for the workers.');
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+  });
+
+  it('names the kept protocol block again in the next run, and replaces it when it is named, and the doctor exits 0', async () => {
+    const state = await prepareOldNode();
+    await editProtocol(state);
+    expect((await box.run(['upgrade', '--home', box.node, '--yes'])).code).toBe(0);
+
+    const again = await box.run(['upgrade', '--home', box.node]);
+    expect(again.code).toBe(0);
+    expect(again.stderr).toContain('block protocol was edited');
+    expect(again.stderr).toContain('--overwrite protocol');
+    expect(again.stderr).not.toContain('is missing');
+
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.stdout).toContain('protocol (edited');
+    expect(doctor.stdout).not.toContain('worker (missing');
+
+    const upgraded = await box.run(['upgrade', '--home', box.node, '--overwrite', 'protocol']);
     expect(upgraded.code).toBe(0);
     expect(await box.read(join(state, 'roles', 'worker.md'))).not.toContain('My own rule for the workers.');
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);

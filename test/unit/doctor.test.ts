@@ -220,17 +220,85 @@ describe('doctor: blocks', () => {
     expect(result.text).not.toContain('safety');
   });
 
-  it('warns when a block or its file is missing, and when the markers are broken', async () => {
+  it('warns when a role block or its file is missing', async () => {
     const deps = await initialized();
     deps.files.delete(`${HOME}/.factory/roles/worker.md`);
     const missing = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
     expect(missing.level).toBe('warn');
     expect(missing.text).toContain('worker (missing');
+  });
 
+  it('fails when the markers of the file that holds the safety block are broken', async () => {
+    const deps = await initialized();
     deps.files.set(CLAUDE_MD, '<!-- factory:begin x v1 sha256=zz -->\n');
     const broken = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
+    expect(broken.level).toBe('fail');
     expect(broken.text).toContain('coordinator (malformed');
     expect(broken.text).toContain('safety (malformed');
+  });
+
+  describe('the safety block (TP-43, TP-125)', () => {
+    const editSafety = (deps: FakeDeps): void => {
+      const claude = deps.files.get(CLAUDE_MD) ?? '';
+      const at = claude.indexOf('<!-- factory:begin safety');
+      expect(at).toBeGreaterThan(-1);
+      deps.files.set(CLAUDE_MD, `${claude.slice(0, at)}${claude.slice(at).replace('Never skip permissions', 'Skip permissions')}`);
+    };
+
+    it('fails when the text does not match the hash of its marker, and names the command that puts it back and keeps the old text', async () => {
+      const deps = await initialized();
+      editSafety(deps);
+      const result = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('safety (edited, in /w/node/coordinator/CLAUDE.md)');
+      expect(result.text).toContain('Run "factory upgrade --overwrite safety" to replace the text. It keeps the old text in a backup file.');
+    });
+
+    it('fails when the file has no safety block', async () => {
+      const deps = await initialized();
+      const claude = deps.files.get(CLAUDE_MD) ?? '';
+      const at = claude.indexOf('<!-- factory:begin safety');
+      const end = claude.indexOf('<!-- factory:end safety -->') + '<!-- factory:end safety -->'.length;
+      deps.files.set(CLAUDE_MD, `${claude.slice(0, at)}${claude.slice(end)}`);
+      const result = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('safety (missing, in /w/node/coordinator/CLAUDE.md)');
+      expect(result.text).toContain('Run "factory upgrade --overwrite safety" to add it.');
+    });
+
+    it('fails when the file is not there', async () => {
+      const deps = await initialized();
+      deps.files.delete(CLAUDE_MD);
+      const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('safety (missing');
+    });
+
+    it('fails the node check and the whole run for an edited block, and names the command in one line', async () => {
+      const deps = await initialized();
+      editSafety(deps);
+      const output = await doctor(deps);
+      expect(output.failed).toBe(true);
+      const blocks = output.lines.find((line) => line.text.startsWith('blocks '));
+      expect(blocks?.level).toBe('fail');
+      expect(blocks?.text).toContain('factory upgrade --overwrite safety');
+    });
+
+    it('fails for an edited prefix line, because the owner prefix is part of the block', async () => {
+      const deps = await initialized();
+      const claude = deps.files.get(CLAUDE_MD) ?? '';
+      expect(claude).toContain('- The owner prefix is');
+      deps.files.set(CLAUDE_MD, claude.replace(/- The owner prefix is `[^`]*`/, '- The owner prefix is `[From anyone]`'));
+      const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('safety (edited');
+    });
+
+    it('does not fail for an edited role block, which stays a warning', async () => {
+      const deps = await initialized();
+      deps.files.set(CLAUDE_MD, (deps.files.get(CLAUDE_MD) ?? '').replace('Coordinate. Do not produce.', 'Do as you like.'));
+      expect((await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME))).level).toBe('warn');
+    });
   });
 
   it('keeps the text of the owner out of the verdict', async () => {
@@ -1728,13 +1796,36 @@ describe('doctor: the setup text and the rendered blocks (TP-104, TP-76)', () =>
     expect(result.text).not.toContain('--overwrite');
   });
 
-  it('warns that an edited setup block stays as it is, and names the overwrite command', async () => {
+  it('warns that an edited setup block is put back by upgrade, and names the setup file (TP-142)', async () => {
     const deps = await initialized();
     deps.files.set(CLAUDE_MD, (deps.files.get(CLAUDE_MD) ?? '').replace('Write your own text', 'Changed by hand'));
     const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('setup (edited');
-    expect(result.text).toContain('run "factory upgrade --overwrite setup" to replace the text');
+    expect(result.text).toContain('setup (edited, in /w/node/coordinator/CLAUDE.md)');
+    expect(result.text).toContain(
+      'Move your edit to setup/coordinator.md, then run "factory upgrade". It puts back the text of that file and keeps the old text in a backup file.',
+    );
+    expect(result.text).not.toContain('--overwrite');
+  });
+
+  it('names the worker setup file for an edited setup-worker block', async () => {
+    const deps = await initialized();
+    deps.files.set(`${HOME}/.factory/roles/worker.md`, (deps.files.get(`${HOME}/.factory/roles/worker.md`) ?? '').replace('Write your own text', 'Changed by hand'));
+    const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('setup-worker (edited');
+    expect(result.text).toContain('Move your edit to setup/roles/worker.md');
+  });
+
+  it('names a block under the old name of an earlier version, and not a missing block, after an upgrade kept it', async () => {
+    const deps = await initialized();
+    const worker = renderBlock({ name: 'protocol', version: 1, body: 'Old rules.' });
+    if (!worker.ok) throw new Error(worker.error.message);
+    deps.files.set(`${HOME}/.factory/roles/worker.md`, `${worker.value.replace('Old rules.', 'Edited rules.')}\n`);
+    const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(result.text).toContain('protocol (edited, in /w/node/.factory/roles/worker.md): the layer of this node needs the block worker');
+    expect(result.text).toContain('Run "factory upgrade --overwrite protocol" to replace it.');
+    expect(result.text).not.toMatch(/(^|; )worker \(missing/);
   });
 
   it('warns that a setup block that is not there is added by upgrade', async () => {

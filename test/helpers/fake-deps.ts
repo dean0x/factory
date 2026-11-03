@@ -177,7 +177,8 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       },
       writeTextExclusive: async (path, text, mode) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
-        if (kindOf(path) !== null) return ok(false);
+        // A file, a folder and a link at the path all count as existing, and a link is not followed.
+        if (kindOf(path) !== null || Object.hasOwn(options.links ?? {}, path)) return ok(false);
         files.set(path, text);
         modes.set(path, mode);
         touch(path);

@@ -65,6 +65,12 @@ export const fileSteps: readonly FileStep[] = [
   },
 ];
 
+/**
+ * The old names of the managed blocks that any step renamed. A file can hold a block under its old name after a step,
+ * for example a block that a person edited, which the step kept. So the names count at every state version.
+ */
+export const blockRenamesOf = (steps: readonly FileStep[]): readonly BlockRename[] => steps.flatMap((step) => step.renames);
+
 /** The steps that take the state from version `from` to version `to`, in order. */
 export const stepsBetween = (steps: readonly FileStep[], from: number, to: number): readonly FileStep[] =>
   steps.filter((step) => step.from >= from && step.to <= to).sort((left, right) => left.from - right.from);

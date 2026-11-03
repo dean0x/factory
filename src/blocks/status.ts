@@ -1,5 +1,6 @@
 import type { Deps } from '../core/deps.js';
 import type { BlockRename } from '../migrate/files.js';
+import { blockNames } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import type { BlockTemplate, BlockTarget } from '../templates/types.js';
 import { parseBlocks, verifyBlock, type ParsedBlock } from './managed.js';
@@ -35,6 +36,43 @@ export const NO_PENDING_FILES: PendingFiles = { moves: [], renames: [] };
 /** The old name of a block that the file holds under it, or undefined. */
 export const renamedFromOf = (status: BlockStatus): string | undefined =>
   status.kind === 'intact' || status.kind === 'edited' ? status.renamedFrom : undefined;
+
+/**
+ * What the safety block is, against the text that the package renders for the node. Only an equal block needs no action.
+ * A block that is intact but different is rendered again. An edited, a missing and a malformed block stop a launch: the
+ * safety rules are a security boundary.
+ */
+export type SafetyState = 'equal' | 'different' | 'edited' | 'missing' | 'malformed';
+
+export const safetyStateOf = (status: BlockStatus): SafetyState => {
+  switch (status.kind) {
+    case 'intact':
+      return status.block.body === status.template.body ? 'equal' : 'different';
+    case 'edited':
+    case 'missing':
+    case 'malformed':
+      return status.kind;
+    default: {
+      const unreachable: never = status;
+      return unreachable;
+    }
+  }
+};
+
+/**
+ * The status of one block. A list of one template gives a list of one status; if it did not, the block counts as missing,
+ * so a caller that stops on a missing block fails closed.
+ */
+export const inspectBlock = async (deps: Deps, home: string, template: BlockTemplate): Promise<BlockStatus> => {
+  const [status] = await inspectBlocks(deps, home, [template]);
+  return status ?? { kind: 'missing', template, file: fileOfTarget(layoutOf(home), template.target), fileAbsent: true };
+};
+
+const STOPPING_STATES: readonly SafetyState[] = ['edited', 'missing', 'malformed'];
+
+/** True for the safety block when it is edited, missing or malformed: `start` exits 4 and `doctor` fails. */
+export const isSafetyStop = (status: BlockStatus): boolean =>
+  status.template.name === blockNames.safety && STOPPING_STATES.includes(safetyStateOf(status));
 
 export const fileOfTarget = (layout: Layout, target: BlockTarget): string =>
   target === 'claudeFile' ? layout.claudeMd : layout.workerMd;

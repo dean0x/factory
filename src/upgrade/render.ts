@@ -7,13 +7,25 @@ import type { ApprovalModes } from '../recipes/index.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
 import type { SetupTexts } from '../templates/types.js';
 import { blockFileTexts, writeAll, type Written } from './apply.js';
-import { planBlock } from './plan.js';
+import { planBlock, type BlockPlan } from './plan.js';
 
 /** The blocks of the coordinator file leave out the setup texts: a render of the modes never carries a text that is not accepted. */
 const NO_SETUP: SetupTexts = { coordinator: null, worker: null };
 
 /** The actions of `planBlock` that need no word from the owner: the block is current, it is rendered, or it is not there. */
 const QUIET: readonly string[] = ['current', 'render', 'skip-missing'];
+
+/**
+ * Write the new text of each file that holds one of these planned blocks: the same edit and the same atomic write as
+ * `upgrade`. The value is true when a file was written.
+ */
+export const writeBlockPlans = async (deps: Deps, home: string, changes: readonly BlockPlan[]): Promise<CliResult<boolean>> => {
+  const texts = await blockFileTexts(deps, home, changes);
+  if (!texts.ok) return texts;
+  const written: Written[] = [];
+  const wrote = await writeAll(deps, home, texts.value, written);
+  return wrote.ok ? ok(written.length > 0) : wrote;
+};
 
 export interface CoordinatorRender {
   /** True when the render wrote the coordinator file. */
@@ -40,9 +52,6 @@ export const renderCoordinatorText = async (
   const changes = plans.filter((plan) => plan.action === 'render');
   if (changes.length === 0) return ok({ wrote: false, kept });
 
-  const texts = await blockFileTexts(deps, home, changes);
-  if (!texts.ok) return texts;
-  const written: Written[] = [];
-  const wrote = await writeAll(deps, home, texts.value, written);
-  return wrote.ok ? ok({ wrote: written.length > 0, kept }) : wrote;
+  const wrote = await writeBlockPlans(deps, home, changes);
+  return wrote.ok ? ok({ wrote: wrote.value, kept }) : wrote;
 };

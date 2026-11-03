@@ -1,4 +1,5 @@
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { inspectBlock, safetyStateOf } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
@@ -6,7 +7,9 @@ import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
+import { effectiveModes } from '../core/owner-record.js';
 import { err, ok } from '../core/result.js';
+import { requireNoLinks } from '../core/root-paths.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
 import {
@@ -27,9 +30,11 @@ import {
   commandText,
   dirs,
   env,
+  files,
   flags,
   flagText,
   keys,
+  overwriteCommand,
   program,
   roles,
   schemaIds,
@@ -38,6 +43,9 @@ import {
 } from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
+import { safetyTemplateFor } from '../templates/index.js';
+import { planBlock } from '../upgrade/plan.js';
+import { writeBlockPlans } from '../upgrade/render.js';
 import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
 
 export interface StartOptions {
@@ -193,18 +201,61 @@ const chooseProxy = async (deps: Deps, config: FactoryConfig): Promise<CliResult
   );
 };
 
+/**
+ * The safety block, for every launch (design 4.8). `start` never launches with a safety body that differs from the text
+ * that the package renders for the config, the effective approval modes and the owner prefix:
+ * - equal: no action;
+ * - intact but different (the package, a mode or the prefix changed): render the block again, print a notice and go on;
+ *   a dry run writes nothing and returns a note;
+ * - edited, missing or not readable: exit 4, because the safety rules are a security boundary.
+ * A link at the coordinator file is a stop first: nothing is read or written through it. The coordinator folder exists
+ * after this check, because a missing file is a missing block. The value is the notes of a dry run.
+ */
+const requireSafetyBlock = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  dryRun: boolean,
+): Promise<CliResult<readonly string[]>> => {
+  const { claudeMd } = layoutOf(home);
+  const plain = await requireNoLinks(deps, home, [claudeMd]);
+  if (!plain.ok) return plain;
+  const name = blockNames.safety;
+  const file = join(dirs.coordinator, files.claudeMd);
+  const status = await inspectBlock(deps, home, safetyTemplateFor(config, await effectiveModes(deps, home, config)));
+  const state = safetyStateOf(status);
+  switch (state) {
+    case 'equal':
+      return ok([]);
+    case 'different': {
+      if (dryRun) return ok([`The block ${name} in ${file} is out of date. A real run renders it again.`]);
+      const written = await writeBlockPlans(deps, home, [planBlock(status, false)]);
+      if (!written.ok) return written;
+      deps.warn(`Rendered the block ${name} in ${file} again, because the package or a setting changed its text.`);
+      return ok([]);
+    }
+    case 'edited':
+      return safetyRefusal(
+        `the block ${name} in ${file} was edited`,
+        `Run "${overwriteCommand(name)}" to replace the text. It keeps the old text in a backup file.`,
+      );
+    case 'missing':
+      return safetyRefusal(`the block ${name} is missing in ${file}`, `Run "${overwriteCommand(name)}" to add it.`);
+    case 'malformed':
+      return safetyRefusal(
+        `the block ${name} in ${file} can not be read${status.kind === 'malformed' ? `: ${status.message}` : ''}`,
+        `Fix the marker lines in ${file}, then run "${commandText(commands.doctor)}".`,
+      );
+    default: {
+      const unreachable: never = state;
+      return unreachable;
+    }
+  }
+};
+
 /** The tmux calls that start the session, once with the real proxy URL and once with the label of the proxy. */
 const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<StartPlan>> => {
   const { coordinatorDir, stateDir } = layoutOf(home);
-  // tmux starts a window in another folder when its working folder is missing, and that folder loads other instruction files.
-  const kind = await deps.fs.stat(coordinatorDir);
-  if (!kind.ok) return kind;
-  if (kind.value !== 'dir') {
-    return failure(
-      `the ${roles.coordinator} folder ${dirs.coordinator} is missing`,
-      `Run "${commandText(commands.upgrade)} ${flagText(flags.overwrite)} ${blockNames.coordinator} ${flagText(flags.overwrite)} ${blockNames.safety}" to write it.`,
-    );
-  }
   const proxy = await chooseProxy(deps, config);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
@@ -367,6 +418,9 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
   for (const notice of rootNotices(scan)) deps.warn(notice);
   const clean = requireRootClean(scan);
   if (!clean.ok) return clean;
+  // The safety block comes after the root checks and before any tool check, proxy request or launch, also in a dry run.
+  const safety = await requireSafetyBlock(deps, home, loaded.value, dryRun);
+  if (!safety.ok) return safety;
 
   const problems = await toolProblems(deps, !dryRun);
   if (!dryRun && problems.length > 0) {
@@ -387,7 +441,7 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
 
-  if (dryRun) return ok(dryRunOutput({ home, id, exists, how, problems, plan: planned, notes: notes.value }));
+  if (dryRun) return ok(dryRunOutput({ home, id, exists, how, problems, plan: planned, notes: [...notes.value, ...safety.value] }));
 
   if (planned !== null) {
     const started = await startSession(deps, id, planned.steps);

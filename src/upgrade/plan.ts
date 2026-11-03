@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { parseBlocks, sha256Hex } from '../blocks/managed.js';
-import { renamedFromOf, type BlockStatus, type PendingFiles } from '../blocks/status.js';
+import { renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
@@ -21,6 +21,7 @@ import {
   overwriteCommand,
   program,
   setupBlockNames,
+  setupFileOf,
 } from '../names.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
@@ -41,9 +42,10 @@ export type FilePlan =
 
 /**
  * What the upgrade does with a block. An edited block of the fixed rules (the safety block) stops the command
- * (`refuse-edited`): an edited one can remove a rule. Any other edited block is kept, with a warning (`skip-edited`).
- * An intact block of the current version whose text differs from the text that the package and the settings render is
- * rendered again (`render`).
+ * (`refuse-edited`): an edited one can remove a rule. An edited setup block is put back (`replace`), because the setup
+ * file holds its text. Any other edited block is kept, with a warning (`skip-edited`), until a person names it. A block
+ * that `replace` writes over has its old text in a backup file. An intact block of the current version whose text differs
+ * from the text that the package and the settings render is rendered again (`render`).
  */
 export type BlockAction =
   | 'current'
@@ -171,12 +173,12 @@ export interface ReplacePlan {
   readonly text: string;
 }
 
-export interface FilesPlan extends PendingFiles {
+export interface FilesPlan {
   readonly moves: readonly MovePlan[];
   readonly replaces: readonly ReplacePlan[];
 }
 
-export const NO_FILES_PLAN: FilesPlan = { moves: [], renames: [], replaces: [] };
+export const NO_FILES_PLAN: FilesPlan = { moves: [], replaces: [] };
 
 /**
  * The moves outside the state folder. A source that is not a file, or that holds no managed block, is skipped: a file
@@ -216,7 +218,7 @@ export const planRootMoves = async (
 };
 
 /**
- * The file moves, the new file texts and the block renames of the steps that take the state to the current version.
+ * The file moves and the new file texts of the steps that take the state to the current version.
  * A source that does not exist is skipped. A target that exists stops the upgrade. A file to replace that does not
  * exist is skipped, and one that a person edited is kept.
  */
@@ -255,7 +257,7 @@ export const planFiles = async (
     const action = sha256Hex(current.value) === replace.oldSha256 ? 'replace' : 'keep';
     replaces.push({ path: join(dirs.state, replace.path), filePath, action, text: replace.text });
   }
-  return ok({ moves, renames: chosen.flatMap((step) => step.renames), replaces });
+  return ok({ moves, replaces });
 };
 
 export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan => {
@@ -283,6 +285,9 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
         };
       }
       if (status.kind === 'edited') {
+        // The text of a setup block comes from its setup file, so the setup file is where a person edits it. An edit in
+        // the rendered file is put back, and the old text goes to a backup file.
+        if (setupBlockNames.includes(template.name)) return { template, status, action: 'replace', from };
         const kept = template.name === blockNames.safety ? 'refuse-edited' : 'skip-edited';
         return { template, status, action: overwrite ? 'replace' : kept, from };
       }
@@ -386,6 +391,12 @@ export const planLines = (
       case 'render':
         return { level: 'text', text: `block ${name}: render the text again, because the package or a setting changed it` };
       case 'replace':
+        if (setupBlockNames.includes(name)) {
+          return {
+            level: 'text',
+            text: `block ${name}: put back the text of ${setupFileOf(name)}. The edited text goes to a backup file.`,
+          };
+        }
         return {
           level: 'text',
           text:

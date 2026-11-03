@@ -98,6 +98,19 @@ describe('factory doctor (built binary)', () => {
     expect(result.stdout).toContain('coordinator (edited');
   });
 
+  it('fails for an edited safety block, exits 1 and names the command that puts it back (TP-43)', async () => {
+    await initNode();
+    const claude = join(box.node, 'coordinator', 'CLAUDE.md');
+    const text = await box.read(claude);
+    const edited = text.replace('Never skip permissions', 'Skip permissions');
+    expect(edited).not.toBe(text);
+    await writeFile(claude, edited);
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('safety (edited');
+    expect(result.stdout).toContain('factory upgrade --overwrite safety');
+  });
+
   it('exits 1 for a bad config and names the key', async () => {
     await initNode();
     const path = join(box.node, 'factory.yaml');

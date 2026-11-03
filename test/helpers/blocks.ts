@@ -1,6 +1,8 @@
+import { renderBlock } from '../../src/blocks/managed.js';
+import type { FactoryConfig } from '../../src/config/schema.js';
 import { defaultOwnerPrefix, values } from '../../src/names.js';
 import { ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
-import { blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
+import { blockInputOf, blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
 import type { BlockInput, BlockTemplate, SetupTexts } from '../../src/templates/types.js';
 
 /** The mode of each approval point of the software recipe, the default: every point waits for the owner. */
@@ -34,6 +36,21 @@ export const blockInput = (layer: number, overrides: Partial<Omit<BlockInput, 'l
 /** The managed blocks of a node that `init` made on this layer: the default prefix, the default limits and the setup texts. */
 export const freshBlocks = (layer: number): readonly BlockTemplate[] =>
   blockTemplatesFor(blockInput(layer, { ownerPrefix: initOwnerPrefix, setup: initSetupTexts }));
+
+/**
+ * The text of `coordinator/CLAUDE.md` as the package renders it for this config and these modes: the role block and the
+ * safety block of the file, one after the other, with no setup text.
+ */
+export const claudeFileText = (config: FactoryConfig, modes: ApprovalModes = softwareOwnerModes): string => {
+  const blocks = blockTemplatesFor(blockInputOf(config, noSetupTexts, modes))
+    .filter((template) => template.target === 'claudeFile')
+    .map((template) => {
+      const rendered = renderBlock(template);
+      if (!rendered.ok) throw new Error(rendered.error.message);
+      return rendered.value;
+    });
+  return `${blocks.join('\n\n')}\n`;
+};
 
 /** The managed blocks of a node on layer 1 that `init` made: coordinator, safety, worker, setup and setup-worker. */
 export const layer1Blocks: readonly BlockTemplate[] = freshBlocks(1);
