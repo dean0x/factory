@@ -234,12 +234,14 @@ describe('init: refusals', () => {
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('refuses a second init in the same home', async () => {
+  it('treats a second init in the same home as a root that holds both config files, and refuses a flag that names a value of the root', async () => {
     const { deps } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
+    const before = snapshot(deps);
     const second = await runInit(deps, options());
-    expect(second.ok).toBe(false);
-    expect(messageOf(second)).toContain('factory.yaml already exists');
+    expect(second).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(second)).toContain('--owner-name');
+    expect(snapshot(deps)).toBe(before);
   });
 
   it('refuses when a state folder already exists', async () => {
@@ -3074,6 +3076,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
       const merge = warnings.filter((warning) => warning.includes('merge'));
       expect(merge).toHaveLength(1);
       expect(merge[0]).toContain(`counts as ${owner}`);
+      expect(merge[0]).toContain('Run "factory init" in a terminal window outside a factory session');
       expect(warnings.filter((warning) => warning.includes('release'))).toHaveLength(1);
       expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
       expect(deps.files.has(INDEX)).toBe(true);

@@ -38,6 +38,10 @@ export interface RecordedApprovals {
 /** No flag, no answer: the modes are the default, and nothing is set. */
 export const NO_APPROVALS: ApprovalChoice = { modes: {}, set: [] };
 
+/** The remedy line of every stop that only the owner in a terminal window, outside a factory session, can lift. */
+export const initInTerminalWindow = (): string =>
+  `Run "${commandText(commands.init)}" in a terminal window outside a ${places.session}.`;
+
 /** True when the owner can set a mode here. The owner record writer has the same rule, and it refuses all the same. */
 const ownerCanSet = (deps: Deps, yes: boolean): boolean => !yes && requireOwnerChannel(deps).ok;
 
@@ -74,13 +78,15 @@ const parseFlags = (texts: readonly string[], points: readonly ApprovalPoint[]):
  * The choice that the flags make, before any question. All checks of the flags come here, so a bad value or a refused
  * choice stops the command before the first clone and before any write. A `delegated` choice with `--yes` is a usage
  * error (exit 2). A `delegated` choice that the owner record writer would refuse is a stop (exit 4): no terminal window,
- * or a factory session.
+ * or a factory session. A point that no flag names has its mode in `base`: `owner` for a new factory, the current mode
+ * for a factory that is there already.
  */
 export const approvalsFromFlags = (
   deps: Deps,
   yes: boolean,
   points: readonly ApprovalPoint[],
   texts: readonly string[],
+  base: ApprovalModes = ownerModes(points),
 ): CliResult<ApprovalChoice> => {
   const given = parseFlags(texts, points);
   if (!given.ok) return given;
@@ -94,32 +100,29 @@ export const approvalsFromFlags = (
     }
     const channel = requireOwnerChannel(deps);
     if (!channel.ok) {
-      return safetyRefusal(
-        `the approval point ${asked.id} cannot be ${DELEGATED_MODE}: ${channel.error.message}`,
-        `Run "${commandText(commands.init)}" in a terminal window outside a ${places.session}.`,
-      );
+      return safetyRefusal(`the approval point ${asked.id} cannot be ${DELEGATED_MODE}: ${channel.error.message}`, initInTerminalWindow());
     }
   }
   const owner = ownerCanSet(deps, yes);
   return ok({
-    modes: { ...ownerModes(points), ...Object.fromEntries(given.value) },
+    modes: { ...base, ...Object.fromEntries(given.value) },
     set: owner ? points.filter((point) => given.value.has(point.id)).map((point) => point.id) : [],
   });
 };
 
 /** The mode that an answer means: the name of a mode or its first letters, in any letter case. An empty answer is the default. */
-const modeOfAnswer = (answer: string): ApprovalMode | null => {
+const modeOfAnswer = (answer: string, fallback: ApprovalMode): ApprovalMode | null => {
   const text = answer.trim().toLowerCase();
-  if (text === '') return OWNER_MODE;
+  if (text === '') return fallback;
   return values.approvalModes.find((mode) => mode.startsWith(text)) ?? null;
 };
 
-const askMode = async (deps: Deps, point: ApprovalPoint): Promise<CliResult<ApprovalMode>> => {
-  const question = `Approval point ${point.id} (${point.label}): ${OWNER_MODE} or ${DELEGATED_MODE}? [${OWNER_MODE}] `;
+const askMode = async (deps: Deps, point: ApprovalPoint, fallback: ApprovalMode): Promise<CliResult<ApprovalMode>> => {
+  const question = `Approval point ${point.id} (${point.label}): ${OWNER_MODE} or ${DELEGATED_MODE}? [${fallback}] `;
   for (let attempt = 0; attempt < approvalQuestion.maxAttempts; attempt += 1) {
     const answer = await deps.prompt(question);
     if (!answer.ok) return answer;
-    const mode = modeOfAnswer(answer.value);
+    const mode = modeOfAnswer(answer.value, fallback);
     if (mode !== null) return ok(mode);
   }
   return usageError(
@@ -129,8 +132,10 @@ const askMode = async (deps: Deps, point: ApprovalPoint): Promise<CliResult<Appr
 };
 
 /**
- * Ask the owner for each point that no flag names, in the order of the recipe. The question is for a person who types in
- * a terminal window outside a factory session, with no `--yes`. In every other case the choice stays as the flags made it.
+ * Ask the owner for each point that no flag names, in the order of the recipe. The default answer of a point is its mode
+ * in the choice: `owner` for a new factory, the current mode for a factory that is there already. The question is for a
+ * person who types in a terminal window outside a factory session, with no `--yes`. In every other case the choice stays
+ * as the flags made it.
  */
 export const askApprovals = async (
   deps: Deps,
@@ -143,7 +148,7 @@ export const askApprovals = async (
   const set = new Set(choice.set);
   for (const point of points) {
     if (set.has(point.id)) continue;
-    const mode = await askMode(deps, point);
+    const mode = await askMode(deps, point, choice.modes[point.id] ?? OWNER_MODE);
     if (!mode.ok) return mode;
     modes[point.id] = mode.value;
     set.add(point.id);
@@ -193,7 +198,8 @@ export const recordApprovals = async (
       counted[point.id] = mode;
     } else {
       warnings.push(
-        `The approval record of the point ${point.id} was not written (${written.error.message}). The point counts as ${OWNER_MODE}.`,
+        `The approval record of the point ${point.id} was not written (${written.error.message}). The point counts as ${OWNER_MODE}. ` +
+          initInTerminalWindow(),
       );
     }
   }

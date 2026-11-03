@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
@@ -233,11 +233,14 @@ describe('factory init (built binary)', () => {
     expect((await box.git(box.node, ['status', '--porcelain'])).stdout).toBe('?? notes.md\n');
   });
 
-  it('refuses a second init in the same home with exit 1', async () => {
+  it('treats a second init in the same home as a registered root: a flag that names a value exits 2, a plain run exits 0', async () => {
     expect((await box.run(initArgs())).code).toBe(0);
-    const second = await box.run(initArgs());
-    expect(second.code).toBe(1);
-    expect(second.stderr).toContain('factory.yaml already exists');
+    const flagged = await box.run(initArgs());
+    expect(flagged.code).toBe(2);
+    expect(flagged.stderr).toContain('--name');
+    const plain = await box.run(['init', '--home', box.node, '--yes']);
+    expect([plain.code, plain.stderr]).toEqual([0, '']);
+    expect(plain.stdout).toContain('is registered');
   });
 
   it('refuses with exit 1 a folder inside a root that the factory list holds, names a remedy and creates nothing', async () => {
@@ -656,5 +659,167 @@ describe('factory init: a received factory (built binary)', () => {
     const start = await box.run(['start', '--dry-run', '--home', received], { env: second() });
     expect(start.code).toBe(0);
     expect(start.stderr).toContain(join(received, 'web'));
+  });
+});
+
+describe('factory init: a folder that holds both config files (built binary)', () => {
+  const listFile = (): string => join(box.root, 'home', '.local', 'state', 'factory', 'homes.json');
+  const listed = async (): Promise<{ home: string; id: string; origin?: string }[]> =>
+    (JSON.parse(await box.read(listFile())) as { homes: { home: string; id: string; origin?: string }[] }).homes;
+  const commitCount = async (folder: string): Promise<number> =>
+    Number((await box.git(folder, ['rev-list', '--count', 'HEAD'])).stdout.trim());
+
+  /** The factory of the test, made by `init` and registered. */
+  const registered = async (): Promise<void> => {
+    const web = await box.makeProject('web', 'git@github.com:acme/web.git');
+    expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+  };
+
+  /** The same factory in another place: the folder moves, and the factory list keeps the old place. */
+  const moved = async (): Promise<string> => {
+    await registered();
+    const place = join(box.root, 'moved');
+    await rename(box.node, place);
+    return place;
+  };
+
+  it('registers a moved factory, keeps the local file byte-equal, and doctor and start --dry-run exit 0 (TP-82)', async () => {
+    const place = await moved();
+    const local = await box.read(join(place, 'factory.local.yaml'));
+    const result = await box.run(['init', '--yes'], { cwd: place });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('The node id demo is in the factory list for another factory folder');
+    expect(result.stdout).toContain('Registered the node "demo"');
+    expect(result.stdout).toContain('has no entry');
+    expect(await box.read(join(place, 'factory.local.yaml'))).toBe(local);
+    expect((await box.git(place, ['status', '--porcelain', '-uall'])).stdout).toBe('');
+    expect((await box.run(['doctor', '--home', place])).code).toBe(0);
+    expect((await box.run(['start', '--dry-run', '--home', place])).code).toBe(0);
+    const entries = await listed();
+    expect(entries.map((entry) => entry.origin)).toEqual(['own', 'received']);
+    expect(entries.map((entry) => entry.id)).toEqual(['demo', 'demo']);
+  });
+
+  it('says nothing about delegations when the local file asks for none (TP-82)', async () => {
+    const place = await moved();
+    const result = await box.run(['init', '--yes'], { cwd: place });
+    expect(result.code).toBe(0);
+    expect(result.stderr).not.toContain('delegat');
+  });
+
+  it('says that each delegation must be set again and names the command, and counts the point as owner (TP-82)', async () => {
+    const place = await moved();
+    const local = join(place, 'factory.local.yaml');
+    await writeFile(local, (await box.read(local)).replace('merge: owner', 'merge: delegated'), { mode: 0o600 });
+    const result = await box.run(['init', '--yes', '--json'], { cwd: place });
+    expect(result.code).toBe(0);
+    const report = JSON.parse(result.stdout) as { approval: Record<string, string>; warnings: string[] };
+    expect(report.approval).toMatchObject({ merge: 'owner', release: 'owner' });
+    const text = report.warnings.join('\n');
+    expect(text).toContain('delegated at: merge');
+    expect(text).toContain('run "factory init" in a terminal window outside a factory session');
+  });
+
+  it('exits 4 in a factory session on a moved root and writes nothing (TP-83)', async () => {
+    const place = await moved();
+    const before = await box.read(listFile());
+    const result = await box.run(['init', '--yes'], { cwd: place, env: { FACTORY_SESSION: 'demo' } });
+    expect(result.code).toBe(4);
+    expect(await box.read(listFile())).toBe(before);
+  });
+
+  it('exits 1 and changes nothing when the factory list cannot be written (TP-95)', async () => {
+    const place = await moved();
+    const stateHome = join(box.root, 'state-locked');
+    await mkdir(join(stateHome, 'factory'), { recursive: true, mode: 0o700 });
+    await writeFile(join(stateHome, 'factory', 'homes.json.lock'), '1\n');
+    const local = await box.read(join(place, 'factory.local.yaml'));
+    const marker = await box.read(join(place, '.factory', 'node.json'));
+    const result = await box.run(['init', '--yes'], { cwd: place, env: { XDG_STATE_HOME: stateHome } });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('holds the lock');
+    expect(await box.read(join(place, 'factory.local.yaml'))).toBe(local);
+    expect(await box.read(join(place, '.factory', 'node.json'))).toBe(marker);
+    expect((await box.git(place, ['status', '--porcelain', '-uall'])).stdout).toBe('');
+  });
+
+  it('registers a folder whose entry has another node id, with the origin received (TP-84)', async () => {
+    await registered();
+    const config = join(box.node, 'factory.yaml');
+    const text = await box.read(config);
+    expect(text).toMatch(/^ {2}id: demo\b/m);
+    await writeFile(config, text.replace(/^( {2}id: )demo\b/m, '$1other'));
+    const refused = await box.run(['doctor', '--home', box.node]);
+    expect(refused.code).toBe(4);
+    const result = await box.run(['init', '--yes'], { cwd: box.node });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('another id');
+    const real = await realpath(box.node);
+    const entries = (await listed()).filter((entry) => entry.home === real);
+    expect(entries).toEqual([expect.objectContaining({ id: 'other', origin: 'received' })]);
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+  });
+
+  it('makes the state folder again when it is missing, and commits it (TP-85)', async () => {
+    await registered();
+    await rm(join(box.node, '.factory'), { recursive: true, force: true });
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(4);
+    const result = await box.run(['init', '--yes'], { cwd: box.node });
+    expect(result.code).toBe(0);
+    expect(existsSync(join(box.node, '.factory', 'node.json'))).toBe(true);
+    expect(await commitCount(join(box.node, '.factory'))).toBe(1);
+    expect((await box.git(join(box.node, '.factory'), ['status', '--porcelain'])).stdout).toBe('');
+    expect((await box.git(box.node, ['status', '--porcelain', '-uall'])).stdout).toBe('');
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+    expect((await listed()).map((entry) => entry.origin)).toEqual(['own']);
+  });
+
+  it('writes a broken marker again and commits only the marker (TP-96)', async () => {
+    await registered();
+    const state = join(box.node, '.factory');
+    const marker = join(state, 'node.json');
+    const board = await box.read(join(state, 'board.json'));
+    await writeFile(marker, '{not json');
+    await box.git(state, ['add', 'node.json']);
+    await box.git(state, ['commit', '-m', 'break the marker']);
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(4);
+    const before = await commitCount(state);
+    const result = await box.run(['init', '--yes'], { cwd: box.node });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('.factory/node.json');
+    expect(await commitCount(state)).toBe(before + 1);
+    expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
+    expect(await box.read(join(state, 'board.json'))).toBe(board);
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+  });
+
+  it('writes a marker that was broken and not committed, and makes no commit, since git holds the same text (TP-96)', async () => {
+    await registered();
+    const state = join(box.node, '.factory');
+    await writeFile(join(state, 'node.json'), '{not json');
+    const before = await commitCount(state);
+    const result = await box.run(['init', '--yes', '--json'], { cwd: box.node });
+    expect(result.code).toBe(0);
+    expect((JSON.parse(result.stdout) as { warnings: string[] }).warnings.join('\n')).not.toContain('not committed');
+    expect(await commitCount(state)).toBe(before);
+    expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+  });
+
+  it('exits 4 and changes nothing when .factory is a file (TP-119)', async () => {
+    await registered();
+    await rm(join(box.node, '.factory'), { recursive: true, force: true });
+    await writeFile(join(box.node, '.factory'), 'not a folder');
+    const result = await box.run(['init', '--yes'], { cwd: box.node });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('.factory');
+    expect(await box.read(join(box.node, '.factory'))).toBe('not a folder');
+  });
+
+  it('sets an approval point again on a registered root, and writes the record after the entry in the factory list (TP-181)', async () => {
+    await registered();
+    const result = await box.run(['init', '--yes', '--approval', 'merge=owner'], { cwd: box.node });
+    expect([result.code, result.stderr]).toEqual([0, '']);
+    expect(await listed()).toHaveLength(1);
   });
 });

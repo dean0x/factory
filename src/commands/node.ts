@@ -108,7 +108,7 @@ const writeEdited = async (
   if (!edited.ok) return failure(edited.error);
   const checked = parseConfigTexts(node.sharedText, edited.value);
   if (!checked.ok) return err({ ...checked.error, message: `${checked.error.message}. Nothing was changed.` });
-  const written = await deps.fs.writeTextAtomic(node.localFile, edited.value);
+  const written = await deps.fs.writeTextAtomic(node.localFile, edited.value, node.home);
   return written.ok ? ok(checked.value) : written;
 };
 

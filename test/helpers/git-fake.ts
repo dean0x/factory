@@ -30,6 +30,8 @@ export interface GitFixture {
   readonly tracked?: Readonly<Record<string, readonly string[]>>;
   /** The exit code of `git ls-files`. Default: 0. */
   readonly lsFilesExit?: number;
+  /** What `git status --porcelain -z` prints, by folder: for example " M node.json\0". A folder with no entry is clean. */
+  readonly status?: Readonly<Record<string, string>>;
   /**
    * The paths that git ignores, by folder, as the rules of `.gitignore` make them. A folder with no entry ignores every
    * path, as the share list of a factory does.
@@ -107,6 +109,8 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       return found.length === 0 ? exited(1) : exited(0);
     }
     switch (rest) {
+      case 'status --porcelain -z --untracked-files=all':
+        return exited(0, fixture.status?.[dir] ?? '');
       case 'rev-parse --git-common-dir':
         return repo === undefined ? exited(128) : exited(0, `${repo.commonDir ?? '.git'}\n`);
       case 'config remote.origin.url':

@@ -3,6 +3,7 @@ import { posix } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
+import { isSameOrInside } from '../../src/core/paths.js';
 import { ok } from '../../src/core/result.js';
 import { dirs, env, files as fileNames, homeIndex, privateFile, program, stateKeys } from '../../src/names.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
@@ -118,6 +119,10 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   };
   const under = (root: string, path: string): boolean => path === root || path.startsWith(`${root}/`);
   const kindOf = (path: string): PathKind | null => (files.has(path) ? 'file' : dirs.has(path) ? 'dir' : null);
+  const realOf = (path: string): string => {
+    const link = Object.entries(options.links ?? {}).find(([from]) => under(from, path));
+    return link === undefined ? path : link[1] + path.slice(link[0].length);
+  };
   const treeKeys = (root: string): { files: string[]; dirs: string[] } => ({
     files: [...files.keys()].filter((key) => under(root, key)),
     dirs: [...dirs].filter((key) => under(root, key)),
@@ -174,8 +179,14 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         touch(path);
         return ok(true);
       },
-      writeTextAtomic: async (path, text, mode) => {
+      writeTextAtomic: async (path, text, within, mode) => {
+        // The same refusals as the real write: a link at the target, and a real path outside the folder.
+        if (Object.hasOwn(options.links ?? {}, path)) return failure(`cannot write ${path}: it is a link`);
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
+        if (!dirs.has(within)) return enoent('resolve', within);
+        if (!isSameOrInside(realOf(within), posix.join(realOf(posix.dirname(path)), posix.basename(path)))) {
+          return failure(`cannot write ${path}: it is outside ${within}`);
+        }
         atomicWrites.push(path);
         files.set(path, text);
         touch(path);
@@ -202,8 +213,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       },
       realpath: async (path) => {
         if (kindOf(path) === null) return enoent('resolve', path);
-        const link = Object.entries(options.links ?? {}).find(([from]) => under(from, path));
-        return ok(link === undefined ? path : link[1] + path.slice(link[0].length));
+        return ok(realOf(path));
       },
       mkdir: async (path, mode) => {
         if (mode !== undefined && !dirs.has(path)) modes.set(path, mode);
@@ -342,10 +352,10 @@ export const withFailingWrites = <T extends Deps>(
   const attempts = new Map<string, number>();
   const guarded =
     (write: Fs['writeTextAtomic']): Fs['writeTextAtomic'] =>
-    async (path, text, mode) => {
+    async (path, text, within, mode) => {
       const attempt = (attempts.get(path) ?? 0) + 1;
       attempts.set(path, attempt);
-      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text, mode);
+      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text, within, mode);
     };
   return {
     ...deps,

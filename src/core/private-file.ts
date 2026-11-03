@@ -137,7 +137,7 @@ export const changePrivateFile = async (
 
   const current = await readPrivateText(deps, path, maxBytes);
   const next = current.ok ? await change(current.value) : err(`${path} cannot be read: ${current.error}`);
-  const written = next.ok ? await deps.fs.writeTextAtomic(path, next.value, privateFile.fileMode) : null;
+  const written = next.ok ? await deps.fs.writeTextAtomic(path, next.value, dirname(path), privateFile.fileMode) : null;
   await deps.fs.remove(lockPath);
   if (!next.ok) return next;
   return written?.ok === false ? err(written.error.message) : ok(undefined);

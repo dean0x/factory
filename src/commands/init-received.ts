@@ -8,9 +8,9 @@ import { localConfigSchema, mergeConfig, type FactoryConfig, type SharedConfig }
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
 import { configValue, ignoredPathsOf, isWorkTreeRoot, trackedFilesOf } from '../core/git.js';
-import { readHomeIndex } from '../core/home-index.js';
+import { rootRefusalOf } from '../core/home.js';
+import { entryOfHome, readHomeIndex } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { comparable } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import {
   requireNoLinks,
@@ -63,7 +63,14 @@ import {
   type InitPlan,
   type PlannedAcceptance,
 } from './init.js';
-import { approvalLines, approvalsFromFlags, askApprovals, NO_APPROVALS, type ApprovalChoice } from './init-approval.js';
+import {
+  approvalLines,
+  approvalsFromFlags,
+  askApprovals,
+  initInTerminalWindow,
+  NO_APPROVALS,
+  type ApprovalChoice,
+} from './init-approval.js';
 import { checkHomeOutsideRoots, leftoverTempFolders, tempFolderWarning } from './init-home.js';
 import { planReceivedProjects, runClones, undoClones } from './init-clone.js';
 
@@ -76,14 +83,12 @@ import { planReceivedProjects, runClones, undoClones } from './init-clone.js';
  * of `checkReceivedRoot`, the setup of `collectSetup` and the decision of `decideAcceptance` are the same for them.
  */
 
-const ACCEPT_REASON = `the ${roles.owner} accepted these files in a terminal window with ${commands.init}`;
-const YES_REASON = 'init with the yes flag: first acceptance of the setup text';
+export const ACCEPT_REASON = `the ${roles.owner} accepted these files in a terminal window with ${commands.init}`;
+export const YES_REASON = 'init with the yes flag: first acceptance of the setup text';
 const REMOVE_REMEDY =
   'Remove each of them from git with "git rm --cached", commit the change, then run the command again.';
 const MAX_NAMED_PATHS = 5;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
-
-const initAgain = (): string => `Run "${commandText(commands.init)}" in a terminal window outside a ${places.session}.`;
 
 /** What `checkReceivedRoot` finds in a received root, before anything is written. */
 export interface ReceivedRoot {
@@ -135,6 +140,13 @@ const requireNoStateFolder = async (deps: Deps, layout: Layout): Promise<CliResu
       );
 };
 
+/** On a root that holds both config files, the state path is a folder or it is not there. Any other form is a stop. */
+const requireStateFolderOrNone = async (deps: Deps, layout: Layout): Promise<CliResult<void>> => {
+  const kind = await deps.fs.lstat(layout.stateDir);
+  if (!kind.ok) return kind;
+  return kind.value === null || kind.value === 'dir' ? ok(undefined) : rootRefusalOf(layout.home, { kind: 'state-not-folder' });
+};
+
 /**
  * Git must ignore the local file and the state folder, or private data could go out with the next commit (exit 4, and the
  * message names the line of `.gitignore`). A coordinator folder or a project folder that git does not ignore is a warning.
@@ -177,9 +189,14 @@ const checkIgnoreRules = async (
 /**
  * Every check of a received root that needs no answer and writes nothing: the links, the top of the work tree, the files
  * that git tracks (the cap, the local file, the state folder, the coordinator folder and the project folders, and links),
- * the shared file, a state folder in any form and the ignore rules.
+ * the shared file, a state folder in any form and the ignore rules. A root that holds both config files has a state
+ * folder of its own: with `keepState`, a folder is no stop, and a state path of any other form is.
  */
-export const checkReceivedRoot = async (deps: Deps, home: string): Promise<CliResult<ReceivedRoot>> => {
+export const checkReceivedRoot = async (
+  deps: Deps,
+  home: string,
+  checks: { readonly keepState?: boolean } = {},
+): Promise<CliResult<ReceivedRoot>> => {
   const layout = layoutOf(home);
   const plain = await requireNoRootLinks(deps, layout);
   if (!plain.ok) return plain;
@@ -210,7 +227,7 @@ export const checkReceivedRoot = async (deps: Deps, home: string): Promise<CliRe
   const projectPaths = shared.value.recipe.projects.map((project) => project.path);
   const problems = requireNoTrackedProblems(trackedProblems(tracked, projectPaths));
   if (!problems.ok) return problems;
-  const noState = await requireNoStateFolder(deps, layout);
+  const noState = checks.keepState === true ? await requireStateFolderOrNone(deps, layout) : await requireNoStateFolder(deps, layout);
   if (!noState.ok) return noState;
   const warnings = await checkIgnoreRules(deps, layout, projectPaths);
   if (!warnings.ok) return warnings;
@@ -288,7 +305,7 @@ export const decideAcceptance = async (
   if (!(asking.stdinIsTTY && asking.stdoutIsTTY)) {
     return safetyRefusal(
       `the setup of the ${places.folder} needs an acceptance, and no terminal window can ask for it`,
-      `${initAgain()} Or remove the listed files from the config repo.`,
+      `${initInTerminalWindow()} Or remove the listed files from the config repo.`,
     );
   }
   const answer = await askSetupAcceptance(asking, { root: home, node, current: setup.collected });
@@ -296,8 +313,30 @@ export const decideAcceptance = async (
   return ok(answer.value ? { kind: 'record', fromInitYes: false } : { kind: 'declined' });
 };
 
+/** The setup texts that the blocks may use: the texts of accepted files, and none after a no or with no acceptance. */
+export const renderedTexts = (decision: AcceptanceDecision, setup: CollectedSetup): SetupTexts =>
+  decision.kind === 'record' || decision.kind === 'already' ? setup.texts : { coordinator: null, worker: null };
+
+/** The acceptance that `init` writes after the entry in the factory list, or null when the decision writes none. */
+export const plannedAcceptance = (
+  decision: AcceptanceDecision,
+  request: { readonly home: string; readonly node: string; readonly setup: CollectedSetup },
+): PlannedAcceptance | null =>
+  decision.kind === 'record'
+    ? {
+        fromInitYes: decision.fromInitYes,
+        input: {
+          root: request.home,
+          node: request.node,
+          file: setupAcceptance.setupTextFiles[0],
+          entries: request.setup.collected.manifest.entries,
+          reason: decision.fromInitYes ? YES_REASON : ACCEPT_REASON,
+        },
+      }
+    : null;
+
 /** The `Deps` whose first question starts with `prefix`: the text that the owner reads before the first answer. */
-const withFirstQuestion = (deps: Deps, prefix: string): Deps => {
+export const withFirstQuestion = (deps: Deps, prefix: string): Deps => {
   let pending = true;
   return {
     ...deps,
@@ -365,14 +404,17 @@ const ownerFieldsOf = async (deps: Deps, options: InitOptions, ask: boolean): Pr
   return ok({ name, github });
 };
 
-/** The flags that name values of a new root. A received factory has its values in `factory.yaml`. */
+/** The flags that name values of a new root, as typed. A factory that is there already has its values in its files. */
+export const valueFlagsOf = (options: InitOptions): readonly string[] => [
+  ...(options.projects.length > 0 ? [flagText(flags.project)] : []),
+  ...(options.name === undefined ? [] : [flagText(flags.name)]),
+  ...(options.layer === undefined ? [] : [flagText(flags.layer)]),
+  ...(options.recipe === undefined ? [] : [flagText(flags.recipe)]),
+];
+
+/** A received factory takes its values from `factory.yaml`. */
 const requireFlagsThatApply = (options: InitOptions): CliResult<void> => {
-  const given = [
-    ...(options.projects.length > 0 ? [flagText(flags.project)] : []),
-    ...(options.name === undefined ? [] : [flagText(flags.name)]),
-    ...(options.layer === undefined ? [] : [flagText(flags.layer)]),
-    ...(options.recipe === undefined ? [] : [flagText(flags.recipe)]),
-  ];
+  const given = valueFlagsOf(options);
   return given.length === 0
     ? ok(undefined)
     : usageError(
@@ -407,16 +449,17 @@ const listingOf = (home: string, shared: SharedConfig): readonly string[] => {
   ];
 };
 
-/** A warning for each other root in the factory list that has the same node id. */
-const sameIdWarnings = async (deps: Deps, indexPath: string, home: string, id: string): Promise<readonly string[]> => {
+/** A warning for each other root in the factory list that has the same node id. The entry of the root itself is no other root. */
+export const sameIdWarnings = async (deps: Deps, indexPath: string, home: string, id: string): Promise<readonly string[]> => {
   const entries = await readHomeIndex(deps, indexPath);
   if (!entries.ok) return [];
+  const own = await entryOfHome(deps, entries.value, home);
   return entries.value
-    .filter((entry) => entry.id === id && comparable(deps, entry.home) !== comparable(deps, home))
+    .filter((entry) => entry.id === id && entry !== own)
     .map((entry) => `The ${roles.node} id ${id} is in the ${places.list} for another ${places.folder}: ${entry.home}.`);
 };
 
-const acceptanceLines = (plan: PlannedAcceptance, accepted: boolean): readonly OutLine[] =>
+export const acceptanceLines = (plan: PlannedAcceptance, accepted: boolean): readonly OutLine[] =>
   accepted && plan.fromInitYes
     ? [
         { level: 'text', text: `Accepted the setup text with ${flagText(flags.yes)}: ${plan.input.entries.map((entry) => entry.path).join(', ')}` },
@@ -427,12 +470,12 @@ const acceptanceLines = (plan: PlannedAcceptance, accepted: boolean): readonly O
       ]
     : [];
 
-const declinedLines = (): readonly OutLine[] => [
+export const declinedLines = (): readonly OutLine[] => [
   {
     level: 'text',
     text:
       `No setup acceptance was written, and the ${roles.coordinator} text holds no setup block. ` +
-      `${initAgain()} Until the ${roles.owner} accepts the files, "${commandText(commands.start)}" does not start.`,
+      `${initInTerminalWindow()} Until the ${roles.owner} accepts the files, "${commandText(commands.start)}" does not start.`,
   },
 ];
 
@@ -447,7 +490,7 @@ export const runReceived = async (
   home: string,
 ): Promise<CliResult<CommandOutput>> => {
   if (inFactorySession(deps)) {
-    return safetyRefusal(`"${commandText(commands.init)}" does not register a received ${places.folder} in a ${places.session}`, initAgain());
+    return safetyRefusal(`"${commandText(commands.init)}" does not register a received ${places.folder} in a ${places.session}`, initInTerminalWindow());
   }
   const tty = deps.stdinIsTTY && deps.stdoutIsTTY;
   if (!options.yes && !tty) {
@@ -484,30 +527,14 @@ export const runReceived = async (
   const decision = await decideAcceptance(asking, { home, node: id, yes: options.yes, setup: setup.value });
   if (!decision.ok) return decision;
 
-  const accepting = decision.value.kind === 'record' || decision.value.kind === 'already';
-  const rendered: SetupTexts = accepting ? setup.value.texts : { coordinator: null, worker: null };
-  const acceptance: PlannedAcceptance | null =
-    decision.value.kind === 'record'
-      ? {
-          fromInitYes: decision.value.fromInitYes,
-          input: {
-            root: home,
-            node: id,
-            file: setupAcceptance.setupTextFiles[0],
-            entries: setup.value.collected.manifest.entries,
-            reason: decision.value.fromInitYes ? YES_REASON : ACCEPT_REASON,
-          },
-        }
-      : null;
-
   const planned = await planReceived(deps, {
     home,
     indexPath,
     root: root.value,
     owner: owner.value,
     approvals: answered.value,
-    rendered,
-    acceptance,
+    rendered: renderedTexts(decision.value, setup.value),
+    acceptance: plannedAcceptance(decision.value, { home, node: id, setup: setup.value }),
     warnings: [
       ...root.value.warnings,
       ...(await sameIdWarnings(deps, indexPath, home, id)),

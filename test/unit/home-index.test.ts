@@ -509,6 +509,16 @@ describe('home index: recording a home', () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('disk full') });
     expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_B, [], 'api')] });
   });
+
+  it('refuses a link at the index path, and leaves the file and the lock as they were', async () => {
+    const deps = createFakeDeps({ env: {}, links: { [INDEX]: '/elsewhere/homes.json' } });
+    deps.seedDir('/elsewhere');
+    deps.seed(INDEX, indexText([entry(HOME_B, [], 'api')]));
+    const result = await recordHome(deps, INDEX, entry(HOME_A, []));
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('is a link') });
+    expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_B, [], 'api')] });
+    expect(deps.files.has(`${INDEX}.lock`)).toBe(false);
+  });
 });
 
 describe('home index: two writers at once', () => {

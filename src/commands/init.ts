@@ -15,16 +15,12 @@ import {
 import { checkLocalSource, type OriginClass } from '../core/clone-url.js';
 import type { Deps } from '../core/deps.js';
 import {
-  commitAll,
   configValue,
   defaultBranchOf,
   GIT_ENTRY,
-  gitInit,
-  hasIdentity,
   initRootRepo,
   MAX_SCAN_ENTRIES,
   parseGithubRepo,
-  requireWorkTreeTop,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -91,7 +87,9 @@ import {
   leftoverTempFolders,
   tempFolderWarning,
 } from './init-home.js';
+import { runExisting } from './init-existing.js';
 import { runReceived } from './init-received.js';
+import { makeStateFolder } from './init-state.js';
 import { oldFolderWarning, originCredentialsWarning, unsharedWarning } from './project-url.js';
 
 export interface InitOptions {
@@ -173,7 +171,6 @@ export interface InitResult {
 const GH_TIMEOUT_MS = 10_000;
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_MODEL = 'default';
-const FIRST_COMMIT_MESSAGE = 'chore: initialize the state';
 const ROOT_COMMIT_MESSAGE = 'chore: initialize the config repo';
 
 const DEFAULT_LIMITS = {
@@ -320,6 +317,27 @@ export interface BlockTexts {
   readonly workerText: string | null;
 }
 
+/** The rendered blocks of the templates, by the file that holds them. */
+const renderedBlocks = (
+  templates: readonly BlockTemplate[],
+): CliResult<{ readonly claudeBlocks: readonly string[]; readonly workerBlocks: readonly string[] }> => {
+  const claudeBlocks: string[] = [];
+  const workerBlocks: string[] = [];
+  for (const template of templates) {
+    const rendered = renderBlock(template);
+    if (!rendered.ok) return rendered;
+    (template.target === 'claudeFile' ? claudeBlocks : workerBlocks).push(rendered.value);
+  }
+  return ok({ claudeBlocks, workerBlocks });
+};
+
+/** The text of the worker file: the worker blocks of the templates, or null when the templates hold none. */
+export const workerTextOf = (templates: readonly BlockTemplate[]): CliResult<string | null> => {
+  const rendered = renderedBlocks(templates);
+  if (!rendered.ok) return rendered;
+  return ok(rendered.value.workerBlocks.length === 0 ? null : appendBlocks('', rendered.value.workerBlocks));
+};
+
 /** Render the managed blocks. CLAUDE.md keeps its text, and the blocks go at the end. */
 export const blockTexts = async (
   deps: Deps,
@@ -340,13 +358,9 @@ export const blockTexts = async (
     if (taken !== undefined) return failure(`${files.claudeMd} already holds the block ${taken.name}`);
   }
 
-  const claudeBlocks: string[] = [];
-  const workerBlocks: string[] = [];
-  for (const template of templates) {
-    const rendered = renderBlock(template);
-    if (!rendered.ok) return rendered;
-    (template.target === 'claudeFile' ? claudeBlocks : workerBlocks).push(rendered.value);
-  }
+  const rendered = renderedBlocks(templates);
+  if (!rendered.ok) return rendered;
+  const { claudeBlocks, workerBlocks } = rendered.value;
   return ok({
     original,
     claudeText: appendBlocks(original ?? '', claudeBlocks),
@@ -733,7 +747,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
       await undo(
         plan.gitignoreOriginal === null
           ? deps.fs.remove(layout.gitignoreFile)
-          : deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreOriginal),
+          : deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreOriginal, layout.home),
       );
     }
     if (touched.setupWorkerFile) await undo(deps.fs.remove(layout.setupWorkerFile));
@@ -744,7 +758,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
       await undo(
         plan.claudeOriginal === null
           ? deps.fs.remove(layout.claudeMd)
-          : deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeOriginal),
+          : deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeOriginal, layout.home),
       );
     }
     if (touched.coordinatorDir) await undo(deps.fs.removeEmptyDir(layout.coordinatorDir));
@@ -763,32 +777,9 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   const plain = await requireNoRootLinks(deps, layout);
   if (!plain.ok) return plain;
 
-  const cleared = await deps.fs.remove(staging);
-  if (!cleared.ok) return rollback(cleared.error);
-  for (const file of plan.stateFiles) {
-    const target = join(staging, file.rel);
-    const folder = await deps.fs.mkdir(dirname(target));
-    if (!folder.ok) return rollback(folder.error);
-    const written = await deps.fs.writeText(target, file.text);
-    if (!written.ok) return rollback(written.error);
-  }
-
-  const initialized = await gitInit(deps, staging);
-  if (!initialized.ok) return rollback(initialized.error);
-  // The staging folder can sit in a folder of a repo (the root repo of a received factory). A commit must go to the repo of
-  // the state folder, so every git write in it waits until the folder is the top of its own work tree.
-  const stateTop = await requireWorkTreeTop(deps, staging, dirs.state);
-  if (!stateTop.ok) return rollback(stateTop.error);
-  const identity = await hasIdentity(deps, staging);
-  if (identity) {
-    const committed = await commitAll(deps, staging, FIRST_COMMIT_MESSAGE);
-    if (!committed.ok) return rollback(committed.error);
-  }
-
-  const stateAbsent = await requireAbsent(layout.stateDir, dirs.state);
-  if (!stateAbsent.ok) return rollback(stateAbsent.error);
-  const moved = await deps.fs.rename(staging, layout.stateDir);
-  if (!moved.ok) return rollback(moved.error);
+  const madeState = await makeStateFolder(deps, layout, staging, plan.stateFiles);
+  if (!madeState.ok) return rollback(madeState.error);
+  const identity = madeState.value.committed;
   touched.state = true;
 
   const coordinatorDir = await makeFolder(layout.coordinatorDir);
@@ -796,7 +787,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   touched.coordinatorDir = coordinatorDir.value;
   const claudeUnchanged = await requireUnchanged(layout.claudeMd, plan.claudeOriginal, `${dirs.coordinator}/${files.claudeMd}`);
   if (!claudeUnchanged.ok) return rollback(claudeUnchanged.error);
-  const claude = await deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeText);
+  const claude = await deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeText, layout.home);
   if (!claude.ok) return rollback(claude.error);
   touched.claude = true;
 
@@ -829,7 +820,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   if (!plan.received) {
     const gitignoreUnchanged = await requireUnchanged(layout.gitignoreFile, plan.gitignoreOriginal, files.gitignore);
     if (!gitignoreUnchanged.ok) return rollback(gitignoreUnchanged.error);
-    const gitignore = await deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreText);
+    const gitignore = await deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreText, layout.home);
     if (!gitignore.ok) return rollback(gitignore.error);
     touched.gitignore = true;
   }
@@ -838,7 +829,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   // A local file or a shared file that is there already is never replaced, and the undo never removes it.
   const localAbsent = await requireAbsent(layout.localConfigFile, files.localConfig);
   if (!localAbsent.ok) return rollback(localAbsent.error);
-  const local = await deps.fs.writeTextAtomic(layout.localConfigFile, plan.localConfigText, localFileModes.private);
+  const local = await deps.fs.writeTextAtomic(layout.localConfigFile, plan.localConfigText, layout.home, localFileModes.private);
   if (!local.ok) return rollback(local.error);
   touched.local = true;
 
@@ -847,7 +838,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   if (!plan.received) {
     const configAbsent = await requireAbsent(layout.configFile, files.config);
     if (!configAbsent.ok) return rollback(configAbsent.error);
-    const config = await deps.fs.writeTextAtomic(layout.configFile, plan.configText);
+    const config = await deps.fs.writeTextAtomic(layout.configFile, plan.configText, layout.home);
     if (!config.ok) return rollback(config.error);
     touched.config = true;
 
@@ -896,7 +887,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   );
   // The setup acceptance comes last for the same reason. A write that fails is a warning: the run keeps its work, and
   // `start` stops until the owner accepts the files.
-  const accepted = await recordAcceptance(deps, plan);
+  const accepted = await recordAcceptance(deps, plan.acceptance);
 
   return ok({
     committed: identity,
@@ -919,17 +910,13 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   });
 };
 
-/** Write the setup acceptance of the plan through its writer. A write that fails gives a warning and no acceptance. */
-const recordAcceptance = async (
+/** Write a setup acceptance through its writer. A write that fails gives a warning and no acceptance. */
+export const recordAcceptance = async (
   deps: Deps,
-  plan: InitPlan,
+  acceptance: PlannedAcceptance | null,
 ): Promise<{ readonly accepted: boolean; readonly warnings: readonly string[] }> => {
-  if (plan.acceptance === null) return { accepted: false, warnings: [] };
-  const written = await recordSetupAcceptance(
-    deps,
-    plan.acceptance.input,
-    plan.acceptance.fromInitYes ? { fromInitYes: true } : {},
-  );
+  if (acceptance === null) return { accepted: false, warnings: [] };
+  const written = await recordSetupAcceptance(deps, acceptance.input, acceptance.fromInitYes ? { fromInitYes: true } : {});
   return written.ok
     ? { accepted: true, warnings: [] }
     : {
@@ -954,8 +941,10 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   const chosen = await chooseHome(deps, options);
   if (!chosen.ok) return chosen;
   const { home, found, skipped, truncated } = chosen.value;
-  // A factory that arrived goes its own way: the home holds `factory.yaml` and no local file.
-  if (chosen.value.received) return runReceived(deps, options, indexPath.value, home);
+  // A factory that is there already goes its own way. With no local file, it arrived; with both config files, `init` ran
+  // here before, or the folder moved.
+  if (chosen.value.kind === 'received') return runReceived(deps, options, indexPath.value, home);
+  if (chosen.value.kind === 'both') return runExisting(deps, options, indexPath.value, home);
 
   // A bad value must give its error before any clone runs, because a clone costs time and disk.
   const checked = await checkOptions(deps, options, home, indexPath.value);

@@ -5,7 +5,15 @@ import { printable, type CommandOutput, type OutLine } from '../cli/output.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
-import { commitPaths, GIT_ENTRY, hasIdentity, headOf, statusOf, unstagePaths, type RepoPaths } from '../core/git.js';
+import {
+  commitPaths,
+  GIT_ENTRY,
+  hasIdentity,
+  headOf,
+  requireStateRepoReady,
+  unstagePaths,
+  type RepoPaths,
+} from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { indexPathOf, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -65,44 +73,18 @@ export interface UpgradeOptions {
 }
 
 const COMMIT_MESSAGE = 'chore: upgrade the state';
-const MAX_SHOWN_PATHS = 5;
 
 /** The paths of `paths` that are in the state repo, relative to it, each one once. */
 const inStateRepo = (layout: Layout, paths: readonly string[]): readonly string[] => [
   ...new Set(paths.filter((path) => isSameOrInside(layout.stateDir, path)).map((path) => relative(layout.stateDir, path))),
 ];
 
-const shownPaths = (paths: readonly string[]): string => {
-  const shown = paths.slice(0, MAX_SHOWN_PATHS).join(', ');
-  return paths.length > MAX_SHOWN_PATHS ? `${shown} and ${paths.length - MAX_SHOWN_PATHS} more` : shown;
-};
-
 /**
- * Refuse when the commit of the upgrade could take a change of the owner. The index of the state repo must hold no
- * staged change. A file that the upgrade changes must have no change of the owner, staged or not.
+ * Refuse when the commit of the upgrade could take a change of the owner. A file that the upgrade changes must have no
+ * change of the owner, staged or not.
  */
-const checkStateRepoReady = async (deps: Deps, layout: Layout, touched: readonly string[]): Promise<CliResult<void>> => {
-  const status = await statusOf(deps, layout.stateDir);
-  if (!status.ok) return status;
-  const again = `Then run "${commandText(commands.upgrade)}" again.`;
-  const staged = status.value.filter((entry) => ![' ', '?', '!'].includes(entry.index));
-  if (staged.length > 0) {
-    return failure(
-      `${dirs.state} has staged changes: ${shownPaths(staged.map((entry) => entry.path))}`,
-      `Commit them, or clear them with "git reset" in ${dirs.state}. ${again}`,
-    );
-  }
-  const changed = status.value.filter((entry) =>
-    touched.some((path) => entry.path === path || entry.path.startsWith(`${path}/`)),
-  );
-  if (changed.length > 0) {
-    return failure(
-      `${dirs.state} has changes in files that the upgrade changes: ${shownPaths(changed.map((entry) => entry.path))}`,
-      `Commit them, or put the files back with git in ${dirs.state}. ${again}`,
-    );
-  }
-  return ok(undefined);
-};
+const checkStateRepoReady = (deps: Deps, layout: Layout, touched: readonly string[]): Promise<CliResult<void>> =>
+  requireStateRepoReady(deps, layout.stateDir, touched, 'the upgrade', `Then run "${commandText(commands.upgrade)}" again.`);
 
 /**
  * Put the upgraded home in the home index, as init does, so that a command finds the home from a project folder.
@@ -333,7 +315,7 @@ export const runUpgrade = async (
         );
       }
     }
-    const problems = await restore(deps, written, moved);
+    const problems = await restore(deps, home, written, moved);
     const unstaged = attempt === null ? ok(undefined) : await unstagePaths(deps, layout.stateDir, attempt.paths);
     const notes: string[] = [];
     if (problems.length > 0) {
@@ -369,7 +351,7 @@ export const runUpgrade = async (
       : [{ path: layout.localConfigFile, text: localText.value, mode: localFileModes.private }]),
     ...(configText.value === null ? [] : [{ path: layout.configFile, text: configText.value }]),
   ];
-  const wrote = await writeAll(deps, newFiles, written);
+  const wrote = await writeAll(deps, home, newFiles, written);
   if (!wrote.ok) return abort(wrote.error.message);
 
   const paths: RepoPaths = {

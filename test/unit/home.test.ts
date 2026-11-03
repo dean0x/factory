@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { locateHome, locateHomeFolder, type NodeIdReader } from '../../src/core/home.js';
+import {
+  entryProblemOf,
+  locateHome,
+  locateHomeFolder,
+  markerProblemOf,
+  reasonOf,
+  type NodeIdReader,
+} from '../../src/core/home.js';
 import { err, ok } from '../../src/core/result.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 
@@ -300,6 +307,77 @@ describe('home: the exception of upgrade', () => {
   it('does not mark a registered folder', async () => {
     const result = await withException(nodeAt(HOME), HOME, idOf('demo', 1));
     expect(result).toMatchObject({ ok: true, value: { unregistered: false } });
+  });
+});
+
+describe('home: the parts of the registration check', () => {
+  const problem = async <T extends { ok: boolean }>(result: Promise<T>) => {
+    const done = await result;
+    if (!done.ok) throw new Error('the check failed');
+    return (done as unknown as { value: unknown }).value;
+  };
+
+  it('finds no entry for a folder that the list does not hold, and does not look at the marker', async () => {
+    const deps = nodeAt(HOME, {}, false);
+    expect(await problem(entryProblemOf(deps, HOME, reader))).toEqual({ kind: 'no-entry' });
+  });
+
+  it('finds the other id of an entry, and gives none for an entry with the same id', async () => {
+    const deps = nodeAt(HOME);
+    expect(await problem(entryProblemOf(deps, HOME, reader))).toBeNull();
+    registerRoot(deps, HOME, 'old');
+    expect(await problem(entryProblemOf(deps, HOME, reader))).toEqual({ kind: 'other-id', listed: 'old' });
+  });
+
+  it('does not look at the marker when the entry is right', async () => {
+    const deps = nodeAt(HOME);
+    deps.files.delete(MARKER);
+    expect(await problem(entryProblemOf(deps, HOME, reader))).toBeNull();
+  });
+
+  it.each([
+    ['is missing', undefined, { kind: 'marker', reason: 'is missing' }],
+    ['does not parse', '{', { kind: 'marker', reason: 'does not parse' }],
+    ['is not valid', '{"schema_version": "x"}', { kind: 'marker', reason: 'is not valid' }],
+  ])('names a marker that %s', async (_name, text, expected) => {
+    const deps = nodeAt(HOME);
+    deps.files.delete(MARKER);
+    if (text !== undefined) deps.seed(MARKER, text);
+    expect(await problem(markerProblemOf(deps, HOME))).toEqual(expected);
+  });
+
+  it('gives none for a valid marker, and names a state path that is not a folder', async () => {
+    const deps = nodeAt(HOME);
+    expect(await problem(markerProblemOf(deps, HOME))).toBeNull();
+    const file = nodeAt(HOME, {}, false);
+    file.seed(`${HOME}/.factory`, 'x');
+    expect(await problem(markerProblemOf(file, HOME))).toEqual({ kind: 'state-not-folder' });
+  });
+
+  it('keeps the order of the check: the entry first, then the marker', async () => {
+    const deps = nodeAt(HOME, {}, false);
+    deps.files.delete(MARKER);
+    expect(await stopped(deps, HOME)).toMatchObject({ message: expect.stringContaining('has no entry') });
+    registerRoot(deps, HOME, 'demo');
+    deps.files.delete(MARKER);
+    expect(await stopped(deps, HOME)).toMatchObject({ message: expect.stringContaining('is missing') });
+  });
+
+  it.each([
+    [{ kind: 'no-entry' }, 'the factory list has no entry for /w/node'],
+    [{ kind: 'in-clone', factory: '/w/other' }, 'it is in a clone of the factory folder /w/other'],
+    [{ kind: 'other-id', listed: 'old' }, 'the factory list has the node id "old" for /w/node, and the file has another id'],
+    [{ kind: 'state-not-folder' }, '/w/node/.factory is not a folder'],
+    [{ kind: 'marker', reason: 'is missing' }, 'the factory marker .factory/node.json is missing'],
+    [{ kind: 'marker-newer', reason: 'is from a newer version' }, 'the factory marker .factory/node.json is from a newer version'],
+    [{ kind: 'list', reason: 'the list is gone', remedy: 'x' }, 'the list is gone'],
+  ] as const)('gives the reason of %j as a sentence', (found, reason) => {
+    expect(reasonOf(HOME, found)).toBe(reason);
+  });
+
+  it('gives the same reason in the stop of a command', async () => {
+    const stop = await stopped(nodeAt(HOME, {}, false), HOME);
+    expect(stop.message).toBe(`/w/node/factory.yaml does not count: ${reasonOf(HOME, { kind: 'no-entry' })}`);
   });
 });
 

@@ -1,6 +1,7 @@
 import { isMap, isSeq, parseDocument, Scalar, type Document } from 'yaml';
 import { err, ok, type Result } from '../core/result.js';
 import { files, keys } from '../names.js';
+import type { ApprovalModes } from '../recipes/index.js';
 import type { LinkConfig } from './schema.js';
 
 /**
@@ -39,6 +40,28 @@ export const addChildText = (text: string, link: LinkConfig): Result<string, str
     list.add(entry);
   } else {
     return err(childrenNotList);
+  }
+  return ok(configDocumentText(doc));
+};
+
+/**
+ * Set the mode of each approval point. A point that the map names keeps its place and its comments, a new point goes at
+ * the end, and the map is a block map. The key is added when the file has none.
+ */
+export const setApprovalText = (text: string, modes: ApprovalModes): Result<string, string> => {
+  const parsed = parseConfigDocument(text);
+  if (!parsed.ok) return parsed;
+  const doc = parsed.value;
+  if (!isMap(doc.contents)) return err(`${files.localConfig} must hold a mapping of keys`);
+
+  const current = doc.get(keys.root.approval, true);
+  if (current === undefined || current === null || (current instanceof Scalar && current.value === null)) {
+    doc.set(keys.root.approval, doc.createNode(modes));
+  } else if (isMap(current)) {
+    current.flow = false;
+    for (const [point, mode] of Object.entries(modes)) current.set(point, mode);
+  } else {
+    return err(`${keys.root.approval} in ${files.localConfig} is not a mapping`);
   }
   return ok(configDocumentText(doc));
 };

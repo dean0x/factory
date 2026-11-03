@@ -164,17 +164,18 @@ export const applyMoves = async (deps: Deps, moves: readonly MovePlan[], moved: 
 
 /**
  * Put the old state back, newest change first: the old texts, then the moves back, then the folders that a move made.
- * Returns the messages of the failures.
+ * Every file is inside the node home `home`. Returns the messages of the failures.
  */
 export const restore = async (
   deps: Deps,
+  home: string,
   written: readonly Written[],
   moved: readonly Moved[] = [],
 ): Promise<readonly string[]> => {
   const problems: string[] = [];
   for (const entry of [...written].reverse()) {
     const result =
-      entry.previous === null ? await deps.fs.remove(entry.path) : await deps.fs.writeTextAtomic(entry.path, entry.previous);
+      entry.previous === null ? await deps.fs.remove(entry.path) : await deps.fs.writeTextAtomic(entry.path, entry.previous, home);
     if (!result.ok) problems.push(result.error.message);
   }
   for (const move of [...moved].reverse()) {
@@ -198,8 +199,13 @@ export interface NewFile {
   readonly mode?: number;
 }
 
-/** Write the files whose text changes. Each old text goes to `written` first. */
-export const writeAll = async (deps: Deps, newFiles: readonly NewFile[], written: Written[]): Promise<CliResult<void>> => {
+/** Write the files whose text changes. Each file is inside the node home `home`. Each old text goes to `written` first. */
+export const writeAll = async (
+  deps: Deps,
+  home: string,
+  newFiles: readonly NewFile[],
+  written: Written[],
+): Promise<CliResult<void>> => {
   for (const file of newFiles) {
     const previous = await readIfFile(deps, file.path);
     if (!previous.ok) return previous;
@@ -209,7 +215,7 @@ export const writeAll = async (deps: Deps, newFiles: readonly NewFile[], written
       if (!folder.ok) return folder;
     }
     written.push({ path: file.path, previous: previous.value });
-    const result = await deps.fs.writeTextAtomic(file.path, file.text, file.mode);
+    const result = await deps.fs.writeTextAtomic(file.path, file.text, home, file.mode);
     if (!result.ok) return result;
   }
   return ok(undefined);

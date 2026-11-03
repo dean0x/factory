@@ -46,8 +46,11 @@ export interface Fs {
    * Write the text to a temporary file in the same folder, then rename it over the target.
    * A reader sees the old text or the new text, never a part. A failure leaves the target as it was.
    * The file gets `mode` when it is given. Else it keeps the mode of the file it replaces.
+   * `within` is the folder that the caller means. The write is refused, and nothing changes, when the last part of the
+   * path is a link (also a link whose target does not exist), or when the real path of the file is not inside the real
+   * path of `within`. A link in `within` itself, or above it, is no reason to refuse.
    */
-  writeTextAtomic(path: string, text: string, mode?: number): Promise<CliResult<void>>;
+  writeTextAtomic(path: string, text: string, within: string, mode?: number): Promise<CliResult<void>>;
   /** The kind of the path, or null when it does not exist. */
   stat(path: string): Promise<CliResult<PathKind | null>>;
   /**

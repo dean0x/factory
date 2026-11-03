@@ -63,7 +63,7 @@ export interface LocateOptions {
 }
 
 /** Why a config file does not count. The message and the remedy are plain text for the person. */
-type RootProblem =
+export type RootProblem =
   | { readonly kind: 'no-entry' }
   | { readonly kind: 'in-clone'; readonly factory: string }
   | { readonly kind: 'other-id'; readonly listed: string }
@@ -74,37 +74,54 @@ type RootProblem =
 
 const INIT = commandText(commands.init);
 
-const refusalOf = (home: string, problem: RootProblem): Err<CliError> => {
+/** The reason why a config file does not count, as a sentence that follows "does not count:". */
+export const reasonOf = (home: string, problem: RootProblem): string => {
+  switch (problem.kind) {
+    case 'no-entry':
+      return `the ${places.list} has no entry for ${home}`;
+    case 'in-clone':
+      return `it is in a clone of the ${places.folder} ${problem.factory}`;
+    case 'other-id':
+      return `the ${places.list} has the ${roles.node} id "${problem.listed}" for ${home}, and the file has another id`;
+    case 'state-not-folder':
+      return `${layoutOf(home).stateDir} is not a folder`;
+    case 'marker':
+    case 'marker-newer':
+      return `the ${places.marker} ${STATE_LABEL} ${problem.reason}`;
+    case 'list':
+      return problem.reason;
+    default: {
+      const unreachable: never = problem;
+      return unreachable;
+    }
+  }
+};
+
+/** The stop (exit 4) of a command for a config file that does not count: the file, the reason and the remedy. */
+export const rootRefusalOf = (home: string, problem: RootProblem): Err<CliError> => {
   const layout = layoutOf(home);
   const file = layout.configFile;
   const initHere = `Run "${INIT}" in the ${places.folder} ${home}.`;
+  const message = `${file} does not count: ${reasonOf(home, problem)}`;
   switch (problem.kind) {
     case 'no-entry':
-      return safetyRefusal(`${file} does not count: the ${places.list} has no entry for ${home}`, initHere);
+    case 'other-id':
+    case 'marker':
+      return safetyRefusal(message, initHere);
     case 'in-clone':
       return safetyRefusal(
-        `${file} does not count: it is in a clone of the ${places.folder} ${problem.factory}`,
+        message,
         `Run the command from the ${places.folder} ${problem.factory}, or name it with ${flagText(flags.home)} ${problem.factory}.`,
-      );
-    case 'other-id':
-      return safetyRefusal(
-        `${file} does not count: the ${places.list} has the ${roles.node} id "${problem.listed}" for ${home}, and the file has another id`,
-        initHere,
       );
     case 'state-not-folder':
       return safetyRefusal(
         `${layout.stateDir} is not a folder, so ${file} does not count`,
         `Move ${layout.stateDir} away, then run "${INIT}" in the ${places.folder} ${home}.`,
       );
-    case 'marker':
-      return safetyRefusal(`${file} does not count: the ${places.marker} ${STATE_LABEL} ${problem.reason}`, initHere);
     case 'marker-newer':
-      return safetyRefusal(
-        `${file} does not count: the ${places.marker} ${STATE_LABEL} ${problem.reason}`,
-        `Upgrade ${program}, then run the command again.`,
-      );
+      return safetyRefusal(message, `Upgrade ${program}, then run the command again.`);
     case 'list':
-      return safetyRefusal(`${file} does not count: ${problem.reason}`, problem.remedy);
+      return safetyRefusal(message, problem.remedy);
     default: {
       const unreachable: never = problem;
       return unreachable;
@@ -138,8 +155,11 @@ const listingOf = async (deps: Deps, home: string): Promise<CliResult<{ readonly
   return ok(factory === null ? { kind: 'no-entry' } : { kind: 'in-clone', factory });
 };
 
-/** The problem with the factory marker, or null when the marker is there and valid at a known state version. */
-const markerProblemOf = async (deps: Deps, home: string): Promise<CliResult<RootProblem | null>> => {
+/**
+ * The problem with the factory marker, or null when the marker is there and valid at a known state version (an older
+ * version is no problem: the state check of `doctor` names `upgrade` for it).
+ */
+export const markerProblemOf = async (deps: Deps, home: string): Promise<CliResult<RootProblem | null>> => {
   const stateDir = await deps.fs.stat(layoutOf(home).stateDir);
   if (!stateDir.ok) return stateDir;
   if (stateDir.value !== null && stateDir.value !== 'dir') return ok({ kind: 'state-not-folder' });
@@ -165,10 +185,25 @@ const markerProblemOf = async (deps: Deps, home: string): Promise<CliResult<Root
 };
 
 /**
+ * The entry part of the root rule, for a folder that holds its config file: the factory list has an entry for the
+ * folder, and the id of that entry is the node id of the config. A config that gives no node id is not used by the
+ * command either, so only the entry is checked then. The value is null when the entry is right, else the reason.
+ */
+export const entryProblemOf = async (deps: Deps, home: string, readNodeId: NodeIdReader): Promise<CliResult<RootProblem | null>> => {
+  const listing = await listingOf(deps, home);
+  if (!listing.ok) return listing;
+  if (!('entryId' in listing.value)) return ok(listing.value);
+
+  const identity = await readNodeId(deps, home);
+  return identity.ok && identity.value.id !== listing.value.entryId
+    ? ok({ kind: 'other-id', listed: listing.value.entryId })
+    : ok(null);
+};
+
+/**
  * The registration check, the root rule of design 4.3. A config file counts only when the factory list has an entry
  * for its folder, the id of that entry is the node id of the config, and the factory marker is there and valid. A
- * folder with no config file has nothing to count: the command reports the missing file. A config that gives no node
- * id is not used by the command either, so only the entry and the marker are checked then. The error is a failure of
+ * folder with no config file has nothing to count: the command reports the missing file. The error is a failure of
  * the file system. The value is null when the config counts, else the reason.
  */
 const rootProblemOf = async (deps: Deps, home: string, readNodeId: NodeIdReader): Promise<CliResult<RootProblem | null>> => {
@@ -179,14 +214,8 @@ const rootProblemOf = async (deps: Deps, home: string, readNodeId: NodeIdReader)
   if (!config.ok) return config;
   if (config.value !== 'file') return ok(null);
 
-  const listing = await listingOf(deps, home);
-  if (!listing.ok) return listing;
-  if (!('entryId' in listing.value)) return ok(listing.value);
-
-  const identity = await readNodeId(deps, home);
-  if (identity.ok && identity.value.id !== listing.value.entryId) {
-    return ok({ kind: 'other-id', listed: listing.value.entryId });
-  }
+  const entry = await entryProblemOf(deps, home, readNodeId);
+  if (!entry.ok || entry.value !== null) return entry;
   return markerProblemOf(deps, home);
 };
 
@@ -239,7 +268,7 @@ export const locateHome = async (
     const identity = await readNodeId(deps, home);
     if (identity.ok && identity.value.schema === OLDEST_SCHEMA) return ok({ home, source, unregistered: true });
   }
-  return refusalOf(home, problem.value);
+  return rootRefusalOf(home, problem.value);
 };
 
 /** Like `locateHome`, and the home must be a folder. */

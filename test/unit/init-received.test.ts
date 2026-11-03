@@ -688,14 +688,14 @@ describe('init: the approval points of a received factory', () => {
   });
 });
 
-describe('init: a folder that holds both config files keeps its current behaviour', () => {
-  it('stops with exit 1 and the message of a node that exists', async () => {
+describe('init: a folder that holds both config files and a local file that is not valid', () => {
+  it('stops with exit 1, names the local file and writes nothing', async () => {
     const { deps } = received({}, terminal);
     deps.seed(`${ROOT}/factory.local.yaml`, 'schema: 1\n');
     const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
-    expect(messageOf(result)).toContain('already exists');
+    expect(messageOf(result)).toContain('factory.local.yaml');
     expect(snapshot(deps)).toBe(before);
   });
 });

@@ -1,7 +1,7 @@
 import { basename, join, resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
-import { commands, commandText, program, trackedFiles } from '../names.js';
+import { commands, commandText, dirs, program, trackedFiles } from '../names.js';
 import type { Deps } from './deps.js';
 import { ok } from './result.js';
 
@@ -364,6 +364,46 @@ const parseStatus = (stdout: string): readonly StatusEntry[] => {
     if (WITH_OLD_PATH.includes(entry.index) || WITH_OLD_PATH.includes(entry.tree)) at += 1;
   }
   return entries;
+};
+
+const MAX_SHOWN_PATHS = 5;
+
+const shownPaths = (paths: readonly string[]): string => {
+  const shown = paths.slice(0, MAX_SHOWN_PATHS).join(', ');
+  return paths.length > MAX_SHOWN_PATHS ? `${shown} and ${paths.length - MAX_SHOWN_PATHS} more` : shown;
+};
+
+/**
+ * Refuse when a commit in the state repo could take a change of the owner. The index of the state repo must hold no
+ * staged change. A path of `touched` must have no change of the owner, staged or not: `changing` names the command that
+ * changes these paths ("the upgrade"), and `again` is the sentence that names the command to run again.
+ */
+export const requireStateRepoReady = async (
+  deps: Deps,
+  stateDir: string,
+  touched: readonly string[],
+  changing: string,
+  again: string,
+): Promise<CliResult<void>> => {
+  const status = await statusOf(deps, stateDir);
+  if (!status.ok) return status;
+  const staged = status.value.filter((entry) => ![' ', '?', '!'].includes(entry.index));
+  if (staged.length > 0) {
+    return failure(
+      `${dirs.state} has staged changes: ${shownPaths(staged.map((entry) => entry.path))}`,
+      `Commit them, or clear them with "git reset" in ${dirs.state}. ${again}`,
+    );
+  }
+  const changed = status.value.filter((entry) =>
+    touched.some((path) => entry.path === path || entry.path.startsWith(`${path}/`)),
+  );
+  if (changed.length > 0) {
+    return failure(
+      `${dirs.state} has changes in files that ${changing} changes: ${shownPaths(changed.map((entry) => entry.path))}`,
+      `Commit them, or put the files back with git in ${dirs.state}. ${again}`,
+    );
+  }
+  return ok(undefined);
 };
 
 /** The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. */

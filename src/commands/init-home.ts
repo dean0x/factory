@@ -20,18 +20,18 @@ export interface HomeChoice {
   readonly skipped: readonly SkippedFolder[];
   /** True when a workspace folder holds more entries than the scan reads. */
   readonly truncated: boolean;
-  /** True when the home holds `factory.yaml` and no local file: a factory that arrived, for example with `git clone`. */
-  readonly received: boolean;
+  /** What the home is for `init`. */
+  readonly kind: FolderKind;
 }
 
-const NOT_PROPOSED = { found: [], skipped: [], truncated: false, received: false } as const;
+const NOT_PROPOSED = { found: [], skipped: [], truncated: false } as const;
 
 /**
- * What a folder is for `init`. `received`: it holds `factory.yaml` and no local file, so a factory arrived in it.
- * `other`: it holds no `factory.yaml`, or it holds both config files; `checkHomeIsNew` and the paths for a folder with both
- * config files decide what happens then.
+ * What a folder is for `init`. `received`: it holds `factory.yaml` and no local file, so a factory arrived in it. `both`:
+ * it holds both config files, so a factory is there already. `other`: it holds no `factory.yaml`; `checkHomeIsNew` decides
+ * what happens then.
  */
-export type FolderKind = 'received' | 'other';
+export type FolderKind = 'received' | 'both' | 'other';
 
 /** The kind of a folder. A local file counts as present when its path is any kind of entry, a dangling link included. */
 export const folderKindOf = async (deps: Deps, folder: string): Promise<CliResult<FolderKind>> => {
@@ -41,7 +41,7 @@ export const folderKindOf = async (deps: Deps, folder: string): Promise<CliResul
   if (config.value !== 'file') return ok('other');
   const local = await deps.fs.lstat(layout.localConfigFile);
   if (!local.ok) return local;
-  return ok(local.value === null ? 'received' : 'other');
+  return ok(local.value === null ? 'received' : 'both');
 };
 
 const describeSkipped = (skipped: readonly SkippedFolder[]): string =>
@@ -82,7 +82,7 @@ const proposedName = (folder: string): string | null => {
   return name === '' ? null : `${name}-${program}`;
 };
 
-const nodeExists = (home: string): CliResult<never> =>
+export const nodeExists = (home: string): CliResult<never> =>
   failure(
     `${files.config} already exists in ${home}`,
     `That folder is already a ${roles.node}. Run "${commandText(commands.doctor)}".`,
@@ -132,10 +132,9 @@ export const checkHomeOutsideRoots = async (deps: Deps, indexPath: string, home:
 
 /**
  * Choose the node home. The home flag wins. Else, in a git work tree, the proposal is a folder beside the work tree;
- * a work tree whose top holds `factory.yaml` and no local file is a received factory, and the top is the home; a work
- * tree whose top holds both config files is a node already, and the command stops. Else, in a folder that holds
- * `factory.yaml` and no local file, that folder is the home of a received factory; in a folder that holds both config
- * files, the command stops: that node exists. Else, in a folder that holds git repos one level down, the proposal is a
+ * a work tree whose top holds `factory.yaml` is a factory that is there already, and the top is the home. The kind says
+ * which: `received` with no local file, `both` with a local file. Else, in a folder that holds `factory.yaml`, that
+ * folder is the home, with the same two kinds. Else, in a folder that holds git repos one level down, the proposal is a
  * folder inside it, and each repo is a project.
  * A person confirms the proposal on a terminal, or the yes flag confirms it. Else the home is the current folder.
  */
@@ -146,7 +145,7 @@ export const chooseHome = async (
   if (options.home !== undefined) {
     const home = resolve(deps.cwd, options.home);
     const kind = await folderKindOf(deps, home);
-    return kind.ok ? ok({ home, ...NOT_PROPOSED, received: kind.value === 'received' }) : kind;
+    return kind.ok ? ok({ home, ...NOT_PROPOSED, kind: kind.value }) : kind;
   }
   const refuse = (folder: string): CliResult<never> =>
     usageError(`cannot make a ${roles.node} home name from the folder ${folder}`, `Pass ${flagText(flags.home)} DIR.`);
@@ -155,28 +154,28 @@ export const chooseHome = async (
   if (top !== null) {
     const kind = await folderKindOf(deps, top);
     if (!kind.ok) return kind;
-    if (kind.value === 'received') return ok({ home: top, ...NOT_PROPOSED, received: true });
+    if (kind.value !== 'other') return ok({ home: top, ...NOT_PROPOSED, kind: kind.value });
     const known = await checkHomeIsNew(deps, top);
     if (!known.ok) return known;
     const name = proposedName(top);
     if (name === null) return refuse(top);
-    const choice = { home: join(dirname(top), name), found: [top], skipped: [], truncated: false, received: false };
+    const choice = { home: join(dirname(top), name), found: [top], skipped: [], truncated: false, kind: 'other' as const };
     return confirmProposal(deps, options.yes, choice, `this folder is in the git work tree ${top}`);
   }
 
   const folder = resolve(deps.cwd);
   const folderKind = await folderKindOf(deps, folder);
   if (!folderKind.ok) return folderKind;
-  if (folderKind.value === 'received') return ok({ home: folder, ...NOT_PROPOSED, received: true });
+  if (folderKind.value !== 'other') return ok({ home: folder, ...NOT_PROPOSED, kind: folderKind.value });
   const own = await checkHomeIsNew(deps, folder);
   if (!own.ok) return own;
   const scan = await listRepoChildren(deps, folder);
   if (!scan.ok) return scan;
-  if (scan.value.repos.length === 0) return ok({ home: folder, ...NOT_PROPOSED });
+  if (scan.value.repos.length === 0) return ok({ home: folder, ...NOT_PROPOSED, kind: 'other' });
   const name = proposedName(folder);
   if (name === null) return refuse(folder);
   const { repos, skipped, truncated } = scan.value;
-  const choice = { home: join(folder, name), found: repos, skipped, truncated, received: false };
+  const choice = { home: join(folder, name), found: repos, skipped, truncated, kind: 'other' as const };
   const names = repos.map((repo) => basename(repo)).join(', ');
   return confirmProposal(deps, options.yes, choice, `this folder holds the git repos ${names}`);
 };

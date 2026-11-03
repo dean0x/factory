@@ -3,7 +3,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
@@ -494,7 +494,7 @@ describe('node deps: atomic write', () => {
     await deps.fs.mkdir(folder);
     const file = join(folder, 'CLAUDE.md');
     await writeFile(file, 'old text', 'utf8');
-    expect((await deps.fs.writeTextAtomic(file, 'new text')).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(file, 'new text', folder)).ok).toBe(true);
     expect(await readFile(file, 'utf8')).toBe('new text');
     expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['CLAUDE.md'] });
   });
@@ -503,7 +503,7 @@ describe('node deps: atomic write', () => {
     const folder = fresh('create');
     await deps.fs.mkdir(folder);
     const file = join(folder, 'factory.yaml');
-    expect((await deps.fs.writeTextAtomic(file, 'schema: 1\n')).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(file, 'schema: 1\n', folder)).ok).toBe(true);
     expect(await readFile(file, 'utf8')).toBe('schema: 1\n');
   });
 
@@ -513,7 +513,7 @@ describe('node deps: atomic write', () => {
     const file = join(folder, 'CLAUDE.md');
     await writeFile(file, 'old text', 'utf8');
     await chmod(file, 0o600);
-    expect((await deps.fs.writeTextAtomic(file, 'new text')).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(file, 'new text', folder)).ok).toBe(true);
     expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
 
@@ -521,13 +521,13 @@ describe('node deps: atomic write', () => {
     const folder = fresh('given-mode');
     await deps.fs.mkdir(folder);
     const created = join(folder, 'new.json');
-    expect((await deps.fs.writeTextAtomic(created, '{}', 0o600)).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(created, '{}', folder, 0o600)).ok).toBe(true);
     expect((await stat(created)).mode & 0o777).toBe(0o600);
 
     const old = join(folder, 'old.json');
     await writeFile(old, '{}', 'utf8');
     await chmod(old, 0o644);
-    expect((await deps.fs.writeTextAtomic(old, '{"a":1}', 0o600)).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(old, '{"a":1}', folder, 0o600)).ok).toBe(true);
     expect((await stat(old)).mode & 0o777).toBe(0o600);
   });
 
@@ -537,22 +537,73 @@ describe('node deps: atomic write', () => {
     expect((await stat(folder)).mode & 0o777).toBe(0o700);
   });
 
-  it('writes through a link and keeps the link', async () => {
+  it('refuses a link at the target, also a link to a file in the folder, and changes nothing', async () => {
     const folder = fresh('link');
     await deps.fs.mkdir(folder);
     const target = join(folder, 'real.md');
     const link = join(folder, 'CLAUDE.md');
     await writeFile(target, 'old text', 'utf8');
     await symlink(target, link);
-    expect((await deps.fs.writeTextAtomic(link, 'new text')).ok).toBe(true);
-    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    const result = await deps.fs.writeTextAtomic(link, 'new text', folder);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('is a link');
     expect(await readlink(link)).toBe(target);
-    expect(await readFile(target, 'utf8')).toBe('new text');
+    expect(await readFile(target, 'utf8')).toBe('old text');
+    expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['CLAUDE.md', 'real.md'] });
+  });
+
+  it('refuses a link at the target when the target of the link does not exist, and makes no file there', async () => {
+    const folder = fresh('dangling');
+    const outside = fresh('dangling-outside');
+    await deps.fs.mkdir(folder);
+    await deps.fs.mkdir(outside);
+    const missing = join(outside, 'made-by-the-write.md');
+    const link = join(folder, 'CLAUDE.md');
+    await symlink(missing, link);
+    const result = await deps.fs.writeTextAtomic(link, 'new text', folder);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('is a link');
+    expect(await deps.fs.list(outside)).toEqual({ ok: true, value: [] });
+    expect(await readlink(link)).toBe(missing);
+  });
+
+  it('refuses a path that resolves outside the folder because a part of the path is a link', async () => {
+    const folder = fresh('through-link');
+    const outside = fresh('through-link-outside');
+    await deps.fs.mkdir(folder);
+    await deps.fs.mkdir(outside);
+    await symlink(outside, join(folder, 'inner'));
+    const result = await deps.fs.writeTextAtomic(join(folder, 'inner', 'x.md'), 'new text', folder);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('is outside');
+    expect(await deps.fs.list(outside)).toEqual({ ok: true, value: [] });
+  });
+
+  it('refuses a path that leaves the folder by a parent part, and a folder next to it with a longer name', async () => {
+    const folder = fresh('leaves');
+    const sibling = `${folder}-more`;
+    await deps.fs.mkdir(join(folder, 'inner'));
+    await deps.fs.mkdir(sibling);
+    const up = await deps.fs.writeTextAtomic(`${folder}/inner/../../${basename(sibling)}/x.md`, 'new text', folder);
+    expect(up.ok).toBe(false);
+    const next = await deps.fs.writeTextAtomic(join(sibling, 'x.md'), 'new text', folder);
+    expect(next.ok).toBe(false);
+    expect(await deps.fs.list(sibling)).toEqual({ ok: true, value: [] });
+  });
+
+  it('writes in a folder below the folder that the caller names, also when the caller names a link to the folder', async () => {
+    const real = fresh('real-folder');
+    const named = fresh('named-link');
+    await deps.fs.mkdir(join(real, 'inner'));
+    await symlink(real, named);
+    const file = join(named, 'inner', 'x.md');
+    expect((await deps.fs.writeTextAtomic(file, 'new text', named)).ok).toBe(true);
+    expect(await readFile(join(real, 'inner', 'x.md'), 'utf8')).toBe('new text');
   });
 
   it('fails and leaves no temporary file when the folder does not exist', async () => {
     const folder = fresh('missing');
-    const result = await deps.fs.writeTextAtomic(join(folder, 'CLAUDE.md'), 'text');
+    const result = await deps.fs.writeTextAtomic(join(folder, 'CLAUDE.md'), 'text', folder);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
     expect(await deps.fs.stat(folder)).toEqual({ ok: true, value: null });
@@ -565,7 +616,7 @@ describe('node deps: atomic write', () => {
     const target = join(folder, 'homes.json');
     await writeFile(victim, 'victim text', 'utf8');
     await symlink(victim, `${target}.tmp-${process.pid}`);
-    expect((await deps.fs.writeTextAtomic(target, 'new text', 0o600)).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(target, 'new text', folder, 0o600)).ok).toBe(true);
     expect(await readFile(victim, 'utf8')).toBe('victim text');
     expect(await readFile(target, 'utf8')).toBe('new text');
     expect(await readlink(`${target}.tmp-${process.pid}`)).toBe(victim);
@@ -577,7 +628,7 @@ describe('node deps: atomic write', () => {
     const target = join(folder, 'homes.json');
     const planted = `${target}.tmp-${process.pid}`;
     await writeFile(planted, 'planted text', 'utf8');
-    expect((await deps.fs.writeTextAtomic(target, 'new text', 0o600)).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(target, 'new text', folder, 0o600)).ok).toBe(true);
     expect(await readFile(planted, 'utf8')).toBe('planted text');
     expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['homes.json', `homes.json.tmp-${process.pid}`] });
   });
@@ -586,7 +637,7 @@ describe('node deps: atomic write', () => {
     const folder = fresh('blocked');
     const target = join(folder, 'CLAUDE.md');
     await deps.fs.mkdir(target);
-    const result = await deps.fs.writeTextAtomic(target, 'text');
+    const result = await deps.fs.writeTextAtomic(target, 'text', folder);
     expect(result.ok).toBe(false);
     expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['CLAUDE.md'] });
   });
