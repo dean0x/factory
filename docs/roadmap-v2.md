@@ -26,7 +26,7 @@ The build order is FAC-M2, M4, M5, M6, M7, then M3, M8, M10, M9. D-56 sets M2, M
 |---|---|---|---|---|
 | 1 | FAC-M2 | Names, home, roles and schema 2 | FAC-M1 | F-1, F-3, F-4, F-5, F-10, F-13 |
 | 2 | FAC-M4 | Worker control | FAC-M2 | F-7, F-8, F-9, F-12, F-20, F-21 |
-| 3 | FAC-M5 | Local board, check and release commands | FAC-M4 | F-2, F-6 |
+| 3 | FAC-M5 | Local board, check and release commands | FAC-M4 | F-2, F-6, F-22, F-23 |
 | 4 | FAC-M6 | devflow setup | FAC-M5 | F-10, F-16 |
 | 5 | FAC-M7 | This workspace adopted (local board) | FAC-M4, FAC-M6 | F-3, F-8 |
 | 6 | FAC-M3 | GitHub board, and the move to it | FAC-M7 | F-2, F-18, F-19 |
@@ -175,6 +175,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 7. **Extension points (design §4.14).** The event file and `report --json` hold the fields of design §4.14, and a sample reader outside `src/` (in `examples/`) reads them.
 8. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
 9. **Acceptance of shared check commands.** A check command from the shared file runs only after the owner accepts it (design §4.4).
+10. **Usage view and token estimate (F-22, F-23).** `factory status --usage` shows the token use, the limits and the work counts of the factory. `factory item estimate <id>` gives a token range for a work item from the closed items. Both read only data that factory records: the last-seen files, the hook and status line data (design §4.6) and the board. They never read a file under `~/.claude`. If the status line data has token, cost or limit fields, the hook records them in the last-seen line. The FAC-M5 plan adds the flag and the subcommand to design §4.2.
 
 **`factory copies` (D-55).** The coordinator's repeated git work across work copies becomes four commands. Workers do their own git work on their own branch.
 - `list`: one row per work copy: project, path, worker, branch, short HEAD.
@@ -226,6 +227,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] `scripts/budget-check.sh` exits 0 for the jobs built so far. It exits 1 when a fixture output is more than twice the figure in `docs/token-budget.md` (test with an inflated output).
 - [ ] Template test: the coordinator role text and the fixed rules follow the approval setting. With `merge: owner`, the text says that every merge waits for the owner. With `merge: delegated`, it names the proofs of design §6.1 and does not say that every merge waits.
 - [ ] Unit test: `doctor` warns, with the fix, when the host of a configured proxy is not loopback (`127.0.0.1`, `::1` or `localhost`). It gives no such warning for a loopback host.
+- [ ] Usage view (F-22). Test `status --usage shows tokens, limits and work counts for two subscriptions` (`test/unit/status-usage.test.ts`), on a fixture of last-seen lines and closed items for two subscriptions. For each subscription and each model, the output shows the token use for today, this week and this month. It shows the quota or weekly limit percent when the data of the subscription has one, and `-` when it has none. The fixture has one subscription of each kind. The output also shows the work counts (items closed and lines changed) for the three periods, and the tokens of each work item. Line 1 is the verdict, and the output follows the output rule (at most 20 lines, checked with the short-output helper). The static test of FAC-M4 (no source file opens a path under `~/.claude`) covers this code.
+- [ ] Token estimate (F-23). Test `item estimate gives a token range from closed items` (`test/unit/item-estimate.test.ts`), on a fixture of closed items with measured tokens. With at least N similar closed items, `factory item estimate <id>` prints a token range and its basis (the closed items that it used) and exits 0. With fewer, it prints `NO BASIS` on line 1 and exits 3. N is a named number in `src/names.ts`, with the proposed value 3. The output follows the output rule. `docs/token-budget.md` keeps its 17 rows, because design §3 lists no job for these two commands (docs check 6).
 
 ### FAC-M6: devflow setup
 
@@ -381,6 +384,8 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - Answered (D-57): the release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope. FAC-M5 builds the check (design §6.2).
 - Before FAC-M3 (after the workspace move in FAC-M7): which private repo holds the decision store of this workspace, and which private git remote holds the state repo (`state.remote`) for a second machine.
 - Before the milestone that builds each watch command (FAC-M3 for `factory watch`, FAC-M4 for `worker watch`, FAC-M5 for `pr watch`): the bound of each command. The design gives no value for the number of reads per run of `factory watch`, and none for the maximum wait of `worker watch` and `pr watch`. It also gives no result when the bound or the wait ends. Each value is a named number in `src/names.ts`.
+- Before FAC-M5 builds the usage view (F-22): the source of the usage of a subscription other than Claude Code, for example Codex. `session.agent` accepts only `claude` in FAC-M4. The owner decides the worker agent setting for another agent, and where its token and limit data come from. Until then, the usage view lists the Claude Code subscriptions only.
+- Before FAC-M5 builds the usage view (F-22): FAC-M4 task 2 records which quota or cost fields the real status line data has. If the data has no such field, the owner names the other source. A read under `~/.claude` is not a source (F-9).
 - Before FAC-M10: the old local paths in the git history. The owner decides; the history is not rewritten (D-7 A).
 - Before FAC-M10: the first publish and the public visibility of the repo. The owner writes a decision id in `docs/release-approval.md`.
 
