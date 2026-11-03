@@ -12,7 +12,7 @@ Dean gave the feedback F-14 to F-21 and the decisions D-59 and D-60 on 2026-11-0
 4. **Approval points (F-15, D-57).** The core knows approval points and work items only. The recipe lists the approval points and owns the words merge, pull request and release. `init` asks the owner for the mode of each point: `owner` or `delegated` (§6).
 5. **Core and setup (F-16).** The core is the metal. A setup is text and scripts that a person adds on top. The owner accepts the setup text by its hash (D-13) (§4.13).
 6. **No desk, few stops (F-17).** The design has no review desk of its own. It lists the extension points instead (§4.14). Only a security boundary stops a command, and every stop prints the command that fixes it (§4.3).
-7. **One board for many repos (F-19).** One GitHub project holds the issues of many repos in one board. FAC-M3 proves it with a real run (§4.10).
+7. **One board for many repos (F-19).** Yes, GitHub Projects can hold issues from many repos. Not verified yet: FAC-M3 proves it with two repos. Not checked yet for Jira and Linear: FAC-M9 (§4.10).
 8. **Lifecycle (F-20, F-21).** The commands `start`, `shutdown`, `restart`, `reboot`, `status` and `dismiss` have a milestone and a test each. The design defines an idle worker (§4.2, §4.11).
 9. **Leftovers.** The docs hold no local machine path (docs check 8). D-57 is answered: the release proof is an owner-approved release scope (§6.2).
 
@@ -52,23 +52,29 @@ An independent check compared this design with every note from Dean. `docs/inten
 
 ## Summary for Dean (one page)
 
-**What factory is.** `factory` is a CLI. It creates and runs the orchestration setup of this workspace on any machine, for any person. `factory init` makes a factory folder: the config, the coordinator text, the role texts and the decision profile. `factory start` starts the tmux layout and the coordinator session. Other commands do the multi-step jobs that the Orchestrator does by hand today. The CLI never contains a name, an account or a path. It reads them from the person who runs `init`.
+**What factory is.** `factory` is a program that you run in a terminal window. It creates and runs the orchestration setup of this workspace on any machine, for any person. `factory init` makes a factory folder: the config, the coordinator text, the role texts and your decision notes. `factory start` starts the screen layout and the coordinator session. Other commands do the multi-step jobs that the Orchestrator does by hand today. The program never contains a name, an account or a path. It reads them from the person who runs `init`.
 
-**One core, many kinds of factory.** The core knows nodes, layers, roles, sessions, the inbox and reports, the owner's decisions, the board, capacity, the state store and approval points. A **recipe** gives the rest: the role text of each layer, the work cycle, the approval points, the kind of output and the board mapping. The first recipe is `software`: projects are git repos, the output is a pull request, and the approval points are the merge and the release. It has two setups: plain Claude Code (the default) and devflow. Other recipes, for example research or content, come later.
+**One core, many kinds of factory.** The core knows nodes, layers, roles, sessions, the assignments that go down, the reports that go up, the decisions of the owner, the board, capacity, the saved state and approval points. A **recipe** gives the rest: the role text of each layer, the work cycle, the approval points, the kind of output and the board mapping. A recipe for a marketing factory can be the work cycle "write a post, check it, publish it", with one approval point before the post goes out. The first recipe is `software`. Other recipes, for example research or content, come later.
 
-**Plain words (D-59).** A session that works on one track is a **worker**. A worker does all the steps (plan to release) for one track of one project. Items that wait for the owner are **requests**. A written task is an **assignment**. The merge order is the **queue**. `docs/glossary.md` has the table of plain words.
+Software recipe: projects are git repos, the output is a pull request, and the approval points are the merge and the release. It has two setups: plain Claude Code (the default) and devflow.
 
-**The team's board, not our own desk.** The work items, the requests and the decisions live in GitHub, Jira or Linear. One GitHub project holds the issues of many repos in one board. The owner answers a decision with a comment such as `/choose B`. A script reads the answer, so the coordinator spends no tokens on it. The decision store is private by default.
+**Plain words (D-59).** A session that works on one track is a **worker**. A worker does all the steps, from the plan to the finished work, for one track of one project. Items that wait for the owner are **requests**. A written task is an **assignment**. The order of the finished work that waits for an approval point is the **queue**. `docs/glossary.md` has the table of plain words.
 
-**Where things run.** One factory is one folder and one git repo. The coordinator runs in `coordinator/` inside it. Workers run in work copies of the projects, under `work-copies/`. So a worker never loads the coordinator text. The config travels in git: clone the config repo on another machine and run `factory init`. Personal values and credentials stay in a local file that git ignores.
+**The team's board, not our own desk.** The work items, the requests and the decisions live in GitHub, Jira or Linear. Yes, GitHub Projects can hold issues from many repos. Not verified yet: FAC-M3 proves it with two repos. Jira and Linear are a separate question. Not checked yet: FAC-M9. The owner answers a decision with a comment such as `/choose B`. A script reads the answer, so the answer costs no model use. The place that holds the decisions is private by default.
 
-**Layers.** Every node has the same mechanics: the config, the report digest that goes up, the inbox that comes down, and the CLI. Each layer has its own role. Layer 0 is the workers. Layer 1 is the coordinator. Layer 2 manages coordinators. Each layer above 2 gets its own role when it becomes real. A new top layer changes no node below it.
+**Where things run.** One factory is one folder, and the folder is a shared repo, the config repo. The coordinator runs in `coordinator/` inside it. Workers run in work copies of the projects, under `work-copies/`. So a worker never loads the coordinator text. The config travels as a shared repo: clone the config repo on another machine and run `factory init`. Personal values and credentials stay in a local file that the share list leaves out.
 
-**Scripts save tokens.** The largest costs today are the merge check (25–60k tokens each time), the status round (40–80k), a restart of all workers (60–100k) and worker creation (20–30k). Each becomes one command with a short verdict as output, about 1–4k tokens. A rough total: 50–70% less coordinator spend on routine work.
+**Layers.** Every node has the same mechanics: the config, the report that goes up, the assignments that come down, and the program. Each layer has its own role. Layer 0 is the workers. Layer 1 is the coordinator. Layer 2 manages coordinators. Each layer above 2 gets its own role when it becomes real. A new top layer changes no node below it.
 
-**Safety is in the code, not only in the text.** factory starts a session only in auto mode. It has no flag that skips permissions. A proxy is an explicit config option, checked before each launch. factory types owner-authority input only for a decision that the owner recorded. A decision answer counts only when it comes from the owner's board account. Each approval point waits for the owner, unless the owner delegated it. A delegation needs an approval record that the owner writes in a terminal window outside a factory session (§6 says what this does not prove). A release always needs the proof of §6.2.
+**Scripts save model use.** The largest costs today are the check of finished work (25–60k tokens of model use each time), the status round (40–80k), a restart of all workers (60–100k) and worker creation (20–30k). Each becomes one command with a short verdict as output, about 1–4k tokens. A rough total: 50–70% less coordinator cost on routine work.
 
-**Decided** (details in §9). v1: TypeScript on Node 22+; binary `factory`, npm package `@dean0x/factory`; MIT; state folder `.factory/` and config `factory.yaml`; the last-seen hook. v2: the ten changes above. v3: the changes at the top, and the decisions of the table v3 in §9.
+**Safety is in the code, not only in the text.** factory starts a session only in auto mode, so Claude Code keeps its own permission checks. The program has no flag that skips permission checks. A proxy (a server that passes the model calls on) is an explicit config option, and factory checks that it answers before each start. factory types owner-authority input only for a decision that the owner recorded. A decision answer counts only when it comes from the owner's board account. Each approval point waits for the owner, unless the owner delegated it. A delegation needs an approval record that the owner writes in a terminal window outside a factory session (§6 says what this does not prove).
+
+Software recipe: a release always needs the proof of §6.2.
+
+Engineering note: the program is written in TypeScript on Node 22+, the npm package is `@dean0x/factory`, and the licence is MIT. The private state folder is `.factory/` and the config is `factory.yaml`. Claude Code writes a "last seen" note for each session through a hook. The screen layout is a tmux session.
+
+**Decided** (details in §9). v1: the language, the names and the licence (see the engineering note above), the state folder and the config file, and the "last seen" note. v2: the ten changes above. v3: the changes at the top, and the decisions of the table v3 in §9.
 
 ---
 
@@ -76,15 +82,15 @@ An independent check compared this design with every note from Dean. `docs/inten
 
 This section describes the workspace setup as it is today. It uses the names of the files of this workspace (the Orchestrator, On Dean and the `lane` files), because those are the names in the files.
 
-Paths are relative to `~/Sandbox/.devflow/` unless they start with `~/` or `/`.
+Paths are relative to `~/work/<workspace>/.devflow/` unless they start with `~/` or `/`. The example path `~/work/<workspace>` stands for the folder of the workspace.
 Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, accounts, paths), **M** machine-specific.
 
 ### 1.1 Parts
 
 | Part | Job | Class | What ties it (file:line) |
 |---|---|---|---|
-| `~/Sandbox/CLAUDE.md` | Orchestrator rules §1–§13 | G, D, P, M | "Dean", `dean0x` §13; founder prefix §12; `~/Sandbox/.devflow` (`--add-dir`); session names `orchestrator:lanes`, `orchestrator:bench`; "10 CPUs, 64 GB", `lockf`, `pbcopy`, `sysctl`, `memory_pressure`; `/devflow:*` in §5 and §7 |
-| `docs/orchestration/protocol.md` | Worker protocol: escalation, test lock, disk, context, PRs, style | G, D, P, M | `~/Sandbox/.devflow/...` (L19–34); Node 24 and `/opt/homebrew/bin` (L34, devflow tests only); `vitest` (L25); devflow timeout rule (L54) |
+| `~/work/<workspace>/CLAUDE.md` | Orchestrator rules §1–§13 | G, D, P, M | "Dean", `dean0x` §13; founder prefix §12; `~/work/<workspace>/.devflow` (`--add-dir`); session names `orchestrator:lanes`, `orchestrator:bench`; "10 CPUs, 64 GB", `lockf`, `pbcopy`, `sysctl`, `memory_pressure`; `/devflow:*` in §5 and §7 |
+| `docs/orchestration/protocol.md` | Worker protocol: escalation, test lock, disk, context, PRs, style | G, D, P, M | `~/work/<workspace>/.devflow/...` (L19–34); Node 24 and `/opt/homebrew/bin` (L34, devflow tests only); `vitest` (L25); devflow timeout rule (L54) |
 | `docs/orchestration/status.md` | Status layout | G, P | "Waiting on Dean" (L42) |
 | `docs/orchestration/respawn-map.md` | Worker, pane, folder and session-id table, plus the restart steps | G (steps), P, M (data) | pane ids, UUIDs, `--add-dir` path (L14), reads `~/.claude/sessions` (L16) |
 | `docs/orchestration/orchestrator-resume.md` | The Orchestrator's resume block | instance data | devflow PR numbers |
@@ -125,7 +131,7 @@ I checked each of these on the file. factory takes one answer for each.
 3. **Where workers live.** The respawn map put workers in the view window. CLAUDE.md §12 puts them in the tmux window `bench`. factory uses the worker window `workers` (F-8, §4.11). The respawn map line is fixed.
 4. **Context budget.** `protocol.md` used 250k/350k tokens. CLAUDE.md §12 uses 30–35% and 40% of the window. factory uses the percent rule, because it works for every window size.
 5. **Reads under `~/.claude`.** CLAUDE.md §1 told workers to avoid them, but three scripts read there. factory replaces every read with the last-seen hook (F-9, §4.6).
-6. **The coordinator instructions reach every worker.** Claude Code loads every CLAUDE.md from the session folder up to the top of the file system. The Orchestrator instructions are in `~/Sandbox/CLAUDE.md`, and every worker folder is under `~/Sandbox`. So each worker also loads them. factory keeps the coordinator text in the coordinator folder, and the top of the factory folder holds no instruction file (F-3, D-60, §4.3).
+6. **The coordinator instructions reach every worker.** Claude Code loads every CLAUDE.md from the session folder up to the top of the file system. The Orchestrator instructions are in `~/work/<workspace>/CLAUDE.md`, and every worker folder is under `~/work/<workspace>`. So each worker also loads them. factory keeps the coordinator text in the coordinator folder, and the top of the factory folder holds no instruction file (F-3, D-60, §4.3).
 
 ## 2. The devflow connection
 
@@ -142,8 +148,8 @@ devflow (npm `devflow-kit`, MIT) installs commands, agents, skills, hooks and ru
 | `/devflow:release` | CLAUDE.md §7 | A `release` stage. The plain setup uses the repo's own release script, named in `factory.yaml`. |
 | Triage words (FIX_NOW, ESCALATED, CHANGES REQUESTED) | board-detail.md | Neutral words `blocker`, `fix`, `defer`, `ask`, `ready`. A setup maps its words to them. |
 | Agent types Code, Validate, Test | protocol L32 | Agent kinds: implementer, verifier, tester, reviewer. A setup maps them to its agent types. ("Role" now means the role of a layer, §5.) |
-| State folder named `.devflow` | CLAUDE.md §11–§12; respawn-map | `.factory/`. Proof of the clash: devflow already wrote `~/Sandbox/.devflow/.devflow/{curation,docs,features,memory}`. |
-| `--add-dir ~/Sandbox/.devflow` | CLAUDE.md §12; restore L20 | `--add-dir <node home>/.factory`, from the config. |
+| State folder named `.devflow` | CLAUDE.md §11–§12; respawn-map | `.factory/`. Proof of the clash: devflow already wrote `~/work/<workspace>/.devflow/.devflow/{curation,docs,features,memory}`. |
+| `--add-dir ~/work/<workspace>/.devflow` | CLAUDE.md §12; restore L20 | `--add-dir <node home>/.factory`, from the config. |
 | Worker name examples `devflow-*` | CLAUDE.md §4 | Keep the `<project>-<track>` form for workers; use neutral examples. |
 | Default repo `dean0x/devflow` | board-set L91; boardlib L13, L240; render-dean L69 | `recipe.projects[].repo` in `factory.yaml`. A bare issue number is refused when the node has more than one project. |
 | Rules in `~/.claude/rules/devflow/` (STE, read economy, quality) | HOME CLAUDE.md | factory writes its own short rules into the role templates. It never writes to `~/.claude/rules/`. |
@@ -222,26 +228,29 @@ The board tool removes most of the render scripts of today (`render-board.py`, `
 ### 4.1 Concepts
 
 - **Node**: one session with a layer and an owner. It has an optional parent and children. A node on layer 1 or above has a factory folder. A worker (layer 0) has none: its state lives in the factory folder of its parent. The coordinator is a node on layer 1. The word *node* stays because it fits a session on any layer.
-- **Factory folder**: the folder of a node on layer 1 or above. It is a git repo of its own, the config repo. It holds the config, the setup text, the clones of the projects and the work copies (§4.3). In code and flags it is `home` or `root` (`--home`, `FACTORY_HOME`).
+- **Factory folder**: the folder of a node on layer 1 or above. It is a repo of its own, the config repo, so a person can share it. It holds the config, the setup text, the clones of the projects and the work copies (§4.3). In code and flags it is `home` or `root` (`--home`, `FACTORY_HOME`).
 - **Layer**: the level of a node, counted from the bottom. Layer 0 is the workers. The layer sets the role (§5).
 - **Role**: the instructions, the commands and the reports of one layer. A role text from the recipe gives them.
 - **Owner**: the person whose decisions the node carries. Each team member is the owner of their own nodes.
 - **Worker**: a session (layer 0) in one work copy. It does all the stages of the work cycle for one track of one project.
-- **Work copy**: a git work tree of a project, in which one worker works. It is under `work-copies/` in the factory folder (§4.3).
-- **Project**: a unit of work that the node manages. In the `software` recipe, a project is a git repo, with its own settings and setup.
+- **Work copy**: a separate copy of a project folder for one worker. It is under `work-copies/` in the factory folder, and the share list leaves that folder out. A command that runs in a work copy still finds its factory (§4.3).
+- **Project**: a unit of work that the node manages, with its own settings and setup.
 - **Recipe**: the kind of factory: role texts, work cycle, approval points, output kind and board mapping (§4.9).
 - **Board**: the system that holds the work items, the requests and the decisions (§4.10). The config key is `tracker`.
 - **Approval point**: a step of the work that needs an approval. The recipe lists the points. The owner sets the mode of each point: `owner` or `delegated` (§6).
 
+Software recipe: a project is a git repo. A work copy is a git work tree of that repo. The output of a project is a pull request. The approval points are the merge and the release.
+
 Factory words, used where they are clearer than the generic word:
 - **request**: an item that waits for the owner (a decision or an action);
 - **assignment**: a written task, or a decision record, that goes down to a worker or a child node;
-- **session reset**: a clear or compact of a session between phases;
+- **session reset**: a wipe or a shortening of the memory of a worker session between two phases;
 - **queue**: the order of the finished work that waits for an approval point;
-- **check**: a check of one piece of finished work. It says `READY` or `NOT READY`, with the reasons. The software recipe checks a pull request with `factory check <pr>`;
-- **release check**: the software recipe check before a release, and the check after it.
+- **check**: a check of one piece of finished work. It says `READY` or `NOT READY`, with the reasons.
 
-`docs/glossary.md` gives one plain sentence for each of these words, and `factory help words` prints them. The same file holds the plain-words table (D-11): for each jargon term, the plain word that user text uses. A test fails when a name has no entry or the entry has more than 25 words. §7.1 shows which of Dean's shop-floor words factory uses.
+Software recipe: `factory check <pr>` checks a pull request before a merge. The release check is the check before a release, and the check after it.
+
+`docs/glossary.md` teaches these words, with one plain sentence for each of them, and `factory help words` prints them. The same file holds the plain-words table (D-11): for each jargon term, the plain word that user text uses. The glossary shows an old word only as a "was" note. The next code change renames the program words in `src/names.ts` and `src/glossary.ts` to the new words. After that, the glossary test compares the program text with `docs/glossary.md` again (roadmap, Point 1). A test fails when a name has no entry or the entry has more than 25 words. §7.1 shows which of Dean's shop-floor words factory uses.
 
 A factory with one project is a node with one project. A factory with many projects is a node with many. There is one code path for both.
 
@@ -250,9 +259,10 @@ A factory with one project is a node with one project. A factory with many proje
 **Core commands** (the same for every recipe; they speak of approval points and work items only)
 
 ```
-factory init [--home DIR] [--name N] [--project PATH|URL]... [--recipe software] [--variant plain|devflow] [--layer N]
+factory init [--home DIR] [--name N] [--project PATH|URL]... [--recipe NAME] [--layer N]
              [--tracker ID] [--items X] [--decisions X] [--approval POINT=owner|delegated]... [--state-from SRC] [--yes]
-factory start [--home DIR]                  # start or attach: tmux session, windows, coordinator (§4.11); after a machine restart it resumes each recorded worker; works from a project folder (§4.3)
+                                            # makes a factory, or registers a received one; run it again in the factory folder to change an approval mode (§6)
+factory start [--home DIR]                  # start or attach: the screen session, its windows and the coordinator (§4.11); after a machine restart it resumes each recorded worker; works from a project folder (§4.3)
 factory shutdown                            # stop every session of this factory, and nothing else (§4.11)
 factory restart <worker>                    # restart one worker with its session id (§4.11)
 factory reboot                              # shut down the whole factory and start it again; each recorded worker resumes (§4.11)
@@ -265,10 +275,9 @@ factory help words                          # the plain description of each fact
 
 factory project add|remove|list
 factory recipe show                         # the project table of the coordinator, from the config
-factory recipe variant <plain|devflow> [--project P]   # the setup of the project: the key `variant` stays until FAC-M6 (§2.2)
 factory tracker set <id> [--project P]      # change the board of the node, or of one project (§4.10)
 factory tracker status                      # the board of each project, and the check of its decision store
-factory state remote <url|path> | push | pull   # the private remote of the state repo (§4.3)
+factory state remote <url|path> | push | pull   # the private remote of the state folder (§4.3)
 
 factory worker new <name> --project P [--copy PATH] [--assignment FILE]
 factory worker list [--json]                # the live workers table
@@ -299,11 +308,14 @@ factory hook <event> | statusline           # called by Claude Code; not for peo
 **Software recipe commands** (the commands that the `software` recipe adds)
 
 ```
+factory init --variant plain|devflow        # the setup of a project (the key `variant` stays until FAC-M6, §2.2); all other `init` forms are in the core table
+factory recipe variant <plain|devflow> [--project P]   # change the setup of one project (§2.2)
 factory check <pr> [--project P]            # the merge check: READY or NOT READY at the current head
 factory pr merge <pr>                       # pinned merge, then the bookkeeping
 factory pr watch <pr>
 factory issues audit [--project P]
 factory release check|verify <project> [<version>]   # the release check before a release, and the check after it
+factory release scope <project> <version>   # the owner records the release scope; a terminal window outside a factory session only (§6.2)
 factory copies list | status | sync <pr|branch> | clean [--apply]   # git across work copies (D-55)
 factory lock run -- <command>               # the shared heavy-test lock
 ```
@@ -371,7 +383,7 @@ The coordinator writes in the coordinator folder, in the state folder and in the
 - A clone URL has these rules: it is `https`, `ssh` (also the scp form) or `file`. An `https` URL has no user name. A password, a token or a secret part in any URL form is refused, a leading hyphen is refused, and the message never repeats the value. Two entries with one clone URL in normal form (the same host and path, with or without `.git`, in the scp or https form), or with one path, are refused. `init` refuses a project flag with credentials (exit 2) before it clones. A URL that `init` reads from an origin loses its user name, and `init` prints a warning. The rules protect secrets, so they stay stops.
 - A project with no shareable URL (no origin, a `file` URL, or a local path that the user types) works on this machine. `factory.yaml` never holds a local path or a `file` URL that `init` writes. `init` and `doctor` warn that the factory cannot be shared with that repo, and name the fix: add an origin and set `url`.
 - `--tracker`, `--items` and `--decisions` choose the board at setup (§4.10). In a terminal window, `init` asks which board to use when `--tracker` is absent.
-- `--approval <point>=<owner|delegated>` sets the mode of one approval point. In a terminal window, `init` asks for each point of the recipe, with `owner` as the default. With `--yes`, or with no terminal window and no flag, it writes `owner`. `--yes` with a flag that asks for `delegated` exits 2 and writes nothing. A `delegated` choice with no terminal window, or inside a factory session, exits 4 and writes nothing (§6).
+- `--approval <point>=<owner|delegated>` sets the mode of one approval point. In a terminal window, `init` asks for each point of the recipe, with `owner` as the default. A second `init` in the factory folder asks again; this is how the owner changes a mode later (§6). With `--yes`, or with no terminal window and no flag, it writes `owner`. `--yes` with a flag that asks for `delegated` exits 2 and writes nothing. A `delegated` choice with no terminal window, or inside a factory session, exits 4 and writes nothing (§6).
 - `--state-from SRC` clones a state repo (a git URL or a path) into `.factory/` instead of an empty one, and runs `doctor`. This is how a second machine gets the work state (FAC-M3).
 - If a step fails, or if `init` cannot write the factory list, it exits 1 and removes only what this run made. A second `init` in the same folder then works. A file or folder that was there before the run stays as it was.
 - `factory start` then starts the session. The user never has to know the folder.
@@ -672,6 +684,8 @@ tracker:
 variants: [plain, devflow]   # variants/plain.yaml (default), variants/devflow.yaml (§2.2)
 ```
 
+**An example with no software: publish a post.** A marketing factory uses the same core. Its recipe names the work cycle "draft, check, publish". The output is a post, not a pull request. Its one approval point is `publish`, and the default mode is `owner`. A worker drafts one post for one track. The check of the recipe says `READY` when the post has its review notes. The post waits in the queue until the owner approves it. Then the coordinator publishes it. The commands `start`, `status`, `request`, `decide` and `dismiss`, and the board, work as they do for the software recipe. The core needs no word of the software recipe for this.
+
 - A recipe is data plus prompt text. It runs no code, except the `install` and `detect` commands of a setup, and only after the user confirms them.
 - factory comes with one recipe first: `software`. Its parts are the projects as git repos, the work copies, PRs, the merge check, CI and releases. The plain setup uses plain Claude Code. The devflow setup maps the stages to the devflow commands (§2.2).
 - Other recipes, for example research or content, come later. They need no change to the core.
@@ -681,7 +695,7 @@ variants: [plain, devflow]   # variants/plain.yaml (default), variants/devflow.y
 
 factory does not build its own review desk. The board, the requests and the decisions live in the team's board tool. The owner chooses the tool in `tracker.kind`. Dean's word is "board"; the config key `tracker` stays.
 
-**One board for many repos (F-19a).** Can one board show the work of many repos? Yes. One GitHub project can hold the issues of many repos in one board. Factory uses one project for all the repos of a factory. FAC-M3 verifies this with a real run on two repos before the board connector is built. Jira and Linear follow in FAC-M9.
+**One board for many repos (F-19a).** Can one board show the work of many repos? Yes, GitHub Projects can hold issues from many repos. Not verified yet: FAC-M3 proves it with two repos. Factory uses one project for all the repos of a factory. FAC-M3 runs the real commands on two repos before the board connector is built. Jira and Linear are a separate question. Not checked yet: FAC-M9.
 - **The bound.** One list call reads one board. It uses `--limit <cap+1>`. If the board holds more than the cap, the output has a line "more than <cap>" and does not print the rest.
 - **The filter.** The server filters the list (`--query`), also by repo. The reader does not filter the full list.
 - **The owner rule.** The owner of the project must reach every repo that the factory lists. The board shows only the items of the listed repos.
@@ -893,7 +907,9 @@ What the CLI must not assume:
 
 ## 6. Safety defaults
 
-Each standing rule goes into a new setup in two ways. The text goes into the managed blocks of `CLAUDE.md` and the role templates. Where a script can enforce the rule, factory enforces it in code, so a model error cannot break it. The table states each rule, not the current state. The milestone that the row, or the section that the row names, gives is the milestone that builds the code control.
+Each standing rule goes into a new setup in two ways. The text goes into the managed blocks of `CLAUDE.md` and the role templates. Where a script can enforce the rule, factory enforces it in code, so a model error cannot break it. The table states each rule, not the current state. The milestone that the row, or the section that the row names, gives is the milestone that builds the code control. The first table holds the rules of every factory. The second table holds the rules of the software recipe.
+
+**Rules for every factory**
 
 | Rule | Text (managed block) | Code enforcement |
 |---|---|---|
@@ -906,15 +922,23 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 | Decisions stay private | yes | `doctor` fails when the decision store is public, and warns when it is not set (§4.10). |
 | No secrets in output | yes | No command prints env values. `doctor` refuses a value that looks like a password or a token in a tracked file of the factory folder. Process lists show only pid, elapsed time and command name. |
 | Peers never ask the owner directly | yes (role templates) | none (model behavior) |
-| One session per work copy | yes | `worker new` refuses a work copy that another worker uses. |
 | The coordinator instructions never reach a worker | yes | The factory folder has no instruction file at its top. The coordinator text is in `coordinator/CLAUDE.md`, and no project clone or work copy is inside or above that folder (§4.3, the instruction-file rule). |
-| Merges follow the approval point `merge` (F-6, D-52) | yes | `merge: owner`: `pr merge` needs an owner decision or an answered ask for that PR and head SHA. `merge: delegated`: `pr merge` needs one proof of approval and one proof of assignment (§6.1). In both cases it passes `--match-head-commit <full SHA>` only after `check` passed at that SHA, and refuses when the head changed. `--admin` only by the node, at the pinned head. |
-| Releases follow the approval point `release` | yes | `release: owner`: every release waits for the owner's go. `release: delegated`: `release check` needs an owner-approved release scope that names the version (§6.2). `release check` and `release verify` only check; they do not publish. |
-| Never bypass the state hook | yes | `init` sets `core.hooksPath`; every state write commits through the helper, which refuses when the hook is off. |
-| Never delete another worker's files; look before removing | yes | `copies clean` is a dry run by default and refuses a work copy with unpushed work or a path that a worker or resume file names. |
-| Resource limits; one heavy suite at a time | yes | `worker new` checks the limits; `lock run` takes the machine lock. |
+| Never bypass the state guard | yes | `init` turns on the guard of the state folder; every state write goes through the helper, which refuses when the guard is off. |
+| Resource limits | yes | `worker new` checks the limits. |
 | Look before typing; target by pane id | yes | Every typed input captures the pane first, refuses an open dialog, clears the input, and checks that the text arrived. Only `src/comms/` types into a pane, and a typed line has at most 300 characters (§4.12). |
 | Supported platforms only | no | Every command refuses on native Windows, with the WSL hint (§4.7). |
+
+Engineering note: the state guard is a git hook of the state folder. `init` sets `core.hooksPath` to turn it on.
+
+**Rules of the software recipe**
+
+| Rule | Text (managed block) | Code enforcement |
+|---|---|---|
+| One session per work copy | yes | `worker new` refuses a work copy that another worker uses. |
+| Merges follow the approval point `merge` (F-6, D-52) | yes | `merge: owner`: `pr merge` needs an owner decision or an answered ask for that PR and head SHA. `merge: delegated`: `pr merge` needs one proof of approval and one proof of assignment (§6.1). In both cases it passes `--match-head-commit <full SHA>` only after `check` passed at that SHA, and refuses when the head changed. `--admin` only by the node, at the pinned head. |
+| Releases follow the approval point `release` | yes | `release: owner`: every release waits for the owner's go. `release: delegated`: `release check` needs an owner-approved release scope that names the version (§6.2). `release check` and `release verify` only check; they do not publish. |
+| Never delete another worker's files; look before removing | yes | `copies clean` is a dry run by default and refuses a work copy with unpushed work or a path that a worker or resume file names. |
+| One heavy test suite at a time | yes | `lock run` takes the machine lock. |
 
 factory never reads or writes under `~/.claude/` (settings, rules, skills, transcripts or session files). It writes only to three places: the factory folder, the `.claude/settings.local.json` of each work copy (the last-seen hook, D-47), and the per-user files of §4.3 (the factory list, the approval records and the setup acceptances), which are outside `~/.claude`.
 
@@ -927,7 +951,7 @@ factory never reads or writes under `~/.claude/` (settings, rules, skills, trans
 
 The rules:
 - **The list is shared, the mode is personal.** The list of points comes with the recipe choice, so it is in the shared file. The mode of each point is in the local file (`approval`, §4.4), because a delegation is owner authority, and each machine has its own approval record.
-- **The owner sets a delegation.** A delegation needs an approval record that the owner writes in a terminal window outside a factory session. §6 ("What the guards do not prove") says what this does not prove. The owner sets it with `init` (the prompt, or `--approval <point>=<owner|delegated>`) or with `factory decide`. `init --yes` writes `owner` only. A delegated approval counts only for work that the owner approved and assigned.
+- **The owner sets a delegation.** A delegation needs an approval record that the owner writes in a terminal window outside a factory session. §6 ("What the guards do not prove") says what this does not prove. The owner sets it with `init` (the prompt, or `--approval <point>=<owner|delegated>`). To change a mode later, the owner runs `factory init` again in the factory folder, in a terminal window outside a factory session. `init` then asks for each approval point again, and the new answer replaces the old mode. `factory decide` answers decisions only; it sets no approval mode. `init --yes` writes `owner` only. A delegated approval counts only for work that the owner approved and assigned.
 - **The approval record.** A delegation is real only with an approval record. The record names the node id, the real path of the factory folder, the point, the mode and the time. Only the approval record writer writes it. The writer needs a terminal window and no `FACTORY_SESSION`, with no exception. The store is a per-user file in the state folder beside the factory list, outside every factory folder, with folder mode 700 and file mode 600. A reader refuses a file of another user or a file that others can write. The store keeps only the newest record for each node id, factory folder and point. The store refuses a file over its size cap, a named number in `src/names.ts`. A record file inside the factory folder or the state folder does not count.
 - **The effective mode.** A matching record has the same node id, the same real path and the same point.
 
@@ -943,9 +967,9 @@ The rules:
 - **Delegations are visible.** `start` and `doctor` list each active delegation with its time.
 - **The setup acceptance is not an approval record.** It has its own writer and its own store, and it writes only its own kind. So `init --yes` can never write an approval record (§4.3).
 
-**What the guards do not prove (D-10 A).** The approval record writer refuses in every pane of a factory session and in a process with no terminal window. `start` puts the session marker `FACTORY_SESSION` in the tmux environment before it makes the second pane and every other window. This stops a factory session that sets a delegation through factory in the normal way. It does not stop a program of the same user that tries to get past the checks. It does not replace the permission checks of Claude Code. The writer and the session marker can not prove that the owner acts. The same limit applies to the setup accept prompt and to the origin of an entry in the factory list: a process that runs as the same user can answer a prompt in a terminal window and can change per-user files. So these controls stop mistakes, not a determined program. FAC-M5 adds a control that factory does not run itself: the session settings that factory renders hold deny rules for the record commands and for the store path. These rules make the gap smaller. They do not close it, so this text keeps the limit.
+**What the guards do not prove (D-10 A).** The approval record writer refuses in every pane of a factory session and in a process with no terminal window. `start` puts the session marker `FACTORY_SESSION` in the tmux environment before it makes the second pane and every other window. This stops a factory session that sets a delegation through factory in the normal way. It does not replace the permission checks of Claude Code. The guard can not prove that the owner, and not another program of the same user, gives the answer. The same limit applies to the setup accept prompt and to the origin of an entry in the factory list. So these controls stop mistakes, not a determined program. FAC-M5 adds a control that factory does not run itself: the session settings that factory renders hold deny rules for the record commands and for the store path. These rules make the gap smaller. They do not close it, so this text keeps the limit.
 
-### 6.1 What counts as approval and assignment (D-52)
+### 6.1 Software recipe: what counts as approval and assignment (D-52)
 
 With `merge: delegated`, `pr merge` needs two proofs: the owner approved the work, and the owner assigned it to a worker or a track. The proof of approval is one of three forms:
 1. **A decision.** A record in `decision-log.json` with `by: owner` that approves the work. The record names the work: a PR, an item or a track.
@@ -970,7 +994,7 @@ An approval in chat becomes a proof when the owner writes it in one of the three
 
 An open question of the owner blocks the merge (D-52). `factory check` gives `NOT READY` while the PR has an open ask or an open request.
 
-### 6.2 Releases (D-57)
+### 6.2 Software recipe: releases (D-57)
 
 D-57 is answered: the release is an approval point of its own, with the values `owner` and `delegated` (OD-1). The default is `owner`: every release waits for the owner's go. With `release: delegated`, the proof is an **owner-approved release scope**: the items and the version that the owner approved for release. The owner writes the scope through the approval record writer (§6), with the same rules as any approval record. `factory release check` refuses (exit 4) when no owner-approved release scope names the version. The approval of the work (§6.1) does not include the release. `release check` and `release verify` read only and publish nothing in every case. FAC-M5 builds the check and its test.
 
@@ -997,6 +1021,18 @@ The setup uses Dean's name and devflow's words in many places. factory uses thes
 | `/devflow:plan` … `/devflow:release` | stages `plan`, `build`, `review`, `fix`, `release` |
 | Code, Validate, Test agents | implementer, verifier, tester agent kinds |
 
+The v2 design used other words. D-59 replaced them. This table maps each v2 word to the v3 word. The scan of the docs does not read this table.
+
+| v2 word | v3 word |
+|---|---|
+| cell | worker |
+| andon | request |
+| work order | assignment |
+| changeover | session reset |
+| staging | queue |
+| inspect | check |
+| ship | release check (software recipe) |
+
 Every user-visible name sits in `src/names.ts`, and a test fails on a stray literal. So a rename changes one file plus the tests. Every name of the table in §4.1 has a plain description in `docs/glossary.md` (at most 25 words), and `factory help words` prints them.
 
 ### 7.1 Dean's shop-floor words (F-1)
@@ -1019,9 +1055,9 @@ Dean found 11 words for the physical layout of a factory. The list ends with the
 
 ## 8. Migration of this workspace
 
-`factory adopt ~/Sandbox` imports the current setup into a node. A dry run comes first. The adopt runs only when all workers are idle and pushed. It does these steps (FAC-M7):
-1. It makes a factory folder next to the projects, for example `~/Sandbox/sandbox-factory` (§4.3). The Orchestrator moves there from the workspace root.
-2. It moves the Orchestrator text of `~/Sandbox/CLAUDE.md` into the tracked file `setup/coordinator.md` of the new factory folder, and keeps a copy in `.factory/backups/`. `init` renders it to `coordinator/CLAUDE.md`. It leaves no coordinator text in any `CLAUDE.md` on the path from a work copy to the root: the old file is removed, or it keeps only lines that every worker may read. The dry run shows this change, and the owner confirms it. Only then do the workers stop loading the Orchestrator instructions (F-3). Without this step, they still load them, because the file sits above every work copy.
+`factory adopt ~/work/<workspace>` imports the current setup into a node. A dry run comes first. The adopt runs only when all workers are idle and pushed. It does these steps (FAC-M7):
+1. It makes a factory folder next to the projects, for example `~/work/<workspace>-factory` (§4.3). The Orchestrator moves there from the workspace root.
+2. It moves the Orchestrator text of `~/work/<workspace>/CLAUDE.md` into the tracked file `setup/coordinator.md` of the new factory folder, and keeps a copy in `.factory/backups/`. `init` renders it to `coordinator/CLAUDE.md`. It leaves no coordinator text in any `CLAUDE.md` on the path from a work copy to the root: the old file is removed, or it keeps only lines that every worker may read. The dry run shows this change, and the owner confirms it. Only then do the workers stop loading the Orchestrator instructions (F-3). Without this step, they still load them, because the file sits above every work copy.
 3. It moves `decision-profile/` and the roadmaps to `.factory/`, keeps the git history (a `git mv` in the state repo), and writes `factory.yaml` from the facts in CLAUDE.md §13.
 4. It imports the board and the On Dean items into the `local` board files. The review page and its scripts stay as the owner view, and the owner can still answer there. FAC-M3 moves the items into GitHub issues with a private repo as the decision store (F-2), and retires the page and its scripts.
 5. It asks the owner to set the approval point `merge` to `delegated` (D-52). The owner confirms in a terminal window, and the approval record writer records it (§6).
@@ -1035,7 +1071,7 @@ Each part of the setup of today (§1.1) has an owner in factory: a command, a mi
 
 | Part (§1.1) | In factory | Milestone | Status |
 |---|---|---|---|
-| `~/Sandbox/CLAUDE.md` | The `coordinator` and `safety` blocks of `coordinator/CLAUDE.md`, rendered from `setup/coordinator.md`; `adopt` moves the text (step 2) | FAC-M2, FAC-M7 | planned |
+| `~/work/<workspace>/CLAUDE.md` | The `coordinator` and `safety` blocks of `coordinator/CLAUDE.md`, rendered from `setup/coordinator.md`; `adopt` moves the text (step 2) | FAC-M2, FAC-M7 | planned |
 | `protocol.md` | The worker role template `.factory/roles/worker.md` | FAC-M2 | planned |
 | `status.md` | The output of `factory status` | FAC-M5 | planned |
 | `respawn-map.md` | The last-seen files, `factory reboot` and the restore of §4.11 | FAC-M4 | planned |
