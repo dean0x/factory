@@ -8,7 +8,7 @@ import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sa
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
 const hasTmux = major >= 3;
-if (!hasTmux) console.warn('up.test.ts is skipped: tmux 3.0 or newer is not installed.');
+if (!hasTmux) console.warn('start.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
 const POLL_STEP_MS = 100;
 const POLL_STEPS = 100;
@@ -69,8 +69,8 @@ const probeProxy = (dir: string): string =>
 const paneSnapshot = async (): Promise<string> =>
   (await tmux(['list-panes', '-s', '-t', '=demo', '-F', '#{window_name} #{pane_id} #{pane_pid} #{pane_dead}'])).stdout;
 
-const up = (...extra: string[]): Promise<RunResult> =>
-  box.run(['up', '--home', box.node, ...extra], { env: tmuxEnv });
+const startFactory = (...extra: string[]): Promise<RunResult> =>
+  box.run(['start', '--home', box.node, ...extra], { env: tmuxEnv });
 
 beforeEach(async () => {
   box = await makeSandbox();
@@ -125,10 +125,10 @@ const initNode = async (): Promise<string[]> => {
   return [web, api];
 };
 
-describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () => {
+describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', () => {
   it('starts the session with the view and bench windows and one launch of claude in auto mode', async () => {
     const [web, api] = await initNode();
-    const result = await up();
+    const result = await startFactory();
     expect(result.stderr).toBe('');
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Session demo runs. Attach with: tmux attach -t demo');
@@ -157,7 +157,7 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
       { env: tmuxEnv },
     );
     expect(init.code).toBe(0);
-    expect((await up()).code).toBe(0);
+    expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
     const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
     expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', odd]);
@@ -166,14 +166,14 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
   it('clears a proxy variable that the shell holds', async () => {
     await initNode();
     expect(tmuxEnv['ANTHROPIC_BASE_URL']).toBe(LAUNCH_PROXY_URL);
-    expect((await up()).code).toBe(0);
+    expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
     expect((await readFile(join(outDir, 'proxy'), 'utf8')).trim()).toBe('no');
   });
 
   it('removes the proxy variable from the environment of the session, so a later window gets none', async () => {
     await initNode();
-    expect((await up()).code).toBe(0);
+    expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
 
     const environment = await tmux(['show-environment', '-t', '=demo', 'ANTHROPIC_BASE_URL']);
@@ -188,7 +188,7 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
 
   it('marks the session and the panes with the options of factory', async () => {
     await initNode();
-    expect((await up()).code).toBe(0);
+    expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
     const home = await tmux(['show-options', '-v', '-t', '=demo:', '@factory_home']);
     expect(home.stdout.trim()).toBe(box.node);
@@ -198,7 +198,7 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
 
   it('keeps the coordinator pane when its program ends', async () => {
     await initNode();
-    expect((await up()).code).toBe(0);
+    expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
     const kept = await tmux(['show-options', '-w', '-v', '-t', '=demo:view', 'remain-on-exit']);
     expect(kept.stdout.trim()).toBe('on');
@@ -206,7 +206,7 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
 
   it('starts one launch after two runs, and the second run starts nothing', async () => {
     await initNode();
-    const first = await up('--json');
+    const first = await startFactory('--json');
     expect(first.code).toBe(0);
     expect(JSON.parse(first.stdout)).toMatchObject({ started: true });
     expect(await waitForLaunch()).toHaveLength(1);
@@ -214,7 +214,7 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
     // The coordinator and the slot in the view window, and the bench window.
     expect(before.trim().split('\n')).toHaveLength(3);
 
-    const again = await up('--json');
+    const again = await startFactory('--json');
     expect(again.code).toBe(0);
     const report: unknown = JSON.parse(again.stdout);
     expect(report).toMatchObject({ session: 'demo', started: false });
@@ -227,14 +227,14 @@ describe.skipIf(!hasTmux)('factory up (built binary, separate tmux server)', () 
   it('refuses a session of another home with exit code 4', async () => {
     await initNode();
     expect((await tmux(['new-session', '-d', '-s', 'demo', 'sleep', '300'])).code).toBe(0);
-    const result = await up();
+    const result = await startFactory();
     expect(result.code).toBe(4);
     expect(result.stderr).toContain('a tmux session demo belongs to another node home');
   });
 
   it('shows the calls for --dry-run, starts no session and no claude', async () => {
     await initNode();
-    const result = await up('--dry-run');
+    const result = await startFactory('--dry-run');
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Dry run');
     expect(result.stdout).toContain('tmux new-session -d -s demo -n view');

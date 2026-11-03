@@ -2,7 +2,7 @@
 
 Set up and run a node of Claude Code sessions with safe defaults.
 
-A node is a folder with a config file, a `CLAUDE.md` for the coordinator, and a `.factory/` folder for the state. The command `factory up` starts the coordinator of the node in tmux. The coordinator manages the projects of the node. This version does not start workers yet.
+A node is a folder with a config file, a `CLAUDE.md` for the coordinator, and a `.factory/` folder for the state. The command `factory start` starts the coordinator of the node in tmux. The coordinator manages the projects of the node. This version does not start workers yet.
 
 ## Install
 
@@ -15,7 +15,7 @@ npm install --global @dean0x/factory
 You need:
 
 - Node.js 22 or newer. The package has no runtime dependencies.
-- tmux 3.0 or newer, and `claude` on the PATH, for `factory up`.
+- tmux 3.0 or newer, and `claude` on the PATH, for `factory start`.
 - macOS or Linux. On native Windows, every command exits with code 4. Use WSL.
 
 ## Commands
@@ -23,7 +23,7 @@ You need:
 | Command | What it does |
 | --- | --- |
 | `factory init` | Create a node. It writes `factory.yaml`, `CLAUDE.md` and `.factory/`, and makes the first commit in the state repository. |
-| `factory up` | Start the tmux session of the node, with the windows `view` and `bench`, or attach to it. |
+| `factory start` | Start the tmux session of the node, with the windows `view` and `bench`, or attach to it. |
 | `factory doctor` | Run 16 checks on the config, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |
@@ -79,11 +79,11 @@ The home is beside the repo, so a walk up from the repo finds no `factory.yaml`.
 ### Start a node
 
 ```sh
-factory up --dry-run
-factory up
+factory start --dry-run
+factory start
 ```
 
-`up` starts a tmux session with the id of the node. The coordinator runs in the window `view`, in the node home. It runs in auto permission mode, with one `--add-dir` for each project, and with the `PATH` of the shell that ran `up`, not the `PATH` of a tmux server that started before. The window `bench` is empty. The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy comes only from the config, and only when it answers. The shells of the slot and the bench get no `ANTHROPIC_BASE_URL` either: `up` removes it from the environment of the session, and from no other session. A second `up` starts no second coordinator. It attaches to the session. If the program of the coordinator has ended, `up` says so and names the commands that remove the session and start it again. `--dry-run` prints the tmux calls and starts no session. `up` refuses (exit code 4) a home inside a git work tree or inside another node home, as `init` does. So a `factory.yaml` that a cloned repo holds never starts a session.
+`start` starts a tmux session with the id of the node. The coordinator runs in the window `view`, in the node home. It runs in auto permission mode, with one `--add-dir` for each project, and with the `PATH` of the shell that ran `start`, not the `PATH` of a tmux server that started before. The window `bench` is empty. The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy comes only from the config, and only when it answers. The shells of the slot and the bench get no `ANTHROPIC_BASE_URL` either: `start` removes it from the environment of the session, and from no other session. A second `start` starts no second coordinator. It attaches to the session. If the program of the coordinator has ended, `start` says so and names the commands that remove the session and start it again. `--dry-run` prints the tmux calls and starts no session. `start` refuses (exit code 4) a home inside a git work tree or inside another node home, as `init` does. So a `factory.yaml` that a cloned repo holds never starts a session.
 
 ### Child nodes
 
@@ -185,7 +185,7 @@ npm run test:integration
 npm run exit-check
 ```
 
-The integration tests and the exit check use `dist/factory.js`, so run `npm run build` first. Some integration tests need tmux 3.0 or newer, and skip with a note when tmux is missing. The exit check packs the tarball and installs it in a throw-away HOME. Then it runs `init`, `up --dry-run` and `doctor` on a new repo, and searches the generated files and the help text for names that must not be there. It never writes the real HOME, the real state folder or the real tmux server.
+The integration tests and the exit check use `dist/factory.js`, so run `npm run build` first. Some integration tests need tmux 3.0 or newer, and skip with a note when tmux is missing. The exit check packs the tarball and installs it in a throw-away HOME. Then it runs `init`, `start --dry-run` and `doctor` on a new repo, and searches the generated files and the help text for names that must not be there. It never writes the real HOME, the real state folder or the real tmux server.
 
 `npm run check:docs` checks that the design documents agree with each other.
 

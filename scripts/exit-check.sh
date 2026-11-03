@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Exit check: pack the CLI, install the tarball in a throw-away HOME, make a node for a git repo, and check it.
-# The flow: init --yes inside the repo "web" makes "web-factory"; up --dry-run and doctor must exit 0;
+# The flow: init --yes inside the repo "web" makes "web-factory"; start --dry-run and doctor must exit 0;
 # the generated files and the --help text of every command must hold no name from the deny list and no old word.
 # The real HOME, the real XDG state folder, the real tmux server, the real npm prefix and the real npm cache are never written.
 # It needs a build first: npm run build
@@ -102,9 +102,9 @@ head -n 1 "$tmp/init.log"
 grep -Fq 'path: "../web"' "$home/factory.yaml" || fail "the repo web is not a project of the node"
 [ -n "$(find "$XDG_STATE_HOME" -type f -print | head -n 1)" ] || fail "init wrote no home index in the state folder"
 
-step "up --dry-run"
-logged up factory up --dry-run --home "$home"
-head -n 1 "$tmp/up.log"
+step "start --dry-run"
+logged start factory start --dry-run --home "$home"
+head -n 1 "$tmp/start.log"
 
 step "doctor"
 logged doctor factory doctor --home "$home"

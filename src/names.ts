@@ -26,7 +26,7 @@ export const roles = {
 
 export const commands = {
   init: 'init',
-  up: 'up',
+  start: 'start',
   node: 'node',
   doctor: 'doctor',
   upgrade: 'upgrade',
@@ -285,7 +285,7 @@ export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash:
 /** The ids of the JSON documents that commands print. */
 export const schemaIds = {
   init: `${program}.init/v1`,
-  up: `${program}.up/v1`,
+  start: `${program}.start/v1`,
   nodeChildren: `${program}.node-children/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,

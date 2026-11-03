@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
-import { runUp, type UpOptions } from '../../src/commands/up.js';
+import { runStart, type StartOptions } from '../../src/commands/start.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
@@ -78,10 +78,11 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   return { deps, tmux: log };
 };
 
-const up = async (deps: FakeDeps, options: Partial<UpOptions> = {}) => runUp(deps, { home: HOME, dryRun: false, ...options });
+const startFactory = async (deps: FakeDeps, options: Partial<StartOptions> = {}) =>
+  runStart(deps, { home: HOME, dryRun: false, ...options });
 
-const succeeded = async (deps: FakeDeps, options: Partial<UpOptions> = {}) => {
-  const result = await up(deps, options);
+const succeeded = async (deps: FakeDeps, options: Partial<StartOptions> = {}) => {
+  const result = await startFactory(deps, options);
   if (!result.ok) throw new Error(result.error.message);
   return result.value;
 };
@@ -89,7 +90,7 @@ const succeeded = async (deps: FakeDeps, options: Partial<UpOptions> = {}) => {
 const answers: FetchHandler = () => ok({ status: 200 });
 const silent: FetchHandler = () => failure('no answer');
 
-describe('up: a new session', () => {
+describe('start:a new session', () => {
   it('runs the tmux calls in order, with the launch of the coordinator in the first one', async () => {
     const { deps, tmux } = make();
     await succeeded(deps);
@@ -178,7 +179,7 @@ describe('up: a new session', () => {
     const { deps } = make();
     const output = await succeeded(deps);
     expect(output.lines.at(-1)?.text).toBe('Session demo runs. Attach with: tmux attach -t demo');
-    expect(output.json).toEqual({ schema: 'factory.up/v1', session: 'demo', started: true, attached: false, proxy: null });
+    expect(output.json).toEqual({ schema: 'factory.start/v1', session: 'demo', started: true, attached: false, proxy: null });
     expect(output.failed).toBe(false);
   });
 
@@ -216,7 +217,7 @@ describe('up: a new session', () => {
   });
 });
 
-describe('up: attach', () => {
+describe('start:attach', () => {
   it('attaches with the terminal when a person types and reads, outside tmux', async () => {
     const { deps, tmux } = make({ tty: true });
     const output = await succeeded(deps);
@@ -246,13 +247,13 @@ describe('up: attach', () => {
   it('fails when the attach ends with a non-zero exit code', async () => {
     const { deps } = make({ tty: true });
     const broken = { ...deps, runAttached: async () => ok(1) };
-    const result = await runUp(broken, { home: HOME, dryRun: false });
+    const result = await runStart(broken, { home: HOME, dryRun: false });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) expect(result.error.message).toContain('attach ended with exit code 1');
   });
 });
 
-describe('up: a session that runs already', () => {
+describe('start:a session that runs already', () => {
   it('starts nothing for a session of this home, and attaches', async () => {
     const { deps, tmux } = make({ tty: true, tmux: { sessions: { demo: HOME } } });
     const output = await succeeded(deps);
@@ -263,7 +264,7 @@ describe('up: a session that runs already', () => {
       'display-message -p -t =demo:view.{left} #{pane_dead}',
     ]);
     expect(deps.attached).toHaveLength(1);
-    expect(output.json).toEqual({ schema: 'factory.up/v1', session: 'demo', started: false, attached: true, proxy: null });
+    expect(output.json).toEqual({ schema: 'factory.start/v1', session: 'demo', started: false, attached: true, proxy: null });
     expect(output.lines.map((line) => line.text).join('\n')).not.toContain('Started');
     expect(output.lines.some((line) => line.level === 'warn')).toBe(false);
   });
@@ -275,9 +276,9 @@ describe('up: a session that runs already', () => {
     expect(warning?.text).toBe('The coordinator of the session demo has ended.');
     const remedy = output.lines.map((line) => line.text).join('\n');
     expect(remedy).toContain('"tmux kill-session -t =demo"');
-    expect(remedy).toContain('"factory up --home /w/node"');
+    expect(remedy).toContain('"factory start --home /w/node"');
     expect(output.json).toEqual({
-      schema: 'factory.up/v1',
+      schema: 'factory.start/v1',
       session: 'demo',
       started: false,
       attached: true,
@@ -328,7 +329,7 @@ describe('up: a session that runs already', () => {
     ['no home option', { demo: null }],
   ])('refuses with exit kind safety for a session with %s', async (_name, sessions) => {
     const { deps, tmux } = make({ tmux: { sessions } });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (!result.ok) expect(result.error.message).toBe('a tmux session demo belongs to another node home');
     expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
@@ -341,7 +342,7 @@ describe('up: a session that runs already', () => {
   });
 });
 
-describe('up: the proxy', () => {
+describe('start:the proxy', () => {
   it('sets the proxy variable for a proxy that answers, and prints only its label', async () => {
     const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers });
     const output = await succeeded(deps);
@@ -354,7 +355,7 @@ describe('up: the proxy', () => {
 
   it('stops with the fix when the proxy is down and on_fail is stop', async () => {
     const { deps, tmux } = make({ config: withProxy('stop'), fetch: silent });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) {
       expect(result.error.message).toBe('local (127.0.0.1:8080) does not answer');
@@ -375,10 +376,10 @@ describe('up: the proxy', () => {
   });
 });
 
-describe('up: the tools', () => {
+describe('start:the tools', () => {
   it('names tmux when it is not on PATH, and starts no tmux call', async () => {
     const { deps, tmux } = make({ tools: ['claude'] });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) expect(result.error.message).toContain('tmux is not on PATH');
     expect(tmux.calls).toEqual([]);
@@ -386,14 +387,14 @@ describe('up: the tools', () => {
 
   it('names claude when it is not on PATH', async () => {
     const { deps } = make({ tools: ['tmux'] });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) expect(result.error.message).toContain('claude is not on PATH');
   });
 
   it('names both when both are missing', async () => {
     const { deps } = make({ tools: [] });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.message).toContain('tmux is not on PATH');
@@ -403,7 +404,7 @@ describe('up: the tools', () => {
 
   it.each([['tmux 2.9a'], ['tmux 1.8'], ['tmux 2.99']])('refuses %s as too old', async (version) => {
     const { deps, tmux } = make({ tmux: { version } });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('too old');
     expect(tmux.commands()).toEqual(['-V']);
@@ -411,16 +412,16 @@ describe('up: the tools', () => {
 
   it('refuses a tmux whose version it cannot read', async () => {
     const { deps } = make({ tmux: { version: 'tmux master' } });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('cannot read the version of tmux');
   });
 });
 
-describe('up: a step that fails', () => {
+describe('start:a step that fails', () => {
   it('removes the session that it made, and says so', async () => {
     const { deps, tmux } = make({ tmux: { failing: 'split-window' } });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) {
       expect(result.error.message).toBe('tmux split-window failed (exit code 1): split-window failed. The session demo was removed.');
@@ -431,7 +432,7 @@ describe('up: a step that fails', () => {
 
   it('removes the session when the removal of the proxy variable fails, before any other window exists', async () => {
     const { deps, tmux } = make({ tmux: { failing: 'set-environment' } });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result.ok).toBe(false);
     expect(tmux.commands().at(-1)).toBe('kill-session -t =demo');
     expect(tmux.commands().some((line) => line.startsWith('split-window') || line.startsWith('new-window'))).toBe(false);
@@ -447,7 +448,7 @@ describe('up: a step that fails', () => {
         return deps.run(command, args, runOptions);
       },
     };
-    const result = await runUp(ended, { home: HOME, dryRun: false });
+    const result = await runStart(ended, { home: HOME, dryRun: false });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) {
       expect(result.error.message).toBe(
@@ -461,7 +462,7 @@ describe('up: a step that fails', () => {
 
   it('removes nothing when the first step fails, because no session exists', async () => {
     const { deps, tmux } = make({ tmux: { failing: 'new-session' } });
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result.ok).toBe(false);
     expect(tmux.commands().some((line) => line.startsWith('kill-session'))).toBe(false);
   });
@@ -473,13 +474,13 @@ describe('up: a step that fails', () => {
       run: async (command: string, args: readonly string[], runOptions?: Parameters<typeof deps.run>[2]) =>
         args[0] === 'kill-session' ? failure('cannot run tmux: EPERM') : deps.run(command, args, runOptions),
     };
-    const result = await runUp(broken, { home: HOME, dryRun: false });
+    const result = await runStart(broken, { home: HOME, dryRun: false });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('remove it with "tmux kill-session -t =demo"');
   });
 });
 
-describe('up: --dry-run', () => {
+describe('start:--dry-run', () => {
   it('runs only has-session from tmux, and starts nothing', async () => {
     const { deps, tmux } = make();
     const output = await succeeded(deps, { dryRun: true });
@@ -489,7 +490,7 @@ describe('up: --dry-run', () => {
     expect(text).toContain('Dry run');
     expect(text).toContain(`tmux new-session -d -s demo -n view -c /w/node -- ${[...LAUNCH_BASE, '--add-dir', '/w/web'].join(' ')}`);
     expect(text).toContain('tmux new-window -d -t =demo: -n bench -c /w/node');
-    expect(output.json).toMatchObject({ schema: 'factory.up/v1', session: 'demo', started: false, attached: false, dryRun: true });
+    expect(output.json).toMatchObject({ schema: 'factory.start/v1', session: 'demo', started: false, attached: false, dryRun: true });
   });
 
   it('shows the removal of the proxy variable from the session, right after the new session', async () => {
@@ -530,7 +531,7 @@ describe('up: --dry-run', () => {
 
   it('stops for a proxy that is down with on_fail stop, as a real run does', async () => {
     const { deps } = make({ config: withProxy('stop'), fetch: silent });
-    const result = await up(deps, { dryRun: true });
+    const result = await startFactory(deps, { dryRun: true });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 
@@ -545,26 +546,26 @@ describe('up: --dry-run', () => {
   });
 });
 
-describe('up: the home and the config', () => {
+describe('start:the home and the config', () => {
   it('fails when the config is missing or invalid', async () => {
     const { deps } = make();
     deps.files.delete(`${HOME}/factory.yaml`);
-    expect(await up(deps)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(await startFactory(deps)).toMatchObject({ ok: false, error: { kind: 'failure' } });
     deps.files.set(`${HOME}/factory.yaml`, 'schema: 2\n');
-    expect(await up(deps)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(await startFactory(deps)).toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 
   it('fails when the home is not a folder', async () => {
     const { deps } = make();
     deps.seed('/w/file', 'x');
-    const result = await up(deps, { home: '/w/file' });
+    const result = await startFactory(deps, { home: '/w/file' });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) expect(result.error.message).toBe('/w/file is not a folder');
   });
 
   it('finds the home from FACTORY_HOME', async () => {
     const { deps } = make({ env: { FACTORY_HOME: HOME } });
-    const result = await runUp(deps, { home: undefined, dryRun: true });
+    const result = await runStart(deps, { home: undefined, dryRun: true });
     expect(result.ok).toBe(true);
   });
 
@@ -572,7 +573,7 @@ describe('up: the home and the config', () => {
     'refuses with exit 4 a home inside a git work tree, and sends no proxy check and no tmux call (dry run: %s)',
     async (dryRun) => {
       const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers, workTree: '/w' });
-      const result = await up(deps, { dryRun });
+      const result = await startFactory(deps, { dryRun });
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
       if (!result.ok) expect(result.error.message).toContain('inside the git work tree /w');
       expect(deps.fetched).toEqual([]);
@@ -583,7 +584,7 @@ describe('up: the home and the config', () => {
   it('refuses with exit 4 a home inside another node home, and starts nothing', async () => {
     const { deps, tmux } = make();
     deps.seed('/w/factory.yaml', renderConfig(sampleConfig()));
-    const result = await up(deps);
+    const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (!result.ok) expect(result.error.message).toContain('inside another node home');
     expect(tmux.calls).toEqual([]);

@@ -52,7 +52,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     expect(fallback.includes(`${join(box.env['HOME'] ?? '', '.claude')}/`)).toBe(false);
   });
 
-  it('lets doctor and up --dry-run find web-factory from web/ and from web/src', async () => {
+  it('lets doctor and start --dry-run find web-factory from web/ and from web/src', async () => {
     const web = await initWeb();
     const config = join(realRoot, 'web-factory', 'factory.yaml');
     for (const cwd of [web, join(web, 'src'), join(web, 'src', 'deep')]) {
@@ -61,7 +61,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
       expect(doctor.stdout).toContain(config);
       expect(doctor.stdout).toContain('1 entry in the home index, all present');
 
-      const dry = await box.run(['up', '--dry-run'], { cwd, ...withState() });
+      const dry = await box.run(['start', '--dry-run'], { cwd, ...withState() });
       expect({ cwd, code: dry.code, stderr: dry.stderr }).toEqual({ cwd, code: 0, stderr: '' });
       expect(dry.stdout).toContain('Dry run');
     }
@@ -71,7 +71,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     await initWeb();
     const other = join(box.root, 'elsewhere');
     await mkdir(other, { recursive: true });
-    for (const args of [['doctor'], ['up', '--dry-run']]) {
+    for (const args of [['doctor'], ['start', '--dry-run']]) {
       const result = await box.run(args, { cwd: other, ...withState() });
       expect({ args, code: result.code }).toEqual({ args, code: 2 });
       expect(result.stderr).toContain('Run "factory init" here, or use --home DIR');
@@ -84,7 +84,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     const init = await box.run(['init', '--home', second, '--name', 'second', ...owner, '--project', web], withState());
     expect(init.code).toBe(0);
 
-    const result = await box.run(['up', '--dry-run'], { cwd: join(web, 'src'), ...withState() });
+    const result = await box.run(['start', '--dry-run'], { cwd: join(web, 'src'), ...withState() });
     expect(result.code).toBe(2);
     expect(result.stderr).toContain(join(realRoot, 'web-factory'));
     expect(result.stderr).toContain(join(realRoot, 'second-home'));
@@ -93,7 +93,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
   it('ignores a home that no longer exists', async () => {
     const web = await initWeb();
     await rm(join(box.root, 'web-factory'), { recursive: true, force: true });
-    const result = await box.run(['up', '--dry-run'], { cwd: web, ...withState() });
+    const result = await box.run(['start', '--dry-run'], { cwd: web, ...withState() });
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('--home DIR');
   });
@@ -112,7 +112,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
   it('exits 2 and names the file when the index cannot be read', async () => {
     const web = await initWeb();
     await writeFile(indexFile(), '{ broken');
-    const result = await box.run(['up', '--dry-run'], { cwd: web, ...withState() });
+    const result = await box.run(['start', '--dry-run'], { cwd: web, ...withState() });
     expect(result.code).toBe(2);
     expect(result.stderr).toContain(indexFile());
 

@@ -167,10 +167,24 @@ describe('the node command in the command line', () => {
     expect(result.out).toContain('       factory node remove-child ID [--home DIR]');
   });
 
-  it('lists the command and the up command in the help', async () => {
+  it('lists the command and the start command in the help', async () => {
     const result = await run(['help']);
-    expect(result.out).toMatch(/\n {2}up {8}Start the session/);
+    expect(result.out).toMatch(/\n {2}start {5}Start the session/);
     expect(result.out).toMatch(/\n {2}node {6}Show or change the children/);
+  });
+
+  it('exits 2 for the command up, which has no alias for start', async () => {
+    const result = await run(['up', '--dry-run']);
+    expect(result.code).toBe(2);
+    expect(result.out).toBe('');
+    expect(result.err).toContain('unknown command "up"');
+    expect(result.err).not.toMatch(/^ {2}up /m);
+  });
+
+  it('shows the usage of start with the home and dry-run flags', async () => {
+    const result = await run(['start', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Usage: factory start [--home DIR] [--dry-run]');
   });
 
   it('exits 2 for a node command without a subcommand', async () => {

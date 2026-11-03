@@ -555,7 +555,7 @@ describe('doctor: proxies', () => {
   describe('the rule for a request', () => {
     const accepted = ok(undefined);
 
-    it.each(['flag', 'cwd'] as const)('allows the request for a home from %s that the up command accepts', (source) => {
+    it.each(['flag', 'cwd'] as const)('allows the request for a home from %s that the start command accepts', (source) => {
       expect(proxyRequestRule(source, accepted)).toEqual({ may: true });
     });
 
@@ -647,7 +647,7 @@ describe('doctor: proxies', () => {
       expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
     });
 
-    describe('when the home is in a place that the up command refuses', () => {
+    describe('when the home is in a place that the start command refuses', () => {
       /** The files of a node with a proxy, copied into deps where a git work tree holds /w. */
       const inWorkTree = async (cwd: string): Promise<FakeDeps> => {
         const made = await nodeWithProxy(cwd);
@@ -723,7 +723,7 @@ describe('doctor: tools', () => {
   it('warns for a missing program and names the commands that need it', async () => {
     const result = await checkTools(makeDeps({ tools: ['git', 'claude'] }));
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('tmux (the "factory up" command)');
+    expect(result.text).toContain('tmux (the "factory start" command)');
     expect(result.text).toContain('gh (the GitHub commands)');
     expect(result.text).not.toContain('git (');
   });
@@ -736,11 +736,11 @@ describe('doctor: tools', () => {
     ['tmux 2.9a', 'tmux 2.9'],
     ['tmux 1.8', 'tmux 1.8'],
     ['tmux 2.99', 'tmux 2.99'],
-  ])('warns for %s and names the up command', async (version, shown) => {
+  ])('warns for %s and names the start command', async (version, shown) => {
     const result = await checkTools(makeDeps({ tmux: { version } }));
     expect(result.level).toBe('warn');
     expect(result.text).toContain(`${shown} is older than 3.0`);
-    expect(result.text).toContain('"factory up"');
+    expect(result.text).toContain('"factory start"');
   });
 
   it('warns when the version of tmux cannot be read', async () => {

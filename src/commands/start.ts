@@ -36,7 +36,7 @@ import {
 import { checkProxyHealth } from '../safety/proxy.js';
 import { checkHomeLocation } from './init-home.js';
 
-export interface UpOptions {
+export interface StartOptions {
   readonly home: string | undefined;
   readonly dryRun: boolean;
 }
@@ -102,7 +102,7 @@ const coordinatorEnded = async (deps: Deps, id: string): Promise<boolean> => {
   return result.ok && result.value.exitCode === 0 && result.value.stdout.trim() === '1';
 };
 
-/** The tools that `up` needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
+/** The tools that `start` needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
 const toolProblems = async (deps: Deps, readVersion: boolean): Promise<readonly string[]> => {
   const problems: string[] = [];
   if (!(await onPath(deps, toolNames.tmux))) {
@@ -255,7 +255,7 @@ const coordinatorEndedLines = (id: string, home: string): readonly OutLine[] => 
   { level: 'warn', text: `The ${roles.coordinator} of the session ${id} has ended.` },
   text(
     `The window ${tmuxNames.windowView} shows why. Remove the session with "${commandLine(killSessionArgs(id))}". ` +
-      `Then run "${commandText(commands.up)} ${flagText(flags.home)} ${shellWord(home)}" again.`,
+      `Then run "${commandText(commands.start)} ${flagText(flags.home)} ${shellWord(home)}" again.`,
   ),
 ];
 
@@ -293,13 +293,13 @@ const dryRunOutput = (input: {
         ? [text(`Session ${id} runs. Attach with: ${attachHint(id)}`)]
         : [text('Calls:'), ...shown.map((line) => text(`  ${line}`))]),
     ],
-    json: { schema: schemaIds.up, session: id, started: false, attached: false, proxy, dryRun: true, calls: shown },
+    json: { schema: schemaIds.start, session: id, started: false, attached: false, proxy, dryRun: true, calls: shown },
     warnings: plan?.proxy.warning === undefined ? [] : [plan.proxy.warning],
     failed: false,
   };
 };
 
-export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<CommandOutput>> => {
+export const runStart = async (deps: Deps, options: StartOptions): Promise<CliResult<CommandOutput>> => {
   const located = await locateHomeFolder(deps, options.home);
   if (!located.ok) return located;
   const home = located.value.home;
@@ -351,7 +351,7 @@ export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<C
       text(arrivalText(how, attached.value, id)),
     ],
     json: {
-      schema: schemaIds.up,
+      schema: schemaIds.start,
       session: id,
       started: planned !== null,
       attached: attached.value,

@@ -53,12 +53,12 @@ export interface DoctorOptions {
 
 const MIN_NODE_MAJOR = 22;
 
-const UP_COMMAND = `"${commandText(commands.up)}" command`;
+const START_COMMAND = `"${commandText(commands.start)}" command`;
 
 /** Programs that commands need. The text says which. */
 const TOOLS: readonly { readonly name: string; readonly neededFor: string }[] = [
   { name: toolNames.git, neededFor: 'the state repository and the project checks' },
-  { name: toolNames.tmux, neededFor: `the ${UP_COMMAND}` },
+  { name: toolNames.tmux, neededFor: `the ${START_COMMAND}` },
   { name: toolNames.gh, neededFor: 'the GitHub commands' },
   { name: toolNames.claude, neededFor: 'the launch of sessions' },
 ];
@@ -332,7 +332,7 @@ const NO_HOME_FLAG = `the ${roles.node} home does not come from ${flagText(flags
 
 /**
  * The URLs of a config are requested only when the user chose the place of the config, and the home is a place that
- * the up command accepts. A home inside a git work tree or inside another node home is not requested.
+ * the start command accepts. A home inside a git work tree or inside another node home is not requested.
  */
 export const proxyRequestRule = (source: LocatedHome['source'], location: CliResult<void>): ProxyRequestRule => {
   if (!location.ok) return { may: false, reason: `${location.error.message}, so ${program} sends no request` };
@@ -366,13 +366,13 @@ export const checkProxies = async (
   );
 };
 
-/** The problem of the tmux that is on PATH, or null: its version is not known, or it is older than the up command needs. */
+/** The problem of the tmux that is on PATH, or null: its version is not known, or it is older than the start command needs. */
 const tmuxProblem = async (deps: Deps): Promise<string | null> => {
   const version = await tmuxVersionOf(deps);
   if (version === null) return `cannot read the version of ${toolNames.tmux}`;
   if (isTmuxNewEnough(version)) return null;
   const needed = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
-  return `${toolNames.tmux} ${version.major}.${version.minor} is older than ${needed} (the ${UP_COMMAND} needs ${needed} or newer)`;
+  return `${toolNames.tmux} ${version.major}.${version.minor} is older than ${needed} (the ${START_COMMAND} needs ${needed} or newer)`;
 };
 
 export const checkTools = async (deps: Deps): Promise<CheckResult> => {
