@@ -10,7 +10,7 @@ import { mixConfigValue, SPLIT_SCHEMA_VERSION } from '../config/schema.js';
 import { stepsBetween, type FileStep } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
-import { commands, commandText, dirs, flags, flagText, helpTopics, program } from '../names.js';
+import { blockNames, commands, commandText, dirs, flags, flagText, helpTopics, program } from '../names.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate } from '../templates/types.js';
 import type { BlockSet, UpgradeFile, UpgradeSpec } from './spec.js';
@@ -28,7 +28,19 @@ export type FilePlan =
       readonly raw: unknown;
     };
 
-export type BlockAction = 'current' | 'update' | 'replace' | 'add' | 'skip-missing' | 'refuse-edited' | 'refuse-other';
+/**
+ * What the upgrade does with a block. An edited block of the fixed rules (the safety block) stops the command
+ * (`refuse-edited`): an edited one can remove a rule. Any other edited block is kept, with a warning (`skip-edited`).
+ */
+export type BlockAction =
+  | 'current'
+  | 'update'
+  | 'replace'
+  | 'add'
+  | 'skip-missing'
+  | 'skip-edited'
+  | 'refuse-edited'
+  | 'refuse-other';
 
 export interface BlockPlan {
   readonly template: BlockTemplate;
@@ -222,7 +234,10 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
           reason: `block ${template.name} has version ${from}, but this ${program} has version ${template.version}. Upgrade ${program}.`,
         };
       }
-      if (status.kind === 'edited') return { template, status, action: overwrite ? 'replace' : 'refuse-edited', from };
+      if (status.kind === 'edited') {
+        const kept = template.name === blockNames.safety ? 'refuse-edited' : 'skip-edited';
+        return { template, status, action: overwrite ? 'replace' : kept, from };
+      }
       return { template, status, action: from < template.version || renamed ? 'update' : 'current', from };
     }
     default: {
@@ -259,7 +274,7 @@ export const refusalOf = (blocks: readonly BlockPlan[]): CliResult<void> => {
   ]);
   return safetyRefusal(
     lines.join('\n'),
-    `Use ${flagText(flags.overwrite)} ${edited.map(labelOf).join(' ')} to replace the text with the template. ` +
+    `Run "${commandText(commands.upgrade)} ${flagText(flags.overwrite)} ${blockNames.safety}" to replace the text with the template. ` +
       `Make a copy of your edits first.`,
   );
 };
@@ -320,6 +335,11 @@ export const planLines = (
         return {
           level: 'warn',
           text: `block ${name} is missing. Use ${flagText(flags.overwrite)} ${name} to add it.`,
+        };
+      case 'skip-edited':
+        return {
+          level: 'warn',
+          text: `block ${old ?? name} was edited, so ${program} keeps it. Use ${flagText(flags.overwrite)} ${old ?? name} to replace it.`,
         };
       case 'refuse-edited':
         return { level: 'fail', text: `block ${old ?? name} was edited` };

@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
-import { loadConfig, settleLocalMode } from '../config/load.js';
+import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
@@ -34,7 +34,6 @@ import {
   values,
 } from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
-import { checkHomeLocation } from './init-home.js';
 
 export interface StartOptions {
   readonly home: string | undefined;
@@ -302,13 +301,11 @@ const dryRunOutput = (input: {
 };
 
 export const runStart = async (deps: Deps, options: StartOptions): Promise<CliResult<CommandOutput>> => {
-  const located = await locateHomeFolder(deps, options.home);
+  // The registration check of the lookup keeps a config file of a cloned repo out: its proxy would get the requests of
+  // the session. A config that does not pass it is a stop here, before any proxy check or launch.
+  const located = await locateHomeFolder(deps, options.home, readNodeIdentity);
   if (!located.ok) return located;
   const home = located.value.home;
-  // A node home is never inside a git work tree or another node home (the rules of init). A config file there can
-  // come from a cloned repo, and its proxy would get the requests of the session. So the config is not used.
-  const location = await checkHomeLocation(deps, home);
-  if (!location.ok) return location;
   const loaded = await loadConfig(deps, home);
   if (!loaded.ok) return loaded;
   const id = loaded.value.core.node.id;

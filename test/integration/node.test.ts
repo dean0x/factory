@@ -80,42 +80,50 @@ describe('factory node (built binary)', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ schema: 'factory.node-children/v1', home: manager, layer: 2 });
   });
 
-  it('refuses a second add of the same child with exit code 4', async () => {
+  it('warns at a second add of the same child, exits 0 and changes nothing', async () => {
     await initNode(shop, 'web', 1);
     await initNode(manager, 'mgr', 2);
     expect((await node('add-child', shop)).code).toBe(0);
+    const before = await readFile(join(manager, 'factory.local.yaml'), 'utf8');
     const again = await node('add-child', shop);
-    expect(again.code).toBe(4);
-    expect(again.stderr).toContain('web is a child of this node already');
+    expect(again.code).toBe(0);
+    expect(again.stdout).toContain('web is a child of this node already. Nothing changed.');
+    expect(await readFile(join(manager, 'factory.local.yaml'), 'utf8')).toBe(before);
   });
 
-  it('refuses a child on layer 1 for a node on layer 1, because its children are workers', async () => {
+  it('exits 2 for a child on layer 1 of a node on layer 1, because its children are workers', async () => {
     await initNode(shop, 'web', 1);
     await initNode(manager, 'mgr', 1);
     const result = await node('add-child', shop);
-    expect(result.code).toBe(4);
+    expect(result.code).toBe(2);
     expect(result.stderr).toContain('its children are workers');
   });
 
-  it('refuses a child on another layer than the layer below', async () => {
+  it('exits 1 with a remedy for a child on another layer than the layer below', async () => {
     await initNode(shop, 'web', 3);
     await initNode(manager, 'mgr', 2);
     const result = await node('add-child', shop);
-    expect(result.code).toBe(4);
+    expect(result.code).toBe(1);
     expect(result.stderr).toContain('the child is on layer 3, but a node on layer 2 takes children on layer 1');
+    expect(result.stderr).toContain('Add a node on layer 1, or change the layer of the child.');
   });
 
-  it('refuses a folder that is no node, with exit code 4', async () => {
+  it('exits 1 with a remedy for a folder that is no node', async () => {
     await initNode(manager, 'mgr', 2);
     const result = await node('add-child', join(box.root, 'nowhere'));
-    expect(result.code).toBe(4);
+    expect(result.code).toBe(1);
     expect(result.stderr).toContain('no factory.yaml found there');
+    expect(result.stderr).toContain('Start the child, then add it again.');
   });
 
-  it('refuses this home as a child, and a folder above it', async () => {
+  it('exits 1 with a remedy for this home as a child, and for a folder above it', async () => {
     await initNode(manager, 'mgr', 2);
-    expect((await node('add-child', manager)).code).toBe(4);
-    expect((await node('add-child', box.root)).code).toBe(4);
+    const inside = await node('add-child', manager);
+    expect(inside.code).toBe(1);
+    expect(inside.stderr).toContain('Name a folder outside this node home');
+    const above = await node('add-child', box.root);
+    expect(above.code).toBe(1);
+    expect(above.stderr).toContain('Name a folder that does not hold this node home');
   });
 
   it('refuses an address that is not a file address with exit code 2', async () => {

@@ -1,6 +1,6 @@
 import type { Deps } from '../core/deps.js';
 import { commands, commandText, flags, flagShorts, flagText, helpTopics, program, schemaIds } from '../names.js';
-import { exitCodeOf, safetyRefusal } from './errors.js';
+import { exitCodeOf, failure } from './errors.js';
 import { detectStyle, renderError, renderJson, renderText, renderWarnings } from './output.js';
 import {
   commandTable,
@@ -28,9 +28,9 @@ const findCommand = (name: string) => commandTable.find((command) => command.nam
 
 export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): Promise<number> => {
   if (deps.platform.os === NATIVE_WINDOWS) {
-    const refusal = safetyRefusal(`${program} runs on macOS and Linux`, `Use WSL; ${program} runs there as on Linux.`);
-    await sink.stderr(renderError(refusal.error));
-    return exitCodeOf[refusal.error.kind];
+    const unsupported = failure(`${program} runs on macOS and Linux`, 'Use WSL, then run the command again.');
+    await sink.stderr(renderError(unsupported.error));
+    return exitCodeOf[unsupported.error.kind];
   }
 
   const [first, ...rest] = argv;

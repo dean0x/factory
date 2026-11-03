@@ -11,11 +11,13 @@ import {
   commands,
   commandText,
   env,
+  files,
   flags,
   flagShorts,
   flagText,
   helpTopics,
   nodeCommands,
+  places,
   program,
   roles,
   values,
@@ -170,7 +172,7 @@ export const commandTable: readonly Command[] = [
     summary: `Migrate the config and the state, and refresh the managed blocks.`,
     usage:
       `${commandText(commands.upgrade)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}] ` +
-      `[${flagText(flags.overwrite)} NAME]...`,
+      `[${flagText(flags.overwrite)} NAME]... [${flagText(flags.yes)}]`,
     options: {
       [flags.home]: foundHomeOption,
       [flags.dryRun]: { type: 'boolean', description: 'Show what would change. Change no file.' },
@@ -180,12 +182,19 @@ export const commandTable: readonly Command[] = [
         placeholder: 'NAME',
         description: 'Replace the managed block NAME, also when it was edited or is missing. Repeat the flag for more blocks.',
       },
+      [flags.yes]: {
+        type: 'boolean',
+        description:
+          `Register a ${places.folder} that the ${places.list} does not list, with no question. ` +
+          `Needs ${flagText(flags.home)} DIR and a ${files.config} with schema 1. Not allowed inside a ${places.session}.`,
+      },
     },
     run: (given, deps) =>
       runUpgrade(deps, {
         home: given.string(flags.home),
         dryRun: given.bool(flags.dryRun),
         overwrite: given.strings(flags.overwrite),
+        yes: given.bool(flags.yes),
       }),
   },
   {

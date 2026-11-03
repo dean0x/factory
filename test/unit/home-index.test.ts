@@ -5,8 +5,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
 import {
+  entryOfHome,
   findHomeInIndex,
   goneHomes,
+  homeHoldingFolder,
   indexPathOf,
   matchFolder,
   readHomeIndex,
@@ -684,6 +686,54 @@ describe('home index: recording a home, with a real file system', () => {
       error: expect.stringContaining('written'),
     });
     expect(await readdir(join(state, 'factory'))).toEqual([]);
+  });
+});
+
+describe('home index: the entry of a folder', () => {
+  const entries = [entry(HOME_A, ['/w/web'], 'web'), entry(HOME_B, ['/w/api'], 'other')];
+
+  it('gives the entry that has the folder as its home', async () => {
+    const deps = createFakeDeps();
+    expect(await entryOfHome(deps, entries, HOME_B)).toEqual(entries[1]);
+  });
+
+  it('gives null for a folder that no entry has as its home, also a folder inside a home and a project folder', async () => {
+    const deps = createFakeDeps();
+    expect(await entryOfHome(deps, entries, '/w/elsewhere')).toBeNull();
+    expect(await entryOfHome(deps, entries, `${HOME_A}/sub`)).toBeNull();
+    expect(await entryOfHome(deps, entries, '/w/web')).toBeNull();
+    expect(await entryOfHome(deps, [], HOME_A)).toBeNull();
+  });
+
+  it('compares real paths: a folder behind a link finds the entry of its real folder', async () => {
+    const deps = createFakeDeps({ links: { '/link': '/w' } });
+    deps.seedDir('/link/web-factory');
+    expect(await entryOfHome(deps, entries, '/link/web-factory')).toEqual(entries[0]);
+  });
+
+  it('finds an entry that was written as the home is given, also when the home does not exist', async () => {
+    const deps = createFakeDeps();
+    expect(await entryOfHome(deps, [entry('/gone/home', [])], '/gone/home')).toEqual(entry('/gone/home', []));
+  });
+
+  it('ignores the case of letters on macOS and keeps it on Linux', async () => {
+    expect(await entryOfHome(createFakeDeps({ os: 'darwin' }), entries, '/W/Web-Factory')).toEqual(entries[0]);
+    expect(await entryOfHome(createFakeDeps({ os: 'linux' }), entries, '/W/Web-Factory')).toBeNull();
+  });
+});
+
+describe('home index: the home that holds a folder as a project', () => {
+  const entries = [entry(HOME_A, ['/w/web'], 'web'), entry(HOME_B, ['/w/api'], 'other')];
+
+  it('gives the home of the entry with a project that is or holds the folder', () => {
+    expect(homeHoldingFolder(entries, '/w/web')).toBe(HOME_A);
+    expect(homeHoldingFolder(entries, '/w/api/src/deep')).toBe(HOME_B);
+  });
+
+  it('gives null for a folder in no project, also for a folder that only starts with the same letters', () => {
+    expect(homeHoldingFolder(entries, '/w')).toBeNull();
+    expect(homeHoldingFolder(entries, '/w/web-search')).toBeNull();
+    expect(homeHoldingFolder([], '/w/web')).toBeNull();
   });
 });
 

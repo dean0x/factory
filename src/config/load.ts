@@ -1,17 +1,20 @@
 import { LineCounter, parseDocument } from 'yaml';
 import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
+import type { NodeIdentity } from '../core/home.js';
 import { err, ok, type Result } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import {
   inspectFile,
   inspectParsed,
+  isRecord,
   refuse,
   type DocState,
   type VersionSpec,
 } from '../migrate/inspect.js';
 import { commands, commandText, files, flags, flagText, keys, localFileModes, program, roles } from '../names.js';
 import { layoutOf } from '../state/layout.js';
+import { slug } from './primitives.js';
 import {
   CONFIG_SCHEMA_VERSION,
   LOCAL_SCHEMA_VERSION,
@@ -147,6 +150,41 @@ export const settleLocalMode = async (deps: Deps, home: string, fix: boolean): P
 export const inspectSharedConfig = (deps: Deps, home: string): Promise<DocState<SharedConfig>> =>
   inspectFile(deps, layoutOf(home).configFile, parseYamlText, SHARED_SPEC);
 
+/** The node id of an older layout of the shared file, or null when the value holds none that is a valid id. */
+const nodeIdOfRaw = (raw: unknown): string | null => {
+  const node = isRecord(raw) ? raw[keys.root.node] : undefined;
+  const id = isRecord(node) ? slug.safeParse(node[keys.node.id]) : undefined;
+  return id?.success === true ? id.data : null;
+};
+
+/**
+ * The node id and the schema version that the shared file states, for the registration check of the root. A file of
+ * an older layout gives its id and its version too, so that `upgrade` can name it. The error is the reason when the
+ * file gives no id. The local file is not read.
+ */
+export const readNodeIdentity = async (deps: Deps, home: string): Promise<Result<NodeIdentity, string>> => {
+  const state = await inspectSharedConfig(deps, home);
+  switch (state.kind) {
+    case 'valid':
+      return ok({ id: state.value.core.node.id, schema: state.version });
+    case 'older': {
+      const id = nodeIdOfRaw(state.raw);
+      return id === null ? err(`${CONFIG_LABEL} holds no ${roles.node} id`) : ok({ id, schema: state.version });
+    }
+    case 'missing':
+      return err(`${CONFIG_LABEL} not found`);
+    case 'unparsable':
+    case 'invalid':
+    case 'newer':
+    case 'unsafe':
+      return err(state.message);
+    default: {
+      const unreachable: never = state;
+      return unreachable;
+    }
+  }
+};
+
 /**
  * Both files, as one state. The local file is read only after the check of its owner and its mode. The shared file
  * comes first: while it is not valid, the local file is not looked at.
@@ -157,12 +195,7 @@ export const inspectConfig = async (deps: Deps, home: string): Promise<DocState<
   const access = await localFileAccess(deps, home);
   if (!access.ok) {
     return access.error.kind === 'safety'
-      ? {
-          kind: 'unsafe',
-          message: access.error.message,
-          ...(access.error.hint === undefined ? {} : { hint: access.error.hint }),
-          file: files.localConfig,
-        }
+      ? { kind: 'unsafe', message: access.error.message, hint: access.error.hint, file: files.localConfig }
       : { kind: 'unparsable', message: access.error.message, file: files.localConfig };
   }
   if (access.value.kind === 'absent') return { kind: 'missing', file: files.localConfig };

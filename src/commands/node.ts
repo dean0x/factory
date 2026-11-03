@@ -1,10 +1,10 @@
-import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { failure, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { childTarget } from '../comms/address.js';
 import { probeChildren, type ChildRow } from '../comms/children.js';
 import { fileTransport } from '../comms/transport.js';
 import { addChildText, removeChildText } from '../config/edit.js';
-import { loadConfig, parseConfigTexts, settleLocalMode } from '../config/load.js';
+import { loadConfig, parseConfigTexts, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import { COORDINATOR_LAYER, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
@@ -38,7 +38,7 @@ const needsUsage = (what: string): CliResult<never> =>
   usageError(what, `Run "${commandText(commands.node)} ${flagText(flags.help)}".`);
 
 const openNode = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<OpenNode>> => {
-  const located = await locateHomeFolder(deps, homeFlag);
+  const located = await locateHomeFolder(deps, homeFlag, readNodeIdentity);
   if (!located.ok) return located;
   const home = located.value.home;
   // The loader checks the owner and the mode of the local file, and a missing local file is a usage error.
@@ -118,10 +118,16 @@ const requireApart = async (deps: Deps, home: string, child: string): Promise<Cl
   if (!realHome.ok) return realHome;
   if (!realChild.ok) return realChild;
   if (isSameOrInside(realHome.value, realChild.value)) {
-    return safetyRefusal(`the child home ${child} is this ${roles.node} home, or inside it`);
+    return failure(
+      `the child home ${child} is this ${roles.node} home, or inside it`,
+      `Name a folder outside this ${roles.node} home, then add the child again.`,
+    );
   }
   if (isSameOrInside(realChild.value, realHome.value)) {
-    return safetyRefusal(`the child home ${child} holds this ${roles.node} home`);
+    return failure(
+      `the child home ${child} holds this ${roles.node} home`,
+      `Name a folder that does not hold this ${roles.node} home, then add the child again.`,
+    );
   }
   return ok(undefined);
 };
@@ -138,7 +144,7 @@ const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): 
   const { home, config } = node.value;
   const layer = config.core.node.layer;
   if (layer === COORDINATOR_LAYER) {
-    return safetyRefusal(
+    return usageError(
       `this ${roles.node} is on layer ${COORDINATOR_LAYER}: its children are ${roles.worker}s`,
       `A ${roles.worker} is not a ${roles.node} home. ${program} adds ${roles.worker}s with a later version.`,
     );
@@ -150,20 +156,33 @@ const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): 
   if (!apart.ok) return apart;
 
   const answer = await fileTransport(deps).ping(target.value.address);
-  if (answer.kind === 'unknown') return safetyRefusal(`cannot add the child: ${answer.reason}`);
+  if (answer.kind === 'unknown') {
+    return failure(`cannot add the child: ${answer.reason}`, 'Start the child, then add it again.');
+  }
   if (answer.layer !== layer - 1) {
-    return safetyRefusal(
+    return failure(
       `the child is on layer ${answer.layer}, but a ${roles.node} on layer ${layer} takes children on layer ${layer - 1}`,
+      `Add a ${roles.node} on layer ${layer - 1}, or change the layer of the child.`,
     );
   }
   if (answer.id === config.core.node.id) {
-    return safetyRefusal(
+    return failure(
       `the child has the id ${answer.id}, which is the id of this ${roles.node}`,
       `Change the id in the ${files.config} of the child, then add it again.`,
     );
   }
-  if (config.core.children.some((child) => child.id === answer.id)) {
-    return safetyRefusal(`${answer.id} is a child of this ${roles.node} already`);
+  const known = config.core.children.find((child) => child.id === answer.id);
+  if (known?.address === target.value.address) {
+    const intro: OutLine[] = [
+      { level: 'warn', text: `${answer.id} is a child of this ${roles.node} already. Nothing changed.` },
+    ];
+    return ok(await childrenOutput(deps, { home, config, notes: node.value.notes }, intro));
+  }
+  if (known !== undefined) {
+    return failure(
+      `${answer.id} is a child of this ${roles.node} already, with another address`,
+      `Run "${commandText(commands.node)} ${nodeCommands.removeChild} ${answer.id}", then add the child again.`,
+    );
   }
 
   const edited = addChildText(node.value.localText, { id: answer.id, address: target.value.address });

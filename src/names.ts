@@ -24,6 +24,17 @@ export const roles = {
   variant: 'variant',
 } as const;
 
+/**
+ * The plain words for the places that the root rule names (design 4.3): the folder of a node, the per-user list
+ * of those folders, the marker inside a folder, and a session of the tool.
+ */
+export const places = {
+  folder: `${program} folder`,
+  list: `${program} list`,
+  marker: `${program} marker`,
+  session: `${program} session`,
+} as const;
+
 export const commands = {
   init: 'init',
   start: 'start',

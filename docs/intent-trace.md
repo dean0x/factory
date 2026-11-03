@@ -25,7 +25,7 @@ How to read the table:
 | F-3b | The user does not need to know the folder; `factory start` finds it | §4.3 | Design v3 PR (moved from FAC-M2: D-60 makes the factory one folder): the factory folder holds `factory.yaml`, so `start --dry-run` and `doctor` exit 0 from the factory folder, from the coordinator folder and from a project clone | covered |
 | F-3c | A worker does not load the coordinator instructions | §4.3, §8 | FAC-M2 (a new node), FAC-M7: `scripts/check-worker-paths.sh` passes on the adopted fixture and fails on the fixture before the adopt | covered |
 | F-3d | One project or many: the same layout | §4.1, §4.3 | FAC-M2: `start` test with one `--add-dir` for each project | covered |
-| F-4a | Same layer, same behavior; the role comes from the layer | §5.2 | FAC-M2: role template tests; `node add-child` exits 4 for another layer | covered |
+| F-4a | Same layer, same behavior; the role comes from the layer | §5.2 | FAC-M2: role template tests; `node add-child` exits 1 for another layer | covered |
 | F-4b | The pyramid can grow; a new top layer changes nothing below | §5.2, §5.7 | FAC-M8: growth test (hashes of the nodes below stay the same) and the layer-3 rollup test | covered |
 | F-5 | macOS and Linux only | §4.7 | FAC-M2: fake `win32` refusal test. FAC-M4: `machine` fixtures for both systems. FAC-M5: `lock run` with `flock` and `lockf`. CI runs on Ubuntu and macOS | covered |
 | F-6a | Approved and assigned work merges when the gates pass, with no ask for each PR | §6, §6.1 | FAC-M5: `pr merge` tests, one for each proof, for both kinds of assignment, and the refusals; template test: the coordinator role text and the fixed rules follow the approval setting | covered |
@@ -91,7 +91,7 @@ How to read the table:
 | V-F-3c | Make sure it is figured out; say if not understood | §4.3 | None. The one-page summary of the design answers it | not applicable: a request to confirm |
 | V-F-4a | Nodes on the same layer work the same | §5.2 | FAC-M2: role template tests. FAC-M6: same-layer hash test | covered |
 | V-F-4b | Nodes on different layers work differently | §5.2 | FAC-M2: `roleForLayer` tests. FAC-M8: the `director` template | covered |
-| V-F-4c | All child nodes of one layer work the same | §5.2 | FAC-M2: `add-child` exits 4 for another layer; all workers use the worker role | covered |
+| V-F-4c | All child nodes of one layer work the same | §5.2 | FAC-M2: `add-child` exits 1 for another layer; all workers use the worker role | covered |
 | V-F-4d | The layer that runs devflow knows its projects and variants | §5.2, §4.4 | FAC-M6: coordinator knowledge test and same-layer hash test | covered |
 | V-F-4e | A new top layer works unlike the two below; the pyramid grows | §5.2, §5.7 | FAC-M8: growth test and layer-3 rollup | covered |
 

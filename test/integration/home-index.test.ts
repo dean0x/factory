@@ -109,7 +109,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     expect(result.stdout).toContain('with no factory.yaml');
   });
 
-  it('exits 2 and names the file when the index cannot be read', async () => {
+  it('exits 2 and names the file when the index cannot be read, and exits 4 for a home that the flag names', async () => {
     const web = await initWeb();
     await writeFile(indexFile(), '{ broken');
     const result = await box.run(['start', '--dry-run'], { cwd: web, ...withState() });
@@ -117,8 +117,9 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     expect(result.stderr).toContain(indexFile());
 
     const doctor = await box.run(['doctor', '--home', join(box.root, 'web-factory')], withState());
-    expect(doctor.code).toBe(0);
-    expect(doctor.stdout).toContain(`${indexFile()} cannot be read`);
+    expect(doctor.code).toBe(4);
+    expect(doctor.stderr).toContain(`the factory list ${indexFile()} cannot be used`);
+    expect(doctor.stderr).toContain(`Fix or remove ${indexFile()}, then run "factory init"`);
   });
 
   it('refuses with exit 4 an index under the folder of Claude Code, and creates nothing', async () => {

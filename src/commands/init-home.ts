@@ -10,7 +10,8 @@ import { ok } from '../core/result.js';
 import { commands, commandText, dirs, files, flags, flagText, program, roles } from '../names.js';
 import { isStagingDirName, layoutOf } from '../state/layout.js';
 
-const ACCEPT_ANSWER = /^y(?:es)?$/i;
+/** The answers that mean yes to a question of a command. Any other answer, and an empty one, means no. */
+export const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
 export interface HomeChoice {
   readonly home: string;
@@ -100,7 +101,7 @@ const checkInsideNoNodeHome = async (deps: Deps, home: string): Promise<CliResul
   const parentConfig = await findNearestConfig(deps, dirname(home));
   if (!parentConfig.ok) return parentConfig;
   if (parentConfig.value !== null) {
-    return safetyRefusal(
+    return failure(
       `the ${roles.node} home ${home} is inside another ${roles.node} home: ${parentConfig.value} exists`,
       `A ${roles.node} home must be outside every other ${roles.node} home. Choose another folder with ${flagText(flags.home)} DIR.`,
     );
@@ -175,6 +176,7 @@ export const checkHomeHoldsNoRepo = async (deps: Deps, home: string): Promise<Cl
     return safetyRefusal(
       `the ${roles.node} home ${home} holds the temp folder ${leftover}, left by a stopped ${commands.init}. ` +
         'You can remove it by hand.',
+      `Remove ${leftover}, then run the command again.`,
     );
   }
   return safetyRefusal(

@@ -258,8 +258,9 @@ describe('init: the refusals of the home rules', () => {
     deps.seed('/w/factory.yaml', 'schema: 1\n');
     const before = snapshot(deps);
     const result = await runInit(deps, options());
-    expect(refused(result)).toBe('safety');
+    expect(refused(result)).toBe('failure');
     expect(messageOf(result)).toContain(`${HOME} is inside another node home: /w/factory.yaml exists`);
+    expect(messageOf(result)).toContain('Choose another folder with --home DIR.');
     expect(snapshot(deps)).toBe(before);
   });
 
@@ -267,7 +268,7 @@ describe('init: the refusals of the home rules', () => {
     const { deps } = setup();
     deps.seed('/factory.yaml', 'schema: 1\n');
     const result = await planInit(deps, options({ home: '/w/a/b/c' }));
-    expect(refused(result)).toBe('safety');
+    expect(refused(result)).toBe('failure');
     expect(messageOf(result)).toContain('/factory.yaml exists');
   });
 
@@ -1227,14 +1228,14 @@ describe('init: a workspace folder that holds several repos', () => {
     });
 
     it.each([[false], [true]])(
-      'exits 4 for a folder below a node home, names that home and proposes nothing, with --yes %s',
+      'exits 1 for a folder below a node home, names that home and proposes nothing, with --yes %s',
       async (yes) => {
         const deps = inNode('/ws/sub', { ...terminal, prompt: () => ok('y') });
         const before = snapshot(deps);
 
         const result = await runInit(deps, withHome({ yes }));
 
-        expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+        expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
         expect(messageOf(result)).toContain('/ws/sub is inside another node home: /ws/factory.yaml exists');
         expect(messageOf(result)).not.toContain('already exists');
         expect(messageOf(result)).not.toContain('proposed');
@@ -1243,14 +1244,14 @@ describe('init: a workspace folder that holds several repos', () => {
       },
     );
 
-    it('exits 4 for a folder below a node home before it scans the folder for repos', async () => {
+    it('exits 1 for a folder below a node home before it scans the folder for repos', async () => {
       const deps = inWorkspace({ ...terminal, cwd: '/ws/sub', prompt: () => ok('y') }, { repos: { '/ws/sub/app': {} } });
       deps.seed('/ws/factory.yaml', 'schema: 2\n');
       const before = snapshot(deps);
 
       const result = await runInit(deps, withHome({ yes: true }));
 
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
       expect(messageOf(result)).toContain('is inside another node home');
       expect(deps.prompts).toEqual([]);
       expect(snapshot(deps)).toBe(before);
@@ -1344,26 +1345,27 @@ describe('init: a project URL', () => {
     expect(result.ok && result.value.json['cloned']).toEqual([]);
   });
 
-  it('exits 4 and names the path when the target is a clone of another URL, and changes nothing', async () => {
+  it('exits 1 and names the path when the target is a clone of another URL, and changes nothing', async () => {
     const { deps, log } = setup({ repos: { '/w/api': { origin: 'https://host/other/api.git' } } });
     deps.seedDir('/w/api');
     const before = snapshot(deps);
     const result = await runInit(deps, options({ projects: [URL_API] }));
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(messageOf(result)).toContain('/w/api');
+    expect(messageOf(result)).toContain('Move the folder, or choose another repo.');
     expect(log.clones()).toEqual([]);
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('exits 4 for a target that is a folder with no repo, and for a target that is a file', async () => {
+  it('exits 1 for a target that is a folder with no repo, and for a target that is a file', async () => {
     const folder = setup({});
     folder.deps.seedDir('/w/api');
-    expect(await runInit(folder.deps, options({ projects: [URL_API] }))).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(await runInit(folder.deps, options({ projects: [URL_API] }))).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(folder.log.clones()).toEqual([]);
 
     const file = setup({});
     file.deps.seed('/w/api', 'x');
-    expect(await runInit(file.deps, options({ projects: [URL_API] }))).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(await runInit(file.deps, options({ projects: [URL_API] }))).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(file.log.clones()).toEqual([]);
   });
 
@@ -1765,7 +1767,7 @@ describe('init: the checks before a clone', () => {
 
   it('refuses a home inside another node home and runs no clone', async () => {
     const { result, log, changed } = await initWithUrl({}, {}, (deps) => deps.seed('/w/factory.yaml', 'schema: 2\n'));
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(messageOf(result)).toContain('is inside another node home');
     expect(log.clones()).toEqual([]);
     expect(changed).toBe(false);

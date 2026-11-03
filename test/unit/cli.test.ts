@@ -98,14 +98,12 @@ describe('the refusal on Windows', () => {
   ];
 
   it.each(argvOfEachCommand.map((argv) => [argv.join(' ') || '(no arguments)', argv] as const))(
-    'exits 4 with the hint for "%s" on win32, and prints nothing else',
+    'exits 1 with the remedy line for "%s" on win32, and prints nothing else',
     async (_name, argv) => {
       const result = await runOn('win32', argv);
-      expect(result.code).toBe(4);
+      expect(result.code).toBe(1);
       expect(result.out).toBe('');
-      expect(result.err).toBe(
-        'error: factory runs on macOS and Linux\nUse WSL; factory runs there as on Linux.\n',
-      );
+      expect(result.err).toBe('error: factory runs on macOS and Linux\nUse WSL, then run the command again.\n');
     },
   );
 

@@ -119,12 +119,13 @@ describe('factory init (built binary)', () => {
     expect(second.stderr).toContain('factory.yaml already exists');
   });
 
-  it('refuses with exit 4 a folder below a parent that has a config file, and creates nothing', async () => {
+  it('refuses with exit 1 a folder below a parent that has a config file, names a remedy and creates nothing', async () => {
     expect((await box.run(['init', '--home', box.root, '--name', 'parent', '--owner-name', 'Test Owner'])).code).toBe(0);
     const child = await box.run(initArgs());
-    expect(child.code).toBe(4);
+    expect(child.code).toBe(1);
     expect(child.stderr).toContain('inside another node home');
     expect(child.stderr).toContain('factory.yaml exists');
+    expect(child.stderr).toContain('Choose another folder with --home DIR.');
     expect(existsSync(box.node)).toBe(false);
   });
 

@@ -220,12 +220,18 @@ export const recordNode = async (deps: Deps, indexPath: string | null, node: Ind
   return recorded.ok ? [] : [`The home index ${indexPath} was not updated: ${recorded.error}`];
 };
 
-/** True when an entry of the index has this home, as it is written or by its real path. */
-export const listsHome = async (deps: Deps, entries: readonly HomeEntry[], home: string): Promise<boolean> => {
+/** The entry of the index that has this home, as it is written or by its real path, or null when no entry has it. */
+export const entryOfHome = async (deps: Deps, entries: readonly HomeEntry[], home: string): Promise<HomeEntry | null> => {
   const real = await realPathOf(deps, home);
   const wanted = [home, ...(real.ok ? [real.value] : [])].map((candidate) => comparable(deps, candidate));
-  return entries.some((entry) => wanted.includes(comparable(deps, entry[homeIndex.keys.home])));
+  return entries.find((entry) => wanted.includes(comparable(deps, entry[homeIndex.keys.home]))) ?? null;
 };
+
+/** The folder of the first entry that has a project holding this folder, or null. The folder is a real path. */
+export const homeHoldingFolder = (entries: readonly HomeEntry[], folder: string): string | null =>
+  entries.find((entry) => entry[homeIndex.keys.projects].some((project) => isSameOrInside(project, folder)))?.[
+    homeIndex.keys.home
+  ] ?? null;
 
 /** Whether the folder of the home holds its config file. 'unknown' is a home that cannot be checked. */
 type HomeState = 'present' | 'gone' | 'unknown';

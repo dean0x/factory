@@ -6,6 +6,7 @@ import {
   localFileAccess,
   parseConfigTexts,
   parseYamlText,
+  readNodeIdentity,
   settleLocalMode,
 } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
@@ -268,6 +269,42 @@ describe('inspectConfig and loadConfig', () => {
     deps.seed(LOCAL, sample().local);
     deps.modes.set(LOCAL, 0o666);
     expect((await inspectSharedConfig(deps, HOME)).kind).toBe('valid');
+  });
+});
+
+describe('readNodeIdentity', () => {
+  it('gives the node id and the schema version of a valid shared file, and reads no local file', async () => {
+    const identity = await readNodeIdentity(withFiles(sample().shared, null), HOME);
+    expect(identity).toEqual({ ok: true, value: { id: sampleConfig().core.node.id, schema: 2 } });
+  });
+
+  it('gives the id and the version of a file of an older layout, which is not valid as a whole', async () => {
+    const identity = await readNodeIdentity(withFiles('schema: 1\nnode:\n  id: demo\n  role: coordinator\n', null), HOME);
+    expect(identity).toEqual({ ok: true, value: { id: 'demo', schema: 1 } });
+  });
+
+  it('gives the reason when the older file holds no node id, or an id that is not a slug', async () => {
+    for (const text of ['schema: 1\n', 'schema: 1\nnode:\n  id: Not A Slug\n', 'schema: 1\nnode: demo\n']) {
+      const identity = await readNodeIdentity(withFiles(text, null), HOME);
+      expect(identity).toEqual({ ok: false, error: 'factory.yaml holds no node id' });
+    }
+  });
+
+  it('gives the reason when the file is missing, a folder, newer, invalid or not parsable', async () => {
+    const folder = withFiles(null, null);
+    folder.seedDir(SHARED);
+    const states: readonly [string, FakeDeps][] = [
+      ['missing', withFiles(null, null)],
+      ['a folder', folder],
+      ['newer', withFiles('schema: 3\n', null)],
+      ['invalid', withFiles('schema: 2\nnode: 3\n', null)],
+      ['not parsable', withFiles('a: [1\n', null)],
+    ];
+    for (const [name, deps] of states) {
+      const identity = await readNodeIdentity(deps, HOME);
+      expect(identity.ok, name).toBe(false);
+      if (!identity.ok) expect(identity.error, name).not.toBe('');
+    }
   });
 });
 

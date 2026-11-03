@@ -264,6 +264,28 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(result.stderr).toContain('a tmux session demo belongs to another node home');
   });
 
+  it('exits 4 in a project clone that holds its own config with a proxy entry, and starts nothing (TP-16)', async () => {
+    const [web] = await initNode();
+    const clone = web ?? '';
+    await writeFile(join(clone, 'factory.yaml'), await box.read(join(box.node, 'factory.yaml')));
+    const local = await box.read(join(box.node, 'factory.local.yaml'));
+    expect(local).toContain('proxies: []');
+    await writeFile(
+      join(clone, 'factory.local.yaml'),
+      local.replace('proxies: []', 'proxies:\n  - id: local\n    base_url: "http://127.0.0.1:9"\n    health: /health\n    on_fail: stop'),
+    );
+
+    for (const extra of [[], ['--dry-run']]) {
+      const result = await box.run(['start', ...extra], { cwd: clone, env: tmuxEnv });
+      expect(result.code).toBe(4);
+      expect(result.stderr).toContain(`${join(clone, 'factory.yaml')} does not count`);
+      expect(result.stderr).toContain('name it with --home');
+      expect(result.stdout).not.toContain('127.0.0.1');
+    }
+    expect((await tmux(['list-sessions'])).code).not.toBe(0);
+    expect(existsSync(socket)).toBe(false);
+  });
+
   it('shows the calls for --dry-run, starts no session and no claude', async () => {
     await initNode();
     const result = await startFactory('--dry-run');

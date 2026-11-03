@@ -22,7 +22,7 @@ export type DocState<T> =
       readonly file?: string;
     }
   | { readonly kind: 'invalid'; readonly raw: unknown; readonly message: string; readonly file?: string }
-  | { readonly kind: 'unsafe'; readonly message: string; readonly hint?: string; readonly file?: string };
+  | { readonly kind: 'unsafe'; readonly message: string; readonly hint: string; readonly file?: string };
 
 /** What a versioned file needs from its schema: the value, or an error with the key paths. A Zod schema fits. */
 export interface SchemaParser<T> {

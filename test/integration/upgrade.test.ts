@@ -80,14 +80,31 @@ describe('factory upgrade (built binary)', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ schema: 'factory.upgrade/v1', changed: false, dryRun: true });
   });
 
-  it('refuses an edited block with exit 4 and leaves the file as it is', async () => {
+  it('keeps an edited role block with a warning that names the flag, exits 0 and leaves the file as it is', async () => {
     await initNode();
     const edited = await editCoordinator();
     const result = await box.run(['upgrade', '--home', box.node]);
-    expect(result.code).toBe(4);
+    expect(result.code).toBe(0);
     expect(result.stderr).toContain('block coordinator was edited');
     expect(result.stderr).toContain('--overwrite coordinator');
     expect(await box.read(join(box.node, 'CLAUDE.md'))).toBe(edited);
+  });
+
+  it('refuses an edited safety block with exit 4, names the overwrite command and leaves the file as it is', async () => {
+    await initNode();
+    const path = join(box.node, 'CLAUDE.md');
+    const text = await box.read(path);
+    const start = text.indexOf('<!-- factory:begin safety');
+    expect(start).toBeGreaterThan(-1);
+    const edited = `${text.slice(0, start)}${text.slice(start).replace(/\n([^<\n][^\n]*)\n/, '\nEdited safety line.\n')}`;
+    expect(edited).not.toBe(text);
+    await writeFile(path, edited);
+
+    const result = await box.run(['upgrade', '--home', box.node]);
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('block safety was edited');
+    expect(result.stderr).toContain('factory upgrade --overwrite safety');
+    expect(await box.read(path)).toBe(edited);
   });
 
   it('replaces the edited block when it is named, and the doctor finds all blocks intact', async () => {
@@ -221,7 +238,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
 
   it('upgrades to schema 2 with a local tracker, and then the doctor exits 0', async () => {
     const state = await prepareOldNode();
-    const upgraded = await box.run(['upgrade', '--home', box.node]);
+    const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
     expect(upgraded.stdout).toContain('Changed 8 files.');
 
@@ -264,7 +281,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
       expect.arrayContaining(['CLAUDE.md', 'factory.yaml', '.factory/protocol.md', '.factory/roadmaps/README.md']),
     );
 
-    const upgraded = await box.run(['upgrade', '--home', box.node]);
+    const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
     expect(upgraded.stderr).toBe('');
 
@@ -282,7 +299,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const edited = `${await box.read(path)}\n## Our own track rules\n`;
     await writeFile(path, edited);
 
-    const upgraded = await box.run(['upgrade', '--home', box.node]);
+    const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
     expect(upgraded.stdout).toContain('Changed 7 files.');
     expect(upgraded.stderr).toContain('.factory/roadmaps/README.md was edited, so factory keeps it');
@@ -305,23 +322,32 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
   });
 
-  it('refuses an edited protocol block with exit 4 until it is named', async () => {
-    const state = await prepareOldNode();
+  /** Edit one line of the protocol block, and commit it: the upgrade moves the file, so it needs a clean state repo. */
+  const editProtocol = async (state: string): Promise<void> => {
     const path = join(state, 'protocol.md');
     const text = await box.read(path);
     const line = text.split('\n').find((candidate) => candidate.length > 30 && !candidate.startsWith('<!--')) ?? '';
     expect(line).not.toBe('');
     await writeFile(path, text.replace(line, 'My own rule for the workers.'));
-
-    const refused = await box.run(['upgrade', '--home', box.node]);
-    expect(refused.code).toBe(4);
-    expect(refused.stderr).toContain('block protocol was edited');
-    expect(refused.stderr).toContain('--overwrite protocol');
-    expect((await readdir(state)).sort()).toContain('protocol.md');
-
-    // The upgrade moves the file, so a change of the owner in it must be in a commit before the upgrade runs.
     await commitAll(state, 'my rule for the workers');
-    const upgraded = await box.run(['upgrade', '--home', box.node, '--overwrite', 'protocol']);
+  };
+
+  it('keeps an edited protocol block with a warning that names the flag, and exits 0', async () => {
+    const state = await prepareOldNode();
+    await editProtocol(state);
+
+    const kept = await box.run(['upgrade', '--home', box.node, '--yes']);
+    expect(kept.code).toBe(0);
+    expect(kept.stderr).toContain('block protocol was edited');
+    expect(kept.stderr).toContain('--overwrite protocol');
+    expect(await box.read(join(state, 'roles', 'worker.md'))).toContain('My own rule for the workers.');
+  });
+
+  it('replaces an edited protocol block when it is named, and the doctor exits 0', async () => {
+    const state = await prepareOldNode();
+    await editProtocol(state);
+
+    const upgraded = await box.run(['upgrade', '--home', box.node, '--yes', '--overwrite', 'protocol']);
     expect(upgraded.code).toBe(0);
     expect(await box.read(join(state, 'roles', 'worker.md'))).not.toContain('My own rule for the workers.');
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
@@ -335,7 +361,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const config = await box.read(join(box.node, 'factory.yaml'));
     const marker = await box.read(join(state, 'node.json'));
 
-    const refused = await box.run(['upgrade', '--home', box.node]);
+    const refused = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(refused.code).toBe(1);
     expect(refused.stderr).toContain('.factory has changes in files that the upgrade changes: protocol.md');
     expect(refused.stderr).toContain('Commit them');
@@ -351,7 +377,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await box.git(state, ['log', '--format=%s'])).stdout.trim()).toBe('first');
 
     await commitAll(state, 'a note of the owner');
-    expect((await box.run(['upgrade', '--home', box.node])).code).toBe(0);
+    expect((await box.run(['upgrade', '--home', box.node, '--yes'])).code).toBe(0);
     expect(await box.read(join(state, 'roles', 'worker.md'))).toContain('A note of the owner, outside the block.');
   });
 
@@ -360,7 +386,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const config = await box.read(join(box.node, 'factory.yaml'));
     const marker = await box.read(join(state, 'node.json'));
 
-    for (const args of [['upgrade', '--home', box.node], ['upgrade', '--home', box.node, '--dry-run']]) {
+    for (const args of [['upgrade', '--home', box.node, '--yes'], ['upgrade', '--home', box.node, '--dry-run']]) {
       const result = await box.run(args);
       expect(result.code).toBe(1);
       expect(result.stderr).toContain('lists a project');
@@ -386,11 +412,57 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const edited = text.replace('children: []', 'children:\n  - id: team-a\n    address: "ssh://deploy@host/work"');
     await writeFile(path, edited);
 
-    const result = await box.run(['upgrade', '--home', box.node]);
+    const result = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('children[0] "team-a"');
     expect(result.stderr).not.toContain('deploy@host');
     expect(await box.read(path)).toBe(edited);
     expect((await readdir(state)).sort()).toContain('protocol.md');
+  });
+
+  it('does not register the folder without a yes: exit 2 with no terminal, and nothing changes (TP-88)', async () => {
+    const state = await prepareOldNode();
+    const config = await box.read(join(box.node, 'factory.yaml'));
+    const marker = await box.read(join(state, 'node.json'));
+
+    const result = await box.run(['upgrade', '--home', box.node]);
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('is not in the factory list');
+    expect(result.stderr).toContain('--yes');
+
+    expect(await box.read(join(box.node, 'factory.yaml'))).toBe(config);
+    expect(await box.read(join(state, 'node.json'))).toBe(marker);
+    expect((await readdir(state)).sort()).toContain('protocol.md');
+    expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
+  });
+
+  it('exits 4 in a factory session, also with --yes, and writes nothing (TP-89)', async () => {
+    const state = await prepareOldNode();
+    const config = await box.read(join(box.node, 'factory.yaml'));
+    const marker = await box.read(join(state, 'node.json'));
+
+    const result = await box.run(['upgrade', '--home', box.node, '--yes'], { env: { FACTORY_SESSION: '1' } });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('a factory session can not register it');
+    expect(result.stderr).toContain('outside a factory session');
+
+    expect(await box.read(join(box.node, 'factory.yaml'))).toBe(config);
+    expect(await box.read(join(state, 'node.json'))).toBe(marker);
+    expect((await readdir(state)).sort()).toContain('protocol.md');
+  });
+
+  it('counts the folder only when --home names it: the walk from inside it exits 4 (TP-72)', async () => {
+    await prepareOldNode();
+    const result = await box.run(['upgrade', '--yes'], { cwd: box.node });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('does not count: the factory list has no entry');
+    expect(result.stderr).toContain('factory init');
+  });
+
+  it('registers the folder after the yes, so that start and doctor count it', async () => {
+    await prepareOldNode();
+    expect((await box.run(['upgrade', '--home', box.node, '--yes'])).code).toBe(0);
+    const doctor = await box.run(['doctor'], { cwd: box.node });
+    expect(doctor.code).toBe(0);
   });
 });

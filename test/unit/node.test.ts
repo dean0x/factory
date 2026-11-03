@@ -3,7 +3,7 @@ import { runNode, type NodeOptions } from '../../src/commands/node.js';
 import { parseConfigTexts } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 
@@ -28,8 +28,9 @@ const make = (
     readonly cwd?: string;
   } = {},
 ): FakeDeps => {
-  const deps = createFakeDeps({ cwd: options.cwd ?? '/w' });
+  const deps = createFakeDeps({ cwd: options.cwd ?? '/w', env: { XDG_STATE_HOME: '/state' } });
   seedConfig(deps, HOME, configOf('mgr', options.layer ?? 2, options.children));
+  registerRoot(deps, HOME, 'mgr');
   if (options.sharedText !== undefined) deps.seed(CONFIG_PATH, options.sharedText);
   if (options.localText !== undefined) deps.seed(LOCAL_PATH, options.localText);
   for (const [path, config] of Object.entries(options.homes ?? {})) {
@@ -154,44 +155,45 @@ describe('node add-child', () => {
     expect(deps.files.get(CONFIG_PATH)).toBe(shared);
   });
 
-  it('refuses on layer 1, because the children of a coordinator are workers', async () => {
+  it('refuses on layer 1 with a usage error, because the children of a coordinator are workers', async () => {
     const deps = make({ layer: 1, homes: webHome });
     const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', '/w/web-factory');
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (!result.ok) expect(result.error.message).toContain('its children are workers');
     expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
-  it('refuses a child on a layer that is not the layer below, and names both layers', async () => {
+  it('fails for a child on a layer that is not the layer below, names both layers and a remedy', async () => {
     for (const layer of [2, 3]) {
       const deps = make({ homes: { '/w/other': configOf('other', layer) } });
       const before = deps.files.get(LOCAL_PATH);
       const result = await node(deps, 'add-child', '/w/other');
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
       if (!result.ok) {
         expect(result.error.message).toBe(`the child is on layer ${layer}, but a node on layer 2 takes children on layer 1`);
+        expect(result.error.hint).toContain('layer 1');
       }
       expect(deps.files.get(LOCAL_PATH)).toBe(before);
     }
   });
 
-  it('refuses a child that is more than one layer below, and changes nothing', async () => {
+  it('fails for a child that is more than one layer below, and changes nothing', async () => {
     const deps = make({ layer: 3, homes: { '/w/low': configOf('low', 1) } });
     const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', '/w/low');
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) {
       expect(result.error.message).toBe('the child is on layer 1, but a node on layer 3 takes children on layer 2');
     }
     expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
-  it('refuses a child with the id of this node, tells how to fix it, and changes nothing', async () => {
+  it('fails for a child with the id of this node, tells how to fix it, and changes nothing', async () => {
     const deps = make({ homes: { '/w/same': configOf('mgr', 1) } });
     const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', '/w/same');
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) {
       expect(result.error.message).toBe('the child has the id mgr, which is the id of this node');
       expect(result.error.hint).toContain('Change the id in the factory.yaml of the child');
@@ -199,45 +201,52 @@ describe('node add-child', () => {
     expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
-  it('refuses a child whose folder does not exist, and says why', async () => {
+  it('fails for a child whose folder does not exist, says why and tells to start the child', async () => {
     const result = await node(make(), 'add-child', '/w/none');
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    if (!result.ok) expect(result.error.message).toBe('cannot add the child: no factory.yaml found there');
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!result.ok) {
+      expect(result.error.message).toBe('cannot add the child: no factory.yaml found there');
+      expect(result.error.hint).toBe('Start the child, then add it again.');
+    }
   });
 
-  it('refuses a child whose config is not valid, and says why', async () => {
+  it('fails for a child whose config is not valid, and says why', async () => {
     const broken = renderConfig(configOf('bad', 1)).shared.replace('effort: high', 'effort: wild');
     const result = await node(make({ homes: { '/w/bad': broken } }), 'add-child', '/w/bad');
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) expect(result.error.message).toContain('factory.yaml is invalid');
   });
 
   it('tells which side needs the upgrade when the schema of the child is not the current one', async () => {
     const older = make({ homes: { '/w/old': 'schema: 1\n' } });
     const olderResult = await node(older, 'add-child', '/w/old');
-    expect(olderResult).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(olderResult).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!olderResult.ok) expect(olderResult.error.message).toContain('run "factory upgrade" in that node home');
 
     const newer = make({ homes: { '/w/new': 'schema: 3\n' } });
     const newerResult = await node(newer, 'add-child', '/w/new');
-    expect(newerResult).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(newerResult).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!newerResult.ok) expect(newerResult.error.message).toContain('upgrade factory');
   });
 
-  it('refuses a child that is a child already', async () => {
+  it('warns, with exit 0 and no write, for a child that is a child already', async () => {
     const deps = make({ children: [{ id: 'web', address: 'file:///w/web-factory' }], homes: webHome });
-    const result = await node(deps, 'add-child', '/w/web-factory');
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    if (!result.ok) expect(result.error.message).toBe('web is a child of this node already');
+    const before = deps.files.get(LOCAL_PATH);
+    const output = await succeeded(deps, 'add-child', '/w/web-factory');
+    expect(output.lines[0]).toEqual({ level: 'warn', text: 'web is a child of this node already. Nothing changed.' });
+    expect(output.failed).toBe(false);
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
+    expect(deps.atomicWrites).toEqual([]);
   });
 
-  it('refuses another home with the id of a child', async () => {
+  it('fails for another home with the id of a child, and names the command that removes the child', async () => {
     const deps = make({
       children: [{ id: 'web', address: 'file:///w/web-factory' }],
       homes: { ...webHome, '/w/web-two': configOf('web', 1) },
     });
     const result = await node(deps, 'add-child', '/w/web-two');
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!result.ok) expect(result.error.hint).toBe('Run "factory node remove-child web", then add the child again.');
   });
 
   it.each([
@@ -245,19 +254,23 @@ describe('node add-child', () => {
     ['a folder inside this home', '/w/mgr/sub', 'is this node home, or inside it'],
     ['a folder above this home', '/w', 'holds this node home'],
     ['the root folder', '/', 'holds this node home'],
-  ])('refuses %s', async (_name, path, message) => {
+  ])('fails for %s, and names a remedy', async (_name, path, message) => {
     const deps = make({ homes: { [path]: null } });
     const result = await node(deps, 'add-child', path);
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    if (!result.ok) expect(result.error.message).toContain(message);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!result.ok) {
+      expect(result.error.message).toContain(message);
+      expect(result.error.hint).toContain('then add the child again');
+    }
   });
 
   it('compares real paths, so a link to this home is refused', async () => {
-    const deps = createFakeDeps({ cwd: '/w', links: { '/w/link': HOME } });
+    const deps = createFakeDeps({ cwd: '/w', links: { '/w/link': HOME }, env: { XDG_STATE_HOME: '/state' } });
     seedConfig(deps, HOME, configOf('mgr', 2));
+    registerRoot(deps, HOME, 'mgr');
     deps.seedDir('/w/link');
     const result = await node(deps, 'add-child', '/w/link');
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 
   it.each([
@@ -409,5 +422,38 @@ describe('node: the local file', () => {
     await succeeded(deps, 'remove-child', 'web');
     expect(deps.files.get(CONFIG_PATH)).toBe(before);
     expect(deps.atomicWrites).not.toContain(CONFIG_PATH);
+  });
+});
+
+describe('node: the registration check', () => {
+  const words = [['children'], ['add-child', '/w/web-factory'], ['remove-child', 'web']];
+  const withChild = { children: [{ id: 'web', address: 'file:///w/web-factory' }], homes: webHome };
+
+  it.each([
+    ['no entry in the factory list', (deps: FakeDeps) => deps.files.delete('/state/factory/homes.json')],
+    ['an entry with another node id', (deps: FakeDeps) => registerRoot(deps, HOME, 'other')],
+    ['no factory marker', (deps: FakeDeps) => deps.files.delete(`${HOME}/.factory/node.json`)],
+  ])('exits 4 for all three subcommands with %s, names the file and writes nothing', async (_name, change) => {
+    const deps = make(withChild);
+    change(deps);
+    const before = deps.files.get(LOCAL_PATH);
+    for (const subcommand of words) {
+      const result = await node(deps, ...subcommand);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (!result.ok) {
+        expect(result.error.message).toContain(CONFIG_PATH);
+        expect(result.error.hint).toContain('factory init');
+      }
+    }
+    expect(deps.files.get(LOCAL_PATH)).toBe(before);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('exits 4 when the config comes from a folder above the current folder and is not registered', async () => {
+    const deps = make({ cwd: `${HOME}/deep`, ...withChild });
+    deps.seedDir(`${HOME}/deep`);
+    deps.files.delete('/state/factory/homes.json');
+    const result = await runNode(deps, { home: undefined, words: ['children'] });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 });

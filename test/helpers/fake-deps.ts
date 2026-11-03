@@ -3,6 +3,8 @@ import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
+import { dirs, env, files as fileNames, homeIndex, program, stateKeys } from '../../src/names.js';
+import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 
 export interface RunCall {
   readonly command: string;
@@ -289,6 +291,34 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   };
   fake.seedDir(fake.cwd);
   return fake;
+};
+
+/** The file of the factory list for the environment of `deps`: below the state home, else below `.local/state` of HOME. */
+const factoryListOf = (deps: FakeDeps): string => {
+  const stateHome = deps.env[env.stateHome];
+  if (stateHome !== undefined && posix.isAbsolute(stateHome)) return posix.join(stateHome, program, fileNames.homeIndex);
+  const userHome = deps.env[env.userHome];
+  if (userHome !== undefined && posix.isAbsolute(userHome)) {
+    return posix.join(userHome, ...homeIndex.defaultStateHome, program, fileNames.homeIndex);
+  }
+  throw new Error(`the deps name no state folder: set ${env.stateHome} or ${env.userHome} in the environment`);
+};
+
+/**
+ * Register a root the way `init` does: an entry in the factory list (a root that is listed already gets its entry
+ * replaced) and the factory marker, unless the marker is there. The environment of the deps must name a state folder.
+ */
+export const registerRoot = (deps: FakeDeps, root: string, id: string, projects: readonly string[] = []): void => {
+  const path = factoryListOf(deps);
+  const found = deps.files.get(path);
+  const known = found === undefined ? [] : (JSON.parse(found) as { homes: { home: string }[] }).homes;
+  const entry = { [homeIndex.keys.home]: root, [homeIndex.keys.id]: id, [homeIndex.keys.projects]: projects };
+  const homes = [...known.filter((candidate) => candidate.home !== root), entry];
+  deps.seed(path, `${JSON.stringify({ [homeIndex.keys.schema]: homeIndex.schema, [homeIndex.keys.homes]: homes }, null, 2)}\n`);
+  const marker = posix.join(root, dirs.state, fileNames.nodeState);
+  if (!deps.files.has(marker)) {
+    deps.seed(marker, `${JSON.stringify({ [stateKeys.schemaVersion]: STATE_SCHEMA_VERSION, [stateKeys.createdWith]: 'test', [stateKeys.blocks]: {} })}\n`);
+  }
 };
 
 /**

@@ -22,10 +22,8 @@ import {
   checkStateRepo,
   checkTools,
   checkTracker,
-  proxyRequestRule,
   runDoctor,
   type CheckResult,
-  type ProxyRequestRule,
 } from '../../src/commands/doctor.js';
 import { checkHomeLocation } from '../../src/commands/init-home.js';
 import { runInit } from '../../src/commands/init.js';
@@ -35,7 +33,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import { inspectState } from '../../src/state/load.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
-import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
@@ -43,6 +41,7 @@ import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 
 const HOME = '/w/node';
+const INDEX_FILE = '/state/factory/homes.json';
 const TOOLS = ['git', 'tmux', 'gh', 'claude'];
 
 interface Setup {
@@ -62,7 +61,7 @@ const makeDeps = (setup: Setup = {}): FakeDeps => {
   const tmux = tmuxHandler(setup.tmux);
   const deps = createFakeDeps({
     cwd: setup.cwd ?? '/w',
-    env: { PATH: '/bin', ...setup.env },
+    env: { PATH: '/bin', XDG_STATE_HOME: '/state', ...setup.env },
     run: (call) => (call.command === 'tmux' ? tmux.handler(call) : git.handler(call)),
     nodeVersion: setup.nodeVersion ?? 'v22.5.0',
     ...(setup.fetch === undefined ? {} : { fetch: setup.fetch }),
@@ -92,8 +91,10 @@ const initialized = async (setup: Setup = {}): Promise<FakeDeps> => {
 const levelOf = (results: readonly CheckResult[], id: string): string | undefined =>
   results.find((result) => result.id === id)?.level;
 
+/** Write both config files of the root and register the root with the node id of the config. */
 const writeConfig = (deps: FakeDeps, config: FactoryConfig): void => {
   seedConfig(deps, HOME, config);
+  registerRoot(deps, HOME, config.core.node.id);
 };
 
 const doctor = async (deps: FakeDeps) => {
@@ -527,31 +528,29 @@ describe('doctor: proxies', () => {
     return inspectConfig(deps, HOME);
   };
 
-  const MAY: ProxyRequestRule = { may: true };
-
   it('says that no proxy is in use when the session names none', async () => {
     const deps = await initialized();
-    const results = await checkProxies(deps, await inspectConfig(deps, HOME), MAY);
+    const results = await checkProxies(deps, await inspectConfig(deps, HOME));
     expect(results).toEqual([{ id: 'proxy', level: 'ok', text: 'no proxy is in use' }]);
   });
 
   it('is ok when the proxy answers below 500, and sends one request to the health URL', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 404 }) });
-    const results = await checkProxies(deps, await stateOf(deps, withProxies('stop')), MAY);
+    const results = await checkProxies(deps, await stateOf(deps, withProxies('stop')));
     expect(results).toEqual([{ id: 'proxy:local', level: 'ok', text: 'local (127.0.0.1:8787) answers' }]);
     expect(deps.fetched).toEqual(['http://127.0.0.1:8787/v1/health']);
   });
 
   it('fails when the proxy is down and on_fail is stop', async () => {
     const deps = makeDeps();
-    const [result] = await checkProxies(deps, await stateOf(deps, withProxies('stop')), MAY);
+    const [result] = await checkProxies(deps, await stateOf(deps, withProxies('stop')));
     expect(result?.level).toBe('fail');
     expect(result?.text).toContain('local (127.0.0.1:8787) does not answer');
   });
 
   it('warns when the proxy is down and on_fail is direct', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 500 }) });
-    const [result] = await checkProxies(deps, await stateOf(deps, withProxies('direct')), MAY);
+    const [result] = await checkProxies(deps, await stateOf(deps, withProxies('direct')));
     expect(result?.level).toBe('warn');
     expect(result?.text).toContain('on_fail is direct');
   });
@@ -560,51 +559,15 @@ describe('doctor: proxies', () => {
     const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
     const used = withProxies('stop', { 'web-search': { proxy: 'spare' } });
     const config = { ...used, core: { ...used.core, session: { ...sampleConfig().core.session } } };
-    const results = await checkProxies(deps, await stateOf(deps, config), MAY);
+    const results = await checkProxies(deps, await stateOf(deps, config));
     expect(results.map((result) => result.id)).toEqual(['proxy:spare']);
   });
 
   it('warns that it did not check when the config is not valid', async () => {
     const deps = makeDeps();
     deps.seed(`${HOME}/factory.yaml`, 'schema: 1\n');
-    const results = await checkProxies(deps, await inspectConfig(deps, HOME), MAY);
+    const results = await checkProxies(deps, await inspectConfig(deps, HOME));
     expect(results).toEqual([{ id: 'proxy', level: 'warn', text: 'not checked: factory.yaml is not valid' }]);
-  });
-
-  it('sends no request when it may not, and gives the reason', async () => {
-    const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
-    const rule: ProxyRequestRule = { may: false, reason: 'a reason' };
-    const results = await checkProxies(deps, await stateOf(deps, withProxies('stop')), rule);
-    expect(results).toEqual([{ id: 'proxy', level: 'warn', text: 'not checked: a reason' }]);
-    expect(deps.fetched).toEqual([]);
-  });
-
-  it('has nothing to skip when no proxy is in use', async () => {
-    const deps = await initialized();
-    const results = await checkProxies(deps, await inspectConfig(deps, HOME), { may: false, reason: 'a reason' });
-    expect(results).toEqual([{ id: 'proxy', level: 'ok', text: 'no proxy is in use' }]);
-  });
-
-  describe('the rule for a request', () => {
-    const accepted = ok(undefined);
-
-    it.each(['flag', 'cwd'] as const)('allows the request for a home from %s that the start command accepts', (source) => {
-      expect(proxyRequestRule(source, accepted)).toEqual({ may: true });
-    });
-
-    it.each(['env', 'ancestor', 'index'] as const)('tells the user to give the home when it comes from %s', (source) => {
-      const rule = proxyRequestRule(source, accepted);
-      expect(rule.may).toBe(false);
-      if (!rule.may) expect(rule.reason).toContain('--home DIR');
-    });
-
-    it.each(['flag', 'cwd', 'env'] as const)('refuses the request for a home that fails the place check, from %s', (source) => {
-      const rule = proxyRequestRule(source, failure('the node home /w/node is inside the git work tree /w'));
-      expect(rule).toEqual({
-        may: false,
-        reason: 'the node home /w/node is inside the git work tree /w, so factory sends no request',
-      });
-    });
   });
 
   describe('in the doctor command, by where the config comes from', () => {
@@ -645,26 +608,56 @@ describe('doctor: proxies', () => {
       expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
     });
 
-    it('sends no request when the config is in a parent folder, and warns', async () => {
+    it('sends the request when the config is in a parent folder of a registered root', async () => {
       const deps = await nodeWithProxy(`${HOME}/deep/er`);
       const output = await run(deps, undefined);
-      expect(deps.fetched).toEqual([]);
-      const proxy = (output.json['checks'] as CheckResult[]).find((result) => result.id === 'proxy');
-      expect(proxy?.level).toBe('warn');
-      expect(proxy?.text).toContain('--home DIR');
-      expect(output.lines.some((line) => line.level === 'warn' && line.text.includes('--home DIR'))).toBe(true);
+      expect(deps.fetched).toEqual([PROXY_URL]);
+      expect(levelOf(output.json['checks'] as CheckResult[], 'proxy:local')).toBe('ok');
       expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
       expect(output.failed).toBe(false);
     });
 
-    it('sends no request when only FACTORY_HOME names the home, and warns', async () => {
+    it('sends the request when only FACTORY_HOME names the home of a registered root', async () => {
       const deps = await nodeWithProxy('/elsewhere', { FACTORY_HOME: HOME });
       const output = await run(deps, undefined);
+      expect(deps.fetched).toEqual([PROXY_URL]);
+      expect(levelOf(output.json['checks'] as CheckResult[], 'proxy:local')).toBe('ok');
+    });
+
+    it('sends the request when the registered root comes from the index, by a project folder', async () => {
+      const deps = await nodeWithProxy('/w/web/src');
+      registerRoot(deps, HOME, 'demo', ['/w/web']);
+      deps.seedDir('/w/web/src');
+      const output = await run(deps, undefined);
+      expect(deps.fetched).toEqual([PROXY_URL]);
+      expect(output.json['home']).toBe(HOME);
+    });
+
+    it.each([
+      ['--home', '/elsewhere', HOME, {}],
+      ['the current folder', HOME, undefined, {}],
+      ['a parent folder', `${HOME}/deep/er`, undefined, {}],
+      ['FACTORY_HOME', '/elsewhere', undefined, { FACTORY_HOME: HOME }],
+    ])('exits 4 and sends no request when the root with the proxy is not registered, from %s', async (_name, cwd, home, env) => {
+      const deps = await nodeWithProxy(cwd, env);
+      deps.files.delete(INDEX_FILE);
+      const result = await runDoctor(deps, { home });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: expect.stringContaining('factory init') } });
       expect(deps.fetched).toEqual([]);
-      const proxy = (output.json['checks'] as CheckResult[]).find((result) => result.id === 'proxy');
-      expect(proxy?.level).toBe('warn');
-      expect(proxy?.text).toContain('--home DIR');
-      expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
+    });
+
+    it('exits 4 and sends no request from a clone that holds its own config file with a proxy', async () => {
+      const deps = await nodeWithProxy(`${HOME}/web/src`);
+      registerRoot(deps, HOME, 'demo', [`${HOME}/web`]);
+      seedConfig(deps, `${HOME}/web`, withProxies('stop'));
+      deps.seedDir(`${HOME}/web/src`);
+      const result = await runDoctor(deps, { home: undefined });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (!result.ok) {
+        expect(result.error.message).toContain(`${HOME}/web/factory.yaml`);
+        expect(result.error.hint).toBe(`Run the command from the factory folder ${HOME}, or name it with --home ${HOME}.`);
+      }
+      expect(deps.fetched).toEqual([]);
     });
 
     it('sends the request when FACTORY_HOME names the current folder', async () => {
@@ -680,7 +673,7 @@ describe('doctor: proxies', () => {
       expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
     });
 
-    describe('when the home is in a place that the start command refuses', () => {
+    describe('when the registered home is in a place that the home check fails', () => {
       /** The files of a node with a proxy, copied into deps where a git work tree holds /w. */
       const inWorkTree = async (cwd: string): Promise<FakeDeps> => {
         const made = await nodeWithProxy(cwd);
@@ -704,34 +697,29 @@ describe('doctor: proxies', () => {
       it.each([
         ['the current folder', HOME, undefined],
         ['--home', '/elsewhere', HOME],
-      ])('sends no request for a home inside a git work tree that comes from %s, and the home check fails', async (_name, cwd, home) => {
+      ])('sends the request for a home inside a git work tree that comes from %s, and the home check fails', async (_name, cwd, home) => {
         const deps = await inWorkTree(cwd);
         const output = await run(deps, home);
-        expect(deps.fetched).toEqual([]);
+        expect(deps.fetched).toEqual([PROXY_URL]);
         const checks = output.json['checks'] as CheckResult[];
         expect(levelOf(checks, 'home')).toBe('fail');
-        const proxy = checks.find((result) => result.id === 'proxy');
-        expect(proxy?.level).toBe('warn');
-        expect(proxy?.text).toContain('not checked');
-        expect(proxy?.text).toContain('is inside the git work tree /w');
+        expect(levelOf(checks, 'proxy:local')).toBe('ok');
         expect(output.failed).toBe(true);
       });
 
       it.each([
         ['the current folder', HOME, undefined],
         ['--home', '/elsewhere', HOME],
-      ])('sends no request for a home inside another node home that comes from %s, and the home check fails', async (_name, cwd, home) => {
+      ])('sends the request for a home inside another node home that comes from %s, and the home check fails', async (_name, cwd, home) => {
         const deps = await inNodeHome(cwd);
         const output = await run(deps, home);
-        expect(deps.fetched).toEqual([]);
+        expect(deps.fetched).toEqual([PROXY_URL]);
         const checks = output.json['checks'] as CheckResult[];
         expect(levelOf(checks, 'home')).toBe('fail');
-        const proxy = checks.find((result) => result.id === 'proxy');
-        expect(proxy?.level).toBe('warn');
-        expect(proxy?.text).toContain('is inside another node home');
+        expect(levelOf(checks, 'proxy:local')).toBe('ok');
       });
 
-      it('reports that no proxy is in use when none is, even for a refused home', async () => {
+      it('reports that no proxy is in use when none is, even for a home that fails the home check', async () => {
         const deps = await inWorkTree(HOME);
         writeConfig(deps, sampleConfig());
         const output = await run(deps, undefined);
@@ -948,66 +936,26 @@ describe('doctor: the home index', () => {
     JSON.stringify({ schema: 1, homes: homes.map((home, i) => ({ home, id: `h${i}`, projects: ['/w/web'] })) });
 
   it('is ok when no variable names a folder for the index', async () => {
-    expect(await checkIndex(makeDeps(), HOME)).toMatchObject({ id: 'index', level: 'ok', text: expect.stringContaining('no home index is used') });
+    const deps = makeDeps({ env: { XDG_STATE_HOME: undefined, HOME: undefined } });
+    expect(await checkIndex(deps)).toMatchObject({ id: 'index', level: 'ok', text: expect.stringContaining('no home index is used') });
   });
 
-  it('is ok when this home is in the index and every home in it is present', async () => {
+  it('is ok when every home in the index is present', async () => {
     const deps = makeDeps({ env });
     deps.seed(INDEX, indexOf(HOME));
     deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
-    expect(await checkIndex(deps, HOME)).toMatchObject({ level: 'ok', text: '1 entry in the home index, all present' });
+    expect(await checkIndex(deps)).toMatchObject({ level: 'ok', text: '1 entry in the home index, all present' });
   });
 
-  it('warns when there is no index file yet, because this home is not in it', async () => {
-    const deps = makeDeps({ env });
-    const result = await checkIndex(deps, HOME);
-    expect(result.level).toBe('warn');
-    expect(result.text).toContain(HOME);
-    expect(result.text).toContain(INDEX);
-  });
-
-  it('warns when the index lists other homes but not this one, and says how to fix it', async () => {
-    const deps = makeDeps({ env });
-    deps.seed(INDEX, indexOf('/w/other'));
-    deps.seed('/w/other/factory.yaml', 'schema: 2\n');
-    const result = await checkIndex(deps, HOME);
-    expect(result.level).toBe('warn');
-    expect(result.text).toContain(`does not list ${HOME}`);
-    expect(result.text).toContain('--home DIR');
-    expect(result.text).toContain(INDEX);
-  });
-
-  it('finds this home in the index by its real path', async () => {
-    const deps = makeDeps({ env, links: { '/link': '/real' } });
-    deps.seed(INDEX, indexOf('/real/node'));
-    deps.seed('/real/node/factory.yaml', 'schema: 2\n');
-    deps.seedDir('/link/node');
-    expect((await checkIndex(deps, '/link/node')).level).toBe('ok');
-  });
-
-  it('ignores the case of letters on macOS when it looks for this home, and not on other systems', async () => {
-    for (const [os, level] of [['darwin', 'ok'], ['linux', 'warn']] as const) {
-      const deps = makeDeps({ env, os });
-      deps.seed(INDEX, indexOf('/w/NODE'));
-      deps.seed('/w/NODE/factory.yaml', 'schema: 2\n');
-      expect((await checkIndex(deps, '/w/node')).level).toBe(level);
-    }
-  });
-
-  it('names both problems in one warning', async () => {
-    const deps = makeDeps({ env });
-    deps.seed(INDEX, indexOf('/w/gone'));
-    const result = await checkIndex(deps, HOME);
-    expect(result.level).toBe('warn');
-    expect(result.text).toContain('/w/gone');
-    expect(result.text).toContain(`does not list ${HOME}`);
+  it('is ok when there is no index file yet', async () => {
+    expect(await checkIndex(makeDeps({ env }))).toMatchObject({ level: 'ok', text: '0 entries in the home index, all present' });
   });
 
   it('warns on an entry whose home is gone, and names the home and the file', async () => {
     const deps = makeDeps({ env });
     deps.seed(INDEX, indexOf(HOME, '/w/gone'));
     deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
-    const result = await checkIndex(deps, HOME);
+    const result = await checkIndex(deps);
     expect(result).toMatchObject({ level: 'warn' });
     expect(result.text).toContain('/w/gone');
     expect(result.text).not.toContain(`${HOME},`);
@@ -1017,21 +965,19 @@ describe('doctor: the home index', () => {
   it('warns when the file cannot be read', async () => {
     const deps = makeDeps({ env });
     deps.seed(INDEX, 'broken');
-    expect(await checkIndex(deps, HOME)).toMatchObject({ level: 'warn', text: expect.stringContaining(`${INDEX} cannot be read`) });
+    expect(await checkIndex(deps)).toMatchObject({ level: 'warn', text: expect.stringContaining(`${INDEX} cannot be read`) });
   });
 
   it('warns when the place of the index is inside the folder of Claude Code', async () => {
     const deps = makeDeps({ env: { HOME: '/users/example', XDG_STATE_HOME: '/users/example/.claude/state' } });
-    expect(await checkIndex(deps, HOME)).toMatchObject({ level: 'warn' });
+    expect(await checkIndex(deps)).toMatchObject({ level: 'warn' });
   });
 
-  it('warns in the command when the index does not list the home', async () => {
+  it('exits 4 in the command when the index does not list the home, and names the remedy', async () => {
     const deps = await initialized({ env });
     deps.files.delete(INDEX);
     const result = await runDoctor(deps, { home: HOME });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(levelOf(result.value.json['checks'] as CheckResult[], 'index')).toBe('warn');
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: `Run "factory init" in the factory folder ${HOME}.` } });
   });
 
   it('is ok in the command right after init, because init lists the home', async () => {
@@ -1042,14 +988,10 @@ describe('doctor: the home index', () => {
     expect(levelOf(result.value.json['checks'] as CheckResult[], 'index')).toBe('ok');
   });
 
-  it('runs from a project folder through the index, and sends no network request', async () => {
-    const initializedDeps = await initialized();
-    const shared = initializedDeps.files.get(`${HOME}/factory.yaml`) ?? '';
-    const local = initializedDeps.files.get(`${HOME}/factory.local.yaml`) ?? '';
-    const deps = makeDeps({ env, cwd: '/w/web/src', fetch: () => ok({ status: 200 }) });
-    deps.seedDir('/w/web/src');
-    deps.seed(INDEX, indexOf(HOME));
-    deps.seed(`${HOME}/factory.yaml`, shared);
+  it('runs from a project folder through the index, and checks the proxy, because the root is registered', async () => {
+    const deps = await initialized({ env, cwd: '/w/web/src', fetch: () => ok({ status: 200 }) });
+    registerRoot(deps, HOME, 'demo', ['/w/web']);
+    const local = deps.files.get(`${HOME}/factory.local.yaml`) ?? '';
     deps.seed(
       `${HOME}/factory.local.yaml`,
       local.replace('proxy: none', 'proxy: local').replace('proxies: []', 'proxies:\n  - id: local\n    base_url: "http://127.0.0.1:8787"\n    health: /health\n    on_fail: stop'),
@@ -1058,8 +1000,8 @@ describe('doctor: the home index', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.json['home']).toBe(HOME);
-    expect(deps.fetched).toEqual([]);
-    expect(levelOf(result.value.json['checks'] as CheckResult[], 'proxy')).toBe('warn');
+    expect(deps.fetched).toHaveLength(1);
+    expect(levelOf(result.value.json['checks'] as CheckResult[], 'proxy:local')).toBe('ok');
   });
 });
 
@@ -1367,7 +1309,7 @@ describe('doctor: the command', () => {
 
   it('finds the node by walking up from the current folder', async () => {
     const deps = await initialized();
-    const inside = createFakeDeps({ cwd: `${HOME}/deep/er` });
+    const inside = createFakeDeps({ cwd: `${HOME}/deep/er`, env: { XDG_STATE_HOME: '/state' } });
     for (const [path, text] of deps.files) inside.seed(path, text);
     for (const dir of deps.dirs) inside.seedDir(dir);
     inside.seedDir(`${HOME}/deep/er`);

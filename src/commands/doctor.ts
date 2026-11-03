@@ -4,13 +4,13 @@ import { exitCodeOf, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { probeChildren } from '../comms/children.js';
 import { fileTransport } from '../comms/transport.js';
-import { inspectConfig, localFileAccess, wideModeNote } from '../config/load.js';
+import { inspectConfig, localFileAccess, readNodeIdentity, wideModeNote } from '../config/load.js';
 import { folderKey } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
-import { locateHomeFolder, type LocatedHome } from '../core/home.js';
-import { goneHomes, indexPathOf, listsHome, readHomeIndex } from '../core/home-index.js';
+import { locateHomeFolder } from '../core/home.js';
+import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { isSameOrInsideFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
@@ -204,9 +204,10 @@ export const checkHome = async (
 
 /**
  * The home index lets a command find a home from a project folder. An entry whose home is gone, and a file that
- * cannot be read, are warnings: the index is a cache, and a command that needs it says so.
+ * cannot be read, are warnings. A home that the index does not list never reaches this check: the command exits 4
+ * before it runs (the registration check of the lookup).
  */
-export const checkIndex = async (deps: Deps, home: string): Promise<CheckResult> => {
+export const checkIndex = async (deps: Deps): Promise<CheckResult> => {
   const path = await indexPathOf(deps);
   if (!path.ok) return check(checkIds.index, 'warn', path.error.message);
   if (path.value === null) {
@@ -219,11 +220,6 @@ export const checkIndex = async (deps: Deps, home: string): Promise<CheckResult>
   if (gone.length > 0) {
     problems.push(
       `the home index lists ${gone.join(', ')}, with no ${files.config}. Remove the ${plural(gone.length, 'entry', 'entries')} from ${path.value}.`,
-    );
-  }
-  if (!(await listsHome(deps, entries.value, home))) {
-    problems.push(
-      `the home index does not list ${home}, so a command in a project folder cannot find it. Use ${flagText(flags.home)} DIR, or add an entry for this ${roles.node} home to ${path.value}.`,
     );
   }
   if (problems.length > 0) return check(checkIds.index, 'warn', problems.join(' '));
@@ -371,33 +367,17 @@ export const checkProxyEnv = (deps: Deps): CheckResult => {
     : check(checkIds.proxyEnv, 'warn', `${env.proxyBaseUrl} is set in the shell. ${program} clears it at launch.`);
 };
 
-/** Whether doctor may send a request to the URLs of the config. When it may not, `reason` says why. */
-export type ProxyRequestRule = { readonly may: true } | { readonly may: false; readonly reason: string };
-
-const NO_HOME_FLAG = `the ${roles.node} home does not come from ${flagText(flags.home)} and is not the current folder. Run with ${flagText(flags.home)} DIR to check the proxy.`;
-
 /**
- * The URLs of a config are requested only when the user chose the place of the config, and the home is a place that
- * the start command accepts. A home inside a git work tree or inside another node home is not requested.
+ * One health request for each proxy in use. The home passed the registration check of the lookup, so its config
+ * counts as chosen by the user, whatever way the lookup found it.
  */
-export const proxyRequestRule = (source: LocatedHome['source'], location: CliResult<void>): ProxyRequestRule => {
-  if (!location.ok) return { may: false, reason: `${location.error.message}, so ${program} sends no request` };
-  return source === 'flag' || source === 'cwd' ? { may: true } : { may: false, reason: NO_HOME_FLAG };
-};
-
-/** One health request for each proxy in use, when the rule allows it. */
-export const checkProxies = async (
-  deps: Deps,
-  state: DocState<FactoryConfig>,
-  request: ProxyRequestRule,
-): Promise<readonly CheckResult[]> => {
+export const checkProxies = async (deps: Deps, state: DocState<FactoryConfig>): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
   const { core } = state.value;
   const inUse = new Set([core.session.proxy, ...Object.values(core.workers).map((worker) => worker.proxy)]);
   inUse.delete(values.noProxy);
   const used = core.proxies.filter((proxy) => inUse.has(proxy.id));
   if (used.length === 0) return [check(checkIds.proxy, 'ok', 'no proxy is in use')];
-  if (!request.may) return [notChecked(checkIds.proxy, request.reason)];
 
   return Promise.all(
     used.map(async (proxy): Promise<CheckResult> => {
@@ -498,19 +478,18 @@ export const checkProjectUrls = (state: DocState<FactoryConfig>): readonly Check
 
 const runChecks = async (
   deps: Deps,
-  located: LocatedHome,
+  home: string,
 ): Promise<{ readonly results: readonly CheckResult[]; readonly localMissing: boolean }> => {
-  const { home, source } = located;
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
   const location = await checkHomeLocation(deps, home);
   const [homeCheck, index, blocks, children, permission, proxies, tools, stateRepo, projects, localFile] = await Promise.all([
     checkHome(deps, home, config, location),
-    checkIndex(deps, home),
+    checkIndex(deps),
     checkNodeBlocks(deps, home, config),
     checkChildren(deps, config),
     checkPermissionMode(deps, home),
-    checkProxies(deps, config, proxyRequestRule(source, location)),
+    checkProxies(deps, config),
     checkTools(deps),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),
@@ -543,11 +522,11 @@ const count = (results: readonly CheckResult[], level: CheckLevel): number =>
   results.filter((result) => result.level === level).length;
 
 export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<CliResult<CommandOutput>> => {
-  const located = await locateHomeFolder(deps, options.home);
+  const located = await locateHomeFolder(deps, options.home, readNodeIdentity);
   if (!located.ok) return located;
   const home = located.value.home;
 
-  const { results, localMissing } = await runChecks(deps, located.value);
+  const { results, localMissing } = await runChecks(deps, home);
   const summary = { ok: count(results, 'ok'), warn: count(results, 'warn'), fail: count(results, 'fail') };
   const width = Math.max(...results.map((result) => result.id.length));
   const lines: OutLine[] = [

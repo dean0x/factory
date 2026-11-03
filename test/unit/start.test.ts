@@ -3,7 +3,7 @@ import { failure } from '../../src/cli/errors.js';
 import { runStart, type StartOptions } from '../../src/commands/start.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
-import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, registerRoot, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
@@ -39,6 +39,10 @@ interface Setup {
   readonly links?: Record<string, string>;
   /** The top folder of the git work tree that holds the home. Default: the home is in no work tree. */
   readonly workTree?: string;
+  /** The current folder. Default: /w. */
+  readonly cwd?: string;
+  /** False: the factory list has no entry for the home. Default: true. */
+  readonly registered?: boolean;
 }
 
 /** A fake of git: it knows only the top folder of the work tree. The tmux log does not record its calls. */
@@ -64,8 +68,8 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   const git = gitAnswer(setup.workTree);
   const tty = setup.tty ?? false;
   const deps = createFakeDeps({
-    cwd: '/w',
-    env: { PATH: '/bin', ...setup.env },
+    cwd: setup.cwd ?? '/w',
+    env: { PATH: '/bin', XDG_STATE_HOME: '/state', ...setup.env },
     run: (call) => (call.command === 'git' ? git(call) : handler(call)),
     stdinIsTTY: tty,
     stdoutIsTTY: setup.stdoutTty ?? tty,
@@ -73,7 +77,9 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
   for (const tool of setup.tools ?? ['tmux', 'claude']) deps.seed(`/bin/${tool}`, '');
-  seedConfig(deps, HOME, setup.config ?? sampleConfig());
+  const config = setup.config ?? sampleConfig();
+  seedConfig(deps, HOME, config);
+  if (setup.registered !== false) registerRoot(deps, HOME, config.core.node.id);
   return { deps, tmux: log };
 };
 
@@ -568,25 +574,80 @@ describe('start:the home and the config', () => {
     expect(result.ok).toBe(true);
   });
 
+  it.each([false, true])('starts a registered home that is inside a git work tree (dry run: %s)', async (dryRun) => {
+    const { deps } = make({ workTree: '/w' });
+    expect((await startFactory(deps, { dryRun })).ok).toBe(true);
+  });
+});
+
+describe('start:the registration check', () => {
   it.each([false, true])(
-    'refuses with exit 4 a home inside a git work tree, and sends no proxy check and no tmux call (dry run: %s)',
+    'exits 4 for a home that the factory list does not list, with no proxy check and no tmux call (dry run: %s)',
     async (dryRun) => {
-      const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers, workTree: '/w' });
+      const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers, registered: false });
       const result = await startFactory(deps, { dryRun });
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-      if (!result.ok) expect(result.error.message).toContain('inside the git work tree /w');
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: `Run "factory init" in the factory folder ${HOME}.` } });
+      if (!result.ok) expect(result.error.message).toContain(`${HOME}/factory.yaml`);
       expect(deps.fetched).toEqual([]);
       expect(tmux.calls).toEqual([]);
     },
   );
 
-  it('refuses with exit 4 a home inside another node home, and starts nothing', async () => {
-    const { deps, tmux } = make();
-    seedConfig(deps, '/w');
-    const result = await startFactory(deps);
+  it.each([
+    ['FACTORY_HOME', { env: { FACTORY_HOME: HOME } }, undefined],
+    ['the home flag', {}, HOME],
+    ['a parent folder', { cwd: `${HOME}/deep` }, undefined],
+  ])('applies to a home from %s', async (_name, setup, home) => {
+    const { deps, tmux } = make({ ...setup, registered: false });
+    deps.seedDir(deps.cwd);
+    const result = await runStart(deps, { home, dryRun: true });
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    if (!result.ok) expect(result.error.message).toContain('inside another node home');
     expect(tmux.calls).toEqual([]);
+  });
+
+  it('exits 4 when the entry of the factory list has another node id', async () => {
+    const { deps } = make();
+    registerRoot(deps, HOME, 'another');
+    expect(await startFactory(deps, { dryRun: true })).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+
+  it('exits 4 when the factory marker is missing', async () => {
+    const { deps } = make();
+    deps.files.delete(`${HOME}/.factory/node.json`);
+    const result = await startFactory(deps, { dryRun: true });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    if (!result.ok) expect(result.error.message).toContain('factory marker');
+  });
+
+  it.each([false, true])(
+    'exits 4 from a clone that holds its own config file with a proxy, and sends no proxy check and no launch (dry run: %s)',
+    async (dryRun) => {
+      const { deps, tmux } = make({ cwd: `${HOME}/web/src`, fetch: answers });
+      registerRoot(deps, HOME, 'demo', [`${HOME}/web`]);
+      seedConfig(deps, `${HOME}/web`, withProxy('stop'));
+      deps.seedDir(`${HOME}/web/src`);
+      const result = await runStart(deps, { home: undefined, dryRun });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (!result.ok) {
+        expect(result.error.message).toContain(`${HOME}/web/factory.yaml`);
+        expect(result.error.hint).toContain(`name it with --home ${HOME}`);
+      }
+      expect(deps.fetched).toEqual([]);
+      expect(tmux.calls).toEqual([]);
+    },
+  );
+
+  it('keeps two registered roots apart: each resolves its own config', async () => {
+    const { deps } = make({ cwd: `${HOME}/deep` });
+    const other = { ...sampleConfig(), core: { ...sampleConfig().core, node: { id: 'other', layer: 1 } } };
+    seedConfig(deps, '/w/other', other);
+    registerRoot(deps, '/w/other', 'other');
+    deps.seedDir(`${HOME}/deep`);
+    deps.seedDir('/w/other/deep');
+    const first = await runStart(deps, { home: undefined, dryRun: true });
+    expect(first.ok && first.value.json['session']).toBe('demo');
+    const second = await runStart({ ...deps, cwd: '/w/other/deep' }, { home: undefined, dryRun: true });
+    expect(second.ok && second.value.json['session']).toBe('other');
   });
 });
 

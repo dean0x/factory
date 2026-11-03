@@ -1,15 +1,27 @@
 import { join, relative, resolve } from 'node:path';
 import { fileOfTarget, inspectBlocks, renamedFromOf, type BlockStatus } from '../blocks/status.js';
-import { failure, usageError, type CliResult } from '../cli/errors.js';
-import type { CommandOutput, OutLine } from '../cli/output.js';
+import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { printable, type CommandOutput, type OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
-import { loadConfig, settleLocalMode } from '../config/load.js';
+import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import { commitPaths, hasIdentity, headOf, statusOf, unstagePaths, type RepoPaths } from '../core/git.js';
-import { resolveHome } from '../core/home.js';
+import { locateHomeFolder } from '../core/home.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, dirs, flags, flagText, localFileModes, roles, schemaIds } from '../names.js';
+import {
+  commands,
+  commandText,
+  dirs,
+  env,
+  flags,
+  flagText,
+  localFileModes,
+  places,
+  program,
+  roles,
+  schemaIds,
+} from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import {
   applyMoves,
@@ -39,12 +51,14 @@ import {
   type LocalPlan,
 } from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
-import { checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
+import { ACCEPT_ANSWER, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
 
 export interface UpgradeOptions {
   readonly home: string | undefined;
   readonly dryRun: boolean;
   readonly overwrite: readonly string[];
+  /** The owner's yes to the registration of a folder that the factory list does not list. */
+  readonly yes: boolean;
 }
 
 const COMMIT_MESSAGE = 'chore: upgrade the state';
@@ -137,11 +151,40 @@ const homeRuleLines = async (
   ];
   const lines: OutLine[] = [];
   for (const result of results) {
-    if (result.ok) continue;
-    if (result.error.kind !== 'safety') return result;
-    lines.push({ level: 'warn', text: `${result.error.message}. ${remedy}` });
+    if (!result.ok) lines.push({ level: 'warn', text: `${result.error.message}. ${remedy}` });
   }
   return ok(lines);
+};
+
+/**
+ * The owner's yes for a folder that the factory list does not list. `upgrade` registers the folder at its end, so the
+ * owner must say yes first: on a terminal window after a question (the default is no), or with the yes flag. A factory
+ * session never says it, and a dry run writes nothing, so it asks nothing.
+ */
+const requireRegistrationConsent = async (
+  deps: Deps,
+  home: string,
+  options: UpgradeOptions,
+): Promise<CliResult<void>> => {
+  const inSession = deps.env[env.session];
+  if (inSession !== undefined && inSession !== '') {
+    return safetyRefusal(
+      `${home} is not in the ${places.list}, and a ${places.session} can not register it`,
+      `Run "${commandText(commands.upgrade)} ${flagText(flags.home)} ${home}" in a terminal window outside a ${places.session}.`,
+    );
+  }
+  if (options.dryRun || options.yes) return ok(undefined);
+  const again = `Run "${commandText(commands.upgrade)} ${flagText(flags.home)} ${home}" in a terminal window, or add ${flagText(flags.yes)}.`;
+  if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
+    return usageError(`${home} is not in the ${places.list}, and ${program} registers it only after your yes`, again);
+  }
+  const identity = await readNodeIdentity(deps, home);
+  const who = identity.ok ? ` (${roles.node} id ${identity.value.id})` : '';
+  const answer = await deps.prompt(
+    printable(`The ${places.list} has no entry for ${home}${who}. Upgrade it and register it? [y/N] `),
+  );
+  if (!answer.ok) return answer;
+  return ACCEPT_ANSWER.test(answer.value.trim()) ? ok(undefined) : usageError(`${home} was not registered. Nothing changed`, again);
 };
 
 export const runUpgrade = async (
@@ -149,12 +192,13 @@ export const runUpgrade = async (
   options: UpgradeOptions,
   upgrade: UpgradeSpec = currentSpec,
 ): Promise<CliResult<CommandOutput>> => {
-  const resolved = await resolveHome(deps, options.home);
-  if (!resolved.ok) return resolved;
-  const home = resolved.value;
-  const folder = await deps.fs.stat(home);
-  if (!folder.ok) return folder;
-  if (folder.value !== 'dir') return failure(`${home} is not a folder`);
+  const located = await locateHomeFolder(deps, options.home, readNodeIdentity, { allowUnregisteredSchema1: true });
+  if (!located.ok) return located;
+  const home = located.value.home;
+  if (located.value.unregistered) {
+    const consent = await requireRegistrationConsent(deps, home, options);
+    if (!consent.ok) return consent;
+  }
   const layout = layoutOf(home);
 
   const config = await planFile(deps, layout.configFile, upgrade.config);

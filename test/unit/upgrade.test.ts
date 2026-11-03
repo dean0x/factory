@@ -22,7 +22,7 @@ import { currentSpec, finisher, type UpgradeFile, type UpgradeSpec } from '../..
 import { fileTemplates } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
-import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, registerRoot, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import {
@@ -84,8 +84,8 @@ type UpgradeResult = Awaited<ReturnType<typeof runUpgrade>>;
 const upgrade = (
   deps: FakeDeps,
   spec: UpgradeSpec = currentSpec,
-  options: { dryRun?: boolean; overwrite?: readonly string[] } = {},
-): Promise<UpgradeResult> => runUpgrade(deps, { home: HOME, dryRun: false, overwrite: [], ...options }, spec);
+  options: { dryRun?: boolean; overwrite?: readonly string[]; yes?: boolean } = {},
+): Promise<UpgradeResult> => runUpgrade(deps, { home: HOME, dryRun: false, overwrite: [], yes: true, ...options }, spec);
 
 const success = (result: UpgradeResult): CommandOutput => {
   if (!result.ok) throw new Error(`expected success, got: ${result.error.message}`);
@@ -266,24 +266,54 @@ describe('upgrade: managed blocks', () => {
     expect(text(deps, WORKER)).toContain('New worker text.');
   });
 
-  it('refuses an edited block with a short diff, and changes nothing', async () => {
+  /** Change the first text line of the safety block, so that its text no longer matches its hash. */
+  const editSafety = (deps: FakeDeps): void => {
+    const claude = text(deps, CLAUDE);
+    const safetyStart = claude.indexOf('<!-- factory:begin safety');
+    expect(safetyStart).toBeGreaterThan(-1);
+    deps.files.set(CLAUDE, `${claude.slice(0, safetyStart)}${claude.slice(safetyStart).replace(/\n([^<\n][^\n]*)\n/, '\nEdited safety line.\n')}`);
+  };
+
+  it('stops for an edited safety block with a short diff and the remedy command, and changes nothing', async () => {
     const { deps, gitSince } = await makeNode();
-    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    editSafety(deps);
     const before = snapshot(deps);
     const error = refusal(await upgrade(deps));
     expect(error.kind).toBe('safety');
-    expect(error.message).toContain('block coordinator was edited');
-    expect(error.message).toMatch(/^    file:     - Do as you like\. /m);
-    expect(error.message).toMatch(/^    template: - Coordinate\. Do not produce\. /m);
-    expect(error.hint).toContain('--overwrite coordinator');
+    expect(error.message).toContain('block safety was edited');
+    expect(error.message).toMatch(/^    file:     Edited safety line\./m);
+    expect(error.hint).toContain('Run "factory upgrade --overwrite safety"');
     expect(snapshot(deps)).toEqual(before);
     expect(gitSince()).toEqual([]);
   });
 
-  it('refuses an edited block in a dry run too', async () => {
+  it('stops for an edited safety block in a dry run too', async () => {
+    const { deps } = await makeNode();
+    editSafety(deps);
+    expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).kind).toBe('safety');
+  });
+
+  it('keeps an edited role block with a warning that names the overwrite flag, and goes on', async () => {
     const { deps } = await makeNode();
     edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
-    expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).kind).toBe('safety');
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps));
+    expect(output.lines).toContainEqual({
+      level: 'warn',
+      text: 'block coordinator was edited, so factory keeps it. Use --overwrite coordinator to replace it.',
+    });
+    expect(output.warnings).toContain('block coordinator was edited, so factory keeps it. Use --overwrite coordinator to replace it.');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('keeps an edited role block and still upgrades the other blocks', async () => {
+    const { deps } = await makeNode();
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    const spec = blocksSpec(withBlock('worker', 'New worker text.'));
+    const output = success(await upgrade(deps, spec));
+    expect(text(deps, CLAUDE)).toContain('Do as you like.');
+    expect(text(deps, WORKER)).toContain('New worker text.');
+    expect(output.json).toMatchObject({ changed: true });
   });
 
   it('replaces an edited block when it is named, and does not commit a CLAUDE.md-only change', async () => {
@@ -557,16 +587,17 @@ describe('upgrade: the blocks of a layer', () => {
     expect(snapshot(deps)).toEqual(before);
   });
 
-  it('refuses an edited coordinator block on layer 2, and replaces it with the manager block when it is named', async () => {
+  it('keeps an edited coordinator block on layer 2 with a warning, and replaces it with the manager block when it is named', async () => {
     const { deps } = await makeNode();
     setLayer(deps, 2);
     edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
     const before = snapshot(deps);
 
-    const error = refusal(await upgrade(deps));
-    expect(error.kind).toBe('safety');
-    expect(error.message).toContain('block coordinator was edited');
-    expect(error.hint).toContain('--overwrite coordinator');
+    const kept = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(kept.lines).toContainEqual({
+      level: 'warn',
+      text: 'block coordinator was edited, so factory keeps it. Use --overwrite coordinator to replace it.',
+    });
     expect(snapshot(deps)).toEqual(before);
 
     success(await upgrade(deps, currentSpec, { overwrite: ['manager'] }));
@@ -867,25 +898,29 @@ describe('upgrade: before it changes anything', () => {
     expect(success(await upgrade(deps, spec)).json).toMatchObject({ changed: true, committed: false });
   });
 
-  it('fails when the state file is missing, invalid or unreadable', async () => {
+  it('exits 4, and names init, when the factory marker is missing, does not parse or is not valid', async () => {
     const { deps } = await makeNode();
-    deps.files.delete(NODE_JSON);
-    expect(refusal(await upgrade(deps)).message).toBe('.factory/node.json not found');
-    deps.files.set(NODE_JSON, '{');
-    expect(refusal(await upgrade(deps)).message).toContain('does not parse');
-    deps.files.set(NODE_JSON, JSON.stringify({ schema_version: S }));
-    expect(refusal(await upgrade(deps)).message).toContain('is invalid');
+    const before = snapshot(deps);
+    for (const marker of [null, '{', JSON.stringify({ schema_version: S })]) {
+      if (marker === null) deps.files.delete(NODE_JSON);
+      else deps.files.set(NODE_JSON, marker);
+      const error = refusal(await upgrade(deps));
+      expect(error.kind).toBe('safety');
+      expect(error.message).toContain('factory marker .factory/node.json');
+      expect(error.hint).toBe(`Run "factory init" in the factory folder ${HOME}.`);
+    }
+    deps.files.set(NODE_JSON, before.get(NODE_JSON) ?? '');
+    expect(snapshot(deps)).toEqual(before);
   });
 
   it('finds the node from the current folder, and fails when there is none', async () => {
     const { deps } = await makeNode();
-    const inside = createFakeDeps({ cwd: `${HOME}/deep` });
+    const inside = createFakeDeps({ cwd: `${HOME}/deep`, env: INDEX_ENV });
     for (const [path, body] of deps.files) inside.seed(path, body);
     inside.seedDir(`${HOME}/deep`);
-    expect(success(await runUpgrade(inside, { home: undefined, dryRun: false, overwrite: [] }, currentSpec)).json).toMatchObject({
-      home: HOME,
-    });
-    const none = await runUpgrade(createFakeDeps({ cwd: '/empty' }), { home: undefined, dryRun: false, overwrite: [] }, currentSpec);
+    const options = { home: undefined, dryRun: false, overwrite: [], yes: false };
+    expect(success(await runUpgrade(inside, options, currentSpec)).json).toMatchObject({ home: HOME });
+    const none = await runUpgrade(createFakeDeps({ cwd: '/empty' }), options, currentSpec);
     expect(refusal(none).hint).toContain('--home DIR');
   });
 });
@@ -1244,9 +1279,9 @@ describe('upgrade: a node of schema 1', () => {
     it('writes no index when there is nothing to upgrade', async () => {
       const { deps } = makeOldNode();
       success(await upgrade(deps));
-      deps.files.delete(INDEX);
+      const written = deps.atomicWrites.filter((path) => path === INDEX).length;
       expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
-      expect(deps.files.has(INDEX)).toBe(false);
+      expect(deps.atomicWrites.filter((path) => path === INDEX)).toHaveLength(written);
     });
 
     it('warns, and still succeeds, when the index cannot be written', async () => {
@@ -1260,19 +1295,131 @@ describe('upgrade: a node of schema 1', () => {
       expect(output.lines.some((line) => line.level === 'warn' && line.text === output.warnings[0])).toBe(true);
     });
 
-    it('warns, and still succeeds, when no folder is named for the index', async () => {
+    it('exits 4 and changes no file when no folder is named for the index, because it can not register the folder', async () => {
       const { deps } = makeOldNode({ env: {} });
-      const output = success(await upgrade(deps));
-      expect(output.json).toMatchObject({ changed: true, committed: true });
-      expect(output.warnings).toEqual(['The home index was not updated: XDG_STATE_HOME and HOME name no folder.']);
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(deps));
+      expect(error.kind).toBe('safety');
+      expect(error.message).toContain('XDG_STATE_HOME and HOME name no folder');
+      expect(snapshot(deps)).toEqual(before);
     });
 
-    it('warns, and still succeeds, when the index would be inside the folder of Claude Code', async () => {
+    it('exits 4 and changes no file when the index would be inside the folder of Claude Code', async () => {
       const { deps } = makeOldNode({ env: { XDG_STATE_HOME: '/users/me/.claude/state', HOME: '/users/me' } });
-      const output = success(await upgrade(deps));
-      expect(output.warnings).toHaveLength(1);
-      expect(output.warnings[0]).toContain('The home index was not updated');
-      expect(output.warnings[0]).toContain('/users/me/.claude');
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(deps));
+      expect(error.kind).toBe('safety');
+      expect(error.message).toContain('/users/me/.claude');
+      expect(snapshot(deps)).toEqual(before);
+    });
+  });
+
+  describe('the registration check', () => {
+    const upgradeAsOwner = (deps: FakeDeps, options: { yes?: boolean; dryRun?: boolean; answer?: string; home?: string | undefined } = {}) => {
+      const asked = options.answer !== undefined;
+      const terminal = asked
+        ? {
+            stdinIsTTY: true,
+            stdoutIsTTY: true,
+            prompt: async (question: string) => {
+              deps.prompts.push(question);
+              return ok(options.answer ?? '');
+            },
+          }
+        : {};
+      return runUpgrade(
+        { ...deps, ...terminal },
+        { home: 'home' in options ? options.home : HOME, dryRun: options.dryRun ?? false, overwrite: [], yes: options.yes ?? false },
+        currentSpec,
+      );
+    };
+
+    it('exits 4 for a folder of the current schema that the factory list does not list, and writes nothing (TP-88)', async () => {
+      const { deps } = await makeNode();
+      deps.files.delete(INDEX);
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(deps));
+      expect(error.kind).toBe('safety');
+      expect(error.hint).toBe(`Run "factory init" in the factory folder ${HOME}.`);
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('exits 4 for an unregistered folder of schema 1 that the home flag does not name (TP-88)', async () => {
+      const { deps } = makeOldNode();
+      const before = snapshot(deps);
+      const inFolder = { ...deps, cwd: HOME };
+      const fromEnvironment = { ...deps, env: { ...deps.env, FACTORY_HOME: HOME } };
+      for (const caller of [inFolder, fromEnvironment]) {
+        const result = await runUpgrade(caller, { home: undefined, dryRun: false, overwrite: [], yes: true }, currentSpec);
+        expect(refusal(result).kind).toBe('safety');
+      }
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('exits 4 and writes nothing with FACTORY_SESSION set, also with the yes flag and in a dry run (TP-89)', async () => {
+      const { deps } = makeOldNode();
+      const before = snapshot(deps);
+      const inSession = { ...deps, env: { ...deps.env, FACTORY_SESSION: 'demo' } };
+      for (const options of [{ yes: true }, { yes: false }, { yes: true, dryRun: true }]) {
+        const error = refusal(await upgradeAsOwner(inSession, options));
+        expect(error.kind).toBe('safety');
+        expect(error.hint).toContain('outside a factory session');
+      }
+      expect(snapshot(deps)).toEqual(before);
+      expect(deps.prompts).toEqual([]);
+    });
+
+    it('runs with the yes flag and the home flag, and registers the folder (TP-89)', async () => {
+      const { deps } = makeOldNode();
+      const output = success(await upgradeAsOwner(deps, { yes: true }));
+      expect(output.json).toMatchObject({ changed: true });
+      expect(text(deps, INDEX)).toContain(`"home": "${HOME}"`);
+      expect(deps.prompts).toEqual([]);
+    });
+
+    it('exits 2 and writes nothing with no terminal window and no yes flag', async () => {
+      const { deps } = makeOldNode();
+      const before = snapshot(deps);
+      const error = refusal(await upgradeAsOwner(deps));
+      expect(error.kind).toBe('usage');
+      expect(error.hint).toContain('--yes');
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('asks on a terminal window with the folder and the node id, and runs after a yes', async () => {
+      const { deps } = makeOldNode();
+      const output = success(await upgradeAsOwner(deps, { answer: 'y' }));
+      expect(output.json).toMatchObject({ changed: true });
+      expect(deps.prompts).toHaveLength(1);
+      expect(deps.prompts[0]).toContain(HOME);
+      expect(deps.prompts[0]).toContain('node id demo');
+      expect(deps.prompts[0]).toContain('[y/N]');
+      expect(text(deps, INDEX)).toContain(`"home": "${HOME}"`);
+    });
+
+    it.each(['', 'n', 'no', 'maybe'])('writes nothing when the answer is "%s", because the default is no', async (answer) => {
+      const { deps } = makeOldNode();
+      const before = snapshot(deps);
+      const error = refusal(await upgradeAsOwner(deps, { answer }));
+      expect(error.kind).toBe('usage');
+      expect(error.message).toContain('Nothing changed');
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('asks nothing and writes nothing in a dry run', async () => {
+      const { deps } = makeOldNode();
+      const before = snapshot(deps);
+      success(await upgradeAsOwner(deps, { dryRun: true, answer: 'y' }));
+      expect(deps.prompts).toEqual([]);
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('asks nothing for a folder that the factory list lists', async () => {
+      const { deps } = makeOldNode();
+      registerRoot(deps, HOME, 'demo');
+      const output = success(await upgradeAsOwner(deps));
+      expect(output.json).toMatchObject({ changed: true });
+      expect(deps.prompts).toEqual([]);
     });
   });
 
@@ -1427,17 +1574,16 @@ describe('upgrade: a node of schema 1', () => {
     expect(snapshot(deps)).toEqual(before);
   });
 
-  it('refuses the edited protocol block with the old name in the hint, and changes nothing', async () => {
-    const { deps, gitSince } = makeOldNode();
+  it('keeps the edited protocol block, warns with the old name in the flag, and moves the file with the text', async () => {
+    const { deps } = makeOldNode();
     edit(deps, OLD.protocol, workerLine, 'My own rule for the workers.');
-    const before = snapshot(deps);
-    const error = refusal(await upgrade(deps));
-    expect(error.kind).toBe('safety');
-    expect(error.message).toContain('block protocol was edited');
-    expect(error.hint).toContain('--overwrite protocol');
-    expect(snapshot(deps)).toEqual(before);
-    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
-    expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).kind).toBe('safety');
+    const dry = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(dry.lines).toContainEqual({
+      level: 'warn',
+      text: 'block protocol was edited, so factory keeps it. Use --overwrite protocol to replace it.',
+    });
+    success(await upgrade(deps));
+    expect(text(deps, WORKER)).toContain('My own rule for the workers.');
   });
 
   it.each(['protocol', 'worker'])('replaces the edited protocol block when %s is named', async (name) => {

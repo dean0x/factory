@@ -1,5 +1,5 @@
 import { dirname, join, resolve } from 'node:path';
-import { safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
+import { failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import { CLONE_URL_REMEDY, cloneIssueReason, isPlainRepoName, parseCloneUrl } from '../core/clone-url.js';
 import type { Deps } from '../core/deps.js';
 import { gitClone, isWorkTreeRoot, originUrlOf, withoutUserinfo } from '../core/git.js';
@@ -54,7 +54,7 @@ const isPresentClone = async (deps: Deps, url: string, target: string): Promise<
   if (kind.value === 'dir' && (await isWorkTreeRoot(deps, target)) && (await originUrlOf(deps, target)) === url) {
     return ok(true);
   }
-  return safetyRefusal(
+  return failure(
     `${target} exists and is not a clone of ${withoutUserinfo(url)}`,
     `${program} clones only into a folder that does not exist. Move the folder, or choose another repo.`,
   );
