@@ -46,6 +46,15 @@ describe('factory doctor (built binary)', () => {
     expect(result.code).toBe(0);
   });
 
+  it('exits 0 from the root, the coordinator folder and a project clone, with no --home (TP-14)', async () => {
+    await initNode();
+    for (const cwd of [box.node, join(box.node, 'coordinator'), join(box.node, 'web')]) {
+      const result = await box.run(['doctor'], { cwd });
+      expect({ cwd, code: result.code, stderr: result.stderr }).toEqual({ cwd, code: 0, stderr: '' });
+      expect(result.stdout).toContain('0 failures');
+    }
+  });
+
   it('prints one JSON document with its schema id', async () => {
     await initNode();
     const result = await box.run(['doctor', '--home', box.node, '--json']);

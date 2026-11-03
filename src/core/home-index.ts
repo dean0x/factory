@@ -203,21 +203,22 @@ export interface IndexedNode {
 }
 
 /**
- * Put a node home in the index, so that a command finds it from a project folder. The node exists already, so a problem
- * is a warning and not a failure. The result is the warnings. `indexPath` is null when no variable names a folder.
+ * Put a node home in the index, so that a command finds it from a project folder. The error is a sentence that says the
+ * index was not updated and why. `indexPath` is null when no variable names a folder. The caller decides what a
+ * problem means: `init` undoes its work, and `upgrade` warns.
  */
-export const recordNode = async (deps: Deps, indexPath: string | null, node: IndexedNode): Promise<readonly string[]> => {
+export const recordNode = async (deps: Deps, indexPath: string | null, node: IndexedNode): Promise<Result<void, string>> => {
   if (indexPath === null) {
-    return [`The home index was not updated: ${env.stateHome} and ${env.userHome} name no folder.`];
+    return err(`The home index was not updated: ${env.stateHome} and ${env.userHome} name no folder.`);
   }
   const realHome = await realPathOf(deps, node.home);
-  if (!realHome.ok) return [`The home index ${indexPath} was not updated: ${realHome.error.message}`];
+  if (!realHome.ok) return err(`The home index ${indexPath} was not updated: ${realHome.error.message}`);
   const recorded = await recordHome(deps, indexPath, {
     [homeIndex.keys.home]: realHome.value,
     [homeIndex.keys.id]: node.id,
     [homeIndex.keys.projects]: node.projects.map((project) => resolve(realHome.value, project)),
   });
-  return recorded.ok ? [] : [`The home index ${indexPath} was not updated: ${recorded.error}`];
+  return recorded.ok ? ok(undefined) : err(`The home index ${indexPath} was not updated: ${recorded.error}`);
 };
 
 /** The entry of the index that has this home, as it is written or by its real path, or null when no entry has it. */
@@ -262,6 +263,27 @@ export const goneHomes = async (deps: Deps, entries: readonly HomeEntry[]): Prom
     if (!gone.includes(home) && !(await homeExists(deps, home))) gone.push(home);
   }
   return gone;
+};
+
+/**
+ * The folder of the first root in the list that holds `folder` below it, or null. A folder that is a listed root itself
+ * does not count, so a root can be made again. A root that no longer holds its config file is ignored. `folder` may not
+ * exist yet; its links are resolved as far as it exists.
+ */
+export const listedRootAbove = async (
+  deps: Deps,
+  entries: readonly HomeEntry[],
+  folder: string,
+): Promise<CliResult<string | null>> => {
+  const real = await realPathOf(deps, folder);
+  if (!real.ok) return real;
+  const wanted = comparable(deps, real.value);
+  for (const entry of entries) {
+    const root = entry[homeIndex.keys.home];
+    const listed = comparable(deps, root);
+    if (listed !== wanted && isSameOrInside(listed, wanted) && (await homeExists(deps, root))) return ok(root);
+  }
+  return ok(null);
 };
 
 export interface IndexedProject {

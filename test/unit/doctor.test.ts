@@ -1109,7 +1109,7 @@ describe('doctor: projects', () => {
   };
 
   it('is ok when each project path is a git work tree', async () => {
-    const deps = makeDeps({ git: { repos: { '/w/web': {} } } });
+    const deps = makeDeps({ git: { repos: { '/w/node/web': {} } } });
     expect(await checkProjects(deps, HOME, await withProject(deps))).toMatchObject({ id: 'projects', level: 'ok' });
   });
 
@@ -1117,7 +1117,7 @@ describe('doctor: projects', () => {
     const deps = makeDeps();
     const result = await checkProjects(deps, HOME, await withProject(deps));
     expect(result.level).toBe('fail');
-    expect(result.text).toContain('web (../web)');
+    expect(result.text).toContain('web (web)');
   });
 
   it('is ok for a config without projects, and warns when the config is not valid', async () => {
@@ -1160,7 +1160,7 @@ describe('doctor: projects that the factory can not share (F-17c)', () => {
   });
 
   it('warns once per project with no URL, and names the project and the fix (TP-109)', async () => {
-    const { state } = await stateOf(configWith([noUrl('lib', '../lib'), WEB, noUrl('tool', '../tool')]));
+    const { state } = await stateOf(configWith([noUrl('lib', 'lib'), WEB, noUrl('tool', 'tool')]));
     const results = checkProjectUrls(state);
     expect(results.map((result) => [result.id, result.level])).toEqual([
       ['project-urls:lib', 'warn'],
@@ -1182,14 +1182,14 @@ describe('doctor: projects that the factory can not share (F-17c)', () => {
   });
 
   it('names the local source from the local file in the fix, never in a tracked file', async () => {
-    const { state, deps } = await stateOf(configWith([noUrl('lib', '../lib')], { '../lib': '/srv/code/lib' }));
+    const { state, deps } = await stateOf(configWith([noUrl('lib', 'lib')], { lib: '/srv/code/lib' }));
     const [result] = checkProjectUrls(state);
     expect(result?.text).toContain('Add an origin to the repo (/srv/code/lib) and set url');
     expect(deps.files.get(`${HOME}/factory.yaml`)).not.toContain('/srv/code/lib');
   });
 
   it('finds the source when the key writes the project path another way', async () => {
-    const { state } = await stateOf(configWith([noUrl('lib', '../lib')], { '../lib/': '/srv/code/lib' }));
+    const { state } = await stateOf(configWith([noUrl('lib', 'lib')], { 'lib/': '/srv/code/lib' }));
     expect(checkProjectUrls(state)[0]?.text).toContain('(/srv/code/lib)');
   });
 
@@ -1200,8 +1200,8 @@ describe('doctor: projects that the factory can not share (F-17c)', () => {
   });
 
   it('warns in the command, does not fail it, and sets no exit code', async () => {
-    const deps = makeDeps({ git: { repos: { '/w/lib': {} } } });
-    writeConfig(deps, configWith([noUrl('lib', '../lib')]));
+    const deps = makeDeps({ git: { repos: { '/w/node/lib': {} } } });
+    writeConfig(deps, configWith([noUrl('lib', 'lib')]));
     const output = await doctor(deps);
     expect(levelOf(output.json['checks'] as CheckResult[], 'project-urls:lib')).toBe('warn');
     expect(output.lines.some((line) => line.level === 'warn' && line.text.includes('cannot be shared'))).toBe(true);
@@ -1221,6 +1221,47 @@ describe('doctor: projects that the factory can not share (F-17c)', () => {
     expect(checks.find((check) => check.id === 'config')?.text).toContain('recipe.projects.0.url');
     expect(output.failed).toBe(true);
     expect(JSON.stringify(output)).not.toContain(FAKE_GITHUB_TOKEN);
+  });
+});
+
+describe('doctor: a pulled change in the shared file of a registered root (S-S1)', () => {
+  const ADDRESS = '203.0.113.9:8080';
+  const PROXY_ENTRY = `proxies:\n  - id: pulled\n    base_url: "http://${ADDRESS}/v1"\n    health: /health\n`;
+
+  /** A registered root whose shared file got a change from a pull. The fake fetch answers 200 to any request. */
+  const pulledRoot = async (change: (shared: string) => string): Promise<FakeDeps> => {
+    const deps = await initialized({ fetch: () => ok({ status: 200 }), git: { committed: [`${HOME}/.factory`] } });
+    deps.seedDir(`${HOME}/.factory/.git`);
+    const path = `${HOME}/factory.yaml`;
+    deps.files.set(path, change(deps.files.get(path) ?? ''));
+    return deps;
+  };
+
+  it.each([
+    ['a proxies entry', (shared: string) => `${shared}${PROXY_ENTRY}`, 'proxies: is a local key'],
+    [
+      'the proxy of the session',
+      (shared: string) => shared.replace('  model: default\n', `  model: default\n  proxy: pulled\n`),
+      'session.proxy: is a local key',
+    ],
+  ])('fails the config check for %s, names the key and the local file, sends no request and prints no address', async (_name, change, key) => {
+    const deps = await pulledRoot(change);
+    const output = await doctor(deps);
+    const checks = output.json['checks'] as CheckResult[];
+    const config = checks.find((check) => check.id === 'config');
+    expect(config?.level).toBe('fail');
+    expect(config?.text).toContain(key);
+    expect(config?.text).toContain('factory.local.yaml');
+    expect(output.failed).toBe(true);
+    expect(deps.fetched).toEqual([]);
+    expect(checks.find((check) => check.id === 'proxy')).toMatchObject({
+      level: 'warn',
+      text: 'not checked: factory.yaml is not valid',
+    });
+    expect(checks.some((check) => check.id.startsWith('proxy:'))).toBe(false);
+    const everything = JSON.stringify(output) + output.lines.map((line) => line.text).join('\n');
+    expect(everything).not.toContain(ADDRESS);
+    expect(everything).not.toContain('pulled');
   });
 });
 

@@ -48,19 +48,21 @@ factory doctor
 The home rules decide where the node home is:
 
 1. With `--home DIR`, the home is `DIR`.
-2. Inside a git work tree, the proposal is a folder beside the repo: `../web-factory`. The repo is the first project.
-3. In a folder that holds git repos, the proposal is a folder inside it: `./<folder>-factory`. Each repo is a project. A folder that is a linked worktree of a listed repo is skipped, and `init` names it.
+2. Inside a git work tree, the proposal is a folder beside the repo: `../web-factory`. `init` clones the repo into it as the first project. The old folder stays as it was, and `init` warns that it keeps the work that is not pushed.
+3. In a folder that holds git repos, the proposal is a folder inside it: `./<folder>-factory`. `init` clones each repo into it as a project. A folder that is a linked worktree of a listed repo is skipped, and `init` names it.
 4. Else the home is the current folder.
 
 With no `--home`, `init` makes no proposal in a folder that is a node home. It stops with exit code 1 and says that `factory.yaml` already exists. In a folder inside a node home, it makes no proposal either, and it stops with exit code 1.
 
 In cases 2 and 3, `init` asks you to confirm the proposal. With `--yes`, it uses the proposal and asks nothing. With no terminal and no `--yes`, it prints the proposal and exits with code 2.
 
-`init` refuses (exit code 4) a home that is inside a git work tree, above a project, or that holds a git repo one level down. It stops with exit code 1 for a home inside another node home, and names the remedy.
+`init` stops with exit code 1 for a home inside a root that the factory list holds, and names the remedy. A root can sit beside another root. The node home is a git repo of its own, so `init` has no rule about a git work tree around the home.
+
+A project is one folder in the node home, and its path in `factory.yaml` is that folder name. The name has no `/`, no `\` and no control character, and it does not start with a dot. The node home keeps some names for itself: `coordinator`, `work-copies`, `setup`, `factory.yaml`, `factory.local.yaml`, `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md`, in any letter case. `init` refuses (exit code 4) a repo with such a name before it clones, and it names the folder name that the repo would take. A config file with such a path fails to load.
 
 More flags of `init`:
 
-- `--project PATH|URL` adds a project. Repeat the flag for more. A URL (`https://`, `ssh://` or `user@host:path`) makes `init` clone the repo next to the home. `init` makes every check that needs no cloned project before it clones: the flag values and the owner name, the number of projects, the home (a node that exists, the home rules, a git repo one level down), and `coordinator/CLAUDE.md`, `.gitignore` and `setup/`. If a later step fails, `init` removes the clones that it made, and the empty folders that it made above them. It never removes a folder that was there before. `init` writes the `url` of each project into `factory.yaml` from the origin of its repo. It writes the URL without credentials, and it warns when the origin held some. It refuses (exit code 2) and clones nothing for a `--project` URL that holds credentials: an `https://` URL with any user part, or a password or a token in any URL form. An `ssh://` URL and the `user@host:path` form accept a user name only. Use an `https://` URL with no user name, or an `ssh://` URL. Use `gh auth login` or an SSH key for the credentials. A repo with no origin, or with a `file` URL, gets no `url`. `init` and `doctor` warn that the factory cannot be shared with that repo. Its local folder stays in the key `sources` of `factory.local.yaml`, never in `factory.yaml`.
+- `--project PATH|URL` adds a project. Repeat the flag for more. A URL (`https://`, `ssh://` or `user@host:path`) makes `init` clone the repo into the node home, in the folder with the name of the repo. A path of a git work tree makes `init` clone the repo into the node home from the origin of the work tree. A work tree with no origin is cloned from its folder. A work tree that is a folder of the node home already is the project, and `init` clones nothing. `init` makes every check that needs no cloned project before it clones: the flag values and the owner name, the number of projects, the folder names of the projects, the home (a node that exists, a root that the factory list holds), and `coordinator/CLAUDE.md`, `.gitignore` and `setup/`. If a later step fails, `init` removes the clones that it made, and the empty folders that it made above them. It never removes a folder that was there before. The last step of `init` writes the root into the factory list. If that fails, or if no variable names a folder for the list, `init` exits with code 1, removes only what the run made, and prints no success line. A second `init` in the same folder then works. `init` writes the `url` of each project into `factory.yaml` from the origin of its repo. It writes the URL without credentials, and it warns when the origin held some. It refuses (exit code 2) and clones nothing for a `--project` URL that holds credentials: an `https://` URL with any user part, or a password or a token in any URL form. An `ssh://` URL and the `user@host:path` form accept a user name only. Use an `https://` URL with no user name, or an `ssh://` URL. Use `gh auth login` or an SSH key for the credentials. A repo with no origin, or with a `file` URL, gets no `url`. `init` and `doctor` warn that the factory cannot be shared with that repo. Its local folder stays in the key `sources` of `factory.local.yaml`, never in `factory.yaml`.
 - `--layer N` sets the layer of the node, from 1 to 16. The default is 1. Layer 1 has the coordinator role, layer 2 the manager role. A layer above 2 has no role template yet: `coordinator/CLAUDE.md` holds the safety block only, and `init` prints a warning.
 - `--recipe ID` sets the recipe. The only recipe is `software`.
 - `--name ID`, `--owner-name NAME` and `--owner-github LOGIN` set the id of the node and the owner.
@@ -74,7 +76,7 @@ A command finds the node home in this order:
 3. The nearest `factory.yaml` above the current folder.
 4. The home index.
 
-The home is beside the repo, so a walk up from the repo finds no `factory.yaml`. `init` writes the home index for this case: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The index holds paths only, and it is never under `~/.claude`. The check resolves links, and on macOS it ignores the case of letters. The index file has mode 0600 and its folder has mode 0700. A command refuses an index file or folder that another user owns or that a group or other user can write. The deepest project folder that holds the current folder decides. If no entry fits, the command exits with code 2 and prints a hint. If two homes list the same project, it exits with code 2 and names both homes.
+The clones are inside the node home, so a walk up from a clone finds `factory.yaml`. `init` also writes the home index: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The index holds paths only, and it is never under `~/.claude`. The check resolves links, and on macOS it ignores the case of letters. The index file has mode 0600 and its folder has mode 0700. A command refuses an index file or folder that another user owns or that a group or other user can write. The deepest project folder that holds the current folder decides. If no entry fits, the command exits with code 2 and prints a hint. If two homes list the same project, it exits with code 2 and names both homes.
 
 A `factory.yaml` counts only at a root that `init` registered. This holds for all four ways above. Three things must be true:
 
@@ -136,13 +138,14 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
 
 ```
 <workspace>/
-  web/                      a project (a git repo)
+  web/                      the old folder of the repo. It stays as it was.
   web-factory/              the node home. It is a git repo of its own.
     factory.yaml            the config. You edit it.
     factory.local.yaml      your private settings. The repo does not track it.
     .gitignore              the share list: it ignores everything but three paths
     setup/coordinator.md    your text for the coordinator. The repo tracks it.
     coordinator/CLAUDE.md   the role of the node (managed blocks) and your text. The repo does not track it.
+    web/                    the clone of the project web. The repo does not track it.
     work-copies/            the folder for work copies. The repo does not track it.
     .factory/               the state. It is its own git repo.
       node.json             the schema version and the versions of the blocks
@@ -152,7 +155,7 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
       decision-profile/  roadmaps/
 ```
 
-The node home is the top folder of its own git work tree, and `init` never makes it inside another one. The node home holds no instruction file: the coordinator runs in `coordinator/`. A worker runs in a project checkout, so it never reads the instructions of the coordinator.
+The node home is the top folder of its own git work tree. A project clone is a git work tree inside it, and the share list ignores it. The node home holds no instruction file: the coordinator runs in `coordinator/`. A worker runs in a project checkout, so it never reads the instructions of the coordinator.
 
 ## Words
 

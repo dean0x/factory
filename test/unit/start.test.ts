@@ -28,7 +28,7 @@ const LAUNCH_BASE = [
   'high',
 ];
 /** The folders that the launch adds: the state folder first, then each project. */
-const LAUNCH_DIRS = ['--add-dir', '/w/node/.factory', '--add-dir', '/w/web'];
+const LAUNCH_DIRS = ['--add-dir', '/w/node/.factory', '--add-dir', '/w/node/web'];
 
 interface Setup {
   readonly tmux?: TmuxFixture;
@@ -126,7 +126,7 @@ describe('start:a new session', () => {
     expect(start[start.indexOf('-c') + 1]).toBe(COORDINATOR);
     expect(start).toContain('FACTORY_HOME=/w/node');
     const added = start.flatMap((arg, index) => (arg === '--add-dir' ? [start[index + 1]] : []));
-    expect(added).toEqual([STATE_DIR, '/w/web']);
+    expect(added).toEqual([STATE_DIR, '/w/node/web']);
     expect(added).not.toContain(HOME);
     expect(tmux.commands()).toContain('set-option -t =demo: @factory_home /w/node');
   });
@@ -180,7 +180,7 @@ describe('start:a new session', () => {
     const [launch, keepPane] = chainOf(start);
     expect(chainOf(start)).toHaveLength(2);
     expect(launch).toContain('PATH=/bin:/opt/claude/bin;');
-    expect(launch?.slice(-2)).toEqual(['--add-dir', '/w/web']);
+    expect(launch?.slice(-2)).toEqual(['--add-dir', '/w/node/web']);
     expect(keepPane).toEqual(['set-option', '-w', '-t', '=demo:view', 'remain-on-exit', 'on']);
   });
 
@@ -237,12 +237,12 @@ describe('start:a new session', () => {
 
   it('adds one --add-dir for each project, with the absolute path', async () => {
     const config = sampleConfig();
-    const second = { ...config.recipe.projects[0]!, id: 'api', url: 'https://github.com/acme/api', path: '../api' };
+    const second = { ...config.recipe.projects[0]!, id: 'api', url: 'https://github.com/acme/api', path: 'api' };
     const { deps, tmux } = make({ config: { ...config, recipe: { ...config.recipe, projects: [...config.recipe.projects, second] } } });
     await succeeded(deps);
     const call = tmux.calls.find((candidate) => candidate.args[0] === 'new-session')?.args ?? [];
     const launch = call.slice(call.indexOf('--') + 1, call.indexOf(';'));
-    expect(launch.slice(launch.indexOf('--add-dir'))).toEqual([...LAUNCH_DIRS, '--add-dir', '/w/api']);
+    expect(launch.slice(launch.indexOf('--add-dir'))).toEqual([...LAUNCH_DIRS, '--add-dir', '/w/node/api']);
   });
 
   it('passes the model and the effort of the config', async () => {

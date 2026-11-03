@@ -24,7 +24,7 @@ const URL_USERINFO = /([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/]*@/g;
 export const withoutUserinfo = (text: string): string => text.replace(URL_USERINFO, '$1');
 
 /** `owner/name` of a GitHub remote URL, or null. Only the owner and the name are kept. */
-const parseGithubRepo = (url: string): string | null => {
+export const parseGithubRepo = (url: string): string | null => {
   const match = GITHUB_URL.exec(url.trim());
   return match === null ? null : `${match[1]}/${match[2]}`;
 };
@@ -137,11 +137,6 @@ export const hasIdentity = async (deps: Deps, dir: string): Promise<boolean> => 
 
 export const hasCommit = async (deps: Deps, dir: string): Promise<boolean> =>
   (await gitOutput(deps, dir, ['rev-parse', '--verify', 'HEAD'])) !== null;
-
-export const githubRepoOf = async (deps: Deps, dir: string): Promise<string | null> => {
-  const url = await gitOutput(deps, dir, ['remote', 'get-url', 'origin']);
-  return url === null ? null : parseGithubRepo(url);
-};
 
 /** The default branch: origin/HEAD, else the current branch, else null. */
 export const defaultBranchOf = async (deps: Deps, dir: string): Promise<string | null> => {

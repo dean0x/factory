@@ -134,6 +134,22 @@ export const dirs = {
   setup: 'setup',
 } as const;
 
+/**
+ * The names that a project path can not take, because the root keeps them for itself (design 4.3): the folders and the
+ * config files of the root, and the instruction files that an agent loads. A project path is compared with this list in
+ * any letter case.
+ */
+export const reservedRootNames = [
+  dirs.coordinator,
+  dirs.workCopies,
+  dirs.setup,
+  files.config,
+  files.localConfig,
+  files.claudeMd,
+  'CLAUDE.local.md',
+  'AGENTS.md',
+] as const;
+
 /** The label of the two marker lines around the part of the root `.gitignore` that the tool writes. */
 export const shareListLabel = 'share list';
 

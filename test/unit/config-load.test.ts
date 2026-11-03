@@ -197,7 +197,7 @@ describe('inspectConfig and loadConfig', () => {
   });
 
   it('names a key of the recipe block with the path of the block in the file', async () => {
-    const text = sample().shared.replace('path: "../web"', 'path: "/abs/web"');
+    const text = sample().shared.replace('path: "web"', 'path: "/abs/web"');
     const loaded = await loadConfig(withFiles(text, sample().local), HOME);
     expect(loaded).toMatchObject({ ok: false });
     if (!loaded.ok) expect(loaded.error.message).toContain('recipe.projects.0.path');
@@ -453,7 +453,7 @@ describe('renderConfig', () => {
         tracker: { kind: 'jira', items: 'ACME', decisions: 'ACME-DEC', watch_interval: '2h' },
         parent: { id: 'acme', address: 'file:///srv/nodes/acme-factory' },
         children: [{ id: 'web', address: 'file:///srv/nodes/web-factory' }],
-        sources: { 'sub/web': '/srv/code/"web"' },
+        sources: { 'web-app': '/srv/code/"web"' },
       },
       recipe: {
         id: 'software',
@@ -462,7 +462,7 @@ describe('renderConfig', () => {
           {
             id: '123',
             repo: 'acme/web',
-            path: 'sub/web',
+            path: 'web-app',
             default_branch: 'release/1.x',
             merge_method: 'rebase',
             variant: 'plain',
@@ -536,7 +536,7 @@ describe('renderConfig', () => {
   it('writes the recipe block with its id, its variant and its projects', () => {
     const text = sample().shared;
     expect(text).toContain('recipe:\n  id: software\n  variant: plain');
-    expect(text).toContain('  projects:\n    - id: web\n      url: "https://github.com/acme/web.git"\n      path: "../web"');
+    expect(text).toContain('  projects:\n    - id: web\n      url: "https://github.com/acme/web.git"\n      path: "web"');
     expect(text).toContain('tracker:\n  kind: local');
   });
 

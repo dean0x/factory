@@ -115,6 +115,7 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
+/** Make the node with the clones of two work trees. The result is the folders of the clones in the root. */
 const initNode = async (): Promise<string[]> => {
   const web = await box.makeProject('web');
   const api = await box.makeProject('api');
@@ -123,7 +124,7 @@ const initNode = async (): Promise<string[]> => {
     { env: tmuxEnv },
   );
   expect(result.code).toBe(0);
-  return [web, api];
+  return [join(box.node, 'web'), join(box.node, 'api')];
 };
 
 describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', () => {
@@ -223,7 +224,13 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
     const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
-    expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', join(box.node, '.factory'), '--add-dir', odd]);
+    expect(odd).not.toContain(box.node);
+    expect(argv.slice(argv.indexOf('--add-dir'))).toEqual([
+      '--add-dir',
+      join(box.node, '.factory'),
+      '--add-dir',
+      join(box.node, 'odd;'),
+    ]);
   });
 
   it('clears a proxy variable that the shell holds', async () => {
@@ -314,6 +321,16 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
       expect(result.stdout).not.toContain('127.0.0.1');
     }
     expect((await tmux(['list-sessions'])).code).not.toBe(0);
+    expect(existsSync(socket)).toBe(false);
+  });
+
+  it('runs --dry-run with exit 0 from the root, the coordinator folder and a project clone (TP-14)', async () => {
+    const [web] = await initNode();
+    for (const cwd of [box.node, join(box.node, 'coordinator'), web ?? '']) {
+      const result = await box.run(['start', '--dry-run'], { cwd, env: tmuxEnv });
+      expect({ cwd, code: result.code, stderr: result.stderr }).toEqual({ cwd, code: 0, stderr: '' });
+      expect(result.stdout).toContain('Dry run');
+    }
     expect(existsSync(socket)).toBe(false);
   });
 

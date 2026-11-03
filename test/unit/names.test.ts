@@ -353,7 +353,7 @@ describe('words of the old names', () => {
 
   it('keeps the old words out of the files that init writes', async () => {
     const { handler } = gitHandler({ gh: 'some-login' });
-    const deps = createFakeDeps({ cwd: '/w', run: handler });
+    const deps = createFakeDeps({ cwd: '/w', run: handler, env: { XDG_STATE_HOME: '/state', HOME: '/users/me' } });
     const result = await runInit(deps, {
       home: '/w/node',
       name: undefined,

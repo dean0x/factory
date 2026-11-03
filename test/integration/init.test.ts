@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
@@ -48,17 +48,55 @@ describe('factory init (built binary)', () => {
     expect(existsSync(join(box.node, 'CLAUDE.md'))).toBe(false);
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('repo: "acme/web"');
-    expect(config).toContain('path: "../web"');
+    expect(config).toContain('path: "web"');
+    expect(existsSync(join(box.node, 'web', '.git'))).toBe(true);
   });
 
   it('writes the url of a project from the origin of its repo, and keeps no local path in factory.yaml', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     const result = await box.run(initArgs(['--project', web]));
-    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(`The old folder ${await realpath(web)} keeps the work that is not pushed.`);
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('url: "git@github.com:acme/web.git"');
     expect(config).not.toContain(basename(box.root));
     expect(await box.read(join(box.node, 'factory.local.yaml'))).toContain('sources: {}');
+    // The clone keeps the URL of the origin as it is. (The sandbox serves the repo from a folder by a rule of git.)
+    expect(await box.git(join(box.node, 'web'), ['config', 'remote.origin.url'])).toMatchObject({
+      stdout: 'git@github.com:acme/web.git\n',
+    });
+  });
+
+  it('keeps git status of the root empty after init, the clones, a linked work copy and a temp folder (TP-11)', async () => {
+    const web = await box.makeProject('web', 'git@github.com:acme/web.git');
+    const api = await box.makeProject('api', 'https://github.com/acme/api.git');
+    expect((await box.run(initArgs(['--project', web, '--project', api]))).code).toBe(0);
+    expect((await box.git(box.node, ['status', '--porcelain', '-uall'])).stdout).toBe('');
+
+    const copy = await box.git(join(box.node, 'web'), ['worktree', 'add', '-q', '-b', 'job-1', join(box.node, 'work-copies', 'job-1')]);
+    expect(copy.code).toBe(0);
+    await mkdir(join(box.node, '.factory.tmp-77'), { recursive: true });
+    await writeFile(join(box.node, '.factory.tmp-77', 'left.txt'), 'x');
+    expect((await box.git(box.node, ['status', '--porcelain', '-uall'])).stdout).toBe('');
+    expect((await box.git(box.node, ['ls-files'])).stdout.trim().split('\n').sort()).toEqual([
+      '.gitignore',
+      'factory.yaml',
+      'setup/coordinator.md',
+    ]);
+  });
+
+  it('makes the file tree of the root: the config files, the coordinator folder, the state folder and one folder for each clone', async () => {
+    const web = await box.makeProject('web', 'git@github.com:acme/web.git');
+    const api = await box.makeProject('api', 'https://github.com/acme/api.git');
+    expect((await box.run(initArgs(['--project', web, '--project', api]))).code).toBe(0);
+    expect((await readdir(box.node)).sort()).toEqual(
+      ['.factory', '.git', '.gitignore', 'api', 'coordinator', 'factory.local.yaml', 'factory.yaml', 'setup', 'web'].sort(),
+    );
+    expect((await readdir(join(box.node, 'coordinator'))).sort()).toEqual(['CLAUDE.md']);
+    for (const name of ['web', 'api']) expect(existsSync(join(box.node, name, '.git'))).toBe(true);
+    // The old folders stay as they were.
+    expect(existsSync(join(web, '.git'))).toBe(true);
+    expect(existsSync(join(api, '.git'))).toBe(true);
   });
 
   it('writes the origin url of a project without its credentials, and warns', async () => {
@@ -66,7 +104,8 @@ describe('factory init (built binary)', () => {
     const result = await box.run(initArgs(['--project', web]));
     expect(result.code).toBe(0);
     expect(result.stderr).toContain('holds credentials');
-    for (const text of [result.stdout, result.stderr, await box.read(join(box.node, 'factory.yaml'))]) {
+    const cloneConfig = await box.read(join(box.node, 'web', '.git', 'config'));
+    for (const text of [result.stdout, result.stderr, await box.read(join(box.node, 'factory.yaml')), cloneConfig]) {
       expect(text).not.toContain('SECRET-TOKEN');
       expect(text).not.toContain('deploy');
     }
@@ -84,7 +123,8 @@ describe('factory init (built binary)', () => {
     expect(shared).not.toContain(basename(box.root));
     const local = await box.read(join(box.node, 'factory.local.yaml'));
     expect(local).toContain('sources:');
-    expect(local).toContain('"../web"');
+    expect(local).toContain(`"web": "${await realpath(web)}"`);
+    expect(existsSync(join(box.node, 'web', '.git'))).toBe(true);
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
     expect(doctor.stdout).toContain('cannot be shared with the repo of the project web');
@@ -188,15 +228,41 @@ describe('factory init (built binary)', () => {
     expect(second.stderr).toContain('factory.yaml already exists');
   });
 
-  it('refuses with exit 1 a folder below a parent that has a config file, names a remedy and creates nothing', async () => {
-    // A parent with a config file and no git repo: a node home that init made is a git repo, and then the work tree rule fires first.
-    await writeFile(join(box.root, 'factory.yaml'), 'schema: 2\n');
-    const child = await box.run(initArgs());
+  it('refuses with exit 1 a folder inside a root that the factory list holds, names a remedy and creates nothing', async () => {
+    expect((await box.run(initArgs())).code).toBe(0);
+    const inner = join(box.node, 'inner');
+    const child = await box.run(['init', '--home', inner, '--name', 'inner', '--owner-name', 'Test Owner']);
     expect(child.code).toBe(1);
-    expect(child.stderr).toContain('inside another node home');
-    expect(child.stderr).toContain('factory.yaml exists');
+    expect(child.stderr).toContain('is inside the factory folder');
     expect(child.stderr).toContain('Choose another folder with --home DIR.');
+    expect(existsSync(inner)).toBe(false);
+  });
+
+  it('accepts a root beside a root that the factory list holds', async () => {
+    expect((await box.run(initArgs())).code).toBe(0);
+    const beside = await box.run(['init', '--home', join(box.root, 'other'), '--name', 'other', '--owner-name', 'Test Owner']);
+    expect(beside.code).toBe(0);
+  });
+
+  it('exits 1 when the factory list cannot be written, makes no root, and lets a second init succeed (TP-74)', async () => {
+    const stateHome = join(box.root, 'state');
+    const listFolder = join(stateHome, 'factory');
+    const lock = join(listFolder, 'homes.json.lock');
+    // Another command holds the lock of the list. The write of the list is the last step of init, and it fails.
+    await mkdir(listFolder, { recursive: true, mode: 0o700 });
+    await writeFile(lock, '1\n');
+    const failed = await box.run(initArgs(), { env: { XDG_STATE_HOME: stateHome } });
+    expect(failed.code).toBe(1);
+    expect(failed.stdout).not.toContain('Created the node');
+    expect(failed.stderr).toContain('was not updated');
+    expect(failed.stderr).toContain('holds the lock');
     expect(existsSync(box.node)).toBe(false);
+    expect(await readdir(listFolder)).toEqual(['homes.json.lock']);
+
+    await rm(lock);
+    const again = await box.run(initArgs(), { env: { XDG_STATE_HOME: stateHome } });
+    expect(again.code).toBe(0);
+    expect(existsSync(join(box.node, 'factory.yaml'))).toBe(true);
   });
 
   it('prints a JSON document with a schema field for --json', async () => {
@@ -253,27 +319,30 @@ describe('factory init: a workspace folder (built binary)', () => {
   it('makes ./<folder>-factory with the repos as projects, names the other checkout as skipped, and exits 0', async () => {
     const ws = await makeWorkspace();
     const result = await box.run(['init', '--yes', ...ownerArgs], { cwd: ws });
-    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('keeps the work that is not pushed');
     const home = join(ws, 'ws-factory');
     const config = await box.read(join(home, 'factory.yaml'));
-    expect(config).toContain('path: "../web"');
-    expect(config).toContain('path: "../api"');
+    expect(config).toContain('path: "web"');
+    expect(config).toContain('path: "api"');
     expect(config).not.toContain('web-search');
     expect(result.stdout).toContain('web-search');
     expect(result.stdout).toContain('one more checkout of the repo web');
     expect(existsSync(join(ws, 'factory.yaml'))).toBe(false);
+    for (const name of ['web', 'api']) expect(existsSync(join(home, name, '.git'))).toBe(true);
+    expect((await box.git(home, ['status', '--porcelain', '-uall'])).stdout).toBe('');
     const doctor = await box.run(['doctor', '--home', home]);
     expect(doctor.code).toBe(0);
     expect(doctor.stdout).toContain('the top folder of its own git work tree');
   });
 
-  it('exits 4 and names the rule for --home on the workspace folder', async () => {
+  it('makes the workspace folder the root for --home, with the repos of the folder as plain folders and no project', async () => {
     const ws = await makeWorkspace();
     const result = await box.run(['init', '--home', '.', ...ownerArgs], { cwd: ws });
-    expect(result.code).toBe(4);
-    expect(result.stderr).toContain('holds the git repo');
-    expect(result.stderr).toContain('one level down');
-    expect(existsSync(join(ws, 'factory.yaml'))).toBe(false);
+    expect(result.code).toBe(0);
+    expect(existsSync(join(ws, 'factory.yaml'))).toBe(true);
+    expect(await box.read(join(ws, 'factory.yaml'))).toContain('projects: []');
+    expect((await box.git(ws, ['status', '--porcelain', '-uall'])).stdout).toBe('');
   });
 
   it('prints the proposal and exits 2 without a terminal and without --yes', async () => {
@@ -294,13 +363,15 @@ describe('factory init: the home rules (built binary)', () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     const api = await box.makeProject('api', 'https://github.com/acme/api.git');
     const result = await box.run(['init', '--yes', ...ownerArgs, '--project', api], { cwd: web });
-    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('keeps the work that is not pushed');
     const home = join(box.root, 'web-factory');
     const config = await box.read(join(home, 'factory.yaml'));
     expect(config).toContain('repo: "acme/web"');
-    expect(config.indexOf('path: "../web"')).toBeGreaterThan(0);
-    expect(config.indexOf('path: "../api"')).toBeGreaterThan(config.indexOf('path: "../web"'));
+    expect(config.indexOf('path: "web"')).toBeGreaterThan(0);
+    expect(config.indexOf('path: "api"')).toBeGreaterThan(config.indexOf('path: "web"'));
     expect(existsSync(join(home, '.factory', 'roles', 'worker.md'))).toBe(true);
+    for (const name of ['web', 'api']) expect(existsSync(join(home, name, '.git'))).toBe(true);
   });
 
   it('prints the proposal and exits 2 without a terminal and without --yes', async () => {
@@ -319,22 +390,33 @@ describe('factory init: the home rules (built binary)', () => {
     expect(existsSync(join(box.root, 'factory.yaml'))).toBe(true);
   });
 
-  it('refuses with exit 4 a home inside a git work tree', async () => {
+  it('accepts a home inside a git work tree: the root is a git repo of its own', async () => {
     const web = await box.makeProject('web');
     const result = await box.run(['init', '--home', join(web, 'node'), ...ownerArgs]);
-    expect(result.code).toBe(4);
-    expect(result.stderr).toContain('inside the git work tree');
-    expect(existsSync(join(web, 'node'))).toBe(false);
+    expect(result.code).toBe(0);
+    expect((await box.git(join(web, 'node'), ['rev-parse', '--show-prefix'])).stdout).toBe('\n');
   });
 
-  it('refuses with exit 4 a home that holds a project', async () => {
+  it('takes a work tree that is a folder of the root already as a project, and clones nothing', async () => {
     const holder = join(box.root, 'holder');
     await box.makeProject('holder/app');
     const result = await box.run(['init', '--home', holder, ...ownerArgs, '--project', join(holder, 'app')]);
-    expect(result.code).toBe(4);
-    expect(result.stderr).toContain('is the project folder');
-    expect(existsSync(join(holder, 'factory.yaml'))).toBe(false);
+    expect(result.code).toBe(0);
+    expect(await box.read(join(holder, 'factory.yaml'))).toContain('path: "app"');
+    expect(result.stderr).not.toContain('The old folder');
+    expect(result.stdout).not.toContain('Cloned into');
   });
+
+  it.each(['coordinator', 'setup', 'work-copies', 'CLAUDE.md'])(
+    'refuses with exit 4 a repo whose name the root keeps for itself (%s), clones nothing and writes nothing',
+    async (name) => {
+      const repo = await box.makeProject(name);
+      const result = await box.run(['init', '--home', box.node, ...ownerArgs, '--project', repo]);
+      expect(result.code).toBe(4);
+      expect(result.stderr).toContain(`the project folder name "${name}"`);
+      expect(existsSync(box.node)).toBe(false);
+    },
+  );
 
   it('makes a node on layer 2 with the manager block, and doctor accepts it', async () => {
     const result = await box.run(initArgs(['--layer', '2']));

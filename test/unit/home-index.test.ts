@@ -10,9 +10,11 @@ import {
   goneHomes,
   homeHoldingFolder,
   indexPathOf,
+  listedRootAbove,
   matchFolder,
   readHomeIndex,
   recordHome,
+  recordNode,
   type HomeEntry,
 } from '../../src/core/home-index.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
@@ -734,6 +736,80 @@ describe('home index: the home that holds a folder as a project', () => {
     expect(homeHoldingFolder(entries, '/w')).toBeNull();
     expect(homeHoldingFolder(entries, '/w/web-search')).toBeNull();
     expect(homeHoldingFolder([], '/w/web')).toBeNull();
+  });
+});
+
+describe('home index: the listed root above a folder', () => {
+  const entries = [entry(HOME_A, ['/w/web-factory/web']), entry(HOME_B, [])];
+
+  it('gives the listed root that holds the folder, also when the folder does not exist yet', async () => {
+    const deps = withIndex(entries);
+    expect(await listedRootAbove(deps, entries, `${HOME_A}/coordinator`)).toEqual({ ok: true, value: HOME_A });
+    expect(await listedRootAbove(deps, entries, `${HOME_A}/a/b/c`)).toEqual({ ok: true, value: HOME_A });
+  });
+
+  it('gives null for a listed root itself, so a root can be made again', async () => {
+    expect(await listedRootAbove(withIndex(entries), entries, HOME_A)).toEqual({ ok: true, value: null });
+  });
+
+  it('gives null for a folder beside a root and for a folder that only starts with the same letters', async () => {
+    const deps = withIndex(entries);
+    expect(await listedRootAbove(deps, entries, '/w/web-factory-2')).toEqual({ ok: true, value: null });
+    expect(await listedRootAbove(deps, entries, '/w/third-factory')).toEqual({ ok: true, value: null });
+  });
+
+  it('ignores a listed root that no longer holds its config file', async () => {
+    const deps = withIndex(entries, {}, [HOME_B]);
+    expect(await listedRootAbove(deps, entries, `${HOME_A}/inner`)).toEqual({ ok: true, value: null });
+  });
+
+  it('compares real paths: a folder behind a link into a root is inside the root', async () => {
+    const deps = withIndex(entries, { links: { '/via': HOME_A } });
+    deps.seedDir('/via');
+    expect(await listedRootAbove(deps, entries, '/via/inner')).toEqual({ ok: true, value: HOME_A });
+  });
+
+  it('gives null for an empty list', async () => {
+    expect(await listedRootAbove(withIndex([]), [], `${HOME_A}/inner`)).toEqual({ ok: true, value: null });
+  });
+});
+
+describe('home index: recording a node', () => {
+  const fresh = (): FakeDeps => {
+    const deps = createFakeDeps({ env: {} });
+    deps.seedDir('/state');
+    deps.seedDir(HOME_A);
+    return deps;
+  };
+  const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
+
+  it('writes the real path of the root and the folder of each project, and gives ok', async () => {
+    const deps = fresh();
+    const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: ['web', 'api'] });
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_A, [`${HOME_A}/web`, `${HOME_A}/api`])] });
+  });
+
+  it('gives an error that says the index was not updated when no variable names a folder', async () => {
+    const deps = fresh();
+    const result = await recordNode(deps, null, { home: HOME_A, id: 'web', projects: [] });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('was not updated') });
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('gives an error with the path of the index and the reason when the write fails', async () => {
+    const deps = fresh();
+    deps.seed(INDEX, 'not json');
+    const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [] });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(`The home index ${INDEX} was not updated`) });
+    expect(deps.files.get(INDEX)).toBe('not json');
+  });
+
+  it('throws nothing when the write is refused', async () => {
+    const deps = fresh();
+    deps.seedDir('/state/factory');
+    deps.modes.set('/state/factory', 0o775);
+    await expect(recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [] })).resolves.toMatchObject({ ok: false });
   });
 });
 

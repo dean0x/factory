@@ -31,6 +31,16 @@ export const unsharedWarning = (id: string, reason: UnsharedReason, source?: str
   `Add an origin to the repo${source === undefined ? '' : ` (${source})`} and set ${keys.project.url} ` +
   `for the project in ${files.config}, then run "${commandText(commands.doctor)}".`;
 
+/**
+ * The warning for a work tree that init cloned into the root. The old folder stays as it is, and it keeps the work that
+ * is not pushed. `fromOrigin` is true when the clone started from the origin of the old folder.
+ */
+export const oldFolderWarning = (folder: string, fromOrigin: boolean): string =>
+  `The old folder ${folder} keeps the work that is not pushed. ` +
+  (fromOrigin
+    ? 'The clone holds only what the origin holds.'
+    : 'The clone holds only the commits of the old folder, and the work that is not committed stays there.');
+
 /** The warning for an origin that held credentials. It names neither the user nor the token. */
 export const originCredentialsWarning = (id: string): string =>
   `The origin of the project ${id} holds credentials. ${program} wrote its URL without them. ` +

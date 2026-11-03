@@ -110,13 +110,14 @@ const indexUpgraded = async (deps: Deps, home: string): Promise<readonly OutLine
   if (!indexPath.ok) return warn([`The home index was not updated: ${indexPath.error.message}`]);
   const config = await loadConfig(deps, home);
   if (!config.ok) return warn([`The home index was not updated: ${config.error.message}`]);
-  return warn(
-    await recordNode(deps, indexPath.value, {
-      home,
-      id: config.value.core.node.id,
-      projects: config.value.recipe.projects.map((project) => project.path),
-    }),
-  );
+  const recorded = await recordNode(deps, indexPath.value, {
+    home,
+    id: config.value.core.node.id,
+    projects: config.value.recipe.projects.map((project) => project.path),
+  });
+  return recorded.ok
+    ? []
+    : warn([`${recorded.error} Run "${commandText(commands.init)}" in the ${places.folder} ${home} to register it.`]);
 };
 
 /** The commit of the upgrade: the id of HEAD before it, and the paths that it staged. */

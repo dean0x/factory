@@ -23,21 +23,37 @@ const indexFile = (): string => join(stateHome, 'factory', 'homes.json');
 const withState = (): { env: Record<string, string> } => ({ env: { XDG_STATE_HOME: stateHome } });
 const owner = ['--owner-name', 'Test Owner'];
 
-/** The repo `web` with a source folder, and a node made in it by `init --yes`. */
+/** The repo `web`, and a root made beside it by `init --yes`. The result is the old folder of the repo. */
 const initWeb = async (): Promise<string> => {
   const web = await box.makeProject('web', 'https://github.com/acme/web.git');
-  await mkdir(join(web, 'src', 'deep'), { recursive: true });
   const result = await box.run(['init', '--yes', ...owner], { cwd: web, ...withState() });
-  expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+  expect({ code: result.code }).toEqual({ code: 0 });
+  expect(result.stderr).toContain('keeps the work that is not pushed');
   return web;
 };
 
+/** The folder of the clone of `web` in the root that `initWeb` made. */
+const cloneOfWeb = (): string => join(box.root, 'web-factory', 'web');
+
+/** The index as a person edits it: the entries of the homes by id get the project folders. */
+const listProjects = async (projectsById: Readonly<Record<string, readonly string[]>>): Promise<void> => {
+  const index = JSON.parse(await box.read(indexFile())) as { homes: { id: string; projects: string[] }[] };
+  const homes = index.homes.map((entry) => ({ ...entry, projects: [...(projectsById[entry.id] ?? entry.projects)] }));
+  await writeFile(indexFile(), `${JSON.stringify({ ...index, homes }, null, 2)}\n`);
+};
+
 describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () => {
-  it('keeps the index under XDG_STATE_HOME, readable by the user only, with the real paths', async () => {
-    const web = await initWeb();
+  it('keeps the index under XDG_STATE_HOME, readable by the user only, with the real paths of the clones', async () => {
+    await initWeb();
     expect(JSON.parse(await box.read(indexFile()))).toEqual({
       schema: 1,
-      homes: [{ home: join(realRoot, 'web-factory'), id: 'web-factory', projects: [await realpath(web)] }],
+      homes: [
+        {
+          home: join(realRoot, 'web-factory'),
+          id: 'web-factory',
+          projects: [join(realRoot, 'web-factory', 'web')],
+        },
+      ],
     });
     expect((await stat(indexFile())).mode & 0o777).toBe(0o600);
     expect((await stat(join(stateHome, 'factory'))).mode & 0o777).toBe(0o700);
@@ -52,10 +68,19 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     expect(fallback.includes(`${join(box.env['HOME'] ?? '', '.claude')}/`)).toBe(false);
   });
 
-  it('lets doctor and start --dry-run find web-factory from web/ and from web/src', async () => {
-    const web = await initWeb();
+  it('lets doctor and start --dry-run find web-factory from the root, the coordinator folder and the clone (TP-14)', async () => {
+    await initWeb();
+    const clone = cloneOfWeb();
+    await mkdir(join(clone, 'src', 'deep'), { recursive: true });
     const config = join(realRoot, 'web-factory', 'factory.yaml');
-    for (const cwd of [web, join(web, 'src'), join(web, 'src', 'deep')]) {
+    const folders = [
+      join(box.root, 'web-factory'),
+      join(box.root, 'web-factory', 'coordinator'),
+      clone,
+      join(clone, 'src'),
+      join(clone, 'src', 'deep'),
+    ];
+    for (const cwd of folders) {
       const doctor = await box.run(['doctor'], { cwd, ...withState() });
       expect({ cwd, code: doctor.code }).toEqual({ cwd, code: 0 });
       expect(doctor.stdout).toContain(config);
@@ -78,13 +103,16 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     }
   });
 
-  it('exits 2 and names both homes when two homes list the same project', async () => {
+  it('exits 2 and names both homes when two homes list the same project folder', async () => {
     const web = await initWeb();
     const second = join(box.root, 'second-home');
-    const init = await box.run(['init', '--home', second, '--name', 'second', ...owner, '--project', web], withState());
+    const init = await box.run(['init', '--home', second, '--name', 'second', ...owner], withState());
     expect(init.code).toBe(0);
+    const folder = join(await realpath(web), 'src');
+    await mkdir(folder, { recursive: true });
+    await listProjects({ 'web-factory': [await realpath(web)], second: [await realpath(web)] });
 
-    const result = await box.run(['start', '--dry-run'], { cwd: join(web, 'src'), ...withState() });
+    const result = await box.run(['start', '--dry-run'], { cwd: folder, ...withState() });
     expect(result.code).toBe(2);
     expect(result.stderr).toContain(join(realRoot, 'web-factory'));
     expect(result.stderr).toContain(join(realRoot, 'second-home'));
@@ -98,10 +126,11 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     expect(result.stderr).toContain('--home DIR');
   });
 
-  it('finds the home that is there when the other home of the same project is gone', async () => {
+  it('finds the home that is there when the other home of the same project folder is gone', async () => {
     const web = await initWeb();
     const second = join(box.root, 'second-home');
-    expect((await box.run(['init', '--home', second, '--name', 'second', ...owner, '--project', web], withState())).code).toBe(0);
+    expect((await box.run(['init', '--home', second, '--name', 'second', ...owner], withState())).code).toBe(0);
+    await listProjects({ 'web-factory': [await realpath(web)], second: [await realpath(web)] });
     await rm(join(box.root, 'web-factory'), { recursive: true, force: true });
     const result = await box.run(['doctor'], { cwd: web, ...withState() });
     expect(result.code).toBe(0);

@@ -99,7 +99,7 @@ describe('config schema 2', () => {
       raw['children'] = [{ id: 'web', address: 'file:///srv/nodes/web-factory' }];
       raw['owner'].github = 'some-login';
       raw['approval'] = { [POINT]: 'delegated' };
-      raw['sources'] = { '../web': '/srv/code/web' };
+      raw['sources'] = { web: '/srv/code/web' };
       raw['session'].statusline = 'my-status --short';
       hosted(raw, { watch_interval: '2h' });
       raw['recipe'].projects[0].repo = 'acme/web';
@@ -313,12 +313,87 @@ describe('config schema 2', () => {
       expect(check(mutate)).toContain(expected);
     });
 
-    it('accepts a project path with one .. and rejects two', () => {
-      expect(check((raw) => (raw['recipe'].projects[0].path = '../web'))).toBeNull();
-      expect(check((raw) => (raw['recipe'].projects[0].path = 'sub/web'))).toBeNull();
-      expect(check((raw) => (raw['recipe'].projects[0].path = 'a/../../web'))).toBeNull();
-      expect(check((raw) => (raw['recipe'].projects[0].path = 'a/../../../web'))).toContain('recipe.projects.0.path');
+  });
+
+  describe('project path (AC-12, TP-28)', () => {
+    const withPath = (path: unknown): Mutate => (raw) => {
+      raw['recipe'].projects[0].path = path;
+    };
+
+    it.each(['web', 'web-app', 'web_app', 'web.app', 'Web2', 'a', 'node'])('accepts the folder name %s', (path) => {
+      expect(check(withPath(path))).toBeNull();
     });
+
+    it.each([
+      ['a relative path with a slash', 'sub/web'],
+      ['a path above the root', '../web'],
+      ['a path above the root, twice', '../../web'],
+      ['a path with a .. inside', 'a/../web'],
+      ['an absolute path', '/abs/web'],
+      ['a tilde path', '~/web'],
+      ['a name with a trailing slash', 'web/'],
+      ['a name with a leading ./', './web'],
+      ['a Windows path', 'sub\\web'],
+      ['a Windows path above the root', '..\\web'],
+      ['the empty name', ''],
+      ['a name with a control character', 'we\u001bb'],
+      ['a name with a line break', 'we\nb'],
+    ])('refuses %s as a path that is not one folder name', (_name, path) => {
+      const message = check(withPath(path));
+      expect(message).toContain('recipe.projects.0.path:');
+      if (path !== '') expect(message).toMatch(/one folder name|must not start with a dot|at least 1/);
+    });
+
+    it.each(['.', '..', '.git', '.factory', '.gitignore', '.claude', '.factory.tmp-4242', '.web'])(
+      'refuses the name %s, which starts with a dot',
+      (path) => {
+        expect(check(withPath(path))).toContain('recipe.projects.0.path: must not start with a dot');
+      },
+    );
+
+    it.each([
+      'coordinator',
+      'work-copies',
+      'setup',
+      'factory.yaml',
+      'factory.local.yaml',
+      'CLAUDE.md',
+      'CLAUDE.local.md',
+      'AGENTS.md',
+    ])('refuses the reserved name %s', (path) => {
+      expect(check(withPath(path))).toContain('recipe.projects.0.path: is a name that the factory folder keeps for itself');
+    });
+
+    it.each(['Coordinator', 'COORDINATOR', 'Work-Copies', 'SETUP', 'Factory.YAML', 'claude.md', 'Agents.MD', 'CLAUDE.LOCAL.MD'])(
+      'refuses the reserved name %s in another letter case',
+      (path) => {
+        expect(check(withPath(path))).toContain('keeps for itself');
+      },
+    );
+
+    it('refuses a reserved name that only a compatible form of a letter separates from the reserved name', () => {
+      // A long s (U+017F) folds to s, so this name is "setup" on a file system that folds compatible forms.
+      expect(check(withPath('ſetup'))).toContain('keeps for itself');
+      // A full-width letter folds to the plain letter.
+      expect(check(withPath('ｃoordinator'))).toContain('keeps for itself');
+    });
+
+    it('accepts names that only look like a reserved name', () => {
+      for (const path of ['coordinator2', 'my-setup', 'setup.d', 'work-copies-old', 'CLAUDE', 'AGENTS', 'factory']) {
+        expect(check(withPath(path))).toBeNull();
+      }
+    });
+
+    it('refuses a path that is not a string', () => {
+      expect(check(withPath(7))).toContain('recipe.projects.0.path:');
+      expect(check(withPath(null))).toContain('recipe.projects.0.path:');
+    });
+
+    it('refuses a name longer than a folder name can be', () => {
+      expect(check(withPath('a'.repeat(255)))).toBeNull();
+      expect(check(withPath('a'.repeat(256)))).toContain('recipe.projects.0.path:');
+    });
+
   });
 
   describe('clone URLs (AC-11)', () => {
@@ -327,7 +402,7 @@ describe('config schema 2', () => {
       raw['recipe'].projects[0].url = url;
     };
     /** The sample project, and a second project with its own id, path and URL. */
-    const twoProjects = (first: string, second: string, paths: [string, string] = ['../web', '../api']): Mutate => (raw) => {
+    const twoProjects = (first: string, second: string, paths: [string, string] = ['web', 'api']): Mutate => (raw) => {
       const [web] = raw['recipe'].projects;
       raw['recipe'].projects = [
         { ...web, url: first, path: paths[0] },
@@ -396,19 +471,19 @@ describe('config schema 2', () => {
       expect(message).not.toContain('github.com');
     });
 
-    it('refuses two entries with one path, also when one is written another way', () => {
-      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git', ['../web', '../web']))).toContain(
-        'recipe.projects.1.path:',
+    it('refuses two entries with one path, also when the letter case differs', () => {
+      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git', ['web', 'web']))).toContain(
+        'recipe.projects.1.path: names the same folder as the project web',
       );
-      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git', ['web', './web/']))).toContain(
-        'recipe.projects.1.path:',
+      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git', ['web', 'WEB']))).toContain(
+        'recipe.projects.1.path: names the same folder as the project web',
       );
     });
 
     it('lets two entries with no url stand, because a project with no url is no refusal', () => {
       const raw = sampleObject();
       const { url: _url, ...web } = raw['recipe'].projects[0];
-      raw['recipe'].projects = [web, { ...web, id: 'api', path: '../api' }];
+      raw['recipe'].projects = [web, { ...web, id: 'api', path: 'api' }];
       expect(parseMixed(raw).success).toBe(true);
     });
   });

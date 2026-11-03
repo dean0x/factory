@@ -99,7 +99,7 @@ init_in_web() { (cd "$web" && factory init --yes --owner-name "Test Owner"); }
 logged init init_in_web
 head -n 1 "$tmp/init.log"
 [ -f "$home/factory.yaml" ] || fail "init made no factory.yaml in $home"
-grep -Fq 'path: "../web"' "$home/factory.yaml" || fail "the repo web is not a project of the node"
+grep -Fq 'path: "web"' "$home/factory.yaml" || fail "the repo web is not a project of the node"
 [ -n "$(find "$XDG_STATE_HOME" -type f -print | head -n 1)" ] || fail "init wrote no home index in the state folder"
 
 step "start --dry-run"

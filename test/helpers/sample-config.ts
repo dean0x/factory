@@ -35,7 +35,7 @@ export const sampleConfig = (): FactoryConfig => ({
       {
         id: 'web',
         url: 'https://github.com/acme/web.git',
-        path: '../web',
+        path: 'web',
         default_branch: 'main',
         merge_method: 'squash',
         gate: { checks: [] },

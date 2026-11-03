@@ -1,4 +1,4 @@
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { appendBlocks, parseBlocks, renderBlock } from '../blocks/managed.js';
 import { failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput } from '../cli/output.js';
@@ -12,23 +12,21 @@ import {
   parseConfig,
   type FactoryConfig,
 } from '../config/schema.js';
-import { checkLocalSource, classifyOrigin, type OriginClass } from '../core/clone-url.js';
+import { checkLocalSource, type OriginClass } from '../core/clone-url.js';
 import type { Deps } from '../core/deps.js';
 import {
   commitAll,
   configValue,
   defaultBranchOf,
   GIT_ENTRY,
-  githubRepoOf,
   gitInit,
   hasIdentity,
   initRootRepo,
-  isWorkTreeRoot,
   MAX_SCAN_ENTRIES,
-  originUrlOf,
+  parseGithubRepo,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
-import { missingFolders, realPathOf } from '../core/paths.js';
+import { missingFolders } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import {
@@ -36,12 +34,14 @@ import {
   commandText,
   defaultOwnerPrefix,
   dirs,
+  env,
   files,
   flags,
   flagText,
   keys,
   localFileModes,
   maxFileBytes,
+  places,
   roles,
   schemaIds,
   stateKeys,
@@ -63,17 +63,22 @@ import { roleNameForLayer } from '../recipes/software/recipe.js';
 import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
-import { checkProjectCount, makeCloneParents, planProjects, runClones, undoClones } from './init-clone.js';
+import {
+  checkProjectCount,
+  makeRootFolders,
+  planProjects,
+  runClones,
+  undoClones,
+  type PlannedProject,
+} from './init-clone.js';
 import {
   chooseHome,
-  checkHomeApart,
-  checkHomeHoldsNoRepo,
   checkHomeIsNew,
-  checkHomeLocation,
+  checkHomeOutsideRoots,
   leftoverTempFolders,
   tempFolderWarning,
 } from './init-home.js';
-import { originCredentialsWarning, unsharedWarning } from './project-url.js';
+import { oldFolderWarning, originCredentialsWarning, unsharedWarning } from './project-url.js';
 
 export interface InitOptions {
   readonly home: string | undefined;
@@ -96,6 +101,8 @@ interface StateFile {
 
 export interface InitPlan {
   readonly home: string;
+  /** The file of the factory list. `init` writes the root into it as its last step. */
+  readonly indexPath: string;
   /** The topmost folder that init creates (the home or one of its parents), or null when the home exists. */
   readonly createdRoot: string | null;
   readonly config: FactoryConfig;
@@ -163,7 +170,7 @@ const detectGithubLogin = async (deps: Deps): Promise<string | undefined> => {
 /** A project entry as the config holds it, the local source of a project with no URL to share, and the warnings. */
 interface DescribedProject {
   readonly project: unknown;
-  /** The path of the project. It is the key of the source in the local file. */
+  /** The path of the project: the name of its folder in the root. It is the key of the source in the local file. */
   readonly path: string;
   readonly source: string | null;
   readonly warnings: readonly string[];
@@ -198,54 +205,43 @@ const urlFieldsOf = (
   return { url: null, source: checkLocalSource(source).ok ? source : null, warnings: [unsharedWarning(id, 'no-url')] };
 };
 
-/** The project path is relative to the home. Both paths have their links resolved, as git gives the work tree. */
-const describeProject = async (
-  deps: Deps,
-  realHome: string,
-  argument: string,
-): Promise<CliResult<DescribedProject>> => {
-  const absolute = resolve(deps.cwd, argument);
-  if (!(await isWorkTreeRoot(deps, absolute))) {
-    return usageError(`${argument} is not the top folder of a git work tree`);
-  }
-  const id = slugify(basename(absolute));
-  if (id === null) return usageError(`cannot make a project id from the folder name of ${argument}`);
-  const real = await realPathOf(deps, absolute);
-  if (!real.ok) return real;
-  const repo = await githubRepoOf(deps, absolute);
-  const branch = (await defaultBranchOf(deps, absolute)) ?? DEFAULT_BRANCH;
-  const fields = urlFieldsOf(classifyOrigin(await originUrlOf(deps, absolute)), id, real.value);
-  const path = relative(realHome, real.value) || '.';
+/**
+ * The project entry of a folder in the root. The clone is there already, so the default branch comes from the clone. The
+ * url, the GitHub repo and the local source come from the origin of the repo that the clone started from.
+ */
+const describeProject = async (deps: Deps, planned: PlannedProject): Promise<CliResult<DescribedProject>> => {
+  const id = slugify(planned.name);
+  if (id === null) return usageError(`cannot make a project id from the folder name ${planned.name}`);
+  const repo = planned.origin.kind === 'shareable' ? parseGithubRepo(planned.origin.url) : null;
+  const branch = (await defaultBranchOf(deps, planned.target)) ?? DEFAULT_BRANCH;
+  const fields = urlFieldsOf(planned.origin, id, planned.oldFolder ?? planned.target);
   return ok({
     project: {
       [keys.project.id]: id,
       ...(fields.url === null ? {} : { [keys.project.url]: fields.url }),
       ...(repo === null ? {} : { [keys.project.repo]: repo }),
-      [keys.project.path]: path,
+      [keys.project.path]: planned.name,
       [keys.project.defaultBranch]: branch,
       [keys.project.mergeMethod]: values.mergeMethods[0],
       [keys.project.gate]: { [keys.gate.checks]: [] },
     },
-    path,
+    path: planned.name,
     source: fields.source,
-    warnings: fields.warnings,
+    warnings: [
+      ...fields.warnings,
+      ...(planned.oldFolder === null ? [] : [oldFolderWarning(planned.oldFolder, planned.origin.kind !== 'other')]),
+    ],
   });
 };
 
-const describeProjects = async (
-  deps: Deps,
-  home: string,
-  arguments_: readonly string[],
-): Promise<CliResult<DescribedProjects>> => {
-  const counted = checkProjectCount(arguments_.length);
+const describeProjects = async (deps: Deps, planned: readonly PlannedProject[]): Promise<CliResult<DescribedProjects>> => {
+  const counted = checkProjectCount(planned.length);
   if (!counted.ok) return counted;
-  const realHome = await realPathOf(deps, home);
-  if (!realHome.ok) return realHome;
   const projects: unknown[] = [];
   const sources: (readonly [string, string])[] = [];
   const warnings: string[] = [];
-  for (const argument of arguments_) {
-    const described = await describeProject(deps, realHome.value, argument);
+  for (const project of planned) {
+    const described = await describeProject(deps, project);
     if (!described.ok) return described;
     projects.push(described.value.project);
     if (described.value.source !== null) sources.push([described.value.path, described.value.source]);
@@ -435,19 +431,24 @@ const parseSettings = (input: { readonly shared: unknown; readonly local: unknow
 };
 
 /**
- * Run every check that needs no project: the home holds no node, the layer, the recipe, the home location, the owner
- * name, the node id, the settings with no project, and CLAUDE.md. A bad value is found before any clone runs,
- * because a clone costs time and disk. This function writes nothing.
+ * Run every check that needs no project: the home holds no node, the layer, the recipe, the home is outside every
+ * root that the factory list holds, the owner name, the node id, the settings with no project, and CLAUDE.md. A bad value
+ * is found before any clone runs, because a clone costs time and disk. This function writes nothing.
  */
-const checkOptions = async (deps: Deps, options: InitOptions, home: string): Promise<CliResult<CheckedOptions>> => {
+const checkOptions = async (
+  deps: Deps,
+  options: InitOptions,
+  home: string,
+  indexPath: string,
+): Promise<CliResult<CheckedOptions>> => {
   const fresh = await checkHomeIsNew(deps, home);
   if (!fresh.ok) return fresh;
   const layer = parseLayer(options.layer);
   if (!layer.ok) return layer;
   const recipe = parseRecipe(options.recipe);
   if (!recipe.ok) return recipe;
-  const location = await checkHomeLocation(deps, home);
-  if (!location.ok) return location;
+  const outside = await checkHomeOutsideRoots(deps, indexPath, home);
+  if (!outside.ok) return outside;
   const ownerName = (options.ownerName ?? (await configValue(deps, deps.cwd, 'user.name')) ?? '').trim();
   if (ownerName === '') {
     return usageError(
@@ -471,38 +472,42 @@ const checkOptions = async (deps: Deps, options: InitOptions, home: string): Pro
 };
 
 /**
- * The home is apart from the projects, and it holds no git repo one level down. Both checks need only the paths
- * of the projects, so a clone target counts before the clone is made.
+ * The place of the factory list. `init` writes the root into the list as its last step, so a command without that place
+ * stops before it writes anything (exit 1).
  */
-const checkHomeBesideProjects = async (
-  deps: Deps,
-  home: string,
-  projects: readonly string[],
-): Promise<CliResult<void>> => {
-  const apart = await checkHomeApart(
-    deps,
-    home,
-    projects.map((argument) => resolve(deps.cwd, argument)),
+const requireIndexPath = async (deps: Deps): Promise<CliResult<string>> => {
+  const indexPath = await indexPathOf(deps);
+  if (!indexPath.ok) return indexPath;
+  if (indexPath.value !== null) return ok(indexPath.value);
+  return failure(
+    `the ${places.list} has no place: ${env.stateHome} and ${env.userHome} name no folder`,
+    `Set ${env.stateHome} or ${env.userHome} to an absolute folder, then run "${commandText(commands.init)}" again.`,
   );
-  if (!apart.ok) return apart;
-  return checkHomeHoldsNoRepo(deps, home);
 };
 
 /** Read the system and decide what init writes. This function writes nothing. */
 export const planInit = async (deps: Deps, options: InitOptions): Promise<CliResult<InitPlan>> => {
+  const indexPath = await requireIndexPath(deps);
+  if (!indexPath.ok) return indexPath;
   const home = resolve(deps.cwd, options.home ?? '.');
-  const checked = await checkOptions(deps, options, home);
+  const checked = await checkOptions(deps, options, home, indexPath.value);
   if (!checked.ok) return checked;
-  const beside = await checkHomeBesideProjects(deps, home, options.projects);
-  if (!beside.ok) return beside;
-  return planChecked(deps, options, checked.value);
+  const planned = await planProjects(deps, home, options.projects);
+  if (!planned.ok) return planned;
+  return planChecked(deps, options, checked.value, indexPath.value, planned.value);
 };
 
 /**
  * The plan, after the checks have passed. The clones are there now, so this function describes the projects.
- * The folders above the home exist when a clone needed them.
+ * The root and the folders above it exist when a clone needed them.
  */
-const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOptions): Promise<CliResult<InitPlan>> => {
+const planChecked = async (
+  deps: Deps,
+  options: InitOptions,
+  checked: CheckedOptions,
+  indexPath: string,
+  planned: readonly PlannedProject[],
+): Promise<CliResult<InitPlan>> => {
   const { layer, templates, blocks, root } = checked;
   const home = resolve(deps.cwd, options.home ?? '.');
 
@@ -513,7 +518,7 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
   if (!leftover.ok) return leftover;
   const github = options.ownerGithub ?? (await detectGithubLogin(deps));
 
-  const projects = await describeProjects(deps, home, options.projects);
+  const projects = await describeProjects(deps, planned);
   if (!projects.ok) return projects;
 
   const config = parseSettings(settingsOf(checked, github, projects.value));
@@ -524,6 +529,7 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
   const texts = renderConfig(config.value);
   return ok({
     home,
+    indexPath,
     createdRoot: missing.value.at(-1) ?? null,
     config: config.value,
     configText: texts.shared,
@@ -563,8 +569,11 @@ const SHARED_FILE_MODE = 0o644;
 
 /**
  * Write the node: first into a staging folder, then the state folder, the coordinator folder with its CLAUDE.md, the
- * setup text and the root `.gitignore`, the local file, the shared config file, and last the root repo.
- * The record `touched` marks a path only when this run makes it, so the undo never removes a path that was there before.
+ * setup text and the root `.gitignore`, the local file, the shared config file, the root repo, and last the entry in the
+ * factory list. A step that fails undoes the steps before it, and the command exits 1.
+ * Before each write, init checks whether the target is there. The record `touched` marks a path only when this run makes
+ * it, so the undo never removes a path that was there before. A text that init changed in place (`CLAUDE.md` and
+ * `.gitignore`) is written back as it was.
  */
 export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<InitResult>> => {
   const layout = layoutOf(plan.home);
@@ -579,6 +588,8 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     local: false,
     config: false,
     rootGit: false,
+    /** The folders above the factory list that the write of the list can make, the deepest first. */
+    listFolders: [] as readonly string[],
   };
 
   /** Make a folder. The result is true when this run made it, and false when the folder was there. */
@@ -589,6 +600,29 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     return made.ok ? ok(kind.value === null) : made;
   };
 
+  /** A path that init must make is not there. A path that another program made during the run is never replaced. */
+  const requireAbsent = async (path: string, name: string): Promise<CliResult<void>> => {
+    const kind = await deps.fs.stat(path);
+    if (!kind.ok) return kind;
+    return kind.value === null ? ok(undefined) : failure(`${name} was made by another program during the run`);
+  };
+
+  /**
+   * A text that init changes in place is still the text that the plan read: absent when the plan found no file, else
+   * equal to it. A file that another program made or changed during the run is never replaced.
+   */
+  const requireUnchanged = async (path: string, planned: string | null, name: string): Promise<CliResult<void>> => {
+    const kind = await deps.fs.stat(path);
+    if (!kind.ok) return kind;
+    let unchanged = kind.value === null && planned === null;
+    if (kind.value === 'file' && planned !== null) {
+      const read = await deps.fs.readTextLimited(path, maxFileBytes);
+      if (!read.ok) return read;
+      unchanged = read.value === planned;
+    }
+    return unchanged ? ok(undefined) : failure(`${name} was made or changed by another program during the run`);
+  };
+
   /** Undo only what this run made. A step that fails is named in the message. */
   const rollback = async (cause: CliError): Promise<CliResult<InitResult>> => {
     const problems: string[] = [];
@@ -596,6 +630,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
       const result = await step;
       if (!result.ok) problems.push(result.error.message);
     };
+    for (const folder of touched.listFolders) await undo(deps.fs.removeEmptyDir(folder));
     await undo(deps.fs.remove(staging));
     if (touched.rootGit) await undo(deps.fs.remove(join(plan.home, GIT_ENTRY)));
     if (touched.config) await undo(deps.fs.remove(layout.configFile));
@@ -646,6 +681,8 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     if (!committed.ok) return rollback(committed.error);
   }
 
+  const stateAbsent = await requireAbsent(layout.stateDir, dirs.state);
+  if (!stateAbsent.ok) return rollback(stateAbsent.error);
   const moved = await deps.fs.rename(staging, layout.stateDir);
   if (!moved.ok) return rollback(moved.error);
   touched.state = true;
@@ -653,6 +690,8 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   const coordinatorDir = await makeFolder(layout.coordinatorDir);
   if (!coordinatorDir.ok) return rollback(coordinatorDir.error);
   touched.coordinatorDir = coordinatorDir.value;
+  const claudeUnchanged = await requireUnchanged(layout.claudeMd, plan.claudeOriginal, `${dirs.coordinator}/${files.claudeMd}`);
+  if (!claudeUnchanged.ok) return rollback(claudeUnchanged.error);
   const claude = await deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeText);
   if (!claude.ok) return rollback(claude.error);
   touched.claude = true;
@@ -670,15 +709,22 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     touched.setupFile = true;
   }
 
+  const gitignoreUnchanged = await requireUnchanged(layout.gitignoreFile, plan.gitignoreOriginal, files.gitignore);
+  if (!gitignoreUnchanged.ok) return rollback(gitignoreUnchanged.error);
   const gitignore = await deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreText);
   if (!gitignore.ok) return rollback(gitignore.error);
   touched.gitignore = true;
 
   // The local file comes before the shared file, which marks the home as a node. The local file has mode 600 from the start.
+  // A local file or a shared file that is there already is never replaced, and the undo never removes it.
+  const localAbsent = await requireAbsent(layout.localConfigFile, files.localConfig);
+  if (!localAbsent.ok) return rollback(localAbsent.error);
   const local = await deps.fs.writeTextAtomic(layout.localConfigFile, plan.localConfigText, localFileModes.private);
   if (!local.ok) return rollback(local.error);
   touched.local = true;
 
+  const configAbsent = await requireAbsent(layout.configFile, files.config);
+  if (!configAbsent.ok) return rollback(configAbsent.error);
   const config = await deps.fs.writeTextAtomic(layout.configFile, plan.configText);
   if (!config.ok) return rollback(config.error);
   touched.config = true;
@@ -693,6 +739,23 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     branch: DEFAULT_BRANCH,
   });
   if (!rootRepo.ok) return rollback(rootRepo.error);
+
+  // The entry in the factory list is the last step. When it fails, the root is not registered, so init undoes its work,
+  // and also the folders of the list that the write made.
+  const listFolders = await missingFolders(deps, dirname(plan.indexPath));
+  if (!listFolders.ok) return rollback(listFolders.error);
+  touched.listFolders = listFolders.value;
+  const recorded = await recordNode(deps, plan.indexPath, {
+    home: plan.home,
+    id: plan.config.core.node.id,
+    projects: plan.config.recipe.projects.map((project) => project.path),
+  });
+  if (!recorded.ok) {
+    return rollback(
+      failure(recorded.error, `Fix the cause, then run "${commandText(commands.init)}" again. A second run works in the same folder.`)
+        .error,
+    );
+  }
 
   return ok({
     committed: identity,
@@ -712,54 +775,42 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
 };
 
 /** The projects of the command: the git work trees that the command found come first, when the home is proposed. */
-const projectsOf = (deps: Deps, paths: readonly string[], found: readonly string[]): readonly string[] => [
+const projectsOf = (deps: Deps, flagValues: readonly string[], found: readonly string[]): readonly string[] => [
   ...found,
-  ...paths.filter((argument) => !found.includes(resolve(deps.cwd, argument))),
+  ...flagValues.filter((argument) => !found.includes(resolve(deps.cwd, argument))),
 ];
 
 export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResult<CommandOutput>> => {
-  // The place of the index is checked before init writes anything.
-  const indexPath = await indexPathOf(deps);
+  // The place of the factory list is checked before init writes anything.
+  const indexPath = await requireIndexPath(deps);
   if (!indexPath.ok) return indexPath;
   const chosen = await chooseHome(deps, options);
   if (!chosen.ok) return chosen;
   const { home, found, skipped, truncated } = chosen.value;
 
   // A bad value must give its error before any clone runs, because a clone costs time and disk.
-  const checked = await checkOptions(deps, options, home);
+  const checked = await checkOptions(deps, options, home, indexPath.value);
   if (!checked.ok) return checked;
 
-  // The clones come before the plan, because the plan reads each project. When a later step fails, the clones
-  // that this run made are removed again. A folder that was there before the run is never removed.
-  const projects = await planProjects(deps, home, options.projects);
+  // The clones come before the plan, because the plan reads each project. Every check of the paths of the projects
+  // comes before the first clone. When a later step fails, the clones that this run made are removed again.
+  // A folder that was there before the run is never removed.
+  const projects = await planProjects(deps, home, projectsOf(deps, options.projects, found));
   if (!projects.ok) return projects;
-  const allProjects = projectsOf(deps, projects.value.paths, found);
-  const counted = checkProjectCount(allProjects.length);
-  if (!counted.ok) return counted;
-  const beside = await checkHomeBesideProjects(deps, home, allProjects);
-  if (!beside.ok) return beside;
-  // Git makes the folders above a clone by itself. This run makes them first, so that the undo can remove them.
-  const parents = projects.value.clones.some((clone) => !clone.present) ? await makeCloneParents(deps, home) : ok([]);
+  // Git makes the folders above a clone by itself. This run makes the root and its parents first, so that the undo can
+  // remove them.
+  const parents = projects.value.some((project) => !project.present) ? await makeRootFolders(deps, home) : ok([]);
   if (!parents.ok) return parents;
-  const cloned = await runClones(deps, projects.value.clones, parents.value);
+  const cloned = await runClones(deps, projects.value, parents.value);
   if (!cloned.ok) return cloned;
   const made = cloned.value;
 
-  const plan = await planChecked(deps, { ...options, home, projects: allProjects }, checked.value);
+  const plan = await planChecked(deps, { ...options, home }, checked.value, indexPath.value, projects.value);
   if (!plan.ok) return undoClones(deps, made, parents.value, plan.error);
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
-  const warnings = [
-    ...plan.value.warnings,
-    ...applied.value.warnings,
-    ...notes,
-    ...(await recordNode(deps, indexPath.value, {
-      home: plan.value.home,
-      id: plan.value.config.core.node.id,
-      projects: plan.value.config.recipe.projects.map((project) => project.path),
-    })),
-  ];
+  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...notes];
 
   const written = [
     files.config,

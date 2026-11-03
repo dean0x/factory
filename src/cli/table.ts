@@ -109,7 +109,7 @@ export const commandTable: readonly Command[] = [
         multiple: true,
         placeholder: 'PATH|URL',
         description:
-          'A git work tree to manage, or the URL of a repo to clone next to the home folder ' +
+          'A git work tree to clone into the home folder, or the URL of a repo to clone into it ' +
           '(https://, ssh:// or user@host:path). Repeat the flag for more projects.',
       },
       [flags.layer]: {

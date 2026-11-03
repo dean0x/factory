@@ -504,7 +504,7 @@ node:
   id: acme                   # unique among siblings; also the tmux session name
   layer: 1                   # set by factory; the role comes from the layer (§5)
 session:
-  agent: claude              # the agent command of this node; only `claude` is built (§4.6)
+  # agent: claude            # FAC-M4: the agent command of this node; only `claude` is built (§4.6)
   permission_mode: auto      # the only value accepted (§6)
   effort: high
   model: default
@@ -514,13 +514,13 @@ limits:
   load_max: cpu_count        # adapts to each machine
   context_prepare_pct: 30
   context_max_pct: 40
-  idle_after: 2h             # FAC-M4: a worker with no activity for this time may be idle (§4.11)
+  # idle_after: 2h           # FAC-M4: a worker with no activity for this time may be idle (§4.11)
 tracker:                     # the default board of the node; a project can override it (§4.10)
   kind: github               # github | jira | linear | local
   items: acme/web            # where work items live (a repo, or a project or team scope)
   decisions: acme/decisions  # the decision store; private by default (§4.10)
-  site: null                 # jira only: the base URL of the Jira site
-  key: null                  # jira: the project key; linear: the team key
+  # site: "https://acme.atlassian.net"   # jira only: the base URL of the Jira site
+  # key: ACME                            # jira: the project key; linear: the team key
   watch_interval: 5m         # `factory watch` read interval
 recipe:
   id: software               # the approval points come with the installed recipe (§6)
@@ -532,8 +532,8 @@ recipe:
       path: web              # one folder name inside the factory folder
       default_branch: main
       merge_method: squash
-      variant: devflow       # optional per-project override
-      tracker: { kind: jira, items: WEB, site: "https://acme.atlassian.net", key: WEB }   # optional override (§4.10)
+      # variant: devflow     # FAC-M6: optional per-project override
+      # tracker: { kind: jira, items: WEB, site: "https://acme.atlassian.net", key: WEB }   # FAC-M3: optional override (§4.10)
       gate: { checks: [] }   # extra repo checks for `factory check`
       heavy_test: "npm test" # runs under `factory lock run`
 ```
@@ -561,8 +561,8 @@ approval:                    # the mode of each approval point of the recipe (§
   release: owner
 sources:                     # the local source of a project with no shareable URL
   web: /srv/code/web         # the key is a listed project path (one folder name); the value is an absolute path or a file URL
-state:                       # FAC-M3
-  remote: null               # the private place of the work state of one owner
+# state:                     # FAC-M3
+#   remote: null             # the private place of the work state of one owner
 parent: null                 # or { id, address }; the address is file:// only (§5.3)
 children: []                 # nodes this node manages, each { id, address } (§5)
 ```
@@ -592,7 +592,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 
 - `tracker.kind: local` takes no other tracker key: the items and the decisions stay in `.factory/` (§4.10). The schema refuses `items`, `decisions`, `site`, `key` or `watch_interval` with `local`. Every other kind needs `items` and `decisions`. `jira` also needs `site` and `key`. `linear` also needs `key`.
 - A project can name its own `tracker` with `kind`, `items`, `site` and `key`. The decision store stays the one of the node, so the owner answers in one place. A project with no `tracker` uses the one of the node. The `tracker.decisions` key names a place, not the records, so it stays shared (D-9). With the `local` board the records stay in the private `.factory/`.
-- `session.agent` is the program that factory starts for a session. Only `claude` is accepted now. All starts of the agent use this value (§4.6).
+- `session.agent` (FAC-M4) is the program that factory starts for a session. Only `claude` is accepted. All starts of the agent use this value (§4.6). Before FAC-M4, the schema has no such key, and factory starts `claude`.
 - `approval` maps each approval point of the recipe to `owner` or `delegated`. A point that the file does not name is `owner`. The schema refuses a point that the recipe does not list. §6 says what each value means and what proves `delegated`.
 - The shared file holds no secret and no local path. `factory doctor` refuses a tracked file with a value that looks like a password or a token. The schema is checked at load with a fixed schema (Zod). An unknown key or a bad value stops the command and names the key. It never falls back to a looser default (from firstmate's fail-closed parse).
 - A command that a shared project entry names (a check command of the recipe) runs only after the owner accepts it. No code runs such a command before FAC-M5, which builds the acceptance.
