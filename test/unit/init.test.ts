@@ -95,7 +95,7 @@ describe('init: the files', () => {
     expect(config.value.core.approval).toEqual({ land: 'each' });
     expect(config.value.core.parent).toBeNull();
     expect(config.value.core.children).toEqual([]);
-    expect(config.value.core.cells).toEqual({});
+    expect(config.value.core.workers).toEqual({});
     expect(config.value.recipe).toMatchObject({ id: 'software', variant: 'plain' });
     const text = deps.files.get(`${HOME}/factory.yaml`) ?? '';
     expect(text).toContain('schema: 2');

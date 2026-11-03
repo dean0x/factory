@@ -58,7 +58,7 @@ export const attachHint = (id: string): string => `${toolNames.tmux} attach -t $
 
 /**
  * The tmux calls that start the session of a node, in order. Each call is an argument list for a program that runs with no shell.
- * The view window holds the coordinator and the slot. The bench window holds the cells, which come in a later version.
+ * The view window holds the coordinator and the slot. The bench window holds the workers, which come in a later version.
  * The coordinator pane stays when its program ends, so that a person can read why it ended. The first call sets this
  * option after `new-session`, as a second command in the same argument list. A separate call would come too late for a
  * program that ends at once, and tmux would remove the session with it. The server runs both commands of one call before

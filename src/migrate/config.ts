@@ -15,7 +15,7 @@ const COORDINATOR_LAYER = 1;
 
 /** The keys that schema 2 adds. A document of schema 1 does not hold them. */
 const ADDED_KEYS: readonly string[] = [
-  keys.root.cells,
+  keys.root.workers,
   keys.root.tracker,
   keys.root.approval,
   keys.root.recipe,
@@ -129,7 +129,7 @@ const migrateDocument = (doc: Document): CliResult<void> => {
 
   root.set(keys.root.schema, TO);
   const lanes = pairOf(root, schema1.keys.lanes);
-  if (lanes !== undefined) rename(lanes, keys.root.cells);
+  if (lanes !== undefined) rename(lanes, keys.root.workers);
   addSection(doc, root, keys.root.tracker, { [keys.tracker.kind]: values.trackerLocal });
   addSection(doc, root, keys.root.approval, { [keys.approval.land]: values.landModes[0] });
 

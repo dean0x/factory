@@ -86,7 +86,7 @@ const parentLines = (link: LinkConfig | null): string[] =>
 /** The text of the config file, with comments, for a typed config. */
 export const renderConfig = (config: FactoryConfig): string => {
   const { core, recipe } = config;
-  const cells = Object.entries(core.cells);
+  const workers = Object.entries(core.workers);
   const lines: string[] = [
     `# ${files.config}: the configuration of this ${roles.node}.`,
     '# People edit this file. Do not put keys, tokens or passwords here.',
@@ -116,13 +116,13 @@ export const renderConfig = (config: FactoryConfig): string => {
     `# A session uses a proxy only when the config names it. ${capitalize(program)} checks the proxy before each launch.`,
     ...section(0, keys.root.proxies, core.proxies.map(proxyLines)),
     '',
-    `# Overrides for single ${roles.worker}s: <${roles.worker} id>: { ${keys.cell.proxy}: ${values.noProxy} }`,
-    ...(cells.length === 0
-      ? [`${keys.root.cells}: {}`]
+    `# Overrides for single ${roles.worker}s: <${roles.worker} id>: { ${keys.worker.proxy}: ${values.noProxy} }`,
+    ...(workers.length === 0
+      ? [`${keys.root.workers}: {}`]
       : [
-          `${keys.root.cells}:`,
-          ...cells.map(
-            ([cell, override]) => `${pad(1)}${scalar(cell)}: { ${keys.cell.proxy}: ${scalar(override.proxy)} }`,
+          `${keys.root.workers}:`,
+          ...workers.map(
+            ([worker, override]) => `${pad(1)}${scalar(worker)}: { ${keys.worker.proxy}: ${scalar(override.proxy)} }`,
           ),
         ]),
     '',

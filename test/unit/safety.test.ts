@@ -59,7 +59,7 @@ describe('findTokenPaths', () => {
 
   it('hides a key that looks like a token', () => {
     const key = FAKE_GITHUB_TOKEN;
-    expect(findTokenPaths({ cells: { [key]: 'sk-ant-api03-abcdefgh' } })).toEqual(['cells.<key>']);
+    expect(findTokenPaths({ workers: { [key]: 'sk-ant-api03-abcdefgh' } })).toEqual(['workers.<key>']);
   });
 
   describe('the address of a node link', () => {

@@ -472,7 +472,7 @@ describe('doctor: proxy variable in the shell', () => {
 });
 
 describe('doctor: proxies', () => {
-  const withProxies = (onFail: 'stop' | 'direct', cells: FactoryConfig['core']['cells'] = {}): FactoryConfig => {
+  const withProxies = (onFail: 'stop' | 'direct', workers: FactoryConfig['core']['workers'] = {}): FactoryConfig => {
     const sample = sampleConfig();
     return {
       ...sample,
@@ -483,7 +483,7 @@ describe('doctor: proxies', () => {
           { id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: onFail },
           { id: 'spare', base_url: 'http://127.0.0.1:9999', health: '/health', on_fail: 'stop' },
         ],
-        cells,
+        workers,
       },
     };
   };
@@ -522,9 +522,9 @@ describe('doctor: proxies', () => {
     expect(result?.text).toContain('on_fail is direct');
   });
 
-  it('checks a proxy that only a cell uses, and skips a proxy that nothing uses', async () => {
+  it('checks a proxy that only a worker uses, and skips a proxy that nothing uses', async () => {
     const deps = makeDeps({ fetch: () => ok({ status: 200 }) });
-    const used = withProxies('stop', { 'web-cell': { proxy: 'spare' } });
+    const used = withProxies('stop', { 'web-search': { proxy: 'spare' } });
     const config = { ...used, core: { ...used.core, session: { ...sampleConfig().core.session } } };
     const results = await checkProxies(deps, await stateOf(deps, config), MAY);
     expect(results.map((result) => result.id)).toEqual(['proxy:spare']);
@@ -1095,7 +1095,7 @@ describe('doctor: the children', () => {
     expect(result.text).toContain('unknown: api (');
   });
 
-  it('fails for a child on layer 1 under a node on layer 1, because cells are layer 0', async () => {
+  it('fails for a child on layer 1 under a node on layer 1, because workers are layer 0', async () => {
     const deps = makeDeps();
     const config = sampleConfig();
     writeConfig(deps, { ...config, core: { ...config.core, children: [{ id: 'web', address: 'file:///w/web-factory' }] } });

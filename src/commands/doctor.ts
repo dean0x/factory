@@ -347,7 +347,7 @@ export const checkProxies = async (
 ): Promise<readonly CheckResult[]> => {
   if (state.kind !== 'valid') return [notChecked(checkIds.proxy, `${files.config} is not valid`)];
   const { core } = state.value;
-  const inUse = new Set([core.session.proxy, ...Object.values(core.cells).map((cell) => cell.proxy)]);
+  const inUse = new Set([core.session.proxy, ...Object.values(core.workers).map((worker) => worker.proxy)]);
   inUse.delete(values.noProxy);
   const used = core.proxies.filter((proxy) => inUse.has(proxy.id));
   if (used.length === 0) return [check(checkIds.proxy, 'ok', 'no proxy is in use')];

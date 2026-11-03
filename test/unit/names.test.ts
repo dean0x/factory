@@ -79,7 +79,7 @@ const EXACT_NAMES = new Set([
     keys.owner,
     keys.session,
     keys.proxy,
-    keys.cell,
+    keys.worker,
     keys.limits,
     keys.project,
     keys.gate,
@@ -120,7 +120,7 @@ const TEXT_NAMES = [
   tmuxNames.optionHome,
   tmuxNames.optionNode,
   tmuxNames.optionSlot,
-  tmuxNames.optionCell,
+  tmuxNames.optionWorker,
   marker.prefix,
   address.scheme,
 ];
@@ -188,6 +188,20 @@ const duplicatesOf = (values: readonly string[]): string[] => [
   ...new Set(values.filter((value, index) => values.indexOf(value) !== index)),
 ];
 
+/** Every string value of a tree of names, at any depth. */
+const stringValuesOf = (tree: Readonly<Record<string, unknown>>): string[] =>
+  Object.values(tree).flatMap((value) => {
+    if (typeof value === 'string') return [value];
+    return typeof value === 'object' && value !== null ? stringValuesOf(value as Record<string, unknown>) : [];
+  });
+
+/** Every property name of a tree of names, at any depth. */
+const propertyNamesOf = (tree: Readonly<Record<string, unknown>>): string[] =>
+  Object.entries(tree).flatMap(([name, value]) => [
+    name,
+    ...(typeof value === 'object' && value !== null ? propertyNamesOf(value as Record<string, unknown>) : []),
+  ]);
+
 describe('the role words and the terms', () => {
   /** The words that decision D-59 replaced in the roles and the terms. */
   const REPLACED_WORDS = ['cell', 'andon', 'staging', 'inspect', 'ship'];
@@ -201,6 +215,24 @@ describe('the role words and the terms', () => {
       ...Object.values(templateValues),
     ];
     expect(userValues.filter((value) => replacedWord.test(value))).toEqual([]);
+  });
+
+  it('holds no replaced word in the config keys and the tmux names, at any depth', () => {
+    const configNames = [...stringValuesOf(keys), ...propertyNamesOf(keys)];
+    expect(configNames.filter((value) => replacedWord.test(value))).toEqual([]);
+    expect(stringValuesOf(tmuxNames).filter((value) => replacedWord.test(value))).toEqual([]);
+    expect(Object.keys(tmuxNames).filter((name) => replacedWord.test(name.replace(/([a-z])([A-Z])/g, '$1 $2')))).toEqual([]);
+  });
+
+  it('reads the values and the names of a nested tree of names', () => {
+    const tree = { root: { cells: 'cells', other: 'plain' }, cell: { proxy: 'proxy' } };
+    expect(stringValuesOf(tree)).toEqual(['cells', 'plain', 'proxy']);
+    expect(propertyNamesOf(tree)).toEqual(['root', 'cells', 'other', 'cell', 'proxy']);
+  });
+
+  it('names the config key and the override group for the worker', () => {
+    expect(keys.root.workers).toBe('workers');
+    expect(keys.worker).toEqual({ proxy: 'proxy' });
   });
 
   it('finds a replaced word in a value, also as a plural, and leaves a longer word alone', () => {
@@ -299,21 +331,24 @@ describe('words of the old names', () => {
 });
 
 describe('the pane options of tmux', () => {
-  /** The pane option of FAC-M1 for a work track. The option of v2 is `@cell`. */
-  const OLD_PANE_OPTION = '@lane';
+  /** The pane option of FAC-M1 for a work track, and the pane option of the first schema 2 draft. */
+  const OLD_PANE_OPTIONS = ['@lane', '@cell'];
 
-  it('names the pane options, the cell option among them', () => {
-    expect(tmuxNames.optionCell).toBe('@cell');
+  it('names the pane options, the worker option among them', () => {
+    expect(tmuxNames.optionWorker).toBe('@worker');
     expect(tmuxNames.optionNode).toBe('@node');
     expect(tmuxNames.optionSlot).toBe('@slot');
     expect(tmuxNames.optionHome).toBe('@factory_home');
   });
 
-  it('keeps the old pane option out of every file of src, names.ts and comments included', () => {
+  it('keeps every old pane option out of every file of src, names.ts and comments included', () => {
     const files = allSourceFiles(SRC);
     expect(files).toContain(NAMES_FILE);
-    const found = files.filter((path) => readFileSync(path, 'utf8').includes(OLD_PANE_OPTION));
-    expect(found.map((path) => relative(SRC, path))).toEqual([]);
+    const found = files.flatMap((path) => {
+      const text = readFileSync(path, 'utf8');
+      return OLD_PANE_OPTIONS.filter((option) => text.includes(option)).map((option) => `${relative(SRC, path)}: ${option}`);
+    });
+    expect(found).toEqual([]);
   });
 });
 

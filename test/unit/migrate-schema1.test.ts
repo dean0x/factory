@@ -44,12 +44,12 @@ describe('config migration, schema 1 to 2', () => {
     expect(parsed.success && parsed.data).toEqual(sampleConfig());
   });
 
-  it('turns the role into layer 1 and renames lanes to cells', () => {
+  it('turns the role into layer 1 and renames lanes to workers', () => {
     const doc = schema1Doc();
-    doc.lanes = { 'cell-a': { proxy: 'none' } };
+    doc.lanes = { 'worker-a': { proxy: 'none' } };
     const migrated = valueOf(migrateConfig(doc));
     expect(migrated.node).toEqual({ id: 'demo', layer: 1 });
-    expect(migrated.cells).toEqual({ 'cell-a': { proxy: 'none' } });
+    expect(migrated.workers).toEqual({ 'worker-a': { proxy: 'none' } });
     expect(migrated).not.toHaveProperty('lanes');
   });
 
@@ -114,7 +114,7 @@ describe('config migration, schema 1 to 2', () => {
 
   it('does not change its input', () => {
     const doc = schema1Doc();
-    doc.lanes = { 'cell-a': { proxy: 'none' } };
+    doc.lanes = { 'worker-a': { proxy: 'none' } };
     const before = JSON.parse(JSON.stringify(doc)) as unknown;
     migrateConfig(doc);
     expect(doc).toEqual(before);
@@ -126,7 +126,7 @@ describe('config migration, schema 1 to 2', () => {
     expect(messageOf(migrateConfig(doc))).toContain('node.role');
   });
 
-  it.each(['cells', 'tracker', 'approval', 'recipe', 'parent'])('refuses a schema 1 document that holds %s', (key) => {
+  it.each(['workers', 'tracker', 'approval', 'recipe', 'parent'])('refuses a schema 1 document that holds %s', (key) => {
     const doc = schema1Doc();
     doc[key] = {};
     expect(messageOf(migrateConfig(doc))).toContain(key);
@@ -182,7 +182,7 @@ node:
 
 # Lanes note.
 lanes:
-  cell-a: { proxy: none }
+  worker-a: { proxy: none }
 
 # Projects note.
 projects:
@@ -216,13 +216,13 @@ projects:
     expect(written.ok && Object.keys(written.value as object)).toEqual([
       'schema',
       'node',
-      'cells',
+      'workers',
       'recipe',
       'tracker',
       'approval',
       'parent',
     ]);
-    expect(migrated.indexOf('# Lanes note.')).toBeLessThan(migrated.indexOf('cells:'));
+    expect(migrated.indexOf('# Lanes note.')).toBeLessThan(migrated.indexOf('workers:'));
     expect(migrated.indexOf('# Projects note.')).toBeLessThan(migrated.indexOf('recipe:'));
   });
 

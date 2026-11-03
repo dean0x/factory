@@ -163,8 +163,8 @@ export const tmuxNames = {
   optionNode: '@node',
   /** The pane option that marks the slot of the view window. */
   optionSlot: '@slot',
-  /** The pane option that holds the cell id, on a bench pane. */
-  optionCell: '@cell',
+  /** The pane option that holds the worker id, on a bench pane. */
+  optionWorker: '@worker',
   slotBoard: 'board',
 } as const;
 
@@ -176,7 +176,7 @@ export const keys = {
     owner: 'owner',
     session: 'session',
     proxies: 'proxies',
-    cells: 'cells',
+    workers: 'workers',
     limits: 'limits',
     approval: 'approval',
     tracker: 'tracker',
@@ -188,7 +188,7 @@ export const keys = {
   owner: { display: 'display', github: 'github', prefix: 'prefix' },
   session: { permissionMode: 'permission_mode', effort: 'effort', model: 'model', proxy: 'proxy' },
   proxy: { id: 'id', baseUrl: 'base_url', health: 'health', onFail: 'on_fail' },
-  cell: { proxy: 'proxy' },
+  worker: { proxy: 'proxy' },
   limits: {
     memoryFreeMinPct: 'memory_free_min_pct',
     diskFreeMinGb: 'disk_free_min_gb',

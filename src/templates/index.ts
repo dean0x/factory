@@ -1,4 +1,4 @@
-import { CELL_LAYER, COORDINATOR_LAYER } from '../config/schema.js';
+import { COORDINATOR_LAYER, WORKER_LAYER } from '../config/schema.js';
 import type { BlockRename } from '../migrate/files.js';
 import { blockNames } from '../names.js';
 import { homeRoleBlockNames, roleForLayer } from '../recipes/software/recipe.js';
@@ -23,7 +23,7 @@ const safety: BlockTemplate = {
  */
 export const blockTemplatesFor = (layer: number): readonly BlockTemplate[] => {
   const role = roleForLayer(layer);
-  const worker = layer === COORDINATOR_LAYER ? roleForLayer(CELL_LAYER) : null;
+  const worker = layer === COORDINATOR_LAYER ? roleForLayer(WORKER_LAYER) : null;
   return [role, safety, worker].filter((template): template is BlockTemplate => template !== null);
 };
 

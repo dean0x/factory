@@ -10,7 +10,7 @@ export const sampleConfig = (): FactoryConfig => ({
     },
     session: { permission_mode: 'auto', effort: 'high', model: 'default', proxy: 'none' },
     proxies: [],
-    cells: {},
+    workers: {},
     limits: {
       memory_free_min_pct: 20,
       disk_free_min_gb: 20,

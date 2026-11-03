@@ -8,10 +8,10 @@ import { githubLogin, slug, uniqueIds } from './primitives.js';
 
 export const CONFIG_SCHEMA_VERSION = 2;
 
-/** A cell is layer 0 and has no node home. */
-export const CELL_LAYER = 0;
+/** A worker is layer 0 and has no node home. */
+export const WORKER_LAYER = 0;
 
-/** The layer of the node that manages cells. */
+/** The layer of the node that manages workers. */
 export const COORDINATOR_LAYER = 1;
 
 /** The layer of the node that manages coordinators. It is the highest layer that has a role template. */
@@ -20,7 +20,7 @@ export const MANAGER_LAYER = 2;
 /** The highest layer of a node. */
 export const MAX_LAYER = 16;
 
-const MAX_CELLS = 200;
+const MAX_WORKERS = 200;
 const MAX_CHILDREN = 200;
 const MAX_TRACKER_TEXT = 200;
 const MAX_INTERVAL_DIGITS = 6;
@@ -138,9 +138,9 @@ const coreSchema = z
     [keys.root.owner]: ownerSchema,
     [keys.root.session]: sessionSchema,
     [keys.root.proxies]: z.array(proxySchema).max(20).default([]),
-    [keys.root.cells]: z
-      .record(slug, z.strictObject({ [keys.cell.proxy]: slug }))
-      .refine((cells) => Object.keys(cells).length <= MAX_CELLS, { error: 'has too many entries' })
+    [keys.root.workers]: z
+      .record(slug, z.strictObject({ [keys.worker.proxy]: slug }))
+      .refine((workers) => Object.keys(workers).length <= MAX_WORKERS, { error: 'has too many entries' })
       .default({}),
     [keys.root.limits]: limitsSchema,
     [keys.root.approval]: approvalSchema,
@@ -173,8 +173,8 @@ const coreSchema = z
       }
     };
     checkRef(config.session.proxy, [keys.root.session, keys.session.proxy]);
-    for (const [cell, override] of Object.entries(config.cells)) {
-      checkRef(override.proxy, [keys.root.cells, cell, keys.cell.proxy]);
+    for (const [worker, override] of Object.entries(config.workers)) {
+      checkRef(override.proxy, [keys.root.workers, worker, keys.worker.proxy]);
     }
   });
 

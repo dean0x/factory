@@ -242,14 +242,14 @@ describe('upgrade: managed blocks', () => {
   it('leaves the run-time folders out of the backup, because upgrade never writes into them', async () => {
     const { deps } = await makeNode();
     deps.seed(`${HOME}/.factory/state/run.json`, '{}');
-    deps.seed(`${HOME}/.factory/locks/cell.lock`, '1');
+    deps.seed(`${HOME}/.factory/locks/worker.lock`, '1');
     success(await upgrade(deps, newer));
     const saved = [...deps.files.keys()].filter((path) => path.startsWith(`${BACKUP}/`));
     expect(saved).toContain(`${BACKUP}/.factory/node.json`);
     expect(saved.some((path) => path.startsWith(`${BACKUP}/.factory/state/`))).toBe(false);
     expect(saved.some((path) => path.startsWith(`${BACKUP}/.factory/locks/`))).toBe(false);
     expect(text(deps, `${HOME}/.factory/state/run.json`)).toBe('{}');
-    expect(text(deps, `${HOME}/.factory/locks/cell.lock`)).toBe('1');
+    expect(text(deps, `${HOME}/.factory/locks/worker.lock`)).toBe('1');
   });
 
   it('updates a block in the worker file', async () => {
@@ -1297,7 +1297,7 @@ describe('upgrade: a node of schema 1', () => {
       'schema',
       'node',
       'limits',
-      'cells',
+      'workers',
       'owner',
       'session',
       'proxies',

@@ -265,7 +265,7 @@ const settingsOf = (checked: CheckedValues, github: string | undefined, projects
     [keys.session.proxy]: values.noProxy,
   },
   [keys.root.proxies]: [],
-  [keys.root.cells]: {},
+  [keys.root.workers]: {},
   [keys.root.limits]: DEFAULT_LIMITS,
   [keys.root.approval]: { [keys.approval.land]: values.landModes[0] },
   [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },

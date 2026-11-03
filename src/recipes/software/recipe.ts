@@ -1,4 +1,4 @@
-import { CELL_LAYER, COORDINATOR_LAYER, MANAGER_LAYER } from '../../config/schema.js';
+import { COORDINATOR_LAYER, MANAGER_LAYER, WORKER_LAYER } from '../../config/schema.js';
 import { blockNames } from '../../names.js';
 import { fillTemplate } from '../../templates/fill.js';
 import type { BlockTemplate } from '../../templates/types.js';
@@ -33,7 +33,7 @@ const manager: BlockTemplate = {
  * not fit another layer. This is the only lookup of a role. The caller passes a layer that the config checked.
  */
 export const roleForLayer = (layer: number): BlockTemplate | null => {
-  if (layer <= CELL_LAYER) return worker;
+  if (layer <= WORKER_LAYER) return worker;
   if (layer === COORDINATOR_LAYER) return coordinator;
   return layer === MANAGER_LAYER ? manager : null;
 };

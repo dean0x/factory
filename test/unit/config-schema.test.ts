@@ -41,22 +41,22 @@ describe('config schema 2', () => {
 
   it('fills the defaults of the optional keys', () => {
     const raw = sampleObject();
-    for (const key of ['proxies', 'cells', 'children', 'parent', 'approval']) delete raw[key];
+    for (const key of ['proxies', 'workers', 'children', 'parent', 'approval']) delete raw[key];
     const parsed = configSchema.safeParse(raw);
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.core.proxies).toEqual([]);
-    expect(parsed.data.core.cells).toEqual({});
+    expect(parsed.data.core.workers).toEqual({});
     expect(parsed.data.core.children).toEqual([]);
     expect(parsed.data.core.parent).toBeNull();
     expect(parsed.data.core.approval).toEqual({ land: 'each' });
   });
 
-  it('accepts a full config with proxies, cells, links, a hosted tracker and a numeric load', () => {
+  it('accepts a full config with proxies, workers, links, a hosted tracker and a numeric load', () => {
     const message = check((raw) => {
       raw['proxies'] = [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health' }];
       raw['session'].proxy = 'local';
-      raw['cells'] = { 'web-cell': { proxy: 'none' } };
+      raw['workers'] = { 'web-search': { proxy: 'none' } };
       raw['limits'].load_max = 6;
       raw['parent'] = { id: 'acme', address: 'file:///srv/nodes/acme-factory' };
       raw['children'] = [{ id: 'web', address: 'file:///srv/nodes/web-factory' }];
@@ -94,7 +94,7 @@ describe('config schema 2', () => {
       expect(check(mutate)).toContain(expected);
     });
 
-    it('rejects an unknown key in a proxy, a cell, a child and the parent', () => {
+    it('rejects an unknown key in a proxy, a worker, a child and the parent', () => {
       expect(
         check((raw) => {
           raw['proxies'] = [{ id: 'p', base_url: 'http://127.0.0.1:1', health: '/h', key: 'x' }];
@@ -102,9 +102,9 @@ describe('config schema 2', () => {
       ).toContain('proxies.0.key: unknown key');
       expect(
         check((raw) => {
-          raw['cells'] = { l: { proxy: 'none', extra: true } };
+          raw['workers'] = { l: { proxy: 'none', extra: true } };
         }),
-      ).toContain('cells.l.extra: unknown key');
+      ).toContain('workers.l.extra: unknown key');
       expect(
         check((raw) => {
           raw['children'] = [{ id: 'c', address: 'file:///a', extra: 1 }];
@@ -345,8 +345,8 @@ describe('config schema 2', () => {
       expect(check((raw) => (raw['session'].proxy = 'ghost'))).toContain('session.proxy: names a proxy');
     });
 
-    it('rejects a cell proxy that is not defined', () => {
-      expect(check((raw) => (raw['cells'] = { l: { proxy: 'ghost' } }))).toContain('cells.l.proxy: names a proxy');
+    it('rejects a worker proxy that is not defined', () => {
+      expect(check((raw) => (raw['workers'] = { l: { proxy: 'ghost' } }))).toContain('workers.l.proxy: names a proxy');
     });
 
     it('reserves the id none', () => {

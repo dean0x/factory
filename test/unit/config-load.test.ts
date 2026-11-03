@@ -168,11 +168,11 @@ describe('inspectConfig and loadConfig', () => {
 
   it('hides a key that looks like a token in the error', async () => {
     const unknownKey = await loadConfig(withFile(`${renderConfig(sampleConfig())}${FAKE_GITHUB_TOKEN}: 1\n`), HOME);
-    const cell = await loadConfig(
-      withFile(renderConfig(withCore({ cells: { [FAKE_GITHUB_TOKEN]: { proxy: 'none' } } }))),
+    const worker = await loadConfig(
+      withFile(renderConfig(withCore({ workers: { [FAKE_GITHUB_TOKEN]: { proxy: 'none' } } }))),
       HOME,
     );
-    for (const loaded of [unknownKey, cell]) {
+    for (const loaded of [unknownKey, worker]) {
       expect(loaded.ok).toBe(false);
       if (!loaded.ok) {
         expect(loaded.error.message).toContain('factory.yaml is invalid');
@@ -206,7 +206,7 @@ describe('renderConfig', () => {
         owner: { ...sample.core.owner, display: 'Name: "quoted" # not a comment', github: 'some-login' },
         session: { permission_mode: 'auto', effort: 'max', model: 'a model', proxy: 'local' },
         proxies: [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: 'direct' }],
-        cells: { 'web-cell': { proxy: 'none' }, no: { proxy: 'local' } },
+        workers: { 'web-search': { proxy: 'none' }, no: { proxy: 'local' } },
         limits: { ...sample.core.limits, load_max: 7.5 },
         approval: { land: 'approved-work' },
         tracker: { kind: 'jira', items: 'ACME', decisions: 'ACME-DEC', watch_interval: '2h' },
@@ -251,7 +251,7 @@ describe('renderConfig', () => {
     expect(text).toContain('# factory.yaml: the configuration of this node.');
     expect(text).toContain('schema: 2');
     expect(text).toContain('proxies: []');
-    expect(text).toContain('cells: {}');
+    expect(text).toContain('workers: {}');
     expect(text).toContain('parent: null');
     expect(text).toContain('children: []');
     expect(text.endsWith('\n')).toBe(true);
@@ -259,7 +259,7 @@ describe('renderConfig', () => {
 
   it('writes the schema 2 sections in the order of the design', () => {
     const text = renderConfig(sampleConfig());
-    const order = ['\nnode:', '\nowner:', '\nsession:', '\nproxies:', '\ncells:', '\nlimits:', '\napproval:', '\ntracker:', '\nrecipe:', '\nparent:', '\nchildren:'];
+    const order = ['\nnode:', '\nowner:', '\nsession:', '\nproxies:', '\nworkers:', '\nlimits:', '\napproval:', '\ntracker:', '\nrecipe:', '\nparent:', '\nchildren:'];
     const positions = order.map((key) => text.indexOf(key));
     expect(positions.every((position) => position > 0)).toBe(true);
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
