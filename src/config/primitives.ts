@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { z } from 'zod';
 
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -11,6 +12,9 @@ export const isGithubLogin = (text: string): boolean => GITHUB_LOGIN_PATTERN.tes
 export const isSlug = (text: string): boolean => SLUG_PATTERN.test(text);
 
 export const isBranchName = (text: string): boolean => BRANCH_PATTERN.test(text);
+
+/** A folder path without its `.` segments and its slashes at the end, so two ways to write one path give one key. */
+export const folderKey = (path: string): string => posix.normalize(path).replace(/\/+$/, '');
 
 /** Make a slug from free text, or null when nothing is left. */
 export const slugify = (text: string): string | null => {

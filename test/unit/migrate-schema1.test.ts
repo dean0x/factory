@@ -8,7 +8,7 @@ import { stateMigrations } from '../../src/migrate/state.js';
 import { nodeStateSchema } from '../../src/state/schema.js';
 import { fileTemplates } from '../../src/templates/index.js';
 import { parseMixed, sampleConfig } from '../helpers/sample-config.js';
-import { OLD_ROADMAPS_README, schema1Doc } from '../helpers/schema1.js';
+import { OLD_ROADMAPS_README, schema1Doc, schema1DocWithProject, schema1Project } from '../helpers/schema1.js';
 
 const migrateConfig = (raw: unknown) => {
   const steps = planMigrations(1, 2, configMigrations);
@@ -37,10 +37,11 @@ describe('config migration, schema 1 to 2', () => {
     expect(configMigrations.map((step) => [step.from, step.to])).toEqual([[1, 2]]);
   });
 
-  it('gives a document that the schema 2 parser reads as the sample config', () => {
+  it('gives a document that the schema 2 parser reads as the sample config with no project', () => {
     const migrated = valueOf(migrateConfig(schema1Doc()));
     const parsed = parseMixed(migrated);
-    expect(parsed.success && parsed.data).toEqual(sampleConfig());
+    const sample = sampleConfig();
+    expect(parsed.success && parsed.data).toEqual({ ...sample, recipe: { ...sample.recipe, projects: [] } });
   });
 
   it('turns the role into layer 1 and renames lanes to workers', () => {
@@ -52,22 +53,55 @@ describe('config migration, schema 1 to 2', () => {
     expect(migrated).not.toHaveProperty('lanes');
   });
 
-  it('moves the projects into the software recipe and drops the pack of each project', () => {
+  it('moves the empty project list into the software recipe', () => {
     const migrated = valueOf(migrateConfig(schema1Doc()));
-    expect(migrated.recipe).toMatchObject({ id: 'software', variant: 'plain' });
-    expect(migrated.recipe.projects).toHaveLength(1);
-    expect(migrated.recipe.projects[0]).not.toHaveProperty('pack');
-    expect(migrated.recipe.projects[0]).not.toHaveProperty('variant');
+    expect(migrated.recipe).toEqual({ id: 'software', variant: 'plain', projects: [] });
     expect(migrated).not.toHaveProperty('projects');
   });
 
-  it('keeps a project variant only when the pack differs from the recipe variant', () => {
+  it('upgrades a node that has no projects key at all', () => {
     const doc = schema1Doc();
-    doc.projects[0].pack = 'other';
+    delete doc.projects;
     const migrated = valueOf(migrateConfig(doc));
-    expect(migrated.recipe.projects[0].variant).toBe('other');
-    const parsed = parseMixed(migrated);
-    expect(parsed.success).toBe(false);
+    expect(migrated.recipe).toEqual({ id: 'software', variant: 'plain', projects: [] });
+    expect(parseMixed(migrated).success).toBe(true);
+  });
+
+  describe('a node that lists a project (decision D-3 B, TP-62)', () => {
+    it('stops with a failure, says to make the node again with init, and gives no value', () => {
+      const result = migrateConfig(schema1DocWithProject());
+      expect(result.ok).toBe(false);
+      const message = messageOf(result);
+      expect(message).toContain('lists a project');
+      expect(message).toContain('has no clone URL');
+      expect(message).toContain('make the node again');
+      expect(message).toContain('factory init');
+    });
+
+    it('stops for any number of projects, and does not repeat a path or an id', () => {
+      const doc = schema1Doc();
+      doc.projects = [
+        { ...schema1Project(), id: 'secret-id', path: '../secret-path' },
+        { ...schema1Project(), id: 'other', path: '../other' },
+      ];
+      const message = messageOf(migrateConfig(doc));
+      expect(message).toContain('lists a project');
+      expect(message).not.toContain('secret-id');
+      expect(message).not.toContain('secret-path');
+    });
+
+    it('stops before the other checks of the projects, so a project that is not a mapping stops it too', () => {
+      const doc = schema1Doc();
+      doc.projects = ['web'];
+      expect(messageOf(migrateConfig(doc))).toContain('lists a project');
+    });
+
+    it('does not change its input', () => {
+      const doc = schema1DocWithProject();
+      const before = JSON.parse(JSON.stringify(doc)) as unknown;
+      migrateConfig(doc);
+      expect(doc).toEqual(before);
+    });
   });
 
   it('adds a local tracker and no parent, and no approval: the local file names the modes', () => {

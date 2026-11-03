@@ -111,6 +111,20 @@ describe('git: clone', () => {
     expect(deps.calls[0]?.timeoutMs).toBe(300_000);
   });
 
+  it('passes no option of git before the double hyphen, and never a submodule option', async () => {
+    const { log } = await clone();
+    const [args] = log.clones();
+    expect(args?.slice(0, 2)).toEqual(['clone', '--']);
+    expect(args?.filter((argument) => /submodule|recurse|recursive/i.test(argument))).toEqual([]);
+    expect(args).toHaveLength(4);
+  });
+
+  it('runs git with no shell: the program is git and the URL is one argument', async () => {
+    const { deps } = await clone();
+    expect(deps.calls.map((call) => call.command)).toEqual(['git']);
+    expect(deps.calls[0]?.args).toContain('https://host/acme/api.git');
+  });
+
   it('fails with the exit code and the last line of the git message', async () => {
     const { result } = await clone({ cloneExit: 128 });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });

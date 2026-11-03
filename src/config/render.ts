@@ -49,6 +49,7 @@ const gateLines = (depth: number, checks: readonly string[]): string[] =>
 /** The lines of one project. `depth` is the depth of the list item. */
 const projectLines = (project: ProjectConfig, depth: number): string[] => [
   itemEntry(depth, keys.project.id, scalar(project.id)),
+  ...(project.url === undefined ? [] : [entry(depth + 1, keys.project.url, quoted(project.url))]),
   ...(project.repo === undefined ? [] : [entry(depth + 1, keys.project.repo, quoted(project.repo))]),
   entry(depth + 1, keys.project.path, quoted(project.path)),
   entry(depth + 1, keys.project.defaultBranch, quoted(project.default_branch)),

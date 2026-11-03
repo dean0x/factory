@@ -189,7 +189,7 @@ describe('start:a new session', () => {
 
   it('adds one --add-dir for each project, with the absolute path', async () => {
     const config = sampleConfig();
-    const second = { ...config.recipe.projects[0]!, id: 'api', path: '../api' };
+    const second = { ...config.recipe.projects[0]!, id: 'api', url: 'https://github.com/acme/api', path: '../api' };
     const { deps, tmux } = make({ config: { ...config, recipe: { ...config.recipe, projects: [...config.recipe.projects, second] } } });
     await succeeded(deps);
     const call = tmux.calls.find((candidate) => candidate.args[0] === 'new-session')?.args ?? [];

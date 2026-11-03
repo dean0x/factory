@@ -1,5 +1,6 @@
 import { dirname, join, resolve } from 'node:path';
 import { safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
+import { CLONE_URL_REMEDY, cloneIssueReason, isPlainRepoName, parseCloneUrl } from '../core/clone-url.js';
 import type { Deps } from '../core/deps.js';
 import { gitClone, isWorkTreeRoot, originUrlOf, withoutUserinfo } from '../core/git.js';
 import { missingFolders } from '../core/paths.js';
@@ -7,24 +8,6 @@ import { err, ok } from '../core/result.js';
 import { flags, flagText, program, roles } from '../names.js';
 
 export const MAX_PROJECTS = 100;
-const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const USER = '[A-Za-z0-9_][A-Za-z0-9._-]*';
-const HOST = '[A-Za-z0-9][A-Za-z0-9.-]*';
-const URL_PATH = '[A-Za-z0-9._~%+/-]+';
-const HTTPS_URL = new RegExp(`^https://(?:${USER}@)?${HOST}(?::\\d{1,5})?/${URL_PATH}$`);
-const SSH_URL = new RegExp(`^ssh://(?:${USER}@)?${HOST}(?::\\d{1,5})?/${URL_PATH}$`);
-const SCP_URL = new RegExp(`^${USER}@${HOST}:${URL_PATH}$`);
-const OTHER_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
-/** A value with a colon before its first @ and no slash before it, such as user:secret@host:path. It is no path. */
-const COLON_IN_USER = /^[^\s/@:]+:[^\s/@]*@/;
-const GIT_SUFFIX = '.git';
-/** An https URL with a userinfo part. The other forms hold no credentials: ssh uses a key, never a URL secret. */
-const HTTPS_USERINFO = /^https:\/\/[^\s/]*@/;
-
-/** The warning for a project URL with credentials. It names neither the user nor the token. */
-export const URL_CREDENTIALS_WARNING =
-  'A project URL holds credentials. Git keeps them in the file .git/config of the clone. ' +
-  'Use "gh auth login" or an SSH key instead.';
 
 export interface RepoUrl {
   readonly url: string;
@@ -40,30 +23,27 @@ export interface PlannedClone extends RepoUrl {
 }
 
 /**
- * Read a value of the project flag as a repo URL. The accepted forms are https://, ssh:// and user@host:path.
- * The result is null when the value is a path. A form with a hostname or a user name that starts with a hyphen
- * is not accepted, so a URL can never act as an option of git or ssh. A value with a colon in the user part is
- * not accepted either, and the error does not repeat the value.
+ * Read a value of the project flag as a repo URL. The accepted forms are https://, ssh://, user@host:path and a file
+ * URL. The result is null when the value is a path of this machine. The rules of the clone URL decide: a user name in
+ * an https URL, a password or a token in any form, a scheme that is not allowed and a hyphen at the start are refused
+ * with a usage error before any clone, and the error does not repeat the value.
  */
 export const parseProjectUrl = (argument: string): CliResult<RepoUrl | null> => {
-  const accepted = HTTPS_URL.test(argument) || SSH_URL.test(argument) || SCP_URL.test(argument);
-  if (!accepted) {
-    return OTHER_SCHEME.test(argument) || COLON_IN_USER.test(argument)
-      ? usageError(
-          `${flagText(flags.project)}: this URL form is not accepted`,
-          'Use a URL that starts with https:// or ssh://, or the form user@host:path.',
-        )
-      : ok(null);
+  const parsed = parseCloneUrl(argument);
+  if (!parsed.ok) {
+    return usageError(
+      `${flagText(flags.project)}: ${cloneIssueReason(parsed.error)}`,
+      `${CLONE_URL_REMEDY} Then run the same command again.`,
+    );
   }
-  const last = argument.split(/[/:]/).filter((part) => part !== '').at(-1) ?? '';
-  const name = last.endsWith(GIT_SUFFIX) ? last.slice(0, -GIT_SUFFIX.length) : last;
-  if (!NAME_PATTERN.test(name) || name.includes('..')) {
+  if (parsed.value.kind === 'local') return ok(null);
+  if (!isPlainRepoName(parsed.value.name)) {
     return usageError(
       `${flagText(flags.project)}: the repo name in the URL is not a plain name`,
       'A repo name has letters, digits, dot, hyphen and underscore, and starts with a letter or a digit.',
     );
   }
-  return ok({ url: argument, name });
+  return ok({ url: parsed.value.url, name: parsed.value.name });
 };
 
 /** True when `target` is a work tree whose origin is this URL. A target that exists in any other way is refused. */
@@ -88,8 +68,6 @@ export interface ProjectPlan {
   /** The value of each project flag as a path: a URL is replaced by the folder of its clone. */
   readonly paths: readonly string[];
   readonly clones: readonly PlannedClone[];
-  /** Things that a person should know before the clones run. */
-  readonly warnings: readonly string[];
 }
 
 /**
@@ -125,8 +103,7 @@ export const planProjects = async (
     clones.push({ ...parsed.value, target, present: present.value });
     paths.push(target);
   }
-  const warnings = clones.some((clone) => HTTPS_USERINFO.test(clone.url)) ? [URL_CREDENTIALS_WARNING] : [];
-  return ok({ paths, clones, warnings });
+  return ok({ paths, clones });
 };
 
 /** The paths that a removal step removed, and the paths that it could not remove, each with its reason. */

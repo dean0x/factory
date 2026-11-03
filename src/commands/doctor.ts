@@ -5,6 +5,7 @@ import type { CommandOutput, OutLine } from '../cli/output.js';
 import { probeChildren } from '../comms/children.js';
 import { fileTransport } from '../comms/transport.js';
 import { inspectConfig, localFileAccess, wideModeNote } from '../config/load.js';
+import { folderKey } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
@@ -39,6 +40,7 @@ import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
 import { blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
 import { checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
+import { unsharedReasonOf, unsharedWarning } from './project-url.js';
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 
@@ -472,6 +474,28 @@ export const checkProjects = async (
     : check(checkIds.projects, 'fail', `not a git work tree: ${bad.join(', ')}`);
 };
 
+/**
+ * A project with no URL that a host serves works on this machine, but the factory can not be shared with its repo.
+ * This is a warning for each such project, never an error. The fix names the local source when the local file has one.
+ */
+export const checkProjectUrls = (state: DocState<FactoryConfig>): readonly CheckResult[] => {
+  if (state.kind !== 'valid') return [notChecked(checkIds.projectUrls, `${files.config} is not valid`)];
+  const { projects } = state.value.recipe;
+  const sources = new Map(Object.entries(state.value.core.sources).map(([path, source]) => [folderKey(path), source]));
+  const warnings = projects.flatMap((project) => {
+    const reason = unsharedReasonOf(project);
+    const text = reason === null ? null : unsharedWarning(project.id, reason, sources.get(folderKey(project.path)));
+    return text === null ? [] : [check(`${checkIds.projectUrls}:${project.id}`, 'warn', text)];
+  });
+  if (warnings.length > 0) return warnings;
+  const count = projects.length;
+  const text =
+    count === 0
+      ? 'no project is configured'
+      : `${count} ${plural(count, 'project has a URL', 'projects have a URL')} that can be shared`;
+  return [check(checkIds.projectUrls, 'ok', text)];
+};
+
 const runChecks = async (
   deps: Deps,
   located: LocatedHome,
@@ -510,6 +534,7 @@ const runChecks = async (
     tools,
     stateRepo,
     projects,
+    ...checkProjectUrls(config),
   ];
   return { results, localMissing: isLocalFileMissing(config) };
 };

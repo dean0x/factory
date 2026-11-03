@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
 import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
@@ -40,6 +40,56 @@ describe('factory init (built binary)', () => {
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('repo: "acme/web"');
     expect(config).toContain('path: "../web"');
+  });
+
+  it('writes the url of a project from the origin of its repo, and keeps no local path in factory.yaml', async () => {
+    const web = await box.makeProject('web', 'git@github.com:acme/web.git');
+    const result = await box.run(initArgs(['--project', web]));
+    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+    const config = await box.read(join(box.node, 'factory.yaml'));
+    expect(config).toContain('url: "git@github.com:acme/web.git"');
+    expect(config).not.toContain(basename(box.root));
+    expect(await box.read(join(box.node, 'factory.local.yaml'))).toContain('sources: {}');
+  });
+
+  it('writes the origin url of a project without its credentials, and warns', async () => {
+    const web = await box.makeProject('web', 'https://deploy:SECRET-TOKEN@github.com/acme/web.git');
+    const result = await box.run(initArgs(['--project', web]));
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('holds credentials');
+    for (const text of [result.stdout, result.stderr, await box.read(join(box.node, 'factory.yaml'))]) {
+      expect(text).not.toContain('SECRET-TOKEN');
+      expect(text).not.toContain('deploy');
+    }
+    expect(await box.read(join(box.node, 'factory.yaml'))).toContain('url: "https://github.com/acme/web.git"');
+    expect(await box.read(join(box.node, 'factory.local.yaml'))).not.toContain('SECRET-TOKEN');
+  });
+
+  it('warns for a project with no origin, writes no url, and keeps its local source in the local file', async () => {
+    const web = await box.makeProject('web');
+    const result = await box.run(initArgs(['--project', web]));
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('cannot be shared with the repo of the project web');
+    const shared = await box.read(join(box.node, 'factory.yaml'));
+    expect(shared).not.toContain('url:');
+    expect(shared).not.toContain(basename(box.root));
+    const local = await box.read(join(box.node, 'factory.local.yaml'));
+    expect(local).toContain('sources:');
+    expect(local).toContain('"../web"');
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(0);
+    expect(doctor.stdout).toContain('cannot be shared with the repo of the project web');
+  });
+
+  it('exits 2 for a project flag that holds credentials, clones nothing, and never repeats the value', async () => {
+    const result = await box.run(initArgs(['--project', 'https://deploy:SECRET-TOKEN@github.com/acme/web.git']));
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('--project');
+    expect(result.stderr).toContain('Use an https URL with no user name, or an ssh URL.');
+    expect(result.stderr).not.toContain('SECRET-TOKEN');
+    expect(result.stdout).not.toContain('SECRET-TOKEN');
+    expect(existsSync(box.node)).toBe(false);
+    expect(existsSync(join(box.root, 'web'))).toBe(false);
   });
 
   it('writes factory.local.yaml with mode 600 and keeps the personal keys out of factory.yaml', async () => {
@@ -119,8 +169,8 @@ describe('factory init: a workspace folder (built binary)', () => {
   /** `ws/` holds the repos `web` and `api`, and `web-search` as a linked work tree of `web`. */
   const makeWorkspace = async (): Promise<string> => {
     const ws = join(box.root, 'ws');
-    const web = await box.makeProject('ws/web');
-    await box.makeProject('ws/api');
+    const web = await box.makeProject('ws/web', 'https://github.com/acme/web.git');
+    await box.makeProject('ws/api', 'https://github.com/acme/api.git');
     await box.git(web, ['commit', '--allow-empty', '-q', '-m', 'first']);
     const linked = await box.git(web, ['worktree', 'add', '-q', '-b', 'search', join(ws, 'web-search')]);
     expect(linked.code).toBe(0);
@@ -169,7 +219,7 @@ describe('factory init: the home rules (built binary)', () => {
 
   it('makes the node beside the work tree for --yes, with the work tree as the first project', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
-    const api = await box.makeProject('api');
+    const api = await box.makeProject('api', 'https://github.com/acme/api.git');
     const result = await box.run(['init', '--yes', ...ownerArgs, '--project', api], { cwd: web });
     expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
     const home = join(box.root, 'web-factory');

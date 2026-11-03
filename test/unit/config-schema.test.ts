@@ -99,7 +99,7 @@ describe('config schema 2', () => {
       raw['children'] = [{ id: 'web', address: 'file:///srv/nodes/web-factory' }];
       raw['owner'].github = 'some-login';
       raw['approval'] = { [POINT]: 'delegated' };
-      raw['sources'] = { api: '~/code/api' };
+      raw['sources'] = { '../web': '/srv/code/web' };
       raw['session'].statusline = 'my-status --short';
       hosted(raw, { watch_interval: '2h' });
       raw['recipe'].projects[0].repo = 'acme/web';
@@ -318,6 +318,98 @@ describe('config schema 2', () => {
       expect(check((raw) => (raw['recipe'].projects[0].path = 'sub/web'))).toBeNull();
       expect(check((raw) => (raw['recipe'].projects[0].path = 'a/../../web'))).toBeNull();
       expect(check((raw) => (raw['recipe'].projects[0].path = 'a/../../../web'))).toContain('recipe.projects.0.path');
+    });
+  });
+
+  describe('clone URLs (AC-11)', () => {
+    const SECRET = 'ghp_S3cretT0kenValue';
+    const withUrl = (url: unknown): Mutate => (raw) => {
+      raw['recipe'].projects[0].url = url;
+    };
+    /** The sample project, and a second project with its own id, path and URL. */
+    const twoProjects = (first: string, second: string, paths: [string, string] = ['../web', '../api']): Mutate => (raw) => {
+      const [web] = raw['recipe'].projects;
+      raw['recipe'].projects = [
+        { ...web, url: first, path: paths[0] },
+        { ...web, id: 'api', url: second, path: paths[1] },
+      ];
+    };
+
+    it('takes the url as an optional key, and keeps it in the parsed project', () => {
+      expect(check((raw) => delete raw['recipe'].projects[0].url)).toBeNull();
+      const parsed = parsedOf((() => {
+        const raw = sampleObject();
+        raw['recipe'].projects[0].url = 'git@host:acme/web.git';
+        return raw;
+      })());
+      expect(parsed.recipe.projects[0]?.url).toBe('git@host:acme/web.git');
+    });
+
+    it.each([
+      'https://github.com/acme/web.git',
+      'https://host:8443/acme/web',
+      'git@github.com:acme/web.git',
+      'ssh://git@github.com/acme/web.git',
+      'ssh://github.com/acme/web',
+      'file:///srv/acme/web.git',
+      '/srv/acme/web',
+    ])('accepts the url %s', (url) => {
+      expect(check(withUrl(url))).toBeNull();
+    });
+
+    it.each([
+      ['an https URL with a user name', `https://${SECRET}@github.com/acme/web.git`],
+      ['an https URL with a user and a password', `https://user:${SECRET}@github.com/acme/web.git`],
+      ['an ssh URL with a password', `ssh://git:${SECRET}@github.com/acme/web.git`],
+      ['the scp form with a password', `git:${SECRET}@github.com:acme/web.git`],
+      ['a scheme that is not https, ssh or file', `http://github.com/acme/${SECRET}`],
+      ['a git transport helper', `ext::sh -c ${SECRET}`],
+      ['a leading hyphen', `-oProxyCommand=${SECRET}`],
+      ['a relative path', `../${SECRET}`],
+      ['a value that is not a string', 5],
+      ['a value over the length bound', `https://host/${'a'.repeat(2100)}`],
+    ])('refuses %s, names the key and does not repeat the value', (_name, url) => {
+      const message = check(withUrl(url));
+      expect(message).toContain('recipe.projects.0.url:');
+      expect(message).not.toContain(SECRET);
+      expect(message).not.toContain('aaaaaaaaaa');
+    });
+
+    it('tells the person how to fix a URL with credentials or a scheme that is not allowed', () => {
+      expect(check(withUrl(`https://${SECRET}@github.com/acme/web.git`))).toContain('https URL with no user name, or an ssh URL');
+      expect(check(withUrl('http://github.com/acme/web.git'))).toContain('https URL with no user name, or an ssh URL');
+    });
+
+    it('accepts two projects with two repos', () => {
+      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git'))).toBeNull();
+      expect(check(twoProjects('https://host/acme/web.git', 'https://host:8443/acme/web.git'))).toBeNull();
+    });
+
+    it.each([
+      ['the scp form and the https form of one repo', 'git@github.com:acme/web.git', 'https://github.com/acme/web'],
+      ['a different case of the host', 'https://GitHub.com/acme/web.git', 'https://github.com/acme/web/'],
+      ['ssh with a user and ssh with none', 'ssh://git@github.com/acme/web', 'ssh://github.com/acme/web.git'],
+    ])('refuses two entries with one clone URL in normal form: %s', (_name, first, second) => {
+      const message = check(twoProjects(first, second));
+      expect(message).toContain('recipe.projects.1.url:');
+      expect(message).toContain('web');
+      expect(message).not.toContain('github.com');
+    });
+
+    it('refuses two entries with one path, also when one is written another way', () => {
+      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git', ['../web', '../web']))).toContain(
+        'recipe.projects.1.path:',
+      );
+      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git', ['web', './web/']))).toContain(
+        'recipe.projects.1.path:',
+      );
+    });
+
+    it('lets two entries with no url stand, because a project with no url is no refusal', () => {
+      const raw = sampleObject();
+      const { url: _url, ...web } = raw['recipe'].projects[0];
+      raw['recipe'].projects = [web, { ...web, id: 'api', path: '../api' }];
+      expect(parseMixed(raw).success).toBe(true);
     });
   });
 
@@ -592,6 +684,99 @@ describe('the shared file and the local file (design 4.4)', () => {
     const local = localConfigSchema.safeParse({ ...sampleFiles().local, approval: { nope: 'owner' } });
     if (!shared.success || !local.success) throw new Error('the sample must parse');
     expect(mergeConfig(shared.data, local.data).success).toBe(false);
+  });
+
+  describe('sources: the local source of a project with no URL (AC-11)', () => {
+    const TOKEN = 'ghp_S3cretT0kenValue';
+    /** The sample project sits at `web`, so a key of `sources` can name it. */
+    const parsedWith = (sources: unknown, change: Mutate = () => undefined) => {
+      const raw = sampleObject();
+      raw['recipe'].projects[0].path = 'web';
+      change(raw);
+      raw['sources'] = sources;
+      return parseMixed(raw);
+    };
+    const messageWith = (sources: unknown, change?: Mutate): string => {
+      const parsed = parsedWith(sources, change);
+      return parsed.success ? '' : describeIssues(parsed.error);
+    };
+
+    it.each([
+      ['an absolute path', '/srv/code/web'],
+      ['a path with a space', '/srv/my code/web'],
+      ['a file URL', 'file:///srv/code/web.git'],
+    ])('accepts %s for a listed project', (_name, source) => {
+      const parsed = parsedWith({ web: source });
+      expect(parsed.success && parsed.data.core.sources).toEqual({ web: source });
+    });
+
+    it('accepts a key that writes the project path another way', () => {
+      expect(parsedWith({ './web/': '/srv/code/web' }).success).toBe(true);
+    });
+
+    it.each([
+      ['a leading hyphen', '-oProxyCommand=x'],
+      ['user information in an https URL', `https://user:${TOKEN}@host/acme/web`],
+      ['a user name in an https URL', `https://${TOKEN}@host/acme/web`],
+      ['a password in an ssh URL', `ssh://git:${TOKEN}@host/acme/web`],
+      ['a relative path', 'code/web'],
+      ['a path that starts with a tilde', '~/code/web'],
+      ['a .. segment', '/srv/code/../web'],
+      ['a URL of a host', 'https://host/acme/web'],
+      ['the scp form', 'git@host:acme/web'],
+      ['a scheme that is not allowed', 'http://host/acme/web'],
+      ['a value over the length bound', `/${'a'.repeat(4100)}`],
+    ])('refuses %s, names the key and does not repeat the value', (_name, source) => {
+      const message = messageWith({ web: source });
+      expect(message).toContain('sources.web:');
+      expect(message).not.toContain(TOKEN);
+      expect(message).not.toContain('aaaaaaaaaa');
+    });
+
+    it('puts the problem of a value in the local file', () => {
+      const raw = sampleObject();
+      raw['recipe'].projects[0].path = 'web';
+      raw['sources'] = { web: 'code/web' };
+      const parsed = parseMixed(raw);
+      expect(!parsed.success && parsed.file).toBe(files.localConfig);
+    });
+
+    it('refuses a key that names no listed project, and names the key and the local file', () => {
+      const raw = sampleObject();
+      raw['recipe'].projects[0].path = 'web';
+      raw['sources'] = { api: '/srv/code/api' };
+      const parsed = parseMixed(raw);
+      expect(parsed.success).toBe(false);
+      if (parsed.success) return;
+      expect(parsed.file).toBe(files.localConfig);
+      expect(describeIssues(parsed.error)).toContain('sources.api:');
+    });
+
+    it('refuses a map with more entries than the project list has', () => {
+      const message = messageWith({ web: '/srv/code/web', './web': '/srv/other/web' });
+      expect(message).toContain('sources:');
+      expect(message).toContain('more entries than');
+    });
+
+    it('refuses a source when the project list is empty', () => {
+      expect(messageWith({ web: '/srv/code/web' }, (raw) => (raw['recipe'].projects = []))).toContain('sources.web:');
+    });
+
+    it('bounds the map by itself when it holds more than 200 entries', () => {
+      const sources = Object.fromEntries(Array.from({ length: 201 }, (_, index) => [`p${index}`, `/srv/p${index}`]));
+      expect(messageOf(localOf((raw) => (raw['sources'] = sources)))).toContain('sources:');
+    });
+
+    it('accepts one source for each of 100 projects', () => {
+      const projects = Array.from({ length: 100 }, (_, index) => ({
+        ...sampleObject()['recipe'].projects[0],
+        id: `p${index}`,
+        url: `https://github.com/acme/p${index}`,
+        path: `p${index}`,
+      }));
+      const sources = Object.fromEntries(projects.map((project) => [project.path, `/srv/${project.id}`]));
+      expect(messageWith(sources, (raw) => (raw['recipe'].projects = projects))).toBe('');
+    });
   });
 });
 

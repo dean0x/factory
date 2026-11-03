@@ -7,7 +7,10 @@ import { layer1Blocks } from './blocks.js';
 import type { FakeDeps } from './fake-deps.js';
 import { sampleObject } from './sample-config.js';
 
-/** The config of a FAC-M1 node (schema 1), as a person writes it. */
+/**
+ * The config of a FAC-M1 node (schema 1), as a person writes it. It lists no project: a FAC-M1 project sits outside
+ * the new folder and has no clone URL, so the upgrade refuses a node that lists one.
+ */
 export const schema1Doc = (): Record<string, any> => {
   const sample = sampleObject();
   const { statusline: _statusline, ...session } = sample.session;
@@ -19,10 +22,23 @@ export const schema1Doc = (): Record<string, any> => {
     proxies: sample.proxies,
     lanes: {},
     limits: sample.limits,
-    projects: sample.recipe.projects.map((project: Record<string, unknown>) => ({ ...project, pack: 'plain' })),
+    projects: [],
     children: [],
   };
 };
+
+/** The project of a FAC-M1 node: a path beside the node folder, a pack, and no clone URL. */
+export const schema1Project = (): Record<string, any> => ({
+  id: 'web',
+  path: '../web',
+  default_branch: 'main',
+  merge_method: 'squash',
+  pack: 'plain',
+  gate: { checks: [] },
+});
+
+/** The config of a FAC-M1 node that lists one project. */
+export const schema1DocWithProject = (): Record<string, any> => ({ ...schema1Doc(), projects: [schema1Project()] });
 
 const block = (name: string, version: number, body: string): string => {
   const rendered = renderBlock({ name, version, body });

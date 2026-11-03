@@ -448,7 +448,8 @@ A received factory is a trust boundary, so its checks are stops. The lighter rul
 | Warning (exit 0): Claude Code asks its own questions (the login, the trust of a new folder) | The first `start`. factory does not answer them. | Run `claude` once in the factory folder and answer the questions, then run `factory start`. |
 | Error (exit 1): a clone of a project fails, for example with no access | `init` on a received factory. `init` removes only what this run made. | Get access to the repo or fix its `url` in `factory.yaml`, then run `factory init` again in the factory folder. |
 | Usage error (exit 2): no terminal window and no `--yes` | A script runs `init`. `init` prints the proposal. | Run `factory init` in a terminal window, or add `--yes`. |
-| Stop (exit 4): a clone URL with a password, a token or a scheme that is not allowed, or a project path outside the factory folder or reserved | `init`, `project add` | Use an `https` URL with no user name, or an `ssh` URL, and one folder name that is not reserved. Then run the same command again. |
+| Usage error (exit 2): a project flag with a clone URL that has a user name in an `https` URL, a password or a token, a scheme that is not allowed, or a leading hyphen | `init` | Use an `https` URL with no user name, or an `ssh` URL. Then run the same command again. |
+| Stop (exit 4): a project path outside the factory folder or reserved | `init`, `project add` | Use one folder name that is not reserved. Then run the same command again. |
 | Stop (exit 4): the registration check fails | `start`, `doctor`, `node`, `upgrade` in a received or moved factory, or in a clone that holds its own `factory.yaml` | `factory init` in the factory folder. For a clone that holds its own `factory.yaml`: run the command from the factory folder, or name it with `--home`. |
 | Stop (exit 4): a tracked local file, a tracked state path or a tracked path under `coordinator/` | `init`, on every factory | Stop tracking the path (`git rm --cached <path>`), commit, then run `factory init`. |
 | Stop (exit 4): on a received factory, a tracked file that the owner has not accepted | `init`, `start` | Run `factory init` in a terminal window and accept the files. |
@@ -559,7 +560,7 @@ approval:                    # the mode of each approval point of the recipe (§
   merge: owner               # owner (default) | delegated
   release: owner
 sources:                     # the local source of a project with no shareable URL
-  api: ~/code/api
+  ../api: /srv/code/api      # the key is a listed project path; the value is an absolute path or a file URL
 state:                       # FAC-M3
   remote: null               # the private place of the work state of one owner
 parent: null                 # or { id, address }; the address is file:// only (§5.3)
@@ -582,7 +583,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 | `approval` (the mode of each point) | local | Personal. A delegation is owner authority and needs an approval record on each machine. The list of approval points travels with the recipe. Only the mode per person stays local. |
 | `parent`, `children` | local | True for one machine only; each holds an absolute `file://` address. |
 | the board account and its credentials (FAC-M3) | local | A credential. |
-| `sources` | local | True for one machine only. It holds a local path, which never goes into the shared file. |
+| `sources` | local | True for one machine only. It holds a local path, which never goes into the shared file. Each key names a listed project path. Each value is an absolute path or a `file` URL, with no user name, no `..` segment and no leading hyphen. |
 | `state.remote` (FAC-M3) | local | It names the private place of the work state of one owner. |
 
 **The project entry.** `url` is optional: the clone URL (§4.3). `repo` is optional: the GitHub owner and name, for the board. `path` is one folder name, and it is not a reserved name (§4.3). The recipe parses these keys. The core parses the file around them.

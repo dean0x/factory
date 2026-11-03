@@ -416,7 +416,7 @@ describe('renderConfig', () => {
         tracker: { kind: 'jira', items: 'ACME', decisions: 'ACME-DEC', watch_interval: '2h' },
         parent: { id: 'acme', address: 'file:///srv/nodes/acme-factory' },
         children: [{ id: 'web', address: 'file:///srv/nodes/web-factory' }],
-        sources: { api: '~/code/"api"' },
+        sources: { 'sub/web': '/srv/code/"web"' },
       },
       recipe: {
         id: 'software',
@@ -499,7 +499,7 @@ describe('renderConfig', () => {
   it('writes the recipe block with its id, its variant and its projects', () => {
     const text = sample().shared;
     expect(text).toContain('recipe:\n  id: software\n  variant: plain');
-    expect(text).toContain('  projects:\n    - id: web\n      path: "../web"');
+    expect(text).toContain('  projects:\n    - id: web\n      url: "https://github.com/acme/web.git"\n      path: "../web"');
     expect(text).toContain('tracker:\n  kind: local');
   });
 

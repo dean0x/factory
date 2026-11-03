@@ -11,9 +11,10 @@ import {
   schema2,
   values,
 } from '../names.js';
+import { checkLocalSource, describeCloneIssue } from '../core/clone-url.js';
 import { ownerModes, recipes, type ApprovalModes, type RecipeConfig } from '../recipes/index.js';
 import { parseProxyUrl } from '../safety/proxy.js';
-import { githubLogin, slug, uniqueIds } from './primitives.js';
+import { folderKey, githubLogin, slug, uniqueIds } from './primitives.js';
 
 /** The version of the shared file, `factory.yaml`. */
 export const CONFIG_SCHEMA_VERSION = 2;
@@ -42,7 +43,6 @@ const MAX_TRACKER_TEXT = 200;
 const MAX_STATUSLINE_CHARS = 1000;
 const MAX_SOURCES = 200;
 const MAX_SOURCE_KEY_CHARS = 200;
-const MAX_SOURCE_PATH_CHARS = 4096;
 const MAX_INTERVAL_DIGITS = 6;
 const MAX_INTERVAL_MINUTES = 24 * 60;
 const MAX_INTERVAL_HOURS = 24;
@@ -123,15 +123,18 @@ const approvalSchema = z
   .record(slug, z.enum(values.approvalModes, { error: `must be one of: ${values.approvalModes.join(', ')}` }))
   .default({});
 
-/** The local source of a project with no shareable URL, by project path. The path never goes into the shared file. */
+/**
+ * The local source of a project with no shareable URL, by project path: a file URL or an absolute path. The value
+ * follows the clone URL rules, so a value can never act as an option of git. The path never goes into the shared file.
+ * The keys are checked against the project list when the two files are combined.
+ */
 const sourcesSchema = z
   .record(
     z.string().min(1).max(MAX_SOURCE_KEY_CHARS),
-    z
-      .string()
-      .min(1)
-      .max(MAX_SOURCE_PATH_CHARS)
-      .regex(/^[^\r\n\u0000]+$/, 'must be one line'),
+    z.string().superRefine((value, ctx) => {
+      const checked = checkLocalSource(value);
+      if (!checked.ok) ctx.addIssue({ code: 'custom', message: describeCloneIssue(checked.error) });
+    }),
   )
   .refine((sources) => Object.keys(sources).length <= MAX_SOURCES, { error: 'has too many entries' })
   .default({});
@@ -373,8 +376,27 @@ export const localConfigSchema: SchemaParser<LocalConfig> = {
 };
 
 /**
+ * The problems of the `sources` map against the project list: each key names a listed project path, and the map holds
+ * at most as many entries as the list. The messages name the key and never repeat a value.
+ */
+const sourceIssues = (shared: SharedConfig, local: LocalConfig): readonly z.core.$ZodIssue[] => {
+  const projects = shared.recipe.projects;
+  const listed = new Set(projects.map((project) => folderKey(project.path)));
+  const keysOfMap = Object.keys(local.sources);
+  const unlisted = keysOfMap
+    .filter((key) => !listed.has(folderKey(key)))
+    .map((key) => customIssue([keys.root.sources, key], `names no project path of the list in ${files.config}`));
+  const tooMany =
+    keysOfMap.length > projects.length
+      ? [customIssue([keys.root.sources], 'has more entries than the project list')]
+      : [];
+  return [...unlisted, ...tooMany];
+};
+
+/**
  * Put the two parsed files together. A point of `approval` must be a point of the recipe, and a point that the file
- * does not name waits for the owner. The error belongs to the local file.
+ * does not name waits for the owner. Each key of `sources` must name a listed project path. The error belongs to the
+ * local file.
  */
 export const mergeConfig = (
   shared: SharedConfig,
@@ -382,20 +404,16 @@ export const mergeConfig = (
 ): { readonly success: true; readonly data: FactoryConfig } | { readonly success: false; readonly error: z.ZodError } => {
   const points = recipes[shared.recipe.id].approvalPoints;
   const known = points.map((point) => point.id);
-  const unknown = Object.keys(local.approval).filter((id) => !known.includes(id));
-  if (unknown.length > 0) {
-    return {
-      success: false,
-      error: errorOf(
-        unknown.map((id) =>
-          customIssue(
-            [keys.root.approval, id],
-            `is not an approval point of the ${roles.recipe} ${shared.recipe.id}. The points are: ${known.join(', ')}`,
-          ),
-        ),
+  const unknown = Object.keys(local.approval)
+    .filter((id) => !known.includes(id))
+    .map((id) =>
+      customIssue(
+        [keys.root.approval, id],
+        `is not an approval point of the ${roles.recipe} ${shared.recipe.id}. The points are: ${known.join(', ')}`,
       ),
-    };
-  }
+    );
+  const issues = [...unknown, ...sourceIssues(shared, local)];
+  if (issues.length > 0) return { success: false, error: errorOf(issues) };
   const { session: sharedSession, ...sharedRest } = shared.core;
   const { session: localSession, approval, ...localRest } = local;
   return {

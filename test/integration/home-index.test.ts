@@ -25,7 +25,7 @@ const owner = ['--owner-name', 'Test Owner'];
 
 /** The repo `web` with a source folder, and a node made in it by `init --yes`. */
 const initWeb = async (): Promise<string> => {
-  const web = await box.makeProject('web');
+  const web = await box.makeProject('web', 'https://github.com/acme/web.git');
   await mkdir(join(web, 'src', 'deep'), { recursive: true });
   const result = await box.run(['init', '--yes', ...owner], { cwd: web, ...withState() });
   expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });

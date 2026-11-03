@@ -13,6 +13,7 @@ import {
   checkNodeBlocks,
   checkPermissionMode,
   checkProjects,
+  checkProjectUrls,
   checkProxies,
   checkProxyEnv,
   checkRoles,
@@ -1214,6 +1215,102 @@ describe('doctor: projects', () => {
   });
 });
 
+describe('doctor: projects that the factory can not share (F-17c)', () => {
+  const WEB = sampleConfig().recipe.projects[0]!;
+  const configWith = (projects: readonly Record<string, unknown>[], sources: Record<string, string> = {}): FactoryConfig => {
+    const sample = sampleConfig();
+    return {
+      core: { ...sample.core, sources },
+      recipe: { ...sample.recipe, projects: projects as unknown as FactoryConfig['recipe']['projects'] },
+    };
+  };
+  const stateOf = async (config: FactoryConfig) => {
+    const deps = makeDeps();
+    writeConfig(deps, config);
+    return { deps, state: await inspectConfig(deps, HOME) };
+  };
+  const noUrl = (id: string, path: string): Record<string, unknown> => {
+    const { url: _url, ...rest } = WEB;
+    return { ...rest, id, path };
+  };
+
+  it('is ok when each project has a URL that a host serves', async () => {
+    const { state } = await stateOf(configWith([WEB]));
+    expect(checkProjectUrls(state)).toEqual([
+      { id: 'project-urls', level: 'ok', text: '1 project has a URL that can be shared' },
+    ]);
+  });
+
+  it('is ok for a config without projects', async () => {
+    const { state } = await stateOf(configWith([]));
+    expect(checkProjectUrls(state)).toEqual([{ id: 'project-urls', level: 'ok', text: 'no project is configured' }]);
+  });
+
+  it('warns once per project with no URL, and names the project and the fix (TP-109)', async () => {
+    const { state } = await stateOf(configWith([noUrl('lib', '../lib'), WEB, noUrl('tool', '../tool')]));
+    const results = checkProjectUrls(state);
+    expect(results.map((result) => [result.id, result.level])).toEqual([
+      ['project-urls:lib', 'warn'],
+      ['project-urls:tool', 'warn'],
+    ]);
+    expect(results[0]?.text).toContain('cannot be shared with the repo of the project lib');
+    expect(results[0]?.text).toContain('Add an origin to the repo and set url for the project in factory.yaml');
+    expect(results[0]?.text).toContain('factory doctor');
+  });
+
+  it.each([
+    ['a file URL', 'file:///srv/acme/web.git', 'is a file URL'],
+    ['a path of this machine', '/srv/acme/web', 'is a path of one machine'],
+  ])('warns for %s in the url key', async (_name, url, reason) => {
+    const { state } = await stateOf(configWith([{ ...WEB, url }]));
+    const [result] = checkProjectUrls(state);
+    expect(result).toMatchObject({ id: 'project-urls:web', level: 'warn' });
+    expect(result?.text).toContain(reason);
+  });
+
+  it('names the local source from the local file in the fix, never in a tracked file', async () => {
+    const { state, deps } = await stateOf(configWith([noUrl('lib', '../lib')], { '../lib': '/srv/code/lib' }));
+    const [result] = checkProjectUrls(state);
+    expect(result?.text).toContain('Add an origin to the repo (/srv/code/lib) and set url');
+    expect(deps.files.get(`${HOME}/factory.yaml`)).not.toContain('/srv/code/lib');
+  });
+
+  it('finds the source when the key writes the project path another way', async () => {
+    const { state } = await stateOf(configWith([noUrl('lib', '../lib')], { '../lib/': '/srv/code/lib' }));
+    expect(checkProjectUrls(state)[0]?.text).toContain('(/srv/code/lib)');
+  });
+
+  it('is not checked when the config is not valid', async () => {
+    const deps = makeDeps();
+    deps.files.set(`${HOME}/factory.yaml`, 'x: 1\n');
+    expect(checkProjectUrls(await inspectConfig(deps, HOME))).toMatchObject([{ id: 'project-urls', level: 'warn' }]);
+  });
+
+  it('warns in the command, does not fail it, and sets no exit code', async () => {
+    const deps = makeDeps({ git: { repos: { '/w/lib': {} } } });
+    writeConfig(deps, configWith([noUrl('lib', '../lib')]));
+    const output = await doctor(deps);
+    expect(levelOf(output.json['checks'] as CheckResult[], 'project-urls:lib')).toBe('warn');
+    expect(output.lines.some((line) => line.level === 'warn' && line.text.includes('cannot be shared'))).toBe(true);
+    expect(output.exitCode).toBeUndefined();
+  });
+
+  it('fails the config check for a URL with a token, and prints no part of the token (TP-24)', async () => {
+    const deps = makeDeps();
+    writeConfig(deps, sampleConfig());
+    const path = `${HOME}/factory.yaml`;
+    const text = deps.files.get(path) ?? '';
+    expect(text).toContain('https://github.com/acme/web.git');
+    deps.files.set(path, text.replace('https://github.com/', `https://${FAKE_GITHUB_TOKEN}@github.com/`));
+    const output = await doctor(deps);
+    const checks = output.json['checks'] as CheckResult[];
+    expect(levelOf(checks, 'config')).toBe('fail');
+    expect(checks.find((check) => check.id === 'config')?.text).toContain('recipe.projects.0.url');
+    expect(output.failed).toBe(true);
+    expect(JSON.stringify(output)).not.toContain(FAKE_GITHUB_TOKEN);
+  });
+});
+
 describe('doctor: the command', () => {
   it('passes on a fresh node: no failure, so it is not failed', async () => {
     const deps = await initialized({ git: { committed: [`${HOME}/.factory`] } });
@@ -1240,8 +1337,9 @@ describe('doctor: the command', () => {
       'tools',
       'state-repo',
       'projects',
+      'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('17 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('18 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1264,7 +1362,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(17);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(18);
   });
 
   it('finds the node by walking up from the current folder', async () => {

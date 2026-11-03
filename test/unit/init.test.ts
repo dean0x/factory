@@ -604,6 +604,7 @@ describe('init: projects', () => {
     expect(config.ok && config.value.recipe.projects).toEqual([
       {
         id: 'web',
+        url: 'git@github.com:acme/web.git',
         repo: 'acme/web',
         path: '../web',
         default_branch: 'trunk',
@@ -612,6 +613,7 @@ describe('init: projects', () => {
       },
       {
         id: 'api',
+        url: 'https://github.com/acme/api',
         repo: 'acme/api',
         path: '../api',
         default_branch: 'develop',
@@ -629,6 +631,13 @@ describe('init: projects', () => {
       ['my-tool', undefined, 'main'],
       ['lib', undefined, 'main'],
     ]);
+  });
+
+  it('writes the url of a remote that is not on GitHub', async () => {
+    const { deps } = setup({ repos });
+    await runInit(deps, options({ projects: ['/w/My Tool'] }));
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.recipe.projects.map((p) => p.url)).toEqual(['https://example.com/x.git']);
   });
 
   it('refuses a folder that is not a git work tree, or not its top folder', async () => {
@@ -664,6 +673,136 @@ describe('init: projects', () => {
     const result = await runInit(deps, options({ projects: ['/w/web', '/w/other/web'] }));
     expect(result.ok).toBe(false);
     expect(messageOf(result)).toContain('projects.1.id: duplicate id');
+  });
+});
+
+describe('init: a project with no URL to share (F-17c, AC-11)', () => {
+  const FILE_ORIGIN = 'file:///srv/acme/api.git';
+  const SHARED = `${HOME}/factory.yaml`;
+  const LOCAL = `${HOME}/factory.local.yaml`;
+  const NOT_SHARED = 'cannot be shared';
+
+  const initWith = async (repos: NonNullable<GitFixture['repos']>, projects: readonly string[]) => {
+    const { deps, log } = setup({ repos });
+    const result = await runInit(deps, options({ projects }));
+    const config = await loadConfig(deps, HOME);
+    return { deps, log, result, config };
+  };
+
+  const sharedWarnings = (result: Awaited<ReturnType<typeof runInit>>): string[] =>
+    result.ok ? result.value.warnings.filter((warning) => warning.includes(NOT_SHARED)) : [];
+
+  it('warns once per project that the factory can not be shared with the repo, and goes on (TP-109)', async () => {
+    const { result } = await initWith({ '/w/lib': {}, '/w/tool': {}, '/w/web': { origin: 'git@host:acme/web.git' } }, [
+      '/w/lib',
+      '/w/tool',
+      '/w/web',
+    ]);
+    expect(result.ok).toBe(true);
+    const warnings = sharedWarnings(result);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain('lib');
+    expect(warnings[1]).toContain('tool');
+  });
+
+  it('names the fix: an origin for the repo and the url key of the project in factory.yaml', async () => {
+    const { result } = await initWith({ '/w/lib': {} }, ['/w/lib']);
+    const [warning] = sharedWarnings(result);
+    expect(warning).toContain('origin');
+    expect(warning).toContain('url');
+    expect(warning).toContain('factory.yaml');
+    expect(warning).toContain('factory doctor');
+  });
+
+  it('puts the warning in the JSON document, and the exit stays 0', async () => {
+    const { deps } = setup({ repos: { '/w/lib': {} } });
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', HOME, '--owner-name', 'Test Owner', '--project', '/w/lib', '--json'], deps, sink);
+    expect(code).toBe(0);
+    expect(JSON.parse(sink.out.join('')).warnings.join(' ')).toContain(NOT_SHARED);
+  });
+
+  it('gives no such warning for a project with a URL to share', async () => {
+    const { result } = await initWith({ '/w/web': { origin: 'git@host:acme/web.git' } }, ['/w/web']);
+    expect(result.ok).toBe(true);
+    expect(sharedWarnings(result)).toEqual([]);
+  });
+
+  it('refuses a project flag with a control character, and clones nothing', async () => {
+    const { deps, log } = setup({ repos: { '/w/we\u001b[2Jb': {} } });
+    const result = await runInit(deps, options({ projects: ['/w/we\u001b[2Jb'] }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(log.clones()).toEqual([]);
+  });
+
+  it('writes the project with no url, and no local path in factory.yaml, for a repo with no origin (TP-135)', async () => {
+    const { deps, config } = await initWith({ '/w/lib': {} }, ['/w/lib']);
+    expect(config.ok && config.value.recipe.projects.map((project) => project.url)).toEqual([undefined]);
+    const shared = deps.files.get(SHARED) ?? '';
+    expect(shared).not.toContain('url:');
+    expect(shared).not.toContain('/w/lib');
+    expect(shared).not.toContain('file:');
+  });
+
+  it('keeps the local source of a repo with no origin in the local file only (TP-135)', async () => {
+    const { deps, config } = await initWith({ '/w/lib': {} }, ['/w/lib']);
+    expect(config.ok && config.value.core.sources).toEqual({ '../lib': '/w/lib' });
+    expect(deps.files.get(LOCAL)).toContain('"../lib": "/w/lib"');
+  });
+
+  it('treats a file URL as the origin like no origin: no url in factory.yaml, the URL as the local source (TP-135)', async () => {
+    const { deps, config, result } = await initWith({ '/w/api': { origin: FILE_ORIGIN } }, ['/w/api']);
+    expect(config.ok && config.value.recipe.projects.map((project) => project.url)).toEqual([undefined]);
+    expect(config.ok && config.value.core.sources).toEqual({ '../api': FILE_ORIGIN });
+    expect(deps.files.get(SHARED)).not.toContain('file:');
+    expect(deps.files.get(SHARED)).not.toContain('/srv/acme');
+    expect(sharedWarnings(result)).toHaveLength(1);
+  });
+
+  it.each([
+    ['a local path', '/srv/acme/api.git'],
+    ['an http URL', 'http://host/acme/api.git'],
+    ['a git transport helper', 'ext::sh -c x'],
+  ])('treats %s as the origin like no origin, and keeps the folder as the local source', async (_name, origin) => {
+    const { deps, config, result } = await initWith({ '/w/api': { origin } }, ['/w/api']);
+    expect(config.ok && config.value.recipe.projects.map((project) => project.url)).toEqual([undefined]);
+    expect(config.ok && config.value.core.sources).toEqual({ '../api': '/w/api' });
+    expect(deps.files.get(SHARED)).not.toContain(origin);
+    expect(sharedWarnings(result)).toHaveLength(1);
+  });
+
+  it('clones a file URL of the project flag, writes no url, keeps the URL as the local source, and warns (TP-135)', async () => {
+    const { deps, log } = setup({ repos: { '/w/api': { origin: FILE_ORIGIN } } });
+    const result = await runInit(deps, options({ projects: [FILE_ORIGIN] }));
+    expect(result.ok).toBe(true);
+    expect(log.clones()).toEqual([['clone', '--', FILE_ORIGIN, '/w/api']]);
+    const config = await loadConfig(deps, HOME);
+    expect(config.ok && config.value.recipe.projects.map((project) => project.url)).toEqual([undefined]);
+    expect(config.ok && config.value.core.sources).toEqual({ '../api': FILE_ORIGIN });
+    expect(deps.files.get(SHARED)).not.toContain('file:');
+    expect(sharedWarnings(result)).toHaveLength(1);
+  });
+
+  it('keeps one source for each project with no URL, and none for a project with a URL', async () => {
+    const { config } = await initWith(
+      { '/w/a': {}, '/w/b': { origin: FILE_ORIGIN }, '/w/c': { origin: 'git@host:acme/c.git' } },
+      ['/w/a', '/w/b', '/w/c'],
+    );
+    expect(config.ok && config.value.core.sources).toEqual({ '../a': '/w/a', '../b': FILE_ORIGIN });
+  });
+
+  it('writes the local source of a project into the local file with mode 600', async () => {
+    const { deps } = await initWith({ '/w/lib': {} }, ['/w/lib']);
+    expect(deps.modes.get(LOCAL)).toBe(0o600);
+  });
+
+  it('refuses two projects with one repo, whatever the form of the URL', async () => {
+    const { result } = await initWith(
+      { '/w/web': { origin: 'git@host:acme/web.git' }, '/w/web2': { origin: 'https://host/acme/web' } },
+      ['/w/web', '/w/web2'],
+    );
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('same repo');
   });
 });
 
@@ -975,6 +1114,15 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(deps.prompts[0]).not.toContain('\u001b');
   });
 
+  it('writes no local source for a folder whose name the rules of the local file refuse, and goes on', async () => {
+    const deps = inWorkspace({ ...terminal, prompt: () => ok('y') }, { repos: { '/ws/we\u001b[2Jb': {} } });
+    const result = await runInit(deps, withHome());
+    expect(result.ok).toBe(true);
+    const config = await loadConfig(deps, PROPOSAL);
+    expect(config.ok && config.value.core.sources).toEqual({});
+    expect(deps.files.get(`${PROPOSAL}/factory.local.yaml`)).not.toContain('\u001b');
+  });
+
   it('stops with exit 2 when the person does not accept', async () => {
     const deps = inWorkspace({ ...terminal, prompt: () => ok('n') });
     const before = snapshot(deps);
@@ -1226,7 +1374,7 @@ describe('init: a project URL', () => {
     ['a name that is only .git', 'https://host/acme/.git'],
     ['a name that is too long', `https://host/acme/${'a'.repeat(101)}.git`],
     ['an http URL', 'http://host/acme/api.git'],
-    ['a file URL', 'file:///srv/acme/api.git'],
+    ['a file URL with a host', 'file://host/srv/acme/api.git'],
     ['a transport helper', 'ext::sh -c touch% /tmp/x'],
     ['a host that starts with a hyphen', 'ssh://-oProxyCommand=x/acme/api.git'],
     ['a user that starts with a hyphen', '-oProxyCommand=x@host:acme/api.git'],
@@ -1416,26 +1564,78 @@ describe('init: a project URL', () => {
     const everythingOf = (deps: FakeDeps, result: unknown): string =>
       JSON.stringify([result, [...deps.files.entries()], [...deps.dirs]]);
 
-    const initCli = async (fixture: GitFixture, json: boolean) => {
+    /** A folder whose origin holds a token. The token reaches init through the origin, never through the project flag. */
+    const WITH_TOKEN = { repos: { '/w/api': { origin: URL_TOKEN } } };
+
+    const initCli = async (fixture: GitFixture, json: boolean, project: string = URL_TOKEN) => {
       const { deps } = setup(fixture, { env });
       const sink = captureSink();
-      const argv = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--project', URL_TOKEN, ...(json ? ['--json'] : [])];
+      const argv = ['init', '--home', HOME, '--owner-name', 'Test Owner', '--project', project, ...(json ? ['--json'] : [])];
       const code = await runCli(argv, deps, sink);
       return { deps, code, out: sink.out.join(''), err: sink.errors.join('') };
     };
 
-    it('keeps the token out of the result and the written files, and warns without naming it', async () => {
-      const { deps, done } = run({ repos: { '/w/api': { origin: URL_TOKEN } } }, [URL_TOKEN], { env });
+    it('refuses a project flag with a token, exits 2, clones nothing, and changes nothing (TP-26)', async () => {
+      const { deps, log, done } = run({}, [URL_TOKEN], { env });
+      const before = snapshot(deps);
+      const result = await done;
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(log.clones()).toEqual([]);
+      expect(snapshot(deps)).toBe(before);
+      expect(messageOf(result)).toContain('--project');
+      expect(messageOf(result)).toContain('holds a user name, a password or a token');
+      expect(everythingOf(deps, result)).not.toContain(TOKEN);
+    });
+
+    it('names the remedy of a refused project flag', async () => {
+      const { done } = run({}, [URL_TOKEN], { env });
+      const result = await done;
+      expect(!result.ok && result.error.hint).toContain('https URL with no user name, or an ssh URL');
+      expect(!result.ok && result.error.hint).toContain('run the same command again');
+    });
+
+    it.each([
+      ['an https URL with a user and a password', `https://user:${TOKEN}@github.com/acme/api.git`],
+      ['an https URL with a user name only', 'https://someone@github.com/acme/api.git'],
+      ['an ssh URL with a password', `ssh://git:${TOKEN}@github.com/acme/api.git`],
+      ['the scp form with a password', `git:${TOKEN}@github.com:acme/api.git`],
+    ])('refuses %s before any clone, with exit 2 and without the secret', async (_name, url) => {
+      const { deps, log, done } = run({}, [url], { env });
+      const result = await done;
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(log.clones()).toEqual([]);
+      expect(everythingOf(deps, result)).not.toContain(TOKEN);
+    });
+
+    it('refuses a project flag with a token before a good URL clones, so no clone runs for the pair', async () => {
+      const { log, done } = run({}, [URL_API, URL_TOKEN], { env });
+      expect(await done).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(log.clones()).toEqual([]);
+    });
+
+    it('writes the url of an origin with a token without the token, and warns without naming it (TP-26)', async () => {
+      const { deps, done } = run(WITH_TOKEN, ['/w/api'], { env });
       const result = await done;
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(deps.files.get(`${HOME}/factory.yaml`)).toContain('acme/api');
+      expect(deps.files.get(`${HOME}/factory.yaml`)).toContain(`url: "${URL_SHOWN}"`);
       expect(deps.files.has(INDEX)).toBe(true);
       expect(everythingOf(deps, result)).not.toContain(TOKEN);
       expect(result.value.warnings).toHaveLength(1);
+      expect(result.value.warnings[0]).toContain('api');
       expect(result.value.warnings[0]).toContain('.git/config');
       expect(result.value.warnings[0]).toContain('gh auth login');
       expect(result.value.warnings[0]).not.toContain(TOKEN);
+    });
+
+    it('cuts only the secret part of an ssh origin and keeps the user name that ssh needs', async () => {
+      const origin = `ssh://git:${TOKEN}@github.com/acme/api.git`;
+      const { deps, done } = run({ repos: { '/w/api': { origin } } }, ['/w/api'], { env });
+      const result = await done;
+      expect(result.ok && result.value.warnings).toHaveLength(1);
+      expect(deps.files.get(`${HOME}/factory.yaml`)).toContain('url: "ssh://git@github.com/acme/api.git"');
+      expect(everythingOf(deps, result)).not.toContain(TOKEN);
     });
 
     it.each(['ssh://git@github.com/acme/api.git', 'git@github.com:acme/api.git', URL_SHOWN])(
@@ -1448,7 +1648,7 @@ describe('init: a project URL', () => {
     );
 
     it('prints the token on neither stdout nor stderr, and prints the warning on stderr', async () => {
-      const { code, out, err } = await initCli({ repos: { '/w/api': { origin: URL_TOKEN } } }, false);
+      const { code, out, err } = await initCli(WITH_TOKEN, false, '/w/api');
       expect(code).toBe(0);
       expect(`${out}${err}`).not.toContain(TOKEN);
       expect(err).toContain('warning: ');
@@ -1456,37 +1656,21 @@ describe('init: a project URL', () => {
     });
 
     it('puts the warning in the JSON document, with no token', async () => {
-      const { code, out, err } = await initCli({ repos: { '/w/api': { origin: URL_TOKEN } } }, true);
+      const { code, out, err } = await initCli(WITH_TOKEN, true, '/w/api');
       expect(code).toBe(0);
       expect(`${out}${err}`).not.toContain(TOKEN);
       expect(out).toContain('gh auth login');
     });
 
-    it('shows the token nowhere when the clone fails, also when git repeats the URL', async () => {
-      const { deps, done } = run(echoed, [URL_TOKEN], { env });
-      const result = await done;
-      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
-      expect(messageOf(result)).toContain(`cannot clone ${URL_SHOWN}`);
-      expect(everythingOf(deps, result)).not.toContain(TOKEN);
-      expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
-    });
-
-    it('prints the token on neither stdout nor stderr when the clone fails, in text and in JSON', async () => {
+    it('exits 2 for a project flag with a token, and prints the reason and the remedy but not the token', async () => {
       for (const json of [false, true]) {
-        const { code, out, err } = await initCli(echoed, json);
-        expect(code).toBe(1);
+        const { deps, code, out, err } = await initCli(echoed, json);
+        expect(code).toBe(2);
         expect(`${out}${err}`).not.toContain(TOKEN);
-        expect(err).toContain(`cannot clone ${URL_SHOWN}`);
+        expect(`${out}${err}`).toContain('holds a user name, a password or a token');
+        expect(`${out}${err}`).toContain('https URL with no user name, or an ssh URL');
+        expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
       }
-    });
-
-    it('shows the token nowhere when the target holds a clone of another URL', async () => {
-      const { deps } = setup({ repos: { '/w/api': { origin: 'https://host/other/api.git' } } }, { env });
-      deps.seedDir('/w/api');
-      const result = await runInit(deps, options({ projects: [URL_TOKEN] }));
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-      expect(messageOf(result)).toContain(`is not a clone of ${URL_SHOWN}`);
-      expect(everythingOf(deps, result)).not.toContain(TOKEN);
     });
 
     it('refuses the user:password form and does not repeat it', async () => {
@@ -1502,7 +1686,7 @@ describe('init: a project URL', () => {
         const { deps, log, done } = run({}, [value], { env });
         const result = await done;
         expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
-        expect(messageOf(result)).toContain('this URL form is not accepted');
+        expect(messageOf(result)).toContain('holds a user name, a password or a token');
         expect(everythingOf(deps, result)).not.toContain(value);
         expect(log.clones()).toEqual([]);
       },
@@ -1695,7 +1879,7 @@ describe('init: the checks before a clone', () => {
 describe('init: the home index', () => {
   const INDEX = '/state/factory/homes.json';
   const env = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
-  const repos = { '/w/web': {}, '/w/api': {} };
+  const repos = { '/w/web': { origin: 'git@host:acme/web.git' }, '/w/api': { origin: 'git@host:acme/api.git' } };
   const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
 
   it('records the home, its id and the real path of each project after it writes the node', async () => {

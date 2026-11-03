@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { renderBlock } from '../../src/blocks/managed.js';
-import { failure, type CliError } from '../../src/cli/errors.js';
+import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runInit } from '../../src/commands/init.js';
 import { runUpgrade } from '../../src/commands/upgrade.js';
@@ -25,7 +25,13 @@ import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
-import { OLD_ROADMAPS_README, schema1Doc, schema1Paths, seedSchema1Node } from '../helpers/schema1.js';
+import {
+  OLD_ROADMAPS_README,
+  schema1Doc,
+  schema1DocWithProject,
+  schema1Paths,
+  seedSchema1Node,
+} from '../helpers/schema1.js';
 
 /** The schema versions that this factory reads. A test migration starts from them. */
 const C = CONFIG_SCHEMA_VERSION;
@@ -990,14 +996,7 @@ session:
 proxies: []
 
 # The note on the projects.
-projects:
-  - id: web
-    # The note inside the project.
-    path: "../web"    # The inline note on the path.
-    default_branch: "main"
-    merge_method: squash
-    pack: plain
-    gate: { checks: [] }
+projects: []
 
 # The note on the children.
 children: []
@@ -1225,7 +1224,7 @@ describe('upgrade: a node of schema 1', () => {
       const { deps } = makeOldNode();
       expect(deps.files.has(INDEX)).toBe(false);
       const output = success(await upgrade(deps));
-      expect(indexed(deps)).toEqual([{ home: HOME, id: 'demo', projects: ['/w/web'] }]);
+      expect(indexed(deps)).toEqual([{ home: HOME, id: 'demo', projects: [] }]);
       expect(output.warnings).toEqual([]);
     });
 
@@ -1288,7 +1287,7 @@ describe('upgrade: a node of schema 1', () => {
     expect(Object.keys(sharedValue)).toEqual(['schema', 'node', 'session', 'limits', 'tracker', 'recipe']);
     expect(Object.keys(sharedValue['node'] ?? {})).toEqual(['id', 'layer']);
     expect(Object.keys(sharedValue['session'] ?? {})).toEqual(['permission_mode', 'effort', 'model']);
-    expect(sharedValue['recipe']).toMatchObject({ projects: [{ id: 'web', path: '../web' }] });
+    expect(sharedValue['recipe']).toMatchObject({ projects: [] });
 
     const local = parseYamlText(text(deps, LOCAL));
     const localValue = local.ok ? (local.value as Record<string, Record<string, unknown>>) : {};
@@ -1333,6 +1332,21 @@ describe('upgrade: a node of schema 1', () => {
     expect(live(deps)).toEqual(before);
   });
 
+  it('stops a node that lists a project with a failure, names the init command, and changes no file (TP-62)', async () => {
+    const { deps, gitSince } = makeOldNode({ doc: schema1DocWithProject() });
+    const before = live(deps);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.kind).toBe('failure');
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('lists a project');
+      expect(error.message).toContain('factory init');
+    }
+    expect(live(deps)).toEqual(before);
+    expect(deps.files.has(LOCAL)).toBe(false);
+    expect(gitWrites(gitSince())).toEqual([]);
+  });
+
   describe('the home rules', () => {
     const homeWarnings = async (deps: FakeDeps, dryRun: boolean): Promise<readonly string[]> =>
       success(await upgrade(deps, currentSpec, { dryRun })).warnings;
@@ -1365,18 +1379,21 @@ describe('upgrade: a node of schema 1', () => {
     });
 
     it('warns when a project is inside the home', async () => {
-      const doc = schema1Doc();
-      doc.projects[0].path = 'web';
-      const { deps } = makeOldNode({ doc });
-      const [warning, ...others] = await homeWarnings(deps, false);
+      const { deps } = await makeNode();
+      edit(
+        deps,
+        CONFIG,
+        '  projects: []',
+        '  projects: [{ id: web, url: "https://example.com/team/web", path: web, default_branch: main, merge_method: squash, gate: { checks: [] } }]',
+      );
+      const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+      const [warning, ...others] = success(await upgrade(deps, newer)).warnings;
       expect(others).toEqual([]);
       expect(warning).toContain('is the project folder /w/node/web, or holds it');
     });
 
     it('warns when the home holds a git repo one level down', async () => {
-      const doc = schema1Doc();
-      doc.projects[0].path = '../web';
-      const { deps } = makeOldNode({ doc, git: { repos: { '/w/node/other': {} } } });
+      const { deps } = makeOldNode({ git: { repos: { '/w/node/other': {} } } });
       deps.seedDir('/w/node/other/.git');
       const [warning, ...others] = await homeWarnings(deps, false);
       expect(others).toEqual([]);

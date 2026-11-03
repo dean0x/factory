@@ -62,6 +62,42 @@ describe('findTokenPaths', () => {
     expect(findTokenPaths({ workers: { [key]: 'sk-ant-api03-abcdefgh' } })).toEqual(['workers.<key>']);
   });
 
+  describe('the local source and the clone URL of a project', () => {
+    const LONG_FOLDER = '/var/folders/fn/xhrkn4ys4d37t9fd8kfmd4rw0000gn/T/Work/payments-team-factory-2';
+    const LONG_URL = 'https://github.com/Payments-Team-Org/payments-team-factory-service-2';
+
+    it('is not a token when it is a long path with upper case, lower case and digits', () => {
+      expect(looksLikeToken(LONG_FOLDER)).toBe(true);
+      expect(looksLikeToken(LONG_URL)).toBe(true);
+      expect(
+        findTokenPaths({
+          sources: { '../web': LONG_FOLDER, '../api': `file://${LONG_FOLDER}` },
+          recipe: { projects: [{ id: 'web', url: LONG_URL, path: '../web' }] },
+        }),
+      ).toEqual([]);
+    });
+
+    it('is a token when it holds a known prefix or a hex run', () => {
+      const hex = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+      expect(
+        findTokenPaths({
+          sources: { '../web': `/Users/example/${FAKE_GITHUB_TOKEN}`, '../api': `/Users/example/${hex}` },
+          recipe: { projects: [{ id: 'web', url: `https://github.com/acme/${FAKE_GITHUB_TOKEN}` }] },
+        }),
+      ).toEqual(['sources.../web', 'sources.../api', 'recipe.projects.0.url']);
+    });
+
+    it('keeps the base64 test for the same text in any other place', () => {
+      expect(
+        findTokenPaths({
+          sources: { '../web': { nested: LONG_FOLDER } },
+          recipe: { projects: [{ id: 'web', path: LONG_FOLDER, repo: LONG_URL }], url: LONG_URL },
+          url: LONG_URL,
+        }),
+      ).toEqual(['sources.../web.nested', 'recipe.projects.0.path', 'recipe.projects.0.repo', 'recipe.url', 'url']);
+    });
+  });
+
   describe('the address of a node link', () => {
     const LONG_ADDRESS = 'file:///Users/example/Work/payments-team-factory-2';
 

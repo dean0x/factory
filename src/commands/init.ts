@@ -12,6 +12,7 @@ import {
   parseConfig,
   type FactoryConfig,
 } from '../config/schema.js';
+import { checkLocalSource, classifyOrigin, type OriginClass } from '../core/clone-url.js';
 import type { Deps } from '../core/deps.js';
 import {
   commitAll,
@@ -22,6 +23,7 @@ import {
   hasIdentity,
   isWorkTreeRoot,
   MAX_SCAN_ENTRIES,
+  originUrlOf,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
 import { missingFolders, realPathOf } from '../core/paths.js';
@@ -58,6 +60,7 @@ import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
 import { checkProjectCount, makeCloneParents, planProjects, runClones, undoClones } from './init-clone.js';
 import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeIsNew, checkHomeLocation } from './init-home.js';
+import { originCredentialsWarning, unsharedWarning } from './project-url.js';
 
 export interface InitOptions {
   readonly home: string | undefined;
@@ -134,8 +137,50 @@ const detectGithubLogin = async (deps: Deps): Promise<string | undefined> => {
   return isGithubLogin(login) ? login : undefined;
 };
 
+/** A project entry as the config holds it, the local source of a project with no URL to share, and the warnings. */
+interface DescribedProject {
+  readonly project: unknown;
+  /** The path of the project. It is the key of the source in the local file. */
+  readonly path: string;
+  readonly source: string | null;
+  readonly warnings: readonly string[];
+}
+
+/** The projects of the command, and the sources of the projects that have no URL to share. */
+interface ProjectSettings {
+  readonly projects: readonly unknown[];
+  readonly sources: Readonly<Record<string, string>>;
+}
+
+/** The settings of the projects, and the warnings about them. */
+interface DescribedProjects extends ProjectSettings {
+  readonly warnings: readonly string[];
+}
+
+/**
+ * The url of a project comes from the origin of its repo, without any secret. A repo with no origin, or with an origin
+ * that the config can not hold (a file URL, a path, a scheme that is not allowed), gets no url: its local source goes
+ * into the local file, and a warning says that the factory can not be shared with it.
+ */
+const urlFieldsOf = (
+  origin: OriginClass,
+  id: string,
+  folder: string,
+): { readonly url: string | null; readonly source: string | null; readonly warnings: readonly string[] } => {
+  if (origin.kind === 'shareable') {
+    return { url: origin.url, source: null, warnings: origin.credentialsRemoved ? [originCredentialsWarning(id)] : [] };
+  }
+  const source = origin.kind === 'file' ? origin.url : folder;
+  // A source that the rules of the local file refuse is not written. The project works in its folder all the same.
+  return { url: null, source: checkLocalSource(source).ok ? source : null, warnings: [unsharedWarning(id, 'no-url')] };
+};
+
 /** The project path is relative to the home. Both paths have their links resolved, as git gives the work tree. */
-const describeProject = async (deps: Deps, realHome: string, argument: string): Promise<CliResult<unknown>> => {
+const describeProject = async (
+  deps: Deps,
+  realHome: string,
+  argument: string,
+): Promise<CliResult<DescribedProject>> => {
   const absolute = resolve(deps.cwd, argument);
   if (!(await isWorkTreeRoot(deps, absolute))) {
     return usageError(`${argument} is not the top folder of a git work tree`);
@@ -146,13 +191,21 @@ const describeProject = async (deps: Deps, realHome: string, argument: string): 
   if (!real.ok) return real;
   const repo = await githubRepoOf(deps, absolute);
   const branch = (await defaultBranchOf(deps, absolute)) ?? DEFAULT_BRANCH;
+  const fields = urlFieldsOf(classifyOrigin(await originUrlOf(deps, absolute)), id, real.value);
+  const path = relative(realHome, real.value) || '.';
   return ok({
-    [keys.project.id]: id,
-    ...(repo === null ? {} : { [keys.project.repo]: repo }),
-    [keys.project.path]: relative(realHome, real.value) || '.',
-    [keys.project.defaultBranch]: branch,
-    [keys.project.mergeMethod]: values.mergeMethods[0],
-    [keys.project.gate]: { [keys.gate.checks]: [] },
+    project: {
+      [keys.project.id]: id,
+      ...(fields.url === null ? {} : { [keys.project.url]: fields.url }),
+      ...(repo === null ? {} : { [keys.project.repo]: repo }),
+      [keys.project.path]: path,
+      [keys.project.defaultBranch]: branch,
+      [keys.project.mergeMethod]: values.mergeMethods[0],
+      [keys.project.gate]: { [keys.gate.checks]: [] },
+    },
+    path,
+    source: fields.source,
+    warnings: fields.warnings,
   });
 };
 
@@ -160,18 +213,22 @@ const describeProjects = async (
   deps: Deps,
   home: string,
   arguments_: readonly string[],
-): Promise<CliResult<readonly unknown[]>> => {
+): Promise<CliResult<DescribedProjects>> => {
   const counted = checkProjectCount(arguments_.length);
   if (!counted.ok) return counted;
   const realHome = await realPathOf(deps, home);
   if (!realHome.ok) return realHome;
   const projects: unknown[] = [];
+  const sources: (readonly [string, string])[] = [];
+  const warnings: string[] = [];
   for (const argument of arguments_) {
-    const project = await describeProject(deps, realHome.value, argument);
-    if (!project.ok) return project;
-    projects.push(project.value);
+    const described = await describeProject(deps, realHome.value, argument);
+    if (!described.ok) return described;
+    projects.push(described.value.project);
+    if (described.value.source !== null) sources.push([described.value.path, described.value.source]);
+    warnings.push(...described.value.warnings);
   }
-  return ok(projects);
+  return ok({ projects, sources: Object.fromEntries(sources), warnings });
 };
 
 const MAX_PARENT_LEVELS = 64;
@@ -259,7 +316,7 @@ interface CheckedOptions extends CheckedValues {
 const settingsOf = (
   checked: CheckedValues,
   github: string | undefined,
-  projects: readonly unknown[],
+  { projects, sources }: ProjectSettings,
 ): { readonly shared: unknown; readonly local: unknown } => ({
   shared: {
     [keys.root.schema]: CONFIG_SCHEMA_VERSION,
@@ -290,7 +347,7 @@ const settingsOf = (
     [keys.root.approval]: {},
     [keys.root.parent]: null,
     [keys.root.children]: [],
-    [keys.root.sources]: {},
+    [keys.root.sources]: sources,
   },
 });
 
@@ -327,7 +384,7 @@ const checkOptions = async (deps: Deps, options: InitOptions, home: string): Pro
     return usageError(`cannot make a ${roles.node} id from the folder name`, `Pass ${flagText(flags.name)} ID.`);
   }
   const base = { layer: layer.value, recipe: recipe.value, ownerName, id };
-  const settings = parseSettings(settingsOf(base, options.ownerGithub, []));
+  const settings = parseSettings(settingsOf(base, options.ownerGithub, { projects: [], sources: {} }));
   if (!settings.ok) return settings;
   const templates = blockTemplatesFor(layer.value, ownerModes(recipes[recipe.value].approvalPoints));
   const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
@@ -393,10 +450,12 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
     claudeOriginal: blocks.original,
     claudeText: blocks.claudeText,
     stateFiles: stateFiles.value,
-    warnings:
-      roleNameForLayer(layer) === null
+    warnings: [
+      ...(roleNameForLayer(layer) === null
         ? [`Layer ${layer} has no role template: ${files.claudeMd} holds the safety block only.`]
-        : [],
+        : []),
+      ...projects.value.warnings,
+    ],
   });
 };
 
@@ -534,7 +593,6 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
   const warnings = [
-    ...projects.value.warnings,
     ...plan.value.warnings,
     ...applied.value.warnings,
     ...notes,

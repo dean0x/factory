@@ -34,6 +34,7 @@ export const sampleConfig = (): FactoryConfig => ({
     projects: [
       {
         id: 'web',
+        url: 'https://github.com/acme/web.git',
         path: '../web',
         default_branch: 'main',
         merge_method: 'squash',

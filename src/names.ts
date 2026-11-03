@@ -215,6 +215,7 @@ export const keys = {
   },
   project: {
     id: 'id',
+    url: 'url',
     repo: 'repo',
     path: 'path',
     defaultBranch: 'default_branch',
@@ -276,6 +277,7 @@ export const checkIds = {
   tools: 'tools',
   stateRepo: 'state-repo',
   projects: 'projects',
+  projectUrls: 'project-urls',
 } as const;
 
 export const blockNames = {
@@ -289,7 +291,7 @@ export const blockNames = {
  * The names of a FAC-M1 node (schema 1) that schema 2 does not use. Only the migrations from schema 1 read them.
  */
 export const schema1 = {
-  keys: { role: 'role', lanes: 'lanes', projects: 'projects', pack: 'pack' },
+  keys: { role: 'role', lanes: 'lanes', projects: 'projects' },
   protocolFile: 'protocol.md',
   briefsDir: 'briefs',
   protocolBlock: 'protocol',

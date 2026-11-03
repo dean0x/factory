@@ -149,13 +149,34 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await box.git(state, ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', message])).code).toBe(0);
   };
 
-  /** Copy the fixture, make the web project, and start the state repository with a first commit. */
-  const prepareOldNode = async (): Promise<string> => {
+  /** The project of the fixture: a path beside the node folder and no clone URL. */
+  const FIXTURE_PROJECT = [
+    'projects:',
+    '  - id: web',
+    '    path: "../web"',
+    '    default_branch: "main"',
+    '    merge_method: squash',
+    '    pack: plain',
+    '    gate: { checks: [] }',
+  ].join('\n');
+
+  /**
+   * Copy the fixture and start the state repository with a first commit. A node that lists a project is not upgraded
+   * (decision D-3 B), so the copy lists none, unless the test asks for the project of the fixture.
+   */
+  const prepareOldNode = async (options: { withProject?: boolean } = {}): Promise<string> => {
     await cp(FIXTURE, box.node, { recursive: true });
     const marker = JSON.parse(await box.read(join(box.node, '.factory', 'node.json'))) as Record<string, unknown>;
     expect(marker['created_with']).toBe('0.1.0');
     expect(marker['schema_version']).toBe(1);
-    await box.makeProject('web');
+    if (options.withProject === true) {
+      await box.makeProject('web');
+    } else {
+      const config = join(box.node, 'factory.yaml');
+      const text = await box.read(config);
+      expect(text).toContain(FIXTURE_PROJECT);
+      await writeFile(config, text.replace(FIXTURE_PROJECT, 'projects: []'));
+    }
     const state = join(box.node, '.factory');
     expect((await box.git(state, ['init', '-q'])).code).toBe(0);
     await commitAll(state, 'first');
@@ -332,6 +353,29 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     await commitAll(state, 'a note of the owner');
     expect((await box.run(['upgrade', '--home', box.node])).code).toBe(0);
     expect(await box.read(join(state, 'roles', 'worker.md'))).toContain('A note of the owner, outside the block.');
+  });
+
+  it('stops with exit 1 on a node that lists a project, names the init command, and changes no file (TP-62)', async () => {
+    const state = await prepareOldNode({ withProject: true });
+    const config = await box.read(join(box.node, 'factory.yaml'));
+    const marker = await box.read(join(state, 'node.json'));
+
+    for (const args of [['upgrade', '--home', box.node], ['upgrade', '--home', box.node, '--dry-run']]) {
+      const result = await box.run(args);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('lists a project');
+      expect(result.stderr).toContain('factory init');
+      expect(result.stderr).not.toContain('../web');
+    }
+
+    expect(await box.read(join(box.node, 'factory.yaml'))).toBe(config);
+    expect(await box.read(join(state, 'node.json'))).toBe(marker);
+    expect(existsSync(join(box.node, 'factory.local.yaml'))).toBe(false);
+    const names = (await readdir(state)).sort();
+    expect(names).toContain('protocol.md');
+    expect(names).not.toContain('roles');
+    expect(names).not.toContain('backups');
+    expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
   });
 
   it('stops on a child with an ssh address, names the child, and changes nothing', async () => {
