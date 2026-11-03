@@ -130,6 +130,8 @@ describe('layout', () => {
       claudeMd: '/h/node/coordinator/CLAUDE.md',
       setupDir: '/h/node/setup',
       setupCoordinatorFile: '/h/node/setup/coordinator.md',
+      setupRolesDir: '/h/node/setup/roles',
+      setupWorkerFile: '/h/node/setup/roles/worker.md',
       workCopiesDir: '/h/node/work-copies',
       stateDir: '/h/node/.factory',
       nodeJson: '/h/node/.factory/node.json',

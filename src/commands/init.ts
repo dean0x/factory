@@ -28,6 +28,7 @@ import {
 import { indexPathOf, recordNode } from '../core/home-index.js';
 import { missingFolders } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
+import { requireNoRootLinks } from '../core/root-paths.js';
 import { describeIssues } from '../core/zod.js';
 import {
   commands,
@@ -58,10 +59,10 @@ import {
 } from '../state/files.js';
 import { layoutOf, stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
-import { ownerModes, recipes } from '../recipes/index.js';
+import { readSetupFile, renderableSetupText } from '../state/setup-text.js';
 import { roleNameForLayer } from '../recipes/software/recipe.js';
-import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
-import type { BlockTemplate } from '../templates/types.js';
+import { blockInputOf, blockTemplatesFor, fileTemplates } from '../templates/index.js';
+import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
 import {
   checkProjectCount,
@@ -119,6 +120,8 @@ export interface InitPlan {
   readonly gitignoreText: string;
   /** The text of `setup/coordinator.md` when init makes the file, or null when the file is there already. */
   readonly setupCoordinatorText: string | null;
+  /** The text of `setup/roles/worker.md` when init makes the file, or null when the file is there already. */
+  readonly setupWorkerText: string | null;
   readonly stateFiles: readonly StateFile[];
   /** Things that a person should know before the files are written, for example a layer with no role template. */
   readonly warnings: readonly string[];
@@ -332,11 +335,16 @@ interface CheckedOptions extends CheckedValues {
   readonly root: RootTexts;
 }
 
-/** The texts of the root files that init writes besides the config: the `.gitignore` and the setup text. */
+/** The texts of the root files that init writes besides the config: the `.gitignore` and the setup texts. */
 interface RootTexts {
   readonly gitignoreOriginal: string | null;
   readonly gitignoreText: string;
+  /** The text init writes to `setup/coordinator.md`, or null when the file is there already. */
   readonly setupCoordinatorText: string | null;
+  /** The text init writes to `setup/roles/worker.md`, or null when the file is there already. */
+  readonly setupWorkerText: string | null;
+  /** The setup texts as the blocks use them: the text of a file that is there, else the text that init writes. */
+  readonly setup: SetupTexts;
 }
 
 /** The kind of a path that must be a file or a folder, or must not exist. */
@@ -355,7 +363,22 @@ const requireKind = async (
 };
 
 /**
- * The root `.gitignore` with the share list, and the setup text. A `.gitignore` of the person keeps its lines after the
+ * One setup text. A file that is there keeps its text, and init writes nothing. A file that is absent gets the text of the
+ * template, and the blocks use that text. A link, a text that is too large and a text that is not plain are refused.
+ */
+const setupTextOf = async (
+  deps: Deps,
+  layout: Layout,
+  path: string,
+  template: string,
+): Promise<CliResult<{ readonly write: string | null; readonly use: string | null }>> => {
+  const found = await readSetupFile(deps, layout, path);
+  if (!found.ok) return found;
+  return ok({ write: found.value === null ? template : null, use: renderableSetupText(found.value ?? template) });
+};
+
+/**
+ * The root `.gitignore` with the share list, and the setup texts. A `.gitignore` of the person keeps its lines after the
  * share list. A setup text that is there stays as it is. This function writes nothing.
  */
 const rootTextsOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootTexts>> => {
@@ -373,14 +396,20 @@ const rootTextsOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootTe
   }
   const setupExists = await requireKind(deps, layout.setupDir, 'dir', dirs.setup);
   if (!setupExists.ok) return setupExists;
-  const textExists = setupExists.value
-    ? await requireKind(deps, layout.setupCoordinatorFile, 'file', `${dirs.setup}/${files.setupCoordinator}`)
+  const rolesExist = setupExists.value
+    ? await requireKind(deps, layout.setupRolesDir, 'dir', `${dirs.setup}/${dirs.roles}`)
     : ok(false);
-  if (!textExists.ok) return textExists;
+  if (!rolesExist.ok) return rolesExist;
+  const coordinator = await setupTextOf(deps, layout, layout.setupCoordinatorFile, fileTemplates.setupCoordinator);
+  if (!coordinator.ok) return coordinator;
+  const worker = await setupTextOf(deps, layout, layout.setupWorkerFile, fileTemplates.setupWorker);
+  if (!worker.ok) return worker;
   return ok({
     gitignoreOriginal: original,
     gitignoreText: withList.value,
-    setupCoordinatorText: textExists.value ? null : fileTemplates.setupCoordinator,
+    setupCoordinatorText: coordinator.value.write,
+    setupWorkerText: worker.value.write,
+    setup: { coordinator: coordinator.value.use, worker: worker.value.use },
   });
 };
 
@@ -441,6 +470,9 @@ const checkOptions = async (
   home: string,
   indexPath: string,
 ): Promise<CliResult<CheckedOptions>> => {
+  // The link rule comes first: a link in the setup folder or the coordinator folder stops the command before any write.
+  const plain = await requireNoRootLinks(deps, layoutOf(home));
+  if (!plain.ok) return plain;
   const fresh = await checkHomeIsNew(deps, home);
   if (!fresh.ok) return fresh;
   const layer = parseLayer(options.layer);
@@ -463,11 +495,11 @@ const checkOptions = async (
   const base = { layer: layer.value, recipe: recipe.value, ownerName, id };
   const settings = parseSettings(settingsOf(base, options.ownerGithub, { projects: [], sources: {} }));
   if (!settings.ok) return settings;
-  const templates = blockTemplatesFor(layer.value, ownerModes(recipes[recipe.value].approvalPoints));
-  const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
-  if (!blocks.ok) return blocks;
   const root = await rootTextsOf(deps, layoutOf(home));
   if (!root.ok) return root;
+  const templates = blockTemplatesFor(blockInputOf(settings.value, root.value.setup));
+  const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
+  if (!blocks.ok) return blocks;
   return ok({ ...base, templates, blocks: blocks.value, root: root.value });
 };
 
@@ -539,6 +571,7 @@ const planChecked = async (
     gitignoreOriginal: root.gitignoreOriginal,
     gitignoreText: root.gitignoreText,
     setupCoordinatorText: root.setupCoordinatorText,
+    setupWorkerText: root.setupWorkerText,
     stateFiles: stateFiles.value,
     warnings: [
       ...(roleNameForLayer(layer) === null
@@ -584,6 +617,8 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     claude: false,
     setupDir: false,
     setupFile: false,
+    setupRolesDir: false,
+    setupWorkerFile: false,
     gitignore: false,
     local: false,
     config: false,
@@ -642,6 +677,8 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
           : deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreOriginal),
       );
     }
+    if (touched.setupWorkerFile) await undo(deps.fs.remove(layout.setupWorkerFile));
+    if (touched.setupRolesDir) await undo(deps.fs.removeEmptyDir(layout.setupRolesDir));
     if (touched.setupFile) await undo(deps.fs.remove(layout.setupCoordinatorFile));
     if (touched.setupDir) await undo(deps.fs.removeEmptyDir(layout.setupDir));
     if (touched.claude) {
@@ -662,6 +699,10 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
           : `${cause.message}. These steps of the undo failed, so some changes stay: ${problems.join('; ')}.`,
     });
   };
+
+  // The link rule is checked once more before the first write, because the clones before this step take time.
+  const plain = await requireNoRootLinks(deps, layout);
+  if (!plain.ok) return plain;
 
   const cleared = await deps.fs.remove(staging);
   if (!cleared.ok) return rollback(cleared.error);
@@ -696,17 +737,30 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   if (!claude.ok) return rollback(claude.error);
   touched.claude = true;
 
-  // The setup text is the text that a person shares. A file that is there already keeps its text.
-  if (plan.setupCoordinatorText !== null) {
+  // The setup texts are the texts that a person shares. A file that is there already keeps its text.
+  if (plan.setupCoordinatorText !== null || plan.setupWorkerText !== null) {
     const setupDir = await makeFolder(layout.setupDir);
     if (!setupDir.ok) return rollback(setupDir.error);
     touched.setupDir = setupDir.value;
+  }
+  if (plan.setupCoordinatorText !== null) {
     const setup = await deps.fs.writeTextExclusive(layout.setupCoordinatorFile, plan.setupCoordinatorText, SHARED_FILE_MODE);
     if (!setup.ok) return rollback(setup.error);
     if (!setup.value) {
       return rollback(failure(`${join(dirs.setup, files.setupCoordinator)} was made by another program during the run`).error);
     }
     touched.setupFile = true;
+  }
+  if (plan.setupWorkerText !== null) {
+    const rolesDir = await makeFolder(layout.setupRolesDir);
+    if (!rolesDir.ok) return rollback(rolesDir.error);
+    touched.setupRolesDir = rolesDir.value;
+    const setup = await deps.fs.writeTextExclusive(layout.setupWorkerFile, plan.setupWorkerText, SHARED_FILE_MODE);
+    if (!setup.ok) return rollback(setup.error);
+    if (!setup.value) {
+      return rollback(failure(`${join(dirs.setup, dirs.roles, files.worker)} was made by another program during the run`).error);
+    }
+    touched.setupWorkerFile = true;
   }
 
   const gitignoreUnchanged = await requireUnchanged(layout.gitignoreFile, plan.gitignoreOriginal, files.gitignore);
@@ -817,6 +871,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
     files.localConfig,
     files.gitignore,
     ...(plan.value.setupCoordinatorText === null ? [] : [join(dirs.setup, files.setupCoordinator)]),
+    ...(plan.value.setupWorkerText === null ? [] : [join(dirs.setup, dirs.roles, files.worker)]),
     join(dirs.coordinator, files.claudeMd),
     `${dirs.state}/`,
   ];

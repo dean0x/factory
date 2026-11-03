@@ -404,6 +404,56 @@ describe('the mode and the owner of the local file', () => {
     expect(deps.modes.get(LOCAL)).toBe(before);
   });
 
+  describe('when the local file is a link', () => {
+    const linkedLocal = (extra: Record<string, string> = {}): FakeDeps => {
+      const deps = createFakeDeps({ links: { [LOCAL]: '/outside/local.yaml', ...extra } });
+      deps.seedDir(HOME);
+      deps.seed(SHARED, sample().shared);
+      deps.seed(LOCAL, sample().local);
+      return deps;
+    };
+
+    it('refuses the load with exit 4 and one remedy line that tells to move the file away', async () => {
+      const loaded = await loadConfig(linkedLocal(), HOME);
+      expect(loaded).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (!loaded.ok && loaded.error.kind === 'safety') {
+        expect(loaded.error.message).toBe('factory.local.yaml is a link, so factory does not use it');
+        expect(loaded.error.hint).toBe('Move factory.local.yaml away, then run "factory init" to write a new one.');
+      }
+    });
+
+    it('refuses before the check of the owner and before the mode fix', async () => {
+      const deps = linkedLocal();
+      deps.owners.set(LOCAL, 0);
+      deps.modes.set(LOCAL, 0o644);
+      const access = await localFileAccess(deps, HOME);
+      expect(access).toMatchObject({ ok: false, error: { kind: 'safety', message: 'factory.local.yaml is a link, so factory does not use it' } });
+      expect(await settleLocalMode(deps, HOME, true)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(deps.modes.get(LOCAL)).toBe(0o644);
+    });
+
+    it('refuses a link whose target does not exist', async () => {
+      const deps = createFakeDeps({ links: { [LOCAL]: '/outside/gone.yaml' } });
+      deps.seedDir(HOME);
+      deps.seed(SHARED, sample().shared);
+      expect(await localFileAccess(deps, HOME)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    });
+
+    it('does not read the content, and gives the state unsafe', async () => {
+      const state = await inspectConfig(linkedLocal(), HOME);
+      expect(state).toMatchObject({ kind: 'unsafe', file: 'factory.local.yaml' });
+      expect(state).not.toHaveProperty('raw');
+    });
+
+    it('loads a local file that is a plain file when the folder above the factory folder is a link', async () => {
+      const deps = createFakeDeps({ links: { '/via': '/real' } });
+      deps.seedDir('/via/node');
+      deps.seed('/via/node/factory.yaml', sample().shared);
+      deps.seed('/via/node/factory.local.yaml', sample().local);
+      expect((await loadConfig(deps, '/via/node')).ok).toBe(true);
+    });
+  });
+
   it('does not read the content of a file that it refuses', async () => {
     const deps = withSample();
     deps.modes.set(LOCAL, 0o666);

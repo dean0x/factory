@@ -1,6 +1,7 @@
 import { join, resolve } from 'node:path';
+import { linesOutsideBlocks, parseBlocks } from '../blocks/managed.js';
 import { inspectBlocks, NO_PENDING_FILES, renamedFromOf, type BlockStatus } from '../blocks/status.js';
-import { exitCodeOf, type CliResult } from '../cli/errors.js';
+import { exitCodeOf, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { probeChildren } from '../comms/children.js';
 import { fileTransport } from '../comms/transport.js';
@@ -13,6 +14,7 @@ import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { isSameOrInsideFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
+import { requireNoRootLinks } from '../core/root-paths.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
@@ -27,14 +29,15 @@ import {
   flagText,
   keys,
   maxFileBytes,
+  overwriteCommand,
   places,
   program,
   roles,
   schemaIds,
+  setupBlockNames,
   shareListLabel,
   values,
 } from '../names.js';
-import { ownerModes, recipes } from '../recipes/index.js';
 import { roleNameForLayer } from '../recipes/software/recipe.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { findTokenPaths } from '../safety/secrets.js';
@@ -42,7 +45,8 @@ import { locateShareList } from '../state/files.js';
 import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
-import { blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
+import { readSetupFile, readSetupTexts } from '../state/setup-text.js';
+import { blockInputOf, blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
 import { leftoverTempFolders, tempFolderWarning } from './init-home.js';
 import { unsharedReasonOf, unsharedWarning } from './project-url.js';
 
@@ -282,13 +286,52 @@ export const checkChildren = async (deps: Deps, state: DocState<FactoryConfig>):
   return check(checkIds.children, wrong.length > 0 ? 'fail' : 'warn', problems.join('; '));
 };
 
-/** A block that is not as the layer needs it. A block under the name of another layer is a role block that does not match. */
-const describeBlockProblem = (status: BlockStatus): string[] => {
+/** A block that is not as the layer needs it, and the command that fixes it. */
+interface BlockProblem {
+  readonly text: string;
+  readonly remedy: string;
+}
+
+const UPGRADE_REMEDY = `Run "${commandText(commands.upgrade)}".`;
+
+/**
+ * A block that is not as the layer needs it. A block under the name of another layer is a role block that does not
+ * match. An intact block whose text differs from the rendered text is out of date: `upgrade` renders it again. An edited
+ * block stays as it is until the person names it with `--overwrite`.
+ */
+const describeBlockProblem = (status: BlockStatus): BlockProblem[] => {
+  const name = status.template.name;
+  const where = `${status.kind}, in ${status.file}`;
   const old = renamedFromOf(status);
   if (old !== undefined) {
-    return [`${old} (${status.kind}, in ${status.file}): the layer of this ${roles.node} needs the block ${status.template.name}`];
+    return [{ text: `${old} (${where}): the layer of this ${roles.node} needs the block ${name}`, remedy: UPGRADE_REMEDY }];
   }
-  return status.kind === 'intact' ? [] : [`${status.template.name} (${status.kind}, in ${status.file})`];
+  switch (status.kind) {
+    case 'intact':
+      return status.block.body === status.template.body
+        ? []
+        : [{ text: `${name} (out of date, in ${status.file})`, remedy: UPGRADE_REMEDY }];
+    case 'edited':
+      return [
+        {
+          text: `${name} (${where})`,
+          remedy: `Move your edits to the setup folder, then run "${overwriteCommand(name)}" to replace the text.`,
+        },
+      ];
+    case 'missing':
+      return [
+        {
+          text: `${name} (${where})`,
+          remedy: setupBlockNames.includes(name) ? UPGRADE_REMEDY : `Run "${overwriteCommand(name)}" to add it.`,
+        },
+      ];
+    case 'malformed':
+      return [{ text: `${name} (${where})`, remedy: `Fix the marker lines in ${status.file}, then run "${commandText(commands.upgrade)}".` }];
+    default: {
+      const unreachable: never = status;
+      return unreachable;
+    }
+  }
 };
 
 export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
@@ -298,7 +341,7 @@ export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
     : check(
         checkIds.blocks,
         'warn',
-        `${problems.join('; ')}. Move edits out of the block, then run "${commandText(commands.upgrade)}".`,
+        `${problems.map((problem) => problem.text).join('; ')}. ${[...new Set(problems.map((problem) => problem.remedy))].join(' ')}`,
       );
 };
 
@@ -362,17 +405,96 @@ export const checkPermissionMode = async (deps: Deps, home: string): Promise<Che
     : notChecked(checkIds.permissionMode, `cannot read ${unreadable.join(', ')}`);
 };
 
-/** The blocks come from the layer of the node, so a config that is not valid gives no block list. */
+/** A failed check from an error of a command, with its remedy line. */
+const failedFrom = (id: string, error: CliError): CheckResult =>
+  check(id, 'fail', `${error.message}.${error.hint === undefined ? '' : ` ${error.hint}`}`);
+
+/**
+ * The blocks come from the config of the node and from the setup texts, so a config that is not valid gives no block
+ * list. A link in the paths that the check reads fails the check, and nothing is read through it.
+ */
 export const checkNodeBlocks = async (
   deps: Deps,
   home: string,
   state: DocState<FactoryConfig>,
 ): Promise<CheckResult> => {
   if (state.kind !== 'valid') return notChecked(checkIds.blocks, `${files.config} is not valid`);
-  const { layer } = state.value.core.node;
-  const pending = { ...NO_PENDING_FILES, renames: roleBlockRenames(layer) };
-  const modes = ownerModes(recipes[state.value.recipe.id].approvalPoints);
-  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(layer, modes), pending));
+  const layout = layoutOf(home);
+  const plain = await requireNoRootLinks(deps, layout);
+  if (!plain.ok) return failedFrom(checkIds.blocks, plain.error);
+  const setup = await readSetupTexts(deps, layout);
+  if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
+  const input = blockInputOf(state.value, setup.value);
+  const pending = { ...NO_PENDING_FILES, renames: roleBlockRenames(input.layer) };
+  return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending));
+};
+
+/** A rendered file, the setup file that its text comes from, and the names of both for the output. */
+interface RenderedPair {
+  readonly rendered: string;
+  readonly renderedName: string;
+  readonly setup: string;
+  readonly setupName: string;
+}
+
+const renderedPairs = (home: string): readonly RenderedPair[] => {
+  const layout = layoutOf(home);
+  return [
+    {
+      rendered: layout.claudeMd,
+      renderedName: join(dirs.coordinator, files.claudeMd),
+      setup: layout.setupCoordinatorFile,
+      setupName: join(dirs.setup, files.setupCoordinator),
+    },
+    {
+      rendered: layout.workerMd,
+      renderedName: join(dirs.state, dirs.roles, files.worker),
+      setup: layout.setupWorkerFile,
+      setupName: join(dirs.setup, dirs.roles, files.worker),
+    },
+  ];
+};
+
+/** The lines of a rendered file that no block holds and that its setup file does not hold. Null when there is no file. */
+const strayLinesOf = async (deps: Deps, home: string, pair: RenderedPair): Promise<CliResult<number | null>> => {
+  const kind = await deps.fs.stat(pair.rendered);
+  if (!kind.ok) return kind;
+  if (kind.value !== 'file') return ok(null);
+  const rendered = await deps.fs.readTextLimited(pair.rendered, maxFileBytes);
+  if (!rendered.ok) return rendered;
+  const blocks = parseBlocks(rendered.value);
+  // A file with broken markers is the business of the blocks check.
+  if (!blocks.ok) return ok(null);
+  const setup = await readSetupFile(deps, layoutOf(home), pair.setup);
+  if (!setup.ok) return setup;
+  const known = new Set((setup.value ?? '').split('\n').map((line) => line.trim()));
+  return ok(linesOutsideBlocks(rendered.value, blocks.value).filter((line) => !known.has(line)).length);
+};
+
+/**
+ * Only the setup folder travels. A line that a person wrote in `coordinator/CLAUDE.md` or in the worker file, outside the
+ * managed blocks, stays on this machine, unless the setup file holds it too. This is a warning. It names the count and
+ * the file, never the text.
+ */
+export const checkSetupText = async (deps: Deps, home: string): Promise<CheckResult> => {
+  const plain = await requireNoRootLinks(deps, layoutOf(home));
+  if (!plain.ok) return failedFrom(checkIds.setupText, plain.error);
+  const problems: string[] = [];
+  const targets: string[] = [];
+  for (const pair of renderedPairs(home)) {
+    const stray = await strayLinesOf(deps, home, pair);
+    if (!stray.ok) return notChecked(checkIds.setupText, stray.error.message);
+    if (stray.value === null || stray.value === 0) continue;
+    problems.push(`${pair.renderedName} holds ${stray.value} ${plural(stray.value, 'line', 'lines')} outside its blocks that ${pair.setupName} does not hold`);
+    targets.push(pair.setupName);
+  }
+  return problems.length === 0
+    ? check(checkIds.setupText, 'ok', 'no text outside the managed blocks stays on this machine')
+    : check(
+        checkIds.setupText,
+        'warn',
+        `${problems.join('; ')}. Only the setup folder travels. Move the text to ${targets.join(' or to ')}, then run "${commandText(commands.upgrade)}".`,
+      );
 };
 
 export const checkProxyEnv = (deps: Deps): CheckResult => {
@@ -491,25 +613,31 @@ export const checkProjectUrls = (state: DocState<FactoryConfig>): readonly Check
   return [check(checkIds.projectUrls, 'ok', text)];
 };
 
-const runChecks = async (
-  deps: Deps,
-  home: string,
-): Promise<{ readonly results: readonly CheckResult[]; readonly localMissing: boolean }> => {
+interface CheckRun {
+  readonly results: readonly CheckResult[];
+  readonly localMissing: boolean;
+  /** True when the local file is a link, of another account, or open to write: a security stop. */
+  readonly localUnsafe: boolean;
+}
+
+const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
-  const [root, tempFolder, index, blocks, children, permission, proxies, tools, stateRepo, projects, localFile] = await Promise.all([
-    checkRoot(deps, home),
-    checkTempFolders(deps, home),
-    checkIndex(deps),
-    checkNodeBlocks(deps, home, config),
-    checkChildren(deps, config),
-    checkPermissionMode(deps, home),
-    checkProxies(deps, config),
-    checkTools(deps),
-    checkStateRepo(deps, home),
-    checkProjects(deps, home, config),
-    checkLocalFile(deps, home),
-  ]);
+  const [root, tempFolder, index, blocks, setupText, children, permission, proxies, tools, stateRepo, projects, localFile] =
+    await Promise.all([
+      checkRoot(deps, home),
+      checkTempFolders(deps, home),
+      checkIndex(deps),
+      checkNodeBlocks(deps, home, config),
+      checkSetupText(deps, home),
+      checkChildren(deps, config),
+      checkPermissionMode(deps, home),
+      checkProxies(deps, config),
+      checkTools(deps),
+      checkStateRepo(deps, home),
+      checkProjects(deps, home, config),
+      checkLocalFile(deps, home),
+    ]);
   const results = [
     checkConfig(config),
     checkConfigVersion(config),
@@ -519,6 +647,7 @@ const runChecks = async (
     tempFolder,
     index,
     blocks,
+    setupText,
     checkRoles(config),
     checkTracker(config),
     children,
@@ -531,7 +660,11 @@ const runChecks = async (
     projects,
     ...checkProjectUrls(config),
   ];
-  return { results, localMissing: isLocalFileMissing(config) };
+  return {
+    results,
+    localMissing: isLocalFileMissing(config),
+    localUnsafe: config.kind === 'unsafe' && config.file === files.localConfig,
+  };
 };
 
 const count = (results: readonly CheckResult[], level: CheckLevel): number =>
@@ -542,7 +675,7 @@ export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<Cli
   if (!located.ok) return located;
   const home = located.value.home;
 
-  const { results, localMissing } = await runChecks(deps, home);
+  const { results, localMissing, localUnsafe } = await runChecks(deps, home);
   const summary = { ok: count(results, 'ok'), warn: count(results, 'warn'), fail: count(results, 'fail') };
   const width = Math.max(...results.map((result) => result.id.length));
   const lines: OutLine[] = [
@@ -560,5 +693,7 @@ export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<Cli
     failed: summary.fail > 0,
     // The check names `init`: the person has to run it, so this is a usage problem and not a failed check of a good setup.
     ...(localMissing ? { exitCode: exitCodeOf.usage } : {}),
+    // A local file that others can write, that another account owns, or that is a link breaks the security rule.
+    ...(localUnsafe && !localMissing ? { exitCode: exitCodeOf.safety } : {}),
   });
 };

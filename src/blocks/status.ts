@@ -14,7 +14,13 @@ export type BlockStatus =
       /** The old name of the block, when the file holds the block under it. */
       readonly renamedFrom?: string;
     }
-  | { readonly kind: 'missing'; readonly template: BlockTemplate; readonly file: string }
+  | {
+      readonly kind: 'missing';
+      readonly template: BlockTemplate;
+      readonly file: string;
+      /** True when the file itself is not there. */
+      readonly fileAbsent: boolean;
+    }
   | { readonly kind: 'malformed'; readonly template: BlockTemplate; readonly file: string; readonly message: string };
 
 /** What an upgrade is about to change: files that move, and managed blocks that get a new name. */
@@ -72,11 +78,11 @@ export const inspectBlocks = async (
     const file = fileOfTarget(layout, template.target);
     const state = states.get(template.target) ?? { kind: 'absent' };
     if (state.kind === 'broken') return { kind: 'malformed', template, file, message: state.message };
-    if (state.kind === 'absent') return { kind: 'missing', template, file };
+    if (state.kind === 'absent') return { kind: 'missing', template, file, fileAbsent: true };
     const oldName = pending.renames.find((rename) => rename.to === template.name)?.from;
     const found = state.blocks.filter((block) => block.name === template.name || block.name === oldName);
     const [block] = found;
-    if (block === undefined) return { kind: 'missing', template, file };
+    if (block === undefined) return { kind: 'missing', template, file, fileAbsent: false };
     if (found.length > 1) return { kind: 'malformed', template, file, message: `block ${template.name} appears twice` };
     const renamed = block.name === template.name ? {} : { renamedFrom: block.name };
     return { kind: verifyBlock(block), template, file, block, ...renamed };

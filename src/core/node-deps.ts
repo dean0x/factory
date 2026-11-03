@@ -20,7 +20,7 @@ import { createInterface } from 'node:readline';
 import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from './result.js';
-import { MAX_ANSWER_CHARS, type Deps, type Fs, type PathInfo, type PathKind } from './deps.js';
+import { MAX_ANSWER_CHARS, type Deps, type Fs, type LinkKind, type PathInfo, type PathKind } from './deps.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 30_000;
 const MAX_RUN_OUTPUT_BYTES = 1_048_576;
@@ -121,6 +121,18 @@ const statInfo = async (path: string): Promise<CliResult<PathInfo | null>> => {
   }
 };
 
+/** A path that does not exist, or that has a file where a folder should be, has no kind. */
+const MISSING_CODES: readonly string[] = ['ENOENT', 'ENOTDIR'];
+
+const linkKind = async (path: string): Promise<CliResult<LinkKind | null>> => {
+  try {
+    const info = await lstat(path);
+    return ok(info.isSymbolicLink() ? 'link' : pathKindOf(info));
+  } catch (cause) {
+    return MISSING_CODES.includes(errorCode(cause)) ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
+  }
+};
+
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   readTextLimited: async (path, maxBytes) => {
@@ -145,6 +157,7 @@ const nodeFs: Fs = {
     return info.ok ? ok(info.value?.kind ?? null) : info;
   },
   statInfo,
+  lstat: linkKind,
   chmod: (path, mode) => guard('change the mode of', path, () => chmod(path, mode)),
   realpath: (path) => guard('resolve', path, () => realpath(path)),
   mkdir: (path, mode) =>

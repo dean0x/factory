@@ -31,6 +31,10 @@ export interface Layout {
   /** The folder of the setup text. The root repo tracks it. */
   readonly setupDir: string;
   readonly setupCoordinatorFile: string;
+  /** The folder of the role texts in the setup folder. */
+  readonly setupRolesDir: string;
+  /** The worker role text that a person shares. Each machine renders the worker file of the state folder from it. */
+  readonly setupWorkerFile: string;
   /** The fixed folder of the work copies. Git ignores it. */
   readonly workCopiesDir: string;
   readonly stateDir: string;
@@ -47,6 +51,7 @@ export const layoutOf = (home: string): Layout => {
   const stateDir = join(home, dirs.state);
   const coordinatorDir = join(home, dirs.coordinator);
   const setupDir = join(home, dirs.setup);
+  const setupRolesDir = join(setupDir, dirs.roles);
   return {
     home,
     configFile: join(home, files.config),
@@ -56,6 +61,8 @@ export const layoutOf = (home: string): Layout => {
     claudeMd: join(coordinatorDir, files.claudeMd),
     setupDir,
     setupCoordinatorFile: join(setupDir, files.setupCoordinator),
+    setupRolesDir,
+    setupWorkerFile: join(setupRolesDir, files.worker),
     workCopiesDir: join(home, dirs.workCopies),
     stateDir,
     nodeJson: join(stateDir, stateRel.nodeJson),

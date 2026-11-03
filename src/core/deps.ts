@@ -2,6 +2,9 @@ import type { CliResult } from '../cli/errors.js';
 
 export type PathKind = 'file' | 'dir' | 'other';
 
+/** The kind of a path itself: a link is a `link`, and `lstat` does not follow it. */
+export type LinkKind = PathKind | 'link';
+
 /** What a path is and who may use it. A link is followed. */
 export interface PathInfo {
   readonly kind: PathKind;
@@ -31,6 +34,11 @@ export interface Fs {
   writeTextAtomic(path: string, text: string, mode?: number): Promise<CliResult<void>>;
   /** The kind of the path, or null when it does not exist. */
   stat(path: string): Promise<CliResult<PathKind | null>>;
+  /**
+   * The kind of the path itself, or null when it does not exist. A link as the last part of the path is a `link`, also when
+   * its target is missing. A link in a folder above the path is followed.
+   */
+  lstat(path: string): Promise<CliResult<LinkKind | null>>;
   /** The kind, the owner and the permission bits of the path, or null when it does not exist. */
   statInfo(path: string): Promise<CliResult<PathInfo | null>>;
   /** Set the permission bits of a file or a folder that exists. */

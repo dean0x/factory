@@ -1,0 +1,188 @@
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { CliError } from '../../src/cli/errors.js';
+import { createNodeDeps } from '../../src/core/node-deps.js';
+import { LINK_REMEDY, requireNoLinks, requireNoRootLinks, rootGuardPaths } from '../../src/core/root-paths.js';
+import { layoutOf } from '../../src/state/layout.js';
+import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+
+const ROOT = '/w/acme';
+const layout = layoutOf(ROOT);
+
+const refusal = (result: Awaited<ReturnType<typeof requireNoLinks>>): CliError => {
+  if (result.ok) throw new Error('expected a refusal');
+  return result.error;
+};
+
+/** A factory folder with the setup texts, the coordinator folder and the state folder. */
+const seeded = (links: Readonly<Record<string, string>> = {}): FakeDeps => {
+  const deps = createFakeDeps({ links });
+  deps.seed(layout.setupCoordinatorFile, 'Coordinator text.\n');
+  deps.seed(layout.setupWorkerFile, 'Worker text.\n');
+  deps.seed(layout.claudeMd, 'Instructions.\n');
+  deps.seed(layout.workerMd, 'Worker.\n');
+  deps.seedDir(layout.backupsDir);
+  return deps;
+};
+
+describe('the paths that the link rule covers', () => {
+  it('names the setup texts, the coordinator file, the worker file and the backups, and not the local file', () => {
+    expect(rootGuardPaths(layout)).toEqual([
+      `${ROOT}/setup/coordinator.md`,
+      `${ROOT}/setup/roles/worker.md`,
+      `${ROOT}/coordinator/CLAUDE.md`,
+      `${ROOT}/.factory/roles/worker.md`,
+      `${ROOT}/.factory/backups`,
+    ]);
+    expect(rootGuardPaths(layout)).not.toContain(layout.localConfigFile);
+  });
+});
+
+describe('requireNoLinks', () => {
+  it('passes a factory folder with plain files and plain folders', async () => {
+    expect((await requireNoRootLinks(seeded(), layout)).ok).toBe(true);
+  });
+
+  it('passes a factory folder where none of the paths exist yet', async () => {
+    expect((await requireNoRootLinks(createFakeDeps(), layout)).ok).toBe(true);
+  });
+
+  it('passes a path list that is empty', async () => {
+    expect((await requireNoLinks(createFakeDeps(), ROOT, [])).ok).toBe(true);
+  });
+
+  it('refuses a link at the setup text with exit 4 and one remedy line, and names the part', async () => {
+    const error = refusal(await requireNoRootLinks(seeded({ [layout.setupCoordinatorFile]: '/outside/notes.md' }), layout));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toBe('setup/coordinator.md is a link, so factory does not use it');
+    expect(error.kind === 'safety' && error.hint).toBe(LINK_REMEDY);
+  });
+
+  it.each([
+    ['the setup folder', layout.setupDir, 'setup'],
+    ['the roles folder of the setup', layout.setupRolesDir, 'setup/roles'],
+    ['the worker text of the setup', layout.setupWorkerFile, 'setup/roles/worker.md'],
+    ['the coordinator folder', layout.coordinatorDir, 'coordinator'],
+    ['the coordinator file', layout.claudeMd, 'coordinator/CLAUDE.md'],
+    ['the state folder', layout.stateDir, '.factory'],
+    ['the worker file', layout.workerMd, '.factory/roles/worker.md'],
+    ['the backups folder', layout.backupsDir, '.factory/backups'],
+  ])('refuses a link at %s', async (_name, path, shown) => {
+    const error = refusal(await requireNoRootLinks(seeded({ [path]: '/outside' }), layout));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain(`${shown} is a link`);
+  });
+
+  it('names the first link of the path, which is a folder above the file', async () => {
+    const error = refusal(await requireNoRootLinks(seeded({ [layout.coordinatorDir]: '/outside' }), layout));
+    expect(error.message).toBe('coordinator is a link, so factory does not use it');
+  });
+
+  it('refuses a link whose target does not exist', async () => {
+    const deps = createFakeDeps({ links: { [layout.setupCoordinatorFile]: '/outside/gone.md' } });
+    deps.seedDir(layout.setupDir);
+    expect(refusal(await requireNoRootLinks(deps, layout)).kind).toBe('safety');
+  });
+
+  it('refuses a link whose target is inside the factory folder', async () => {
+    const deps = seeded({ [layout.setupCoordinatorFile]: layout.setupWorkerFile });
+    expect(refusal(await requireNoRootLinks(deps, layout)).message).toContain('setup/coordinator.md is a link');
+  });
+
+  it('refuses a path that is not inside the factory folder', async () => {
+    const error = refusal(await requireNoLinks(createFakeDeps(), ROOT, ['/w/other/setup/coordinator.md']));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain('is not inside the factory folder');
+  });
+
+  it('refuses a path that climbs out of the factory folder', async () => {
+    const error = refusal(await requireNoLinks(createFakeDeps(), ROOT, [`${ROOT}/../other/file`]));
+    expect(error.kind).toBe('safety');
+  });
+
+  it('refuses a path with more parts than the bound allows', async () => {
+    const deep = `${ROOT}/${Array.from({ length: 40 }, (_unused, index) => `d${index}`).join('/')}`;
+    expect(refusal(await requireNoLinks(createFakeDeps(), ROOT, [deep])).kind).toBe('safety');
+  });
+
+  it('takes the remedy line of the caller', async () => {
+    const deps = createFakeDeps({ links: { [layout.localConfigFile]: '/outside/local.yaml' } });
+    deps.seed(layout.localConfigFile, 'x');
+    const error = refusal(await requireNoLinks(deps, ROOT, [layout.localConfigFile], 'Move it away.'));
+    expect(error.kind === 'safety' && error.hint).toBe('Move it away.');
+  });
+
+  it('works when the factory folder is under a linked parent folder', async () => {
+    const deps = createFakeDeps({ links: { '/link': '/real' } });
+    const inside = layoutOf('/link/acme');
+    deps.seed(inside.setupCoordinatorFile, 'Text.\n');
+    deps.seed(inside.claudeMd, 'Instructions.\n');
+    expect((await requireNoRootLinks(deps, inside)).ok).toBe(true);
+  });
+
+  it('works when the factory folder is a link itself', async () => {
+    const deps = createFakeDeps({ links: { [ROOT]: '/real/acme' } });
+    deps.seed(layout.setupCoordinatorFile, 'Text.\n');
+    expect((await requireNoRootLinks(deps, layout)).ok).toBe(true);
+  });
+
+  it('stops under a linked parent folder when a part below the factory folder is a link', async () => {
+    const inside = layoutOf('/link/acme');
+    const deps = createFakeDeps({ links: { '/link': '/real', [inside.setupDir]: '/outside' } });
+    deps.seedDir(inside.setupDir);
+    expect(refusal(await requireNoRootLinks(deps, inside)).message).toContain('setup is a link');
+  });
+});
+
+describe('requireNoLinks on a real file system', () => {
+  const real = createNodeDeps();
+  let base = '';
+
+  beforeAll(async () => {
+    base = await mkdtemp(join(tmpdir(), 'factory-root-paths-'));
+  });
+
+  afterAll(async () => {
+    await rm(base, { recursive: true, force: true });
+  });
+
+  const folderWithSetup = async (name: string): Promise<string> => {
+    const folder = join(base, name);
+    await mkdir(join(folder, 'setup', 'roles'), { recursive: true });
+    await mkdir(join(folder, 'coordinator'), { recursive: true });
+    await writeFile(join(folder, 'setup', 'coordinator.md'), 'Text.\n', 'utf8');
+    await writeFile(join(folder, 'coordinator', 'CLAUDE.md'), 'Instructions.\n', 'utf8');
+    return folder;
+  };
+
+  it('works for a factory folder that is reached through a linked parent folder', async () => {
+    const folder = await folderWithSetup('real-parent');
+    const via = join(base, 'via-parent');
+    await symlink(base, via);
+    const reached = join(via, 'real-parent');
+    expect((await requireNoRootLinks(real, layoutOf(reached))).ok).toBe(true);
+    expect((await requireNoRootLinks(real, layoutOf(folder))).ok).toBe(true);
+  });
+
+  it('stops for a link at the setup text that leads to a file outside the factory folder, and reads nothing', async () => {
+    const folder = await folderWithSetup('linked-setup');
+    const outside = join(base, 'outside-secret.txt');
+    await writeFile(outside, 'secret\n', 'utf8');
+    await rm(join(folder, 'setup', 'coordinator.md'));
+    await symlink(outside, join(folder, 'setup', 'coordinator.md'));
+    const error = refusal(await requireNoRootLinks(real, layoutOf(folder)));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toBe('setup/coordinator.md is a link, so factory does not use it');
+  });
+
+  it('stops for a link in place of the coordinator folder', async () => {
+    const folder = await folderWithSetup('linked-coordinator');
+    const elsewhere = join(base, 'elsewhere');
+    await mkdir(elsewhere, { recursive: true });
+    await rm(join(folder, 'coordinator'), { recursive: true });
+    await symlink(elsewhere, join(folder, 'coordinator'));
+    expect(refusal(await requireNoRootLinks(real, layoutOf(folder))).message).toContain('coordinator is a link');
+  });
+});

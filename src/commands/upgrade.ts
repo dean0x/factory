@@ -9,6 +9,7 @@ import { locateHomeFolder } from '../core/home.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
+import { requireNoRootLinks } from '../core/root-paths.js';
 import {
   commands,
   commandText,
@@ -23,6 +24,7 @@ import {
   schemaIds,
 } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
+import { readSetupTexts } from '../state/setup-text.js';
 import {
   applyMoves,
   backup,
@@ -47,6 +49,7 @@ import {
   planLocal,
   planRootMoves,
   refusalOf,
+  settleSetupBlocks,
   type FilesPlan,
 } from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
@@ -170,6 +173,11 @@ export const runUpgrade = async (
     if (!consent.ok) return consent;
   }
   const layout = layoutOf(home);
+  // The link rule comes first, also in a dry run: no read or write below goes through a link.
+  const plain = await requireNoRootLinks(deps, layout);
+  if (!plain.ok) return plain;
+  const setup = await readSetupTexts(deps, layout);
+  if (!setup.ok) return setup;
 
   const config = await planFile(deps, layout.configFile, upgrade.config);
   if (!config.ok) return config;
@@ -186,11 +194,12 @@ export const runUpgrade = async (
   if (!rootMoved.ok) return rootMoved;
   // The moves outside the state folder come first. A block file is read at its old place until the move is done.
   const files: FilesPlan = { ...stateFiles.value, moves: [...rootMoved.value, ...stateFiles.value.moves] };
-  const blockSet = planBlockSet(config.value, local.value, upgrade);
+  const blockSet = planBlockSet(config.value, local.value, upgrade, setup.value);
   if (!blockSet.ok) return blockSet;
 
   const known = blockSet.value.templates.map((template) => template.name);
-  const oldNames = [...upgrade.files.flatMap((step) => step.renames), ...blockSet.value.renames].map((rename) => rename.from);  const unknown = options.overwrite.filter((name) => !known.includes(name) && !oldNames.includes(name));
+  const oldNames = [...upgrade.files.flatMap((step) => step.renames), ...blockSet.value.renames].map((rename) => rename.from);
+  const unknown = options.overwrite.filter((name) => !known.includes(name) && !oldNames.includes(name));
   if (unknown.length > 0) {
     return usageError(`${flagText(flags.overwrite)}: unknown block ${unknown.join(', ')}`, `The blocks are: ${known.join(', ')}.`);
   }
@@ -199,8 +208,8 @@ export const runUpgrade = async (
   const named = (status: BlockStatus): boolean =>
     options.overwrite.some((name) => name === status.template.name || name === renamedFromOf(status));
   const pending = { ...files, renames: [...files.renames, ...blockSet.value.renames] };
-  const blocks = (await inspectBlocks(deps, home, blockSet.value.templates, pending)).map((status) =>
-    planBlock(status, named(status)),
+  const blocks = settleSetupBlocks(
+    (await inspectBlocks(deps, home, blockSet.value.templates, pending)).map((status) => planBlock(status, named(status))),
   );
 
   const refused = refusalOf(blocks);
@@ -277,6 +286,9 @@ export const runUpgrade = async (
     if (!ready.ok) return ready;
   }
 
+  // The paths are checked once more before the first write, because a path can change while the command plans.
+  const stillPlain = await requireNoRootLinks(deps, layout);
+  if (!stillPlain.ok) return stillPlain;
   const backupDir = await backup(deps, home);
   if (!backupDir.ok) return backupDir;
   const backupPath = relative(home, backupDir.value);

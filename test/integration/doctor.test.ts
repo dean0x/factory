@@ -1,4 +1,4 @@
-import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
@@ -150,9 +150,22 @@ describe('factory doctor (built binary)', () => {
     const path = join(box.node, 'factory.local.yaml');
     await chmod(path, 0o662);
     const result = await box.run(['doctor', '--home', box.node]);
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(4);
     expect(result.stdout).toContain('chmod 600 factory.local.yaml');
     expect((await stat(path)).mode & 0o777).toBe(0o662);
+  });
+
+  it('exits 4 for a local file that is a link, and names the remedy', async () => {
+    await initNode();
+    const path = join(box.node, 'factory.local.yaml');
+    const elsewhere = join(box.root, 'elsewhere.yaml');
+    await rename(path, elsewhere);
+    await symlink(elsewhere, path);
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(4);
+    expect(result.stdout).toContain('factory.local.yaml is a link, so factory does not use it');
+    expect(result.stdout).toContain('factory init');
+    expect((await lstat(path)).isSymbolicLink()).toBe(true);
   });
 
   it('exits 2 when there is no config file above the folder and no entry of the home index', async () => {

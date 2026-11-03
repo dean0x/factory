@@ -1,10 +1,9 @@
-import { z } from 'zod';
 import { failure, type CliResult } from '../cli/errors.js';
 import { LOCAL_SPEC, parseYamlText, SHARED_SPEC } from '../config/load.js';
 import { renderLocalConfig, renderSharedConfig } from '../config/render.js';
 import {
   localConfigSchema,
-  nodeSchema,
+  parseConfig,
   sharedConfigSchema,
   splitConfigValue,
   type SharedConfig,
@@ -16,13 +15,11 @@ import { fileSteps, rootMoves, type BlockRename, type FileStep, type RootMove } 
 import type { SchemaParser, TextParser, VersionSpec } from '../migrate/inspect.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
-import { keys, values } from '../names.js';
-import { ownerModes, recipes } from '../recipes/index.js';
 import { jsonText } from '../state/files.js';
 import { STATE_SPEC, parseJsonText } from '../state/load.js';
 import { nodeStateSchema } from '../state/schema.js';
-import { blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
-import type { BlockTemplate } from '../templates/types.js';
+import { blockInputOf, blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
+import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 
 /** How `upgrade` handles one versioned file. */
 export interface UpgradeFile {
@@ -53,10 +50,10 @@ export interface UpgradeSpec {
   /** The value of the local file, taken from a migrated config value that holds the keys of both files. */
   localPartOf(config: unknown): unknown;
   /**
-   * The managed blocks of the node that a config value describes. The value holds the keys of both files, in the
-   * current schema versions.
+   * The managed blocks of the node that a config value describes, with the setup texts of the root. The value holds the
+   * keys of both files, in the current schema versions.
    */
-  blocksOf(config: unknown): CliResult<BlockSet>;
+  blocksOf(config: unknown, setup: SetupTexts): CliResult<BlockSet>;
 }
 
 export const finisher =
@@ -66,21 +63,17 @@ export const finisher =
     return parsed.success ? ok(render(parsed.data)) : failure(describeIssues(parsed.error));
   };
 
-const blocksSchema = z.looseObject({
-  [keys.root.node]: nodeSchema,
-  [keys.root.recipe]: z.looseObject({ [keys.recipe.id]: z.enum(values.recipes) }),
-});
-
 /**
- * The blocks come from the layer of the node, which sets the role, and from the approval points of its recipe.
- * Every point waits for the owner here. The effective modes come in a later step.
+ * The blocks come from the merged config of the two files: the layer sets the role, the recipe sets the approval
+ * points, the local file sets the owner prefix, and the shared file sets the context limits. The setup texts follow the
+ * core blocks.
  */
-const blocksOfNode = (config: unknown): CliResult<BlockSet> => {
-  const parsed = blocksSchema.safeParse(config);
+const blocksOfNode = (config: unknown, setup: SetupTexts): CliResult<BlockSet> => {
+  const { shared, local } = splitConfigValue(config);
+  const parsed = parseConfig(shared, local);
   if (!parsed.success) return failure(describeIssues(parsed.error));
-  const { layer } = parsed.data[keys.root.node];
-  const modes = ownerModes(recipes[parsed.data[keys.root.recipe][keys.recipe.id]].approvalPoints);
-  return ok({ templates: blockTemplatesFor(layer, modes), renames: roleBlockRenames(layer) });
+  const input = blockInputOf(parsed.data, setup);
+  return ok({ templates: blockTemplatesFor(input), renames: roleBlockRenames(input.layer) });
 };
 
 /** A migrated value holds the keys of both files. The shared file takes its part of them. */

@@ -1,34 +1,63 @@
-import { COORDINATOR_LAYER, WORKER_LAYER } from '../config/schema.js';
+import { COORDINATOR_LAYER, WORKER_LAYER, type FactoryConfig } from '../config/schema.js';
 import type { BlockRename } from '../migrate/files.js';
 import { blockNames } from '../names.js';
-import type { ApprovalModes } from '../recipes/index.js';
+import { ownerModes, recipes } from '../recipes/index.js';
 import { approvalRules, homeRoleBlockNames, roleForLayer, roleNameForLayer } from '../recipes/software/recipe.js';
 import { PROFILE_INDEX_LINES, PROFILE_README_LINES } from './decision-profile.js';
-import { fillTemplate } from './fill.js';
+import { coordinatorValuesFor, fillTemplate } from './fill.js';
 import { ROADMAPS_README_LINES } from './roadmaps.js';
 import { safetyLines } from './safety.js';
-import { SETUP_COORDINATOR_LINES } from './setup.js';
-import type { BlockTemplate } from './types.js';
+import { SETUP_COORDINATOR_LINES, SETUP_WORKER_LINES } from './setup.js';
+import type { BlockInput, BlockTemplate, SetupTexts } from './types.js';
 
-/** The safety block belongs to the core. Every role gets it. Its approval point lines follow the modes. */
-const safetyFor = (modes: ApprovalModes): BlockTemplate => ({
+/**
+ * The safety block belongs to the core. Every role gets it. Its approval point lines follow the modes, and it holds the
+ * owner prefix. It lives in the coordinator folder, so its paths are written from that folder.
+ */
+const safetyFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.safety,
   version: 2,
   target: 'claudeFile',
-  body: fillTemplate(safetyLines(approvalRules(modes))),
+  body: fillTemplate(safetyLines(approvalRules(input.modes)), coordinatorValuesFor(input)),
 });
 
+/** The block of a setup text, or none when the text is absent or empty. The body is the text as it is. */
+const setupBlock = (name: string, target: BlockTemplate['target'], text: string | null): readonly BlockTemplate[] =>
+  text === null ? [] : [{ name, version: 1, target, body: text }];
+
 /**
- * The managed blocks of a node on this layer: its role block, the safety block, and, on layer 1,
- * the worker block. A worker has no home, so the node just above the workers holds the instructions that the workers follow.
- * A layer with no role template has the safety block only. The text of the approval points follows `modes`,
- * the mode of each approval point by point id.
+ * The managed blocks of a node on this layer: its role block, the safety block, and, on layer 1, the worker
+ * block. A worker has no home, so the node just above the workers holds the instructions that the workers follow.
+ * A layer with no role template has the safety block only. After the core blocks come the blocks of the setup texts:
+ * the coordinator text goes into the coordinator file, and the worker text goes into the worker file of a node that has
+ * one. The text of the blocks follows `input`.
  */
-export const blockTemplatesFor = (layer: number, modes: ApprovalModes): readonly BlockTemplate[] => {
-  const role = roleForLayer(layer, modes);
-  const worker = layer === COORDINATOR_LAYER ? roleForLayer(WORKER_LAYER, modes) : null;
-  return [role, safetyFor(modes), worker].filter((template): template is BlockTemplate => template !== null);
+export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] => {
+  const role = roleForLayer(input);
+  const worker = input.layer === COORDINATOR_LAYER ? roleForLayer({ ...input, layer: WORKER_LAYER }) : null;
+  const core = [role, safetyFor(input), worker].filter((template): template is BlockTemplate => template !== null);
+  const hasWorkerFile = core.some((template) => template.target === 'workerFile');
+  return [
+    ...core,
+    ...setupBlock(blockNames.setup, 'claudeFile', input.setup.coordinator),
+    ...(hasWorkerFile ? setupBlock(blockNames.setupWorker, 'workerFile', input.setup.worker) : []),
+  ];
 };
+
+/**
+ * What the blocks of a node depend on, from its config and its setup texts. Every approval point waits for the owner
+ * here. The effective modes come in a later step.
+ */
+export const blockInputOf = (config: FactoryConfig, setup: SetupTexts): BlockInput => ({
+  layer: config.core.node.layer,
+  modes: ownerModes(recipes[config.recipe.id].approvalPoints),
+  ownerPrefix: config.core.owner.prefix,
+  limits: {
+    contextPreparePct: config.core.limits.context_prepare_pct,
+    contextMaxPct: config.core.limits.context_max_pct,
+  },
+  setup,
+});
 
 /**
  * The role blocks that another layer would hold, each as the old name of the role block of this layer.
@@ -45,4 +74,5 @@ export const fileTemplates = {
   profileIndex: fillTemplate(PROFILE_INDEX_LINES),
   roadmapsReadme: fillTemplate(ROADMAPS_README_LINES),
   setupCoordinator: fillTemplate(SETUP_COORDINATOR_LINES),
+  setupWorker: fillTemplate(SETUP_WORKER_LINES),
 } as const;

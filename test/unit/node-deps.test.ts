@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmod, lstat, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -307,6 +307,45 @@ describe('node deps: fs', () => {
     expect((await deps.fs.remove(moved)).ok).toBe(true);
     expect((await deps.fs.remove(moved)).ok).toBe(true);
     expect(await deps.fs.stat(moved)).toEqual({ ok: true, value: null });
+  });
+});
+
+describe('node deps: lstat', () => {
+  it('tells the kind of a file, of a folder and of a path that does not exist', async () => {
+    const file = fresh('lstat-file.txt');
+    await writeFile(file, 'x', 'utf8');
+    expect(await deps.fs.lstat(file)).toEqual({ ok: true, value: 'file' });
+    expect(await deps.fs.lstat(dir)).toEqual({ ok: true, value: 'dir' });
+    expect(await deps.fs.lstat(fresh('lstat-none'))).toEqual({ ok: true, value: null });
+  });
+
+  it('tells a link to a file, a link to a folder and a link with no target as link, and follows none of them', async () => {
+    const target = fresh('lstat-target.txt');
+    await writeFile(target, 'x', 'utf8');
+    const toFile = fresh('lstat-to-file');
+    const toFolder = fresh('lstat-to-folder');
+    const dangling = fresh('lstat-dangling');
+    await symlink(target, toFile);
+    await symlink(dir, toFolder);
+    await symlink(join(dir, 'lstat-no-target'), dangling);
+    for (const link of [toFile, toFolder, dangling]) {
+      expect(await deps.fs.lstat(link)).toEqual({ ok: true, value: 'link' });
+    }
+  });
+
+  it('follows a link in a folder above the path', async () => {
+    const real = fresh('lstat-real');
+    await mkdir(real);
+    await writeFile(join(real, 'inner.txt'), 'x', 'utf8');
+    const via = fresh('lstat-via');
+    await symlink(real, via);
+    expect(await deps.fs.lstat(join(via, 'inner.txt'))).toEqual({ ok: true, value: 'file' });
+  });
+
+  it('gives null when a file stands where a folder should be', async () => {
+    const file = fresh('lstat-not-a-folder.txt');
+    await writeFile(file, 'x', 'utf8');
+    expect(await deps.fs.lstat(join(file, 'below'))).toEqual({ ok: true, value: null });
   });
 });
 

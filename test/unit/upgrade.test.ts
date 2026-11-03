@@ -11,6 +11,7 @@ import { runInit } from '../../src/commands/init.js';
 import { runUpgrade } from '../../src/commands/upgrade.js';
 import { parseConfigTexts, parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
+import { setupBlockNames } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -56,10 +57,15 @@ interface Node {
 }
 
 const makeNode = async (
-  options: { repo?: boolean; run?: (inner: RunHandler) => RunHandler } = {},
+  options: { repo?: boolean; run?: (inner: RunHandler) => RunHandler; links?: Record<string, string> } = {},
 ): Promise<Node> => {
   const { handler } = gitHandler();
-  const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin', ...INDEX_ENV }, run: options.run?.(handler) ?? handler });
+  const deps = createFakeDeps({
+    cwd: '/w',
+    env: { PATH: '/bin', ...INDEX_ENV },
+    run: options.run?.(handler) ?? handler,
+    ...(options.links === undefined ? {} : { links: options.links }),
+  });
   const init = await runInit(
     { ...deps, run: async (command, args, runOptions) => handler({ command, args, cwd: runOptions?.cwd }) },
     {
@@ -180,7 +186,10 @@ describe('upgrade: when nothing changes', () => {
     const { deps } = await makeNode();
     deps.files.delete(WORKER);
     const output = success(await upgrade(deps));
-    expect(output.warnings).toEqual(['block worker is missing. Use --overwrite worker to add it.']);
+    expect(output.warnings).toEqual([
+      'block worker is missing. Run "factory upgrade --overwrite worker" to add it.',
+      'block setup-worker is missing. Run "factory upgrade --overwrite setup-worker" to add it.',
+    ]);
     expect(output.json).toMatchObject({ changed: false });
     expect(deps.files.has(WORKER)).toBe(false);
   });
@@ -232,7 +241,7 @@ describe('upgrade: managed blocks', () => {
     ]);
 
     const statuses = await inspectBlocks(deps, HOME, withBlock('coordinator', 'New coordinator text.'));
-    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
+    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact', 'intact', 'intact']);
   });
 
   it('copies the config, CLAUDE.md and the state folder into the backup first, and not the old backups', async () => {
@@ -298,11 +307,9 @@ describe('upgrade: managed blocks', () => {
     edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
     const before = snapshot(deps);
     const output = success(await upgrade(deps));
-    expect(output.lines).toContainEqual({
-      level: 'warn',
-      text: 'block coordinator was edited, so factory keeps it. Use --overwrite coordinator to replace it.',
-    });
-    expect(output.warnings).toContain('block coordinator was edited, so factory keeps it. Use --overwrite coordinator to replace it.');
+    const warning = 'block coordinator was edited, so factory keeps it. Run "factory upgrade --overwrite coordinator" to replace it.';
+    expect(output.lines).toContainEqual({ level: 'warn', text: warning });
+    expect(output.warnings).toContain(warning);
     expect(snapshot(deps)).toEqual(before);
   });
 
@@ -349,8 +356,11 @@ describe('upgrade: managed blocks', () => {
     const output = success(await upgrade(deps, currentSpec, { overwrite: ['safety'] }));
     const after = text(deps, CLAUDE);
     expect(after.startsWith('Owner text.\n')).toBe(true);
-    expect(after.trimEnd().endsWith('<!-- factory:end safety -->')).toBe(true);
+    // The setup block is gone with the safety block, and it comes back after it.
+    expect(after.trimEnd().endsWith('<!-- factory:end setup -->')).toBe(true);
+    expect(after.indexOf('<!-- factory:begin safety')).toBeLessThan(after.indexOf('<!-- factory:begin setup'));
     expect(lineTexts(output)).toContain(`block safety: add version ${versionOf('safety')}`);
+    expect(lineTexts(output)).toContain(`block setup: add version ${versionOf('setup')}`);
   });
 
   it('creates a missing worker file when the block is named', async () => {
@@ -358,6 +368,9 @@ describe('upgrade: managed blocks', () => {
     deps.files.delete(WORKER);
     const output = success(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
     expect(text(deps, WORKER)).toContain(`<!-- factory:begin worker v${versionOf('worker')} sha256=`);
+    // The setup text goes into the file that this run makes, so a second run has nothing left to add.
+    expect(text(deps, WORKER)).toContain(`<!-- factory:begin setup-worker v${versionOf('setup-worker')} sha256=`);
+    expect(output.warnings).toEqual([]);
     expect(output.json).toMatchObject({ committed: true });
   });
 
@@ -370,8 +383,9 @@ describe('upgrade: managed blocks', () => {
     const after = text(deps, CLAUDE);
     expect(after).toContain(`<!-- factory:begin coordinator v${versionOf('coordinator')} sha256=`);
     expect(after).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
+    expect(after).toContain(`<!-- factory:begin setup v${versionOf('setup')} sha256=`);
     expect(output.warnings).toEqual([]);
-    expect((await inspectBlocks(deps, HOME, layer1Blocks)).map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
   });
 
   it('rejects the name of a block that does not exist', async () => {
@@ -379,7 +393,7 @@ describe('upgrade: managed blocks', () => {
     const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['nope'] }));
     expect(error.kind).toBe('usage');
     expect(error.message).toContain('unknown block nope');
-    expect(error.hint).toBe('The blocks are: coordinator, safety, worker.');
+    expect(error.hint).toBe('The blocks are: coordinator, safety, worker, setup, setup-worker.');
   });
 
   it('fails when a block has a newer version than the template', async () => {
@@ -412,6 +426,7 @@ describe('upgrade: migrations', () => {
     const spec: UpgradeSpec = {
       ...currentSpec,
       config: configAt(C + 2, [step('schema', C, { two: true }), step('schema', C + 1, { three: true })]),
+      ...fixedBlocks(layer1Blocks),
     };
     const output = success(await upgrade(deps, spec));
     const written = parseJsonText(text(deps, CONFIG));
@@ -535,13 +550,15 @@ describe('upgrade: the blocks of a layer', () => {
     return state.ok ? (state.value as { blocks: unknown }).blocks : undefined;
   };
 
-  it('keeps the coordinator, safety and worker blocks of layer 1', async () => {
+  it('keeps the coordinator, safety, worker and setup blocks of layer 1', async () => {
     const { deps } = await makeNode();
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
     expect(lineTexts(output).filter((line) => line.startsWith('block '))).toEqual([
       `block coordinator: version ${versionOf('coordinator')} is current`,
       `block safety: version ${versionOf('safety')} is current`,
       `block worker: version ${versionOf('worker')} is current`,
+      `block setup: version ${versionOf('setup')} is current`,
+      `block setup-worker: version ${versionOf('setup-worker')} is current`,
     ]);
   });
 
@@ -558,18 +575,25 @@ describe('upgrade: the blocks of a layer', () => {
     expect(claude).not.toContain('factory:begin coordinator');
     expect(claude).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
     expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 1');
-    expect(blocksOfState(deps)).toEqual({ manager: 1, safety: versionOf('safety'), worker: versionOf('worker') });
+    expect(blocksOfState(deps)).toEqual({
+      manager: 1,
+      safety: versionOf('safety'),
+      worker: versionOf('worker'),
+      setup: versionOf('setup'),
+      'setup-worker': versionOf('setup-worker'),
+    });
     expect(output.json).toMatchObject({ committed: true });
     expect(gitSince().some((command) => command.endsWith('chore: upgrade the state'))).toBe(true);
-    expect((await inspectBlocks(deps, HOME, layer2Blocks)).map((status) => status.kind)).toEqual(['intact', 'intact']);
+    expect((await inspectBlocks(deps, HOME, layer2Blocks)).map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
   });
 
-  it('lists the safety block only when the layer is 3, which has no role template', async () => {
+  it('lists the safety and setup blocks only when the layer is 3, which has no role template', async () => {
     const { deps } = await makeNode();
     setLayer(deps, 3);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
     expect(lineTexts(output).filter((line) => line.startsWith('block '))).toEqual([
       `block safety: version ${versionOf('safety')} is current`,
+      `block setup: version ${versionOf('setup')} is current`,
     ]);
   });
 
@@ -588,6 +612,8 @@ describe('upgrade: the blocks of a layer', () => {
       coordinator: versionOf('coordinator'),
       safety: versionOf('safety'),
       worker: versionOf('worker'),
+      setup: versionOf('setup'),
+      'setup-worker': versionOf('setup-worker'),
     });
   });
 
@@ -609,7 +635,7 @@ describe('upgrade: the blocks of a layer', () => {
     const kept = success(await upgrade(deps, currentSpec, { dryRun: true }));
     expect(kept.lines).toContainEqual({
       level: 'warn',
-      text: 'block coordinator was edited, so factory keeps it. Use --overwrite coordinator to replace it.',
+      text: 'block coordinator was edited, so factory keeps it. Run "factory upgrade --overwrite coordinator" to replace it.',
     });
     expect(snapshot(deps)).toEqual(before);
 
@@ -625,7 +651,7 @@ describe('upgrade: the blocks of a layer', () => {
     setLayer(deps, 2);
     const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
     expect(error.kind).toBe('usage');
-    expect(error.hint).toBe('The blocks are: manager, safety.');
+    expect(error.hint).toBe('The blocks are: manager, safety, setup.');
   });
 
   it('fails and names the key when the layer of the config is not valid', async () => {
@@ -907,7 +933,7 @@ describe('upgrade: before it changes anything', () => {
 
   it('does not need the repository for a change of the config only', async () => {
     const { deps } = await makeNode({ repo: false });
-    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]) };
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]), ...fixedBlocks(layer1Blocks) };
     expect(success(await upgrade(deps, spec)).json).toMatchObject({ changed: true, committed: false });
   });
 
@@ -1055,6 +1081,8 @@ describe('upgrade: a node of schema 1', () => {
   const ROLES = `${HOME}/.factory/roles`;
   const ORDERS_KEEP = `${HOME}/.factory/orders/.gitkeep`;
   const BACKUPS_DIR = `${HOME}/.factory/backups/`;
+  /** A root of schema 1 has no setup folder, so it holds the core blocks only. */
+  const coreBlocks = layer1Blocks.filter((template) => !setupBlockNames.includes(template.name));
   const workerBody = layer1Blocks.find((template) => template.name === 'worker')?.body ?? '';
   const workerLine = workerBody.split('\n').find((line) => line.length > 20 && !line.startsWith('#')) ?? '';
 
@@ -1125,7 +1153,7 @@ describe('upgrade: a node of schema 1', () => {
     const worker = text(deps, WORKER);
     expect(worker).toContain(`<!-- factory:begin worker v${versionOf('worker')} sha256=`);
     expect(worker).not.toContain('factory:begin protocol');
-    expect((await inspectBlocks(deps, HOME, layer1Blocks)).map((status) => status.kind)).toEqual([
+    expect((await inspectBlocks(deps, HOME, coreBlocks)).map((status) => status.kind)).toEqual([
       'intact',
       'intact',
       'intact',
@@ -1633,7 +1661,7 @@ describe('upgrade: a node of schema 1', () => {
     const dry = success(await upgrade(deps, currentSpec, { dryRun: true }));
     expect(dry.lines).toContainEqual({
       level: 'warn',
-      text: 'block protocol was edited, so factory keeps it. Use --overwrite protocol to replace it.',
+      text: 'block protocol was edited, so factory keeps it. Run "factory upgrade --overwrite protocol" to replace it.',
     });
     success(await upgrade(deps));
     expect(text(deps, WORKER)).toContain('My own rule for the workers.');
@@ -1646,7 +1674,7 @@ describe('upgrade: a node of schema 1', () => {
     expect(text(deps, WORKER)).toContain(workerLine);
     expect(text(deps, WORKER)).not.toContain('My own rule for the workers.');
     expect(deps.files.has(OLD.protocol)).toBe(false);
-    expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
+    expect((await inspectBlocks(deps, HOME, coreBlocks)).every((status) => status.kind === 'intact')).toBe(true);
   });
 
   it('keeps the text around the protocol block', async () => {
@@ -1677,7 +1705,7 @@ describe('upgrade: a node of schema 1', () => {
     const output = success(await upgrade(deps));
     expect(deps.files.has(WORKER)).toBe(false);
     expect(deps.files.has(ORDERS_KEEP)).toBe(true);
-    expect(output.warnings).toEqual(['block worker is missing. Use --overwrite worker to add it.']);
+    expect(output.warnings).toEqual(['block worker is missing. Run "factory upgrade --overwrite worker" to add it.']);
     expect(output.json).toMatchObject({
       moves: [
         { from: 'CLAUDE.md', to: 'coordinator/CLAUDE.md' },
@@ -1937,7 +1965,11 @@ describe('upgrade: the two config files', () => {
     const sharedBefore = text(deps, CONFIG);
     const original = text(deps, LOCAL);
     const first = deps.atomicWrites.length;
-    const spec: UpgradeSpec = { ...currentSpec, local: localAt(L + 1, [step('schema', L, { added: true })]) };
+    const spec: UpgradeSpec = {
+      ...currentSpec,
+      local: localAt(L + 1, [step('schema', L, { added: true })]),
+      ...fixedBlocks(layer1Blocks),
+    };
     const output = success(await upgrade(deps, spec));
     expect(lineTexts(output)).toContain(`factory.local.yaml: schema ${L} to ${L + 1} (1 step)`);
     expect(lineTexts(output)).toContain(`factory.yaml: schema ${C} is current`);
@@ -1955,7 +1987,7 @@ describe('upgrade: the two config files', () => {
     const { deps } = await makeNode();
     const localBefore = text(deps, LOCAL);
     const first = deps.atomicWrites.length;
-    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]) };
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]), ...fixedBlocks(layer1Blocks) };
     const output = success(await upgrade(deps, spec));
     expect(output.json).toMatchObject({ config: { from: C, to: C + 1 }, local: { from: L, to: L } });
     expect(lineTexts(output)).toContain(`factory.local.yaml: schema ${L} is current`);
@@ -1970,6 +2002,7 @@ describe('upgrade: the two config files', () => {
       ...currentSpec,
       config: configAt(C + 1, [step('schema', C)]),
       local: localAt(L + 1, [step('schema', L)]),
+      ...fixedBlocks(layer1Blocks),
     };
     success(await upgrade(deps, spec));
     const writes = deps.atomicWrites.slice(first);
@@ -2037,5 +2070,343 @@ describe('upgrade: the two config files', () => {
       expect(snapshot(deps)).toEqual(before);
       expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
     });
+
+    it('stops with exit 4 and one remedy line for a local file that is a link, before the mode fix, and changes nothing (TP-147)', async () => {
+      const links: Record<string, string> = {};
+      const { deps, gitSince } = await makeNode({ links });
+      links[LOCAL] = '/outside/factory.local.yaml';
+      deps.modes.set(LOCAL, 0o644);
+      const before = snapshot(deps);
+      for (const dryRun of [false, true]) {
+        const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+        expect(error.kind).toBe('safety');
+        expect(error.message).toBe('factory.local.yaml is a link, so factory does not use it');
+        expect(error.hint).toBe('Move factory.local.yaml away, then run "factory init" to write a new one.');
+      }
+      expect(deps.modes.get(LOCAL)).toBe(0o644);
+      expect(snapshot(deps)).toEqual(before);
+      expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    });
+  });
+});
+
+/** The state of every file and folder, for a test that proves a run wrote nothing. */
+const wholeState = (deps: FakeDeps): { readonly files: Map<string, string>; readonly dirs: string[]; readonly modes: Map<string, number> } => ({
+  files: snapshot(deps),
+  dirs: [...deps.dirs].sort(),
+  modes: new Map(deps.modes),
+});
+
+describe('upgrade: the link rule (TP-130)', () => {
+  it.each([
+    ['the setup folder', `${HOME}/setup`, 'setup'],
+    ['the setup text of the coordinator', `${HOME}/setup/coordinator.md`, 'setup/coordinator.md'],
+    ['the roles folder of the setup', `${HOME}/setup/roles`, 'setup/roles'],
+    ['the setup text of the workers', `${HOME}/setup/roles/worker.md`, 'setup/roles/worker.md'],
+    ['the coordinator folder', `${HOME}/coordinator`, 'coordinator'],
+    ['the coordinator CLAUDE.md', CLAUDE, 'coordinator/CLAUDE.md'],
+    ['the state folder', `${HOME}/.factory`, '.factory'],
+    ['the worker file', WORKER, '.factory/roles/worker.md'],
+    ['the backup folder', `${HOME}/.factory/backups`, '.factory/backups'],
+  ])('stops with exit 4 for a link at %s, writes nothing and makes no backup, also in a dry run', async (_name, path, shown) => {
+    const links: Record<string, string> = {};
+    const { deps, gitSince } = await makeNode({ links });
+    links[path] = '/outside/target';
+    const before = wholeState(deps);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { dryRun }));
+      expect(error.kind).toBe('safety');
+      expect(error.message).toBe(`${shown} is a link, so factory does not use it`);
+      expect(error.hint).toBe('Replace the link with a plain file inside the factory folder, then run "factory doctor".');
+    }
+    expect(wholeState(deps)).toEqual(before);
+    expect([...deps.files.keys()].some((file) => file.includes('/backups/'))).toBe(false);
+    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+  });
+
+  it('stops for a link in an overwrite run too, and does not follow it to add a block', async () => {
+    const links: Record<string, string> = {};
+    const { deps } = await makeNode({ links });
+    links[WORKER] = '/outside/worker.md';
+    deps.files.delete(WORKER);
+    const before = wholeState(deps);
+    const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
+    expect(error.kind).toBe('safety');
+    expect(wholeState(deps)).toEqual(before);
+  });
+
+  it('makes the link check before it reads the setup text, so a text behind a link is never read', async () => {
+    const links: Record<string, string> = {};
+    const { deps } = await makeNode({ links });
+    links[`${HOME}/setup/coordinator.md`] = '/outside/notes.md';
+    deps.files.set(`${HOME}/setup/coordinator.md`, '<!-- factory:begin coordinator v1 sha256=abc -->\n');
+    const error = refusal(await upgrade(deps));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain('is a link');
+  });
+
+  it('does not move a CLAUDE.md that is a link from the top of a root of schema 1', async () => {
+    const links: Record<string, string> = {};
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin', ...INDEX_ENV }, run: handler, links });
+    seedSchema1Node(deps, HOME);
+    links[schema1Paths(HOME).claude] = '/outside/CLAUDE.md';
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(output.json['moves']).toEqual([
+      { from: '.factory/protocol.md', to: '.factory/roles/worker.md' },
+      { from: '.factory/briefs', to: '.factory/orders' },
+    ]);
+  });
+});
+
+describe('upgrade: a factory folder that breaks the folder rule (exit 4, before any write)', () => {
+  /** Copy the node at HOME to another folder by hand, with its files and modes. The factory list does not hold the copy. */
+  const copyNodeTo = (deps: FakeDeps, to: string): void => {
+    for (const dir of [...deps.dirs]) {
+      if (dir === HOME || dir.startsWith(`${HOME}/`)) deps.seedDir(dir.replace(HOME, to));
+    }
+    for (const [path, body] of [...deps.files]) {
+      if (path.startsWith(`${HOME}/`)) deps.seed(path.replace(HOME, to), body);
+    }
+    for (const [path, mode] of [...deps.modes]) {
+      if (path.startsWith(`${HOME}/`)) deps.modes.set(path.replace(HOME, to), mode);
+    }
+  };
+
+  const run = (deps: FakeDeps, place: string, dryRun: boolean) =>
+    runUpgrade(deps, { home: place, dryRun, overwrite: [], yes: true }, currentSpec);
+
+  const assertStopped = async (deps: FakeDeps, place: string, reason: string): Promise<void> => {
+    const before = wholeState(deps);
+    for (const dryRun of [false, true]) {
+      const result = await run(deps, place, dryRun);
+      const error = refusal(result);
+      expect(error.kind).toBe('safety');
+      expect(error.message).toContain(reason);
+    }
+    expect(wholeState(deps)).toEqual(before);
+    expect([...deps.files.keys()].some((file) => file.startsWith(`${place}/.factory/backups/`))).toBe(false);
+  };
+
+  it('stops for a factory folder inside a git work tree', async () => {
+    const { deps } = await makeNode();
+    deps.seedDir('/w/repo/.git');
+    copyNodeTo(deps, '/w/repo/factory');
+    await assertStopped(deps, '/w/repo/factory', 'the factory list has no entry for /w/repo/factory');
+  });
+
+  it('stops for a factory folder above one of its projects', async () => {
+    const { deps } = await makeNode();
+    deps.seedDir('/w/ws/web/.git');
+    copyNodeTo(deps, '/w/ws');
+    await assertStopped(deps, '/w/ws', 'the factory list has no entry for /w/ws');
+  });
+
+  it('stops for a factory folder inside another factory folder', async () => {
+    const { deps } = await makeNode();
+    copyNodeTo(deps, `${HOME}/inner`);
+    await assertStopped(deps, `${HOME}/inner`, `the factory list has no entry for ${HOME}/inner`);
+  });
+
+  it('stops with the same exit code when the yes flag is set, because a schema 2 folder is never registered by upgrade', async () => {
+    const { deps } = await makeNode();
+    deps.seedDir('/w/repo/.git');
+    copyNodeTo(deps, '/w/repo/factory');
+    const error = refusal(await runUpgrade(deps, { home: '/w/repo/factory', dryRun: false, overwrite: [], yes: true }, currentSpec));
+    expect(error.kind).toBe('safety');
+    expect(error.hint).toBe('Run "factory init" in the factory folder /w/repo/factory.');
+  });
+
+  it('still upgrades the factory folder that init registered, next to the copies', async () => {
+    const { deps } = await makeNode();
+    copyNodeTo(deps, '/w/repo/factory');
+    expect(success(await upgrade(deps, currentSpec, { dryRun: true })).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+  });
+});
+
+describe('upgrade: the setup text (TP-102)', () => {
+  const SETUP = `${HOME}/setup/coordinator.md`;
+  const SETUP_WORKER = `${HOME}/setup/roles/worker.md`;
+  const blockBody = (file: string, name: string): string => {
+    const start = file.indexOf(`<!-- factory:begin ${name} `);
+    const end = file.indexOf(`<!-- factory:end ${name} -->`);
+    return start < 0 || end < 0 ? '' : file.slice(file.indexOf('\n', start) + 1, end).trimEnd();
+  };
+
+  it('renders a changed setup file again into coordinator/CLAUDE.md, after the core blocks, and keeps the core blocks as they are', async () => {
+    const { deps } = await makeNode();
+    const before = text(deps, CLAUDE);
+    deps.files.set(SETUP, 'My shared rules.\nSecond rule.\n');
+    const output = success(await upgrade(deps));
+    const after = text(deps, CLAUDE);
+    expect(blockBody(after, 'setup')).toBe('My shared rules.\nSecond rule.');
+    expect(after.indexOf('<!-- factory:begin setup')).toBeGreaterThan(after.indexOf('<!-- factory:end safety -->'));
+    expect(blockBody(after, 'coordinator')).toBe(blockBody(before, 'coordinator'));
+    expect(blockBody(after, 'safety')).toBe(blockBody(before, 'safety'));
+    expect(lineTexts(output)).toContain('block setup: render the text again, because the package or a setting changed it');
+    expect(output.json).toMatchObject({ changed: true });
+  });
+
+  it('renders a changed worker text into the worker file', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(SETUP_WORKER, 'Every worker keeps notes.\n');
+    success(await upgrade(deps));
+    expect(blockBody(text(deps, WORKER), 'setup-worker')).toBe('Every worker keeps notes.');
+    expect(text(deps, WORKER)).toContain('factory:begin worker v');
+  });
+
+  it('shows the render in a dry run and changes no file', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(SETUP, 'Dry rules.\n');
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain('block setup: render the text again, because the package or a setting changed it');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('keeps the text of the person around the blocks', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(CLAUDE, `My own rules.\n\n${text(deps, CLAUDE)}\nMore of mine.\n`);
+    deps.files.set(SETUP, 'Changed.\n');
+    success(await upgrade(deps));
+    expect(text(deps, CLAUDE).startsWith('My own rules.\n')).toBe(true);
+    expect(text(deps, CLAUDE).endsWith('\nMore of mine.\n')).toBe(true);
+  });
+
+  it('adds the setup block to a file that has none, without the overwrite flag', async () => {
+    const { deps } = await makeNode();
+    const claude = text(deps, CLAUDE);
+    deps.files.set(CLAUDE, claude.slice(0, claude.indexOf('<!-- factory:begin setup')));
+    const output = success(await upgrade(deps));
+    expect(lineTexts(output)).toContain(`block setup: add version ${versionOf('setup')}`);
+    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin setup v');
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('adds the block when the setup file is new, and renders no block while the file is absent or empty', async () => {
+    const absent = await makeNode();
+    absent.deps.files.delete(SETUP);
+    const claude = text(absent.deps, CLAUDE);
+    absent.deps.files.set(CLAUDE, claude.slice(0, claude.indexOf('<!-- factory:begin setup')));
+    const none = success(await upgrade(absent.deps));
+    expect(lineTexts(none).filter((line) => line.startsWith('block setup'))).toEqual(['block setup-worker: version 1 is current']);
+    expect(text(absent.deps, CLAUDE)).not.toContain('factory:begin setup');
+
+    const empty = await makeNode();
+    empty.deps.files.set(SETUP, '\n  \n');
+    const emptyClaude = text(empty.deps, CLAUDE);
+    empty.deps.files.set(CLAUDE, emptyClaude.slice(0, emptyClaude.indexOf('<!-- factory:begin setup')));
+    success(await upgrade(empty.deps));
+    expect(text(empty.deps, CLAUDE)).not.toContain('factory:begin setup');
+  });
+
+  it('exits 1 with a remedy line for a setup file that holds a block marker, and writes nothing', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(SETUP, 'Fine.\n<!-- factory:begin safety v2 sha256=abc -->\n');
+    const before = wholeState(deps);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.kind).toBe('failure');
+      expect(error.message).toBe('setup/coordinator.md holds a line that starts a managed block');
+      expect(error.hint).toBe('Remove the marker lines from setup/coordinator.md, then run the command again.');
+    }
+    expect(wholeState(deps)).toEqual(before);
+  });
+
+  it('exits 1 for a setup file over the size bound, and for a file with a control character', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(SETUP, 'x'.repeat(65_537));
+    expect(refusal(await upgrade(deps)).message).toBe('setup/coordinator.md is larger than 65536 bytes');
+    deps.files.set(SETUP, 'a\u0000b');
+    expect(refusal(await upgrade(deps)).message).toBe('setup/coordinator.md is not plain text: it holds a control character');
+  });
+
+  it('keeps an edited setup block with a warning that names the overwrite command, and replaces it when it is named', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(CLAUDE, text(deps, CLAUDE).replace('Write your own text', 'Changed by hand'));
+    const kept = success(await upgrade(deps));
+    expect(kept.warnings).toContain(
+      'block setup was edited, so factory keeps it. Run "factory upgrade --overwrite setup" to replace it.',
+    );
+    expect(text(deps, CLAUDE)).toContain('Changed by hand');
+    success(await upgrade(deps, currentSpec, { overwrite: ['setup'] }));
+    expect(text(deps, CLAUDE)).not.toContain('Changed by hand');
+    expect(text(deps, CLAUDE)).toContain('Write your own text');
+  });
+
+  it('has nothing to do the second time', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(SETUP, 'Once.\n');
+    success(await upgrade(deps));
+    await deps.fs.remove(`${HOME}/.factory/backups`);
+    const second = success(await upgrade(deps));
+    expect(second.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+  });
+});
+
+describe('upgrade: render a changed block again (TP-76)', () => {
+  const prefixLine = (claude: string): string => claude.split('\n').find((line) => line.startsWith('- The owner prefix is')) ?? '';
+
+  it('renders the intact safety block again after a change of the prefix in the local file, and keeps the block version', async () => {
+    const { deps } = await makeNode();
+    const before = text(deps, CLAUDE);
+    expect(prefixLine(before)).toContain('typed by');
+    deps.files.set(LOCAL, text(deps, LOCAL).replace('typed by', 'sent by'));
+    const output = success(await upgrade(deps));
+    const after = text(deps, CLAUDE);
+    expect(prefixLine(after)).toContain('sent by');
+    expect(prefixLine(after)).not.toContain('typed by');
+    expect(lineTexts(output)).toContain('block safety: render the text again, because the package or a setting changed it');
+    expect(after).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
+    const statuses = await inspectBlocks(deps, HOME, layer1Blocks);
+    expect(statuses.find((status) => status.template.name === 'safety')?.kind).toBe('intact');
+  });
+
+  it('renders the coordinator block again after a change of a context limit in the shared file', async () => {
+    const { deps } = await makeNode();
+    expect(text(deps, CLAUDE)).toContain('saves a checkpoint at 30 percent');
+    deps.files.set(CONFIG, text(deps, CONFIG).replace('context_prepare_pct: 30', 'context_prepare_pct: 25'));
+    const output = success(await upgrade(deps));
+    expect(text(deps, CLAUDE)).toContain('saves a checkpoint at 25 percent');
+    expect(lineTexts(output)).toContain('block coordinator: render the text again, because the package or a setting changed it');
+  });
+
+  it('keeps a role block that a person edited, with a warning that names the overwrite command, while it renders the safety block again', async () => {
+    const { deps } = await makeNode();
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    deps.files.set(LOCAL, text(deps, LOCAL).replace('typed by', 'sent by'));
+    const output = success(await upgrade(deps));
+    expect(text(deps, CLAUDE)).toContain('Do as you like.');
+    expect(prefixLine(text(deps, CLAUDE))).toContain('sent by');
+    expect(output.warnings).toContain(
+      'block coordinator was edited, so factory keeps it. Run "factory upgrade --overwrite coordinator" to replace it.',
+    );
+  });
+
+  it('stops for an edited safety block after a change of the prefix, and changes nothing', async () => {
+    const { deps } = await makeNode();
+    const claude = text(deps, CLAUDE);
+    const start = claude.indexOf('<!-- factory:begin safety');
+    deps.files.set(CLAUDE, `${claude.slice(0, start)}${claude.slice(start).replace(/\n([^<\n][^\n]*)\n/, '\nEdited safety line.\n')}`);
+    deps.files.set(LOCAL, text(deps, LOCAL).replace('typed by', 'sent by'));
+    const before = snapshot(deps);
+    expect(refusal(await upgrade(deps)).kind).toBe('safety');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('renders nothing again when nothing changed, and changes no file', async () => {
+    const { deps } = await makeNode();
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps));
+    expect(output.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('renders a block again once, so the second run has nothing to do', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(LOCAL, text(deps, LOCAL).replace('typed by', 'sent by'));
+    success(await upgrade(deps));
+    await deps.fs.remove(`${HOME}/.factory/backups`);
+    expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
   });
 });

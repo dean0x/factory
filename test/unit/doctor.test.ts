@@ -18,6 +18,7 @@ import {
   checkRoles,
   checkRoot,
   checkSecrets,
+  checkSetupText,
   checkState,
   checkStateRepo,
   checkTempFolders,
@@ -200,7 +201,7 @@ describe('doctor: blocks', () => {
     expect(checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks))).toMatchObject({
       id: 'blocks',
       level: 'ok',
-      text: '3 managed blocks are intact',
+      text: '5 managed blocks are intact',
     });
   });
 
@@ -243,9 +244,9 @@ describe('doctor: the blocks of a layer', () => {
 
   const nodeBlocks = async (deps: FakeDeps) => checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
 
-  it('checks the coordinator, safety and worker blocks of a node on layer 1', async () => {
+  it('checks the coordinator, safety, worker and setup blocks of a node on layer 1', async () => {
     const deps = await initialized();
-    expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '3 managed blocks are intact' });
+    expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '5 managed blocks are intact' });
   });
 
   it('warns that the role block does not match when the layer was changed by hand', async () => {
@@ -257,7 +258,7 @@ describe('doctor: the blocks of a layer', () => {
     expect(result.text).toContain('needs the block manager');
   });
 
-  it('is ok for the blocks of layer 2: manager and safety', async () => {
+  it('is ok for the blocks of layer 2: manager, safety and setup', async () => {
     const deps = await initialized();
     setLayer(deps, 2);
     const path = CLAUDE_MD;
@@ -267,7 +268,7 @@ describe('doctor: the blocks of a layer', () => {
       return rendered.value;
     });
     deps.files.set(path, `${blocks.join('\n\n')}\n`);
-    expect(await nodeBlocks(deps)).toMatchObject({ level: 'ok', text: '2 managed blocks are intact' });
+    expect(await nodeBlocks(deps)).toMatchObject({ level: 'ok', text: '3 managed blocks are intact' });
   });
 
   it('does not check the blocks when the config is not valid', async () => {
@@ -1282,6 +1283,7 @@ describe('doctor: the command', () => {
       'temp-folder',
       'index',
       'blocks',
+      'setup-text',
       'roles',
       'tracker',
       'children',
@@ -1294,7 +1296,7 @@ describe('doctor: the command', () => {
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('19 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('20 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1317,7 +1319,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(19);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(20);
   });
 
   it('finds the node by walking up from the current folder', async () => {
@@ -1439,5 +1441,203 @@ describe('doctor: the local file', () => {
     expect(result.text).toContain('sources.api');
     expect(result.text).toContain('factory.local.yaml');
     expect(result.text).not.toContain('ghp_');
+  });
+
+  describe('when the local file is a link (TP-147)', () => {
+    const linkedLocal = async (): Promise<FakeDeps> => {
+      const links: Record<string, string> = {};
+      const deps = await initialized({ links });
+      links[LOCAL] = '/outside/factory.local.yaml';
+      return deps;
+    };
+
+    it('exits 4, fails the config and local file checks, and names one remedy', async () => {
+      const deps = await linkedLocal();
+      const run = await doctor(deps);
+      expect(run.exitCode).toBe(4);
+      expect(run.failed).toBe(true);
+      const checks = run.json['checks'] as CheckResult[];
+      expect(levelOf(checks, 'config')).toBe('fail');
+      expect(levelOf(checks, 'local-file')).toBe('fail');
+      const text = checks.find((result) => result.id === 'local-file')?.text ?? '';
+      expect(text).toContain('factory.local.yaml is a link');
+      expect(text).toContain('factory init');
+    });
+
+    it('changes no mode: a link is checked before the mode', async () => {
+      const deps = await linkedLocal();
+      deps.modes.set(LOCAL, 0o644);
+      await doctor(deps);
+      expect(deps.modes.get(LOCAL)).toBe(0o644);
+    });
+  });
+
+  it.each([
+    ['a group write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o660)],
+    ['another owner', (deps: FakeDeps) => deps.owners.set(LOCAL, 0)],
+  ])('exits 4 for a local file with %s', async (_name, change) => {
+    const deps = await initialized();
+    change(deps);
+    expect((await doctor(deps)).exitCode).toBe(4);
+  });
+
+  it('sets no exit code for a local file with read bits only: it warns', async () => {
+    const deps = await initialized();
+    deps.modes.set(LOCAL, 0o644);
+    const run = await doctor(deps);
+    expect(run.exitCode).toBeUndefined();
+    expect(levelOf(run.json['checks'] as CheckResult[], 'local-file')).toBe('warn');
+  });
+});
+
+describe('doctor: the setup text and the rendered blocks (TP-104, TP-76)', () => {
+  const SETUP = `${HOME}/setup/coordinator.md`;
+  const SETUP_WORKER = `${HOME}/setup/roles/worker.md`;
+  const WORKER_MD = `${HOME}/.factory/roles/worker.md`;
+  const LOCAL = `${HOME}/factory.local.yaml`;
+  const setupCheck = async (deps: FakeDeps): Promise<CheckResult> => checkSetupText(deps, HOME);
+
+  it('is ok on a new node, where every line is in a block', async () => {
+    const deps = await initialized();
+    expect(await setupCheck(deps)).toMatchObject({ id: 'setup-text', level: 'ok' });
+  });
+
+  it('warns when coordinator/CLAUDE.md holds text outside its blocks that the setup file does not hold, and names the setup file', async () => {
+    const deps = await initialized();
+    deps.files.set(CLAUDE_MD, `My own rules.\nA second rule.\n\n${deps.files.get(CLAUDE_MD) ?? ''}`);
+    const result = await setupCheck(deps);
+    expect(result.level).toBe('warn');
+    expect(result.text).toBe(
+      'coordinator/CLAUDE.md holds 2 lines outside its blocks that setup/coordinator.md does not hold. ' +
+        'Only the setup folder travels. Move the text to setup/coordinator.md, then run "factory upgrade".',
+    );
+  });
+
+  it('never prints the text of the person', async () => {
+    const deps = await initialized();
+    deps.files.set(CLAUDE_MD, `A private line.\n\n${deps.files.get(CLAUDE_MD) ?? ''}`);
+    const run = await doctor(deps);
+    expect(JSON.stringify(run)).not.toContain('A private line.');
+    expect(levelOf(run.json['checks'] as CheckResult[], 'setup-text')).toBe('warn');
+  });
+
+  it('counts a line once when it is singular, and names no line that the setup file holds', async () => {
+    const deps = await initialized();
+    deps.files.set(CLAUDE_MD, `Shared rule.\nOnly here.\n\n${deps.files.get(CLAUDE_MD) ?? ''}`);
+    deps.files.set(SETUP, 'Shared rule.\n');
+    const result = await setupCheck(deps);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('holds 1 line outside its blocks');
+  });
+
+  it('is ok when the setup file holds every line that stands outside the blocks', async () => {
+    const deps = await initialized();
+    deps.files.set(CLAUDE_MD, `Shared rule.\n\n${deps.files.get(CLAUDE_MD) ?? ''}`);
+    deps.files.set(SETUP, 'Shared rule.\n');
+    expect((await setupCheck(deps)).level).toBe('ok');
+  });
+
+  it('does not count the lines inside a block, edited or not', async () => {
+    const deps = await initialized();
+    deps.files.set(CLAUDE_MD, (deps.files.get(CLAUDE_MD) ?? '').replace('Coordinate. Do not produce.', 'Do as you like.'));
+    expect((await setupCheck(deps)).level).toBe('ok');
+  });
+
+  it('checks the worker file too, and names the worker text of the setup folder', async () => {
+    const deps = await initialized();
+    deps.files.set(WORKER_MD, `Notes of mine.\n\n${deps.files.get(WORKER_MD) ?? ''}`);
+    const result = await setupCheck(deps);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('.factory/roles/worker.md holds 1 line outside its blocks that setup/roles/worker.md does not hold');
+    expect(result.text).toContain('Move the text to setup/roles/worker.md');
+    expect(result.text).not.toContain('coordinator/CLAUDE.md');
+  });
+
+  it('names both setup files when both rendered files hold such text', async () => {
+    const deps = await initialized();
+    deps.files.set(CLAUDE_MD, `One.\n\n${deps.files.get(CLAUDE_MD) ?? ''}`);
+    deps.files.set(WORKER_MD, `Two.\n\n${deps.files.get(WORKER_MD) ?? ''}`);
+    const result = await setupCheck(deps);
+    expect(result.text).toContain('Move the text to setup/coordinator.md or to setup/roles/worker.md');
+  });
+
+  it('is ok when the rendered files are not there', async () => {
+    const deps = await initialized();
+    deps.files.delete(CLAUDE_MD);
+    deps.files.delete(WORKER_MD);
+    expect((await setupCheck(deps)).level).toBe('ok');
+  });
+
+  it('leaves a file with broken markers to the blocks check', async () => {
+    const deps = await initialized();
+    deps.files.set(CLAUDE_MD, '<!-- factory:begin x v1 sha256=zz -->\nLoose text.\n');
+    expect((await setupCheck(deps)).level).toBe('ok');
+  });
+
+  it('fails, and reads nothing, when the setup text is a link', async () => {
+    const links: Record<string, string> = {};
+    const deps = await initialized({ links });
+    links[SETUP] = '/outside/notes.md';
+    const result = await setupCheck(deps);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('setup/coordinator.md is a link');
+    const blocks = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(blocks.level).toBe('fail');
+    expect(blocks.text).toContain('setup/coordinator.md is a link');
+  });
+
+  it('fails the blocks check for a setup file that holds a block marker, and names the file', async () => {
+    const deps = await initialized();
+    deps.files.set(SETUP, '<!-- factory:begin coordinator v1 sha256=abc -->\n');
+    const blocks = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(blocks.level).toBe('fail');
+    expect(blocks.text).toContain('setup/coordinator.md holds a line that starts a managed block');
+  });
+
+  it('warns that an intact safety block is out of date after a prefix change in the local file, and names upgrade', async () => {
+    const deps = await initialized();
+    const before = deps.files.get(LOCAL) ?? '';
+    expect(before).toContain('typed by');
+    deps.files.set(LOCAL, before.replace('typed by', 'sent by'));
+    const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('safety (out of date, in /w/node/coordinator/CLAUDE.md)');
+    expect(result.text).toContain('Run "factory upgrade".');
+  });
+
+  it('warns that a setup block is out of date after a change of the setup file, and names upgrade', async () => {
+    const deps = await initialized();
+    deps.files.set(SETUP, 'A new shared rule.\n');
+    const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('setup (out of date');
+    expect(result.text).toContain('Run "factory upgrade".');
+    expect(result.text).not.toContain('--overwrite');
+  });
+
+  it('warns that an edited setup block stays as it is, and names the overwrite command', async () => {
+    const deps = await initialized();
+    deps.files.set(CLAUDE_MD, (deps.files.get(CLAUDE_MD) ?? '').replace('Write your own text', 'Changed by hand'));
+    const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('setup (edited');
+    expect(result.text).toContain('run "factory upgrade --overwrite setup" to replace the text');
+  });
+
+  it('warns that a setup block that is not there is added by upgrade', async () => {
+    const deps = await initialized();
+    const claude = deps.files.get(CLAUDE_MD) ?? '';
+    deps.files.set(CLAUDE_MD, claude.slice(0, claude.indexOf('<!-- factory:begin setup')));
+    const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('setup (missing');
+    expect(result.text).toContain('Run "factory upgrade".');
+  });
+
+  it('counts the worker setup file as the source of the worker setup block', async () => {
+    const deps = await initialized();
+    deps.files.set(SETUP_WORKER, 'A rule for every worker.\n');
+    const result = await checkNodeBlocks(deps, HOME, await inspectConfig(deps, HOME));
+    expect(result.text).toContain('setup-worker (out of date');
   });
 });

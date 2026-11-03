@@ -22,9 +22,9 @@ You need:
 
 | Command | What it does |
 | --- | --- |
-| `factory init` | Create a node. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `coordinator/CLAUDE.md` and `.factory/`. It makes the first commit in the state repository and the first commit in the repo of the node folder. |
+| `factory init` | Create a node. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`. It makes the first commit in the state repository and the first commit in the repo of the node folder. |
 | `factory start` | Start the tmux session of the node, with the windows `view` and `bench`, or attach to it. |
-| `factory doctor` | Run 19 checks on the config, the state, the node folder, the managed blocks, the secrets, the proxy settings, the tools and the projects. |
+| `factory doctor` | Run 20 checks on the config, the state, the node folder, the managed blocks, the text outside the managed blocks, the secrets, the proxy settings, the tools and the projects. |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
@@ -122,6 +122,12 @@ factory upgrade
 
 `upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports.
 
+`init` and `upgrade` render your setup texts. The text of `setup/coordinator.md` goes into the block `setup` of `coordinator/CLAUDE.md`, after the other blocks. The text of `setup/roles/worker.md` goes into the block `setup-worker` of `.factory/roles/worker.md`. A file that is absent or empty renders no block. A file that is larger than 65536 bytes, that holds a control character, or that holds a marker line of a managed block stops the command with exit code 1 and changes nothing. Write your own text in the setup files and not in the managed files, because only the setup folder travels. `factory doctor` warns about text outside the managed blocks that the setup files do not hold.
+
+`upgrade` renders a block again when its text differs from the text that the package and your settings give. The owner prefix of `factory.local.yaml` is in the `safety` block. The context limits of `factory.yaml` are in the `coordinator` block. A block that you edited stays as it is, with a warning that names `factory upgrade --overwrite <block>`. `doctor` names the same command.
+
+`init`, `upgrade` and `doctor` stop with exit code 4 when `factory.local.yaml` is a link. `init` and `upgrade` also stop with exit code 4, and write nothing, when `setup/`, `setup/roles/`, a setup file, `coordinator/`, `coordinator/CLAUDE.md`, `.factory/`, `.factory/roles/worker.md` or `.factory/backups/` is a link. Replace the link with a plain file. A node home under a linked parent folder works: only a link below the node home stops the command. A folder that the home index does not list is no node home: a copy inside another node home, inside a git work tree, or above a project is such a folder. `upgrade` stops there with exit code 4 and writes nothing, also in a dry run.
+
 `upgrade` backs up `factory.yaml`, `CLAUDE.md` (the old place), `coordinator/CLAUDE.md` and `.factory/` to `.factory/backups/<timestamp>/`. The backup leaves out `.factory/state/` and `.factory/locks/`: they hold run-time data, and `upgrade` never changes them. It restores the files when a step fails. It never replaces a managed block that you edited, unless you name it. An edited safety block stops `upgrade` with exit code 4. Any other edited block stays as it is, with a warning that names the flag. To replace such a block with the template text, name it:
 
 ```sh
@@ -144,6 +150,7 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
     factory.local.yaml      your private settings. The repo does not track it.
     .gitignore              the share list: it ignores everything but three paths
     setup/coordinator.md    your text for the coordinator. The repo tracks it.
+    setup/roles/worker.md   your text for every worker. The repo tracks it.
     coordinator/CLAUDE.md   the role of the node (managed blocks) and your text. The repo does not track it.
     web/                    the clone of the project web. The repo does not track it.
     work-copies/            the folder for work copies. The repo does not track it.

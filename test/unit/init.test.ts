@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
@@ -69,6 +70,7 @@ describe('init: the files', () => {
       'factory.local.yaml',
       '.gitignore',
       'setup/coordinator.md',
+      'setup/roles/worker.md',
       'coordinator/CLAUDE.md',
       '.factory/node.json',
       '.factory/roles/worker.md',
@@ -146,12 +148,12 @@ describe('init: the files', () => {
       value: {
         schema_version: STATE_SCHEMA_VERSION,
         created_with: FACTORY_VERSION,
-        blocks: { coordinator: 2, safety: 2, worker: 1 },
+        blocks: { coordinator: 2, safety: 2, worker: 1, setup: 1, 'setup-worker': 1 },
       },
     });
   });
 
-  it('writes the managed blocks: coordinator and safety in coordinator/CLAUDE.md, worker in roles/worker.md', async () => {
+  it('writes the managed blocks: coordinator, safety and setup in coordinator/CLAUDE.md, worker and setup-worker in roles/worker.md', async () => {
     const { deps } = setup();
     await runInit(deps, options());
     const claude = parseBlocks(deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '');
@@ -159,9 +161,11 @@ describe('init: the files', () => {
     expect(claude.ok && claude.value.map((block) => [block.name, verifyBlock(block)])).toEqual([
       ['coordinator', 'intact'],
       ['safety', 'intact'],
+      ['setup', 'intact'],
     ]);
     expect(worker.ok && worker.value.map((block) => [block.name, verifyBlock(block)])).toEqual([
       ['worker', 'intact'],
+      ['setup-worker', 'intact'],
     ]);
   });
 
@@ -191,7 +195,7 @@ describe('init: the files', () => {
     const text = deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '';
     expect(text.startsWith('# My rules\n\nBe kind.\n\n')).toBe(true);
     const parsed = parseBlocks(text);
-    expect(parsed.ok && parsed.value.map((block) => block.name)).toEqual(['coordinator', 'safety']);
+    expect(parsed.ok && parsed.value.map((block) => block.name)).toEqual(['coordinator', 'safety', 'setup']);
   });
 
   it('creates the home folder when it does not exist', async () => {
@@ -546,7 +550,7 @@ describe('init: the layer and the recipe', () => {
     const config = await loadConfig(deps, HOME);
     expect(config.ok && config.value.core.node.layer).toBe(1);
     expect(config.ok && config.value.recipe.id).toBe('software');
-    expect(claudeBlocks(deps)).toEqual(['coordinator', 'safety']);
+    expect(claudeBlocks(deps)).toEqual(['coordinator', 'safety', 'setup']);
     expect(files(deps)).toContain('.factory/roles/worker.md');
   });
 
@@ -555,13 +559,13 @@ describe('init: the layer and the recipe', () => {
     expect((await runInit(deps, options({ layer: '2' }))).ok).toBe(true);
     const config = await loadConfig(deps, HOME);
     expect(config.ok && config.value.core.node.layer).toBe(2);
-    expect(claudeBlocks(deps)).toEqual(['manager', 'safety']);
+    expect(claudeBlocks(deps)).toEqual(['manager', 'safety', 'setup']);
     expect(files(deps)).not.toContain('.factory/roles/worker.md');
     expect(files(deps)).toContain('.factory/node.json');
     const state = await loadState(deps, HOME);
-    expect(state.ok && state.value.blocks).toEqual({ manager: 1, safety: 2 });
+    expect(state.ok && state.value.blocks).toEqual({ manager: 1, safety: 2, setup: 1 });
     const statuses = await inspectBlocks(deps, HOME, layer2Blocks);
-    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact']);
+    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
   });
 
   it('makes a node on layer 3 with the safety block only, no worker file, and a warning that names the layer', async () => {
@@ -571,10 +575,10 @@ describe('init: the layer and the recipe', () => {
     if (!result.ok) return;
     const config = await loadConfig(deps, HOME);
     expect(config.ok && config.value.core.node.layer).toBe(3);
-    expect(claudeBlocks(deps)).toEqual(['safety']);
+    expect(claudeBlocks(deps)).toEqual(['safety', 'setup']);
     expect(files(deps)).not.toContain('.factory/roles/worker.md');
     const state = await loadState(deps, HOME);
-    expect(state.ok && state.value.blocks).toEqual({ safety: 2 });
+    expect(state.ok && state.value.blocks).toEqual({ safety: 2, setup: 1 });
     expect(result.value.warnings).toContain('Layer 3 has no role template: CLAUDE.md holds the safety block only.');
     expect(result.value.json['warnings']).toEqual(result.value.warnings);
   });
@@ -2434,7 +2438,15 @@ describe('init: output', () => {
       schema: 'factory.init/v1',
       home: HOME,
       nodeId: 'node',
-      files: ['factory.yaml', 'factory.local.yaml', '.gitignore', 'setup/coordinator.md', 'coordinator/CLAUDE.md', '.factory/'],
+      files: [
+        'factory.yaml',
+        'factory.local.yaml',
+        '.gitignore',
+        'setup/coordinator.md',
+        'setup/roles/worker.md',
+        'coordinator/CLAUDE.md',
+        '.factory/',
+      ],
       committed: true,
       rootCommitted: true,
     });
@@ -2449,10 +2461,26 @@ describe('init: output', () => {
       'factory.yaml',
       'factory.local.yaml',
       '.gitignore',
+      'setup/roles/worker.md',
       'coordinator/CLAUDE.md',
       '.factory/',
     ]);
     expect(deps.files.get(`${HOME}/setup/coordinator.md`)).toBe('My shared text.\n');
+  });
+
+  it('does not list a worker text that was there before the run', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/setup/roles/worker.md`, 'My text for every worker.\n');
+    const result = await runInit(deps, options());
+    expect(result.ok && result.value.json['files']).toEqual([
+      'factory.yaml',
+      'factory.local.yaml',
+      '.gitignore',
+      'setup/coordinator.md',
+      'coordinator/CLAUDE.md',
+      '.factory/',
+    ]);
+    expect(deps.files.get(`${HOME}/setup/roles/worker.md`)).toBe('My text for every worker.\n');
   });
 });
 
@@ -2465,6 +2493,8 @@ describe('init: the root .gitignore and the setup text (TP-10, TP-69)', () => {
     expect(deps.files.get(GITIGNORE)).toBe(SHARE_LIST_PART);
     expect(deps.modes.get(`${HOME}/setup/coordinator.md`)).toBe(0o644);
     expect(deps.files.get(`${HOME}/setup/coordinator.md`)).toContain('Write your own text');
+    expect(deps.modes.get(`${HOME}/setup/roles/worker.md`)).toBe(0o644);
+    expect(deps.files.get(`${HOME}/setup/roles/worker.md`)).toContain('Write your own text');
   });
 
   it('puts the share list before the lines of a person, and keeps those lines as they are', async () => {
@@ -2481,13 +2511,14 @@ describe('init: the root .gitignore and the setup text (TP-10, TP-69)', () => {
     expect(deps.files.get(GITIGNORE)).toBe(`# top\n${SHARE_LIST_PART.trimEnd()}\n!/notes.md\n`);
   });
 
-  it('keeps a setup text that is there, and writes no other file in the setup folder', async () => {
+  it('keeps a setup text that is there, and writes no other file in the setup folder than the worker text', async () => {
     const { deps } = setup();
     deps.seed(`${HOME}/setup/coordinator.md`, 'My shared text.\n');
     expect((await runInit(deps, options())).ok).toBe(true);
     expect(deps.files.get(`${HOME}/setup/coordinator.md`)).toBe('My shared text.\n');
-    expect([...deps.files.keys()].filter((path) => path.startsWith(`${HOME}/setup/`))).toEqual([
+    expect([...deps.files.keys()].filter((path) => path.startsWith(`${HOME}/setup/`)).sort()).toEqual([
       `${HOME}/setup/coordinator.md`,
+      `${HOME}/setup/roles/worker.md`,
     ]);
   });
 
@@ -2539,5 +2570,139 @@ describe('init: a local file that is there already', () => {
     expect(messageOf(result)).toContain('chmod 600 factory.local.yaml');
     expect(deps.modes.get(LOCAL)).toBe(mode);
     expect(snapshot(deps)).toBe(before);
+  });
+
+  it('stops with exit 4 and one remedy line for a local file that is a link, and changes nothing (TP-147)', async () => {
+    const links: Record<string, string> = { [LOCAL]: '/outside/factory.local.yaml' };
+    const { deps } = setup({}, { links });
+    deps.seed(LOCAL, 'schema: 1\n');
+    deps.modes.set(LOCAL, 0o644);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('factory.local.yaml is a link, so factory does not use it');
+    expect(messageOf(result)).toContain('Move factory.local.yaml away, then run "factory init" to write a new one.');
+    expect(deps.modes.get(LOCAL)).toBe(0o644);
+    expect(snapshot(deps)).toBe(before);
+  });
+});
+
+describe('init: the setup texts and the link rule (TP-102, TP-130)', () => {
+  const SETUP = `${HOME}/setup/coordinator.md`;
+  const SETUP_WORKER = `${HOME}/setup/roles/worker.md`;
+  const CLAUDE = `${HOME}/coordinator/CLAUDE.md`;
+  const WORKER = `${HOME}/.factory/roles/worker.md`;
+  const blockNamesIn = (deps: FakeDeps, path: string): string[] => {
+    const parsed = parseBlocks(deps.files.get(path) ?? '');
+    return parsed.ok ? parsed.value.map((block) => block.name) : [];
+  };
+  const bodyOf = (deps: FakeDeps, path: string, name: string): string | undefined => {
+    const parsed = parseBlocks(deps.files.get(path) ?? '');
+    return parsed.ok ? parsed.value.find((block) => block.name === name)?.body : undefined;
+  };
+
+  it('renders the setup coordinator text into the setup block of coordinator/CLAUDE.md after the core blocks', async () => {
+    const { deps } = setup();
+    deps.seed(SETUP, 'Our team rules.\nSecond rule.\n');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(blockNamesIn(deps, CLAUDE)).toEqual(['coordinator', 'safety', 'setup']);
+    expect(bodyOf(deps, CLAUDE, 'setup')?.trimEnd()).toBe('Our team rules.\nSecond rule.');
+    expect(deps.files.get(SETUP)).toBe('Our team rules.\nSecond rule.\n');
+  });
+
+  it('renders the setup worker text into the setup-worker block of the worker file after the worker block', async () => {
+    const { deps } = setup();
+    deps.seed(SETUP_WORKER, 'Every worker keeps notes.\n');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(blockNamesIn(deps, WORKER)).toEqual(['worker', 'setup-worker']);
+    expect(bodyOf(deps, WORKER, 'setup-worker')?.trimEnd()).toBe('Every worker keeps notes.');
+  });
+
+  it('puts the setup text in the block as it is written, and records the version of each setup block', async () => {
+    const { deps } = setup();
+    deps.seed(SETUP, 'One.\r\nTwo.\r\n');
+    await runInit(deps, options());
+    expect(bodyOf(deps, CLAUDE, 'setup')?.trimEnd()).toBe('One.\nTwo.');
+    const state = await loadState(deps, HOME);
+    expect(state.ok && state.value.blocks).toMatchObject({ setup: 1, 'setup-worker': 1 });
+  });
+
+  it('renders no setup block for a setup file that is empty, and keeps the file', async () => {
+    const { deps } = setup();
+    deps.seed(SETUP, '\n\n');
+    deps.seed(SETUP_WORKER, '');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(blockNamesIn(deps, CLAUDE)).toEqual(['coordinator', 'safety']);
+    expect(blockNamesIn(deps, WORKER)).toEqual(['worker']);
+    expect(deps.files.get(SETUP)).toBe('\n\n');
+    const state = await loadState(deps, HOME);
+    expect(state.ok && Object.keys(state.value.blocks).sort()).toEqual(['coordinator', 'safety', 'worker']);
+  });
+
+  it('renders no worker setup block for a node with no worker file, and writes no worker setup file text into CLAUDE.md', async () => {
+    const { deps } = setup();
+    deps.seed(SETUP_WORKER, 'Worker text.\n');
+    expect((await runInit(deps, options({ layer: '2' }))).ok).toBe(true);
+    expect(deps.files.has(WORKER)).toBe(false);
+    expect(deps.files.get(CLAUDE)).not.toContain('Worker text.');
+  });
+
+  it.each([
+    ['the coordinator text', SETUP, '<!-- factory:begin coordinator v2 sha256=abc -->\n', 'setup/coordinator.md'],
+    ['the worker text', SETUP_WORKER, 'Fine.\n<!-- factory:end worker -->\n', 'setup/roles/worker.md'],
+  ])('exits 1 with a remedy line for %s that holds a block marker, runs no clone and writes nothing', async (_name, path, text, shown) => {
+    const { deps, log } = setup();
+    deps.seed(path, text);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ projects: ['https://host/acme/api.git'] }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain(`${shown} holds a line that starts a managed block`);
+    expect(messageOf(result)).toContain(`Remove the marker lines from ${shown}, then run the command again.`);
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('exits 1 for a setup text over the size bound or with a control character, and writes nothing', async () => {
+    for (const text of ['x'.repeat(65_537), 'a\u001bb']) {
+      const { deps } = setup();
+      deps.seed(SETUP, text);
+      const before = snapshot(deps);
+      const result = await runInit(deps, options());
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(snapshot(deps)).toBe(before);
+    }
+  });
+
+  it.each([
+    ['the setup folder', `${HOME}/setup`, 'setup'],
+    ['the setup text of the coordinator', SETUP, 'setup/coordinator.md'],
+    ['the roles folder of the setup', `${HOME}/setup/roles`, 'setup/roles'],
+    ['the setup text of the workers', SETUP_WORKER, 'setup/roles/worker.md'],
+    ['the coordinator folder', `${HOME}/coordinator`, 'coordinator'],
+    ['the coordinator CLAUDE.md', CLAUDE, 'coordinator/CLAUDE.md'],
+    ['the state folder', `${HOME}/.factory`, '.factory'],
+    ['the worker file', WORKER, '.factory/roles/worker.md'],
+    ['the backup folder', `${HOME}/.factory/backups`, '.factory/backups'],
+  ])('exits 4 for a link at %s, runs no clone and writes nothing', async (_name, path, shown) => {
+    const links: Record<string, string> = { [path]: '/outside/target' };
+    const { deps, log } = setup({}, { links });
+    // A link can only stand in a folder that exists.
+    deps.seedDir(dirname(path));
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ projects: ['https://host/acme/api.git'] }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain(`${shown} is a link, so factory does not use it`);
+    expect(messageOf(result)).toContain('Replace the link with a plain file inside the factory folder, then run "factory doctor".');
+    expect(log.clones()).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.files.has(INDEX)).toBe(false);
+  });
+
+  it('works for a factory folder that sits under a linked parent folder (TP-149)', async () => {
+    const links: Record<string, string> = { '/w/linked': '/w/real' };
+    const { deps } = setup({}, { links });
+    deps.seedDir('/w/real');
+    const result = await runInit(deps, options({ home: '/w/linked/node' }));
+    expect(result.ok).toBe(true);
   });
 });

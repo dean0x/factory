@@ -10,9 +10,20 @@ import { mixConfigValue, SPLIT_SCHEMA_VERSION } from '../config/schema.js';
 import { stepsBetween, type FileStep, type RootMove } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
-import { blockNames, commands, commandText, dirs, flags, flagText, helpTopics, program } from '../names.js';
+import {
+  blockNames,
+  commands,
+  commandText,
+  dirs,
+  flags,
+  flagText,
+  helpTopics,
+  overwriteCommand,
+  program,
+  setupBlockNames,
+} from '../names.js';
 import type { Layout } from '../state/layout.js';
-import type { BlockTemplate } from '../templates/types.js';
+import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import type { BlockSet, UpgradeFile, UpgradeSpec } from './spec.js';
 
 const MAX_DIFF_LINES = 3;
@@ -31,10 +42,13 @@ export type FilePlan =
 /**
  * What the upgrade does with a block. An edited block of the fixed rules (the safety block) stops the command
  * (`refuse-edited`): an edited one can remove a rule. Any other edited block is kept, with a warning (`skip-edited`).
+ * An intact block of the current version whose text differs from the text that the package and the settings render is
+ * rendered again (`render`).
  */
 export type BlockAction =
   | 'current'
   | 'update'
+  | 'render'
   | 'replace'
   | 'add'
   | 'skip-missing'
@@ -52,7 +66,7 @@ export interface BlockPlan {
   readonly reason?: string;
 }
 
-const CHANGING: readonly BlockAction[] = ['update', 'replace', 'add'];
+const CHANGING: readonly BlockAction[] = ['update', 'render', 'replace', 'add'];
 
 export const isChange = (plan: BlockPlan): boolean => CHANGING.includes(plan.action);
 
@@ -124,11 +138,16 @@ const migratedConfig = (config: FilePlan, local: LocalPlan, upgrade: UpgradeSpec
   return localValue.ok ? ok(mixConfigValue(shared.value, localValue.value)) : localValue;
 };
 
-/** The managed blocks of the node, as its config is after the migrations. */
-export const planBlockSet = (config: FilePlan, local: LocalPlan, upgrade: UpgradeSpec): CliResult<BlockSet> => {
+/** The managed blocks of the node, as its config is after the migrations, with the setup texts of the root. */
+export const planBlockSet = (
+  config: FilePlan,
+  local: LocalPlan,
+  upgrade: UpgradeSpec,
+  setup: SetupTexts,
+): CliResult<BlockSet> => {
   const migrated = migratedConfig(config, local, upgrade);
   if (!migrated.ok) return migrated;
-  const set = upgrade.blocksOf(migrated.value);
+  const set = upgrade.blocksOf(migrated.value, setup);
   return set.ok ? set : failure(`${upgrade.config.spec.file}: ${set.error.message}`);
 };
 
@@ -171,6 +190,10 @@ export const planRootMoves = async (
   for (const move of moves) {
     const fromPath = join(layout.home, move.from);
     const toPath = join(layout.home, move.to);
+    // A link is not ours to move: the move would put the link into the coordinator folder.
+    const own = await deps.fs.lstat(fromPath);
+    if (!own.ok) return own;
+    if (own.value === 'link') continue;
     const source = await deps.fs.stat(fromPath);
     if (!source.ok) return source;
     if (source.value !== 'file') continue;
@@ -239,8 +262,11 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
   switch (status.kind) {
     case 'malformed':
       return { template, status, action: 'refuse-other', from: null, reason: `${status.file}: ${status.message}` };
-    case 'missing':
-      return { template, status, action: overwrite ? 'add' : 'skip-missing', from: null };
+    case 'missing': {
+      // The setup text is written to be rendered, so a block of it that is not there yet is added to a file that is there.
+      const add = overwrite || (setupBlockNames.includes(template.name) && !status.fileAbsent);
+      return { template, status, action: add ? 'add' : 'skip-missing', from: null };
+    }
     case 'intact':
     case 'edited': {
       const from = status.block.version;
@@ -259,7 +285,10 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
         const kept = template.name === blockNames.safety ? 'refuse-edited' : 'skip-edited';
         return { template, status, action: overwrite ? 'replace' : kept, from };
       }
-      return { template, status, action: from < template.version || renamed ? 'update' : 'current', from };
+      if (from < template.version || renamed) return { template, status, action: 'update', from };
+      // The text depends on the package, on the settings and on the setup text. An intact block of this version that
+      // differs from the rendered text is out of date, whatever its marker says.
+      return { template, status, action: status.block.body === template.body ? 'current' : 'render', from };
     }
     default: {
       const unreachable: never = status;
@@ -267,6 +296,17 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
     }
   }
 };
+
+/**
+ * A setup block goes into a file that is there, or into a file that this run makes. A setup block of a file that is not
+ * there stays missing, unless another block is added to that file in the same run.
+ */
+export const settleSetupBlocks = (plans: readonly BlockPlan[]): readonly BlockPlan[] =>
+  plans.map((plan) => {
+    const waiting = plan.action === 'skip-missing' && setupBlockNames.includes(plan.template.name);
+    const fileComes = plans.some((other) => other.action === 'add' && other.template.target === plan.template.target);
+    return waiting && fileComes ? { ...plan, action: 'add' } : plan;
+  });
 
 const clip = (line: string): string =>
   line.length > MAX_DIFF_WIDTH ? `${line.slice(0, MAX_DIFF_WIDTH)}...` : line;
@@ -342,6 +382,8 @@ export const planLines = (
               ? `block ${name}: version ${plan.from} to ${version}`
               : `block ${old}: becomes block ${name}, version ${version}`,
         };
+      case 'render':
+        return { level: 'text', text: `block ${name}: render the text again, because the package or a setting changed it` };
       case 'replace':
         return {
           level: 'text',
@@ -355,12 +397,12 @@ export const planLines = (
       case 'skip-missing':
         return {
           level: 'warn',
-          text: `block ${name} is missing. Use ${flagText(flags.overwrite)} ${name} to add it.`,
+          text: `block ${name} is missing. Run "${overwriteCommand(name)}" to add it.`,
         };
       case 'skip-edited':
         return {
           level: 'warn',
-          text: `block ${old ?? name} was edited, so ${program} keeps it. Use ${flagText(flags.overwrite)} ${old ?? name} to replace it.`,
+          text: `block ${old ?? name} was edited, so ${program} keeps it. Run "${overwriteCommand(old ?? name)}" to replace it.`,
         };
       case 'refuse-edited':
         return { level: 'fail', text: `block ${old ?? name} was edited` };

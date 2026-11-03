@@ -3,6 +3,7 @@ import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import type { NodeIdentity } from '../core/home.js';
 import { err, ok, type Result } from '../core/result.js';
+import { requireNoLinks } from '../core/root-paths.js';
 import { describeIssues } from '../core/zod.js';
 import {
   inspectFile,
@@ -107,8 +108,18 @@ export type LocalAccess =
 
 const LOCAL_FILE_REMEDY = `Check the file, set the mode to 600 with "chmod 600 ${files.localConfig}", then run the command again.`;
 
+/** The remedy line for a local file that is a link: the file is written again by `init`. */
+const LOCAL_FILE_LINK_REMEDY = `Move ${files.localConfig} away, then run "${commandText(commands.init)}" to write a new one.`;
+
+/**
+ * What the local file is. A link stops the command first (exit 4), before the owner check and before any mode change,
+ * because both would act on the target of the link.
+ */
 export const localFileAccess = async (deps: Deps, home: string): Promise<CliResult<LocalAccess>> => {
-  const info = await deps.fs.statInfo(layoutOf(home).localConfigFile);
+  const layout = layoutOf(home);
+  const linked = await requireNoLinks(deps, home, [layout.localConfigFile], LOCAL_FILE_LINK_REMEDY);
+  if (!linked.ok) return linked;
+  const info = await deps.fs.statInfo(layout.localConfigFile);
   if (!info.ok) return info;
   if (info.value === null) return ok({ kind: 'absent' });
   if (info.value.kind !== 'file') return safetyRefusal(`${files.localConfig} is not a file`, LOCAL_FILE_REMEDY);

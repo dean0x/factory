@@ -42,7 +42,7 @@ export interface FakeOptions {
   readonly prompt?: PromptHandler;
   /** The result of a program that uses the terminal. Default: exit code 0. */
   readonly runAttached?: AttachedHandler;
-  /** Links: a path under a key resolves to the same path under the value. */
+  /** Links: a path under a key resolves to the same path under the value. `lstat` gives `link` for a key itself. */
   readonly links?: Readonly<Record<string, string>>;
 }
 
@@ -176,6 +176,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         return ok(undefined);
       },
       stat: async (path) => ok(kindOf(path)),
+      lstat: async (path) => ok(Object.hasOwn(options.links ?? {}, path) ? 'link' : kindOf(path)),
       statInfo: async (path) => {
         const kind = kindOf(path);
         if (kind === null) return ok(null);

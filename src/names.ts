@@ -306,6 +306,7 @@ export const checkIds = {
   tempFolder: 'temp-folder',
   index: 'index',
   blocks: 'blocks',
+  setupText: 'setup-text',
   roles: 'roles',
   tracker: 'tracker',
   children: 'children',
@@ -324,7 +325,17 @@ export const blockNames = {
   manager: 'manager',
   safety: 'safety',
   worker: 'worker',
+  /** The text of `setup/coordinator.md`, in the coordinator `CLAUDE.md`. */
+  setup: 'setup',
+  /** The text of `setup/roles/worker.md`, in the worker file. */
+  setupWorker: 'setup-worker',
 } as const;
+
+/** The blocks whose text a person writes in the setup folder. A missing one is added by `upgrade`. */
+export const setupBlockNames: readonly string[] = [blockNames.setup, blockNames.setupWorker];
+
+/** The most bytes of a setup text that `init` and `upgrade` render into a session instruction file. A larger file is refused. */
+export const maxSetupTextBytes = 65_536;
 
 /**
  * The names of a FAC-M1 node (schema 1) that schema 2 does not use. Only the migrations from schema 1 read them.
@@ -374,11 +385,30 @@ export const flagText = (name: string): string => `--${name}`;
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
 
+/** The command that replaces or adds one managed block, for example `factory upgrade --overwrite coordinator`. */
+export const overwriteCommand = (block: string): string =>
+  `${commandText(commands.upgrade)} ${flagText(flags.overwrite)} ${block}`;
+
 /** The path of a key inside the config, for example `limits.disk_free_min_gb`. */
 const keyPath = (...parts: readonly string[]): string => parts.join('.');
 
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');
+
+/** The paths in the texts, written from the factory folder. */
+const pathValues: Readonly<Record<string, string>> = {
+  configFile: files.config,
+  localConfigFile: files.localConfig,
+  stateDir: dirs.state,
+  nodeFile: inState(files.nodeState),
+  workerFile: inState(dirs.roles, files.worker),
+  boardFile: inState(files.board),
+  waitingFile: inState(files.waiting),
+  decisionLogFile: inState(files.decisionLog),
+  profileDir: `${inState(dirs.profile)}/`,
+  roadmapsDir: `${inState(dirs.roadmaps)}/`,
+  ordersDir: `${inState(dirs.orders)}/`,
+};
 
 /** The values for the placeholders of the templates, for example {{worker}} and {{Worker}}. */
 export const templateValues: Readonly<Record<string, string>> = {
@@ -391,16 +421,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   recipe: roles.recipe,
   variant: roles.variant,
   childrenKey: keys.root.children,
-  configFile: files.config,
-  stateDir: dirs.state,
-  nodeFile: inState(files.nodeState),
-  workerFile: inState(dirs.roles, files.worker),
-  boardFile: inState(files.board),
-  waitingFile: inState(files.waiting),
-  decisionLogFile: inState(files.decisionLog),
-  profileDir: `${inState(dirs.profile)}/`,
-  roadmapsDir: `${inState(dirs.roadmaps)}/`,
-  ordersDir: `${inState(dirs.orders)}/`,
+  ...pathValues,
   profileIndex: files.profileIndex,
   profileReadme: files.profileReadme,
   profileLog: files.profileLog,
@@ -415,4 +436,15 @@ export const templateValues: Readonly<Record<string, string>> = {
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,
   claudeDir: dirs.claude,
+};
+
+/**
+ * The values for the texts in the coordinator `CLAUDE.md`: the role block, the safety block and the setup block. The
+ * coordinator session runs in the coordinator folder, which is one level below the factory folder, so each path is
+ * written from that folder: `../factory.yaml`, `../factory.local.yaml` and `../.factory/...`. The texts in the state
+ * folder keep the values of `templateValues`.
+ */
+export const coordinatorTemplateValues: Readonly<Record<string, string>> = {
+  ...templateValues,
+  ...Object.fromEntries(Object.entries(pathValues).map(([name, path]) => [name, `../${path}`])),
 };

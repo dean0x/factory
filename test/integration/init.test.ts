@@ -39,6 +39,7 @@ describe('factory init (built binary)', () => {
       'factory.local.yaml',
       '.gitignore',
       'setup/coordinator.md',
+      'setup/roles/worker.md',
       'coordinator/CLAUDE.md',
       '.factory/node.json',
       '.factory/roles/worker.md',
@@ -82,6 +83,7 @@ describe('factory init (built binary)', () => {
       '.gitignore',
       'factory.yaml',
       'setup/coordinator.md',
+      'setup/roles/worker.md',
     ]);
   });
 
@@ -167,7 +169,12 @@ describe('factory init (built binary)', () => {
     expect((await box.git(box.node, ['rev-parse', '--is-inside-work-tree', '--show-prefix'])).stdout).toBe('true\n\n');
     expect((await box.git(box.node, ['log', '--format=%s'])).stdout.trim()).toBe('chore: initialize the config repo');
     const tracked = await box.git(box.node, ['ls-files']);
-    expect(tracked.stdout.trim().split('\n').sort()).toEqual(['.gitignore', 'factory.yaml', 'setup/coordinator.md']);
+    expect(tracked.stdout.trim().split('\n').sort()).toEqual([
+      '.gitignore',
+      'factory.yaml',
+      'setup/coordinator.md',
+      'setup/roles/worker.md',
+    ]);
     expect((await box.git(box.node, ['status', '--porcelain'])).stdout).toBe('');
     const ignore = await box.read(join(box.node, '.gitignore'));
     expect(ignore.split('\n')).toEqual([
@@ -198,7 +205,7 @@ describe('factory init (built binary)', () => {
       'work-copies/job-1/file.txt',
       'web/file.txt',
     ];
-    const shared = ['.gitignore', 'factory.yaml', 'setup/coordinator.md'];
+    const shared = ['.gitignore', 'factory.yaml', 'setup/coordinator.md', 'setup/roles/worker.md'];
     for (const path of ignored) {
       expect({ path, code: (await box.git(box.node, ['check-ignore', '-q', '--no-index', path])).code }).toEqual({ path, code: 0 });
     }
@@ -217,7 +224,12 @@ describe('factory init (built binary)', () => {
     expect(ignore.startsWith('# factory:begin share list\n')).toBe(true);
     expect(ignore.endsWith('\n!/notes.md\n')).toBe(true);
     const tracked = await box.git(box.node, ['ls-files']);
-    expect(tracked.stdout.trim().split('\n').sort()).toEqual(['.gitignore', 'factory.yaml', 'setup/coordinator.md']);
+    expect(tracked.stdout.trim().split('\n').sort()).toEqual([
+      '.gitignore',
+      'factory.yaml',
+      'setup/coordinator.md',
+      'setup/roles/worker.md',
+    ]);
     expect((await box.git(box.node, ['status', '--porcelain'])).stdout).toBe('?? notes.md\n');
   });
 
@@ -290,6 +302,7 @@ describe('factory init (built binary)', () => {
       'factory.yaml',
       '.gitignore',
       'setup/coordinator.md',
+      'setup/roles/worker.md',
       'coordinator/CLAUDE.md',
       '.factory/node.json',
       '.factory/roles/worker.md',
@@ -427,7 +440,7 @@ describe('factory init: the home rules (built binary)', () => {
     expect(existsSync(join(box.node, '.factory', 'roles', 'worker.md'))).toBe(false);
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
-    expect(doctor.stdout).toContain('2 managed blocks are intact');
+    expect(doctor.stdout).toContain('3 managed blocks are intact');
   });
 
   it('makes a node on layer 3 with the safety block only, warns and names the layer, and doctor warns the same', async () => {
@@ -443,7 +456,7 @@ describe('factory init: the home rules (built binary)', () => {
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
     expect(doctor.stdout).toContain('layer 3 has no role template');
-    expect(doctor.stdout).toContain('1 managed blocks are intact');
+    expect(doctor.stdout).toContain('2 managed blocks are intact');
   });
 
   it.each(['0', '17', 'x'])('exits 2 for the layer "%s"', async (layer) => {
