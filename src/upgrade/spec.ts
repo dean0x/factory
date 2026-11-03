@@ -12,7 +12,7 @@ import {
 import { ok } from '../core/result.js';
 import { describeIssues } from '../core/zod.js';
 import { configMigrations } from '../migrate/config.js';
-import { fileSteps, type BlockRename, type FileStep } from '../migrate/files.js';
+import { fileSteps, rootMoves, type BlockRename, type FileStep, type RootMove } from '../migrate/files.js';
 import type { SchemaParser, TextParser, VersionSpec } from '../migrate/inspect.js';
 import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
@@ -48,6 +48,8 @@ export interface UpgradeSpec {
   readonly state: UpgradeFile;
   /** The files that move, and the blocks that get a new name, when the state migrates. */
   readonly files: readonly FileStep[];
+  /** The files that move outside the state folder. A move happens whatever the version of the state is. */
+  readonly rootMoves: readonly RootMove[];
   /** The value of the local file, taken from a migrated config value that holds the keys of both files. */
   localPartOf(config: unknown): unknown;
   /**
@@ -55,8 +57,6 @@ export interface UpgradeSpec {
    * current schema versions.
    */
   blocksOf(config: unknown): CliResult<BlockSet>;
-  /** The paths of the projects that a config value lists, as the value holds them. The value holds the keys of both files. */
-  projectPathsOf(config: unknown): CliResult<readonly string[]>;
 }
 
 export const finisher =
@@ -81,18 +81,6 @@ const blocksOfNode = (config: unknown): CliResult<BlockSet> => {
   const { layer } = parsed.data[keys.root.node];
   const modes = ownerModes(recipes[parsed.data[keys.root.recipe][keys.recipe.id]].approvalPoints);
   return ok({ templates: blockTemplatesFor(layer, modes), renames: roleBlockRenames(layer) });
-};
-
-const projectsSchema = z.looseObject({
-  [keys.root.recipe]: z.looseObject({
-    [keys.recipe.projects]: z.array(z.looseObject({ [keys.project.path]: z.string() })).default([]),
-  }),
-});
-
-const projectPathsOfRecipe = (config: unknown): CliResult<readonly string[]> => {
-  const parsed = projectsSchema.safeParse(config);
-  if (!parsed.success) return failure(describeIssues(parsed.error));
-  return ok(parsed.data[keys.root.recipe][keys.recipe.projects].map((project) => project[keys.project.path]));
 };
 
 /** A migrated value holds the keys of both files. The shared file takes its part of them. */
@@ -120,7 +108,7 @@ export const currentSpec: UpgradeSpec = {
     finish: finisher(nodeStateSchema, jsonText),
   },
   files: fileSteps,
+  rootMoves,
   localPartOf: (config) => splitConfigValue(config).local,
   blocksOf: blocksOfNode,
-  projectPathsOf: projectPathsOfRecipe,
 };

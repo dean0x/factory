@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
@@ -29,6 +29,7 @@ const fakeClaude = (dir: string): string =>
     'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/proxy"; else echo no > "$dir/proxy"; fi',
     'printf \'%s\' "$FACTORY_HOME" > "$dir/home"',
     'printf \'%s\' "$FACTORY_SESSION" > "$dir/session"',
+    'pwd -P > "$dir/cwd"',
     'echo launched >> "$dir/launches"',
     'exec sleep 300',
     '',
@@ -143,11 +144,41 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
 
     const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
     expect(argv.slice(0, 4)).toEqual(['--permission-mode', 'auto', '--effort', 'high']);
-    expect(argv.filter((arg) => arg === '--add-dir')).toHaveLength(2);
-    expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', web, '--add-dir', api]);
+    expect(argv.filter((arg) => arg === '--add-dir')).toHaveLength(3);
+    expect(argv.slice(argv.indexOf('--add-dir'))).toEqual([
+      '--add-dir',
+      join(box.node, '.factory'),
+      '--add-dir',
+      web,
+      '--add-dir',
+      api,
+    ]);
+    expect(argv).not.toContain(box.node);
     expect(argv.join(' ')).not.toMatch(/dangerously|bypass/i);
     expect(await readFile(join(outDir, 'home'), 'utf8')).toBe(box.node);
     expect(await readFile(join(outDir, 'session'), 'utf8')).toBe('demo');
+  });
+
+  it('starts the coordinator in the coordinator folder, and keeps the top of the factory folder as the home (TP-46)', async () => {
+    await initNode();
+    expect((await startFactory()).code).toBe(0);
+    await waitForLaunch();
+    expect((await readFile(join(outDir, 'cwd'), 'utf8')).trim()).toBe(await realpath(join(box.node, 'coordinator')));
+    expect(await readFile(join(outDir, 'home'), 'utf8')).toBe(box.node);
+    const paths = await tmux(['list-panes', '-s', '-t', '=demo', '-F', '#{pane_current_path}']);
+    const folder = await realpath(join(box.node, 'coordinator'));
+    expect(paths.stdout.trim().split('\n')).toEqual([folder, folder, folder]);
+  });
+
+  it('exits 1 and starts no session when the coordinator folder is missing, because tmux would use another folder', async () => {
+    await initNode();
+    await rm(join(box.node, 'coordinator'), { recursive: true });
+    const result = await startFactory();
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('the coordinator folder coordinator is missing');
+    expect(result.stderr).toContain('factory upgrade --overwrite coordinator --overwrite safety');
+    expect((await tmux(['-S', socket, 'has-session', '-t', '=demo'])).code).not.toBe(0);
+    expect(existsSync(socket)).toBe(false);
   });
 
   it('exits 2, names init and starts no session when factory.yaml has no factory.local.yaml next to it', async () => {
@@ -192,7 +223,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
     const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
-    expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', odd]);
+    expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', join(box.node, '.factory'), '--add-dir', odd]);
   });
 
   it('clears a proxy variable that the shell holds', async () => {

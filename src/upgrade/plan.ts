@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { sha256Hex } from '../blocks/managed.js';
+import { parseBlocks, sha256Hex } from '../blocks/managed.js';
 import { renamedFromOf, type BlockStatus, type PendingFiles } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
@@ -7,7 +7,7 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { localFileAccess, requireInit } from '../config/load.js';
 import { mixConfigValue, SPLIT_SCHEMA_VERSION } from '../config/schema.js';
-import { stepsBetween, type FileStep } from '../migrate/files.js';
+import { stepsBetween, type FileStep, type RootMove } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
 import { blockNames, commands, commandText, dirs, flags, flagText, helpTopics, program } from '../names.js';
@@ -132,18 +132,6 @@ export const planBlockSet = (config: FilePlan, local: LocalPlan, upgrade: Upgrad
   return set.ok ? set : failure(`${upgrade.config.spec.file}: ${set.error.message}`);
 };
 
-/** The paths of the projects, as the config holds them after the migrations. */
-export const planProjectPaths = (
-  config: FilePlan,
-  local: LocalPlan,
-  upgrade: UpgradeSpec,
-): CliResult<readonly string[]> => {
-  const migrated = migratedConfig(config, local, upgrade);
-  if (!migrated.ok) return migrated;
-  const paths = upgrade.projectPathsOf(migrated.value);
-  return paths.ok ? paths : failure(`${upgrade.config.spec.file}: ${paths.error.message}`);
-};
-
 /** A file or a folder that moves. `from` and `to` are paths inside the node home, for the output. */
 export interface MovePlan {
   readonly from: string;
@@ -169,6 +157,39 @@ export interface FilesPlan extends PendingFiles {
 }
 
 export const NO_FILES_PLAN: FilesPlan = { moves: [], renames: [], replaces: [] };
+
+/**
+ * The moves outside the state folder. A source that is not a file, or that holds no managed block, is skipped: a file
+ * of the owner stays where it is. A target that exists stops the upgrade, and nothing changes.
+ */
+export const planRootMoves = async (
+  deps: Deps,
+  layout: Layout,
+  moves: readonly RootMove[],
+): Promise<CliResult<readonly MovePlan[]>> => {
+  const planned: MovePlan[] = [];
+  for (const move of moves) {
+    const fromPath = join(layout.home, move.from);
+    const toPath = join(layout.home, move.to);
+    const source = await deps.fs.stat(fromPath);
+    if (!source.ok) return source;
+    if (source.value !== 'file') continue;
+    const text = await deps.fs.readText(fromPath);
+    if (!text.ok) return text;
+    const blocks = parseBlocks(text.value);
+    if (blocks.ok && blocks.value.length === 0) continue;
+    const target = await deps.fs.stat(toPath);
+    if (!target.ok) return target;
+    if (target.value !== null) {
+      return failure(
+        `cannot move ${move.from} to ${move.to}: the target exists`,
+        `Move or remove one of the two files, then run "${commandText(commands.upgrade)}" again.`,
+      );
+    }
+    planned.push({ from: move.from, to: move.to, fromPath, toPath });
+  }
+  return ok(planned);
+};
 
 /**
  * The file moves, the new file texts and the block renames of the steps that take the state to the current version.

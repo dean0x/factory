@@ -19,10 +19,20 @@ export const stateRel = {
 } as const;
 
 export interface Layout {
+  /** The root: the top folder of the config repo. */
   readonly home: string;
   readonly configFile: string;
   readonly localConfigFile: string;
+  /** The `.gitignore` of the root. Its part between the marker lines is the share list. */
+  readonly gitignoreFile: string;
+  /** The folder of the coordinator session. Git ignores it. The root holds no instruction file. */
+  readonly coordinatorDir: string;
   readonly claudeMd: string;
+  /** The folder of the setup text. The root repo tracks it. */
+  readonly setupDir: string;
+  readonly setupCoordinatorFile: string;
+  /** The fixed folder of the work copies. Git ignores it. */
+  readonly workCopiesDir: string;
   readonly stateDir: string;
   readonly nodeJson: string;
   readonly workerMd: string;
@@ -35,11 +45,18 @@ export interface Layout {
 /** Every path inside a node home comes from here. */
 export const layoutOf = (home: string): Layout => {
   const stateDir = join(home, dirs.state);
+  const coordinatorDir = join(home, dirs.coordinator);
+  const setupDir = join(home, dirs.setup);
   return {
     home,
     configFile: join(home, files.config),
     localConfigFile: join(home, files.localConfig),
-    claudeMd: join(home, files.claudeMd),
+    gitignoreFile: join(home, files.gitignore),
+    coordinatorDir,
+    claudeMd: join(coordinatorDir, files.claudeMd),
+    setupDir,
+    setupCoordinatorFile: join(setupDir, files.setupCoordinator),
+    workCopiesDir: join(home, dirs.workCopies),
     stateDir,
     nodeJson: join(stateDir, stateRel.nodeJson),
     workerMd: join(stateDir, stateRel.worker),

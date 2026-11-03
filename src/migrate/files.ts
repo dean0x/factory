@@ -1,4 +1,5 @@
-import { blockNames, dirs, schema1 } from '../names.js';
+import { join } from 'node:path';
+import { blockNames, dirs, files, schema1 } from '../names.js';
 import { stateRel } from '../state/layout.js';
 import { fileTemplates } from '../templates/index.js';
 
@@ -7,6 +8,18 @@ export interface FileMove {
   readonly from: string;
   readonly to: string;
 }
+
+/**
+ * A file with managed blocks that moves outside the state folder. Both paths are relative to the root. The file moves
+ * only when it holds a managed block, because a file of the owner at that place is not a file of this tool.
+ */
+export interface RootMove {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** The moves outside the state folder. `CLAUDE.md` leaves the root, which holds no instruction file. */
+export const rootMoves: readonly RootMove[] = [{ from: files.claudeMd, to: join(dirs.coordinator, files.claudeMd) }];
 
 /** A managed block that gets a new name. */
 export interface BlockRename {

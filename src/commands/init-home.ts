@@ -3,7 +3,7 @@ import { failure, safetyRefusal, usageError, type CliResult } from '../cli/error
 import { printable } from '../cli/output.js';
 import { localFileAccess } from '../config/load.js';
 import type { Deps } from '../core/deps.js';
-import { listRepoChildren, workTreeTop, type SkippedFolder } from '../core/git.js';
+import { listRepoChildren, MAX_SCAN_ENTRIES, workTreeTop, type SkippedFolder } from '../core/git.js';
 import { findNearestConfig } from '../core/home.js';
 import { isSameOrInside, nearestExisting, realPathOf } from '../core/paths.js';
 import { ok } from '../core/result.js';
@@ -157,7 +157,31 @@ export const chooseHome = async (
 };
 
 /**
- * The home holds no git repo one level down. The state folder of a node is a repo, so it does not count.
+ * The temp folders in the home that a stopped `init` left: the staging folders of the state repo. The list is empty when
+ * the home does not exist. The names are read from the folder, up to `MAX_SCAN_ENTRIES` of them. Nothing is removed.
+ */
+export const leftoverTempFolders = async (deps: Deps, home: string): Promise<CliResult<readonly string[]>> => {
+  const kind = await deps.fs.stat(home);
+  if (!kind.ok) return kind;
+  if (kind.value !== 'dir') return ok([]);
+  const names = await deps.fs.list(home);
+  if (!names.ok) return names;
+  return ok(
+    names.value
+      .slice(0, MAX_SCAN_ENTRIES)
+      .filter(isStagingDirName)
+      .map((name) => join(home, name)),
+  );
+};
+
+/** The warning for a temp folder that a stopped `init` left. The remedy is to remove it by hand. */
+export const tempFolderWarning = (folder: string): string =>
+  `The ${roles.node} home holds the temp folder ${folder}, left by a stopped ${commands.init}. ` +
+  `Remove ${folder} by hand when no ${commands.init} runs.`;
+
+/**
+ * The home holds no git repo one level down. The state folder of a node is a repo, so it does not count. A temp
+ * folder of a stopped `init` is a repo too, and it does not count: `leftoverTempFolders` finds it.
  * This covers a home that is a workspace folder, also when no project is declared.
  */
 export const checkHomeHoldsNoRepo = async (deps: Deps, home: string): Promise<CliResult<void>> => {
@@ -170,15 +194,7 @@ export const checkHomeHoldsNoRepo = async (deps: Deps, home: string): Promise<Cl
     (path) => basename(path) !== dirs.state,
   );
   const repo = found.find((path) => !isStagingDirName(basename(path)));
-  if (repo === undefined) {
-    const leftover = found[0];
-    if (leftover === undefined) return ok(undefined);
-    return safetyRefusal(
-      `the ${roles.node} home ${home} holds the temp folder ${leftover}, left by a stopped ${commands.init}. ` +
-        'You can remove it by hand.',
-      `Remove ${leftover}, then run the command again.`,
-    );
-  }
+  if (repo === undefined) return ok(undefined);
   return safetyRefusal(
     `the ${roles.node} home ${home} holds the git repo ${basename(repo)} one level down`,
     `A ${roles.node} home must hold no git repo. Choose another folder with ${flagText(flags.home)} DIR.`,

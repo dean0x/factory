@@ -22,8 +22,10 @@ const initNode = async (): Promise<void> => {
   expect(result.code).toBe(0);
 };
 
+const COORDINATOR_FILE = ['coordinator', 'CLAUDE.md'] as const;
+
 const editCoordinator = async (): Promise<string> => {
-  const path = join(box.node, 'CLAUDE.md');
+  const path = join(box.node, ...COORDINATOR_FILE);
   const text = await box.read(path);
   const edited = text.replace('Coordinate. Do not produce.', 'Do as you like.');
   expect(edited).not.toBe(text);
@@ -87,12 +89,12 @@ describe('factory upgrade (built binary)', () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toContain('block coordinator was edited');
     expect(result.stderr).toContain('--overwrite coordinator');
-    expect(await box.read(join(box.node, 'CLAUDE.md'))).toBe(edited);
+    expect(await box.read(join(box.node, ...COORDINATOR_FILE))).toBe(edited);
   });
 
   it('refuses an edited safety block with exit 4, names the overwrite command and leaves the file as it is', async () => {
     await initNode();
-    const path = join(box.node, 'CLAUDE.md');
+    const path = join(box.node, ...COORDINATOR_FILE);
     const text = await box.read(path);
     const start = text.indexOf('<!-- factory:begin safety');
     expect(start).toBeGreaterThan(-1);
@@ -240,7 +242,9 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const state = await prepareOldNode();
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
-    expect(upgraded.stdout).toContain('Changed 8 files.');
+    expect(upgraded.stdout).toContain('Changed 9 files.');
+    expect(existsSync(join(box.node, 'CLAUDE.md'))).toBe(false);
+    expect(await box.read(join(box.node, ...COORDINATOR_FILE))).toContain('factory:begin coordinator');
 
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('schema: 2');
@@ -301,7 +305,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
 
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
-    expect(upgraded.stdout).toContain('Changed 7 files.');
+    expect(upgraded.stdout).toContain('Changed 8 files.');
     expect(upgraded.stderr).toContain('.factory/roadmaps/README.md was edited, so factory keeps it');
     expect(upgraded.stderr).toContain('factory help words');
     expect(await box.read(path)).toBe(edited);
@@ -314,6 +318,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const before = await box.read(join(box.node, 'factory.yaml'));
     const result = await box.run(['upgrade', '--home', box.node, '--dry-run']);
     expect(result.code).toBe(0);
+    expect(result.stdout).toContain('move CLAUDE.md to coordinator/CLAUDE.md');
     expect(result.stdout).toContain('move .factory/protocol.md to .factory/roles/worker.md');
     expect(result.stdout).toContain('move .factory/briefs to .factory/orders');
     expect(result.stdout).toContain('replace .factory/roadmaps/README.md with the new text');

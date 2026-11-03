@@ -1,0 +1,8 @@
+/**
+ * The text of `setup/coordinator.md` when `init` makes it. The file holds the own text of the owner for the
+ * {{coordinator}}. It is in the config repo, so everyone who gets the repo gets the text.
+ */
+export const SETUP_COORDINATOR_LINES: readonly string[] = [
+  '<!-- Write your own text for the {{coordinator}} here. This file is in the config repo, so everyone who gets the repo gets this text. -->',
+  '',
+];

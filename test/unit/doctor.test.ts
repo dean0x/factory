@@ -7,7 +7,6 @@ import {
   checkChildren,
   checkConfig,
   checkConfigVersion,
-  checkHome,
   checkIndex,
   checkLocalFile,
   checkNodeBlocks,
@@ -17,15 +16,16 @@ import {
   checkProxies,
   checkProxyEnv,
   checkRoles,
+  checkRoot,
   checkSecrets,
   checkState,
   checkStateRepo,
+  checkTempFolders,
   checkTools,
   checkTracker,
   runDoctor,
   type CheckResult,
 } from '../../src/commands/doctor.js';
-import { checkHomeLocation } from '../../src/commands/init-home.js';
 import { runInit } from '../../src/commands/init.js';
 import { inspectConfig } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
@@ -41,6 +41,7 @@ import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 
 const HOME = '/w/node';
+const CLAUDE_MD = `${HOME}/coordinator/CLAUDE.md`;
 const INDEX_FILE = '/state/factory/homes.json';
 const TOOLS = ['git', 'tmux', 'gh', 'claude'];
 
@@ -205,7 +206,7 @@ describe('doctor: blocks', () => {
 
   it('warns when a block was edited by hand, and names it', async () => {
     const deps = await initialized();
-    const path = `${HOME}/CLAUDE.md`;
+    const path = CLAUDE_MD;
     deps.files.set(path, (deps.files.get(path) ?? '').replace('Coordinate. Do not produce.', 'Do as you like.'));
     const result = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
     expect(result.level).toBe('warn');
@@ -220,7 +221,7 @@ describe('doctor: blocks', () => {
     expect(missing.level).toBe('warn');
     expect(missing.text).toContain('worker (missing');
 
-    deps.files.set(`${HOME}/CLAUDE.md`, '<!-- factory:begin x v1 sha256=zz -->\n');
+    deps.files.set(CLAUDE_MD, '<!-- factory:begin x v1 sha256=zz -->\n');
     const broken = checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks));
     expect(broken.text).toContain('coordinator (malformed');
     expect(broken.text).toContain('safety (malformed');
@@ -228,7 +229,7 @@ describe('doctor: blocks', () => {
 
   it('keeps the text of the owner out of the verdict', async () => {
     const deps = await initialized();
-    const path = `${HOME}/CLAUDE.md`;
+    const path = CLAUDE_MD;
     deps.files.set(path, `My own rules.\n\n${deps.files.get(path) ?? ''}\nMore of my rules.\n`);
     expect(checkBlocks(await inspectBlocks(deps, HOME, layer1Blocks)).level).toBe('ok');
   });
@@ -252,14 +253,14 @@ describe('doctor: the blocks of a layer', () => {
     setLayer(deps, 2);
     const result = await nodeBlocks(deps);
     expect(result.level).toBe('warn');
-    expect(result.text).toContain('coordinator (intact, in /w/node/CLAUDE.md)');
+    expect(result.text).toContain('coordinator (intact, in /w/node/coordinator/CLAUDE.md)');
     expect(result.text).toContain('needs the block manager');
   });
 
   it('is ok for the blocks of layer 2: manager and safety', async () => {
     const deps = await initialized();
     setLayer(deps, 2);
-    const path = `${HOME}/CLAUDE.md`;
+    const path = CLAUDE_MD;
     const blocks = layer2Blocks.map((block) => {
       const rendered = renderBlock(block);
       if (!rendered.ok) throw new Error(rendered.error.message);
@@ -673,53 +674,34 @@ describe('doctor: proxies', () => {
       expect(output.lines[0]).toEqual({ level: 'text', text: `Config: ${HOME}/factory.yaml` });
     });
 
-    describe('when the registered home is in a place that the home check fails', () => {
-      /** The files of a node with a proxy, copied into deps where a git work tree holds /w. */
+    describe('when the registered home is not the top folder of a git work tree', () => {
+      /** The files of a node with a proxy, copied into deps where the home is a folder inside a work tree. */
       const inWorkTree = async (cwd: string): Promise<FakeDeps> => {
         const made = await nodeWithProxy(cwd);
         const deps = makeDeps({
           cwd,
           fetch: () => ok({ status: 200 }),
-          git: { repos: { '/w': {} }, committed: [`${HOME}/.factory`] },
+          git: { repos: { [HOME]: { topLevel: false } }, committed: [`${HOME}/.factory`] },
         });
         for (const dir of made.dirs) deps.seedDir(dir);
         for (const [path, text] of made.files) deps.seed(path, text);
         return deps;
       };
 
-      /** The same files, with the config of another node home in the parent folder. */
-      const inNodeHome = async (cwd: string): Promise<FakeDeps> => {
-        const deps = await nodeWithProxy(cwd);
-        deps.seed('/w/factory.yaml', 'schema: 2\n');
-        return deps;
-      };
-
       it.each([
         ['the current folder', HOME, undefined],
         ['--home', '/elsewhere', HOME],
-      ])('sends the request for a home inside a git work tree that comes from %s, and the home check fails', async (_name, cwd, home) => {
+      ])('sends the request for a home inside a git work tree that comes from %s, and the root check warns', async (_name, cwd, home) => {
         const deps = await inWorkTree(cwd);
         const output = await run(deps, home);
         expect(deps.fetched).toEqual([PROXY_URL]);
         const checks = output.json['checks'] as CheckResult[];
-        expect(levelOf(checks, 'home')).toBe('fail');
+        expect(levelOf(checks, 'root')).toBe('warn');
         expect(levelOf(checks, 'proxy:local')).toBe('ok');
-        expect(output.failed).toBe(true);
+        expect(output.failed).toBe(false);
       });
 
-      it.each([
-        ['the current folder', HOME, undefined],
-        ['--home', '/elsewhere', HOME],
-      ])('sends the request for a home inside another node home that comes from %s, and the home check fails', async (_name, cwd, home) => {
-        const deps = await inNodeHome(cwd);
-        const output = await run(deps, home);
-        expect(deps.fetched).toEqual([PROXY_URL]);
-        const checks = output.json['checks'] as CheckResult[];
-        expect(levelOf(checks, 'home')).toBe('fail');
-        expect(levelOf(checks, 'proxy:local')).toBe('ok');
-      });
-
-      it('reports that no proxy is in use when none is, even for a home that fails the home check', async () => {
+      it('reports that no proxy is in use when none is, even for a home that is not the top of a work tree', async () => {
         const deps = await inWorkTree(HOME);
         writeConfig(deps, sampleConfig());
         const output = await run(deps, undefined);
@@ -787,100 +769,89 @@ describe('doctor: tools', () => {
   });
 });
 
-describe('doctor: the home', () => {
-  const validConfig = (deps: FakeDeps) => inspectConfig(deps, HOME);
+describe('doctor: the root', () => {
+  const GITIGNORE = `${HOME}/.gitignore`;
 
-  const homeCheck = async (deps: FakeDeps) =>
-    checkHome(deps, HOME, await validConfig(deps), await checkHomeLocation(deps, HOME));
+  /** A root that init made, in a fake git that finds a work tree at the top of the root. */
+  const rooted = (setup: Setup = {}): Promise<FakeDeps> => initialized({ ...setup, git: { repos: { [HOME]: {} } } });
 
-  /** A node that init made, seen by a git that finds a work tree at /w. Init refuses this place, so the files are copied. */
-  const inRepo = async (): Promise<FakeDeps> => {
-    const made = await initialized();
-    const deps = makeDeps({ git: { repos: { '/w': {} } } });
-    for (const dir of made.dirs) deps.seedDir(dir);
-    for (const [path, text] of made.files) deps.seed(path, text);
-    return deps;
-  };
-
-  it('is ok for a home outside every work tree and every other home, apart from the projects', async () => {
-    const deps = await initialized();
-    expect(await homeCheck(deps)).toEqual({
-      id: 'home',
+  it('is ok for the top folder of its own work tree that holds the share list', async () => {
+    expect(await checkRoot(await rooted(), HOME)).toEqual({
+      id: 'root',
       level: 'ok',
-      text: 'the node home is outside every git work tree and every other node home, and holds no git repo one level down, and is apart from its projects',
+      text: 'the factory folder is the top folder of its own git work tree and holds the share list',
     });
   });
 
-  it('fails when the home is inside a git work tree', async () => {
-    const deps = await inRepo();
-    const result = await homeCheck(deps);
-    expect(result.level).toBe('fail');
-    expect(result.text).toContain('is inside the git work tree /w');
+  it('stays ok when a person adds lines after the share list', async () => {
+    const deps = await rooted();
+    deps.files.set(GITIGNORE, `${deps.files.get(GITIGNORE) ?? ''}\n!/notes.md\n`);
+    expect((await checkRoot(deps, HOME)).level).toBe('ok');
   });
 
-  it('fails when the home holds a git repo one level down, and not for its own state folder', async () => {
-    const own = makeDeps({ git: { repos: { [`${HOME}/.factory`]: {} } } });
-    const made = await initialized();
-    for (const dir of made.dirs) own.seedDir(dir);
-    for (const [path, text] of made.files) own.seed(path, text);
-    own.seedDir(`${HOME}/.factory/.git`);
-    expect((await homeCheck(own)).level).toBe('ok');
-
-    const holding = makeDeps({ git: { repos: { [`${HOME}/.factory`]: {}, [`${HOME}/web`]: {} } } });
-    for (const dir of made.dirs) holding.seedDir(dir);
-    for (const [path, text] of made.files) holding.seed(path, text);
-    holding.seedDir(`${HOME}/.factory/.git`);
-    holding.seedDir(`${HOME}/web/.git`);
-    const result = await homeCheck(holding);
-    expect(result.level).toBe('fail');
-    expect(result.text).toContain('holds the git repo web one level down');
+  it('warns, and does not fail, when the root is a folder inside another work tree', async () => {
+    const deps = await initialized({ git: { repos: { [HOME]: { topLevel: false } } } });
+    const result = await checkRoot(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(`${HOME} is not the top folder of a git work tree of its own`);
   });
 
-  it('fails with the words "temp folder" when a stopped init left a folder in the home', async () => {
-    const made = await initialized();
-    const leftover = `${HOME}/.factory.tmp-4242`;
-    const holding = makeDeps({ git: { repos: { [`${HOME}/.factory`]: {}, [leftover]: {} } } });
-    for (const dir of made.dirs) holding.seedDir(dir);
-    for (const [path, text] of made.files) holding.seed(path, text);
-    holding.seedDir(`${HOME}/.factory/.git`);
-    holding.seedDir(`${leftover}/.git`);
-    const result = await homeCheck(holding);
-    expect(result.level).toBe('fail');
-    expect(result.text).toContain(`holds the temp folder ${leftover}, left by a stopped init`);
-    expect(oldWordsIn(result.text)).toEqual([]);
-  });
-
-  it('fails when the home is inside another node home', async () => {
-    const deps = await initialized();
-    deps.seed('/w/factory.yaml', 'schema: 2\n');
-    const result = await homeCheck(deps);
-    expect(result.level).toBe('fail');
-    expect(result.text).toContain('is inside another node home');
+  it('warns when the root is in no work tree', async () => {
+    const result = await checkRoot(await initialized(), HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('is not the top folder of a git work tree of its own');
   });
 
   it.each([
-    ['a project inside the home', 'sub'],
-    ['the home as a project', '.'],
-  ])('fails for %s', async (_name, path) => {
-    const deps = await initialized();
-    const config = sampleConfig();
-    const project = { ...config.recipe.projects[0]!, path };
-    writeConfig(deps, { ...config, recipe: { ...config.recipe, projects: [project] }, core: { ...config.core, node: { id: 'demo', layer: 1 } } });
-    const result = await homeCheck(deps);
-    expect(result.level).toBe('fail');
-    expect(result.text).toContain('is the project folder');
+    ['is missing', undefined],
+    ['holds no share list', '!/notes.md\n'],
+    ['holds a share list that was changed', '# factory:begin share list\n/old\n# factory:end share list\n'],
+    ['holds a marker line with no pair', '# factory:begin share list\n/*\n'],
+  ])('warns when .gitignore %s', async (_name, text) => {
+    const deps = await rooted();
+    if (text === undefined) deps.files.delete(GITIGNORE);
+    else deps.files.set(GITIGNORE, text);
+    const result = await checkRoot(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('.gitignore has no intact share list');
+    expect(oldWordsIn(result.text)).toEqual([]);
   });
 
-  it('checks the place of the home when the config is not valid, and says that the projects are not checked', async () => {
-    const deps = await initialized();
-    deps.files.set(`${HOME}/factory.yaml`, 'x: 1\n');
-    expect(await homeCheck(deps)).toMatchObject({
+  it('does not check the root when git is missing', async () => {
+    const deps = await rooted({ tools: ['tmux', 'gh', 'claude'] });
+    expect(await checkRoot(deps, HOME)).toEqual({ id: 'root', level: 'warn', text: 'not checked: git is missing' });
+  });
+});
+
+describe('doctor: the temp folders of a stopped init (TP-73)', () => {
+  it('is ok when the root holds no temp folder', async () => {
+    expect(await checkTempFolders(await initialized(), HOME)).toEqual({
+      id: 'temp-folder',
       level: 'ok',
-      text: expect.stringContaining('the projects are not checked'),
+      text: 'no temp folder of a stopped init in the factory folder',
     });
-    const inside = await inRepo();
-    inside.files.set(`${HOME}/factory.yaml`, 'x: 1\n');
-    expect((await homeCheck(inside)).level).toBe('fail');
+  });
+
+  it('warns with the words "temp folder" for each leftover, and removes nothing', async () => {
+    const deps = await initialized();
+    const first = `${HOME}/.factory.tmp-4242`;
+    const second = `${HOME}/.factory.tmp-77`;
+    deps.seedDir(first);
+    deps.seedDir(second);
+    const result = await checkTempFolders(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(`temp folder ${first}`);
+    expect(result.text).toContain(`temp folder ${second}`);
+    expect(oldWordsIn(result.text)).toEqual([]);
+    expect(deps.dirs.has(first)).toBe(true);
+    expect(deps.dirs.has(second)).toBe(true);
+  });
+
+  it('does not take the state folder or a folder with another name for a temp folder', async () => {
+    const deps = await initialized();
+    deps.seedDir(`${HOME}/.factory.tmp-x`);
+    deps.seedDir(`${HOME}/web`);
+    expect((await checkTempFolders(deps, HOME)).level).toBe('ok');
   });
 });
 
@@ -1255,7 +1226,7 @@ describe('doctor: projects that the factory can not share (F-17c)', () => {
 
 describe('doctor: the command', () => {
   it('passes on a fresh node: no failure, so it is not failed', async () => {
-    const deps = await initialized({ git: { committed: [`${HOME}/.factory`] } });
+    const deps = await initialized({ git: { repos: { [HOME]: {} }, committed: [`${HOME}/.factory`] } });
     deps.seedDir(`${HOME}/.factory/.git`);
     const output = await doctor(deps);
     expect(output.failed).toBe(false);
@@ -1266,7 +1237,8 @@ describe('doctor: the command', () => {
       'config-version',
       'local-file',
       'state',
-      'home',
+      'root',
+      'temp-folder',
       'index',
       'blocks',
       'roles',
@@ -1281,7 +1253,7 @@ describe('doctor: the command', () => {
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('18 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('19 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1304,7 +1276,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(18);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(19);
   });
 
   it('finds the node by walking up from the current folder', async () => {

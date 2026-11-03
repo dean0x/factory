@@ -38,7 +38,7 @@ const C = CONFIG_SCHEMA_VERSION;
 const S = STATE_SCHEMA_VERSION;
 
 const HOME = '/w/node';
-const CLAUDE = `${HOME}/CLAUDE.md`;
+const CLAUDE = `${HOME}/coordinator/CLAUDE.md`;
 const WORKER = `${HOME}/.factory/roles/worker.md`;
 const NODE_JSON = `${HOME}/.factory/node.json`;
 const CONFIG = `${HOME}/factory.yaml`;
@@ -240,7 +240,7 @@ describe('upgrade: managed blocks', () => {
     const original = { claude: text(deps, CLAUDE), config: text(deps, CONFIG), node: text(deps, NODE_JSON) };
     deps.seed(`${HOME}/.factory/backups/older/factory.yaml`, 'old backup');
     success(await upgrade(deps, newer));
-    expect(text(deps, `${BACKUP}/CLAUDE.md`)).toBe(original.claude);
+    expect(text(deps, `${BACKUP}/coordinator/CLAUDE.md`)).toBe(original.claude);
     expect(text(deps, `${BACKUP}/factory.yaml`)).toBe(original.config);
     expect(text(deps, `${BACKUP}/.factory/node.json`)).toBe(original.node);
     expect([...deps.files.keys()].some((path) => path.startsWith(`${BACKUP}/.factory/backups`))).toBe(false);
@@ -359,6 +359,19 @@ describe('upgrade: managed blocks', () => {
     const output = success(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
     expect(text(deps, WORKER)).toContain(`<!-- factory:begin worker v${versionOf('worker')} sha256=`);
     expect(output.json).toMatchObject({ committed: true });
+  });
+
+  it('makes a missing coordinator folder and writes its CLAUDE.md when the blocks are named', async () => {
+    const { deps } = await makeNode();
+    deps.files.delete(CLAUDE);
+    deps.dirs.delete(`${HOME}/coordinator`);
+    const output = success(await upgrade(deps, currentSpec, { overwrite: ['coordinator', 'safety'] }));
+    expect(deps.dirs.has(`${HOME}/coordinator`)).toBe(true);
+    const after = text(deps, CLAUDE);
+    expect(after).toContain(`<!-- factory:begin coordinator v${versionOf('coordinator')} sha256=`);
+    expect(after).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
+    expect(output.warnings).toEqual([]);
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
   });
 
   it('rejects the name of a block that does not exist', async () => {
@@ -647,7 +660,7 @@ describe('upgrade: when a step fails after the backup', () => {
     expect(error.message).toContain('disk full');
     expect(error.message).toContain('The files are as they were.');
     for (const [path, body] of before) expect(text(deps, path)).toBe(body);
-    expect(text(deps, `${BACKUP}/CLAUDE.md`)).toBe(before.get(CLAUDE));
+    expect(text(deps, `${BACKUP}/coordinator/CLAUDE.md`)).toBe(before.get(CLAUDE));
   });
 
   it('puts back every file and clears the index when the commit fails', async () => {
@@ -686,7 +699,7 @@ describe('upgrade: when a step fails after the backup', () => {
     expect(error.message).toContain('Restore it from .factory/backups/2030-01-02T03-04-05-678Z');
     expect(text(deps, NODE_JSON)).toBe(before.get(NODE_JSON));
     expect(text(deps, CLAUDE)).not.toBe(before.get(CLAUDE));
-    expect(text(deps, `${BACKUP}/CLAUDE.md`)).toBe(before.get(CLAUDE));
+    expect(text(deps, `${BACKUP}/coordinator/CLAUDE.md`)).toBe(before.get(CLAUDE));
   });
 
   it('says that the files could not be put back when two files fail', async () => {
@@ -1080,6 +1093,7 @@ describe('upgrade: a node of schema 1', () => {
       expect.arrayContaining([
         `factory.yaml: schema 1 to ${C} (1 step)`,
         `.factory/node.json: schema_version 1 to ${S} (1 step)`,
+        'move CLAUDE.md to coordinator/CLAUDE.md',
         'move .factory/protocol.md to .factory/roles/worker.md',
         'move .factory/briefs to .factory/orders',
         'replace .factory/roadmaps/README.md with the new text',
@@ -1093,6 +1107,7 @@ describe('upgrade: a node of schema 1', () => {
       changed: true,
       dryRun: true,
       moves: [
+        { from: 'CLAUDE.md', to: 'coordinator/CLAUDE.md' },
         { from: '.factory/protocol.md', to: '.factory/roles/worker.md' },
         { from: '.factory/briefs', to: '.factory/orders' },
       ],
@@ -1143,7 +1158,7 @@ describe('upgrade: a node of schema 1', () => {
       blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
     });
 
-    expect(output.lines.at(-1)?.text).toBe('Changed 8 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+    expect(output.lines.at(-1)?.text).toBe('Changed 9 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S } });
     expect(gitWrites(gitSince())).toEqual([
       'rm -r -q --cached --ignore-unmatch -- protocol.md briefs',
@@ -1152,6 +1167,60 @@ describe('upgrade: a node of schema 1', () => {
     ]);
     expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
     expect(deps.files.has(`${BACKUP}/.factory/briefs/.gitkeep`)).toBe(true);
+  });
+
+  describe('the move of CLAUDE.md into the coordinator folder', () => {
+    it('moves the file of the old place with its text, makes the folder, and keeps a copy in the backup', async () => {
+      const { deps } = makeOldNode();
+      const old = text(deps, OLD.claude);
+      expect(old).toContain('factory:begin coordinator');
+      success(await upgrade(deps));
+      expect(deps.files.has(OLD.claude)).toBe(false);
+      expect(deps.dirs.has(`${HOME}/coordinator`)).toBe(true);
+      const moved = text(deps, CLAUDE);
+      expect(moved).toContain('factory:begin coordinator');
+      expect(moved).toContain(COORDINATOR_LINE);
+      expect(text(deps, `${BACKUP}/CLAUDE.md`)).toBe(old);
+    });
+
+    it('keeps the lines of the owner in the moved file', async () => {
+      const { deps } = makeOldNode();
+      deps.files.set(OLD.claude, `My own rules.\n\n${text(deps, OLD.claude)}\nMore of my rules.\n`);
+      success(await upgrade(deps));
+      expect(text(deps, CLAUDE).startsWith('My own rules.\n')).toBe(true);
+      expect(text(deps, CLAUDE).endsWith('\nMore of my rules.\n')).toBe(true);
+    });
+
+    it('leaves a CLAUDE.md at the old place that holds no managed block, and does not stop for it', async () => {
+      const { deps } = makeOldNode();
+      const withoutBlocks = 'Only my own rules.\n';
+      deps.files.set(OLD.claude, withoutBlocks);
+      const output = success(await upgrade(deps));
+      expect((output.json['moves'] as { from: string }[]).map((move) => move.from)).not.toContain('CLAUDE.md');
+      expect(text(deps, OLD.claude)).toBe(withoutBlocks);
+    });
+
+    it('refuses before any change when the target exists, and names both files', async () => {
+      const { deps } = makeOldNode();
+      deps.seed(CLAUDE, 'mine');
+      const before = snapshot(deps);
+      const error = refusal(await upgrade(deps));
+      expect(error.kind).toBe('failure');
+      expect(error.message).toBe('cannot move CLAUDE.md to coordinator/CLAUDE.md: the target exists');
+      expect(error.hint).toContain('Move or remove one of the two files');
+      expect(snapshot(deps)).toEqual(before);
+      expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).message).toContain('the target exists');
+    });
+
+    it('puts the file back at the old place when a later write fails', async () => {
+      const { deps } = makeOldNode();
+      const before = live(deps);
+      const failing = withFailingWrites(deps, (path, attempt) => path === CONFIG && attempt === 1);
+      const error = refusal(await upgrade(failing));
+      expect(error.message).toContain('The files are as they were.');
+      expect(live(deps)).toEqual(before);
+      expect(deps.dirs.has(`${HOME}/coordinator`)).toBe(false);
+    });
   });
 
   describe('the roadmap README', () => {
@@ -1183,7 +1252,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(note?.level).toBe('warn');
       expect(note?.text).toContain('factory help words');
       expect(output.warnings).toEqual([note?.text]);
-      expect(output.lines.at(-1)?.text).toBe('Changed 7 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+      expect(output.lines.at(-1)?.text).toBe('Changed 8 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
       expect(gitWrites(gitSince())[1]).toBe('add -A -- roles/worker.md node.json orders');
     });
 
@@ -1494,7 +1563,7 @@ describe('upgrade: a node of schema 1', () => {
     expect(gitWrites(gitSince())).toEqual([]);
   });
 
-  describe('the home rules', () => {
+  describe('the placement of the home', () => {
     const homeWarnings = async (deps: FakeDeps, dryRun: boolean): Promise<readonly string[]> =>
       success(await upgrade(deps, currentSpec, { dryRun })).warnings;
 
@@ -1504,28 +1573,22 @@ describe('upgrade: a node of schema 1', () => {
       expect(await homeWarnings(deps, false)).toEqual([]);
     });
 
-    it('warns when the home is inside a git work tree, with the remedy, and still upgrades', async () => {
-      const { deps } = makeOldNode({ git: { repos: { '/w': {} } } });
-      const [warning, ...others] = await homeWarnings(deps, true);
-      expect(others).toEqual([]);
-      expect(warning).toContain('is inside the git work tree /w');
-      expect(warning).toContain('Move the home');
-      expect(warning).toContain('fix the project paths in factory.yaml');
-      expect(text(deps, CONFIG)).toContain('schema: 1');
+    const places: readonly (readonly [string, GitFixture, (deps: FakeDeps) => void])[] = [
+      ['inside a git work tree', { repos: { '/w': {} } }, () => undefined],
+      ['inside another node home', {}, (deps) => deps.seed('/w/factory.yaml', 'schema: 2\n')],
+      ['that holds a git repo one level down', { repos: { '/w/node/other': {} } }, (deps) => deps.seedDir('/w/node/other/.git')],
+    ];
 
-      expect(await homeWarnings(deps, false)).toEqual([warning]);
+    it.each(places)('gives no placement warning for a home %s, because the root is a repo that holds its clones', async (_name, git, prepare) => {
+      const { deps } = makeOldNode({ git });
+      prepare(deps);
+      expect(await homeWarnings(deps, true)).toEqual([]);
+      expect(text(deps, CONFIG)).toContain('schema: 1');
+      expect(await homeWarnings(deps, false)).toEqual([]);
       expect(text(deps, CONFIG)).toContain('schema: 2');
     });
 
-    it('warns when the home is inside another node home', async () => {
-      const { deps } = makeOldNode();
-      deps.seed('/w/factory.yaml', 'schema: 2\n');
-      const [warning, ...others] = await homeWarnings(deps, false);
-      expect(others).toEqual([]);
-      expect(warning).toContain('is inside another node home: /w/factory.yaml exists');
-    });
-
-    it('warns when a project is inside the home', async () => {
+    it('gives no placement warning for a project folder inside the home', async () => {
       const { deps } = await makeNode();
       edit(
         deps,
@@ -1534,17 +1597,7 @@ describe('upgrade: a node of schema 1', () => {
         '  projects: [{ id: web, url: "https://example.com/team/web", path: web, default_branch: main, merge_method: squash, gate: { checks: [] } }]',
       );
       const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
-      const [warning, ...others] = success(await upgrade(deps, newer)).warnings;
-      expect(others).toEqual([]);
-      expect(warning).toContain('is the project folder /w/node/web, or holds it');
-    });
-
-    it('warns when the home holds a git repo one level down', async () => {
-      const { deps } = makeOldNode({ git: { repos: { '/w/node/other': {} } } });
-      deps.seedDir('/w/node/other/.git');
-      const [warning, ...others] = await homeWarnings(deps, false);
-      expect(others).toEqual([]);
-      expect(warning).toContain('holds the git repo other one level down');
+      expect(success(await upgrade(deps, newer)).warnings).toEqual([]);
     });
 
     it('does not check the home when nothing is upgraded', async () => {
@@ -1625,7 +1678,12 @@ describe('upgrade: a node of schema 1', () => {
     expect(deps.files.has(WORKER)).toBe(false);
     expect(deps.files.has(ORDERS_KEEP)).toBe(true);
     expect(output.warnings).toEqual(['block worker is missing. Use --overwrite worker to add it.']);
-    expect(output.json).toMatchObject({ moves: [{ from: '.factory/briefs', to: '.factory/orders' }] });
+    expect(output.json).toMatchObject({
+      moves: [
+        { from: 'CLAUDE.md', to: 'coordinator/CLAUDE.md' },
+        { from: '.factory/briefs', to: '.factory/orders' },
+      ],
+    });
   });
 
   it('stops on a child with an address that is not a file address, and moves nothing', async () => {

@@ -76,13 +76,17 @@ const copyIntoBackup = async (deps: Deps, layout: Layout, target: string): Promi
   const copies: readonly (readonly [string, string, readonly string[]])[] = [
     [layout.configFile, join(target, files.config), []],
     [layout.localConfigFile, join(target, files.localConfig), []],
-    [layout.claudeMd, join(target, files.claudeMd), []],
+    // The file of the old layout, which a move can take to the coordinator folder.
+    [join(layout.home, files.claudeMd), join(target, files.claudeMd), []],
+    [layout.claudeMd, join(target, dirs.coordinator, files.claudeMd), []],
     [layout.stateDir, join(target, dirs.state), [layout.backupsDir, layout.runtimeDir, layout.locksDir]],
   ];
   for (const [from, to, skip] of copies) {
     const kind = await deps.fs.stat(from);
     if (!kind.ok) return kind;
     if (kind.value === null) continue;
+    const folder = await deps.fs.mkdir(dirname(to));
+    if (!folder.ok) return folder;
     const copied = await deps.fs.copyTree(from, to, skip);
     if (!copied.ok) return copied;
   }
@@ -200,6 +204,10 @@ export const writeAll = async (deps: Deps, newFiles: readonly NewFile[], written
     const previous = await readIfFile(deps, file.path);
     if (!previous.ok) return previous;
     if (previous.value === file.text) continue;
+    if (previous.value === null) {
+      const folder = await deps.fs.mkdir(dirname(file.path));
+      if (!folder.ok) return folder;
+    }
     written.push({ path: file.path, previous: previous.value });
     const result = await deps.fs.writeTextAtomic(file.path, file.text, file.mode);
     if (!result.ok) return result;

@@ -1,4 +1,4 @@
-import { chmod, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
@@ -56,16 +56,17 @@ describe('factory doctor (built binary)', () => {
     expect(document.checks.find((check) => check.id === 'config')?.level).toBe('ok');
     expect(document.checks.every((check) => check.level !== 'fail')).toBe(true);
     expect(document.checks.map((check) => check.id)).toEqual(
-      expect.arrayContaining(['home', 'tracker', 'children']),
+      expect.arrayContaining(['root', 'temp-folder', 'tracker', 'children']),
     );
-    for (const id of ['home', 'tracker', 'children']) {
+    expect(document.checks.map((check) => check.id)).not.toContain('home');
+    for (const id of ['root', 'temp-folder', 'tracker', 'children']) {
       expect(document.checks.find((check) => check.id === id)?.level).toBe('ok');
     }
   });
 
   it('warns about an edited block and still exits 0', async () => {
     await initNode();
-    const claude = join(box.node, 'CLAUDE.md');
+    const claude = join(box.node, 'coordinator', 'CLAUDE.md');
     const text = await box.read(claude);
     const edited = text.replace('Coordinate. Do not produce.', 'Do as you like.');
     expect(edited).not.toBe(text);
@@ -96,6 +97,24 @@ describe('factory doctor (built binary)', () => {
     expect(result.code).toBe(1);
     expect(result.stdout).toContain('note in factory.yaml or factory.local.yaml looks like a token');
     expect(result.stdout + result.stderr).not.toContain(secret);
+  });
+
+  it('warns, and exits 0, for a temp folder of a stopped init, and removes nothing (TP-73)', async () => {
+    await initNode();
+    const leftover = join(box.node, '.factory.tmp-4242');
+    await mkdir(leftover);
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`temp folder ${leftover}, left by a stopped init`);
+    expect((await stat(leftover)).isDirectory()).toBe(true);
+  });
+
+  it('warns, and exits 0, when the share list of .gitignore is not intact', async () => {
+    await initNode();
+    await writeFile(join(box.node, '.gitignore'), '!/notes.md\n');
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('.gitignore has no intact share list');
   });
 
   it('exits 2 and names init when factory.yaml has no factory.local.yaml next to it', async () => {

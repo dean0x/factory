@@ -601,7 +601,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 ### 4.5 Upgrades without loss of state
 
 - **State has a version.** `node.json` holds `schema_version`, and `factory.yaml` holds `schema`. Each migration is one pure function from version N to N+1, with a test.
-- **The upgrade order:** a dry run that prints the plan, warns when the factory folder breaks a folder rule, and checks every new file against the new schema; a backup to `.factory/backups/<ts>/`; the migrations; one commit in the state repo with the files that the upgrade wrote or moved. If one step fails, factory restores the backup and stops.
+- **The upgrade order:** a dry run that prints the plan, including the move of `CLAUDE.md` into `coordinator/`, and checks every new file against the new schema; a backup to `.factory/backups/<ts>/`; the migrations; one commit in the state repo with the files that the upgrade wrote or moved. If one step fails, factory restores the backup and stops.
 - **Managed blocks.** `CLAUDE.md` and the role templates contain blocks between `<!-- factory:begin <name> v<n> sha256=<hash> -->` and `<!-- factory:end <name> -->`. An upgrade rewrites only these blocks. The owner's text outside them stays. If the hash shows a hand edit inside a block, factory stops and shows the diff. The owner then moves the edit out of the block or accepts the loss with `--overwrite <name>`.
 - **No downgrade of state.** An older CLI refuses a newer `schema_version`, with a message.
 - **Parents and children can run different versions.** The report schema has its own version, and a parent reads every report version back to the oldest supported one.

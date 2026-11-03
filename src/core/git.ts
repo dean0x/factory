@@ -7,7 +7,7 @@ import { ok } from './result.js';
 const GIT_TIMEOUT_MS = 15_000;
 const CLONE_TIMEOUT_MS = 300_000;
 /** The entry that every work tree has in its top folder: a folder, or a file for a linked work tree. */
-const GIT_ENTRY = '.git';
+export const GIT_ENTRY = '.git';
 const MAX_STDERR_CHARS = 200;
 
 const GITHUB_URL =
@@ -186,13 +186,45 @@ export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>
  */
 const NO_HOOKS = 'core.hooksPath=/dev/null';
 
-const commitStaged = (deps: Deps, dir: string, message: string): Promise<CliResult<void>> =>
-  gitStep(deps, dir, ['-c', 'commit.gpgsign=false', '-c', NO_HOOKS, 'commit', '-q', '-m', message], 'commit the state files');
+const commitStaged = (deps: Deps, dir: string, message: string, what: string): Promise<CliResult<void>> =>
+  gitStep(deps, dir, ['-c', 'commit.gpgsign=false', '-c', NO_HOOKS, 'commit', '-q', '-m', message], what);
+
+const COMMIT_STATE = 'commit the state files';
 
 /** Stage everything and commit, for a new repo. The caller checks the identity first. */
 export const commitAll = async (deps: Deps, dir: string, message: string): Promise<CliResult<void>> => {
   const staged = await gitStep(deps, dir, ['add', '-A'], 'stage the state files');
-  return staged.ok ? commitStaged(deps, dir, message) : staged;
+  return staged.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : staged;
+};
+
+export interface RootRepoInput {
+  /** The paths, relative to the root, that the first commit holds. No other path is staged. */
+  readonly paths: readonly string[];
+  readonly message: string;
+  /** The name of the first branch. */
+  readonly branch: string;
+}
+
+export interface RootRepo {
+  /** False when git has no identity: the repo exists, and it holds no commit. */
+  readonly committed: boolean;
+}
+
+/**
+ * Make the root a git repo and commit the allowed paths. The root must hold no git folder yet. The paths are staged by
+ * name, so a path that the share list ignores can not enter the commit. The hooks of git do not run for the commit.
+ */
+export const initRootRepo = async (deps: Deps, root: string, input: RootRepoInput): Promise<CliResult<RootRepo>> => {
+  const entry = await deps.fs.stat(join(root, GIT_ENTRY));
+  if (!entry.ok) return entry;
+  if (entry.value !== null) return failure(`cannot create the config repository: ${root} holds a git repository already`);
+  const made = await gitStep(deps, root, ['init', '-q', '-b', input.branch], 'create the config repository');
+  if (!made.ok) return made;
+  if (!(await hasIdentity(deps, root))) return ok({ committed: false });
+  const staged = await gitStep(deps, root, ['add', '--', ...input.paths], 'stage the config files');
+  if (!staged.ok) return staged;
+  const committed = await commitStaged(deps, root, input.message, 'commit the config files');
+  return committed.ok ? ok({ committed: true }) : committed;
 };
 
 /** Paths in a repo, relative to its top folder. */
@@ -224,7 +256,7 @@ export const commitPaths = async (
     if (!removed.ok) return removed;
   }
   const added = await gitStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
-  return added.ok ? commitStaged(deps, dir, message) : added;
+  return added.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : added;
 };
 
 /** Remove the staged changes of `paths` from the index. The files keep their text, and other staged changes stay. */

@@ -9,6 +9,8 @@ import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
+const COORDINATOR = '/w/node/coordinator';
+const STATE_DIR = '/w/node/.factory';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
 const REMOVE_PROXY_VARIABLE = 'set-environment -t =demo -r ANTHROPIC_BASE_URL';
 const KEEP_PANE = 'set-option -w -t =demo:view remain-on-exit on';
@@ -25,6 +27,8 @@ const LAUNCH_BASE = [
   '--effort',
   'high',
 ];
+/** The folders that the launch adds: the state folder first, then each project. */
+const LAUNCH_DIRS = ['--add-dir', '/w/node/.factory', '--add-dir', '/w/web'];
 
 interface Setup {
   readonly tmux?: TmuxFixture;
@@ -43,6 +47,8 @@ interface Setup {
   readonly cwd?: string;
   /** False: the factory list has no entry for the home. Default: true. */
   readonly registered?: boolean;
+  /** False: the home has no coordinator folder. Default: true. */
+  readonly coordinatorFolder?: boolean;
 }
 
 /** A fake of git: it knows only the top folder of the work tree. The tmux log does not record its calls. */
@@ -79,6 +85,7 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   for (const tool of setup.tools ?? ['tmux', 'claude']) deps.seed(`/bin/${tool}`, '');
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
+  if (setup.coordinatorFolder !== false) deps.seedDir(COORDINATOR);
   if (setup.registered !== false) registerRoot(deps, HOME, config.core.node.id);
   return { deps, tmux: log };
 };
@@ -102,14 +109,49 @@ describe('start:a new session', () => {
     expect(tmux.commands()).toEqual([
       '-V',
       'has-session -t =demo',
-      `new-session -d -s demo -n view -c /w/node -- ${[...LAUNCH_BASE, '--add-dir', '/w/web'].join(' ')} ; ${KEEP_PANE}`,
+      `new-session -d -s demo -n view -c ${COORDINATOR} -- ${[...LAUNCH_BASE, ...LAUNCH_DIRS].join(' ')} ; ${KEEP_PANE}`,
       REMOVE_PROXY_VARIABLE,
       'set-option -p -t =demo:view.{left} @node demo',
       'set-option -t =demo: @factory_home /w/node',
-      'split-window -d -h -t =demo:view -c /w/node',
+      `split-window -d -h -t =demo:view -c ${COORDINATOR}`,
       'set-option -p -t =demo:view.{right} @slot board',
-      'new-window -d -t =demo: -n bench -c /w/node',
+      `new-window -d -t =demo: -n bench -c ${COORDINATOR}`,
     ]);
+  });
+
+  it('starts in the coordinator folder, with the root as the home, and adds no folder for the root (TP-46)', async () => {
+    const { deps, tmux } = make();
+    await succeeded(deps);
+    const start = tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
+    expect(start[start.indexOf('-c') + 1]).toBe(COORDINATOR);
+    expect(start).toContain('FACTORY_HOME=/w/node');
+    const added = start.flatMap((arg, index) => (arg === '--add-dir' ? [start[index + 1]] : []));
+    expect(added).toEqual([STATE_DIR, '/w/web']);
+    expect(added).not.toContain(HOME);
+    expect(tmux.commands()).toContain('set-option -t =demo: @factory_home /w/node');
+  });
+
+  it('stops before any proxy check or tmux call when the coordinator folder is missing', async () => {
+    const fetched: string[] = [];
+    const { deps, tmux } = make({
+      coordinatorFolder: false,
+      config: withProxy('stop'),
+      fetch: (url) => {
+        fetched.push(url);
+        return ok({ status: 200 });
+      },
+    });
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        kind: 'failure',
+        message: 'the coordinator folder coordinator is missing',
+        hint: 'Run "factory upgrade --overwrite coordinator --overwrite safety" to write it.',
+      },
+    });
+    expect(fetched).toEqual([]);
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
   });
 
   it('sets remain-on-exit in the call that starts the session, so the pane cannot end before the option applies', async () => {
@@ -127,7 +169,7 @@ describe('start:a new session', () => {
     const output = await succeeded(deps);
     expect(tmux.sessions().has('demo')).toBe(true);
     expect(tmux.commands().some((line) => line.startsWith('kill-session'))).toBe(false);
-    expect(tmux.commands().at(-1)).toBe('new-window -d -t =demo: -n bench -c /w/node');
+    expect(tmux.commands().at(-1)).toBe(`new-window -d -t =demo: -n bench -c ${COORDINATOR}`);
     expect(output.json).toMatchObject({ started: true });
   });
 
@@ -200,7 +242,7 @@ describe('start:a new session', () => {
     await succeeded(deps);
     const call = tmux.calls.find((candidate) => candidate.args[0] === 'new-session')?.args ?? [];
     const launch = call.slice(call.indexOf('--') + 1, call.indexOf(';'));
-    expect(launch.slice(launch.indexOf('--add-dir'))).toEqual(['--add-dir', '/w/web', '--add-dir', '/w/api']);
+    expect(launch.slice(launch.indexOf('--add-dir'))).toEqual([...LAUNCH_DIRS, '--add-dir', '/w/api']);
   });
 
   it('passes the model and the effort of the config', async () => {
@@ -493,8 +535,8 @@ describe('start:--dry-run', () => {
     expect(tmux.sessions().size).toBe(0);
     const text = output.lines.map((line) => line.text).join('\n');
     expect(text).toContain('Dry run');
-    expect(text).toContain(`tmux new-session -d -s demo -n view -c /w/node -- ${[...LAUNCH_BASE, '--add-dir', '/w/web'].join(' ')}`);
-    expect(text).toContain('tmux new-window -d -t =demo: -n bench -c /w/node');
+    expect(text).toContain(`tmux new-session -d -s demo -n view -c ${COORDINATOR} -- ${[...LAUNCH_BASE, ...LAUNCH_DIRS].join(' ')}`);
+    expect(text).toContain(`tmux new-window -d -t =demo: -n bench -c ${COORDINATOR}`);
     expect(output.json).toMatchObject({ schema: 'factory.start/v1', session: 'demo', started: false, attached: false, dryRun: true });
   });
 
@@ -642,6 +684,7 @@ describe('start:the registration check', () => {
     const other = { ...sampleConfig(), core: { ...sampleConfig().core, node: { id: 'other', layer: 1 } } };
     seedConfig(deps, '/w/other', other);
     registerRoot(deps, '/w/other', 'other');
+    deps.seedDir('/w/other/coordinator');
     deps.seedDir(`${HOME}/deep`);
     deps.seedDir('/w/other/deep');
     const first = await runStart(deps, { home: undefined, dryRun: true });

@@ -97,6 +97,8 @@ export const files = {
   /** The config of one person on one machine: git ignores it, and it has mode 600. */
   localConfig: 'factory.local.yaml',
   claudeMd: 'CLAUDE.md',
+  /** The text of the owner for the coordinator. It is in the `setup` folder, so it travels with the config repo. */
+  setupCoordinator: 'coordinator.md',
   nodeState: 'node.json',
   worker: 'worker.md',
   board: 'board.json',
@@ -124,7 +126,16 @@ export const dirs = {
   runtime: 'state',
   locks: 'locks',
   claude: '.claude',
+  /** The folder of the coordinator session, below the root. It holds the rendered `CLAUDE.md`, and git ignores it. */
+  coordinator: 'coordinator',
+  /** The fixed folder of the work copies, below the root. Git ignores it. */
+  workCopies: 'work-copies',
+  /** The folder of the setup text that a person shares. The root repo tracks it. */
+  setup: 'setup',
 } as const;
+
+/** The label of the two marker lines around the part of the root `.gitignore` that the tool writes. */
+export const shareListLabel = 'share list';
 
 /** The settings files of Claude Code in a project: `<prefix>*<suffix>` inside the `.claude` folder. */
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
@@ -275,7 +286,8 @@ export const checkIds = {
   configVersion: 'config-version',
   localFile: 'local-file',
   state: 'state',
-  home: 'home',
+  root: 'root',
+  tempFolder: 'temp-folder',
   index: 'index',
   blocks: 'blocks',
   roles: 'roles',

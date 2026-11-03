@@ -67,25 +67,27 @@ export const attachHint = (id: string): string => `${toolNames.tmux} attach -t $
  * removes the variable from the environment of the session, so the shell of every later pane and window gets none.
  * The call names the session and never the server: other sessions keep their environment.
  * Every word goes through `call`, so a path or a value that ends in a semicolon stays one word.
+ * Every window starts in the coordinator folder. The session option holds the home, the root of the config repo.
  */
 export const startSteps = (input: {
   readonly id: string;
   readonly home: string;
+  readonly coordinatorDir: string;
   readonly launch: readonly string[];
 }): readonly TmuxArgs[] => {
-  const { id, home, launch } = input;
+  const { id, home, coordinatorDir, launch } = input;
   const view = windowTarget(id, tmuxNames.windowView);
   return [
     [
-      ...call('new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', home, '--', ...launch),
+      ...call('new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', coordinatorDir, '--', ...launch),
       NEXT_COMMAND,
       ...call('set-option', '-w', '-t', view, 'remain-on-exit', 'on'),
     ],
     call('set-environment', '-t', sessionTarget(id), '-r', env.proxyBaseUrl),
     call('set-option', '-p', '-t', coordinatorPane(id), tmuxNames.optionNode, id),
     call('set-option', '-t', windowTarget(id, ''), tmuxNames.optionHome, home),
-    call('split-window', '-d', '-h', '-t', view, '-c', home),
+    call('split-window', '-d', '-h', '-t', view, '-c', coordinatorDir),
     call('set-option', '-p', '-t', `${view}.${RIGHT_PANE}`, tmuxNames.optionSlot, tmuxNames.slotBoard),
-    call('new-window', '-d', '-t', windowTarget(id, ''), '-n', tmuxNames.windowBench, '-c', home),
+    call('new-window', '-d', '-t', windowTarget(id, ''), '-n', tmuxNames.windowBench, '-c', coordinatorDir),
   ];
 };

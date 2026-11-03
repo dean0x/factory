@@ -18,9 +18,11 @@ import {
   commitAll,
   configValue,
   defaultBranchOf,
+  GIT_ENTRY,
   githubRepoOf,
   gitInit,
   hasIdentity,
+  initRootRepo,
   isWorkTreeRoot,
   MAX_SCAN_ENTRIES,
   originUrlOf,
@@ -39,6 +41,7 @@ import {
   flagText,
   keys,
   localFileModes,
+  maxFileBytes,
   roles,
   schemaIds,
   stateKeys,
@@ -49,9 +52,11 @@ import {
   initialDecisionLogText,
   initialWaitingText,
   jsonText,
+  sharedRootPaths,
   STATE_GITIGNORE,
+  withShareList,
 } from '../state/files.js';
-import { layoutOf, stagingDirOf, stateRel } from '../state/layout.js';
+import { layoutOf, stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
 import { ownerModes, recipes } from '../recipes/index.js';
 import { roleNameForLayer } from '../recipes/software/recipe.js';
@@ -59,7 +64,15 @@ import { blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
 import { checkProjectCount, makeCloneParents, planProjects, runClones, undoClones } from './init-clone.js';
-import { chooseHome, checkHomeApart, checkHomeHoldsNoRepo, checkHomeIsNew, checkHomeLocation } from './init-home.js';
+import {
+  chooseHome,
+  checkHomeApart,
+  checkHomeHoldsNoRepo,
+  checkHomeIsNew,
+  checkHomeLocation,
+  leftoverTempFolders,
+  tempFolderWarning,
+} from './init-home.js';
 import { originCredentialsWarning, unsharedWarning } from './project-url.js';
 
 export interface InitOptions {
@@ -90,16 +103,25 @@ export interface InitPlan {
   readonly configText: string;
   /** The text of the local file. Init writes it with mode 600. */
   readonly localConfigText: string;
-  /** The text of CLAUDE.md before init, or null when the file does not exist. */
+  /** The text of CLAUDE.md in the coordinator folder before init, or null when the file does not exist. */
   readonly claudeOriginal: string | null;
   readonly claudeText: string;
+  /** The text of the root `.gitignore` before init, or null when the file does not exist. */
+  readonly gitignoreOriginal: string | null;
+  /** The text init writes: the share list first, and the lines of the person after it. */
+  readonly gitignoreText: string;
+  /** The text of `setup/coordinator.md` when init makes the file, or null when the file is there already. */
+  readonly setupCoordinatorText: string | null;
   readonly stateFiles: readonly StateFile[];
   /** Things that a person should know before the files are written, for example a layer with no role template. */
   readonly warnings: readonly string[];
 }
 
 export interface InitResult {
+  /** True when the state repo holds its first commit. */
   readonly committed: boolean;
+  /** True when the root repo holds its first commit. */
+  readonly rootCommitted: boolean;
   readonly warnings: readonly string[];
 }
 
@@ -107,6 +129,7 @@ const GH_TIMEOUT_MS = 10_000;
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_MODEL = 'default';
 const FIRST_COMMIT_MESSAGE = 'chore: initialize the state';
+const ROOT_COMMIT_MESSAGE = 'chore: initialize the config repo';
 
 const DEFAULT_LIMITS = {
   [keys.limits.memoryFreeMinPct]: 20,
@@ -310,7 +333,60 @@ interface CheckedValues {
 interface CheckedOptions extends CheckedValues {
   readonly templates: readonly BlockTemplate[];
   readonly blocks: BlockTexts;
+  readonly root: RootTexts;
 }
+
+/** The texts of the root files that init writes besides the config: the `.gitignore` and the setup text. */
+interface RootTexts {
+  readonly gitignoreOriginal: string | null;
+  readonly gitignoreText: string;
+  readonly setupCoordinatorText: string | null;
+}
+
+/** The kind of a path that must be a file or a folder, or must not exist. */
+const requireKind = async (
+  deps: Deps,
+  path: string,
+  kind: 'file' | 'dir',
+  name: string,
+): Promise<CliResult<boolean>> => {
+  const found = await deps.fs.stat(path);
+  if (!found.ok) return found;
+  if (found.value !== null && found.value !== kind) {
+    return failure(`${name} is not a ${kind === 'dir' ? 'folder' : 'file'}`, 'Move it away, then run the command again.');
+  }
+  return ok(found.value !== null);
+};
+
+/**
+ * The root `.gitignore` with the share list, and the setup text. A `.gitignore` of the person keeps its lines after the
+ * share list. A setup text that is there stays as it is. This function writes nothing.
+ */
+const rootTextsOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootTexts>> => {
+  const ignoreExists = await requireKind(deps, layout.gitignoreFile, 'file', files.gitignore);
+  if (!ignoreExists.ok) return ignoreExists;
+  let original: string | null = null;
+  if (ignoreExists.value) {
+    const read = await deps.fs.readTextLimited(layout.gitignoreFile, maxFileBytes);
+    if (!read.ok) return read;
+    original = read.value;
+  }
+  const withList = withShareList(original);
+  if (!withList.ok) {
+    return failure(withList.error, `Remove the marker lines from ${files.gitignore}, then run the command again.`);
+  }
+  const setupExists = await requireKind(deps, layout.setupDir, 'dir', dirs.setup);
+  if (!setupExists.ok) return setupExists;
+  const textExists = setupExists.value
+    ? await requireKind(deps, layout.setupCoordinatorFile, 'file', `${dirs.setup}/${files.setupCoordinator}`)
+    : ok(false);
+  if (!textExists.ok) return textExists;
+  return ok({
+    gitignoreOriginal: original,
+    gitignoreText: withList.value,
+    setupCoordinatorText: textExists.value ? null : fileTemplates.setupCoordinator,
+  });
+};
 
 /** The settings of the two config files. The projects are the described projects of the command. */
 const settingsOf = (
@@ -389,7 +465,9 @@ const checkOptions = async (deps: Deps, options: InitOptions, home: string): Pro
   const templates = blockTemplatesFor(layer.value, ownerModes(recipes[recipe.value].approvalPoints));
   const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
   if (!blocks.ok) return blocks;
-  return ok({ ...base, templates, blocks: blocks.value });
+  const root = await rootTextsOf(deps, layoutOf(home));
+  if (!root.ok) return root;
+  return ok({ ...base, templates, blocks: blocks.value, root: root.value });
 };
 
 /**
@@ -425,11 +503,14 @@ export const planInit = async (deps: Deps, options: InitOptions): Promise<CliRes
  * The folders above the home exist when a clone needed them.
  */
 const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOptions): Promise<CliResult<InitPlan>> => {
-  const { layer, templates, blocks } = checked;
+  const { layer, templates, blocks, root } = checked;
   const home = resolve(deps.cwd, options.home ?? '.');
 
   const missing = await missingFolders(deps, home);
   if (!missing.ok) return missing;
+  // A temp folder of a stopped init is a warning. This run removes nothing.
+  const leftover = await leftoverTempFolders(deps, home);
+  if (!leftover.ok) return leftover;
   const github = options.ownerGithub ?? (await detectGithubLogin(deps));
 
   const projects = await describeProjects(deps, home, options.projects);
@@ -449,11 +530,15 @@ const planChecked = async (deps: Deps, options: InitOptions, checked: CheckedOpt
     localConfigText: texts.local,
     claudeOriginal: blocks.original,
     claudeText: blocks.claudeText,
+    gitignoreOriginal: root.gitignoreOriginal,
+    gitignoreText: root.gitignoreText,
+    setupCoordinatorText: root.setupCoordinatorText,
     stateFiles: stateFiles.value,
     warnings: [
       ...(roleNameForLayer(layer) === null
         ? [`Layer ${layer} has no role template: ${files.claudeMd} holds the safety block only.`]
         : []),
+      ...leftover.value.map(tempFolderWarning),
       ...projects.value.warnings,
     ],
   });
@@ -473,11 +558,36 @@ const createdFolders = (home: string, createdRoot: string | null): readonly stri
   return folders;
 };
 
-/** Write the node: first into a staging folder, then the state folder, then CLAUDE.md, and the config file last. */
+/** The mode of a file that the config repo shares. */
+const SHARED_FILE_MODE = 0o644;
+
+/**
+ * Write the node: first into a staging folder, then the state folder, the coordinator folder with its CLAUDE.md, the
+ * setup text and the root `.gitignore`, the local file, the shared config file, and last the root repo.
+ * The record `touched` marks a path only when this run makes it, so the undo never removes a path that was there before.
+ */
 export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<InitResult>> => {
   const layout = layoutOf(plan.home);
   const staging = stagingDirOf(plan.home, deps.pid);
-  const touched = { state: false, claude: false, local: false, config: false };
+  const touched = {
+    state: false,
+    coordinatorDir: false,
+    claude: false,
+    setupDir: false,
+    setupFile: false,
+    gitignore: false,
+    local: false,
+    config: false,
+    rootGit: false,
+  };
+
+  /** Make a folder. The result is true when this run made it, and false when the folder was there. */
+  const makeFolder = async (folder: string): Promise<CliResult<boolean>> => {
+    const kind = await deps.fs.stat(folder);
+    if (!kind.ok) return kind;
+    const made = await deps.fs.mkdir(folder);
+    return made.ok ? ok(kind.value === null) : made;
+  };
 
   /** Undo only what this run made. A step that fails is named in the message. */
   const rollback = async (cause: CliError): Promise<CliResult<InitResult>> => {
@@ -487,7 +597,18 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
       if (!result.ok) problems.push(result.error.message);
     };
     await undo(deps.fs.remove(staging));
-    if (touched.state) await undo(deps.fs.remove(layout.stateDir));
+    if (touched.rootGit) await undo(deps.fs.remove(join(plan.home, GIT_ENTRY)));
+    if (touched.config) await undo(deps.fs.remove(layout.configFile));
+    if (touched.local) await undo(deps.fs.remove(layout.localConfigFile));
+    if (touched.gitignore) {
+      await undo(
+        plan.gitignoreOriginal === null
+          ? deps.fs.remove(layout.gitignoreFile)
+          : deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreOriginal),
+      );
+    }
+    if (touched.setupFile) await undo(deps.fs.remove(layout.setupCoordinatorFile));
+    if (touched.setupDir) await undo(deps.fs.removeEmptyDir(layout.setupDir));
     if (touched.claude) {
       await undo(
         plan.claudeOriginal === null
@@ -495,8 +616,8 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
           : deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeOriginal),
       );
     }
-    if (touched.config) await undo(deps.fs.remove(layout.configFile));
-    if (touched.local) await undo(deps.fs.remove(layout.localConfigFile));
+    if (touched.coordinatorDir) await undo(deps.fs.removeEmptyDir(layout.coordinatorDir));
+    if (touched.state) await undo(deps.fs.remove(layout.stateDir));
     for (const folder of createdFolders(plan.home, plan.createdRoot)) await undo(deps.fs.removeEmptyDir(folder));
     return err({
       ...cause,
@@ -529,9 +650,29 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   if (!moved.ok) return rollback(moved.error);
   touched.state = true;
 
+  const coordinatorDir = await makeFolder(layout.coordinatorDir);
+  if (!coordinatorDir.ok) return rollback(coordinatorDir.error);
+  touched.coordinatorDir = coordinatorDir.value;
   const claude = await deps.fs.writeTextAtomic(layout.claudeMd, plan.claudeText);
   if (!claude.ok) return rollback(claude.error);
   touched.claude = true;
+
+  // The setup text is the text that a person shares. A file that is there already keeps its text.
+  if (plan.setupCoordinatorText !== null) {
+    const setupDir = await makeFolder(layout.setupDir);
+    if (!setupDir.ok) return rollback(setupDir.error);
+    touched.setupDir = setupDir.value;
+    const setup = await deps.fs.writeTextExclusive(layout.setupCoordinatorFile, plan.setupCoordinatorText, SHARED_FILE_MODE);
+    if (!setup.ok) return rollback(setup.error);
+    if (!setup.value) {
+      return rollback(failure(`${join(dirs.setup, files.setupCoordinator)} was made by another program during the run`).error);
+    }
+    touched.setupFile = true;
+  }
+
+  const gitignore = await deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreText);
+  if (!gitignore.ok) return rollback(gitignore.error);
+  touched.gitignore = true;
 
   // The local file comes before the shared file, which marks the home as a node. The local file has mode 600 from the start.
   const local = await deps.fs.writeTextAtomic(layout.localConfigFile, plan.localConfigText, localFileModes.private);
@@ -542,14 +683,31 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   if (!config.ok) return rollback(config.error);
   touched.config = true;
 
+  // A git folder that was there before the run is never removed. `initRootRepo` refuses to use it.
+  const gitFolder = await deps.fs.stat(join(plan.home, GIT_ENTRY));
+  if (!gitFolder.ok) return rollback(gitFolder.error);
+  touched.rootGit = gitFolder.value === null;
+  const rootRepo = await initRootRepo(deps, plan.home, {
+    paths: sharedRootPaths,
+    message: ROOT_COMMIT_MESSAGE,
+    branch: DEFAULT_BRANCH,
+  });
+  if (!rootRepo.ok) return rollback(rootRepo.error);
+
   return ok({
     committed: identity,
-    warnings: identity
-      ? []
-      : [
-          `No git identity: the first commit of ${dirs.state} was not made. ` +
-            'Set user.name and user.email, then commit there.',
-        ],
+    rootCommitted: rootRepo.value.committed,
+    warnings: [
+      ...(identity
+        ? []
+        : [
+            `No git identity: the first commit of ${dirs.state} was not made. ` +
+              'Set user.name and user.email, then commit there.',
+          ]),
+      ...(rootRepo.value.committed
+        ? []
+        : ['No git identity: the first commit of the config repo was not made. Set user.name and user.email, then commit there.']),
+    ],
   });
 };
 
@@ -603,7 +761,14 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
     })),
   ];
 
-  const written = [files.config, files.localConfig, files.claudeMd, `${dirs.state}/`];
+  const written = [
+    files.config,
+    files.localConfig,
+    files.gitignore,
+    ...(plan.value.setupCoordinatorText === null ? [] : [join(dirs.setup, files.setupCoordinator)]),
+    join(dirs.coordinator, files.claudeMd),
+    `${dirs.state}/`,
+  ];
   return ok({
     lines: [
       { level: 'text', text: `Created the ${roles.node} "${plan.value.config.core.node.id}" in ${plan.value.home}.` },
@@ -623,6 +788,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
       cloned: made,
       skipped,
       committed: applied.value.committed,
+      rootCommitted: applied.value.rootCommitted,
       warnings,
     },
     warnings,

@@ -1,4 +1,4 @@
-import { join, relative, resolve } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileOfTarget, inspectBlocks, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { printable, type CommandOutput, type OutLine } from '../cli/output.js';
@@ -45,13 +45,12 @@ import {
   planFiles,
   planLines,
   planLocal,
-  planProjectPaths,
+  planRootMoves,
   refusalOf,
-  type FilePlan,
-  type LocalPlan,
+  type FilesPlan,
 } from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
-import { ACCEPT_ANSWER, checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
+import { ACCEPT_ANSWER } from './init-home.js';
 
 export interface UpgradeOptions {
   readonly home: string | undefined;
@@ -127,36 +126,6 @@ interface CommitAttempt {
 }
 
 /**
- * A warning for each home rule that the home breaks. The upgrade still runs, because the owner moves the home.
- * The paths of the projects are those of the config after the migrations.
- */
-const homeRuleLines = async (
-  deps: Deps,
-  home: string,
-  config: FilePlan,
-  local: LocalPlan,
-  upgrade: UpgradeSpec,
-): Promise<CliResult<readonly OutLine[]>> => {
-  const paths = planProjectPaths(config, local, upgrade);
-  if (!paths.ok) return paths;
-  const projects = paths.value.map((path) => resolve(home, path));
-  const remedy =
-    `${commandText(commands.doctor)} fails for this home. Move the home to a folder beside the projects, ` +
-    `outside every git work tree and every other ${roles.node} home, and fix the project paths in ${upgrade.config.spec.file}.`;
-
-  const results = [
-    await checkHomeLocation(deps, home),
-    await checkHomeHoldsNoRepo(deps, home),
-    await checkHomeApart(deps, home, projects),
-  ];
-  const lines: OutLine[] = [];
-  for (const result of results) {
-    if (!result.ok) lines.push({ level: 'warn', text: `${result.error.message}. ${remedy}` });
-  }
-  return ok(lines);
-};
-
-/**
  * The owner's yes for a folder that the factory list does not list. `upgrade` registers the folder at its end, so the
  * owner must say yes first: on a terminal window after a question (the default is no), or with the yes flag. A factory
  * session never says it, and a dry run writes nothing, so it asks nothing.
@@ -210,14 +179,17 @@ export const runUpgrade = async (
   if (!modeNotes.ok) return modeNotes;
   const state = await planFile(deps, layout.nodeJson, upgrade.state);
   if (!state.ok) return state;
-  const files = await planFiles(deps, layout, state.value, upgrade.files);
-  if (!files.ok) return files;
+  const stateFiles = await planFiles(deps, layout, state.value, upgrade.files);
+  if (!stateFiles.ok) return stateFiles;
+  const rootMoved = await planRootMoves(deps, layout, upgrade.rootMoves);
+  if (!rootMoved.ok) return rootMoved;
+  // The moves outside the state folder come first. A block file is read at its old place until the move is done.
+  const files: FilesPlan = { ...stateFiles.value, moves: [...rootMoved.value, ...stateFiles.value.moves] };
   const blockSet = planBlockSet(config.value, local.value, upgrade);
   if (!blockSet.ok) return blockSet;
 
   const known = blockSet.value.templates.map((template) => template.name);
-  const oldNames = [...upgrade.files.flatMap((step) => step.renames), ...blockSet.value.renames].map((rename) => rename.from);
-  const unknown = options.overwrite.filter((name) => !known.includes(name) && !oldNames.includes(name));
+  const oldNames = [...upgrade.files.flatMap((step) => step.renames), ...blockSet.value.renames].map((rename) => rename.from);  const unknown = options.overwrite.filter((name) => !known.includes(name) && !oldNames.includes(name));
   if (unknown.length > 0) {
     return usageError(`${flagText(flags.overwrite)}: unknown block ${unknown.join(', ')}`, `The blocks are: ${known.join(', ')}.`);
   }
@@ -225,7 +197,7 @@ export const runUpgrade = async (
   // A block that gets a new name is named by its old name or its new name.
   const named = (status: BlockStatus): boolean =>
     options.overwrite.some((name) => name === status.template.name || name === renamedFromOf(status));
-  const pending = { ...files.value, renames: [...files.value.renames, ...blockSet.value.renames] };
+  const pending = { ...files, renames: [...files.renames, ...blockSet.value.renames] };
   const blocks = (await inspectBlocks(deps, home, blockSet.value.templates, pending)).map((status) =>
     planBlock(status, named(status)),
   );
@@ -235,7 +207,11 @@ export const runUpgrade = async (
 
   const changes = blocks.filter(isChange);
   const changed =
-    config.value.kind === 'migrate' || local.value.kind !== 'current' || state.value.kind === 'migrate' || changes.length > 0;
+    config.value.kind === 'migrate' ||
+    local.value.kind !== 'current' ||
+    state.value.kind === 'migrate' ||
+    files.moves.length > 0 ||
+    changes.length > 0;
 
   // The new texts come from pure functions. The dry run makes them too, so that it reports what the real run refuses.
   const stateText = stateFileText(state.value, upgrade, changes);
@@ -245,13 +221,9 @@ export const runUpgrade = async (
   const localText = localFileText(config.value, local.value, upgrade);
   if (!localText.ok) return localText;
 
-  const homeLines = changed ? await homeRuleLines(deps, home, config.value, local.value, upgrade) : ok<readonly OutLine[]>([]);
-  if (!homeLines.ok) return homeLines;
-
   const lines: OutLine[] = [
-    ...planLines(config.value, local.value, state.value, files.value, blocks, upgrade),
+    ...planLines(config.value, local.value, state.value, files, blocks, upgrade),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
-    ...homeLines.value,
   ];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
   const summary = {
@@ -261,8 +233,8 @@ export const runUpgrade = async (
       to: upgrade.local.spec.supported,
     },
     state: { from: state.value.kind === 'current' ? state.value.version : state.value.from, to: upgrade.state.spec.supported },
-    moves: files.value.moves.map((move) => ({ from: move.from, to: move.to })),
-    replaces: files.value.replaces.map((replace) => ({ path: replace.path, action: replace.action })),
+    moves: files.moves.map((move) => ({ from: move.from, to: move.to })),
+    replaces: files.replaces.map((replace) => ({ path: replace.path, action: replace.action })),
     blocks: blocks.map((plan) => ({
       name: plan.template.name,
       action: plan.action,
@@ -282,7 +254,7 @@ export const runUpgrade = async (
   if (!changed) return done([{ level: 'text', text: 'Nothing to upgrade.' }], null, false);
   if (options.dryRun) return done([{ level: 'text', text: 'Dry run: no file was changed.' }], null, false);
 
-  const replacements = files.value.replaces.filter((replace) => replace.action === 'replace');
+  const replacements = files.replaces.filter((replace) => replace.action === 'replace');
   const touchesState = state.value.kind === 'migrate' || changes.length > 0;
   if (touchesState) {
     const repo = await deps.fs.stat(join(layout.stateDir, '.git'));
@@ -295,7 +267,7 @@ export const runUpgrade = async (
     }
     // These are the files that the upgrade can change in the repo: the commit holds those and no other file.
     const touched = inStateRepo(layout, [
-      ...files.value.moves.flatMap((move) => [move.fromPath, move.toPath]),
+      ...files.moves.flatMap((move) => [move.fromPath, move.toPath]),
       ...replacements.map((replace) => replace.filePath),
       ...(stateText.value === null ? [] : [layout.nodeJson]),
       ...changes.map((change) => fileOfTarget(layout, change.template.target)),
@@ -352,7 +324,7 @@ export const runUpgrade = async (
     );
   };
 
-  const movedFiles = await applyMoves(deps, files.value.moves, moved);
+  const movedFiles = await applyMoves(deps, files.moves, moved);
   if (!movedFiles.ok) return abort(movedFiles.error.message);
   const blockTexts = await blockFileTexts(deps, home, changes);
   if (!blockTexts.ok) return abort(blockTexts.error.message);

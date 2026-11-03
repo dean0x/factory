@@ -8,6 +8,7 @@ import { checkHomeHoldsNoRepo } from '../../src/commands/init-home.js';
 import { loadConfig } from '../../src/config/load.js';
 import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
+import { SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
 import { loadState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { FACTORY_VERSION } from '../../src/version.js';
@@ -56,7 +57,9 @@ describe('init: the files', () => {
     const expected = [
       'factory.yaml',
       'factory.local.yaml',
-      'CLAUDE.md',
+      '.gitignore',
+      'setup/coordinator.md',
+      'coordinator/CLAUDE.md',
       '.factory/node.json',
       '.factory/roles/worker.md',
       '.factory/board.json',
@@ -138,10 +141,10 @@ describe('init: the files', () => {
     });
   });
 
-  it('writes the managed blocks: coordinator and safety in CLAUDE.md, worker in roles/worker.md', async () => {
+  it('writes the managed blocks: coordinator and safety in coordinator/CLAUDE.md, worker in roles/worker.md', async () => {
     const { deps } = setup();
     await runInit(deps, options());
-    const claude = parseBlocks(deps.files.get(`${HOME}/CLAUDE.md`) ?? '');
+    const claude = parseBlocks(deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '');
     const worker = parseBlocks(deps.files.get(`${HOME}/.factory/roles/worker.md`) ?? '');
     expect(claude.ok && claude.value.map((block) => [block.name, verifyBlock(block)])).toEqual([
       ['coordinator', 'intact'],
@@ -171,11 +174,11 @@ describe('init: the files', () => {
     }
   });
 
-  it('keeps the text of an existing CLAUDE.md and adds the blocks at the end', async () => {
+  it('keeps the text of an existing coordinator/CLAUDE.md and adds the blocks at the end', async () => {
     const { deps } = setup();
-    deps.seed(`${HOME}/CLAUDE.md`, '# My rules\n\nBe kind.\n');
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, '# My rules\n\nBe kind.\n');
     await runInit(deps, options());
-    const text = deps.files.get(`${HOME}/CLAUDE.md`) ?? '';
+    const text = deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '';
     expect(text.startsWith('# My rules\n\nBe kind.\n\n')).toBe(true);
     const parsed = parseBlocks(text);
     expect(parsed.ok && parsed.value.map((block) => block.name)).toEqual(['coordinator', 'safety']);
@@ -233,7 +236,7 @@ describe('init: refusals', () => {
     const { deps } = setup();
     await runInit(deps, options());
     const second = setup();
-    second.deps.seed(`${HOME}/CLAUDE.md`, deps.files.get(`${HOME}/CLAUDE.md`) ?? '');
+    second.deps.seed(`${HOME}/coordinator/CLAUDE.md`, deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '');
     const before = snapshot(second.deps);
     const result = await runInit(second.deps, options());
     expect(result.ok).toBe(false);
@@ -243,7 +246,7 @@ describe('init: refusals', () => {
 
   it('refuses a CLAUDE.md with a broken block marker', async () => {
     const { deps } = setup();
-    deps.seed(`${HOME}/CLAUDE.md`, '<!-- factory:begin x v1 sha256=zz -->\n');
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, '<!-- factory:begin x v1 sha256=zz -->\n');
     const result = await runInit(deps, options());
     expect(result.ok).toBe(false);
     expect(messageOf(result)).toContain('CLAUDE.md: line 1');
@@ -448,7 +451,7 @@ describe('init: the proposed home in a git work tree', () => {
 describe('init: the layer and the recipe', () => {
   const files = (deps: FakeDeps): string[] => [...deps.files.keys()].map((path) => path.slice(HOME.length + 1)).sort();
   const claudeBlocks = (deps: FakeDeps): string[] => {
-    const parsed = parseBlocks(deps.files.get(`${HOME}/CLAUDE.md`) ?? '');
+    const parsed = parseBlocks(deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '');
     return parsed.ok ? parsed.value.map((block) => block.name) : [];
   };
 
@@ -833,6 +836,49 @@ describe('init: the state repository', () => {
     expect(log.commands().some((line) => line.includes('commit'))).toBe(false);
   });
 
+  it('makes the root a repo of its own and commits the three shared paths by name, after all files are there (TP-10)', async () => {
+    const { deps, log } = setup();
+    const result = await runInit(deps, options());
+    expect(result.ok && result.value.json['rootCommitted']).toBe(true);
+    const rootInit = log.calls.findIndex((call) => call.args[1] === HOME && call.args.includes('init'));
+    const lastStateCall = log.calls.map((call) => call.args[1]).lastIndexOf(`${HOME}/.factory.tmp-4242`);
+    expect(rootInit).toBeGreaterThan(lastStateCall);
+    expect(log.calls.slice(rootInit).map((call) => call.args.slice(2).join(' '))).toEqual([
+      'init -q -b main',
+      'config user.name',
+      'config user.email',
+      'add -- .gitignore factory.yaml setup',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the config repo',
+    ]);
+  });
+
+  it('stages no path that the share list ignores', async () => {
+    const { deps, log } = setup();
+    await runInit(deps, options());
+    const staged = log.commands().filter((line) => line.startsWith('add'));
+    const root = staged.find((line) => line.startsWith('add --'));
+    expect(root).toBe('add -- .gitignore factory.yaml setup');
+    for (const name of ['factory.local.yaml', 'coordinator', '.factory', 'work-copies']) {
+      expect(root?.split(' ')).not.toContain(name);
+    }
+    expect(staged.filter((line) => line.includes('-A'))).toEqual(['add -A']);
+  });
+
+  it('warns and makes no root commit when there is no git identity, and the repo of the root is there', async () => {
+    const { deps, log } = setup({ identity: false });
+    const result = await runInit(deps, options({ ownerName: 'Test Owner' }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.json['rootCommitted']).toBe(false);
+    expect(result.value.warnings.join('\n')).toContain('the first commit of the config repo was not made');
+    const rootInit = log.calls.findIndex((call) => call.args[1] === HOME && call.args.includes('init'));
+    expect(log.calls.slice(rootInit).map((call) => call.args.slice(2).join(' '))).toEqual([
+      'init -q -b main',
+      'config user.name',
+      'config user.email',
+    ]);
+  });
+
   it('never runs a program through a shell', async () => {
     const { deps, log } = setup({ gh: 'x' });
     await runInit(deps, options());
@@ -843,7 +889,7 @@ describe('init: the state repository', () => {
 describe('init: rollback', () => {
   it('removes everything and restores CLAUDE.md when the config file cannot be written', async () => {
     const { deps } = setup();
-    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     const before = snapshot(deps);
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
@@ -865,7 +911,7 @@ describe('init: rollback', () => {
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('removes CLAUDE.md and the state folder when CLAUDE.md cannot be written', async () => {
+  it('removes the coordinator folder and the state folder when CLAUDE.md cannot be written', async () => {
     const { deps } = setup();
     const before = snapshot(deps);
     const plan = await planInit(deps, options());
@@ -903,16 +949,21 @@ describe('init: rollback', () => {
     expect(message).toContain('/w/fresh: ENOTEMPTY');
   });
 
-  it('writes CLAUDE.md and then the config file with the atomic write', async () => {
+  it('writes CLAUDE.md, .gitignore, the local file and then the shared file with the atomic write', async () => {
     const { deps } = setup();
-    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     expect((await runInit(deps, options())).ok).toBe(true);
-    expect(deps.atomicWrites).toEqual([`${HOME}/CLAUDE.md`, `${HOME}/factory.local.yaml`, `${HOME}/factory.yaml`]);
+    expect(deps.atomicWrites).toEqual([
+      `${HOME}/coordinator/CLAUDE.md`,
+      `${HOME}/.gitignore`,
+      `${HOME}/factory.local.yaml`,
+      `${HOME}/factory.yaml`,
+    ]);
   });
 
   it('removes the local file and restores CLAUDE.md when the shared file cannot be written', async () => {
     const { deps } = setup();
-    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
@@ -920,7 +971,68 @@ describe('init: rollback', () => {
     expect(result.ok).toBe(false);
     expect(deps.files.has(`${HOME}/factory.local.yaml`)).toBe(false);
     expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(false);
-    expect(deps.files.get(`${HOME}/CLAUDE.md`)).toBe('Owner text.\n');
+    expect(deps.files.get(`${HOME}/coordinator/CLAUDE.md`)).toBe('Owner text.\n');
+  });
+
+  it('removes .gitignore, the setup text and the new folders when the shared file cannot be written', async () => {
+    const { deps } = setup();
+    const before = snapshot(deps);
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const result = await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
+    expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain('nothing was changed');
+    for (const path of ['.gitignore', 'setup/coordinator.md', 'coordinator/CLAUDE.md']) {
+      expect(deps.files.has(`${HOME}/${path}`)).toBe(false);
+    }
+    for (const dir of ['setup', 'coordinator', '.factory']) expect(deps.dirs.has(`${HOME}/${dir}`)).toBe(false);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('puts the text of a person back into .gitignore, and keeps a setup text that was there, when the shared file cannot be written', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/.gitignore`, '!/notes.md\n');
+    deps.seed(`${HOME}/setup/coordinator.md`, 'My shared text.\n');
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const result = await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
+    expect(result.ok).toBe(false);
+    expect(deps.files.get(`${HOME}/.gitignore`)).toBe('!/notes.md\n');
+    expect(deps.files.get(`${HOME}/setup/coordinator.md`)).toBe('My shared text.\n');
+    expect(deps.dirs.has(`${HOME}/setup`)).toBe(true);
+  });
+
+  it('removes the git folder of the root that this run made when the first commit of the root fails', async () => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({
+      cwd: '/w',
+      run: (call) => (call.args.includes('commit') && call.args[1] === HOME ? exited(1) : handler(call)),
+    });
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const before = snapshot(deps);
+    const result = await applyInit(deps, plan.value);
+    expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain('cannot commit the config files');
+    expect(messageOf(result)).toContain('nothing was changed');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('never removes a git folder that was in the root before the run, and changes nothing else', async () => {
+    const { deps } = setup();
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    deps.seed(`${HOME}/.git/HEAD`, 'ref: refs/heads/trunk\n');
+    const before = snapshot(deps);
+    const result = await applyInit(deps, plan.value);
+    expect(result.ok).toBe(false);
+    expect(messageOf(result)).toContain('holds a git repository already');
+    expect(deps.files.get(`${HOME}/.git/HEAD`)).toBe('ref: refs/heads/trunk\n');
+    expect(snapshot(deps)).toBe(before);
   });
 
   it('writes no shared file, and leaves no local file, when the local file cannot be written', async () => {
@@ -938,18 +1050,19 @@ describe('init: rollback', () => {
 
   it('puts the old CLAUDE.md back with the atomic write', async () => {
     const { deps } = setup();
-    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    const claude = `${HOME}/coordinator/CLAUDE.md`;
+    deps.seed(claude, 'Owner text.\n');
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
     await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
-    expect(deps.atomicWrites).toEqual([`${HOME}/CLAUDE.md`, `${HOME}/factory.local.yaml`, `${HOME}/CLAUDE.md`]);
-    expect(deps.files.get(`${HOME}/CLAUDE.md`)).toBe('Owner text.\n');
+    expect(deps.atomicWrites).toEqual([claude, `${HOME}/.gitignore`, `${HOME}/factory.local.yaml`, claude]);
+    expect(deps.files.get(claude)).toBe('Owner text.\n');
   });
 
   it('names the file that it cannot put back, and does not say that nothing was changed', async () => {
     const { deps } = setup();
-    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
@@ -962,8 +1075,8 @@ describe('init: rollback', () => {
     const message = messageOf(result);
     expect(message).not.toContain('nothing was changed');
     expect(message).toContain(`cannot write ${HOME}/factory.yaml`);
-    expect(message).toContain(`cannot write ${HOME}/CLAUDE.md`);
-    expect(deps.files.get(`${HOME}/CLAUDE.md`)).not.toBe('Owner text.\n');
+    expect(message).toContain(`cannot write ${HOME}/coordinator/CLAUDE.md`);
+    expect(deps.files.get(`${HOME}/coordinator/CLAUDE.md`)).not.toBe('Owner text.\n');
   });
 
   it('names the folder that it cannot remove, and does not say that nothing was changed', async () => {
@@ -987,7 +1100,7 @@ describe('init: rollback', () => {
 
   it('leaves the folder as it was and says so when the staging folder cannot be renamed', async () => {
     const { deps } = setup();
-    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     const before = snapshot(deps);
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
@@ -1007,7 +1120,7 @@ describe('init: rollback', () => {
   it('leaves the folder as it was and says so when the first commit fails', async () => {
     const { handler } = gitHandler();
     const deps = createFakeDeps({ cwd: '/w', run: (call) => (call.args.includes('commit') ? exited(1) : handler(call)) });
-    deps.seed(`${HOME}/CLAUDE.md`, 'Owner text.\n');
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     const before = snapshot(deps);
     const plan = await planInit(deps, options());
     expect(plan.ok).toBe(true);
@@ -1158,16 +1271,25 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(await checkHomeHoldsNoRepo(deps, WS)).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 
-  it('names a temp folder that a stopped init left, says it can be removed by hand, and removes nothing', async () => {
+  it('does not stop for a temp folder that a stopped init left, and removes nothing (TP-73)', async () => {
     const deps = inWorkspace({}, { repos: { '/ws/.factory.tmp-4242': {} } });
     const before = snapshot(deps);
-    const result = await checkHomeHoldsNoRepo(deps, WS);
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    const message = messageOf(result);
-    expect(message).toContain('holds the temp folder /ws/.factory.tmp-4242, left by a stopped init');
-    expect(oldWordsIn(message)).toEqual([]);
-    expect(message).toContain('You can remove it by hand');
-    expect(message).not.toContain('git repo');
+    expect(await checkHomeHoldsNoRepo(deps, WS)).toEqual({ ok: true, value: undefined });
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('plans a warning, not a stop, for a temp folder of a stopped init, and the plan removes nothing', async () => {
+    const deps = inWorkspace({}, { repos: { '/ws/.factory.tmp-4242': {} } });
+    const before = snapshot(deps);
+    const plan = await planInit(deps, options({ home: WS }));
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    const warning = plan.value.warnings.find((text) => text.includes('temp folder'));
+    expect(warning).toBe(
+      'The node home holds the temp folder /ws/.factory.tmp-4242, left by a stopped init. ' +
+        'Remove /ws/.factory.tmp-4242 by hand when no init runs.',
+    );
+    expect(oldWordsIn(warning ?? '')).toEqual([]);
     expect(snapshot(deps)).toBe(before);
   });
 
@@ -1816,8 +1938,12 @@ describe('init: the checks before a clone', () => {
   });
 
   it.each([
-    ['is not a file', (deps: FakeDeps) => deps.seedDir(`${HOME}/CLAUDE.md`), 'CLAUDE.md is not a file'],
-    ['has a broken block marker', (deps: FakeDeps) => deps.seed(`${HOME}/CLAUDE.md`, '<!-- factory:begin x v1 sha256=zz -->\n'), 'CLAUDE.md: line 1'],
+    ['is not a file', (deps: FakeDeps) => deps.seedDir(`${HOME}/coordinator/CLAUDE.md`), 'CLAUDE.md is not a file'],
+    [
+      'has a broken block marker',
+      (deps: FakeDeps) => deps.seed(`${HOME}/coordinator/CLAUDE.md`, '<!-- factory:begin x v1 sha256=zz -->\n'),
+      'CLAUDE.md: line 1',
+    ],
   ])('refuses a CLAUDE.md that %s and runs no clone', async (_name, prepare, text) => {
     const { result, log, changed } = await initWithUrl({}, {}, prepare);
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
@@ -1826,11 +1952,33 @@ describe('init: the checks before a clone', () => {
     expect(changed).toBe(false);
   });
 
+  it.each([
+    ['a .gitignore that is a folder', (deps: FakeDeps) => deps.seedDir(`${HOME}/.gitignore`), '.gitignore is not a file'],
+    [
+      'a .gitignore with a marker line of the share list that has no pair',
+      (deps: FakeDeps) => deps.seed(`${HOME}/.gitignore`, '# factory:begin share list\n/*\n'),
+      '.gitignore holds a marker line of the share list that has no pair',
+    ],
+    ['a setup path that is a file', (deps: FakeDeps) => deps.seed(`${HOME}/setup`, 'x'), 'setup is not a folder'],
+    [
+      'a setup text that is a folder',
+      (deps: FakeDeps) => deps.seedDir(`${HOME}/setup/coordinator.md`),
+      'setup/coordinator.md is not a file',
+    ],
+  ])('refuses %s and runs no clone', async (_name, prepare, text) => {
+    const { result, log, changed } = await initWithUrl({}, {}, prepare);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(messageOf(result)).toContain(text);
+    expect(messageOf(result)).toContain('then run the command again');
+    expect(log.clones()).toEqual([]);
+    expect(changed).toBe(false);
+  });
+
   it('refuses a CLAUDE.md that holds a block of the same name and runs no clone', async () => {
     const first = setup();
     await runInit(first.deps, options());
     const { result, log, changed } = await initWithUrl({}, {}, (deps) =>
-      deps.seed(`${HOME}/CLAUDE.md`, first.deps.files.get(`${HOME}/CLAUDE.md`) ?? ''),
+      deps.seed(`${HOME}/coordinator/CLAUDE.md`, first.deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? ''),
     );
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(messageOf(result)).toContain('already holds the block coordinator');
@@ -1848,15 +1996,15 @@ describe('init: the checks before a clone', () => {
     expect(changed).toBe(false);
   });
 
-  it('refuses a home that holds a temp folder of a stopped init, names it and runs no clone', async () => {
-    const staging = `${HOME}/.factory.tmp-4242`;
-    const { result, log, changed } = await initWithUrl({}, { repos: { [staging]: {} } }, (deps) =>
-      deps.seedDir(`${staging}/.git`),
-    );
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    expect(messageOf(result)).toContain(`holds the temp folder ${staging}, left by a stopped init`);
-    expect(log.clones()).toEqual([]);
-    expect(changed).toBe(false);
+  it('warns about a temp folder of a stopped init, does not stop for it, and keeps the folder (TP-73)', async () => {
+    const leftover = `${HOME}/.factory.tmp-77`;
+    const { deps } = setup({ repos: { [leftover]: {}, '/w/api': { origin: URL_API } } });
+    deps.seedDir(`${leftover}/.git`);
+    const result = await runInit(deps, options({ projects: [URL_API] }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.warnings.join('\n')).toContain(`temp folder ${leftover}, left by a stopped init`);
+    expect(deps.dirs.has(`${leftover}/.git`)).toBe(true);
   });
 
   it('refuses a home that holds a project and runs no clone', async () => {
@@ -1960,10 +2108,79 @@ describe('init: output', () => {
       schema: 'factory.init/v1',
       home: HOME,
       nodeId: 'node',
-      files: ['factory.yaml', 'factory.local.yaml', 'CLAUDE.md', '.factory/'],
+      files: ['factory.yaml', 'factory.local.yaml', '.gitignore', 'setup/coordinator.md', 'coordinator/CLAUDE.md', '.factory/'],
       committed: true,
+      rootCommitted: true,
     });
     expect(result.value.lines.map((line) => line.text).join('\n')).toContain('factory doctor --home /w/node');
+  });
+
+  it('does not list a setup text that was there before the run', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/setup/coordinator.md`, 'My shared text.\n');
+    const result = await runInit(deps, options());
+    expect(result.ok && result.value.json['files']).toEqual([
+      'factory.yaml',
+      'factory.local.yaml',
+      '.gitignore',
+      'coordinator/CLAUDE.md',
+      '.factory/',
+    ]);
+    expect(deps.files.get(`${HOME}/setup/coordinator.md`)).toBe('My shared text.\n');
+  });
+});
+
+describe('init: the root .gitignore and the setup text (TP-10, TP-69)', () => {
+  const GITIGNORE = `${HOME}/.gitignore`;
+
+  it('writes the share list as the whole .gitignore of a new root, with mode 644 for the setup text', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.get(GITIGNORE)).toBe(SHARE_LIST_PART);
+    expect(deps.modes.get(`${HOME}/setup/coordinator.md`)).toBe(0o644);
+    expect(deps.files.get(`${HOME}/setup/coordinator.md`)).toContain('Write your own text');
+  });
+
+  it('puts the share list before the lines of a person, and keeps those lines as they are', async () => {
+    const { deps } = setup();
+    deps.seed(GITIGNORE, '!/notes.md\n# mine\n');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.get(GITIGNORE)).toBe(`${SHARE_LIST_PART}\n!/notes.md\n# mine\n`);
+  });
+
+  it('puts a changed share list right in its place, and keeps the lines around it', async () => {
+    const { deps } = setup();
+    deps.seed(GITIGNORE, `# top\n${SHARE_LIST_BEGIN}\n/old\n${SHARE_LIST_END}\n!/notes.md\n`);
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.get(GITIGNORE)).toBe(`# top\n${SHARE_LIST_PART.trimEnd()}\n!/notes.md\n`);
+  });
+
+  it('keeps a setup text that is there, and writes no other file in the setup folder', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/setup/coordinator.md`, 'My shared text.\n');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.get(`${HOME}/setup/coordinator.md`)).toBe('My shared text.\n');
+    expect([...deps.files.keys()].filter((path) => path.startsWith(`${HOME}/setup/`))).toEqual([
+      `${HOME}/setup/coordinator.md`,
+    ]);
+  });
+
+  it('writes no instruction file at the top of the root, and no file in work-copies', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.has(`${HOME}/CLAUDE.md`)).toBe(false);
+    expect([...deps.files.keys()].filter((path) => path.startsWith(`${HOME}/work-copies`))).toEqual([]);
+  });
+
+  it('keeps the owner text of a coordinator/CLAUDE.md that was there, and the folder when the run fails', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
+    const plan = await planInit(deps, options());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
+    expect(deps.dirs.has(`${HOME}/coordinator`)).toBe(true);
+    expect(deps.files.get(`${HOME}/coordinator/CLAUDE.md`)).toBe('Owner text.\n');
   });
 });
 

@@ -7,6 +7,7 @@ import { PROFILE_INDEX_LINES, PROFILE_README_LINES } from './decision-profile.js
 import { fillTemplate } from './fill.js';
 import { ROADMAPS_README_LINES } from './roadmaps.js';
 import { safetyLines } from './safety.js';
+import { SETUP_COORDINATOR_LINES } from './setup.js';
 import type { BlockTemplate } from './types.js';
 
 /** The safety block belongs to the core. Every role gets it. Its approval point lines follow the modes. */
@@ -43,4 +44,5 @@ export const fileTemplates = {
   profileReadme: fillTemplate(PROFILE_README_LINES),
   profileIndex: fillTemplate(PROFILE_INDEX_LINES),
   roadmapsReadme: fillTemplate(ROADMAPS_README_LINES),
+  setupCoordinator: fillTemplate(SETUP_COORDINATOR_LINES),
 } as const;

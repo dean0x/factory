@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { stat } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
@@ -34,9 +34,18 @@ describe('factory init (built binary)', () => {
     const result = await box.run(initArgs(['--project', web]));
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Created the node "demo"');
-    for (const name of ['factory.yaml', 'factory.local.yaml', 'CLAUDE.md', '.factory/node.json', '.factory/roles/worker.md']) {
+    for (const name of [
+      'factory.yaml',
+      'factory.local.yaml',
+      '.gitignore',
+      'setup/coordinator.md',
+      'coordinator/CLAUDE.md',
+      '.factory/node.json',
+      '.factory/roles/worker.md',
+    ]) {
       expect(existsSync(join(box.node, name))).toBe(true);
     }
+    expect(existsSync(join(box.node, 'CLAUDE.md'))).toBe(false);
     const config = await box.read(join(box.node, 'factory.yaml'));
     expect(config).toContain('repo: "acme/web"');
     expect(config).toContain('path: "../web"');
@@ -112,6 +121,66 @@ describe('factory init (built binary)', () => {
     expect(status.stdout).toBe('');
   });
 
+  it('makes the root a git repo of its own with a first commit of the three shared paths, and doctor exits 0 (TP-10)', async () => {
+    const result = await box.run(initArgs());
+    expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: '' });
+    expect((await box.git(box.node, ['rev-parse', '--is-inside-work-tree', '--show-prefix'])).stdout).toBe('true\n\n');
+    expect((await box.git(box.node, ['log', '--format=%s'])).stdout.trim()).toBe('chore: initialize the config repo');
+    const tracked = await box.git(box.node, ['ls-files']);
+    expect(tracked.stdout.trim().split('\n').sort()).toEqual(['.gitignore', 'factory.yaml', 'setup/coordinator.md']);
+    expect((await box.git(box.node, ['status', '--porcelain'])).stdout).toBe('');
+    const ignore = await box.read(join(box.node, '.gitignore'));
+    expect(ignore.split('\n')).toEqual([
+      '# factory:begin share list',
+      '/*',
+      '!/.gitignore',
+      '!/factory.yaml',
+      '!/setup/',
+      '# factory:end share list',
+      '',
+    ]);
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(0);
+    expect(doctor.stdout).toContain('the factory folder is the top folder of its own git work tree and holds the share list');
+    expect(doctor.stdout).toContain('no temp folder of a stopped init in the factory folder');
+  });
+
+  it('ignores the private files, the state folder, the coordinator folder, the work copies and the clones, by git check-ignore (TP-69)', async () => {
+    expect((await box.run(initArgs())).code).toBe(0);
+    await mkdir(join(box.node, 'work-copies', 'job-1'), { recursive: true });
+    await writeFile(join(box.node, 'work-copies', 'job-1', 'file.txt'), 'x');
+    await mkdir(join(box.node, 'web'), { recursive: true });
+    await writeFile(join(box.node, 'web', 'file.txt'), 'x');
+    const ignored = [
+      'factory.local.yaml',
+      '.factory/node.json',
+      'coordinator/CLAUDE.md',
+      'work-copies/job-1/file.txt',
+      'web/file.txt',
+    ];
+    const shared = ['.gitignore', 'factory.yaml', 'setup/coordinator.md'];
+    for (const path of ignored) {
+      expect({ path, code: (await box.git(box.node, ['check-ignore', '-q', '--no-index', path])).code }).toEqual({ path, code: 0 });
+    }
+    for (const path of shared) {
+      expect({ path, code: (await box.git(box.node, ['check-ignore', '-q', '--no-index', path])).code }).toEqual({ path, code: 1 });
+    }
+    expect((await box.git(box.node, ['status', '--porcelain', '-uall'])).stdout).toBe('');
+  });
+
+  it('keeps the lines of a person in .gitignore after the share list, and the git repo of the root clean', async () => {
+    await mkdir(box.node, { recursive: true });
+    await writeFile(join(box.node, '.gitignore'), '!/notes.md\n');
+    await writeFile(join(box.node, 'notes.md'), 'My notes.\n');
+    expect((await box.run(initArgs())).code).toBe(0);
+    const ignore = await box.read(join(box.node, '.gitignore'));
+    expect(ignore.startsWith('# factory:begin share list\n')).toBe(true);
+    expect(ignore.endsWith('\n!/notes.md\n')).toBe(true);
+    const tracked = await box.git(box.node, ['ls-files']);
+    expect(tracked.stdout.trim().split('\n').sort()).toEqual(['.gitignore', 'factory.yaml', 'setup/coordinator.md']);
+    expect((await box.git(box.node, ['status', '--porcelain'])).stdout).toBe('?? notes.md\n');
+  });
+
   it('refuses a second init in the same home with exit 1', async () => {
     expect((await box.run(initArgs())).code).toBe(0);
     const second = await box.run(initArgs());
@@ -120,7 +189,8 @@ describe('factory init (built binary)', () => {
   });
 
   it('refuses with exit 1 a folder below a parent that has a config file, names a remedy and creates nothing', async () => {
-    expect((await box.run(['init', '--home', box.root, '--name', 'parent', '--owner-name', 'Test Owner'])).code).toBe(0);
+    // A parent with a config file and no git repo: a node home that init made is a git repo, and then the work tree rule fires first.
+    await writeFile(join(box.root, 'factory.yaml'), 'schema: 2\n');
     const child = await box.run(initArgs());
     expect(child.code).toBe(1);
     expect(child.stderr).toContain('inside another node home');
@@ -152,7 +222,9 @@ describe('factory init (built binary)', () => {
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
     for (const name of [
       'factory.yaml',
-      'CLAUDE.md',
+      '.gitignore',
+      'setup/coordinator.md',
+      'coordinator/CLAUDE.md',
       '.factory/node.json',
       '.factory/roles/worker.md',
       '.factory/decision-profile/README-format.md',
@@ -192,7 +264,7 @@ describe('factory init: a workspace folder (built binary)', () => {
     expect(existsSync(join(ws, 'factory.yaml'))).toBe(false);
     const doctor = await box.run(['doctor', '--home', home]);
     expect(doctor.code).toBe(0);
-    expect(doctor.stdout).toContain('holds no git repo one level down');
+    expect(doctor.stdout).toContain('the top folder of its own git work tree');
   });
 
   it('exits 4 and names the rule for --home on the workspace folder', async () => {
@@ -267,7 +339,7 @@ describe('factory init: the home rules (built binary)', () => {
   it('makes a node on layer 2 with the manager block, and doctor accepts it', async () => {
     const result = await box.run(initArgs(['--layer', '2']));
     expect(result.code).toBe(0);
-    const claude = await box.read(join(box.node, 'CLAUDE.md'));
+    const claude = await box.read(join(box.node, 'coordinator', 'CLAUDE.md'));
     expect(claude).toContain('factory:begin manager');
     expect(claude).not.toContain('factory:begin coordinator');
     expect(existsSync(join(box.node, '.factory', 'roles', 'worker.md'))).toBe(false);
@@ -280,7 +352,7 @@ describe('factory init: the home rules (built binary)', () => {
     const result = await box.run(initArgs(['--layer', '3']));
     expect(result.code).toBe(0);
     expect(result.stderr).toContain('Layer 3 has no role template');
-    const claude = await box.read(join(box.node, 'CLAUDE.md'));
+    const claude = await box.read(join(box.node, 'coordinator', 'CLAUDE.md'));
     expect(claude).toContain('factory:begin safety');
     expect(claude).not.toContain('factory:begin coordinator');
     expect(claude).not.toContain('factory:begin manager');

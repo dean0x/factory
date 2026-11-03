@@ -5,6 +5,7 @@ import {
   commitPaths,
   gitClone,
   headOf,
+  initRootRepo,
   listRepoChildren,
   MAX_SCAN_ENTRIES,
   statusOf,
@@ -181,6 +182,68 @@ describe('git: the commit of a new state repo', () => {
       'add -A',
       '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: first',
     ]);
+  });
+});
+
+describe('git: the repo of the root', () => {
+  const ROOT = '/w/node';
+  const input = { paths: ['.gitignore', 'factory.yaml', 'setup'], message: 'chore: first', branch: 'main' };
+
+  it('makes the repo on the named branch, stages the named paths after a separator, and commits with the hooks off', async () => {
+    const { handler, log } = gitHandler();
+    const result = await initRootRepo(createFakeDeps({ cwd: WS, run: handler }), ROOT, input);
+    expect(result).toEqual({ ok: true, value: { committed: true } });
+    expect(log.commands()).toEqual([
+      'init -q -b main',
+      'config user.name',
+      'config user.email',
+      'add -- .gitignore factory.yaml setup',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: first',
+    ]);
+  });
+
+  it('never stages with -A or a dot, so a path outside the list can not enter the commit', async () => {
+    const { handler, log } = gitHandler();
+    await initRootRepo(createFakeDeps({ cwd: WS, run: handler }), ROOT, input);
+    const staging = log.commands().filter((command) => command.startsWith('add'));
+    expect(staging).toEqual(['add -- .gitignore factory.yaml setup']);
+    expect(staging[0]?.split(' ')).not.toContain('-A');
+    expect(staging[0]?.split(' ')).not.toContain('.');
+  });
+
+  it('makes the repo and no commit when git has no identity', async () => {
+    const { handler, log } = gitHandler({ identity: false });
+    const result = await initRootRepo(createFakeDeps({ cwd: WS, run: handler }), ROOT, input);
+    expect(result).toEqual({ ok: true, value: { committed: false } });
+    expect(log.commands().filter((command) => command.startsWith('init'))).toEqual(['init -q -b main']);
+    expect(log.commands().some((command) => command.startsWith('add') || command.includes('commit'))).toBe(false);
+  });
+
+  it('refuses a root that holds a git folder already, and runs no git command', async () => {
+    const { handler, log } = gitHandler();
+    const deps = createFakeDeps({ cwd: WS, run: handler });
+    deps.seedDir(`${ROOT}/.git`);
+    const result = await initRootRepo(deps, ROOT, input);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('holds a git repository already') } });
+    expect(log.commands()).toEqual([]);
+  });
+
+  it('refuses a root that holds a git file, as a linked work tree does', async () => {
+    const { handler, log } = gitHandler();
+    const deps = createFakeDeps({ cwd: WS, run: handler });
+    deps.seed(`${ROOT}/.git`, 'gitdir: /elsewhere\n');
+    expect((await initRootRepo(deps, ROOT, input)).ok).toBe(false);
+    expect(log.commands()).toEqual([]);
+  });
+
+  it.each([
+    ['the repo can not be made', 'init', 'cannot create the config repository: git exited with 128'],
+    ['the paths can not be staged', 'add', 'cannot stage the config files: git exited with 128'],
+    ['the commit fails', 'commit', 'cannot commit the config files: git exited with 128'],
+  ])('names the step in the error when %s', async (_name, word, message) => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: WS, run: (call) => (call.args.includes(word) ? exited(128) : handler(call)) });
+    expect(await initRootRepo(deps, ROOT, input)).toMatchObject({ ok: false, error: { message } });
   });
 });
 

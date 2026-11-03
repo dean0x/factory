@@ -2,7 +2,7 @@
 
 Set up and run a node of Claude Code sessions with safe defaults.
 
-A node is a folder with a config file, a `CLAUDE.md` for the coordinator, and a `.factory/` folder for the state. The command `factory start` starts the coordinator of the node in tmux. The coordinator manages the projects of the node. This version does not start workers yet.
+A node is a folder with a config file, a `coordinator/CLAUDE.md` for the coordinator, and a `.factory/` folder for the state. The folder is a git repo of its own. The repo shares only `factory.yaml`, `.gitignore` and `setup/`. The command `factory start` starts the coordinator of the node in tmux. The coordinator manages the projects of the node. This version does not start workers yet.
 
 ## Install
 
@@ -22,9 +22,9 @@ You need:
 
 | Command | What it does |
 | --- | --- |
-| `factory init` | Create a node. It writes `factory.yaml`, `CLAUDE.md` and `.factory/`, and makes the first commit in the state repository. |
+| `factory init` | Create a node. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `coordinator/CLAUDE.md` and `.factory/`. It makes the first commit in the state repository and the first commit in the repo of the node folder. |
 | `factory start` | Start the tmux session of the node, with the windows `view` and `bench`, or attach to it. |
-| `factory doctor` | Run 18 checks on the config, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. |
+| `factory doctor` | Run 19 checks on the config, the state, the node folder, the managed blocks, the secrets, the proxy settings, the tools and the projects. |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
@@ -60,8 +60,8 @@ In cases 2 and 3, `init` asks you to confirm the proposal. With `--yes`, it uses
 
 More flags of `init`:
 
-- `--project PATH|URL` adds a project. Repeat the flag for more. A URL (`https://`, `ssh://` or `user@host:path`) makes `init` clone the repo next to the home. `init` makes every check that needs no cloned project before it clones: the flag values and the owner name, the number of projects, the home (a node that exists, the home rules, a git repo one level down) and `CLAUDE.md`. If a later step fails, `init` removes the clones that it made, and the empty folders that it made above them. It never removes a folder that was there before. `init` writes the `url` of each project into `factory.yaml` from the origin of its repo. It writes the URL without credentials, and it warns when the origin held some. It refuses (exit code 2) and clones nothing for a `--project` URL that holds credentials: an `https://` URL with any user part, or a password or a token in any URL form. An `ssh://` URL and the `user@host:path` form accept a user name only. Use an `https://` URL with no user name, or an `ssh://` URL. Use `gh auth login` or an SSH key for the credentials. A repo with no origin, or with a `file` URL, gets no `url`. `init` and `doctor` warn that the factory cannot be shared with that repo. Its local folder stays in the key `sources` of `factory.local.yaml`, never in `factory.yaml`.
-- `--layer N` sets the layer of the node, from 1 to 16. The default is 1. Layer 1 has the coordinator role, layer 2 the manager role. A layer above 2 has no role template yet: `CLAUDE.md` holds the safety block only, and `init` prints a warning.
+- `--project PATH|URL` adds a project. Repeat the flag for more. A URL (`https://`, `ssh://` or `user@host:path`) makes `init` clone the repo next to the home. `init` makes every check that needs no cloned project before it clones: the flag values and the owner name, the number of projects, the home (a node that exists, the home rules, a git repo one level down), and `coordinator/CLAUDE.md`, `.gitignore` and `setup/`. If a later step fails, `init` removes the clones that it made, and the empty folders that it made above them. It never removes a folder that was there before. `init` writes the `url` of each project into `factory.yaml` from the origin of its repo. It writes the URL without credentials, and it warns when the origin held some. It refuses (exit code 2) and clones nothing for a `--project` URL that holds credentials: an `https://` URL with any user part, or a password or a token in any URL form. An `ssh://` URL and the `user@host:path` form accept a user name only. Use an `https://` URL with no user name, or an `ssh://` URL. Use `gh auth login` or an SSH key for the credentials. A repo with no origin, or with a `file` URL, gets no `url`. `init` and `doctor` warn that the factory cannot be shared with that repo. Its local folder stays in the key `sources` of `factory.local.yaml`, never in `factory.yaml`.
+- `--layer N` sets the layer of the node, from 1 to 16. The default is 1. Layer 1 has the coordinator role, layer 2 the manager role. A layer above 2 has no role template yet: `coordinator/CLAUDE.md` holds the safety block only, and `init` prints a warning.
 - `--recipe ID` sets the recipe. The only recipe is `software`.
 - `--name ID`, `--owner-name NAME` and `--owner-github LOGIN` set the id of the node and the owner.
 
@@ -91,7 +91,7 @@ factory start --dry-run
 factory start
 ```
 
-`start` starts a tmux session with the id of the node. The coordinator runs in the window `view`, in the node home. It runs in auto permission mode, with one `--add-dir` for each project, and with the `PATH` of the shell that ran `start`, not the `PATH` of a tmux server that started before. The window `bench` is empty. The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy comes only from the config, and only when it answers. The shells of the slot and the bench get no `ANTHROPIC_BASE_URL` either: `start` removes it from the environment of the session, and from no other session. A second `start` starts no second coordinator. It attaches to the session. If the program of the coordinator has ended, `start` says so and names the commands that remove the session and start it again. `--dry-run` prints the tmux calls and starts no session. `start` counts a `factory.yaml` only at a registered root (see "Find the home"). So a `factory.yaml` that a cloned repo holds never starts a session.
+`start` starts a tmux session with the id of the node. The coordinator runs in the window `view`, in the folder `coordinator/` of the node home. If that folder is missing, `start` stops with exit code 1 and names the command that writes it again. The session option `@factory_home` and the variable `FACTORY_HOME` still name the node home. The coordinator runs in auto permission mode, with one `--add-dir` for the state folder `.factory/` and one for each project. There is no `--add-dir` for the top of the node home. It runs with the `PATH` of the shell that ran `start`, not the `PATH` of a tmux server that started before. The window `bench` is empty. The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy comes only from the config, and only when it answers. The shells of the slot and the bench get no `ANTHROPIC_BASE_URL` either: `start` removes it from the environment of the session, and from no other session. A second `start` starts no second coordinator. It attaches to the session. If the program of the coordinator has ended, `start` says so and names the commands that remove the session and start it again. `--dry-run` prints the tmux calls and starts no session. `start` counts a `factory.yaml` only at a registered root (see "Find the home"). So a `factory.yaml` that a cloned repo holds never starts a session.
 
 ### Child nodes
 
@@ -116,11 +116,11 @@ factory upgrade
 
 `upgrade` follows the root rule (see "Find the home") with one exception. A node of version 0.1.0 is not in the home index. `upgrade` counts such a folder when you name it with `--home` and its `factory.yaml` has schema 1. On a terminal, it shows the folder and the node id and asks whether to upgrade and register it; the default is no. With no terminal, add `--yes`. With `FACTORY_SESSION` set, `upgrade` exits with code 4 and writes nothing, also with `--yes`. A dry run asks nothing and writes nothing.
 
-When `upgrade` has something to upgrade, it checks the home rules of `init`. If the home is inside a git work tree or inside another node home, holds a git repo one level down, or is a project folder or holds one, `upgrade` prints a warning with the remedy and still upgrades. `factory doctor` fails for such a home until you move it. Move the home to a folder beside the projects, and fix the project paths in `factory.yaml`.
+`upgrade` moves the `CLAUDE.md` of the node home to `coordinator/CLAUDE.md` when that file holds managed blocks. It makes the folder `coordinator/`, and it keeps your own lines in the file. A `CLAUDE.md` with no managed block stays where it is. If `coordinator/CLAUDE.md` exists already, `upgrade` stops with exit code 1 and changes nothing. Move or remove one of the two files, then run `upgrade` again. `upgrade` makes no check of the place of the node home. `factory doctor` warns when the node home is not the top folder of its own git work tree, or when `.gitignore` has no intact share list, and it warns about each temp folder that a stopped `init` left. It removes nothing.
 
 `upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports.
 
-`upgrade` backs up `factory.yaml`, `CLAUDE.md` and `.factory/` to `.factory/backups/<timestamp>/`. The backup leaves out `.factory/state/` and `.factory/locks/`: they hold run-time data, and `upgrade` never changes them. It restores the files when a step fails. It never replaces a managed block that you edited, unless you name it. An edited safety block stops `upgrade` with exit code 4. Any other edited block stays as it is, with a warning that names the flag. To replace such a block with the template text, name it:
+`upgrade` backs up `factory.yaml`, `CLAUDE.md` (the old place), `coordinator/CLAUDE.md` and `.factory/` to `.factory/backups/<timestamp>/`. The backup leaves out `.factory/state/` and `.factory/locks/`: they hold run-time data, and `upgrade` never changes them. It restores the files when a step fails. It never replaces a managed block that you edited, unless you name it. An edited safety block stops `upgrade` with exit code 4. Any other edited block stays as it is, with a warning that names the flag. To replace such a block with the template text, name it:
 
 ```sh
 factory upgrade --overwrite coordinator
@@ -137,9 +137,13 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
 ```
 <workspace>/
   web/                      a project (a git repo)
-  web-factory/              the node home
+  web-factory/              the node home. It is a git repo of its own.
     factory.yaml            the config. You edit it.
-    CLAUDE.md               the role of the node (managed blocks) and your text
+    factory.local.yaml      your private settings. The repo does not track it.
+    .gitignore              the share list: it ignores everything but three paths
+    setup/coordinator.md    your text for the coordinator. The repo tracks it.
+    coordinator/CLAUDE.md   the role of the node (managed blocks) and your text. The repo does not track it.
+    work-copies/            the folder for work copies. The repo does not track it.
     .factory/               the state. It is its own git repo.
       node.json             the schema version and the versions of the blocks
       roles/worker.md       the worker role (layer 1 only)
@@ -148,7 +152,7 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
       decision-profile/  roadmaps/
 ```
 
-The node home is never inside a git work tree. The coordinator runs in the home. A worker runs in a project checkout, so it never reads the instructions of the coordinator.
+The node home is the top folder of its own git work tree, and `init` never makes it inside another one. The node home holds no instruction file: the coordinator runs in `coordinator/`. A worker runs in a project checkout, so it never reads the instructions of the coordinator.
 
 ## Words
 
@@ -156,7 +160,7 @@ The node home is never inside a git work tree. The coordinator runs in the home.
 
 ## Managed blocks
 
-`init` writes text blocks between markers in `CLAUDE.md` and `.factory/roles/worker.md`:
+`init` writes text blocks between markers in `coordinator/CLAUDE.md` and `.factory/roles/worker.md`:
 
 ```
 <!-- factory:begin NAME vN sha256=HASH -->

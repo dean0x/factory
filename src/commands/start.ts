@@ -20,9 +20,11 @@ import {
   type TmuxArgs,
 } from '../launch/tmux.js';
 import {
+  blockNames,
   capitalize,
   commands,
   commandText,
+  dirs,
   env,
   flags,
   flagText,
@@ -34,6 +36,7 @@ import {
   values,
 } from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
+import { layoutOf } from '../state/layout.js';
 
 export interface StartOptions {
   readonly home: string | undefined;
@@ -164,6 +167,16 @@ const chooseProxy = async (deps: Deps, config: FactoryConfig): Promise<CliResult
 
 /** The tmux calls that start the session, once with the real proxy URL and once with the label of the proxy. */
 const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<StartPlan>> => {
+  const { coordinatorDir, stateDir } = layoutOf(home);
+  // tmux starts a window in another folder when its working folder is missing, and that folder loads other instruction files.
+  const kind = await deps.fs.stat(coordinatorDir);
+  if (!kind.ok) return kind;
+  if (kind.value !== 'dir') {
+    return failure(
+      `the ${roles.coordinator} folder ${dirs.coordinator} is missing`,
+      `Run "${commandText(commands.upgrade)} ${flagText(flags.overwrite)} ${blockNames.coordinator} ${flagText(flags.overwrite)} ${blockNames.safety}" to write it.`,
+    );
+  }
   const proxy = await chooseProxy(deps, config);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
@@ -171,6 +184,8 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
   const stepsFor = (proxyBaseUrl: string | null): CliResult<readonly TmuxArgs[]> => {
     const launch = launchArgv({
       home,
+      coordinatorDir,
+      stateDir,
       sessionId: core.node.id,
       effort: core.session.effort,
       model: core.session.model,
@@ -178,7 +193,7 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
       path: path === undefined || path === '' ? null : path,
       projects: recipe.projects.map((project) => resolve(home, project.path)),
     });
-    return launch.ok ? ok(startSteps({ id: core.node.id, home, launch: launch.value })) : failure(launch.error);
+    return launch.ok ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value })) : failure(launch.error);
   };
   const steps = stepsFor(proxy.value.baseUrl);
   if (!steps.ok) return steps;

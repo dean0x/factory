@@ -26,20 +26,24 @@ import {
   flags,
   flagText,
   keys,
+  maxFileBytes,
+  places,
   program,
   roles,
   schemaIds,
+  shareListLabel,
   values,
 } from '../names.js';
 import { ownerModes, recipes } from '../recipes/index.js';
 import { roleNameForLayer } from '../recipes/software/recipe.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { findTokenPaths } from '../safety/secrets.js';
+import { locateShareList } from '../state/files.js';
 import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
 import { blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
-import { checkHomeApart, checkHomeHoldsNoRepo, checkHomeLocation } from './init-home.js';
+import { leftoverTempFolders, tempFolderWarning } from './init-home.js';
 import { unsharedReasonOf, unsharedWarning } from './project-url.js';
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
@@ -178,28 +182,39 @@ export const checkState = (state: DocState<NodeState>): CheckResult => {
 };
 
 /**
- * The home is outside every git work tree and every other node home. When the config is valid, no project is the
- * home or inside it. These are the rules that `init` enforces, checked again for a home that was moved or edited.
- * `location` is the result of `checkHomeLocation` for this home.
+ * The root is the top folder of a git work tree of its own, and its `.gitignore` holds the share list. A root that
+ * breaks this rule is a warning: it is a layout problem and no security stop. The checks of tracked paths come later.
  */
-export const checkHome = async (
-  deps: Deps,
-  home: string,
-  state: DocState<FactoryConfig>,
-  location: CliResult<void>,
-): Promise<CheckResult> => {
-  if (!location.ok) return check(checkIds.home, 'fail', location.error.message);
-  const holdsNoRepo = await checkHomeHoldsNoRepo(deps, home);
-  if (!holdsNoRepo.ok) return check(checkIds.home, 'fail', holdsNoRepo.error.message);
-  const where = `the ${roles.node} home is outside every git work tree and every other ${roles.node} home, and holds no git repo one level down`;
-  if (state.kind !== 'valid') {
-    return check(checkIds.home, 'ok', `${where}; the projects are not checked, because ${files.config} is not valid`);
+export const checkRoot = async (deps: Deps, home: string): Promise<CheckResult> => {
+  if (!(await onPath(deps, toolNames.git))) return notChecked(checkIds.root, `${toolNames.git} is missing`);
+  const problems: string[] = [];
+  if (!(await isWorkTreeRoot(deps, home))) {
+    problems.push(`the ${places.folder} ${home} is not the top folder of a git work tree of its own. Run "git init" in it.`);
   }
-  const projects = state.value.recipe.projects.map((project) => resolve(home, project.path));
-  const apart = await checkHomeApart(deps, home, projects);
-  return apart.ok
-    ? check(checkIds.home, 'ok', `${where}, and is apart from its projects`)
-    : check(checkIds.home, 'fail', apart.error.message);
+  const { gitignoreFile } = layoutOf(home);
+  const kind = await deps.fs.stat(gitignoreFile);
+  if (!kind.ok) return notChecked(checkIds.root, kind.error.message);
+  const text = kind.value === 'file' ? await deps.fs.readTextLimited(gitignoreFile, maxFileBytes) : null;
+  if (text !== null && !text.ok) return notChecked(checkIds.root, text.error.message);
+  const at = locateShareList(text === null ? '' : text.value);
+  if (at.kind !== 'found' || !at.current) {
+    problems.push(
+      `${files.gitignore} has no intact ${shareListLabel}, the lines between the two marker lines. ` +
+        `Copy the part from the ${files.gitignore} of a new ${places.folder} that "${commandText(commands.init)}" made.`,
+    );
+  }
+  return problems.length === 0
+    ? check(checkIds.root, 'ok', `the ${places.folder} is the top folder of its own git work tree and holds the ${shareListLabel}`)
+    : check(checkIds.root, 'warn', problems.join(' '));
+};
+
+/** A temp folder of a stopped `init` is a warning. Nothing is removed. */
+export const checkTempFolders = async (deps: Deps, home: string): Promise<CheckResult> => {
+  const found = await leftoverTempFolders(deps, home);
+  if (!found.ok) return notChecked(checkIds.tempFolder, found.error.message);
+  return found.value.length === 0
+    ? check(checkIds.tempFolder, 'ok', `no temp folder of a stopped ${commands.init} in the ${places.folder}`)
+    : check(checkIds.tempFolder, 'warn', found.value.map(tempFolderWarning).join(' '));
 };
 
 /**
@@ -482,9 +497,9 @@ const runChecks = async (
 ): Promise<{ readonly results: readonly CheckResult[]; readonly localMissing: boolean }> => {
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
-  const location = await checkHomeLocation(deps, home);
-  const [homeCheck, index, blocks, children, permission, proxies, tools, stateRepo, projects, localFile] = await Promise.all([
-    checkHome(deps, home, config, location),
+  const [root, tempFolder, index, blocks, children, permission, proxies, tools, stateRepo, projects, localFile] = await Promise.all([
+    checkRoot(deps, home),
+    checkTempFolders(deps, home),
     checkIndex(deps),
     checkNodeBlocks(deps, home, config),
     checkChildren(deps, config),
@@ -500,7 +515,8 @@ const runChecks = async (
     checkConfigVersion(config),
     localFile,
     checkState(state),
-    homeCheck,
+    root,
+    tempFolder,
     index,
     blocks,
     checkRoles(config),
