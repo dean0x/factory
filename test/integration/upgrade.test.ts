@@ -446,7 +446,8 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const state = await prepareOldNode();
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
-    expect(upgraded.stdout).toContain('Changed 9 files.');
+    expect(upgraded.stdout).toContain('Changed 10 files.');
+    expect(upgraded.stdout).toContain('Made the root a git repo. Its first commit holds .gitignore, factory.yaml.');
     expect(existsSync(join(box.node, 'CLAUDE.md'))).toBe(false);
     expect(await box.read(join(box.node, ...COORDINATOR_FILE))).toContain('factory:begin coordinator');
 
@@ -481,6 +482,56 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
   });
 
+  it('gives the node the root repo and the .gitignore of a new node, writes no setup file, and registers the root (TP-23)', async () => {
+    await prepareOldNode();
+    const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
+    expect(upgraded.code).toBe(0);
+    await freshNode();
+    const fresh = join(box.root, 'fresh');
+
+    expect(await box.read(join(box.node, '.gitignore'))).toBe(await box.read(join(fresh, '.gitignore')));
+    const tracked = async (dir: string): Promise<string[]> => (await box.git(dir, ['ls-files'])).stdout.trim().split('\n');
+    expect(await tracked(box.node)).toEqual(['.gitignore', 'factory.yaml']);
+    expect((await box.git(box.node, ['log', '--format=%s'])).stdout.trim()).toBe('chore: initialize the config repo');
+    expect((await box.git(box.node, ['status', '--porcelain'])).stdout).toBe('');
+    // The private files stay out of the root repo, as git sees it.
+    const ignored = await box.git(box.node, ['check-ignore', 'factory.local.yaml', '.factory', 'coordinator']);
+    expect(ignored.stdout.trim().split('\n').sort()).toEqual(['.factory', 'coordinator', 'factory.local.yaml']);
+    // A node from before the setup folder has no setup text, and upgrade writes none: only init writes the setup files.
+    expect(existsSync(join(box.node, 'setup'))).toBe(false);
+
+    const index = JSON.parse(await box.read(join(box.root, 'home', '.local', 'state', 'factory', 'homes.json'))) as {
+      homes: { home: string; origin: string }[];
+    };
+    expect(index.homes.filter((entry) => entry.home.endsWith(`${sep}node`)).map((entry) => entry.origin)).toEqual(['own']);
+
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(0);
+    expect(doctor.stdout).toMatch(/root\s+the factory folder is the top folder of its own git work tree and holds the share list/);
+    expect(doctor.stdout).toMatch(/root-repo\s+the root repo tracks no path that must stay on this machine/);
+    expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
+  });
+
+  it('keeps the lines of the person in the root .gitignore, and renders the factory part again (TP-117)', async () => {
+    await prepareOldNode();
+    const path = join(box.node, '.gitignore');
+    const mine = '# my lines\ndist/\n';
+    await writeFile(path, mine);
+    expect((await box.run(['upgrade', '--home', box.node, '--yes'])).code).toBe(0);
+    await freshNode();
+    const part = await box.read(join(box.root, 'fresh', '.gitignore'));
+    expect(await box.read(path)).toBe(`${part}\n${mine}`);
+
+    const stale = (await box.read(path)).replace('!/factory.yaml', '!/old-name.yaml');
+    expect(stale).not.toBe(await box.read(path));
+    await writeFile(path, `${stale}!/notes.md\n`);
+    const again = await box.run(['upgrade', '--home', box.node]);
+    expect(again.code).toBe(0);
+    expect(again.stdout).toContain('.gitignore: render the share list again. Your lines stay as they are.');
+    expect(await box.read(path)).toBe(`${part}\n${mine}!/notes.md\n`);
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+  });
+
   it('leaves no old word in the files of the upgraded node, and gives it the text of a new node', async () => {
     const state = await prepareOldNode();
     // The scan sees the old words before the upgrade, so an empty result afterwards is not a blind scan.
@@ -513,7 +564,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
 
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
-    expect(upgraded.stdout).toContain('Changed 8 files.');
+    expect(upgraded.stdout).toContain('Changed 9 files.');
     expect(upgraded.stderr).toContain('.factory/roadmaps/README.md was edited, so factory keeps it');
     expect(upgraded.stderr).toContain('factory help words');
     expect(await box.read(path)).toBe(edited);

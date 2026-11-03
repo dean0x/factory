@@ -34,6 +34,7 @@ import {
   places,
   program,
   roles,
+  rootRepo,
   schemaIds,
 } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
@@ -45,12 +46,14 @@ import {
   blockFileTexts,
   configFileText,
   localFileText,
+  makeRootRepo,
   pruneBackups,
   pruneBlockBackups,
   restore,
   stateFileText,
   writeAll,
   type BlockBackup,
+  type MadeRootRepo,
   type Moved,
   type NewFile,
   type Written,
@@ -63,6 +66,7 @@ import {
   planFiles,
   planLines,
   planLocal,
+  planRoot,
   planRootMoves,
   refusalOf,
   settleSetupBlocks,
@@ -162,6 +166,12 @@ const requireRegistrationConsent = async (
   return ACCEPT_ANSWER.test(answer.value.trim()) ? ok(undefined) : usageError(`${home} was not registered. Nothing changed`, again);
 };
 
+/** The line for the root repo that the run made. Git with no identity makes the repo and no commit, which is a warning. */
+const rootRepoLine = (made: MadeRootRepo): OutLine =>
+  made.committed
+    ? { level: 'ok', text: `Made the root a git repo. Its first commit holds ${made.paths.join(', ')}.` }
+    : { level: 'warn', text: rootRepo.noIdentity };
+
 const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };
 
 /**
@@ -229,6 +239,8 @@ export const runUpgrade = async (
   if (!rootMoved.ok) return rootMoved;
   // The moves outside the state folder come first. A block file is read at its old place until the move is done.
   const files: FilesPlan = { ...stateFiles.value, moves: [...rootMoved.value, ...stateFiles.value.moves] };
+  const root = await planRoot(deps, layout);
+  if (!root.ok) return root;
   const blockSet = await planBlockSet(config.value, local.value, upgrade, setup.value, (parsed) =>
     effectiveModes(deps, home, parsed),
   );
@@ -259,6 +271,8 @@ export const runUpgrade = async (
     local.value.kind !== 'current' ||
     state.value.kind === 'migrate' ||
     files.moves.length > 0 ||
+    root.value.gitignore.action !== 'current' ||
+    root.value.repo ||
     changes.length > 0;
 
   // The new texts come from pure functions. The dry run makes them too, so that it reports what the real run refuses.
@@ -270,7 +284,7 @@ export const runUpgrade = async (
   if (!localText.ok) return localText;
 
   const lines: OutLine[] = [
-    ...planLines(config.value, local.value, state.value, files, blocks, upgrade),
+    ...planLines(config.value, local.value, state.value, files, root.value, blocks, upgrade),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
   ];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
@@ -283,6 +297,8 @@ export const runUpgrade = async (
     state: { from: state.value.kind === 'current' ? state.value.version : state.value.from, to: upgrade.state.spec.supported },
     moves: files.moves.map((move) => ({ from: move.from, to: move.to })),
     replaces: files.replaces.map((replace) => ({ path: replace.path, action: replace.action })),
+    gitignore: root.value.gitignore.action,
+    rootRepo: root.value.repo,
     blocks: blocks.map((plan) => ({
       name: plan.template.name,
       action: plan.action,
@@ -351,6 +367,8 @@ export const runUpgrade = async (
   const written: Written[] = [];
   const moved: Moved[] = [];
   let commit: CommitAttempt | null = null;
+  // The root repo that this run made, which a later failure removes.
+  let rootMade: MadeRootRepo | null = null;
   const abort = async (error: string): Promise<CliResult<never>> => {
     const attempt = commit;
     if (attempt !== null) {
@@ -372,9 +390,13 @@ export const runUpgrade = async (
         );
       }
     }
+    const repoGone = rootMade === null ? ok(undefined) : await deps.fs.remove(join(home, GIT_ENTRY));
     const problems = await restore(deps, home, written, moved);
     const unstaged = attempt === null ? ok(undefined) : await unstagePaths(deps, layout.stateDir, attempt.paths);
     const notes: string[] = [];
+    if (!repoGone.ok) {
+      notes.push(`${repoGone.error.message}. Remove ${GIT_ENTRY} in ${home} by hand.`);
+    }
     if (problems.length > 0) {
       const many = problems.length > 1;
       notes.push(
@@ -401,6 +423,7 @@ export const runUpgrade = async (
     ...blockTexts.value,
     ...replacements.map((replace) => ({ path: replace.filePath, text: replace.text })),
     ...(stateText.value === null ? [] : [{ path: layout.nodeJson, text: stateText.value }]),
+    ...(root.value.gitignore.text === null ? [] : [{ path: root.value.gitignore.filePath, text: root.value.gitignore.text }]),
     // The local file comes before the shared file, which is the last to change. A run that stops between the two leaves
     // the old shared file with all its keys.
     ...(localText.value === null
@@ -410,6 +433,13 @@ export const runUpgrade = async (
   ];
   const wrote = await writeAll(deps, home, newFiles, written);
   if (!wrote.ok) return abort(wrote.error.message);
+
+  // The root repo comes after the files that its first commit holds, and before the commit of the state repo.
+  if (root.value.repo) {
+    const madeRepo = await makeRootRepo(deps, home);
+    if (!madeRepo.ok) return abort(madeRepo.error.message);
+    rootMade = madeRepo.value;
+  }
 
   const paths: RepoPaths = {
     present: inStateRepo(layout, [...written.map((entry) => entry.path), ...moved.map((move) => move.to)]),
@@ -433,6 +463,7 @@ export const runUpgrade = async (
         level: 'ok',
         text: `Kept the old text of block ${saved.block} in ${saved.path}.`,
       })),
+      ...(rootMade === null ? [] : [rootRepoLine(rootMade)]),
       { level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` },
       ...(pruned.length === 0
         ? []

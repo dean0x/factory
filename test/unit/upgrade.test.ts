@@ -15,7 +15,7 @@ import { env, setupBlockNames } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
-import { jsonText } from '../../src/state/files.js';
+import { jsonText, SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
 import { parseJsonText } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { backup } from '../../src/upgrade/apply.js';
@@ -45,6 +45,8 @@ const WORKER = `${HOME}/.factory/roles/worker.md`;
 const NODE_JSON = `${HOME}/.factory/node.json`;
 const CONFIG = `${HOME}/factory.yaml`;
 const LOCAL = `${HOME}/factory.local.yaml`;
+const GITIGNORE = `${HOME}/.gitignore`;
+const ROOT_GIT = `${HOME}/.git`;
 const BACKUP = `${HOME}/.factory/backups/2030-01-02T03-04-05-678Z`;
 const COORDINATOR_LINE = 'Coordinate. Do not produce.';
 /** The variables that name the folder of the home index. */
@@ -57,16 +59,30 @@ interface Node {
   readonly gitSince: () => string[];
 }
 
+/**
+ * A git that makes the folder of the repo, as real git does: `git init` leaves a `.git` folder. The fake file system has
+ * no git, so this wrapper seeds the folder, and a second run finds the repo that the first run made.
+ */
+const makingGitFolders =
+  (target: () => FakeDeps | undefined) =>
+  (inner: RunHandler): RunHandler =>
+  (call) => {
+    if (call.command === 'git' && call.args[0] === '-C' && call.args[2] === 'init') target()?.seedDir(`${call.args[1]}/.git`);
+    return inner(call);
+  };
+
 const makeNode = async (
   options: { repo?: boolean; run?: (inner: RunHandler) => RunHandler; links?: Record<string, string> } = {},
 ): Promise<Node> => {
   const { handler } = gitHandler();
+  let made: FakeDeps | undefined;
   const deps = createFakeDeps({
     cwd: '/w',
     env: { PATH: '/bin', ...INDEX_ENV },
-    run: options.run?.(handler) ?? handler,
+    run: makingGitFolders(() => made)(options.run?.(handler) ?? handler),
     ...(options.links === undefined ? {} : { links: options.links }),
   });
+  made = deps;
   const init = await runInit(
     { ...deps, run: async (command, args, runOptions) => handler({ command, args, cwd: runOptions?.cwd }) },
     {
@@ -83,6 +99,8 @@ const makeNode = async (
   );
   expect(init.ok).toBe(true);
   if (options.repo !== false) deps.seedDir(`${HOME}/.factory/.git`);
+  // The fake git makes no folder, so the root repo that `init` made is seeded here.
+  deps.seedDir(`${HOME}/.git`);
   const first = deps.calls.length;
   return { deps, gitSince: () => deps.calls.slice(first).map((call) => call.args.slice(2).join(' ')) };
 };
@@ -194,6 +212,183 @@ describe('upgrade: when nothing changes', () => {
     ]);
     expect(output.json).toMatchObject({ changed: false });
     expect(deps.files.has(WORKER)).toBe(false);
+  });
+});
+
+describe('upgrade: the root .gitignore (TP-117)', () => {
+  const OLD_PART = `${SHARE_LIST_BEGIN}\n/*\n!/.gitignore\n${SHARE_LIST_END}\n`;
+  const MINE = '# mine\n!/notes.md\nnode_modules/\n';
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+
+  it('renders the factory part again and keeps every line of the person byte-equal', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(GITIGNORE, `# top\n${OLD_PART}${MINE}`);
+    const output = success(await upgrade(deps));
+    expect(text(deps, GITIGNORE)).toBe(`# top\n${SHARE_LIST_PART}${MINE}`);
+    expect(output.json).toMatchObject({ changed: true, gitignore: 'render', rootRepo: false, committed: false });
+    expect(output.lines.at(-1)?.text).toMatch(/^Changed 1 file\./);
+    expect(gitWrites(gitSince())).toEqual([]);
+  });
+
+  it('puts the factory part at the top of a file with no marker lines, and keeps the old lines below it', async () => {
+    const { deps } = await makeNode();
+    const old = 'node_modules/\n*.log\nlast line with no line break';
+    deps.files.set(GITIGNORE, old);
+    const output = success(await upgrade(deps));
+    expect(text(deps, GITIGNORE)).toBe(`${SHARE_LIST_PART}\n${old}`);
+    expect(output.json).toMatchObject({ gitignore: 'add' });
+  });
+
+  it('gives a file that holds only blanks the factory part alone', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(GITIGNORE, '\n  \n');
+    success(await upgrade(deps));
+    expect(text(deps, GITIGNORE)).toBe(SHARE_LIST_PART);
+  });
+
+  it('makes the file when it is missing', async () => {
+    const { deps } = await makeNode();
+    deps.files.delete(GITIGNORE);
+    const output = success(await upgrade(deps));
+    expect(text(deps, GITIGNORE)).toBe(SHARE_LIST_PART);
+    expect(output.json).toMatchObject({ changed: true, gitignore: 'create' });
+  });
+
+  it('changes nothing when the part is current, also when the person has lines of their own', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(GITIGNORE, `${MINE}${SHARE_LIST_PART}!/more.md\n`);
+    const writes = deps.atomicWrites.length;
+    const output = success(await upgrade(deps));
+    expect(output.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(output.json).toMatchObject({ changed: false, gitignore: 'current', rootRepo: false });
+    expect(deps.atomicWrites).toHaveLength(writes);
+  });
+
+  it('names the change in a dry run and writes nothing', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(GITIGNORE, `${OLD_PART}${MINE}`);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain('.gitignore: render the share list again. Your lines stay as they are.');
+    expect(output.json).toMatchObject({ changed: true, dryRun: true, gitignore: 'render' });
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('exits 1 for a marker line with no pair, names the fix, and writes nothing, also in a dry run', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(GITIGNORE, `${MINE}${SHARE_LIST_BEGIN}\n/*\n`);
+    const before = snapshot(deps);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.kind).toBe('failure');
+      expect(error.message).toContain('marker line');
+      expect(error.hint).toContain('Remove the marker lines from .gitignore');
+    }
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('exits 1 for a .gitignore that is not a file, and writes nothing', async () => {
+    const { deps } = await makeNode();
+    deps.files.delete(GITIGNORE);
+    deps.seedDir(GITIGNORE);
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps));
+    expect(error.kind).toBe('failure');
+    expect(error.message).toBe('.gitignore is not a file');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('puts the file back when a later write fails', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(GITIGNORE, `${OLD_PART}${MINE}`);
+    const before = snapshot(deps);
+    const failing = withFailingWrites(deps, (path, attempt) => path === NODE_JSON && attempt === 1);
+    expect(refusal(await upgrade(failing, newer)).message).toContain('The files are as they were.');
+    expect(text(deps, GITIGNORE)).toBe(before.get(GITIGNORE));
+  });
+
+  it('removes a file that it made when a later write fails', async () => {
+    const { deps } = await makeNode();
+    deps.files.delete(GITIGNORE);
+    const failing = withFailingWrites(deps, (path, attempt) => path === NODE_JSON && attempt === 1);
+    refusal(await upgrade(failing, newer));
+    expect(deps.files.has(GITIGNORE)).toBe(false);
+  });
+});
+
+describe('upgrade: the root repo (TP-23)', () => {
+  const noIdentity = (inner: RunHandler): RunHandler => (call) =>
+    call.args.includes('user.name') ? exited(1) : inner(call);
+
+  it('makes the repo for a node that is current but has none, and commits the shared files', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.dirs.delete(ROOT_GIT);
+    const output = success(await upgrade(deps));
+    expect(gitWrites(gitSince())).toEqual([
+      'init -q -b main',
+      'add -- .gitignore factory.yaml setup',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the config repo',
+    ]);
+    expect(output.json).toMatchObject({ changed: true, gitignore: 'current', rootRepo: true, committed: false });
+    expect(output.warnings).toEqual([]);
+    expect(output.lines.map((line) => line.text)).toContain(
+      'Made the root a git repo. Its first commit holds .gitignore, factory.yaml, setup.',
+    );
+  });
+
+  it('names the repo in a dry run and runs no git command that writes', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.dirs.delete(ROOT_GIT);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain('make the root a git repo, with a first commit of the shared files');
+    expect(output.json).toMatchObject({ changed: true, dryRun: true, rootRepo: true });
+    expect(gitWrites(gitSince())).toEqual([]);
+  });
+
+  it('leaves a git entry that is there as it is, and makes no repo', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(ROOT_GIT, 'gitdir: /elsewhere\n');
+    deps.dirs.delete(ROOT_GIT);
+    const output = success(await upgrade(deps));
+    expect(output.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(output.json).toMatchObject({ rootRepo: false });
+    expect(gitSince().some((command) => command.startsWith('init'))).toBe(false);
+  });
+
+  it('makes the repo with no commit, and warns, when git has no identity', async () => {
+    const { deps, gitSince } = await makeNode({ run: noIdentity });
+    deps.dirs.delete(ROOT_GIT);
+    const output = success(await upgrade(deps));
+    expect(gitWrites(gitSince())).toEqual(['init -q -b main']);
+    expect(output.warnings).toEqual([
+      'No git identity: the first commit of the config repo was not made. Set user.name and user.email, then commit there.',
+    ]);
+  });
+
+  it('removes the repo that it made, and puts the files back, when the first commit fails', async () => {
+    const { deps } = await makeNode({ run: (inner) => (call) => (call.args.includes('commit') ? exited(1) : inner(call)) });
+    deps.dirs.delete(ROOT_GIT);
+    deps.files.delete(GITIGNORE);
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps));
+    expect(error.message).toContain('cannot commit the config files');
+    expect(error.message).toContain('The files are as they were.');
+    expect(deps.dirs.has(ROOT_GIT)).toBe(false);
+    for (const [path, body] of before) expect(text(deps, path)).toBe(body);
+    expect(deps.files.has(GITIGNORE)).toBe(false);
+  });
+
+  it('removes the repo that it made when the state commit fails after it', async () => {
+    const { deps, gitSince } = await makeNode({
+      // The first commit of the root repo works, and the commit of the state repo fails.
+      run: (inner) => (call) => (call.args.includes('commit') && call.args[1] === `${HOME}/.factory` ? exited(1) : inner(call)),
+    });
+    deps.dirs.delete(ROOT_GIT);
+    const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+    const error = refusal(await upgrade(deps, newer));
+    expect(error.message).toContain('cannot commit the state files');
+    expect(gitSince()).toContain('init -q -b main');
+    expect(deps.dirs.has(ROOT_GIT)).toBe(false);
   });
 });
 
@@ -1127,6 +1322,7 @@ describe('upgrade: before it changes anything', () => {
     const { deps } = await makeNode();
     const inside = createFakeDeps({ cwd: `${HOME}/deep`, env: INDEX_ENV });
     for (const [path, body] of deps.files) inside.seed(path, body);
+    for (const dir of deps.dirs) inside.seedDir(dir);
     inside.seedDir(`${HOME}/deep`);
     const options = { home: undefined, dryRun: false, overwrite: [], yes: false };
     expect(success(await runUpgrade(inside, options, currentSpec)).json).toMatchObject({ home: HOME });
@@ -1266,11 +1462,13 @@ describe('upgrade: a node of schema 1', () => {
     } = {},
   ): Node => {
     const { handler } = gitHandler(options.git);
+    let made: FakeDeps | undefined;
     const deps = createFakeDeps({
       cwd: '/w',
       env: { PATH: '/bin', ...(options.env ?? INDEX_ENV) },
-      run: options.run?.(handler) ?? handler,
+      run: makingGitFolders(() => made)(options.run?.(handler) ?? handler),
     });
+    made = deps;
     seedSchema1Node(deps, HOME, options.doc);
     const first = deps.calls.length;
     return { deps, gitSince: () => deps.calls.slice(first).map((call) => call.args.slice(2).join(' ')) };
@@ -1357,15 +1555,112 @@ describe('upgrade: a node of schema 1', () => {
       blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
     });
 
-    expect(output.lines.at(-1)?.text).toBe('Changed 9 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+    expect(output.lines.at(-1)?.text).toBe('Changed 10 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S } });
     expect(gitWrites(gitSince())).toEqual([
+      'init -q -b main',
+      'add -- .gitignore factory.yaml',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the config repo',
       'rm -r -q --cached --ignore-unmatch -- protocol.md briefs',
       'add -A -- roles/worker.md roadmaps/README.md node.json orders',
       '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
     ]);
     expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
     expect(deps.files.has(`${BACKUP}/.factory/briefs/.gitkeep`)).toBe(true);
+  });
+
+  describe('the root repo and the root .gitignore (TP-23, TP-117)', () => {
+    /** The paths of the factory folder that are under the setup folder, files and folders. */
+    const underSetup = (deps: FakeDeps): string[] =>
+      [...deps.files.keys(), ...deps.dirs].filter((path) => path === `${HOME}/setup` || path.startsWith(`${HOME}/setup/`));
+
+    it('writes the share list, makes the root repo, and commits only the shared files that exist', async () => {
+      const { deps, gitSince } = makeOldNode();
+      const output = success(await upgrade(deps));
+      expect(text(deps, GITIGNORE)).toBe(SHARE_LIST_PART);
+      expect(output.json).toMatchObject({ gitignore: 'create', rootRepo: true });
+      expect(output.warnings).toEqual([]);
+      expect(output.lines.map((line) => line.text)).toContain(
+        'Made the root a git repo. Its first commit holds .gitignore, factory.yaml.',
+      );
+      const commands = gitWrites(gitSince());
+      expect(commands.slice(0, 3)).toEqual([
+        'init -q -b main',
+        'add -- .gitignore factory.yaml',
+        '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the config repo',
+      ]);
+    });
+
+    it('writes no setup file and makes no setup folder: a node of schema 1 has no setup text to accept', async () => {
+      const { deps } = makeOldNode();
+      success(await upgrade(deps));
+      expect(underSetup(deps)).toEqual([]);
+    });
+
+    it('registers the root, and a second run finds nothing to upgrade once the repo is there', async () => {
+      const { deps } = makeOldNode();
+      success(await upgrade(deps));
+      expect(text(deps, INDEX)).toContain(`"home": "${HOME}"`);
+      expect(deps.dirs.has(ROOT_GIT)).toBe(true);
+      expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    });
+
+    it('keeps the lines of the person in the .gitignore of the old node, below the share list', async () => {
+      const { deps } = makeOldNode();
+      const mine = 'dist/\n*.log\n';
+      deps.seed(GITIGNORE, mine);
+      const output = success(await upgrade(deps));
+      expect(text(deps, GITIGNORE)).toBe(`${SHARE_LIST_PART}\n${mine}`);
+      expect(output.json).toMatchObject({ gitignore: 'add', rootRepo: true });
+    });
+
+    it('makes no repo for an old node that has a git entry already, and still writes the share list', async () => {
+      const { deps, gitSince } = makeOldNode();
+      deps.seedDir(ROOT_GIT);
+      success(await upgrade(deps));
+      expect(text(deps, GITIGNORE)).toBe(SHARE_LIST_PART);
+      expect(gitSince().some((command) => command.startsWith('init'))).toBe(false);
+      expect(gitWrites(gitSince()).some((command) => command.includes('.gitignore'))).toBe(false);
+    });
+
+    it('names both in a dry run, and writes nothing', async () => {
+      const { deps, gitSince } = makeOldNode();
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(lineTexts(output)).toEqual(
+        expect.arrayContaining([
+          '.gitignore: new file, with the share list',
+          'make the root a git repo, with a first commit of the shared files',
+        ]),
+      );
+      expect(output.json).toMatchObject({ gitignore: 'create', rootRepo: true });
+      expect(snapshot(deps)).toEqual(before);
+      expect(gitWrites(gitSince())).toEqual([]);
+    });
+
+    it('stops before any change for a .gitignore with a marker line that has no pair', async () => {
+      const { deps } = makeOldNode();
+      deps.seed(GITIGNORE, `${SHARE_LIST_END}\n`);
+      const before = live(deps);
+      for (const dryRun of [false, true]) {
+        expect(refusal(await upgrade(deps, currentSpec, { dryRun })).message).toContain('marker line');
+      }
+      expect(live(deps)).toEqual(before);
+    });
+
+    it('puts every file back, and removes the repo it made, when the first commit fails', async () => {
+      const node = makeOldNode({ run: (inner) => (call) => (call.args.includes('commit') ? exited(1) : inner(call)) });
+      const before = live(node.deps);
+      const error = refusal(await upgrade(node.deps));
+      expect(error.message).toContain('cannot commit the config files');
+      expect(live(node.deps)).toEqual(before);
+      expect(node.deps.dirs.has(ROOT_GIT)).toBe(false);
+      expect(gitWrites(node.gitSince())).toEqual([
+        'init -q -b main',
+        'add -- .gitignore factory.yaml',
+        '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the config repo',
+      ]);
+    });
   });
 
   describe('the move of CLAUDE.md into the coordinator folder', () => {
@@ -1437,7 +1732,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(oldWordsIn(text(deps, OLD.roadmaps))).toEqual([]);
       expect(output.json).toMatchObject({ replaces: [{ path: '.factory/roadmaps/README.md', action: 'replace' }] });
       expect(output.warnings).toEqual([]);
-      expect(gitWrites(gitSince())[1]).toContain('roadmaps/README.md');
+      expect(gitWrites(gitSince()).find((command) => command.startsWith('add -A'))).toContain('roadmaps/README.md');
       expect(text(deps, `${BACKUP}/.factory/roadmaps/README.md`)).toBe(OLD_ROADMAPS_README);
     });
 
@@ -1451,8 +1746,10 @@ describe('upgrade: a node of schema 1', () => {
       expect(note?.level).toBe('warn');
       expect(note?.text).toContain('factory help words');
       expect(output.warnings).toEqual([note?.text]);
-      expect(output.lines.at(-1)?.text).toBe('Changed 8 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
-      expect(gitWrites(gitSince())[1]).toBe('add -A -- roles/worker.md node.json orders');
+      expect(output.lines.at(-1)?.text).toBe('Changed 9 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+      expect(gitWrites(gitSince()).find((command) => command.startsWith('add -A'))).toBe(
+        'add -A -- roles/worker.md node.json orders',
+      );
     });
 
     it('is kept when its text differs in one character, also a trailing newline', async () => {

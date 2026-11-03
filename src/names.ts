@@ -303,6 +303,13 @@ export const homeIndex = {
  */
 export const trackedFiles = { maxCount: 2_000, maxFileBytes } as const;
 
+/** The first commit of the root repo, which `init` and `upgrade` make: the branch, the message and the notice of a missing identity. */
+export const rootRepo = {
+  branch: 'main',
+  commitMessage: 'chore: initialize the config repo',
+  noIdentity: 'No git identity: the first commit of the config repo was not made. Set user.name and user.email, then commit there.',
+} as const;
+
 /**
  * The store of the approval records (design 6): the number of its schema, its keys, the two kinds of record and its
  * bounds. A `delegation` record holds the mode of one approval point. A `scope` record is a record of its own kind with

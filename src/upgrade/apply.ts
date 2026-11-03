@@ -3,10 +3,12 @@ import { fileOfTarget, renamedFromOf } from '../blocks/status.js';
 import { appendBlocks, parseBlocks, renderBlock, replaceBlock, type ParsedBlock } from '../blocks/managed.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
+import { GIT_ENTRY, initRootRepo } from '../core/git.js';
 import { ok } from '../core/result.js';
 import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
 import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
-import { commands, commandText, dirs, files, localFileModes, program, stateKeys } from '../names.js';
+import { commands, commandText, dirs, files, localFileModes, program, rootRepo, stateKeys } from '../names.js';
+import { sharedRootPaths } from '../state/files.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import type { BlockPlan, FilePlan, LocalPlan, MovePlan } from './plan.js';
 import type { UpgradeFile, UpgradeSpec } from './spec.js';
@@ -281,6 +283,37 @@ export const writeAll = async (
     if (!result.ok) return result;
   }
   return ok(undefined);
+};
+
+/** The root repo that the run made: the paths of its first commit, and whether git made the commit. */
+export interface MadeRootRepo {
+  readonly paths: readonly string[];
+  readonly committed: boolean;
+}
+
+/**
+ * Make the root a git repo, with a first commit of the shared paths. The share list ignores every other path. A root from
+ * before the setup folder has no `setup/`, and the run writes none, so the commit holds the shared paths that exist.
+ * `initRootRepo` refuses a root that holds a git entry. When a step fails after `git init` made the repo, the part-made
+ * repo is removed, so a failure leaves no repo behind. A git entry that was there before the call is never removed.
+ */
+export const makeRootRepo = async (deps: Deps, home: string): Promise<CliResult<MadeRootRepo>> => {
+  const gitPath = join(home, GIT_ENTRY);
+  const before = await deps.fs.lstat(gitPath);
+  if (!before.ok) return before;
+  const present: string[] = [];
+  for (const path of sharedRootPaths) {
+    const kind = await deps.fs.lstat(join(home, path));
+    if (!kind.ok) return kind;
+    if (kind.value !== null) present.push(path);
+  }
+  const made = await initRootRepo(deps, home, { paths: present, message: rootRepo.commitMessage, branch: rootRepo.branch });
+  if (made.ok) return ok({ paths: present, committed: made.value.committed });
+  if (before.value !== null) return made;
+  const removed = await deps.fs.remove(gitPath);
+  return removed.ok
+    ? made
+    : failure(`${made.error.message}. ${removed.error.message}`, `Remove ${GIT_ENTRY} in ${home}, then run "${commandText(commands.upgrade)}" again.`);
 };
 
 export const blockFileTexts = async (

@@ -7,6 +7,7 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { localFileAccess, requireInit } from '../config/load.js';
 import { mixConfigValue, SPLIT_SCHEMA_VERSION } from '../config/schema.js';
+import { GIT_ENTRY } from '../core/git.js';
 import { stepsBetween, type FileStep, type RootMove } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
@@ -15,6 +16,7 @@ import {
   commands,
   commandText,
   dirs,
+  files,
   flags,
   flagText,
   helpTopics,
@@ -23,6 +25,8 @@ import {
   setupBlockNames,
   setupFileOf,
 } from '../names.js';
+import { locateShareList } from '../state/files.js';
+import { rootGitignoreOf } from '../state/gitignore.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import type { BlockSet, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
@@ -218,6 +222,50 @@ export const planRootMoves = async (
 };
 
 /**
+ * What the run does to the root `.gitignore`: make the file, add the share list at its top, render the part between the
+ * marker lines again, or nothing because the part is current.
+ */
+export type GitignoreAction = 'create' | 'add' | 'render' | 'current';
+
+export interface GitignorePlan {
+  readonly action: GitignoreAction;
+  readonly filePath: string;
+  /** The text to write. It is null when the file holds the current share list. */
+  readonly text: string | null;
+}
+
+/** The root files that are not part of the state: the `.gitignore` and the git repo of the root. */
+export interface RootPlan {
+  readonly gitignore: GitignorePlan;
+  /** True when the root holds no git entry of any kind: the run makes the root repo. */
+  readonly repo: boolean;
+}
+
+const gitignoreActionOf = (original: string | null, text: string): GitignoreAction => {
+  if (original === null) return 'create';
+  if (original === text) return 'current';
+  return locateShareList(original).kind === 'found' ? 'render' : 'add';
+};
+
+/**
+ * The plan for the root `.gitignore` and the root repo. The `.gitignore` keeps every line outside the share list as it is.
+ * A marker line with no pair stops the plan, and nothing changes. A root that holds a git entry keeps it: the run makes a
+ * repo only where there is none, and it never touches the repo that is there. The plan reads only.
+ */
+export const planRoot = async (deps: Deps, layout: Layout): Promise<CliResult<RootPlan>> => {
+  const current = await rootGitignoreOf(deps, layout);
+  if (!current.ok) return current;
+  const { original, text } = current.value;
+  const action = gitignoreActionOf(original, text);
+  const entry = await deps.fs.lstat(join(layout.home, GIT_ENTRY));
+  if (!entry.ok) return entry;
+  return ok({
+    gitignore: { action, filePath: layout.gitignoreFile, text: action === 'current' ? null : text },
+    repo: entry.value === null,
+  });
+};
+
+/**
  * The file moves and the new file texts of the steps that take the state to the current version.
  * A source that does not exist is skipped. A target that exists stops the upgrade. A file to replace that does not
  * exist is skipped, and one that a person edited is kept.
@@ -346,11 +394,25 @@ export const refusalOf = (blocks: readonly BlockPlan[]): CliResult<void> => {
   );
 };
 
+/** The lines for the root files. A current `.gitignore` and a root that holds a repo already give no line. */
+const rootLines = (root: RootPlan): OutLine[] => {
+  const ignore = files.gitignore;
+  const gitignore: Readonly<Record<GitignoreAction, readonly string[]>> = {
+    create: [`${ignore}: new file, with the share list`],
+    add: [`${ignore}: add the share list at the top. Your lines stay below it.`],
+    render: [`${ignore}: render the share list again. Your lines stay as they are.`],
+    current: [],
+  };
+  const repo = root.repo ? ['make the root a git repo, with a first commit of the shared files'] : [];
+  return [...gitignore[root.gitignore.action], ...repo].map((text): OutLine => ({ level: 'text', text }));
+};
+
 export const planLines = (
   config: FilePlan,
   local: LocalPlan,
   state: FilePlan,
   files: FilesPlan,
+  root: RootPlan,
   blocks: readonly BlockPlan[],
   upgrade: UpgradeSpec,
 ): OutLine[] => {
@@ -442,6 +504,7 @@ export const planLines = (
     fileLine(state, upgrade.state),
     ...moveLines,
     ...files.replaces.map(replaceLine),
+    ...rootLines(root),
     ...blocks.map(blockLine),
   ];
 };

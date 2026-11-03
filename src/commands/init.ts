@@ -45,6 +45,7 @@ import {
   places,
   program,
   roles,
+  rootRepo,
   schemaIds,
   setupAcceptance,
   stateKeys,
@@ -57,8 +58,8 @@ import {
   jsonText,
   sharedRootPaths,
   STATE_GITIGNORE,
-  withShareList,
 } from '../state/files.js';
+import { rootGitignoreOf } from '../state/gitignore.js';
 import { layoutOf, stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
 import { readSetupFile, renderableSetupText } from '../state/setup-text.js';
@@ -180,7 +181,6 @@ export interface InitResult {
 const GH_TIMEOUT_MS = 10_000;
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_MODEL = 'default';
-const ROOT_COMMIT_MESSAGE = 'chore: initialize the config repo';
 
 const DEFAULT_LIMITS = {
   [keys.limits.memoryFreeMinPct]: 20,
@@ -442,18 +442,8 @@ const setupTextOf = async (
  * share list. A setup text that is there stays as it is. This function writes nothing.
  */
 const rootTextsOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootTexts>> => {
-  const ignoreExists = await requireKind(deps, layout.gitignoreFile, 'file', files.gitignore);
-  if (!ignoreExists.ok) return ignoreExists;
-  let original: string | null = null;
-  if (ignoreExists.value) {
-    const read = await deps.fs.readTextLimited(layout.gitignoreFile, maxFileBytes);
-    if (!read.ok) return read;
-    original = read.value;
-  }
-  const withList = withShareList(original);
-  if (!withList.ok) {
-    return failure(withList.error, `Remove the marker lines from ${files.gitignore}, then run the command again.`);
-  }
+  const gitignore = await rootGitignoreOf(deps, layout);
+  if (!gitignore.ok) return gitignore;
   const setupExists = await requireKind(deps, layout.setupDir, 'dir', dirs.setup);
   if (!setupExists.ok) return setupExists;
   const rolesExist = setupExists.value
@@ -465,8 +455,8 @@ const rootTextsOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootTe
   const worker = await setupTextOf(deps, layout, layout.setupWorkerFile, fileTemplates.setupWorker);
   if (!worker.ok) return worker;
   return ok({
-    gitignoreOriginal: original,
-    gitignoreText: withList.value,
+    gitignoreOriginal: gitignore.value.original,
+    gitignoreText: gitignore.value.text,
     setupCoordinatorText: coordinator.value.write,
     setupWorkerText: worker.value.write,
     setup: { coordinator: coordinator.value.use, worker: worker.value.use },
@@ -891,13 +881,13 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     const gitFolder = await deps.fs.stat(join(plan.home, GIT_ENTRY));
     if (!gitFolder.ok) return rollback(gitFolder.error);
     touched.rootGit = gitFolder.value === null;
-    const rootRepo = await initRootRepo(deps, plan.home, {
+    const madeRepo = await initRootRepo(deps, plan.home, {
       paths: sharedRootPaths,
-      message: ROOT_COMMIT_MESSAGE,
-      branch: DEFAULT_BRANCH,
+      message: rootRepo.commitMessage,
+      branch: rootRepo.branch,
     });
-    if (!rootRepo.ok) return rollback(rootRepo.error);
-    rootCommitted = rootRepo.value.committed;
+    if (!madeRepo.ok) return rollback(madeRepo.error);
+    rootCommitted = madeRepo.value.committed;
   }
 
   // The entry in the factory list is the last step. When it fails, the root is not registered, so init undoes its work,
@@ -946,9 +936,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
             `No git identity: the first commit of ${dirs.state} was not made. ` +
               'Set user.name and user.email, then commit there.',
           ]),
-      ...(rootCommitted || plan.received
-        ? []
-        : ['No git identity: the first commit of the config repo was not made. Set user.name and user.email, then commit there.']),
+      ...(rootCommitted || plan.received ? [] : [rootRepo.noIdentity]),
       ...approvals.warnings,
       ...accepted.warnings,
     ],
