@@ -163,12 +163,6 @@ describe('the docs scan: what it skips', () => {
     expect(scanDoc('glossary.md', text).map((hit) => hit.line)).toEqual([4]);
   });
 
-  it('skips a line of the allow list in its own file only', () => {
-    const line = '- **cell**: A cell is a worker session.\n';
-    expect(scanDoc('glossary.md', line)).toEqual([]);
-    expect(scanDoc('design.md', line).length).toBeGreaterThan(0);
-  });
-
   it('skips a quoted note of the owner in the trace only, and reads the other rows', () => {
     const quoted = readDoc('intent-trace.md').split('\n').find((line) => line.startsWith('| F-1a |')) ?? '';
     expect(quoted).not.toBe('');
@@ -198,8 +192,64 @@ describe('the docs scan: what it skips', () => {
     expect(scanDoc('intent-trace.md', row).map((hit) => hit.kind)).toEqual(['jargon']);
   });
 
-  it('skips the whole line of a glossary entry, also after the first bar', () => {
-    expect(scanDoc('glossary.md', '- **cell**: A cell | a lane and a heartbeat.\n')).toEqual([]);
+  it('reads the whole line of a glossary entry that has no (was: old word) mark, also after the first bar', () => {
+    expect(scanDoc('glossary.md', '- **cell**: A cell | a lane and a heartbeat.\n').map((hit) => hit.word)).toEqual([
+      'cell',
+      'cell',
+      'lane',
+      'heartbeat',
+    ]);
+  });
+});
+
+describe('the (was: old word) mark of a glossary entry', () => {
+  it.each([...OLD_WORD_LIST, 'work order', 'changeover', 'heartbeat', 'bench window', 'outbox', 'adapter'])(
+    'is not a hit right after the bold term of a glossary entry: (was: %s)',
+    (word) => {
+      expect(scanDoc('glossary.md', `- **new word** (was: ${word}): A plain sentence.\n`)).toEqual([]);
+    },
+  );
+
+  it('is not a hit with a capital letter or a hyphen in the old word', () => {
+    expect(scanDoc('glossary.md', '- **terminal window** (was: TTY): A plain sentence.\n')).toEqual([]);
+    expect(scanDoc('glossary.md', '- **new word** (was: Pack-out): A plain sentence.\n')).toEqual([]);
+  });
+
+  it('is a hit in every doc except the glossary', () => {
+    const line = '- **worker** (was: cell): A plain sentence.\n';
+    expect(scanDoc('glossary.md', line)).toEqual([]);
+    for (const doc of ['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md']) {
+      expect(scanDoc(doc, line).map((hit) => hit.word), doc).toEqual(['cell']);
+    }
+  });
+
+  it('is a hit when it is not right after the bold term', () => {
+    expect(scanDoc('glossary.md', '- **worker**: A worker (was: cell) is a session.\n').map((hit) => hit.word)).toEqual([
+      'cell',
+    ]);
+    expect(scanDoc('glossary.md', 'A line that is not an entry (was: cell).\n').map((hit) => hit.word)).toEqual(['cell']);
+    expect(scanDoc('glossary.md', '  - **worker** (was: cell): A plain sentence.\n')).toHaveLength(1);
+  });
+
+  it('is a hit when the mark holds more than letters, spaces and hyphens', () => {
+    const line = '- **worker** (was: cell, then a lane of work.): A plain sentence.\n';
+    expect(scanDoc('glossary.md', line).map((hit) => hit.word)).toEqual(['cell', 'lane']);
+  });
+
+  it('keeps a hit for an old word elsewhere in the same entry', () => {
+    const own = scanDoc('glossary.md', '- **worker** (was: cell): A worker is a cell in one lane.\n');
+    expect(own.map((hit) => hit.word)).toEqual(['cell', 'lane']);
+    const jargon = scanDoc('glossary.md', '- **event file** (was: outbox): The outbox holds the digest.\n');
+    expect(jargon.map((hit) => [hit.kind, hit.word])).toEqual([['jargon', 'outbox']]);
+  });
+
+  it('keeps a hit for the old word in the bold term', () => {
+    expect(scanDoc('glossary.md', '- **cell** (was: cell): A plain sentence.\n').map((hit) => hit.word)).toEqual(['cell']);
+  });
+
+  it('removes only the first mark of a line', () => {
+    const line = '- **worker** (was: cell): A plain sentence (was: lane).\n';
+    expect(scanDoc('glossary.md', line).map((hit) => hit.word)).toEqual(['lane']);
   });
 });
 
@@ -247,11 +297,16 @@ describe('the allow list', () => {
     },
   );
 
-  it('skips only the quote cell of a trace entry, and the whole line of a glossary entry', () => {
-    for (const entry of ALLOWED_LINES) {
-      const expected = entry.file === 'intent-trace.md' ? 'quote cell' : 'whole line';
-      expect(entry.skips, `${entry.file} ${entry.startsWith}`).toBe(expected);
-    }
+  it('holds only rows of the trace, and no line of the glossary', () => {
+    expect(ALLOWED_LINES.map((entry) => entry.file)).toEqual(Array(ALLOWED_LINES.length).fill('intent-trace.md'));
+  });
+
+  it('holds no entry of the glossary: an old word there shows only in the (was: old word) mark', () => {
+    const entries = readDoc('glossary.md')
+      .split('\n')
+      .filter((line) => line.startsWith('- **'));
+    expect(entries.length).toBeGreaterThan(0);
+    for (const line of entries) expect(scanDoc('glossary.md', `${line}\n`), line).toEqual([]);
   });
 });
 

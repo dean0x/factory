@@ -278,39 +278,36 @@ export const JARGON_PATTERNS: readonly JargonPattern[] = [
 /** The docs that the scan reads in the docs change. */
 export const SCANNED_DOCS = ['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md'] as const;
 
-/** The part of an allowed line that the scan skips: the whole line, or only the quote cell (the second column) of a row. */
-export type AllowedSkip = 'whole line' | 'quote cell';
-
-/** A line that keeps an old word on purpose. The docs review reads this list. */
+/**
+ * A row of the trace that keeps an old word on purpose, in its quote cell (the second column). The docs review reads this
+ * list.
+ */
 export interface AllowedLine {
   readonly file: string;
   /** The line starts with this text. */
   readonly startsWith: string;
-  readonly skips: AllowedSkip;
   readonly reason: string;
 }
-
-const GLOSSARY_SYNC =
-  'the entry must equal the text of src/glossary.ts, and the glossary test checks that; the code change renames the term and removes this line from the list';
 
 const OWNER_NOTE =
   'the row quotes a note of the owner, and the note holds the old word; the intent check compares the row with his own words; the scan reads the other cells of the row';
 
-/** The lines of the docs that keep an old word, each with its reason. */
+/** The rows of the docs that keep an old word in the quote cell, each with its reason. */
 export const ALLOWED_LINES: readonly AllowedLine[] = [
-  { file: 'intent-trace.md', startsWith: '| F-1a |', skips: 'quote cell', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| F-14b |', skips: 'quote cell', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| V-F-1b |', skips: 'quote cell', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| V-F-1c |', skips: 'quote cell', reason: OWNER_NOTE },
-  { file: 'glossary.md', startsWith: '- **layer**:', skips: 'whole line', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **cell**:', skips: 'whole line', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **andon**:', skips: 'whole line', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **work order**:', skips: 'whole line', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **changeover**:', skips: 'whole line', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **staging**:', skips: 'whole line', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **inspect**:', skips: 'whole line', reason: GLOSSARY_SYNC },
-  { file: 'glossary.md', startsWith: '- **ship**:', skips: 'whole line', reason: GLOSSARY_SYNC },
+  { file: 'intent-trace.md', startsWith: '| F-1a |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| F-14b |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| V-F-1b |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| V-F-1c |', reason: OWNER_NOTE },
 ];
+
+/** The doc whose entries show the old word of a new word in the form `(was: old word)`. */
+export const WAS_MARK_FILE = 'glossary.md';
+
+/**
+ * The mark `(was: old word)` right after the bold term of a glossary entry, for example `- **worker** (was: cell): ...`.
+ * The old word is letters, spaces and hyphens, at most 30 characters. The first group is the part of the line that stays.
+ */
+const WAS_MARK = /^(- \*\*[^*]+\*\*) \(was: [A-Za-z][A-Za-z -]{0,29}\)/;
 
 export interface DocHit {
   readonly file: string;
@@ -332,20 +329,9 @@ const withoutQuoteCell = (line: string): string =>
     .map((cell, index) => (index === 2 ? ' ' : cell))
     .join('|');
 
-/** The part of a line that the scan reads, or `undefined` when the allow list skips the whole line. */
-const readablePart = (raw: string, allowed: AllowedLine | undefined): string | undefined => {
-  if (allowed === undefined) return raw;
-  switch (allowed.skips) {
-    case 'whole line':
-      return undefined;
-    case 'quote cell':
-      return withoutQuoteCell(raw);
-    default: {
-      const unreachable: never = allowed.skips;
-      return unreachable;
-    }
-  }
-};
+/** Removes the `(was: old word)` mark of a glossary entry. A mark in another doc, or after the first words, stays. */
+const withoutWasMark = (file: string, line: string): string =>
+  file === WAS_MARK_FILE ? line.replace(WAS_MARK, '$1') : line;
 
 /**
  * A fence starts at column 0, the same rule as the awk checks of `scripts/check-intent-docs.sh`. An indented fence line
@@ -356,8 +342,9 @@ const FENCE_LINE = /^```/;
 /**
  * The hits of one doc: an old word or a scanned jargon word outside fenced code, outside code spans, outside the mapping
  * tables of design 7 and 7.1 and outside the plain-words table. A fence that does not close is a hit at the line of its
- * opening fence, because the scan would otherwise skip every line after it. The allow list skips the whole line of a
- * glossary entry and only the quote cell of a trace row.
+ * opening fence, because the scan would otherwise skip every line after it. The allow list skips only the quote cell of a
+ * trace row. A glossary entry may show the old word that its word replaces, only in the mark `(was: old word)` after its
+ * bold term; the scan skips that mark and reads the rest of the entry.
  */
 export const scanDoc = (file: string, text: string): DocHit[] => {
   const hits: DocHit[] = [];
@@ -380,9 +367,8 @@ export const scanDoc = (file: string, text: string): DocHit[] => {
     if (inPlainWords) return;
     if (file === 'design.md' && inGeneric && raw.startsWith('|')) return;
     const allowed = ALLOWED_LINES.find((entry) => entry.file === file && raw.startsWith(entry.startsWith));
-    const readable = readablePart(raw, allowed);
-    if (readable === undefined) return;
-    const line = withoutCodeSpans(readable);
+    const readable = allowed === undefined ? raw : withoutQuoteCell(raw);
+    const line = withoutCodeSpans(withoutWasMark(file, readable));
     for (const word of line.match(OLD_WORDS_DESIGN_SCAN) ?? []) {
       hits.push({ file, line: index + 1, word, kind: 'old word' });
     }
