@@ -198,26 +198,33 @@ export const recordScope = (
     [keys.at]: at,
   }));
 
+/** The newest delegation record of a point: its mode and its time. */
+interface NewestRecord {
+  readonly time: number;
+  readonly mode: ApprovalMode;
+  readonly at: string;
+}
+
 /** The newest delegation record of each point for this node id and this real root. Equal times: the owner mode wins. */
-const newestModes = (deps: Deps, records: readonly OwnerRecord[], node: string, root: string): ReadonlyMap<string, ApprovalMode> => {
+const newestModes = (deps: Deps, records: readonly OwnerRecord[], node: string, root: string): ReadonlyMap<string, NewestRecord> => {
   const wanted = comparable(deps, root);
-  const newest = new Map<string, { readonly time: number; readonly mode: ApprovalMode }>();
+  const newest = new Map<string, NewestRecord>();
   for (const record of records) {
     if (record.kind !== ownerRecords.kinds.delegation) continue;
     if (record.node !== node || comparable(deps, record.root) !== wanted) continue;
     const time = Date.parse(record.at);
     const known = newest.get(record.point);
     if (known === undefined || time > known.time) {
-      newest.set(record.point, { time, mode: record.mode });
+      newest.set(record.point, { time, mode: record.mode, at: record.at });
     } else if (time === known.time && record.mode === OWNER_MODE) {
-      newest.set(record.point, { time, mode: OWNER_MODE });
+      newest.set(record.point, { time, mode: OWNER_MODE, at: record.at });
     }
   }
-  return new Map([...newest].map(([point, { mode }]) => [point, mode]));
+  return newest;
 };
 
 /** The delegation records of this node id and this folder. A store that cannot be used holds none: every point is `owner`. */
-const delegationsOf = async (deps: Deps, root: string, node: string): Promise<ReadonlyMap<string, ApprovalMode>> => {
+const delegationsOf = async (deps: Deps, root: string, node: string): Promise<ReadonlyMap<string, NewestRecord>> => {
   const real = await deps.fs.realpath(root);
   if (!real.ok) return new Map();
   const path = await storePathOf(deps, real.value);
@@ -226,19 +233,42 @@ const delegationsOf = async (deps: Deps, root: string, node: string): Promise<Re
   return records.ok ? newestModes(deps, records.value, node, real.value) : new Map();
 };
 
+/** An approval point that is delegated now, and the time of the record that delegates it. */
+export interface ActiveDelegation {
+  readonly point: string;
+  readonly at: string;
+}
+
+/** The effective mode of each approval point, with the delegations that are active and the values that no record backs. */
+export interface DelegationReport {
+  readonly modes: ApprovalModes;
+  /** The delegated points, in the order of the recipe. */
+  readonly active: readonly ActiveDelegation[];
+  /** The points whose local value is `delegated` and that no matching record backs. They count as `owner`. */
+  readonly unmatched: readonly string[];
+}
+
 /**
- * The mode of each approval point of the recipe that the node follows (design 6). A point is `delegated` only when the
- * local value is `delegated` and the newest delegation record for the node id, the real path of the folder and the point is
+ * The mode of each approval point of the recipe that the node follows (design 6), the delegations that are active with the
+ * time of their record, and the local `delegated` values that no record backs. A point is `delegated` only when the local
+ * value is `delegated` and the newest delegation record for the node id, the real path of the folder and the point is
  * `delegated`. Every other case gives `owner`: a local `delegated` with no matching record, a newer record with the mode
  * `owner`, a record for another folder, a record of another kind, and a store that cannot be used. The store is read only
  * when a local value asks for a delegation.
  */
-export const effectiveModes = async (deps: Deps, root: string, config: FactoryConfig): Promise<ApprovalModes> => {
+export const delegationReport = async (deps: Deps, root: string, config: FactoryConfig): Promise<DelegationReport> => {
   const points = recipes[config.recipe.id].approvalPoints;
   const asked = points.filter((point) => config.core.approval[point.id] === DELEGATED_MODE);
-  if (asked.length === 0) return ownerModes(points);
+  if (asked.length === 0) return { modes: ownerModes(points), active: [], unmatched: [] };
   const records = await delegationsOf(deps, root, config.core.node.id);
-  return Object.fromEntries(
-    points.map((point) => [point.id, asked.includes(point) && records.get(point.id) === DELEGATED_MODE ? DELEGATED_MODE : OWNER_MODE]),
-  );
+  const backed = asked.filter((point) => records.get(point.id)?.mode === DELEGATED_MODE);
+  return {
+    modes: Object.fromEntries(points.map((point) => [point.id, backed.includes(point) ? DELEGATED_MODE : OWNER_MODE])),
+    active: backed.map((point) => ({ point: point.id, at: records.get(point.id)?.at ?? '' })),
+    unmatched: asked.filter((point) => !backed.includes(point)).map((point) => point.id),
+  };
 };
+
+/** The mode of each approval point (see `delegationReport`). */
+export const effectiveModes = async (deps: Deps, root: string, config: FactoryConfig): Promise<ApprovalModes> =>
+  (await delegationReport(deps, root, config)).modes;

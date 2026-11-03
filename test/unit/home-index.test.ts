@@ -13,6 +13,7 @@ import {
   listedRootAbove,
   matchFolder,
   originOf,
+  originOfHome,
   readHomeIndex,
   recordHome,
   recordNode,
@@ -880,6 +881,37 @@ describe('home index: the origin of a root (TP-159)', () => {
       other.seed(`${HOME_A}/factory.yaml`, 'origin: own\n');
       const otherEntries = await readHomeIndex(other, INDEX);
       expect(originOf(otherEntries.ok ? await entryOfHome(other, otherEntries.value, HOME_A) : null)).toBe('received');
+    });
+
+    describe('the origin of a folder (TP-155)', () => {
+      const listed = (homes: readonly object[]): FakeDeps => {
+        const deps = createFakeDeps({ env: { XDG_STATE_HOME: '/state' } });
+        deps.seedDir(HOME_A);
+        deps.seed(INDEX, JSON.stringify({ schema: 1, homes }));
+        return deps;
+      };
+
+      it('is own for an entry of the index that says own', async () => {
+        expect(await originOfHome(listed([before('own')]), HOME_A)).toBe('own');
+      });
+
+      it('is received for an entry that says received, for an entry with no origin and for a folder with no entry', async () => {
+        expect(await originOfHome(listed([before('received')]), HOME_A)).toBe('received');
+        expect(await originOfHome(listed([before()]), HOME_A)).toBe('received');
+        expect(await originOfHome(listed([before('own')]), HOME_B)).toBe('received');
+      });
+
+      it('is received when no variable names a folder for the index, when the file is broken and when it is not safe', async () => {
+        const noPlace = createFakeDeps({ env: {} });
+        noPlace.seedDir(HOME_A);
+        expect(await originOfHome(noPlace, HOME_A)).toBe('received');
+        const broken = listed([before('own')]);
+        broken.seed(INDEX, 'not json');
+        expect(await originOfHome(broken, HOME_A)).toBe('received');
+        const open = listed([before('own')]);
+        open.modes.set(INDEX, 0o666);
+        expect(await originOfHome(open, HOME_A)).toBe('received');
+      });
     });
   });
 

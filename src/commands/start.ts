@@ -38,6 +38,7 @@ import {
 } from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
+import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
 
 export interface StartOptions {
   readonly home: string | undefined;
@@ -359,6 +360,13 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
   // A real run sets a wide mode of the local file back to 600 before it uses the file. A dry run only names the command.
   const notes = await settleLocalMode(deps, home, !dryRun);
   if (!notes.ok) return notes;
+
+  // The root checks come before the tool check, the proxy health request and any launch, also in a dry run. A warning is
+  // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.
+  const scan = await scanRoot(deps, home, loaded.value);
+  for (const notice of rootNotices(scan)) deps.warn(notice);
+  const clean = requireRootClean(scan);
+  if (!clean.ok) return clean;
 
   const problems = await toolProblems(deps, !dryRun);
   if (!dryRun && problems.length > 0) {

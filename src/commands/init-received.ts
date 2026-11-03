@@ -13,9 +13,14 @@ import { entryOfHome, readHomeIndex } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import {
+  describeTrackedProblems,
+  ignoreProbesOf,
+  REMOVE_REMEDY,
   requireNoLinks,
   requireNoRootLinks,
   requireNoTrackedLinks,
+  TRACKED_CAP_MESSAGE,
+  TRACKED_CAP_REMEDY,
   trackedProblems,
   trackedSetOf,
   type TrackedProblem,
@@ -25,7 +30,6 @@ import {
   askSetupAcceptance,
   collectManifest,
   manifestOf,
-  visibleText,
   type Collected,
   type ManifestEntry,
 } from '../core/setup-acceptance.js';
@@ -47,9 +51,8 @@ import {
   roles,
   schemaIds,
   setupAcceptance,
-  trackedFiles,
 } from '../names.js';
-import { layoutOf, stateRel, type Layout } from '../state/layout.js';
+import { layoutOf, type Layout } from '../state/layout.js';
 import { plainSetupText, renderableSetupText } from '../state/setup-text.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
 import type { SetupTexts } from '../templates/types.js';
@@ -85,9 +88,6 @@ import { planReceivedProjects, runClones, undoClones } from './init-clone.js';
 
 export const ACCEPT_REASON = `the ${roles.owner} accepted these files in a terminal window with ${commands.init}`;
 export const YES_REASON = 'init with the yes flag: first acceptance of the setup text';
-const REMOVE_REMEDY =
-  'Remove each of them from git with "git rm --cached", commit the change, then run the command again.';
-const MAX_NAMED_PATHS = 5;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
 /** What `checkReceivedRoot` finds in a received root, before anything is written. */
@@ -101,32 +101,11 @@ export interface ReceivedRoot {
   readonly warnings: readonly string[];
 }
 
-const problemText = (problem: TrackedProblem): string => {
-  switch (problem.kind) {
-    case 'local-file':
-      return `the local file ${visibleText(problem.path)}`;
-    case 'state-folder':
-      return `${visibleText(problem.path)} in the state folder ${dirs.state}`;
-    case 'session-folder':
-      return `${visibleText(problem.path)} in the ${roles.coordinator} folder ${dirs.coordinator}`;
-    case 'clone':
-      return `${visibleText(problem.path)} in a project folder`;
-    default: {
-      const unreachable: never = problem.kind;
-      return unreachable;
-    }
-  }
-};
-
 /** The paths that the root repo must not track, as a stop (exit 4) that names them. */
 const requireNoTrackedProblems = (problems: readonly TrackedProblem[]): CliResult<void> =>
   problems.length === 0
     ? ok(undefined)
-    : safetyRefusal(
-        `the root repo tracks files that must stay on this machine: ${problems.slice(0, MAX_NAMED_PATHS).map(problemText).join(', ')}` +
-          (problems.length > MAX_NAMED_PATHS ? ` and ${problems.length - MAX_NAMED_PATHS} more` : ''),
-        REMOVE_REMEDY,
-      );
+    : safetyRefusal(`the root repo tracks files that must stay on this machine: ${describeTrackedProblems(problems)}`, REMOVE_REMEDY);
 
 /** On a received root, a state folder in any form is a stop. The folder holds the history of a node, so init never replaces it. */
 const requireNoStateFolder = async (deps: Deps, layout: Layout): Promise<CliResult<void>> => {
@@ -156,12 +135,7 @@ const checkIgnoreRules = async (
   layout: Layout,
   projectPaths: readonly string[],
 ): Promise<CliResult<readonly string[]>> => {
-  const probes = {
-    local: files.localConfig,
-    state: join(dirs.state, stateRel.nodeJson),
-    coordinator: join(dirs.coordinator, files.claudeMd),
-  };
-  const projectProbes = projectPaths.map((path) => join(path, files.claudeMd));
+  const { clones: projectProbes, ...probes } = ignoreProbesOf(projectPaths);
   const ignored = await ignoredPathsOf(deps, layout.home, [probes.local, probes.state, probes.coordinator, ...projectProbes]);
   if (!ignored.ok) return ignored;
   const lines = [
@@ -211,12 +185,7 @@ export const checkReceivedRoot = async (
   }
   const list = await trackedFilesOf(deps, home);
   if (!list.ok) return list;
-  if (list.value.reachedCap) {
-    return safetyRefusal(
-      `the root repo tracks more than ${trackedFiles.maxCount} files, so ${program} does not hash them`,
-      `Remove the files that the ${places.folder} does not need from git with "git rm --cached", then run "${commandText(commands.init)}" again.`,
-    );
-  }
+  if (list.value.reachedCap) return safetyRefusal(TRACKED_CAP_MESSAGE, TRACKED_CAP_REMEDY);
   const tracked = list.value.paths;
   const set = trackedSetOf(tracked);
   const linked = await requireNoTrackedLinks(deps, home, set);

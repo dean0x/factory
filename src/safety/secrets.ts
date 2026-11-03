@@ -29,6 +29,17 @@ const hasKnownTokenShape = (text: string): boolean =>
 export const looksLikeToken = (text: string): boolean =>
   hasKnownTokenShape(text) || (text.match(BASE64_RUN) ?? []).some(isRandomLooking);
 
+/** A run with a slash and no plus sign is a path or a URL: the base64 alphabet needs a plus sign to hold a slash. */
+const isPathLike = (run: string): boolean => run.includes('/') && !run.includes('+');
+
+/**
+ * True when the text of a file holds a token: a known prefix, a hex run of 40 characters or more, or a long base64 run.
+ * A text holds paths and URLs, and a long path with mixed letters and digits looks like random data, so a run that is a
+ * path (see `isPathLike`) is not a token. The check is for the tracked text files of the root.
+ */
+export const textHasToken = (text: string): boolean =>
+  hasKnownTokenShape(text) || (text.match(BASE64_RUN) ?? []).some((run) => !isPathLike(run) && isRandomLooking(run));
+
 const ITEM_INDEX = /^\d+$/;
 
 /** The key path of the address of a node link: `parent.address` or `children.<n>.address`. */

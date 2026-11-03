@@ -14,14 +14,12 @@ import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { isSameOrInsideFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
   checkIds,
-  claudeSettings,
   commandText,
   commands,
   dirs,
@@ -51,6 +49,7 @@ import { readSetupFile, readSetupTexts } from '../state/setup-text.js';
 import { blockInputOf, blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
 import { leftoverTempFolders, tempFolderWarning } from './init-home.js';
 import { unsharedReasonOf, unsharedWarning } from './project-url.js';
+import { hasRootFailure, rootCheckResults, scanRoot } from './root-content.js';
 
 export type CheckLevel = 'ok' | 'warn' | 'fail';
 
@@ -74,14 +73,6 @@ const TOOLS: readonly { readonly name: string; readonly neededFor: string }[] = 
   { name: toolNames.tmux, neededFor: `the ${START_COMMAND}` },
   { name: toolNames.gh, neededFor: 'the GitHub commands' },
   { name: toolNames.claude, neededFor: 'the launch of sessions' },
-];
-
-/** Patterns of Claude Code settings that skip the permission checks. */
-const BYPASS_PATTERNS: readonly RegExp[] = [
-  /bypassPermissions/,
-  /dangerously-skip-permissions/,
-  /"skipDangerousModePermissionPrompt"\s*:\s*true/,
-  /"dangerouslySkipPermissions"\s*:\s*true/,
 ];
 
 const check = (id: string, level: CheckLevel, text: string): CheckResult => ({ id, level, text });
@@ -372,41 +363,6 @@ export const checkSecrets = (state: DocState<FactoryConfig>): CheckResult => {
       );
 };
 
-export const checkPermissionMode = async (deps: Deps, home: string): Promise<CheckResult> => {
-  const settingsDir = join(home, dirs.claude);
-  const userHome = deps.env[env.userHome];
-  if (userHome !== undefined) {
-    const userDir = join(resolve(userHome), dirs.claude);
-    const isUserDir = await isSameOrInsideFolder(deps, userDir, resolve(settingsDir));
-    if (!isUserDir.ok) return notChecked(checkIds.permissionMode, isUserDir.error.message);
-    if (isUserDir.value) {
-      return notChecked(checkIds.permissionMode, `${settingsDir} is, or is inside, the user settings folder of Claude Code`);
-    }
-  }
-  const folder = await deps.fs.stat(settingsDir);
-  if (!folder.ok) return notChecked(checkIds.permissionMode, folder.error.message);
-  if (folder.value === null) return check(checkIds.permissionMode, 'ok', `no ${dirs.claude} folder in the ${program} home`);
-  const names = await deps.fs.list(settingsDir);
-  if (!names.ok) return notChecked(checkIds.permissionMode, names.error.message);
-
-  const settings = names.value.filter(
-    (name) => name.startsWith(claudeSettings.prefix) && name.endsWith(claudeSettings.suffix),
-  );
-  const bad: string[] = [];
-  const unreadable: string[] = [];
-  for (const name of settings) {
-    const text = await deps.fs.readText(join(settingsDir, name));
-    if (!text.ok) unreadable.push(`${dirs.claude}/${name}`);
-    else if (BYPASS_PATTERNS.some((pattern) => pattern.test(text.value))) bad.push(`${dirs.claude}/${name}`);
-  }
-  if (bad.length > 0) {
-    return check(checkIds.permissionMode, 'fail', `${bad.join(', ')} skips the permission checks. Remove the setting.`);
-  }
-  return unreadable.length === 0
-    ? check(checkIds.permissionMode, 'ok', 'no settings file skips the permission checks')
-    : notChecked(checkIds.permissionMode, `cannot read ${unreadable.join(', ')}`);
-};
-
 /**
  * An instruction file of an agent in the root or in a folder above it reaches every session of the factory. It is a
  * warning only, never a failure (F-17c): the file is the choice of the person who owns that folder.
@@ -633,9 +589,17 @@ interface CheckRun {
   readonly localUnsafe: boolean;
 }
 
+/**
+ * A failed root check sends no proxy health request: the proxy line says why. The root checks run first, because a
+ * request to a proxy is a step toward a launch that the failure forbids.
+ */
+const skippedProxyCheck = (): CheckResult =>
+  notChecked(checkIds.proxy, 'a root check failed, so no health request went to a proxy');
+
 const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
+  const rootScan = await scanRoot(deps, home, config.kind === 'valid' ? config.value : null);
   const [
     root,
     tempFolder,
@@ -643,7 +607,6 @@ const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
     blocks,
     setupText,
     children,
-    permission,
     instructionFileCheck,
     proxies,
     tools,
@@ -657,9 +620,8 @@ const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
     checkNodeBlocks(deps, home, config),
     checkSetupText(deps, home),
     checkChildren(deps, config),
-    checkPermissionMode(deps, home),
     checkInstructionFiles(deps, home),
-    checkProxies(deps, config),
+    hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config),
     checkTools(deps),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),
@@ -679,7 +641,7 @@ const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
     checkTracker(config),
     children,
     checkSecrets(config),
-    permission,
+    ...rootCheckResults(rootScan),
     instructionFileCheck,
     checkProxyEnv(deps),
     ...proxies,

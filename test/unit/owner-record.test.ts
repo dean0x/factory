@@ -6,6 +6,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import {
+  delegationReport,
   effectiveModes,
   readOwnerRecords,
   recordDelegation,
@@ -252,6 +253,64 @@ describe('approval records: the store', () => {
       expect(await setMode(deps, 'release', delegated)).toMatchObject({ ok: false });
       expect(storedRecords(deps)).toHaveLength(1);
     });
+  });
+});
+
+describe('the delegation report (TP-78)', () => {
+  const NEWER = '2030-06-07T08:09:10.000Z';
+
+  it('lists no delegation and no unmatched value when each local value is owner', async () => {
+    const deps = person();
+    seedStore(deps, [delegation()]);
+    expect(await delegationReport(deps, ROOT, configWith({}))).toEqual({
+      modes: { merge: owner, release: owner },
+      active: [],
+      unmatched: [],
+    });
+  });
+
+  it('lists an active delegation with the time of its record, in the order of the recipe', async () => {
+    const deps = person();
+    seedStore(deps, [delegation({ point: 'release', at: NEWER }), delegation()]);
+    const report = await delegationReport(deps, ROOT, configWith({ merge: delegated, release: delegated }));
+    expect(report.active).toEqual([
+      { point: 'merge', at: '2030-01-02T03:04:05.678Z' },
+      { point: 'release', at: NEWER },
+    ]);
+    expect(report.unmatched).toEqual([]);
+    expect(report.modes).toEqual({ merge: delegated, release: delegated });
+  });
+
+  it('names a delegated value with no record as unmatched, and counts it as owner', async () => {
+    const deps = person();
+    seedStore(deps, [delegation()]);
+    const report = await delegationReport(deps, ROOT, configWith({ merge: delegated, release: delegated }));
+    expect(report.unmatched).toEqual(['release']);
+    expect(report.active.map((entry) => entry.point)).toEqual(['merge']);
+    expect(report.modes).toEqual({ merge: delegated, release: owner });
+  });
+
+  it('names a delegated value as unmatched when a newer record ends the delegation', async () => {
+    const deps = person();
+    seedStore(deps, [delegation(), delegation({ mode: owner, at: NEWER })]);
+    const report = await delegationReport(deps, ROOT, configWith({ merge: delegated }));
+    expect(report.active).toEqual([]);
+    expect(report.unmatched).toEqual(['merge']);
+  });
+
+  it('names every delegated value as unmatched when the store cannot be used', async () => {
+    const deps = person();
+    deps.seed(STORE, 'not json');
+    const report = await delegationReport(deps, ROOT, configWith({ merge: delegated }));
+    expect(report.unmatched).toEqual(['merge']);
+    expect(report.modes).toEqual({ merge: owner, release: owner });
+  });
+
+  it('gives the same modes as effectiveModes', async () => {
+    const deps = person();
+    seedStore(deps, [delegation()]);
+    const config = configWith({ merge: delegated, release: delegated });
+    expect((await delegationReport(deps, ROOT, config)).modes).toEqual(await effectiveModes(deps, ROOT, config));
   });
 });
 

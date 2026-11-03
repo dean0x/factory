@@ -1,10 +1,22 @@
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { safetyRefusal, type CliResult } from '../cli/errors.js';
-import { commands, commandText, dirs, files, places, program } from '../names.js';
+import {
+  claudeSettings,
+  commands,
+  commandText,
+  dirs,
+  files,
+  instructionFiles,
+  places,
+  program,
+  roles,
+  trackedFiles,
+} from '../names.js';
 import type { Layout } from '../state/layout.js';
 import type { Deps } from './deps.js';
 import { projectFolderKey } from './project-path.js';
 import { ok } from './result.js';
+import { visibleText } from './setup-acceptance.js';
 
 /** The most parts that one path below the factory folder can have. A longer path is not one of ours. */
 const MAX_PARTS = 32;
@@ -85,6 +97,57 @@ export const requireNoTrackedLinks = (deps: Deps, root: string, tracked: readonl
     tracked.map((path) => join(root, path)),
   );
 
+const lowerKey = (path: string): string => path.normalize('NFKC').toLowerCase();
+
+/**
+ * True when the tracked path is a file that a session can load as instructions, at any depth: a listed instruction file,
+ * or a path below a listed folder (`.claude/rules`). The names come from `instructionFiles`. The compare ignores the
+ * letter case, because a file system that ignores it loads `claude.md` as `CLAUDE.md`.
+ */
+export const isInstructionPath = (path: string): boolean => {
+  const wanted = `/${lowerKey(path)}`;
+  return instructionFiles.some((name) => {
+    const listed = `/${lowerKey(name)}`;
+    return wanted.endsWith(listed) || wanted.includes(`${listed}/`);
+  });
+};
+
+/** True when the tracked path is a Claude Code settings file, directly in a `.claude` folder at any depth. */
+export const isClaudeSettingsPath = (path: string): boolean => {
+  const parts = lowerKey(path).split('/');
+  const name = parts.at(-1) ?? '';
+  return (
+    parts.at(-2) === dirs.claude &&
+    name.startsWith(claudeSettings.prefix) &&
+    name.endsWith(claudeSettings.suffix)
+  );
+};
+
+/** The tracked paths below one folder of the root: the first part of the path is the folder, in the form of the folder key. */
+export const trackedUnder = (tracked: readonly string[], folder: string): readonly string[] =>
+  tracked.filter((path) => path.includes('/') && projectFolderKey(path.split('/', 1)[0] ?? '') === projectFolderKey(folder));
+
+/** The paths below the root that the ignore check probes, one for each thing that git must ignore. */
+export interface IgnoreProbes {
+  readonly local: string;
+  readonly state: string;
+  readonly coordinator: string;
+  readonly workCopies: string;
+  readonly clones: readonly string[];
+}
+
+/**
+ * The probe paths of the ignore check. Git answers for one path, so each folder has a path inside it: a rule that ignores
+ * the folder ignores the path. The probes are names that may or may not exist.
+ */
+export const ignoreProbesOf = (projectPaths: readonly string[]): IgnoreProbes => ({
+  local: files.localConfig,
+  state: join(dirs.state, files.nodeState),
+  coordinator: join(dirs.coordinator, files.claudeMd),
+  workCopies: join(dirs.workCopies, 'probe'),
+  clones: projectPaths.map((path) => join(path, files.claudeMd)),
+});
+
 /** Why a tracked path stops `init`. */
 export type TrackedProblemKind = 'local-file' | 'state-folder' | 'session-folder' | 'clone';
 
@@ -113,3 +176,43 @@ export const trackedProblems = (tracked: readonly string[], cloneFolders: readon
     return kind === null ? [] : [{ path, kind }];
   });
 };
+
+/** The most items that a message names. A longer list ends with the count of the rest. */
+export const MAX_NAMED_ITEMS = 5;
+
+/** A path as one line of text: every control character shows as an escape, the line break and the tab among them. */
+export const shownPath = (path: string): string => visibleText(path).replaceAll('\n', '\\n').replaceAll('\t', '\\t');
+
+/** The first items of a list as text, and the count of the rest. */
+export const namedItems = (items: readonly string[]): string =>
+  items.slice(0, MAX_NAMED_ITEMS).join(', ') +
+  (items.length > MAX_NAMED_ITEMS ? ` and ${items.length - MAX_NAMED_ITEMS} more` : '');
+
+/** The remedy line for the tracked paths that must stay on this machine. */
+export const REMOVE_REMEDY =
+  'Remove each of them from git with "git rm --cached", commit the change, then run the command again.';
+
+/** The stop for a list of tracked files over its cap, and its remedy line. */
+export const TRACKED_CAP_MESSAGE = `the root repo tracks more than ${trackedFiles.maxCount} files, so ${program} does not hash them`;
+export const TRACKED_CAP_REMEDY = `Remove the files that the ${places.folder} does not need from git with "git rm --cached", then run "${commandText(commands.init)}" again.`;
+
+const trackedProblemText = (problem: TrackedProblem): string => {
+  switch (problem.kind) {
+    case 'local-file':
+      return `the local file ${shownPath(problem.path)}`;
+    case 'state-folder':
+      return `${shownPath(problem.path)} in the state folder ${dirs.state}`;
+    case 'session-folder':
+      return `${shownPath(problem.path)} in the ${roles.coordinator} folder ${dirs.coordinator}`;
+    case 'clone':
+      return `${shownPath(problem.path)} in a project folder`;
+    default: {
+      const unreachable: never = problem.kind;
+      return unreachable;
+    }
+  }
+};
+
+/** The tracked problems as text: at most five of them, and the count of the rest. */
+export const describeTrackedProblems = (problems: readonly TrackedProblem[]): string =>
+  namedItems(problems.map(trackedProblemText));

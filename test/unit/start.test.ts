@@ -7,7 +7,9 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { ok } from '../../src/core/result.js';
 import { env } from '../../src/names.js';
 import { createFakeDeps, exited, registerRoot, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
@@ -55,13 +57,34 @@ interface Setup {
   readonly coordinatorFolder?: boolean;
   /** The paths of the project folders that exist in the home. Default: the folder of each project of the config. */
   readonly projectFolders?: readonly string[];
+  /** The paths that git tracks in the home. Default: none. */
+  readonly tracked?: readonly string[];
+  /** The paths that git ignores in the home. Default: git ignores every path. */
+  readonly ignored?: readonly string[];
+  /** The origin of the home in the factory list. Default: none, so the home counts as received. */
+  readonly origin?: 'own' | 'received';
+  /** True: the home is the top folder of no git work tree, so git can not list its files. */
+  readonly noRepo?: boolean;
 }
 
-/** A fake of git: it knows only the top folder of the work tree. The tmux log does not record its calls. */
-const gitAnswer = (workTree: string | undefined) => (call: RunCall) =>
-  call.args.includes('--show-toplevel') && workTree !== undefined
-    ? exited(0, `${workTree}\n`)
-    : exited(128, '', 'fatal: not a git repository\n');
+/**
+ * A fake of git. It knows the top folder of the work tree, and for the home it answers the questions of the root checks:
+ * the top of the work tree, the tracked paths and the ignore rules. The tmux log does not record its calls.
+ */
+const gitAnswer = (setup: Setup) => (call: RunCall) => {
+  const command = call.args.slice(2).join(' ');
+  if (call.args.includes('--show-toplevel') && setup.workTree !== undefined) return exited(0, `${setup.workTree}\n`);
+  if (setup.noRepo !== true) {
+    if (command === 'rev-parse --is-inside-work-tree --show-prefix') return exited(0, 'true\n\n');
+    if (command === 'ls-files -z') return exited(0, (setup.tracked ?? []).map((path) => `${path}\0`).join(''));
+    if (call.args[2] === 'check-ignore') {
+      const asked = call.args.slice(call.args.indexOf('--') + 1);
+      const rules = setup.ignored;
+      return asked.every((path) => rules === undefined || rules.includes(path)) ? exited(0) : exited(1);
+    }
+  }
+  return exited(128, '', 'fatal: not a git repository\n');
+};
 
 const withProxy = (onFail: 'stop' | 'direct'): FactoryConfig => {
   const config = sampleConfig();
@@ -77,7 +100,7 @@ const withProxy = (onFail: 'stop' | 'direct'): FactoryConfig => {
 
 const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   const { handler, log } = tmuxHandler(setup.tmux);
-  const git = gitAnswer(setup.workTree);
+  const git = gitAnswer(setup);
   const tty = setup.tty ?? false;
   const deps = createFakeDeps({
     cwd: setup.cwd ?? '/w',
@@ -95,7 +118,8 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   for (const path of setup.projectFolders ?? config.recipe.projects.map((project) => project.path)) {
     deps.seedDir(`${HOME}/${path}`);
   }
-  if (setup.registered !== false) registerRoot(deps, HOME, config.core.node.id);
+  for (const path of setup.tracked ?? []) if (!deps.files.has(`${HOME}/${path}`)) deps.seed(`${HOME}/${path}`, 'text\n');
+  if (setup.registered !== false) registerRoot(deps, HOME, config.core.node.id, [], setup.origin);
   return { deps, tmux: log };
 };
 
@@ -909,5 +933,191 @@ describe('start:instruction files at the root and above it (TP-33)', () => {
     expect(result.ok).toBe(false);
     expect(deps.warned).toHaveLength(1);
     expect(tmux.calls).toEqual([]);
+  });
+});
+
+describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-134, TP-154, TP-155, TP-168, TP-179, TP-180)', () => {
+  const BYPASS = JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } });
+  const ALL_PROBES = ['factory.local.yaml', '.factory/node.json', 'coordinator/CLAUDE.md', 'work-copies/probe', 'web/CLAUDE.md'];
+
+  /** The result of a run that the root checks stop: exit 4, the reason and one remedy line. */
+  const stopOf = async (deps: FakeDeps, options: Partial<StartOptions> = {}) => {
+    const result = await startFactory(deps, options);
+    if (result.ok) throw new Error('expected a stop');
+    expect(result.error.kind).toBe('safety');
+    expect(result.error.hint).toBeDefined();
+    expect(result.error.hint).not.toContain('\n');
+    expect(result.error.message).not.toContain('\n');
+    return result.error;
+  };
+
+  it('stops with exit 4 when git tracks the local file, names the path and the remedy, and starts nothing (TP-20)', async () => {
+    const { deps, tmux } = make({ origin: 'own', tracked: ['factory.local.yaml'] });
+    const error = await stopOf(deps);
+    expect(error.message).toContain('factory.local.yaml');
+    expect(error.hint).toContain('git rm --cached');
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it.each([
+    ['a path under the state folder', '.factory/node.json'],
+    ['a path under the coordinator folder', 'coordinator/CLAUDE.md'],
+  ])('stops for %s that git tracks (TP-123)', async (_name, path) => {
+    const { deps, tmux } = make({ origin: 'own', tracked: [path] });
+    const error = await stopOf(deps);
+    expect(error.message).toContain(path);
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('stops in a dry run, too, and before the proxy health request', async () => {
+    const { deps, tmux } = make({ origin: 'own', tracked: ['factory.local.yaml'], config: withProxy('stop'), fetch: answers });
+    await stopOf(deps, { dryRun: true });
+    await stopOf(deps);
+    expect(deps.fetched).toEqual([]);
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('stops when git does not ignore the local file, and goes on when git does not ignore the coordinator folder (TP-61)', async () => {
+    const stopped = make({ ignored: ALL_PROBES.filter((path) => path !== 'factory.local.yaml') });
+    const error = await stopOf(stopped.deps);
+    expect(error.message).toContain('factory.local.yaml');
+    expect(error.hint).toContain('.gitignore');
+    expect(stopped.tmux.calls).toEqual([]);
+
+    const warned = make({ ignored: ALL_PROBES.filter((path) => path !== 'coordinator/CLAUDE.md') });
+    const output = await succeeded(warned.deps);
+    expect(output.json).toMatchObject({ started: true });
+    expect(warned.deps.warned.join(' ')).toContain('coordinator/');
+  });
+
+  it('goes on, with a warning that names the path, when an own root tracks an instruction file (TP-155)', async () => {
+    const { deps } = make({ origin: 'own', tracked: ['AGENTS.md'] });
+    const output = await succeeded(deps);
+    expect(output.json).toMatchObject({ started: true });
+    expect(deps.warned.join(' ')).toContain('AGENTS.md');
+    expect(deps.warned.join(' ')).toContain('every receiver');
+  });
+
+  it('stops for a received root whose tracked files the owner did not accept, and names the accept command', async () => {
+    const { deps, tmux } = make({ origin: 'received', tracked: ['scripts/run.sh'] });
+    const error = await stopOf(deps);
+    expect(error.message).toContain('scripts/run.sh');
+    expect(error.hint).toContain('factory init');
+    expect(error.hint).toContain('terminal window');
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('starts a received root after the owner accepted its tracked files', async () => {
+    const { deps } = make({ origin: 'received', tracked: ['scripts/run.sh'] });
+    await acceptTracked(deps, HOME, 'demo', ['scripts/run.sh']);
+    const output = await succeeded(deps);
+    expect(output.json).toMatchObject({ started: true });
+    expect(deps.warned).toEqual([]);
+  });
+
+  it('stops for a project folder that is a link to a folder outside the root (TP-63)', async () => {
+    const { deps, tmux } = make({ links: { [`${HOME}/web`]: '/elsewhere/web' } });
+    deps.seedDir('/elsewhere/web');
+    const error = await stopOf(deps);
+    expect(error.message).toContain('project web');
+    expect(error.message).toContain('outside');
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('stops for a token in a tracked file, names the file and never shows the value (TP-45, TP-134)', async () => {
+    const { deps, tmux } = make({ origin: 'own', tracked: ['docs/notes.md'] });
+    deps.seed(`${HOME}/docs/notes.md`, `key ${FAKE_GITHUB_TOKEN}\n`);
+    const error = await stopOf(deps);
+    expect(error.message).toContain('docs/notes.md');
+    expect(`${error.message} ${error.hint}`).not.toContain(FAKE_GITHUB_TOKEN);
+    expect(JSON.stringify(deps.warned)).not.toContain(FAKE_GITHUB_TOKEN);
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('goes on, with a warning, for a file URL in a tracked file', async () => {
+    const { deps } = make({ origin: 'own', tracked: ['docs/setup.md'] });
+    deps.seed(`${HOME}/docs/setup.md`, 'repo: file:///srv/repos/web.git\n');
+    const output = await succeeded(deps);
+    expect(output.json).toMatchObject({ started: true });
+    expect(deps.warned.join(' ')).toContain('docs/setup.md');
+  });
+
+  it.each([
+    ['the coordinator folder', 'coordinator'],
+    ['a project folder', 'web'],
+  ])('stops for a setting that skips permission prompts in %s (TP-133)', async (_name, folder) => {
+    const { deps, tmux } = make();
+    deps.seed(`${HOME}/${folder}/.claude/settings.local.json`, BYPASS);
+    const error = await stopOf(deps);
+    expect(error.message).toContain(`${folder}/.claude/settings.local.json`);
+    expect(error.message).toContain('skips the permission checks');
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('stops for such a setting in a tracked settings path at any depth, also after the owner accepted the files (TP-168)', async () => {
+    const path = 'tools/deep/.claude/settings.json';
+    const { deps, tmux } = make({ origin: 'received', tracked: [path] });
+    deps.seed(`${HOME}/${path}`, BYPASS);
+    await acceptTracked(deps, HOME, 'demo', [path]);
+    const error = await stopOf(deps);
+    expect(error.message).toContain(path);
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('stops for a settings file that sets or clears the session marker (TP-179)', async () => {
+    const { deps } = make();
+    deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { FACTORY_SESSION: '' } }));
+    const error = await stopOf(deps);
+    expect(error.message).toContain('coordinator/.claude/settings.json');
+    expect(error.message).toContain('FACTORY_SESSION');
+  });
+
+  it('goes on, with a warning, for a settings file in the coordinator folder and for a whole-tool allow rule (TP-154)', async () => {
+    const { deps } = make();
+    deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify({ permissions: { allow: ['Bash'] } }));
+    const output = await succeeded(deps);
+    expect(output.json).toMatchObject({ started: true });
+    expect(deps.warned.join(' ')).toContain('coordinator/.claude/settings.local.json');
+    expect(deps.warned.join(' ')).toContain('Bash');
+  });
+
+  it('goes on, with a warning that names the setting, for a setting that approves project MCP servers (TP-180)', async () => {
+    const { deps } = make();
+    deps.seed(`${HOME}/web/.claude/settings.json`, JSON.stringify({ enableAllProjectMcpServers: true }));
+    const output = await succeeded(deps);
+    expect(output.json).toMatchObject({ started: true });
+    expect(deps.warned.join(' ')).toContain('enableAllProjectMcpServers');
+    expect(deps.warned.join(' ')).toContain('web/.claude/settings.json');
+  });
+
+  it('prints the active delegations before the first call of tmux, and a value with no record as a warning (TP-78)', async () => {
+    const config = sampleConfig();
+    const delegated = { ...config, core: { ...config.core, approval: { ...config.core.approval, merge: 'delegated' as const, release: 'delegated' as const } } };
+    const { deps } = make({ config: delegated });
+    deps.seed(
+      '/state/factory/owner-records.json',
+      JSON.stringify({ schema: 1, records: [{ kind: 'delegation', node: 'demo', root: HOME, point: 'merge', mode: 'delegated', at: '2030-01-02T03:04:05.678Z' }] }),
+    );
+    const seen: number[] = [];
+    const watched: FakeDeps = {
+      ...deps,
+      run: async (command, args, options) => {
+        if (command === 'tmux' && seen.length === 0) seen.push(deps.warned.length);
+        return deps.run(command, args, options);
+      },
+    };
+    const output = await succeeded(watched);
+    expect(output.json).toMatchObject({ started: true });
+    expect(seen).toEqual([2]);
+    const text = deps.warned.join('\n');
+    expect(text).toContain('merge since 2030-01-02T03:04:05.678Z');
+    expect(text).toContain('release is set to delegated');
+    expect(text).toContain('factory init');
+  });
+
+  it('prints no notice for a root with no finding and no delegation', async () => {
+    const { deps } = make({ origin: 'own' });
+    await succeeded(deps);
+    expect(deps.warned).toEqual([]);
   });
 });

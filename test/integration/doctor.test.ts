@@ -133,10 +133,19 @@ describe('factory doctor (built binary)', () => {
 
   it('warns, and exits 0, when the share list of .gitignore is not intact', async () => {
     await initNode();
-    await writeFile(join(box.node, '.gitignore'), '!/notes.md\n');
+    await writeFile(join(box.node, '.gitignore'), 'factory.local.yaml\n.factory/\n!/notes.md\n');
     const result = await box.run(['doctor', '--home', box.node]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('.gitignore has no intact share list');
+  });
+
+  it('fails when the .gitignore of the root no longer makes git ignore the local file and the state folder (TP-61)', async () => {
+    await initNode();
+    await writeFile(join(box.node, '.gitignore'), '!/notes.md\n');
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toMatch(/root-repo\s+git does not ignore factory\.local\.yaml and \.factory\//);
+    expect(result.stdout).toContain('Add the lines "factory.local.yaml" and ".factory/" to .gitignore');
   });
 
   it('exits 2 and names init when factory.yaml has no factory.local.yaml next to it', async () => {
@@ -200,5 +209,80 @@ describe('factory doctor (built binary)', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('ANTHROPIC_BASE_URL');
     expect(result.stdout).not.toContain('topsecret');
+  });
+});
+
+describe('the root checks of factory doctor and factory start (built binary)', () => {
+  const ROOT_CHECKS = ['root-repo', 'root-files', 'project-paths', 'permission-mode', 'delegations'];
+
+  it('has the five root checks, all ok, on a fresh node with a real git repo', async () => {
+    await initNode();
+    const result = await box.run(['doctor', '--home', box.node, '--json']);
+    const document = JSON.parse(result.stdout) as { checks: { id: string; level: string; text: string }[] };
+    for (const id of ROOT_CHECKS) {
+      expect({ id, level: document.checks.find((check) => check.id === id)?.level }).toEqual({ id, level: 'ok' });
+    }
+    expect(document.checks.find((check) => check.id === 'delegations')?.text).toContain('merge: owner');
+  });
+
+  it('fails doctor, and stops start with exit 4, when git tracks the local file (TP-20)', async () => {
+    await initNode();
+    expect((await box.git(box.node, ['add', '-f', 'factory.local.yaml'])).code).toBe(0);
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(1);
+    expect(doctor.stdout).toMatch(/root-repo\s+the root repo tracks files that must stay on this machine: the local file factory\.local\.yaml/);
+    expect(doctor.stdout).toContain('git rm --cached');
+    const start = await box.run(['start', '--dry-run', '--home', box.node]);
+    expect(start.code).toBe(4);
+    expect(start.stderr).toContain('factory.local.yaml');
+    expect(start.stderr).toContain('git rm --cached');
+  });
+
+  it('fails doctor, and stops start, for a token in a tracked file, and never prints the value (TP-45)', async () => {
+    await initNode();
+    await writeFile(join(box.node, 'notes.md'), `The key is ${FAKE_GITHUB_TOKEN} for now.\n`);
+    expect((await box.git(box.node, ['add', '-f', 'notes.md'])).code).toBe(0);
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(1);
+    expect(doctor.stdout).toMatch(/root-files\s+notes\.md holds a value that looks like a password or a token/);
+    const start = await box.run(['start', '--dry-run', '--home', box.node]);
+    expect(start.code).toBe(4);
+    for (const text of [doctor.stdout, doctor.stderr, start.stdout, start.stderr]) expect(text).not.toContain(FAKE_GITHUB_TOKEN);
+  });
+
+  it('fails doctor, and stops start, for a setting that skips permission prompts in the coordinator folder (TP-133)', async () => {
+    await initNode();
+    await mkdir(join(box.node, 'coordinator', '.claude'));
+    await writeFile(
+      join(box.node, 'coordinator', '.claude', 'settings.local.json'),
+      '{"permissions":{"defaultMode":"bypassPermissions"}}\n',
+    );
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(1);
+    expect(doctor.stdout).toContain('coordinator/.claude/settings.local.json skips the permission checks');
+    const start = await box.run(['start', '--dry-run', '--home', box.node]);
+    expect(start.code).toBe(4);
+    expect(start.stderr).toContain('coordinator/.claude/settings.local.json');
+  });
+
+  it('fails doctor for a Claude settings path that the root repo tracks at any depth (TP-168)', async () => {
+    await initNode();
+    const folder = join(box.node, 'tools', 'deep', '.claude');
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, 'settings.json'), '{"skipDangerousModePermissionPrompt": true}\n');
+    expect((await box.git(box.node, ['add', '-f', 'tools/deep/.claude/settings.json'])).code).toBe(0);
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(1);
+    expect(doctor.stdout).toContain('tools/deep/.claude/settings.json skips the permission checks');
+  });
+
+  it('fails doctor for a project folder that is a link to a folder outside the root (TP-63)', async () => {
+    await initNode();
+    const outside = join(box.root, 'outside-web');
+    await rename(join(box.node, 'web'), outside);
+    await symlink(outside, join(box.node, 'web'));
+    const doctor = await box.run(['doctor', '--home', box.node]);
+    expect(doctor.code).toBe(1);
+    expect(doctor.stdout).toMatch(/project-paths\s+project web \(web\) resolves outside the factory folder/);
   });
 });

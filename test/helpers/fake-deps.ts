@@ -334,11 +334,22 @@ const factoryListOf = (deps: FakeDeps): string => {
  * Register a root the way `init` does: an entry in the factory list (a root that is listed already gets its entry
  * replaced) and the factory marker, unless the marker is there. The environment of the deps must name a state folder.
  */
-export const registerRoot = (deps: FakeDeps, root: string, id: string, projects: readonly string[] = []): void => {
+export const registerRoot = (
+  deps: FakeDeps,
+  root: string,
+  id: string,
+  projects: readonly string[] = [],
+  origin?: string,
+): void => {
   const path = factoryListOf(deps);
   const found = deps.files.get(path);
   const known = found === undefined ? [] : (JSON.parse(found) as { homes: { home: string }[] }).homes;
-  const entry = { [homeIndex.keys.home]: root, [homeIndex.keys.id]: id, [homeIndex.keys.projects]: projects };
+  const entry = {
+    [homeIndex.keys.home]: root,
+    [homeIndex.keys.id]: id,
+    [homeIndex.keys.projects]: projects,
+    ...(origin === undefined ? {} : { [homeIndex.keys.origin]: origin }),
+  };
   const homes = [...known.filter((candidate) => candidate.home !== root), entry];
   deps.seed(path, `${JSON.stringify({ [homeIndex.keys.schema]: homeIndex.schema, [homeIndex.keys.homes]: homes }, null, 2)}\n`);
   const marker = posix.join(root, dirs.state, fileNames.nodeState);

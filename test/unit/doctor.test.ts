@@ -12,7 +12,6 @@ import {
   checkInstructionFiles,
   checkLocalFile,
   checkNodeBlocks,
-  checkPermissionMode,
   checkProjects,
   checkProjectUrls,
   checkProxies,
@@ -99,10 +98,10 @@ const initialized = async (setup: Setup = {}): Promise<FakeDeps> => {
 const levelOf = (results: readonly CheckResult[], id: string): string | undefined =>
   results.find((result) => result.id === id)?.level;
 
-/** Write both config files of the root and register the root with the node id of the config. */
+/** Write both config files of the root and register it as the own root of the user, with the node id of the config. */
 const writeConfig = (deps: FakeDeps, config: FactoryConfig): void => {
   seedConfig(deps, HOME, config);
-  registerRoot(deps, HOME, config.core.node.id);
+  registerRoot(deps, HOME, config.core.node.id, [], 'own');
 };
 
 const doctor = async (deps: FakeDeps) => {
@@ -392,152 +391,114 @@ describe('doctor: secrets', () => {
   });
 });
 
-describe('doctor: permission mode', () => {
-  it('is ok when the home has no settings folder', async () => {
+describe('doctor: root checks and the settings of the session folders', () => {
+  const BYPASS = '{"permissions":{"defaultMode":"bypassPermissions"}}';
+  const ROOT_CHECKS = ['root-repo', 'root-files', 'project-paths', 'permission-mode', 'delegations'];
+
+  const checksOf = async (deps: FakeDeps): Promise<readonly CheckResult[]> => (await doctor(deps)).json['checks'] as CheckResult[];
+
+  const textOfCheck = (results: readonly CheckResult[], id: string): string => results.find((result) => result.id === id)?.text ?? '';
+
+  /** The config with a proxy that the session uses. The root stays the own root that init registered. */
+  const useProxy = (deps: FakeDeps): void => {
+    const sample = sampleConfig();
+    seedConfig(deps, HOME, {
+      ...sample,
+      core: {
+        ...sample.core,
+        session: { ...sample.core.session, proxy: 'local' },
+        proxies: [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: 'stop' }],
+      },
+    });
+  };
+
+  it('has the five root checks, all ok, on a fresh node with no settings folder', async () => {
     const deps = await initialized();
-    expect((await checkPermissionMode(deps, HOME)).level).toBe('ok');
+    const results = await checksOf(deps);
+    for (const id of ROOT_CHECKS) expect(levelOf(results, id)).toBe('ok');
   });
 
   it.each([
-    ['bypassPermissions as the default mode', '{"permissions":{"defaultMode":"bypassPermissions"}}'],
+    ['bypassPermissions as the default mode', BYPASS],
     ['the skip flag in a command', '{"env":{"X":"--dangerously-skip-permissions"}}'],
     ['the skip prompt setting', '{"skipDangerousModePermissionPrompt": true}'],
   ])('fails for %s in settings.local.json', async (_name, json) => {
     const deps = await initialized();
     deps.seed(`${HOME}/.claude/settings.local.json`, json);
-    const result = await checkPermissionMode(deps, HOME);
-    expect(result.level).toBe('fail');
-    expect(result.text).toContain('.claude/settings.local.json');
+    const output = await doctor(deps);
+    const results = output.json['checks'] as CheckResult[];
+    expect(levelOf(results, 'permission-mode')).toBe('fail');
+    expect(textOfCheck(results, 'permission-mode')).toContain('.claude/settings.local.json');
+    expect(output.failed).toBe(true);
   });
 
   it('checks settings.json too, and ignores other files and safe settings', async () => {
     const deps = await initialized();
     deps.seed(`${HOME}/.claude/settings.json`, '{"permissions":{"disableBypassPermissionsMode":"disable"}}');
     deps.seed(`${HOME}/.claude/notes.txt`, 'bypassPermissions');
-    expect((await checkPermissionMode(deps, HOME)).level).toBe('ok');
-    deps.seed(`${HOME}/.claude/settings.json`, '{"permissions":{"defaultMode":"bypassPermissions"}}');
-    expect((await checkPermissionMode(deps, HOME)).text).toContain('.claude/settings.json');
+    expect(levelOf(await checksOf(deps), 'permission-mode')).toBe('ok');
+    deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
+    expect(textOfCheck(await checksOf(deps), 'permission-mode')).toContain('.claude/settings.json');
   });
 
-  it('does not read the user settings folder of Claude Code when the home is the user HOME', async () => {
-    const deps = makeDeps({ env: { HOME } });
-    deps.seed(`${HOME}/.claude/settings.json`, '{"permissions":{"defaultMode":"bypassPermissions"}}');
-    const result = await checkPermissionMode(deps, HOME);
-    expect(result.level).toBe('warn');
-    expect(result.text).toContain('not checked');
-  });
-
-  describe('the user settings folder of Claude Code, written in another way', () => {
-    const USER_SETTINGS = '/users/example/.claude';
-    const BYPASS = '{"permissions":{"defaultMode":"bypassPermissions"}}';
-
-    /** Deps that count every list and read inside a settings folder. */
-    const watched = (deps: FakeDeps) => {
-      const touched: string[] = [];
-      const guarded = {
-        ...deps,
-        fs: {
-          ...deps.fs,
-          list: async (path: string) => {
-            touched.push(path);
-            return deps.fs.list(path);
-          },
-          readText: async (path: string) => {
-            touched.push(path);
-            return deps.fs.readText(path);
-          },
-        },
-      };
-      return { guarded, touched };
-    };
-
-    it('skips a settings folder that is a link to the user settings folder', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/example' }, links: { [`${HOME}/.claude`]: USER_SETTINGS } });
-      deps.seedDir(`${HOME}/.claude`);
-      deps.seed(`${USER_SETTINGS}/settings.json`, BYPASS);
-      const { guarded, touched } = watched(deps);
-      const result = await checkPermissionMode(guarded, HOME);
-      expect(result.level).toBe('warn');
-      expect(result.text).toContain('not checked');
-      expect(touched).toEqual([]);
-    });
-
-    it('skips a settings folder in other letter case on macOS', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/example' }, os: 'darwin' });
-      deps.seed(`/Users/Example/.claude/settings.json`, BYPASS);
-      const { guarded, touched } = watched(deps);
-      const result = await checkPermissionMode(guarded, '/Users/Example');
-      expect(result.level).toBe('warn');
-      expect(result.text).toContain('not checked');
-      expect(touched).toEqual([]);
-    });
-
-    it('compares the letters exactly on the other platforms', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/example' }, os: 'linux' });
-      deps.seed(`/Users/Example/.claude/settings.json`, BYPASS);
-      expect((await checkPermissionMode(deps, '/Users/Example')).level).toBe('fail');
-    });
-
-    it('skips a settings folder below the user settings folder', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/example' } });
-      deps.seed(`${USER_SETTINGS}/node/.claude/settings.json`, BYPASS);
-      const result = await checkPermissionMode(deps, `${USER_SETTINGS}/node`);
-      expect(result.level).toBe('warn');
-      expect(result.text).toContain('not checked');
-    });
-
-    it('warns and reads nothing when it cannot resolve the links of the paths', async () => {
-      const deps = makeDeps({ env: { HOME: '/users/example' } });
-      deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
-      const denied = { ...deps, fs: { ...deps.fs, realpath: async () => failure('cannot resolve /: EACCES') } };
-      const { guarded, touched } = watched(denied as FakeDeps);
-      const result = await checkPermissionMode(guarded, HOME);
-      expect(result.level).toBe('warn');
-      expect(result.text).toContain('EACCES');
-      expect(touched).toEqual([]);
-    });
-  });
-
-  it('warns when it cannot tell whether the settings folder exists', async () => {
+  it('checks the coordinator folder and names the file', async () => {
     const deps = await initialized();
-    const denied = { ...deps, fs: { ...deps.fs, stat: async () => failure('cannot stat /w/node/.claude: EACCES') } };
-    const result = await checkPermissionMode(denied, HOME);
-    expect(result.level).toBe('warn');
-    expect(result.text).toContain('not checked');
-    expect(result.text).toContain('EACCES');
+    deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, BYPASS);
+    const results = await checksOf(deps);
+    expect(levelOf(results, 'permission-mode')).toBe('fail');
+    expect(textOfCheck(results, 'permission-mode')).toContain('coordinator/.claude/settings.local.json');
   });
 
-  it('warns when the settings folder cannot be listed', async () => {
-    const deps = await initialized();
-    deps.seedDir(`${HOME}/.claude`);
-    const denied = { ...deps, fs: { ...deps.fs, list: async () => failure('cannot list /w/node/.claude: EACCES') } };
-    const result = await checkPermissionMode(denied, HOME);
-    expect(result.level).toBe('warn');
-    expect(result.text).toContain('not checked');
-    expect(result.text).toContain('EACCES');
+  it('checks a Claude settings path that the root repo tracks, at any depth (TP-168)', async () => {
+    const tracked = 'tools/deep/.claude/settings.json';
+    const deps = await initialized({ git: { tracked: { [HOME]: [tracked] } } });
+    deps.seed(`${HOME}/${tracked}`, BYPASS);
+    const results = await checksOf(deps);
+    expect(levelOf(results, 'permission-mode')).toBe('fail');
+    expect(textOfCheck(results, 'permission-mode')).toContain(tracked);
   });
 
-  it('warns and names the settings file that it cannot read', async () => {
-    const deps = await initialized();
-    deps.seed(`${HOME}/.claude/settings.json`, '{}');
-    deps.seed(`${HOME}/.claude/settings.local.json`, '{}');
-    const readText = async (path: string) =>
-      path.endsWith('settings.local.json') ? failure(`cannot read ${path}: EACCES`) : deps.fs.readText(path);
-    const result = await checkPermissionMode({ ...deps, fs: { ...deps.fs, readText } }, HOME);
-    expect(result.level).toBe('warn');
-    expect(result.text).toContain('.claude/settings.local.json');
-    expect(result.text).not.toContain('.claude/settings.json');
+  it('fails when the root repo tracks the local file (TP-20)', async () => {
+    const deps = await initialized({ git: { tracked: { [HOME]: ['factory.local.yaml', 'factory.yaml'] } } });
+    const output = await doctor(deps);
+    const results = output.json['checks'] as CheckResult[];
+    expect(levelOf(results, 'root-repo')).toBe('fail');
+    expect(textOfCheck(results, 'root-repo')).toContain('git rm --cached');
+    expect(output.failed).toBe(true);
   });
 
-  it('fails for a settings file that skips the checks, even when another file cannot be read', async () => {
+  it('fails when the tracked files of a received root have no setup acceptance', async () => {
+    const deps = await initialized({ git: { tracked: { [HOME]: ['scripts/run.sh', 'factory.yaml'] } } });
+    registerRoot(deps, HOME, 'demo', [], 'received');
+    deps.seed(`${HOME}/scripts/run.sh`, 'echo hi\n');
+    const results = await checksOf(deps);
+    expect(levelOf(results, 'root-repo')).toBe('fail');
+    expect(textOfCheck(results, 'root-repo')).toContain('factory init');
+    expect(textOfCheck(results, 'root-repo')).toContain('scripts/run.sh');
+  });
+
+  it('prints the mode of each approval point on the delegations line', async () => {
+    const results = await checksOf(await initialized());
+    expect(levelOf(results, 'delegations')).toBe('ok');
+    expect(textOfCheck(results, 'delegations')).toContain('merge: owner');
+    expect(textOfCheck(results, 'delegations')).toContain('release: owner');
+  });
+
+  it('sends no proxy health request when a root check fails, and the proxy line gives the reason', async () => {
     const deps = await initialized();
-    deps.seed(`${HOME}/.claude/settings.json`, '{"permissions":{"defaultMode":"bypassPermissions"}}');
-    deps.seed(`${HOME}/.claude/settings.local.json`, '{}');
-    const readText = async (path: string) =>
-      path.endsWith('settings.local.json') ? failure(`cannot read ${path}: EACCES`) : deps.fs.readText(path);
-    const result = await checkPermissionMode({ ...deps, fs: { ...deps.fs, readText } }, HOME);
-    expect(result.level).toBe('fail');
-    expect(result.text).toContain('.claude/settings.json');
+    useProxy(deps);
+    deps.seed(`${HOME}/.claude/settings.local.json`, BYPASS);
+    const results = await checksOf(deps);
+    expect(deps.fetched).toEqual([]);
+    expect(levelOf(results, 'proxy')).toBe('warn');
+    expect(textOfCheck(results, 'proxy')).toContain('root check failed');
+  });
+
+  it('still sends the proxy health request when the root checks pass', async () => {
+    const deps = await initialized();
+    useProxy(deps);
+    await checksOf(deps);
+    expect(deps.fetched).toEqual(['http://127.0.0.1:8787/v1/health']);
   });
 });
 
@@ -749,6 +710,17 @@ describe('doctor: proxies', () => {
         expect(levelOf(checks, 'root')).toBe('warn');
         expect(levelOf(checks, 'proxy:local')).toBe('ok');
         expect(output.failed).toBe(false);
+      });
+
+      it('fails the root check and sends no request for a received home that is not the top of a work tree', async () => {
+        const deps = await inWorkTree(HOME);
+        registerRoot(deps, HOME, 'demo', [], 'received');
+        const output = await run(deps, undefined);
+        const checks = output.json['checks'] as CheckResult[];
+        expect(levelOf(checks, 'root-repo')).toBe('fail');
+        expect(levelOf(checks, 'proxy')).toBe('warn');
+        expect(deps.fetched).toEqual([]);
+        expect(output.failed).toBe(true);
       });
 
       it('reports that no proxy is in use when none is, even for a home that is not the top of a work tree', async () => {
@@ -1424,7 +1396,11 @@ describe('doctor: the command', () => {
       'tracker',
       'children',
       'secrets',
+      'root-repo',
+      'root-files',
+      'project-paths',
       'permission-mode',
+      'delegations',
       'instruction-files',
       'proxy-env',
       'proxy',
@@ -1433,7 +1409,7 @@ describe('doctor: the command', () => {
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('21 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('25 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1456,7 +1432,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(21);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(25);
   });
 
   it('finds the node by walking up from the current folder', async () => {

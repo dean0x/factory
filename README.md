@@ -24,7 +24,7 @@ You need:
 | --- | --- |
 | `factory init` | Create a node. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`. It makes the first commit in the state repository and the first commit in the repo of the node folder. |
 | `factory start` | Start the tmux session of the node, with the windows `view` and `bench`, or attach to it. |
-| `factory doctor` | Run 21 checks on the config, the state, the node folder, the managed blocks, the text outside the managed blocks, the secrets, the instruction files of agents, the proxy settings, the tools and the projects. |
+| `factory doctor` | Run 25 checks on the config, the state, the node folder, the managed blocks, the text outside the managed blocks, the secrets, the files that the root repo tracks, the ignore rules of git, the project paths, the settings files of the session folders, the approval points with the mode `delegated`, the instruction files of agents, the proxy settings, the tools and the projects. |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
@@ -194,12 +194,13 @@ The hash lets `factory` find out that a person edited a block. Text outside the 
 
 ## Safety defaults
 
-- The permission mode is `auto`. `doctor` fails when a settings file in the node folder skips the permission prompts.
+- The permission mode is `auto`. `doctor` fails, and `start` stops with exit code 4, when a Claude settings file skips the permission prompts or sets or clears `FACTORY_SESSION`. The checked files are the settings files in the `coordinator/` folder, in each project folder and at every path that the root repo tracks. `doctor` and `start` warn about a rule that allows a whole tool (for example `Bash` or `*`) and about a setting that approves project MCP servers. A health request goes to a proxy only when no root check fails.
+- The root repo must not track `factory.local.yaml`, the state folder or the `coordinator/` folder, and git must ignore the local file and the state folder. `doctor` fails, and `start` stops with exit code 4, when one of these rules is broken, or when a tracked text file holds a value that looks like a token. A received factory also needs the setup acceptance of all its tracked files: `start` stops with exit code 4 and names `factory init` in a terminal window.
 - An agent loads instruction files from its working folder and from every folder above it. `doctor` warns, under the check `instruction-files`, when the node folder or a folder above it (at most 64 levels) holds `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.claude/CLAUDE.md`, `.claude/rules`, `.claude/settings.json`, `.claude/settings.local.json`, `.github/copilot-instructions.md` or `.cursor/rules`. `start` and `init` print the same warning before they act. The check only tests that a path exists. A folder that it cannot read gives a warning too. It never looks inside `~/.claude`, so it cannot see the instructions of the user level.
 - A proxy comes only from the config. `doctor` prints `Config: <path>` first. It checks that the proxy answers when the config passes the root rule (see "Find the home"), also when it comes from a parent folder, from `FACTORY_HOME` or from the home index. A `factory.yaml` that does not pass the rule, for example one in a clone of a repo, stops `doctor` with exit code 4 before any request. A stray `ANTHROPIC_BASE_URL` in the shell is a warning.
 - The proxy host receives the API traffic of the coordinator. Use only a proxy that you control.
 - By default, merges and releases wait for the owner.
-- `doctor` fails when a value in `factory.yaml` looks like a token. It never prints the value.
+- `doctor` fails when a value in `factory.yaml` or a tracked text file of the root looks like a token. It names the files and never prints the value.
 
 ## Exit codes
 

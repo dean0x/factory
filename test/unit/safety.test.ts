@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { checkProxyHealth, healthUrl, parseProxyUrl, proxyLabel } from '../../src/safety/proxy.js';
-import { findTokenPaths, looksLikeToken } from '../../src/safety/secrets.js';
+import { findTokenPaths, looksLikeToken, textHasToken } from '../../src/safety/secrets.js';
 import { FAKE_GITHUB_OAUTH_TOKEN, FAKE_GITHUB_TOKEN, FAKE_GOOGLE_API_KEY } from '../helpers/fake-secret.js';
 
 describe('looksLikeToken', () => {
@@ -41,6 +41,30 @@ describe('looksLikeToken', () => {
     ['an empty string', ''],
   ])('is false for %s', (_name, text) => {
     expect(looksLikeToken(text)).toBe(false);
+  });
+});
+
+describe('textHasToken (TP-45)', () => {
+  it.each([
+    ['a GitHub token in a line', `token: ${FAKE_GITHUB_TOKEN}\n`],
+    ['an Anthropic key in a sentence', 'Use sk-ant-api03-abcdefghijklmnop for the proxy.'],
+    ['a 40 character hex run', 'key = da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+    ['a base64 secret with a plus sign', 'secret: wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY12'],
+    ['a base64url run', 'value: Zm9vYmFyQmF6X3F1eC1URVNUMDEyMzQ1Njc4OWFiY2RlZg'],
+    ['a token on the last line of many', `${'a line of text\n'.repeat(200)}${FAKE_GOOGLE_API_KEY}`],
+  ])('is true for %s', (_name, text) => {
+    expect(textHasToken(text)).toBe(true);
+  });
+
+  it.each([
+    ['a long path with upper case, lower case and digits', 'See /var/folders/fn/xhrkn4ys4d37t9fd8kfmd4rw0000gn/T/Work/payments-team-factory-2 for it.'],
+    ['a long URL', 'https://github.com/Payments-Team-Org/payments-team-factory-service-2'],
+    ['plain prose', 'The quick brown fox jumps over the lazy dog and keeps running.'],
+    ['a short hex string', 'commit da39a3ee'],
+    ['a prefix alone', 'The key starts with sk-ant- and goes on.'],
+    ['an empty text', ''],
+  ])('is false for %s', (_name, text) => {
+    expect(textHasToken(text)).toBe(false);
   });
 });
 

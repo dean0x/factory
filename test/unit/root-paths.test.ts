@@ -5,6 +5,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { CliError } from '../../src/cli/errors.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import {
+  ignoreProbesOf,
+  isClaudeSettingsPath,
+  isInstructionPath,
   LINK_REMEDY,
   requireNoLinks,
   requireNoRootLinks,
@@ -12,6 +15,7 @@ import {
   rootGuardPaths,
   trackedProblems,
   trackedSetOf,
+  trackedUnder,
 } from '../../src/core/root-paths.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
@@ -264,6 +268,85 @@ describe('the tracked paths that stop init (TP-86, TP-122)', () => {
       ['factory.local.yaml', 'local-file'],
       ['.factory/n', 'state-folder'],
     ]);
+  });
+});
+
+describe('the tracked paths that a session can load (TP-155, TP-168)', () => {
+  it.each([
+    'CLAUDE.md',
+    'CLAUDE.local.md',
+    'AGENTS.md',
+    'GEMINI.md',
+    '.claude/CLAUDE.md',
+    '.claude/rules/style.md',
+    '.claude/rules/deep/more.md',
+    '.github/copilot-instructions.md',
+    '.cursor/rules/a.mdc',
+    '.claude/settings.json',
+    'docs/CLAUDE.md',
+    'tools/deep/.claude/settings.local.json',
+    'Claude.md',
+    'sub/agents.md',
+  ])('takes %s as an instruction file or a settings file', (path) => {
+    expect(isInstructionPath(path)).toBe(true);
+  });
+
+  it.each(['README.md', 'setup/coordinator.md', 'notes/CLAUDE.md.txt', 'claude-notes.md', '.claude-plugin/plugin.json', 'factory.yaml'])(
+    'takes %s as neither',
+    (path) => {
+      expect(isInstructionPath(path)).toBe(false);
+    },
+  );
+
+  it.each([
+    '.claude/settings.json',
+    '.claude/settings.local.json',
+    'web/.claude/settings.json',
+    'a/b/c/.claude/settings.team.json',
+    '.CLAUDE/Settings.JSON',
+  ])('takes %s as a Claude settings path at any depth', (path) => {
+    expect(isClaudeSettingsPath(path)).toBe(true);
+  });
+
+  it.each(['.claude/CLAUDE.md', 'settings.json', '.claude/settings.txt', '.claude/notes/settings.json', 'claude/settings.json'])(
+    'does not take %s as a Claude settings path',
+    (path) => {
+      expect(isClaudeSettingsPath(path)).toBe(false);
+    },
+  );
+});
+
+describe('the tracked paths under one folder (TP-20)', () => {
+  const tracked = ['factory.yaml', 'web/a.ts', 'Web/b.ts', 'work-copies/x', 'WORK-COPIES/y', 'webapp/c.ts', 'a/web/d.ts'];
+
+  it('gives the paths whose first part is the folder, in any letter case, in the order of the list', () => {
+    expect(trackedUnder(tracked, 'web')).toEqual(['web/a.ts', 'Web/b.ts']);
+    expect(trackedUnder(tracked, 'work-copies')).toEqual(['work-copies/x', 'WORK-COPIES/y']);
+  });
+
+  it('gives nothing for a folder that nothing tracks, and never takes a path with the folder name in the middle', () => {
+    expect(trackedUnder(tracked, 'api')).toEqual([]);
+    expect(trackedUnder(['a/web/d.ts'], 'web')).toEqual([]);
+  });
+
+  it('does not take a file at the top for a folder of the same name', () => {
+    expect(trackedUnder(['web'], 'web')).toEqual([]);
+  });
+});
+
+describe('the paths that the ignore check probes (TP-61)', () => {
+  it('names the local file, the node file of the state folder, a coordinator file, a work copies path and a file in each clone', () => {
+    expect(ignoreProbesOf(['web', 'api'])).toEqual({
+      local: 'factory.local.yaml',
+      state: '.factory/node.json',
+      coordinator: 'coordinator/CLAUDE.md',
+      workCopies: 'work-copies/probe',
+      clones: ['web/CLAUDE.md', 'api/CLAUDE.md'],
+    });
+  });
+
+  it('names no clone for a root without projects', () => {
+    expect(ignoreProbesOf([]).clones).toEqual([]);
   });
 });
 

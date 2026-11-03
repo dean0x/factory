@@ -166,6 +166,64 @@ export const shareListLabel = 'share list';
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
 
 /**
+ * The keys of a Claude Code settings file that the checks of the root read. The settings page
+ * (https://code.claude.com/docs/en/settings) and its reference (https://code.claude.com/docs/en/settings-reference) name
+ * `permissions` (with `allow` and `defaultMode`) and `env`. The MCP page (https://code.claude.com/docs/en/mcp) names the
+ * two settings that approve the servers of a project: `enableAllProjectMcpServers` (all of them) and
+ * `enabledMcpjsonServers` (a list).
+ */
+export const claudeSettingKeys = {
+  permissions: 'permissions',
+  allow: 'allow',
+  defaultMode: 'defaultMode',
+  env: 'env',
+  approveAllMcp: 'enableAllProjectMcpServers',
+  approveMcpList: 'enabledMcpjsonServers',
+} as const;
+
+/** The permission mode that accepts file edits with no prompt. A settings file with it gives a warning, not a stop. */
+export const acceptEditsMode = 'acceptEdits';
+
+/** One item of the permission-skip list: a setting at a path with a value, or a text that stands anywhere in the file. */
+export type PermissionSkip =
+  | {
+      readonly kind: 'setting';
+      readonly label: string;
+      readonly path: readonly string[];
+      readonly value: string | boolean;
+    }
+  | { readonly kind: 'text'; readonly label: string; readonly text: string };
+
+/**
+ * The permission-skip list (design 4.4, AC-21): the settings of Claude Code that skip permission prompts. A checked
+ * settings file with one of them makes `doctor` fail and `start` exit 4, on every root and also after a setup acceptance.
+ * Only a setting that skips permission prompts is on the list: an allow rule is not (D-15 B), and `skipAutoPermissionPrompt`
+ * is not, because it hides a notice and skips no prompt.
+ *
+ * Sources: the permissions page (https://code.claude.com/docs/en/permissions) says that the mode `bypassPermissions` skips
+ * the permission prompts and that the flag `--dangerously-skip-permissions` starts it. The settings reference
+ * (https://code.claude.com/docs/en/settings-reference) names `permissions.defaultMode` (the default mode) and
+ * `skipDangerousModePermissionPrompt` (it skips the dialog before that mode). The setting `dangerouslySkipPermissions` is
+ * not in the public settings reference; an earlier check of factory read it, so it stays on the list.
+ */
+export const permissionSkipList: readonly PermissionSkip[] = [
+  {
+    kind: 'setting',
+    label: 'permissions.defaultMode set to bypassPermissions',
+    path: [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode],
+    value: 'bypassPermissions',
+  },
+  { kind: 'text', label: 'the text dangerously-skip-permissions', text: 'dangerously-skip-permissions' },
+  {
+    kind: 'setting',
+    label: 'skipDangerousModePermissionPrompt set to true',
+    path: ['skipDangerousModePermissionPrompt'],
+    value: true,
+  },
+  { kind: 'setting', label: 'dangerouslySkipPermissions set to true', path: ['dangerouslySkipPermissions'], value: true },
+];
+
+/**
  * The paths of the instruction files of agents, from the folder that holds them (design 4.3, the instruction-file
  * rule). `doctor`, `start` and `init` look for them in the root and in every folder above it.
  *
@@ -443,6 +501,14 @@ export const checkIds = {
   children: 'children',
   secrets: 'secrets',
   permissionMode: 'permission-mode',
+  /** What the root repo tracks and what git ignores. */
+  rootRepo: 'root-repo',
+  /** The tracked text files of the root: tokens, `file` URLs and user folder paths. */
+  rootFiles: 'root-files',
+  /** The folder of each project: it resolves inside the root and not into a folder that the root keeps. */
+  projectPaths: 'project-paths',
+  /** The mode of each approval point and the active delegations. */
+  delegations: 'delegations',
   instructionFiles: 'instruction-files',
   proxyEnv: 'proxy-env',
   proxy: 'proxy',

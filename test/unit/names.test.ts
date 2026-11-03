@@ -14,6 +14,7 @@ import {
   keys,
   marker,
   nodeCommands,
+  permissionSkipList,
   program,
   reservedRootNames,
   roles,
@@ -698,9 +699,44 @@ describe('the instruction files (TP-32, TP-34)', () => {
     // below the user home and the Claude folder needs both words in one module. Another module with both is a new
     // reader of that folder, and this test makes a person look at it first.
     expect(withText(/\benv\.userHome\b/).filter((path) => withText(/\bdirs\.claude\b/).includes(path))).toEqual([
-      'commands/doctor.ts',
+      'commands/root-content.ts',
       'core/instruction-files.ts',
       'core/private-file.ts',
     ]);
+  });
+});
+
+describe('the root checks (TP-44, TP-179, TP-180)', () => {
+  const textOf = (path: string): string => stripComments(readFileSync(path, 'utf8'));
+  const withText = (pattern: RegExp): string[] =>
+    allSourceFiles(SRC)
+      .filter((path) => pattern.test(textOf(path)))
+      .map((path) => relative(SRC, path))
+      .sort();
+
+  it('has one check id for each root check, and no two ids are equal', () => {
+    expect([checkIds.rootRepo, checkIds.rootFiles, checkIds.projectPaths, checkIds.permissionMode, checkIds.delegations]).toEqual([
+      'root-repo',
+      'root-files',
+      'project-paths',
+      'permission-mode',
+      'delegations',
+    ]);
+    expect(new Set(Object.values(checkIds)).size).toBe(Object.values(checkIds).length);
+  });
+
+  it('holds the permission-skip list in names.ts: four items with their own labels, and the first is the bypass mode', () => {
+    expect(permissionSkipList).toHaveLength(4);
+    expect(new Set(permissionSkipList.map((item) => item.label)).size).toBe(permissionSkipList.length);
+    expect(permissionSkipList[0]).toMatchObject({ kind: 'setting', path: ['permissions', 'defaultMode'], value: 'bypassPermissions' });
+  });
+
+  it('keeps the words of the skip list in names.ts: no other source file holds one', () => {
+    const words = /bypassPermissions|dangerously-skip-permissions|skipDangerousModePermissionPrompt|dangerouslySkipPermissions/;
+    expect(withText(words).filter((path) => path !== 'names.ts')).toEqual([]);
+  });
+
+  it('keeps the names of the settings that approve project MCP servers in names.ts', () => {
+    expect(withText(/enableAllProjectMcpServers|enabledMcpjsonServers/).filter((path) => path !== 'names.ts')).toEqual([]);
   });
 });

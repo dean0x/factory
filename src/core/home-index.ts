@@ -173,6 +173,17 @@ export const entryOfHome = async (deps: Deps, entries: readonly HomeEntry[], hom
   return entries.find((entry) => wanted.includes(comparable(deps, entry[homeIndex.keys.home]))) ?? null;
 };
 
+/**
+ * The origin of a folder, read from the index (see `originOf`). An index that has no place, that cannot be read or that
+ * has no entry for the folder gives `received`: a check that depends on the origin takes the safe rule.
+ */
+export const originOfHome = async (deps: Deps, home: string): Promise<Origin> => {
+  const path = await indexPathOf(deps);
+  if (!path.ok || path.value === null) return homeIndex.origins.received;
+  const entries = await readHomeIndex(deps, path.value);
+  return entries.ok ? originOf(await entryOfHome(deps, entries.value, home)) : homeIndex.origins.received;
+};
+
 /** The folder of the first entry that has a project holding this folder, or null. The folder is a real path. */
 export const homeHoldingFolder = (entries: readonly HomeEntry[], folder: string): string | null =>
   entries.find((entry) => entry[homeIndex.keys.projects].some((project) => isSameOrInside(project, folder)))?.[
