@@ -15,6 +15,7 @@ import { layer2Blocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps, exited, withFailingWrites, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { oldWordsIn } from '../helpers/old-words.js';
 import { captureSink } from '../helpers/sink.js';
 
 const HOME = '/w/node';
@@ -960,20 +961,20 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(await checkHomeHoldsNoRepo(deps, WS)).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 
-  it('names a staging folder that a stopped init left, says it can be removed by hand, and removes nothing', async () => {
+  it('names a temp folder that a stopped init left, says it can be removed by hand, and removes nothing', async () => {
     const deps = inWorkspace({}, { repos: { '/ws/.factory.tmp-4242': {} } });
     const before = snapshot(deps);
     const result = await checkHomeHoldsNoRepo(deps, WS);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     const message = messageOf(result);
-    expect(message).toContain('/ws/.factory.tmp-4242');
-    expect(message).toContain('left by a stopped init');
+    expect(message).toContain('holds the temp folder /ws/.factory.tmp-4242, left by a stopped init');
+    expect(oldWordsIn(message)).toEqual([]);
     expect(message).toContain('You can remove it by hand');
     expect(message).not.toContain('git repo');
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('names a real repo before a staging folder when the home holds both', async () => {
+  it('names a real repo before a temp folder when the home holds both', async () => {
     const deps = inWorkspace({}, { repos: { '/ws/.factory.tmp-1': {}, '/ws/web': {} } });
     const message = messageOf(await checkHomeHoldsNoRepo(deps, WS));
     expect(message).toContain('holds the git repo web one level down');
@@ -981,7 +982,7 @@ describe('init: a workspace folder that holds several repos', () => {
   });
 
   it.each([['.factory.tmp-'], ['.factory.tmp-4a'], ['.factory.tmp']])(
-    'treats %s as a repo, because it is no staging folder',
+    'treats %s as a repo, because it is no temp folder',
     async (name) => {
       const deps = inWorkspace({}, { repos: { [`/ws/${name}`]: {} } });
       expect(messageOf(await checkHomeHoldsNoRepo(deps, WS))).toContain(`holds the git repo ${name} one level down`);
@@ -1613,13 +1614,13 @@ describe('init: the checks before a clone', () => {
     expect(changed).toBe(false);
   });
 
-  it('refuses a home that holds a staging folder of a stopped init, names it and runs no clone', async () => {
+  it('refuses a home that holds a temp folder of a stopped init, names it and runs no clone', async () => {
     const staging = `${HOME}/.factory.tmp-4242`;
     const { result, log, changed } = await initWithUrl({}, { repos: { [staging]: {} } }, (deps) =>
       deps.seedDir(`${staging}/.git`),
     );
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    expect(messageOf(result)).toContain(`holds the staging folder ${staging}, left by a stopped init`);
+    expect(messageOf(result)).toContain(`holds the temp folder ${staging}, left by a stopped init`);
     expect(log.clones()).toEqual([]);
     expect(changed).toBe(false);
   });

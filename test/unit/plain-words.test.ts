@@ -11,6 +11,7 @@ import {
   scanDoc,
   type DocHit,
 } from '../helpers/plain-words.js';
+import { OLD_WORD_LIST as SRC_OLD_WORD_LIST } from '../helpers/old-words.js';
 
 const DOCS = join(__dirname, '..', '..', 'docs');
 const readDoc = (name: string): string => readFileSync(join(DOCS, name), 'utf8');
@@ -70,6 +71,10 @@ describe('the plain-words table', () => {
 describe('the docs scan: what it finds', () => {
   it('has the eight old words', () => {
     expect([...OLD_WORD_LIST]).toEqual(['lane', 'pack', 'brief', 'cell', 'andon', 'staging', 'inspect', 'ship']);
+  });
+
+  it('has the same eight old words as the scan of the source, which the exit check also holds', () => {
+    expect([...OLD_WORD_LIST]).toEqual([...SRC_OLD_WORD_LIST]);
   });
 
   it.each(OLD_WORD_LIST)('finds the old word "%s", also in a capital letter, a plural and a past form', (word) => {

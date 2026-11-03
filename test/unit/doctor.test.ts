@@ -35,6 +35,7 @@ import { inspectState } from '../../src/state/load.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { oldWordsIn } from '../helpers/old-words.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig } from '../helpers/sample-config.js';
@@ -812,6 +813,20 @@ describe('doctor: the home', () => {
     const result = await homeCheck(holding);
     expect(result.level).toBe('fail');
     expect(result.text).toContain('holds the git repo web one level down');
+  });
+
+  it('fails with the words "temp folder" when a stopped init left a folder in the home', async () => {
+    const made = await initialized();
+    const leftover = `${HOME}/.factory.tmp-4242`;
+    const holding = makeDeps({ git: { repos: { [`${HOME}/.factory`]: {}, [leftover]: {} } } });
+    for (const dir of made.dirs) holding.seedDir(dir);
+    for (const [path, text] of made.files) holding.seed(path, text);
+    holding.seedDir(`${HOME}/.factory/.git`);
+    holding.seedDir(`${leftover}/.git`);
+    const result = await homeCheck(holding);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain(`holds the temp folder ${leftover}, left by a stopped init`);
+    expect(oldWordsIn(result.text)).toEqual([]);
   });
 
   it('fails when the home is inside another node home', async () => {

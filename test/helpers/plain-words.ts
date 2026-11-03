@@ -227,8 +227,8 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
 ];
 
 /**
- * The eight words that D-59 replaced. `test/helpers/old-words.ts` has the list for the scan of `src`: it holds only three
- * of these words until Step 8 of the code change adds the other five.
+ * The eight words that D-59 replaced. `test/helpers/old-words.ts` holds the same list for the scan of `src`, and a unit
+ * test keeps the two lists equal.
  */
 export const OLD_WORD_LIST = ['lane', 'pack', 'brief', 'cell', 'andon', 'staging', 'inspect', 'ship'] as const;
 

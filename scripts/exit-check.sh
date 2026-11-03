@@ -157,9 +157,13 @@ scan "a session id" '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 scan "a date" '20[0-9]{2}-[0-9]{2}-[0-9]{2}'
 # The triage words of one workflow tool. Their case counts: the lower-case words stay allowed.
 scan "a workflow triage word" '(^|[^[:alnum:]_])(FIX_NOW|ESCALATED|CHANGES REQUESTED)([^[:alnum:]_]|$)' exact
-# The words that v2 replaced, as in OLD_WORDS of test/unit/names.test.ts: whole words, also in the plural or in the past tense.
-old_words='(^|[^[:alnum:]_])(lane|pack|brief)(s|ed)?([^[:alnum:]_]|$)'
-scan "an old word (lane, pack or brief)" "$old_words"
+# The eight words that were replaced, as whole words, also in the plural, the past tense or an -ing form.
+# The list and the endings are the same as in test/helpers/old-words.ts, and a unit test keeps them equal.
+old_word_list="lane pack brief cell andon staging inspect ship"
+old_endings="s|es|ed|ing|ped|ping"
+old_alternatives="$(printf '%s' "$old_word_list" | tr ' ' '|')"
+old_words="(^|[^[:alnum:]_])(${old_alternatives})(${old_endings})?([^[:alnum:]_]|\$)"
+scan "an old word" "$old_words"
 printf 'no generated file and no help text holds a name from the deny list or an old word\n'
 
 # The npm page shows the package.json of the package. The installed copy holds no old word.
@@ -168,7 +172,7 @@ package_json="$npm_config_prefix/lib/node_modules/@dean0x/factory/package.json"
 code=0
 grep -Eiq -e "$old_words" "$package_json" || code=$?
 if [ "$code" -eq 0 ]; then
-  fail "the package.json of the package holds an old word (lane, pack or brief)"
+  fail "the package.json of the package holds an old word"
 elif [ "$code" -ne 1 ]; then
   fail "the search of the package.json of the package failed"
 fi

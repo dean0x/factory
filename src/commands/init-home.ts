@@ -162,10 +162,10 @@ export const checkHomeHoldsNoRepo = async (deps: Deps, home: string): Promise<Cl
   );
   const repo = found.find((path) => !isStagingDirName(basename(path)));
   if (repo === undefined) {
-    const staging = found[0];
-    if (staging === undefined) return ok(undefined);
+    const leftover = found[0];
+    if (leftover === undefined) return ok(undefined);
     return safetyRefusal(
-      `the ${roles.node} home ${home} holds the staging folder ${staging}, left by a stopped ${commands.init}. ` +
+      `the ${roles.node} home ${home} holds the temp folder ${leftover}, left by a stopped ${commands.init}. ` +
         'You can remove it by hand.',
     );
   }
