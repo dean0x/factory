@@ -3,16 +3,19 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   address,
+  checkIds,
   claudeSettings,
   commands,
   dirs,
   env,
   files,
   flags,
+  instructionFiles,
   keys,
   marker,
   nodeCommands,
   program,
+  reservedRootNames,
   roles,
   schema1,
   schemaIds,
@@ -22,6 +25,7 @@ import {
   tmuxNames,
   values,
 } from '../../src/names.js';
+import { projectPathIssue } from '../../src/core/project-path.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
 import { runInit } from '../../src/commands/init.js';
 import { glossary } from '../../src/glossary.js';
@@ -645,4 +649,58 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
     }
   });
 
+});
+
+describe('the instruction files (TP-32, TP-34)', () => {
+  const textOf = (path: string): string => stripComments(readFileSync(path, 'utf8'));
+  const withText = (pattern: RegExp): string[] =>
+    allSourceFiles(SRC)
+      .filter((path) => pattern.test(textOf(path)))
+      .map((path) => relative(SRC, path))
+      .sort();
+
+  it('has one check id for them', () => {
+    expect(checkIds.instructionFiles).toBe('instruction-files');
+    expect(new Set(Object.values(checkIds)).size).toBe(Object.values(checkIds).length);
+  });
+
+  it('keeps every name of the list that can sit at the root in the reserved names, or starts it with a dot', () => {
+    const reserved = reservedRootNames.map((name) => name.toLowerCase());
+    for (const name of instructionFiles) {
+      const first = name.split('/')[0] ?? '';
+      expect({ name, kept: first.startsWith('.') || reserved.includes(first.toLowerCase()) }).toEqual({ name, kept: true });
+    }
+  });
+
+  it('refuses the first part of each name of the list as the path of a project', () => {
+    for (const name of instructionFiles) {
+      const first = name.split('/')[0] ?? '';
+      expect({ first, issue: projectPathIssue(first) }).not.toEqual({ first, issue: null });
+    }
+  });
+
+  it('holds the list in names.ts: no other source file has the name of a listed file', () => {
+    const others = ['CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md'].map((name) => `'${name}'`);
+    for (const name of others) {
+      expect({ name, files: withText(new RegExp(name.replace('.', '\\.'))).filter((path) => path !== 'names.ts') }).toEqual({
+        name,
+        files: [],
+      });
+    }
+  });
+
+  it('reads nothing under the user Claude folder: no source file takes the home of the user from the OS', () => {
+    expect(withText(/\bhomedir\b|\buserInfo\b/)).toEqual([]);
+  });
+
+  it('builds the path of the user Claude folder in three modules only, and they compare it without a read', () => {
+    // dirs.claude is the only place of the folder name outside names.ts (see the test of the names above), so a path
+    // below the user home and the Claude folder needs both words in one module. Another module with both is a new
+    // reader of that folder, and this test makes a person look at it first.
+    expect(withText(/\benv\.userHome\b/).filter((path) => withText(/\bdirs\.claude\b/).includes(path))).toEqual([
+      'commands/doctor.ts',
+      'core/instruction-files.ts',
+      'core/private-file.ts',
+    ]);
+  });
 });

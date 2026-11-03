@@ -148,6 +148,22 @@ describe('node deps: the terminal', () => {
       if (!result.ok) expect(result.error.message).toBe('no answer was given');
     });
   });
+
+  describe('warn', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('writes one warning line to stderr at once, with a control character in the text made visible', () => {
+      let written = '';
+      vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+        written += String(chunk);
+        return true;
+      });
+      createNodeDeps().warn('a file named\u001b[31m in /x');
+      expect(written).toBe('warning: a file named?[31m in /x\n');
+    });
+  });
 });
 
 describe('node deps: realpath', () => {

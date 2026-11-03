@@ -1,3 +1,4 @@
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { renderBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
@@ -8,6 +9,7 @@ import {
   checkConfig,
   checkConfigVersion,
   checkIndex,
+  checkInstructionFiles,
   checkLocalFile,
   checkNodeBlocks,
   checkPermissionMode,
@@ -31,10 +33,13 @@ import { runInit } from '../../src/commands/init.js';
 import { inspectConfig } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import type { Deps } from '../../src/core/deps.js';
+import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
+import { checkIds, instructionFiles } from '../../src/names.js';
 import { inspectState } from '../../src/state/load.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
-import { createFakeDeps, registerRoot, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
@@ -1310,6 +1315,93 @@ describe('doctor: a pulled change in the shared file of a registered root (S-S1)
   });
 });
 
+describe('doctor: instruction files at the root and above it (TP-32, TP-34)', () => {
+  /** The user home is another folder, so that the names in `.claude` count at every level above the root. */
+  const withFiles = (...paths: readonly string[]): FakeDeps => {
+    const deps = makeDeps({ env: { HOME: '/elsewhere/u' } });
+    deps.seedDir(HOME);
+    for (const path of paths) deps.seed(path, '');
+    return deps;
+  };
+  const levels = [HOME, '/w', '/'];
+  const spots = instructionFiles.flatMap((name) => levels.map((folder) => [name, folder] as const));
+
+  it('is ok when no listed file is at the root or above it', async () => {
+    const result = await checkInstructionFiles(withFiles(), HOME);
+    expect(result).toMatchObject({ id: 'instruction-files', level: 'ok' });
+  });
+
+  it.each(spots)('warns with the check id for %s in %s', async (name, folder) => {
+    const path = join(folder, name);
+    const result = await checkInstructionFiles(withFiles(path), HOME);
+    expect(result.id).toBe(checkIds.instructionFiles);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(path);
+  });
+
+  it('names every file, from the root up, in one warning', async () => {
+    const root = `${HOME}/CLAUDE.local.md`;
+    const parent = '/w/AGENTS.md';
+    const top = '/GEMINI.md';
+    const result = await checkInstructionFiles(withFiles(top, parent, root), HOME);
+    expect(result.level).toBe('warn');
+    const positions = [root, parent, top].map((path) => result.text.indexOf(path));
+    expect(positions.every((at) => at >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it('warns and does not fail when a folder above the root can not be read', async () => {
+    const deps = withFiles();
+    const unreadable: Deps = {
+      ...deps,
+      fs: { ...deps.fs, lstat: async (path) => (dirname(path) === '/w' ? failure(`cannot stat ${path}: EACCES`) : deps.fs.lstat(path)) },
+    };
+    const result = await checkInstructionFiles(unreadable, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('/w');
+    expect(result.text).toContain('EACCES');
+  });
+
+  it('warns that the walk stopped at 64 folders', async () => {
+    const deep = `/${Array.from({ length: 70 }, (_, index) => `d${index}`).join('/')}`;
+    const deps = withFiles();
+    deps.seedDir(deep);
+    const result = await checkInstructionFiles(deps, deep);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('64');
+  });
+
+  it('does not look inside the user Claude folder', async () => {
+    const deps = makeDeps({ env: { HOME: '/w' } });
+    deps.seedDir(HOME);
+    deps.seed('/w/.claude/CLAUDE.md', '');
+    deps.seed('/w/.claude/settings.json', '');
+    const seen: string[] = [];
+    const result = await checkInstructionFiles(withFsWatch(deps, (_method, path) => seen.push(path)), HOME);
+    expect(result.level).toBe('ok');
+    expect(seen.filter((path) => path === '/w/.claude' || path.startsWith('/w/.claude/'))).toEqual([]);
+  });
+
+  it('shows a warning line in the doctor command that does not fail it', async () => {
+    const deps = await initialized({ env: { HOME: '/elsewhere/u' } });
+    deps.seed('/w/AGENTS.md', '');
+    deps.seedDir(`${HOME}/.factory/.git`);
+    const output = await doctor(deps);
+    const checks = output.json['checks'] as CheckResult[];
+    expect(levelOf(checks, 'instruction-files')).toBe('warn');
+    expect(output.lines.some((line) => line.level === 'warn' && line.text.startsWith('instruction-files') && line.text.includes('/w/AGENTS.md'))).toBe(true);
+    expect(output.failed).toBe(false);
+    expect(output.json['summary']).toMatchObject({ fail: 0 });
+  });
+
+  it('gives the same text as the warning that start and init print (TP-33)', async () => {
+    const deps = withFiles('/w/CLAUDE.md');
+    const result = await checkInstructionFiles(deps, HOME);
+    const lines = instructionFileWarnings(await scanInstructionFiles(deps, HOME));
+    expect(result.text).toBe(lines.join(' '));
+  });
+});
+
 describe('doctor: the command', () => {
   it('passes on a fresh node: no failure, so it is not failed', async () => {
     const deps = await initialized({ git: { repos: { [HOME]: {} }, committed: [`${HOME}/.factory`] } });
@@ -1333,6 +1425,7 @@ describe('doctor: the command', () => {
       'children',
       'secrets',
       'permission-mode',
+      'instruction-files',
       'proxy-env',
       'proxy',
       'tools',
@@ -1340,7 +1433,7 @@ describe('doctor: the command', () => {
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('20 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('21 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1363,7 +1456,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(20);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(21);
   });
 
   it('finds the node by walking up from the current folder', async () => {

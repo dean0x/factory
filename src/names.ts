@@ -139,6 +139,9 @@ export const dirs = {
   setup: 'setup',
 } as const;
 
+/** The instruction file names of agents that sit directly in a folder, apart from `CLAUDE.md`. */
+const agentFiles = { claudeLocal: 'CLAUDE.local.md', agents: 'AGENTS.md', gemini: 'GEMINI.md' } as const;
+
 /**
  * The names that a project path can not take, because the root keeps them for itself (design 4.3): the folders and the
  * config files of the root, and the instruction files that an agent loads. A project path is compared with this list in
@@ -151,8 +154,9 @@ export const reservedRootNames = [
   files.config,
   files.localConfig,
   files.claudeMd,
-  'CLAUDE.local.md',
-  'AGENTS.md',
+  agentFiles.claudeLocal,
+  agentFiles.agents,
+  agentFiles.gemini,
 ] as const;
 
 /** The label of the two marker lines around the part of the root `.gitignore` that the tool writes. */
@@ -160,6 +164,30 @@ export const shareListLabel = 'share list';
 
 /** The settings files of Claude Code in a project: `<prefix>*<suffix>` inside the `.claude` folder. */
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
+
+/**
+ * The paths of the instruction files of agents, from the folder that holds them (design 4.3, the instruction-file
+ * rule). `doctor`, `start` and `init` look for them in the root and in every folder above it.
+ *
+ * Claude Code loads `CLAUDE.md` and `CLAUDE.local.md` from the working folder and from every folder above it, and it
+ * loads `.claude/CLAUDE.md` and the files in `.claude/rules/` from a project folder (the memory page,
+ * https://code.claude.com/docs/en/memory). It reads the settings of a project from `.claude/settings.json` and
+ * `.claude/settings.local.json` (the settings page, https://code.claude.com/docs/en/settings). The other names are the
+ * files of other common agents, as the design lists them: a person may start another agent in the same folder.
+ * A name with a slash is a path below the folder. A name without a slash must be in `reservedRootNames`.
+ */
+export const instructionFiles = [
+  files.claudeMd,
+  agentFiles.claudeLocal,
+  agentFiles.agents,
+  agentFiles.gemini,
+  `${dirs.claude}/${files.claudeMd}`,
+  `${dirs.claude}/rules`,
+  `${dirs.claude}/${claudeSettings.prefix}${claudeSettings.suffix}`,
+  `${dirs.claude}/${claudeSettings.prefix}.local${claudeSettings.suffix}`,
+  '.github/copilot-instructions.md',
+  '.cursor/rules',
+] as const;
 
 export const env = {
   proxyBaseUrl: 'ANTHROPIC_BASE_URL',
@@ -415,6 +443,7 @@ export const checkIds = {
   children: 'children',
   secrets: 'secrets',
   permissionMode: 'permission-mode',
+  instructionFiles: 'instruction-files',
   proxyEnv: 'proxy-env',
   proxy: 'proxy',
   tools: 'tools',

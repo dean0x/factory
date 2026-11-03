@@ -23,6 +23,7 @@ import {
   parseGithubRepo,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
+import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
@@ -985,6 +986,8 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   const chosen = await chooseHome(deps, options);
   if (!chosen.ok) return chosen;
   const { home, found, skipped, truncated } = chosen.value;
+  // The warning about instruction files comes before any question or change, and it never stops the command.
+  await warnInstructionFiles(deps, home);
   // A factory that is there already goes its own way. With no local file, it arrived; with both config files, `init` ran
   // here before, or the folder moved.
   if (chosen.value.kind === 'received') return runReceived(deps, options, indexPath.value, home);

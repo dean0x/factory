@@ -127,6 +127,11 @@ export interface Deps {
   readonly stdoutIsTTY: boolean;
   /** Ask one question and read one line of the answer, at most `MAX_ANSWER_CHARS` characters. The question goes to stderr. */
   prompt(question: string): Promise<CliResult<string>>;
+  /**
+   * Print one warning line to stderr at once. A command uses it for a warning that must show before the command acts,
+   * for example before a session starts. A warning that can wait goes into the output of the command.
+   */
+  warn(message: string): void;
   readonly env: Readonly<Record<string, string | undefined>>;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;

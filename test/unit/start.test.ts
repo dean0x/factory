@@ -1,7 +1,9 @@
+import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import { runStart, type StartOptions } from '../../src/commands/start.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
 import { env } from '../../src/names.js';
 import { createFakeDeps, exited, registerRoot, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
@@ -838,5 +840,74 @@ describe('start:the two config files', () => {
     await succeeded(deps);
     expect(deps.fetched).toEqual([`${PROXY_URL}/health`]);
     expect(tmux.calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe('start:instruction files at the root and above it (TP-33)', () => {
+  const ABOVE = '/w/CLAUDE.md';
+
+  /** The deps whose first call of tmux notes how many warnings were printed by then. */
+  const noteWarningsAtLaunch = (deps: FakeDeps): { readonly watched: FakeDeps; readonly seen: number[] } => {
+    const seen: number[] = [];
+    const watched: FakeDeps = {
+      ...deps,
+      run: async (command, args, options) => {
+        if (command === 'tmux' && seen.length === 0) seen.push(deps.warned.length);
+        return deps.run(command, args, options);
+      },
+    };
+    return { watched, seen };
+  };
+
+  it('prints the warning before the first call of tmux, and starts the session', async () => {
+    const { deps } = make();
+    deps.seed(ABOVE, '');
+    const { watched, seen } = noteWarningsAtLaunch(deps);
+    const output = await succeeded(watched);
+    expect(seen).toEqual([1]);
+    expect(deps.warned).toEqual(instructionFileWarnings(await scanInstructionFiles(deps, HOME)));
+    expect(deps.warned[0]).toContain(ABOVE);
+    expect(output.json).toMatchObject({ started: true });
+    expect(output.warnings.join(' ')).not.toContain(ABOVE);
+  });
+
+  it('prints nothing when no listed file is at the root or above it', async () => {
+    const { deps } = make();
+    await succeeded(deps);
+    expect(deps.warned).toEqual([]);
+  });
+
+  it('prints the warning in a dry run, and the dry run goes on', async () => {
+    const { deps, tmux } = make();
+    deps.seed(`${HOME}/AGENTS.md`, '');
+    const output = await succeeded(deps, { dryRun: true });
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain(`${HOME}/AGENTS.md`);
+    expect(output.json).toMatchObject({ dryRun: true });
+    expect(tmux.calls.some((call) => call.args[0] === 'new-session')).toBe(false);
+  });
+
+  it('gives a warning, not a failure, when a folder above the root can not be read', async () => {
+    const { deps } = make();
+    const unreadable: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        lstat: async (path) =>
+          dirname(path) === '/w' && path !== HOME ? failure(`cannot stat ${path}: EACCES`) : deps.fs.lstat(path),
+      },
+    };
+    const output = await succeeded(unreadable);
+    expect(output.json).toMatchObject({ started: true });
+    expect(deps.warned.join(' ')).toContain('EACCES');
+  });
+
+  it('prints the warning once also when the command stops for another reason', async () => {
+    const { deps, tmux } = make({ tools: [] });
+    deps.seed(ABOVE, '');
+    const result = await startFactory(deps);
+    expect(result.ok).toBe(false);
+    expect(deps.warned).toHaveLength(1);
+    expect(tmux.calls).toEqual([]);
   });
 });

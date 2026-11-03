@@ -12,6 +12,7 @@ import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
+import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { isSameOrInsideFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
@@ -406,6 +407,17 @@ export const checkPermissionMode = async (deps: Deps, home: string): Promise<Che
     : notChecked(checkIds.permissionMode, `cannot read ${unreadable.join(', ')}`);
 };
 
+/**
+ * An instruction file of an agent in the root or in a folder above it reaches every session of the factory. It is a
+ * warning only, never a failure (F-17c): the file is the choice of the person who owns that folder.
+ */
+export const checkInstructionFiles = async (deps: Deps, home: string): Promise<CheckResult> => {
+  const lines = instructionFileWarnings(await scanInstructionFiles(deps, home));
+  return lines.length === 0
+    ? check(checkIds.instructionFiles, 'ok', `no agent instruction file is in the ${places.folder} or above it`)
+    : check(checkIds.instructionFiles, 'warn', lines.join(' '));
+};
+
 /** A failed check from an error of a command, with its remedy line. */
 const failedFrom = (id: string, error: CliError): CheckResult =>
   check(id, 'fail', `${error.message}.${error.hint === undefined ? '' : ` ${error.hint}`}`);
@@ -624,21 +636,35 @@ interface CheckRun {
 const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
   const config = await inspectConfig(deps, home);
   const state = await inspectState(deps, home);
-  const [root, tempFolder, index, blocks, setupText, children, permission, proxies, tools, stateRepo, projects, localFile] =
-    await Promise.all([
-      checkRoot(deps, home),
-      checkTempFolders(deps, home),
-      checkIndex(deps),
-      checkNodeBlocks(deps, home, config),
-      checkSetupText(deps, home),
-      checkChildren(deps, config),
-      checkPermissionMode(deps, home),
-      checkProxies(deps, config),
-      checkTools(deps),
-      checkStateRepo(deps, home),
-      checkProjects(deps, home, config),
-      checkLocalFile(deps, home),
-    ]);
+  const [
+    root,
+    tempFolder,
+    index,
+    blocks,
+    setupText,
+    children,
+    permission,
+    instructionFileCheck,
+    proxies,
+    tools,
+    stateRepo,
+    projects,
+    localFile,
+  ] = await Promise.all([
+    checkRoot(deps, home),
+    checkTempFolders(deps, home),
+    checkIndex(deps),
+    checkNodeBlocks(deps, home, config),
+    checkSetupText(deps, home),
+    checkChildren(deps, config),
+    checkPermissionMode(deps, home),
+    checkInstructionFiles(deps, home),
+    checkProxies(deps, config),
+    checkTools(deps),
+    checkStateRepo(deps, home),
+    checkProjects(deps, home, config),
+    checkLocalFile(deps, home),
+  ]);
   const results = [
     checkConfig(config),
     checkConfigVersion(config),
@@ -654,6 +680,7 @@ const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
     children,
     checkSecrets(config),
     permission,
+    instructionFileCheck,
     checkProxyEnv(deps),
     ...proxies,
     tools,

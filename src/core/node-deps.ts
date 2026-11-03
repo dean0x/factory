@@ -19,6 +19,7 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
+import { renderWarnings } from '../cli/output.js';
 import { isSameOrInside } from './paths.js';
 import { ok } from './result.js';
 import { MAX_ANSWER_CHARS, type Deps, type FileDigest, type Fs, type LinkKind, type PathInfo, type PathKind } from './deps.js';
@@ -273,6 +274,9 @@ export const createNodeDeps = (): Deps => ({
         resolve(ok(answer.slice(0, MAX_ANSWER_CHARS)));
       });
     }),
+  warn: (message) => {
+    process.stderr.write(renderWarnings([message]));
+  },
   env: process.env,
   fetch: async (url, timeoutMs) => {
     try {

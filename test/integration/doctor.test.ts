@@ -40,6 +40,19 @@ describe('factory doctor (built binary)', () => {
     expect(result.stdout).toContain('0 failures');
   });
 
+  it('warns, and still exits 0, when a folder above the node holds an instruction file of an agent (TP-32)', async () => {
+    await initNode();
+    const above = join(box.root, 'AGENTS.md');
+    await writeFile(above, 'x\n');
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toMatch(new RegExp(`instruction-files\\s+Agent instruction files are in the factory folder or above it: .*${above}`));
+    const json = JSON.parse((await box.run(['doctor', '--home', box.node, '--json'])).stdout) as {
+      checks: { id: string; level: string }[];
+    };
+    expect(json.checks.find((check) => check.id === 'instruction-files')?.level).toBe('warn');
+  });
+
   it('finds the node from a folder below it', async () => {
     await initNode();
     const result = await box.run(['doctor'], { cwd: join(box.node, '.factory') });

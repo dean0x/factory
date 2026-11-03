@@ -132,6 +132,16 @@ const initNode = async (): Promise<string[]> => {
 };
 
 describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', () => {
+  it('prints the warning about an instruction file above the root on stderr, and still exits 0 (TP-33)', async () => {
+    await initNode();
+    const above = join(box.root, 'GEMINI.md');
+    await writeFile(above, 'x\n');
+    const result = await startFactory('--dry-run');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('warning: Agent instruction files are in the factory folder or above it: ');
+    expect(result.stderr).toContain(above);
+  });
+
   it('starts the session with the view and bench windows and one launch of claude in auto mode', async () => {
     const [web, api] = await initNode();
     const result = await startFactory();

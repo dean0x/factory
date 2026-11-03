@@ -56,6 +56,8 @@ export interface FakeDeps extends Deps {
   readonly attached: RunCall[];
   /** The questions that were asked, in order. */
   readonly prompts: string[];
+  /** The warnings that were printed at once, before the command returned, in order. */
+  readonly warned: string[];
   readonly fetched: string[];
   /** The paths of the atomic writes, in order. */
   readonly atomicWrites: string[];
@@ -96,6 +98,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const calls: RunCall[] = [];
   const attached: RunCall[] = [];
   const prompts: string[] = [];
+  const warned: string[] = [];
   const fetched: string[] = [];
   const atomicWrites: string[] = [];
   const modes = new Map<string, number>();
@@ -134,6 +137,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     calls,
     attached,
     prompts,
+    warned,
     fetched,
     atomicWrites,
     modes,
@@ -291,6 +295,9 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       prompts.push(question);
       return (options.prompt ?? (() => failure('no answer was given')))(question);
     },
+    warn: (message: string) => {
+      warned.push(message);
+    },
     env: options.env ?? {},
     fetch: async (url) => {
       fetched.push(url);
@@ -338,6 +345,23 @@ export const registerRoot = (deps: FakeDeps, root: string, id: string, projects:
   if (!deps.files.has(marker)) {
     deps.seed(marker, `${JSON.stringify({ [stateKeys.schemaVersion]: STATE_SCHEMA_VERSION, [stateKeys.createdWith]: 'test', [stateKeys.blocks]: {} })}\n`);
   }
+};
+
+/**
+ * A copy of the deps whose file calls report to `seen` first: the name of the call and its first path. The calls run
+ * as before. A test uses it to see which paths a command touches, and when.
+ */
+export const withFsWatch = <T extends Deps>(deps: T, seen: (method: string, path: string) => void): T => {
+  const watched = Object.fromEntries(
+    Object.entries(deps.fs).map(([method, call]) => [
+      method,
+      (path: string, ...rest: readonly unknown[]): unknown => {
+        seen(method, path);
+        return (call as (...args: readonly unknown[]) => unknown)(path, ...rest);
+      },
+    ]),
+  ) as unknown as Fs;
+  return { ...deps, fs: watched };
 };
 
 /**

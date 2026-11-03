@@ -5,6 +5,7 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
+import { warnInstructionFiles } from '../core/instruction-files.js';
 import { err, ok } from '../core/result.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
@@ -349,6 +350,8 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
   const located = await locateHomeFolder(deps, options.home, readNodeIdentity);
   if (!located.ok) return located;
   const home = located.value.home;
+  // The warning about instruction files comes before any change or launch, and it never stops the command.
+  await warnInstructionFiles(deps, home);
   const loaded = await loadConfig(deps, home);
   if (!loaded.ok) return loaded;
   const id = loaded.value.core.node.id;

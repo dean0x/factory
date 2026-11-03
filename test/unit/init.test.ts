@@ -10,6 +10,7 @@ import { collectSetup, decideAcceptance } from '../../src/commands/init-received
 import { runUpgrade } from '../../src/commands/upgrade.js';
 import { loadConfig } from '../../src/config/load.js';
 import type { Deps } from '../../src/core/deps.js';
+import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { acceptanceState, manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
@@ -25,6 +26,7 @@ import {
   exited,
   registerRoot,
   withFailingWrites,
+  withFsWatch,
   type FakeDeps,
   type FakeOptions,
 } from '../helpers/fake-deps.js';
@@ -3286,5 +3288,91 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     expect(result.ok).toBe(true);
     expect(other.deps.files.get(ACCEPTANCES)).toBe(before);
     expect(warningsOf(result).join('\n')).toContain('Run "factory init" in a terminal window');
+  });
+});
+
+describe('init: instruction files at the root and above it (TP-33)', () => {
+  const ABOVE = '/w/CLAUDE.md';
+  const WRITES = new Set(['mkdir', 'writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'chmod', 'copyTree']);
+  const GIT_ACTIONS = new Set(['init', 'clone', 'add', 'commit']);
+
+  /** The deps that note how many warnings were printed when the command first changed a file or ran a git action. */
+  const noteWarningsAtFirstAction = (deps: FakeDeps): { readonly watched: FakeDeps; readonly seen: number[] } => {
+    const seen: number[] = [];
+    const note = (): void => {
+      if (seen.length === 0) seen.push(deps.warned.length);
+    };
+    const running: FakeDeps = {
+      ...deps,
+      run: async (command, args, runOptions) => {
+        if (command === 'git' && GIT_ACTIONS.has(args[0] ?? '')) note();
+        return deps.run(command, args, runOptions);
+      },
+    };
+    return {
+      watched: withFsWatch(running, (method) => {
+        if (WRITES.has(method)) note();
+      }),
+      seen,
+    };
+  };
+
+  it('prints the warning before the first change, and makes the factory', async () => {
+    const { deps } = setup();
+    deps.seed(ABOVE, '');
+    const { watched, seen } = noteWarningsAtFirstAction(deps);
+    const result = await runInit(watched, options());
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual([1]);
+    expect(deps.warned).toEqual(instructionFileWarnings(await scanInstructionFiles(deps, HOME)));
+    expect(deps.warned[0]).toContain(ABOVE);
+    if (result.ok) expect(result.value.warnings.join(' ')).not.toContain(ABOVE);
+  });
+
+  it('prints it before the question about an approval point', async () => {
+    const { deps } = setup({}, { stdinIsTTY: true, stdoutIsTTY: true, prompt: () => ok('') });
+    deps.seed(ABOVE, '');
+    const asked: number[] = [];
+    const asking: FakeDeps = {
+      ...deps,
+      prompt: async (question) => {
+        asked.push(deps.warned.length);
+        return deps.prompt(question);
+      },
+    };
+    await runInit(asking, options({ yes: false }));
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((count) => count === 1)).toBe(true);
+  });
+
+  it('prints nothing when no listed file is at the root or above it', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.warned).toEqual([]);
+  });
+
+  it('prints it also for a file in the folder of the new root, and for a root that is there already', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/AGENTS.md`, '');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain(`${HOME}/AGENTS.md`);
+    const again = await runInit(deps, options({ ownerName: undefined }));
+    expect(again.ok ? 'ok' : again.error.message).toBe('ok');
+    expect(deps.warned).toHaveLength(2);
+    expect(deps.warned[1]).toBe(deps.warned[0]);
+  });
+
+  it('makes the factory when a folder above the root can not be read, and warns', async () => {
+    const { deps } = setup();
+    const unreadable: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        lstat: async (path) => (dirname(path) === '/w' && path !== HOME ? failure(`cannot stat ${path}: EACCES`) : deps.fs.lstat(path)),
+      },
+    };
+    expect((await runInit(unreadable, options())).ok).toBe(true);
+    expect(deps.warned.join(' ')).toContain('EACCES');
   });
 });

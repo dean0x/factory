@@ -69,6 +69,16 @@ describe('factory init (built binary)', () => {
     expect(await stored()).toHaveLength(1);
   });
 
+  it('prints the warning about an instruction file above the root on stderr before it acts, and still exits 0 (TP-33)', async () => {
+    const above = join(box.root, 'CLAUDE.md');
+    await writeFile(above, 'x\n');
+    const result = await box.run(initArgs(['--json']));
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('warning: Agent instruction files are in the factory folder or above it: ');
+    expect(result.stderr).toContain(above);
+    expect(JSON.parse(result.stdout)).toMatchObject({ schema: 'factory.init/v1' });
+  });
+
   it('writes the url of a project from the origin of its repo, and keeps no local path in factory.yaml', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     const result = await box.run(initArgs(['--project', web]));
