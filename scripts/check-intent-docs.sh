@@ -6,7 +6,8 @@
 # DOCS_DIR is the docs folder to check. The default is the docs folder of this repo.
 # Check 2 also reads the label "Design v3 PR": see the comment of check 2.
 # Check 8 also reads README.md and CHANGELOG.md in the folder above DOCS_DIR, when they exist.
-# Check 10 reads the fenced block under "**Core commands**" in design 4.2 and stops at "**Software recipe commands**".
+# Check 10 also reads glossary.md in DOCS_DIR, and reads only the core parts of the design and of the glossary: see the
+# comment of check 10.
 #
 # Exit code 0: every check passes. Exit code 1: a check fails. The output names the first failure of each check.
 # A check that did not run is a failure, never ok: a file or a folder that cannot be read, and an awk that stops with an error.
@@ -24,6 +25,7 @@ design=$docs/design.md
 trace=$docs/intent-trace.md
 roadmap=$docs/roadmap-v2.md
 budget=$docs/token-budget.md
+glossary=$docs/glossary.md
 research=$docs/research
 
 # The marks and the byte-wise match of awk do not depend on the locale of the person.
@@ -42,7 +44,7 @@ report() {
   fi
 }
 
-for file in "$design" "$trace" "$roadmap" "$budget"; do
+for file in "$design" "$trace" "$roadmap" "$budget" "$glossary"; do
   if [ ! -f "$file" ]; then
     printf 'FAIL the file %s is missing\n' "$file"
     exit 1
@@ -371,13 +373,24 @@ first=$(awk '
 ' "$design") || first=$awk_failed
 report 9 "design.md has the headings for core and setup and for extension points" "$first"
 
-# 10. The fenced block under "**Core commands**" in design 4.2 holds no word of the software recipe list: merge, pull
-# request, release (also release check and release scope), CI log, PR and CI. A word also counts as a plural, a past form
-# or an -ing form. PR and CI count only in capital letters. The core part needs at least one line of fenced code.
+# 10. The core parts of the design and of the glossary hold no word of the software recipe list: merge, pull request,
+# release (also release check and release scope), CI log, PR, CI, git and tmux. A word also counts as a plural, a past
+# form or an -ing form, in any letter case; git and tmux count only as the word itself. PR and CI count only in capital
+# letters. A word inside a longer word (.gitignore) does not count, and a code span counts. The core parts are:
+#   a. design.md, the section "Summary for Dean (one page)", down to the next heading of level 1 or 2;
+#   b. design.md, the section "4.1 Concepts", down to the next heading of level 1 to 3;
+#   c. design.md 4.2, the fenced lines under "**Core commands**", down to "**Software recipe commands**";
+#   d. design.md 6, the table rows under "**Rules for every factory**", down to "**Rules of the software recipe**" or the
+#      next heading;
+#   e. glossary.md, the section "Words of every factory", down to the next heading of level 1 or 2.
+# In the parts a, b and e, a line that starts with "Software recipe:" or "Engineering note:" (after an optional "- " or
+# "> ") is not checked. The parts c and d have no such line. A line in fenced code is not a heading and ends no part; a
+# fence starts only at column 0. Each part needs at least one line to check. The output names the first hit, or the part
+# that is missing.
 first=$(awk '
   function recipe_word(line,   low, word) {
     low = tolower(line)
-    if (match(low, /(^|[^a-z0-9_])(merg(e[sd]?|ing)|pull requests?|releas(e[sd]?|ing)|ci logs?)($|[^a-z0-9_])/)) {
+    if (match(low, /(^|[^a-z0-9_])(merg(e[sd]?|ing)|pull requests?|releas(e[sd]?|ing)|ci logs?|git|tmux)($|[^a-z0-9_])/)) {
       word = substr(low, RSTART, RLENGTH)
       sub(/^[^a-z]+/, "", word)
       sub(/[^a-z]+$/, "", word)
@@ -391,25 +404,63 @@ first=$(awk '
     }
     return ""
   }
-  /^### 4\.2 / { inside = 1; next }
-  inside && !fence && /^#/ { inside = 0 }
-  !inside { next }
-  /^\*\*Core commands\*\*/ { core = 1; found = 1; next }
-  /^\*\*Software recipe commands\*\*/ { core = 0; next }
+  function exempt(line) {
+    return line ~ /^(- |> )?(Software recipe|Engineering note):/
+  }
+  BEGIN {
+    split("Summary for Dean|4.1 Concepts|4.2 Core commands|6 Rules for every factory|Words of every factory", name, "[|]")
+  }
+  # The files are design.md, then glossary.md. cur is the number of the part that is open (0: none).
+  FNR == 1 {
+    file = (FILENAME == ARGV[2]) ? "glossary.md" : "design.md"
+    fence = 0; cur = 0; in42 = 0
+  }
   /^```/ { fence = !fence; next }
-  core && fence {
-    corelines++
+  !fence && /^#+([ \t].*)?$/ {
+    match($0, /^#+/)
+    level = RLENGTH
+    if (cur == 3 || cur == 4 || (cur == 1 && level <= 2) || (cur == 2 && level <= 3) || (cur == 5 && level <= 2)) cur = 0
+    in42 = 0
+    if (file == "glossary.md") {
+      if ($0 ~ /^## Words of every factory[ \t]*$/) cur = 5
+    } else if ($0 ~ /^## Summary for Dean \(one page\)[ \t]*$/) cur = 1
+    else if ($0 ~ /^### 4\.1 Concepts[ \t]*$/) cur = 2
+    else if ($0 ~ /^### 4\.2 /) in42 = 1
+    if (cur) seen[cur] = 1
+    next
+  }
+  !fence && in42 && /^\*\*Core commands\*\*/ { cur = 3; seen[3] = 1; next }
+  !fence && cur == 3 && /^\*\*Software recipe commands\*\*/ { cur = 0; next }
+  !fence && cur == 0 && file == "design.md" && /^\*\*Rules for every factory\*\*/ { cur = 4; seen[4] = 1; next }
+  !fence && cur == 4 && /^\*\*Rules of the software recipe\*\*/ { cur = 0; next }
+  cur == 0 || /^[ \t]*$/ { next }
+  cur == 3 && !fence { next }
+  cur == 4 && !/^[|]/ { next }
+  (cur == 1 || cur == 2 || cur == 5) && exempt($0) { next }
+  {
+    lines[cur]++
     if (!hit) {
-      hit = recipe_word($0)
-      if (hit != "") printf "design.md line %d: the core command table holds the software recipe word \"%s\"\n", NR, hit
+      word = recipe_word($0)
+      if (word != "") {
+        hit = 1
+        printf "%s line %d: the core part \"%s\" holds the software recipe word \"%s\"\n", file, FNR, name[cur], word
+      }
     }
   }
   END {
-    if (!found) print "design.md 4.2 has no core command table"
-    else if (!corelines) print "design.md 4.2 has no fenced code under \"**Core commands**\""
+    if (hit) exit
+    for (part = 1; part <= 5; part++) {
+      where = (part == 5) ? "glossary.md" : "design.md"
+      if (part == 3 && !seen[3]) print "design.md 4.2 has no core command table"
+      else if (part == 3 && !lines[3]) print "design.md 4.2 has no fenced code under \"**Core commands**\""
+      else if (!seen[part]) printf "%s has no core part \"%s\"\n", where, name[part]
+      else if (!lines[part]) printf "%s holds no line to check in the core part \"%s\"\n", where, name[part]
+      else continue
+      exit
+    }
   }
-' "$design") || first=$awk_failed
-report 10 "the core command table of design 4.2 holds no word of the software recipe" "$first"
+' "$design" "$glossary") || first=$awk_failed
+report 10 "the core parts of the design and the glossary hold no word of the software recipe" "$first"
 
 if [ "$failed" -ne 0 ]; then
   printf '%s of 10 checks failed\n' "$failed"

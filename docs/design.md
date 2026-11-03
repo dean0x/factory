@@ -320,7 +320,7 @@ factory copies list | status | sync <pr|branch> | clean [--apply]   # git across
 factory lock run -- <command>               # the shared heavy-test lock
 ```
 
-Another recipe adds its own check and output commands. The core commands stay the same for every recipe, and a docs check fails when the core table holds a word of the software recipe. §7.1 maps Dean's shop-floor words to the command words `worker`, `request` and `queue`.
+Another recipe adds its own check and output commands. The core commands stay the same for every recipe, and a docs check fails when a core part of the design or of the glossary holds a word of the software recipe. §7.1 maps Dean's shop-floor words to the command words `worker`, `request` and `queue`.
 
 The lifecycle verbs of the core table:
 - `start` starts the factory. After a machine restart it resumes the recorded workers.

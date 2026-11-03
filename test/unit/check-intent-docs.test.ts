@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const ROOT = join(__dirname, '..', '..');
 const SCRIPT = join(ROOT, 'scripts', 'check-intent-docs.sh');
-const DOC_FILES = ['design.md', 'intent-trace.md', 'roadmap-v2.md', 'token-budget.md'];
+const DOC_FILES = ['design.md', 'intent-trace.md', 'roadmap-v2.md', 'token-budget.md', 'glossary.md'];
 
 /** The files above the docs folder that check 8 also reads. */
 const TOP_FILES = ['README.md', 'CHANGELOG.md'];
@@ -177,6 +177,13 @@ describe('scripts/check-intent-docs.sh', () => {
     const result = check();
     expect(result.code).toBe(1);
     expect(result.out).toContain(`the file ${join(copy, 'token-budget.md')} is missing`);
+  });
+
+  it('exits 1 and names a glossary that is missing, because check 10 reads it', async () => {
+    await rm(join(copy, 'glossary.md'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(result.out).toContain(`the file ${join(copy, 'glossary.md')} is missing`);
   });
 });
 
@@ -479,19 +486,23 @@ const RECIPE_WORDS: ReadonlyArray<{ input: string; printed: string }> = [
   { input: 'CI log', printed: 'ci log' },
   { input: 'PR', printed: 'PR' },
   { input: 'CI', printed: 'CI' },
+  { input: 'git', printed: 'git' },
+  { input: 'Git', printed: 'git' },
+  { input: 'tmux', printed: 'tmux' },
+  { input: 'TMUX', printed: 'tmux' },
 ];
 
-describe('scripts/check-intent-docs.sh, check 10: the core command table holds no word of the software recipe', () => {
-  it.each(RECIPE_WORDS)('exits 1 for the word "$input" in a line of the core command table, and prints "$printed"', async ({ input, printed }) => {
+describe('scripts/check-intent-docs.sh, check 10: the core command block holds no word of the software recipe', () => {
+  it.each(RECIPE_WORDS)('exits 1 for the word "$input" in a line of the core command block, and prints "$printed"', async ({ input, printed }) => {
     await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, `$1 and the ${input}`));
     const result = check();
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['10']);
-    expect(result.out).toMatch(/design\.md line \d+: the core command table holds the software recipe word "/);
+    expect(result.out).toMatch(/design\.md line \d+: the core part "4\.2 Core commands" holds the software recipe word "/);
     expect(result.out).toContain(`the software recipe word "${printed}"`);
   });
 
-  it.each(['merging', 'releasing', 'merges', 'PRs', 'CI logs'])('exits 1 for the form "%s" in a line of the core command table', async (form) => {
+  it.each(['merging', 'releasing', 'merges', 'PRs', 'CI logs'])('exits 1 for the form "%s" in a line of the core command block', async (form) => {
     await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, `$1 and the ${form}`));
     const result = check();
     expect(result.code).toBe(1);
@@ -519,6 +530,11 @@ describe('scripts/check-intent-docs.sh, check 10: the core command table holds n
     expect(check().code).toBe(0);
   });
 
+  it('accepts git and tmux inside a longer word, such as .gitignore and a digit', async () => {
+    await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, '$1 and a .gitignore, a digit and a tmuxinator'));
+    expect(check().code).toBe(0);
+  });
+
   it('accepts a lower-case pr and ci in the core table, because the recipe words PR and CI are upper case', async () => {
     await change('design.md', (text) => text.replace(/^(factory machine .*)$/m, '$1 and a pr and a ci'));
     expect(check().code).toBe(0);
@@ -539,6 +555,242 @@ describe('scripts/check-intent-docs.sh, check 10: the core command table holds n
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['10']);
     expect(result.out).toContain('design.md 4.2 has no core command table');
+  });
+});
+
+/** A core part of check 10, with the means to put a line into it. */
+interface CorePart {
+  /** The name that the script prints for the part. */
+  readonly name: string;
+  readonly file: string;
+  /** A line of the part. The tests put their lines under it. */
+  readonly anchor: RegExp;
+  /** A line in the form of the part (prose, a command in the fence, a table row or a glossary entry) that holds the text. */
+  readonly row: (text: string) => string;
+  /** A line of the part that starts with the text, as far as the form of the part allows. */
+  readonly bare: (text: string) => string;
+  /** The anchor is a line of fenced code. */
+  readonly inFence: boolean;
+  /** A heading that ends the part, and a heading that does not (none: each heading ends the part). */
+  readonly ends: string;
+  readonly deeper?: string;
+  /** The line that starts with `Software recipe:` or `Engineering note:` is not checked in this part. */
+  readonly exempt: boolean;
+}
+
+const identity = (text: string): string => text;
+
+const CORE_PARTS: ReadonlyArray<CorePart> = [
+  {
+    name: 'Summary for Dean',
+    file: 'design.md',
+    anchor: /^\*\*Layers\.\*\* .*$/m,
+    row: identity,
+    bare: identity,
+    inFence: false,
+    ends: '## Another section',
+    deeper: '### A deeper section',
+    exempt: true,
+  },
+  {
+    name: '4.1 Concepts',
+    file: 'design.md',
+    anchor: /^- \*\*Owner\*\*: .*$/m,
+    row: identity,
+    bare: identity,
+    inFence: false,
+    ends: '### Another section',
+    deeper: '#### A deeper section',
+    exempt: true,
+  },
+  {
+    name: '4.2 Core commands',
+    file: 'design.md',
+    anchor: /^factory machine .*$/m,
+    row: (text) => `factory doctor ${text}`,
+    bare: identity,
+    inFence: true,
+    ends: '#### Another section',
+    exempt: false,
+  },
+  {
+    name: '6 Rules for every factory',
+    file: 'design.md',
+    anchor: /^\| Resource limits \|.*$/m,
+    row: (text) => `| Extra rule | yes | ${text} |`,
+    bare: (text) => `| ${text} | yes | none |`,
+    inFence: false,
+    ends: '#### Another section',
+    exempt: false,
+  },
+  {
+    name: 'Words of every factory',
+    file: 'glossary.md',
+    anchor: /^- \*\*proxy\*\*: .*$/m,
+    row: (text) => `- **extra**: ${text}`,
+    bare: identity,
+    inFence: false,
+    ends: '## Another section',
+    deeper: '### A deeper section',
+    exempt: true,
+  },
+];
+
+/** Lines that start with the marks of an exempt line. A line of the software recipe or an engineering note may name a recipe word. */
+const MARKED_LINES = [
+  'Software recipe: the merge in the probe line',
+  '- Engineering note: the git hook in the probe line',
+  '> Software recipe: the release in the probe line',
+  'Engineering note: tmux shows the PR in the probe line',
+];
+
+/** The number of the first line of a file of the copy that equals the line. */
+const lineNumber = async (name: string, line: string): Promise<number> => {
+  const lines = (await readFile(join(copy, name), 'utf8')).split('\n');
+  expect(lines).toContain(line);
+  return lines.indexOf(line) + 1;
+};
+
+describe.each(CORE_PARTS)('scripts/check-intent-docs.sh, check 10, the core part "$name"', (part) => {
+  /** Puts lines under the anchor of the part. */
+  const put = (lines: readonly string[]): Promise<void> =>
+    change(part.file, (text) => text.replace(part.anchor, (anchor) => [anchor, ...lines].join('\n')));
+
+  it('exits 1 for a recipe word, and names the file, the line and the word', async () => {
+    const line = part.row('the merge in the probe line');
+    await put([line]);
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['10']);
+    const number = await lineNumber(part.file, line);
+    expect(result.out).toContain(`${part.file} line ${number}: the core part "${part.name}" holds the software recipe word "merge"`);
+  });
+
+  it.each(['git', 'tmux'])('exits 1 for the word "%s"', async (word) => {
+    await put([part.row(`the ${word} in the probe line`)]);
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['10']);
+    expect(result.out).toContain(`the core part "${part.name}" holds the software recipe word "${word}"`);
+  });
+
+  it('accepts a .gitignore, because git inside a longer word is not the word', async () => {
+    await put([part.row('the .gitignore file in the probe line')]);
+    expect(check().code).toBe(0);
+  });
+
+  if (part.exempt) {
+    it.each(MARKED_LINES)('accepts the line "%s"', async (line) => {
+      await put([part.bare(line)]);
+      expect(check().code).toBe(0);
+    });
+
+    it('checks a line that has the mark only after other text', async () => {
+      await put([part.bare('A note. Software recipe: the merge in the probe line')]);
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['10']);
+    });
+  } else {
+    it.each(MARKED_LINES)('still checks the line "%s"', async (line) => {
+      await put([part.bare(line)]);
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['10']);
+      expect(result.out).toContain(`the core part "${part.name}" holds the software recipe word`);
+    });
+  }
+
+  it('stays open over a heading in fenced code', async () => {
+    const hit = part.row('the merge in the probe line');
+    await put(part.inFence ? ['## Not a title', hit] : ['```', '## Not a title', '```', hit]);
+    const result = check();
+    expect(failedChecks(result.out)).toEqual(['10']);
+    expect(result.out).toContain(`the core part "${part.name}" holds the software recipe word "merge"`);
+  });
+
+  it('ends at a heading of its level', async () => {
+    const hit = part.row('the merge in the probe line');
+    await put(part.inFence ? ['```', part.ends, '```', hit] : [part.ends, hit]);
+    expect(failedChecks(check().out)).not.toContain('10');
+  });
+
+  if (part.deeper !== undefined) {
+    it('stays open over a deeper heading', async () => {
+      await put([part.deeper ?? '', part.row('the merge in the probe line')]);
+      const result = check();
+      expect(failedChecks(result.out)).toEqual(['10']);
+      expect(result.out).toContain(`the core part "${part.name}" holds the software recipe word "merge"`);
+    });
+  }
+});
+
+/** The parts that a test can take away by a change of one line, and empty by a change of the text under the start. */
+const PART_EDITS: ReadonlyArray<{ name: string; file: string; rename: [RegExp, string]; empty: [RegExp, string] }> = [
+  {
+    name: 'Summary for Dean',
+    file: 'design.md',
+    rename: [/^## Summary for Dean \(one page\)$/m, '## A short summary'],
+    empty: [/(## Summary for Dean \(one page\)\n)[\s\S]*?(\n## 1\. )/, '$1$2'],
+  },
+  {
+    name: '4.1 Concepts',
+    file: 'design.md',
+    rename: [/^### 4\.1 Concepts$/m, '### 4.1 Ideas'],
+    empty: [/(### 4\.1 Concepts\n)[\s\S]*?(\n### 4\.2 )/, '$1$2'],
+  },
+  {
+    name: '6 Rules for every factory',
+    file: 'design.md',
+    rename: [/^\*\*Rules for every factory\*\*$/m, '**Rules**'],
+    empty: [/(\*\*Rules for every factory\*\*\n)[\s\S]*?(\*\*Rules of the software recipe\*\*)/, '$1\n$2'],
+  },
+  {
+    name: 'Words of every factory',
+    file: 'glossary.md',
+    rename: [/^## Words of every factory$/m, '## Words'],
+    empty: [/(## Words of every factory\n)[\s\S]*?(\n## Words of the software recipe)/, '$1$2'],
+  },
+];
+
+describe.each(PART_EDITS)('scripts/check-intent-docs.sh, check 10, the core part "$name" is needed', ({ name, file, rename, empty }) => {
+  it('exits 1 and names the part when its heading or label is missing', async () => {
+    await change(file, (text) => text.replace(rename[0], rename[1]));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['10']);
+    expect(result.out).toContain(`${file} has no core part "${name}"`);
+  });
+
+  it('exits 1 and names the part when it holds no line to check', async () => {
+    await change(file, (text) => text.replace(empty[0], empty[1]));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['10']);
+    expect(result.out).toContain(`${file} holds no line to check in the core part "${name}"`);
+  });
+});
+
+describe('scripts/check-intent-docs.sh, check 10: the lines of the core parts', () => {
+  it('reads only the rows of the table "Rules for every factory", so the engineering note under it may name git', () => {
+    const text = readFileSync(join(copy, 'design.md'), 'utf8');
+    const part = text.slice(text.indexOf('**Rules for every factory**'), text.indexOf('**Rules of the software recipe**'));
+    expect(part).toMatch(/^Engineering note: .*\bgit\b/m);
+    expect(check().code).toBe(0);
+  });
+
+  it('names the hit of the design before the hit of the glossary', async () => {
+    await change('glossary.md', (text) => text.replace(/^(- \*\*proxy\*\*: .*)$/m, '$1 Use the release.'));
+    await change('design.md', (text) => text.replace(/^(\*\*Layers\.\*\* .*)$/m, '$1 Use the merge.'));
+    const result = check();
+    expect(result.out).toMatch(/design\.md line \d+: the core part "Summary for Dean" holds the software recipe word "merge"/);
+    expect(result.out).not.toContain('glossary.md line');
+  });
+
+  it('reads the software recipe part of the glossary without a hit', () => {
+    const text = readFileSync(join(copy, 'glossary.md'), 'utf8');
+    expect(text.slice(text.indexOf('## Words of the software recipe'))).toMatch(/\bmerge\b/);
+    expect(check().code).toBe(0);
   });
 });
 
@@ -617,7 +869,7 @@ describe('scripts/check-intent-docs.sh, a comment or a heading in fenced code do
     const result = check();
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toContain('10');
-    expect(result.out).toMatch(/design\.md line \d+: the core command table holds the software recipe word "merge"/);
+    expect(result.out).toMatch(/design\.md line \d+: the core part "4\.2 Core commands" holds the software recipe word "merge"/);
   });
 
   it('check 2 keeps the label section open over a heading line in fenced code', async () => {
