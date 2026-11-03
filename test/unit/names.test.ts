@@ -363,6 +363,7 @@ describe('words of the old names', () => {
       yes: false,
       recipe: undefined,
       layer: undefined,
+      approval: [],
     });
     expect(result.ok).toBe(true);
     expect(deps.files.size).toBeGreaterThan(10);
@@ -610,8 +611,10 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
   });
 
   it('has no module that writes the approval record apart from the owner record writer', () => {
-    const writes = withText(/\b(?:recordDelegation|recordScope)\b/);
-    expect(rel(writes.filter((path) => path !== OWNER_RECORD))).toEqual([]);
+    const callersOf = (pattern: RegExp): string[] => rel(withText(pattern).filter((path) => path !== OWNER_RECORD));
+    expect(callersOf(/\brecordScope\b/)).toEqual([]);
+    // The code of init is the only caller of the delegation writer: it records the points that the owner sets.
+    expect(callersOf(/\brecordDelegation\b/).filter((path) => !/^commands\/init[^/]*\.ts$/.test(path))).toEqual([]);
   });
 
   it('keeps the setup acceptance writer apart: it imports nothing of the approval store and names none of it', () => {

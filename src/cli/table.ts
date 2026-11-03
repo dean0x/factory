@@ -76,7 +76,8 @@ export const commandTable: readonly Command[] = [
     usage:
       `${commandText(commands.init)} [${flagText(flags.home)} DIR] [${flagText(flags.yes)}] ` +
       `[${flagText(flags.name)} ID] [${flagText(flags.ownerName)} NAME] [${flagText(flags.ownerGithub)} LOGIN] ` +
-      `[${flagText(flags.project)} PATH|URL]... [${flagText(flags.layer)} N] [${flagText(flags.recipe)} ID]`,
+      `[${flagText(flags.project)} PATH|URL]... [${flagText(flags.layer)} N] [${flagText(flags.recipe)} ID] ` +
+      `[${flagText(flags.approval)} POINT=${values.approvalModes.join('|')}]...`,
     options: {
       [flags.home]: {
         type: 'string',
@@ -87,7 +88,7 @@ export const commandTable: readonly Command[] = [
       },
       [flags.yes]: {
         type: 'boolean',
-        description: `Use the proposed ${roles.node} folder. Ask no question.`,
+        description: `Use the proposed ${roles.node} folder. Ask no question. Every approval point is ${values.approvalModes[0]}.`,
       },
       [flags.name]: {
         type: 'string',
@@ -122,6 +123,15 @@ export const commandTable: readonly Command[] = [
         placeholder: 'ID',
         description: `The ${roles.recipe} for the kind of work. One of: ${values.recipes.join(', ')}. Default: ${values.recipes[0]}.`,
       },
+      [flags.approval]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'POINT=MODE',
+        description:
+          `The mode of one approval point of the ${roles.recipe}: ${values.approvalModes.join(' or ')}. ` +
+          `Default: ${values.approvalModes[0]}. In a terminal window, ${commands.init} asks for each point that no flag names. ` +
+          `Repeat the flag for more points. ${values.approvalModes[1]} needs a terminal window outside a ${places.session}, and no ${flagText(flags.yes)}.`,
+      },
     },
     run: (given, deps) =>
       runInit(deps, {
@@ -133,6 +143,7 @@ export const commandTable: readonly Command[] = [
         yes: given.bool(flags.yes),
         recipe: given.string(flags.recipe),
         layer: given.string(flags.layer),
+        approval: given.strings(flags.approval),
       }),
   },
   {

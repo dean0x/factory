@@ -101,9 +101,10 @@ const storePathOf = async (deps: Deps, root: string): Promise<CliResult<string>>
 /**
  * The only way to write an approval record: a person types in a terminal window, and the process runs outside a factory
  * session. A session carries the marker in every pane. The guard stops a session and its tools. It cannot prove that the
- * owner acts (design 6).
+ * owner acts (design 6). `init` runs the same check before it writes anything for a `delegated` choice, so the stop comes
+ * before the first clone and not after the last write.
  */
-const requireOwnerChannel = (deps: Deps): CliResult<void> => {
+export const requireOwnerChannel = (deps: Deps): CliResult<void> => {
   const remedy = `Run the command in a terminal window outside a ${places.session}.`;
   if (inFactorySession(deps)) return safetyRefusal(`a ${places.session} cannot write an approval record`, remedy);
   if (!deps.stdinIsTTY) return safetyRefusal('an approval record needs a terminal window', remedy);

@@ -80,6 +80,7 @@ export const flags = {
   project: 'project',
   recipe: 'recipe',
   layer: 'layer',
+  approval: 'approval',
   yes: 'yes',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
@@ -374,6 +375,9 @@ export const values = {
   trackerHosted: ['github', 'jira', 'linear'],
   defaultWatchInterval: '5m',
 } as const;
+
+/** The question of `init` about one approval point: it asks this many times, then it stops with a usage error. */
+export const approvalQuestion = { maxAttempts: 3 } as const;
 
 /** The scheme of the only address that a node link accepts. */
 export const address = { scheme: 'file://' } as const;

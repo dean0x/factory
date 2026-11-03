@@ -11,7 +11,8 @@ import {
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags } from '../../src/cli/table.js';
 import { FACTORY_VERSION } from '../../src/version.js';
-import { createFakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
+import { gitHandler } from '../helpers/git-fake.js';
 import { captureSink } from '../helpers/sink.js';
 
 const run = async (argv: string[]) => {
@@ -189,6 +190,67 @@ describe('the node command in the command line', () => {
     const result = await run(['node']);
     expect(result.code).toBe(2);
     expect(result.err).toContain('needs a subcommand');
+  });
+});
+
+describe('the approval flag of init in the command line (TP-37, TP-38, TP-81)', () => {
+  const init = commandTable.find((command) => command.name === 'init');
+  const STATE_ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+
+  /** The command runs in a fake folder with a place for the factory list and a fake git. */
+  const runInit = async (argv: readonly string[], extra: FakeOptions = {}) => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: '/w', run: handler, env: STATE_ENV, ...extra });
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', '/w/node', '--owner-name', 'Test Owner', ...argv], deps, sink);
+    return { code, deps, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  it('is a flag of init that can repeat, and no other command takes it', () => {
+    expect(init?.options['approval']).toMatchObject({ type: 'string', multiple: true, placeholder: 'POINT=MODE' });
+    for (const command of commandTable.filter((other) => other !== init)) {
+      expect(Object.keys(command.options)).not.toContain('approval');
+    }
+  });
+
+  it('reads the repeated flag as a list of POINT=MODE texts', () => {
+    const parsed = parseFlags(['--approval', 'merge=delegated', '--approval', 'release=owner'], init?.options ?? {});
+    expect(parsed.ok && parsed.value.strings('approval')).toEqual(['merge=delegated', 'release=owner']);
+  });
+
+  it('shows the flag in the usage line and in the help of init', async () => {
+    const result = await run(['init', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('[--approval POINT=owner|delegated]...');
+    expect(result.out).toContain('--approval POINT=MODE');
+    expect(result.out).toContain('owner or delegated');
+  });
+
+  it('exits 0 and writes the mode owner for each point when no flag is given', async () => {
+    const result = await runInit([]);
+    expect(result.code).toBe(0);
+    expect(result.deps.files.get('/w/node/factory.local.yaml')).toMatch(/approval:\n {2}merge: owner\n {2}release: owner\n/);
+  });
+
+  it('exits 2 for --yes with a flag that asks for delegated, and writes no file', async () => {
+    const result = await runInit(['--yes', '--approval', 'merge=delegated']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('factory init --approval <point>=delegated');
+    expect(result.deps.files.size).toBe(0);
+  });
+
+  it('exits 4 for a delegated choice with no terminal window, and writes no file', async () => {
+    const result = await runInit(['--approval', 'merge=delegated']);
+    expect(result.code).toBe(4);
+    expect(result.err).toContain('terminal window outside a factory session');
+    expect(result.deps.files.size).toBe(0);
+  });
+
+  it('exits 2 for a point that the recipe does not list, and names the points', async () => {
+    const result = await runInit(['--approval', 'deploy=owner']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('merge, release');
+    expect(result.deps.files.size).toBe(0);
   });
 });
 

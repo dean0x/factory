@@ -315,6 +315,56 @@ describe('factory init (built binary)', () => {
   });
 });
 
+describe('factory init: the approval points (built binary)', () => {
+  const recordStore = (): string => join(box.env['HOME'] ?? '', '.local', 'state', 'factory', 'owner-records.json');
+
+  it('writes owner for each point with no terminal window and no flag, and writes no approval record (TP-37)', async () => {
+    const result = await box.run([...initArgs(), '--json']);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ approval: { merge: 'owner', release: 'owner' } });
+    expect(result.stdout).not.toContain('factory upgrade');
+    expect(await box.read(join(box.node, 'factory.local.yaml'))).toMatch(/approval:\n {2}merge: owner\n {2}release: owner\n/);
+    expect(existsSync(recordStore())).toBe(false);
+  });
+
+  it('writes owner with the yes flag, also for a flag that names owner, and writes no approval record (TP-37)', async () => {
+    const result = await box.run(initArgs(['--yes', '--approval', 'merge=owner']));
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('Approval points: merge owner, release owner.');
+    expect(existsSync(recordStore())).toBe(false);
+  });
+
+  it('exits 4 for a delegated choice with no terminal window, and makes no root and no record (TP-38)', async () => {
+    const result = await box.run(initArgs(['--approval', 'merge=delegated']));
+    expect(result.code).toBe(4);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('terminal window outside a factory session');
+    expect(existsSync(box.node)).toBe(false);
+    expect(existsSync(recordStore())).toBe(false);
+  });
+
+  it('exits 2 for the yes flag with a delegated choice, and makes no root and no record (TP-81)', async () => {
+    const result = await box.run(initArgs(['--yes', '--approval', 'release=delegated']));
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('with no --yes');
+    expect(existsSync(box.node)).toBe(false);
+    expect(existsSync(recordStore())).toBe(false);
+  });
+
+  it('exits 2 for a point that the recipe does not list, and makes no root', async () => {
+    const result = await box.run(initArgs(['--approval', 'deploy=owner']));
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('The points are: merge, release');
+    expect(existsSync(box.node)).toBe(false);
+  });
+
+  it('shows the flag in the help of init', async () => {
+    const result = await box.run(['init', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('--approval POINT=MODE');
+  });
+});
+
 describe('factory init: a workspace folder (built binary)', () => {
   const ownerArgs = ['--owner-name', 'Test Owner'];
 

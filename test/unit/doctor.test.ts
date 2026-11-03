@@ -85,6 +85,7 @@ const initialized = async (setup: Setup = {}): Promise<FakeDeps> => {
     yes: false,
     recipe: undefined,
     layer: undefined,
+    approval: [],
   });
   expect(result.ok).toBe(true);
   return deps;

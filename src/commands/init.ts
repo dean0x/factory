@@ -61,10 +61,19 @@ import {
 import { layoutOf, stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
 import { readSetupFile, renderableSetupText } from '../state/setup-text.js';
+import { recipes, type ApprovalModes } from '../recipes/index.js';
 import { roleNameForLayer } from '../recipes/software/recipe.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
+import {
+  approvalLines,
+  approvalsFromFlags,
+  askApprovals,
+  NO_APPROVALS,
+  recordApprovals,
+  type ApprovalChoice,
+} from './init-approval.js';
 import {
   checkProjectCount,
   makeRootFolders,
@@ -94,6 +103,8 @@ export interface InitOptions {
   readonly recipe: string | undefined;
   /** The layer of the node, as typed. */
   readonly layer: string | undefined;
+  /** The values of the approval flag, as typed: `POINT=MODE`. */
+  readonly approval: readonly string[];
 }
 
 interface StateFile {
@@ -124,6 +135,8 @@ export interface InitPlan {
   /** The text of `setup/roles/worker.md` when init makes the file, or null when the file is there already. */
   readonly setupWorkerText: string | null;
   readonly stateFiles: readonly StateFile[];
+  /** The mode of each approval point, and the points that init records after its last write. */
+  readonly approvals: ApprovalChoice;
   /** Things that a person should know before the files are written, for example a layer with no role template. */
   readonly warnings: readonly string[];
 }
@@ -133,6 +146,8 @@ export interface InitResult {
   readonly committed: boolean;
   /** True when the root repo holds its first commit. */
   readonly rootCommitted: boolean;
+  /** The mode that counts for each approval point: a `delegated` point whose record was not written counts as `owner`. */
+  readonly approval: ApprovalModes;
   readonly warnings: readonly string[];
 }
 
@@ -327,6 +342,8 @@ interface CheckedValues {
   readonly ownerName: string;
   /** The id of the node. */
   readonly id: string;
+  /** The mode of each approval point, as the flags and the answers of the owner make it. */
+  readonly approvals: ApprovalChoice;
 }
 
 /** The checked values, and the texts that follow from them. */
@@ -446,7 +463,7 @@ const settingsOf = (
     [keys.root.session]: { [keys.session.proxy]: values.noProxy, [keys.session.statusline]: null },
     [keys.root.proxies]: [],
     [keys.root.workers]: {},
-    [keys.root.approval]: {},
+    [keys.root.approval]: checked.approvals.modes,
     [keys.root.parent]: null,
     [keys.root.children]: [],
     [keys.root.sources]: sources,
@@ -480,6 +497,9 @@ const checkOptions = async (
   if (!layer.ok) return layer;
   const recipe = parseRecipe(options.recipe);
   if (!recipe.ok) return recipe;
+  // Every check of the approval flag comes before the first clone and before any write.
+  const approvals = approvalsFromFlags(deps, options.yes, recipes[recipe.value].approvalPoints, options.approval);
+  if (!approvals.ok) return approvals;
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
   if (!outside.ok) return outside;
   const ownerName = (options.ownerName ?? (await configValue(deps, deps.cwd, 'user.name')) ?? '').trim();
@@ -493,8 +513,10 @@ const checkOptions = async (
   if (id === null) {
     return usageError(`cannot make a ${roles.node} id from the folder name`, `Pass ${flagText(flags.name)} ID.`);
   }
-  const base = { layer: layer.value, recipe: recipe.value, ownerName, id };
-  const settings = parseSettings(settingsOf(base, options.ownerGithub, { projects: [], sources: {} }));
+  const base = { layer: layer.value, recipe: recipe.value, ownerName, id, approvals: approvals.value };
+  // The text of the blocks follows the modes of a root that has no record yet, so it names the owner for each point.
+  // After a recorded delegation, `upgrade` renders the text again.
+  const settings = parseSettings(settingsOf({ ...base, approvals: NO_APPROVALS }, options.ownerGithub, { projects: [], sources: {} }));
   if (!settings.ok) return settings;
   const root = await rootTextsOf(deps, layoutOf(home));
   if (!root.ok) return root;
@@ -575,6 +597,7 @@ const planChecked = async (
     setupCoordinatorText: root.setupCoordinatorText,
     setupWorkerText: root.setupWorkerText,
     stateFiles: stateFiles.value,
+    approvals: checked.approvals,
     warnings: [
       ...(roleNameForLayer(layer) === null
         ? [`Layer ${layer} has no role template: ${files.claudeMd} holds the safety block only.`]
@@ -605,7 +628,8 @@ const SHARED_FILE_MODE = 0o644;
 /**
  * Write the node: first into a staging folder, then the state folder, the coordinator folder with its CLAUDE.md, the
  * setup text and the root `.gitignore`, the local file, the shared config file, the root repo, and last the entry in the
- * factory list. A step that fails undoes the steps before it, and the command exits 1.
+ * factory list. A step that fails undoes the steps before it, and the command exits 1. The approval records come after
+ * the entry in the factory list, and a record that fails is a warning, not a failure of the run.
  * Before each write, init checks whether the target is there. The record `touched` marks a path only when this run makes
  * it, so the undo never removes a path that was there before. A text that init changed in place (`CLAUDE.md` and
  * `.gitignore`) is written back as it was.
@@ -813,9 +837,20 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     );
   }
 
+  // The records come after the entry in the factory list, so a run that fails leaves no record. A record that cannot be
+  // written is a warning: the run keeps its work, and the point counts as `owner`.
+  const approvals = await recordApprovals(
+    deps,
+    plan.home,
+    plan.config.core.node.id,
+    recipes[plan.config.recipe.id].approvalPoints,
+    plan.approvals,
+  );
+
   return ok({
     committed: identity,
     rootCommitted: rootRepo.value.committed,
+    approval: approvals.modes,
     warnings: [
       ...(identity
         ? []
@@ -826,6 +861,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
       ...(rootRepo.value.committed
         ? []
         : ['No git identity: the first commit of the config repo was not made. Set user.name and user.email, then commit there.']),
+      ...approvals.warnings,
     ],
   });
 };
@@ -847,6 +883,15 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   // A bad value must give its error before any clone runs, because a clone costs time and disk.
   const checked = await checkOptions(deps, options, home, indexPath.value);
   if (!checked.ok) return checked;
+  // The questions come after the checks, so a refused run asks nothing, and before the first clone.
+  const asked = await askApprovals(
+    deps,
+    options.yes,
+    recipes[checked.value.recipe].approvalPoints,
+    checked.value.approvals,
+  );
+  if (!asked.ok) return asked;
+  const answered: CheckedOptions = { ...checked.value, approvals: asked.value };
 
   // The clones come before the plan, because the plan reads each project. Every check of the paths of the projects
   // comes before the first clone. When a later step fails, the clones that this run made are removed again.
@@ -861,7 +906,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!cloned.ok) return cloned;
   const made = cloned.value;
 
-  const plan = await planChecked(deps, { ...options, home }, checked.value, indexPath.value, projects.value);
+  const plan = await planChecked(deps, { ...options, home }, answered, indexPath.value, projects.value);
   if (!plan.ok) return undoClones(deps, made, parents.value, plan.error);
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);
@@ -883,6 +928,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
       ...written.map((name) => ({ level: 'text' as const, text: `  ${name}` })),
       ...made.map((target) => ({ level: 'text' as const, text: `Cloned into ${target}.` })),
       ...skipped.map((folder) => ({ level: 'text' as const, text: `Skipped ${folder.path}: ${folder.reason}.` })),
+      ...approvalLines(plan.value.home, applied.value.approval),
       {
         level: 'text',
         text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${plan.value.home}".`,
@@ -897,6 +943,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
       skipped,
       committed: applied.value.committed,
       rootCommitted: applied.value.rootCommitted,
+      approval: applied.value.approval,
       warnings,
     },
     warnings,

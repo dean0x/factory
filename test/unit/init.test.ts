@@ -5,10 +5,12 @@ import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import { applyInit, planInit, runInit, type InitOptions } from '../../src/commands/init.js';
+import { runUpgrade } from '../../src/commands/upgrade.js';
 import { loadConfig } from '../../src/config/load.js';
 import type { Deps } from '../../src/core/deps.js';
+import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
-import { files as fileNames } from '../../src/names.js';
+import { env, files as fileNames, values } from '../../src/names.js';
 import { SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
 import { loadState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
@@ -42,6 +44,7 @@ const options = (extra: Partial<InitOptions> = {}): InitOptions => ({
   yes: false,
   recipe: undefined,
   layer: undefined,
+  approval: [],
   ...extra,
 });
 
@@ -58,6 +61,14 @@ const failingWrite = (deps: Deps, suffix: string): Deps => withFailingWrites(dep
 
 const messageOf = (result: { ok: boolean; error?: { message: string; hint?: string } }): string =>
   `${result.error?.message ?? ''} ${result.error?.hint ?? ''}`;
+
+const APPROVAL_QUESTION = 'Approval point ';
+
+/** A person who answers the question about the home with `answer`, and takes the default for each approval point. */
+const answerHome = (answer: string) => (question: string) => ok(question.startsWith(APPROVAL_QUESTION) ? '' : answer);
+
+/** The questions that deps asked about the home, without the questions about the approval points. */
+const homeQuestions = (deps: FakeDeps): string[] => deps.prompts.filter((question) => !question.startsWith(APPROVAL_QUESTION));
 
 describe('init: the files', () => {
   it('writes every file of the plan layout and leaves no staging folder', async () => {
@@ -369,7 +380,7 @@ describe('init: the proposed home in a git work tree', () => {
 
   const withHome = (extra: Partial<InitOptions> = {}): InitOptions => options({ home: undefined, ...extra });
   const terminal = { stdinIsTTY: true, stdoutIsTTY: true };
-  const answers = (answer: string): FakeOptions => ({ ...terminal, prompt: () => ok(answer) });
+  const answers = (answer: string): FakeOptions => ({ ...terminal, prompt: answerHome(answer) });
   const projectsOf = async (deps: FakeDeps) => {
     const config = await loadConfig(deps, PROPOSAL);
     return config.ok ? config.value.recipe.projects.map((project) => [project.id, project.path]) : null;
@@ -439,7 +450,7 @@ describe('init: the proposed home in a git work tree', () => {
       const deps = inRepo(answers(answer));
       const result = await runInit(deps, withHome());
       expect({ answer, ok: result.ok }).toEqual({ answer, ok: true });
-      expect(deps.prompts).toHaveLength(1);
+      expect(homeQuestions(deps)).toHaveLength(1);
       expect(deps.prompts[0]).toContain(`The proposed node home is ${PROPOSAL}`);
       expect(deps.prompts[0]).toContain('Create the node home here? [y/N]');
       expect(await projectsOf(deps)).toEqual([['web', 'web']]);
@@ -488,7 +499,7 @@ describe('init: the proposed home in a git work tree', () => {
     const deps = inRepo(answers('y'));
     const result = await runInit(deps, withHome({ home: HOME }));
     expect(result.ok).toBe(true);
-    expect(deps.prompts).toEqual([]);
+    expect(homeQuestions(deps)).toEqual([]);
     const config = await loadConfig(deps, HOME);
     expect(config.ok && config.value.recipe.projects).toEqual([]);
   });
@@ -1417,19 +1428,19 @@ describe('init: a workspace folder that holds several repos', () => {
   });
 
   it('asks on a terminal, shows the repos and the skipped folder, and goes on for y', async () => {
-    const deps = inWorkspace({ ...terminal, prompt: () => ok('y') });
+    const deps = inWorkspace({ ...terminal, prompt: answerHome('y') });
     const result = await runInit(deps, withHome());
     expect(result.ok).toBe(true);
-    expect(deps.prompts).toHaveLength(1);
+    expect(homeQuestions(deps)).toHaveLength(1);
     expect(deps.prompts[0]).toContain('this folder holds the git repos api, web');
     expect(deps.prompts[0]).toContain('/ws/web-search');
     expect(deps.prompts[0]).toContain('Create the node home here? [y/N]');
   });
 
   it('replaces the control characters of a folder name in the question', async () => {
-    const deps = inWorkspace({ ...terminal, prompt: () => ok('y') }, { repos: { '/ws/we\u001b[2Jb': {} } });
+    const deps = inWorkspace({ ...terminal, prompt: answerHome('y') }, { repos: { '/ws/we\u001b[2Jb': {} } });
     await runInit(deps, withHome());
-    expect(deps.prompts).toHaveLength(1);
+    expect(homeQuestions(deps)).toHaveLength(1);
     expect(deps.prompts[0]).toContain('this folder holds the git repos we?[2Jb');
     expect(deps.prompts[0]).not.toContain('\u001b');
   });
@@ -2704,5 +2715,389 @@ describe('init: the setup texts and the link rule (TP-102, TP-130)', () => {
     deps.seedDir('/w/real');
     const result = await runInit(deps, options({ home: '/w/linked/node' }));
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
+  const STORE = '/state/factory/owner-records.json';
+  const ACCEPTANCES = '/state/factory/setup-acceptances.json';
+  const [owner, delegated] = values.approvalModes;
+  const terminal = { stdinIsTTY: true, stdoutIsTTY: true };
+  const inSession = { ...ENV, [env.session]: 'demo' };
+
+  /** A person who types the answers in the list, one for each question. A question after the last answer gets none. */
+  const typing = (answers: readonly string[]): FakeOptions => {
+    const queue = [...answers];
+    return { ...terminal, prompt: () => (queue.length === 0 ? failure('no answer was given') : ok(queue.shift() ?? '')) };
+  };
+
+  const modesIn = async (deps: Deps, home = HOME) => {
+    const config = await loadConfig(deps, home);
+    return config.ok ? config.value.core.approval : null;
+  };
+
+  const recordsIn = (deps: FakeDeps): unknown[] =>
+    (JSON.parse(deps.files.get(STORE) ?? '{"records":[]}') as { records: unknown[] }).records;
+
+  const delegation = (point: string, mode: string) =>
+    expect.objectContaining({ kind: 'delegation', node: 'node', root: HOME, point, mode });
+
+  describe('a terminal window (TP-37)', () => {
+    it('asks owner or delegated for each point of the recipe, in order, with owner as the default', async () => {
+      const { deps } = setup({}, typing(['', '']));
+      const result = await runInit(deps, options());
+      expect(result.ok).toBe(true);
+      expect(deps.prompts).toHaveLength(2);
+      expect(deps.prompts[0]).toContain('merge');
+      expect(deps.prompts[1]).toContain('release');
+      for (const question of deps.prompts) {
+        expect(question).toContain(`${owner} or ${delegated}`);
+        expect(question).toContain(`[${owner}]`);
+      }
+      expect(await modesIn(deps)).toEqual({ merge: owner, release: owner });
+    });
+
+    it('writes the answer of each point to the local file and records it through the owner record writer', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      expect((await runInit(deps, options())).ok).toBe(true);
+      expect(await modesIn(deps)).toEqual({ merge: delegated, release: owner });
+      expect(recordsIn(deps)).toEqual([delegation('merge', delegated), delegation('release', owner)]);
+      const config = await loadConfig(deps, HOME);
+      expect(config.ok && (await effectiveModes(deps, HOME, config.value))).toEqual({ merge: delegated, release: owner });
+    });
+
+    it('takes an answer in any letter case, with blanks, or as its first letter', async () => {
+      const { deps } = setup({}, typing([' D ', 'OWNER\n']));
+      expect((await runInit(deps, options())).ok).toBe(true);
+      expect(await modesIn(deps)).toEqual({ merge: delegated, release: owner });
+    });
+
+    it('asks again for an answer that is neither, and stops with exit 2 and no file after three of them', async () => {
+      const { deps } = setup({}, typing(['maybe', 'yes', 'no', owner, owner]));
+      const before = snapshot(deps);
+      const result = await runInit(deps, options());
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(messageOf(result)).toContain('merge');
+      expect(deps.prompts).toHaveLength(3);
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it('goes on after one bad answer', async () => {
+      const { deps } = setup({}, typing(['maybe', delegated, owner]));
+      expect((await runInit(deps, options())).ok).toBe(true);
+      expect(deps.prompts).toHaveLength(3);
+      expect(await modesIn(deps)).toEqual({ merge: delegated, release: owner });
+    });
+
+    it('fails with exit 1 and writes nothing when a question gets no answer', async () => {
+      const { deps } = setup({}, { ...terminal });
+      const before = snapshot(deps);
+      const result = await runInit(deps, options());
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it('lets the flag set one point and asks only for the other points', async () => {
+      const { deps } = setup({}, typing([owner]));
+      const result = await runInit(deps, options({ approval: [`merge=${delegated}`] }));
+      expect(result.ok).toBe(true);
+      expect(deps.prompts).toHaveLength(1);
+      expect(deps.prompts[0]).toContain('release');
+      expect(await modesIn(deps)).toEqual({ merge: delegated, release: owner });
+      expect(recordsIn(deps)).toEqual([delegation('merge', delegated), delegation('release', owner)]);
+    });
+
+    it('asks nothing when the flags name every point', async () => {
+      const { deps } = setup({}, typing([]));
+      const result = await runInit(deps, options({ approval: [`release=${delegated}`, `merge=${owner}`] }));
+      expect(result.ok).toBe(true);
+      expect(deps.prompts).toEqual([]);
+      expect(await modesIn(deps)).toEqual({ merge: owner, release: delegated });
+    });
+
+    it('asks after the checks of the home, so a refused home gets no question', async () => {
+      const { deps } = setup({}, typing([owner, owner]));
+      deps.seed(`${HOME}/factory.yaml`, 'schema: 1\n');
+      const result = await runInit(deps, options());
+      expect(result.ok).toBe(false);
+      expect(deps.prompts).toEqual([]);
+    });
+
+    it('asks before the first clone', async () => {
+      const { deps, log } = setup({}, { ...terminal, prompt: () => failure('no answer was given') });
+      const result = await runInit(deps, options({ projects: ['https://host/acme/api.git'] }));
+      expect(result.ok).toBe(false);
+      expect(log.clones()).toEqual([]);
+    });
+
+    it('names the effective mode of each point in the output', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      const result = await runInit(deps, options());
+      expect(result.ok && result.value.json['approval']).toEqual({ merge: delegated, release: owner });
+      expect(result.ok && result.value.lines.map((line) => line.text)).toContain(
+        `Approval points: merge ${delegated}, release ${owner}.`,
+      );
+    });
+
+    it('says that the text of the coordinator follows the delegation after an upgrade', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      const result = await runInit(deps, options());
+      const lines = result.ok ? result.value.lines.map((line) => line.text).join('\n') : '';
+      expect(lines).toContain('factory upgrade');
+      const none = setup({}, typing([owner, owner]));
+      const second = await runInit(none.deps, options());
+      expect(second.ok && second.value.lines.map((line) => line.text).join('\n')).not.toContain('factory upgrade');
+    });
+  });
+
+  describe('no terminal window, or the yes flag (TP-37)', () => {
+    it('writes owner for each point with no terminal window and no flag, asks nothing, and writes no record', async () => {
+      const { deps } = setup();
+      expect((await runInit(deps, options())).ok).toBe(true);
+      expect(await modesIn(deps)).toEqual({ merge: owner, release: owner });
+      expect(deps.prompts).toEqual([]);
+      expect(deps.files.has(STORE)).toBe(false);
+    });
+
+    it('writes owner for each point with the yes flag on a terminal, asks nothing, and writes no record', async () => {
+      const { deps } = setup({}, { ...terminal, prompt: () => ok(delegated) });
+      expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+      expect(await modesIn(deps)).toEqual({ merge: owner, release: owner });
+      expect(deps.prompts).toEqual([]);
+      expect(deps.files.has(STORE)).toBe(false);
+    });
+
+    it('takes the flag with the value owner with the yes flag, and with no terminal window, and writes no record', async () => {
+      for (const extra of [{ yes: true }, {}]) {
+        const { deps } = setup();
+        expect((await runInit(deps, options({ ...extra, approval: [`merge=${owner}`] }))).ok).toBe(true);
+        expect(await modesIn(deps)).toEqual({ merge: owner, release: owner });
+        expect(deps.files.has(STORE)).toBe(false);
+      }
+    });
+
+    it('takes the flag from a terminal for the input only, asks nothing, and records the point that the flag names', async () => {
+      const { deps } = setup({}, { stdinIsTTY: true });
+      const result = await runInit(deps, options({ approval: [`merge=${delegated}`] }));
+      expect(result.ok).toBe(true);
+      expect(deps.prompts).toEqual([]);
+      expect(await modesIn(deps)).toEqual({ merge: delegated, release: owner });
+      expect(recordsIn(deps)).toEqual([delegation('merge', delegated)]);
+    });
+  });
+
+  describe('a delegated choice that the writer would refuse (TP-38)', () => {
+    it('exits 4 with no terminal window, names the point and the remedy, and writes no file', async () => {
+      const { deps, log } = setup();
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ approval: [`release=${delegated}`], projects: ['https://host/acme/api.git'] }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(result)).toContain('release');
+      expect(messageOf(result)).toContain('Run "factory init" in a terminal window outside a factory session.');
+      expect(log.clones()).toEqual([]);
+      expect(snapshot(deps)).toBe(before);
+      expect(deps.files.has(STORE)).toBe(false);
+    });
+
+    it('exits 4 inside a factory session although a terminal window is there, and writes no file', async () => {
+      const { deps, log } = setup({}, { ...terminal, env: inSession });
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ approval: [`merge=${delegated}`], projects: ['https://host/acme/api.git'] }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(result)).toContain('factory session');
+      expect(log.clones()).toEqual([]);
+      expect(deps.prompts).toEqual([]);
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it('exits 4 before any question when one point asks for delegated and the terminal window is not usable', async () => {
+      const { deps } = setup({}, { stdoutIsTTY: true, prompt: () => ok(owner) });
+      const result = await runInit(deps, options({ approval: [`release=${delegated}`] }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(deps.prompts).toEqual([]);
+    });
+
+    it('asks nothing in a factory session, writes owner for each point, and writes no record', async () => {
+      const { deps } = setup({}, { ...terminal, env: inSession, prompt: () => ok(delegated) });
+      expect((await runInit(deps, options())).ok).toBe(true);
+      expect(deps.prompts).toEqual([]);
+      expect(await modesIn(deps)).toEqual({ merge: owner, release: owner });
+      expect(deps.files.has(STORE)).toBe(false);
+    });
+
+    it('takes the flag with the value owner in a factory session, and writes no record', async () => {
+      const { deps } = setup({}, { ...terminal, env: inSession });
+      expect((await runInit(deps, options({ approval: [`merge=${owner}`] }))).ok).toBe(true);
+      expect(deps.files.has(STORE)).toBe(false);
+    });
+  });
+
+  describe('the yes flag with delegated (TP-81)', () => {
+    it.each([
+      ['no terminal window', {}],
+      ['a terminal window', terminal],
+    ])('exits 2 with %s, names the remedy, and writes no file', async (_name, extra) => {
+      const { deps, log } = setup({}, extra);
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ yes: true, approval: [`merge=${owner}`, `release=${delegated}`], projects: ['https://host/acme/api.git'] }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(messageOf(result)).toContain('--yes');
+      expect(messageOf(result)).toContain('release');
+      expect(messageOf(result)).toContain('Run "factory init --approval <point>=delegated" in a terminal window, with no --yes.');
+      expect(log.clones()).toEqual([]);
+      expect(snapshot(deps)).toBe(before);
+      expect(deps.files.has(STORE)).toBe(false);
+    });
+
+    it('exits 2 and not 4 inside a factory session', async () => {
+      const { deps } = setup({}, { ...terminal, env: inSession });
+      const result = await runInit(deps, options({ yes: true, approval: [`merge=${delegated}`] }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    });
+  });
+
+  describe('the flag values', () => {
+    it.each([
+      ['no sign'],
+      ['merge='],
+      ['=owner'],
+      ['merge=maybe'],
+      ['merge=Owner'],
+      ['merge=owner=owner'],
+      ['deploy=owner'],
+      ['Merge=owner'],
+      [''],
+    ])('exits 2 for "%s" and writes nothing', async (text) => {
+      const { deps, log } = setup();
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ approval: [text], projects: ['https://host/acme/api.git'] }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+      expect(messageOf(result)).toContain('--approval');
+      expect(log.clones()).toEqual([]);
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it('names the points of the recipe for a point that it does not list', async () => {
+      const { deps } = setup();
+      const result = await runInit(deps, options({ approval: [`deploy=${owner}`] }));
+      expect(messageOf(result)).toContain('The points are: merge, release');
+    });
+
+    it('names the modes for a mode that is not one', async () => {
+      const { deps } = setup();
+      const result = await runInit(deps, options({ approval: ['merge=maybe'] }));
+      expect(messageOf(result)).toContain(`${owner}, ${delegated}`);
+    });
+
+    it('repeats no control character of the value', async () => {
+      const { deps } = setup();
+      const result = await runInit(deps, options({ approval: ['merge=\u001b[2J'] }));
+      expect(messageOf(result)).not.toContain('\u001b');
+    });
+
+    it('exits 2 for a point that two flags name, also with the same mode', async () => {
+      for (const approval of [[`merge=${owner}`, `merge=${delegated}`], [`merge=${owner}`, `merge=${owner}`]]) {
+        const { deps } = setup();
+        const before = snapshot(deps);
+        const result = await runInit(deps, options({ approval }));
+        expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+        expect(messageOf(result)).toContain('merge');
+        expect(snapshot(deps)).toBe(before);
+      }
+    });
+  });
+
+  describe('when the records are written (TP-91)', () => {
+    const listFails = (deps: Deps): Deps => failingWrite(deps, '/homes.json');
+
+    it('writes the records after the factory list, and no record before it', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      expect((await runInit(deps, options())).ok).toBe(true);
+      const order = deps.atomicWrites.filter((path) => path === INDEX || path === STORE);
+      expect(order).toEqual([INDEX, STORE, STORE]);
+    });
+
+    it('writes no record and no setup acceptance when the factory list can not be written', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      const result = await runInit(listFails(deps), options());
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(deps.files.has(STORE)).toBe(false);
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
+      expect(deps.atomicWrites.filter((path) => path === STORE)).toEqual([]);
+    });
+
+    it('writes no record when the flag names the points and the factory list can not be written', async () => {
+      const { deps } = setup({}, { ...terminal });
+      const flags = [`merge=${delegated}`, `release=${owner}`];
+      const result = await runInit(listFails(deps), options({ approval: flags }));
+      expect(result.ok).toBe(false);
+      expect(deps.files.has(STORE)).toBe(false);
+    });
+
+    it('lets a second init in the same folder succeed, and then writes the records', async () => {
+      const { deps } = setup({}, typing([delegated, owner, delegated, owner]));
+      expect((await runInit(listFails(deps), options())).ok).toBe(false);
+      expect((await runInit(deps, options())).ok).toBe(true);
+      expect(recordsIn(deps)).toEqual([delegation('merge', delegated), delegation('release', owner)]);
+    });
+  });
+
+  describe('when a record can not be written after the factory list (TP-91)', () => {
+    const storeFails = (deps: Deps): Deps => failingWrite(deps, '/owner-records.json');
+
+    it('still succeeds, warns and names the point, and keeps the node', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      const result = await runInit(storeFails(deps), options());
+      expect(result.ok).toBe(true);
+      const warnings = result.ok ? result.value.warnings : [];
+      const merge = warnings.filter((warning) => warning.includes('merge'));
+      expect(merge).toHaveLength(1);
+      expect(merge[0]).toContain(`counts as ${owner}`);
+      expect(warnings.filter((warning) => warning.includes('release'))).toHaveLength(1);
+      expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
+      expect(deps.files.has(INDEX)).toBe(true);
+    });
+
+    it('counts the point as owner: the local file keeps the choice and the effective mode is owner', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      const result = await runInit(storeFails(deps), options());
+      expect(result.ok && result.value.json['approval']).toEqual({ merge: owner, release: owner });
+      expect(await modesIn(deps)).toEqual({ merge: delegated, release: owner });
+      const config = await loadConfig(deps, HOME);
+      expect(config.ok && (await effectiveModes(deps, HOME, config.value))).toEqual({ merge: owner, release: owner });
+      expect(deps.files.has(STORE)).toBe(false);
+    });
+
+    it('does not say that the text follows a delegation that was not recorded', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      const result = await runInit(storeFails(deps), options());
+      expect(result.ok && result.value.lines.map((line) => line.text).join('\n')).not.toContain('factory upgrade');
+    });
+  });
+
+  describe('the text of the coordinator', () => {
+    it('names the owner for each point at the end of init, also for a recorded delegation', async () => {
+      const { deps } = setup({}, typing([delegated, delegated]));
+      expect((await runInit(deps, options())).ok).toBe(true);
+      const claude = deps.files.get(`${HOME}/coordinator/CLAUDE.md`) ?? '';
+      expect(claude).toContain('A merge waits for the go of the owner.');
+      expect(claude).toContain('A release waits for the go of the owner.');
+    });
+
+    it('is rendered again by upgrade for a recorded delegation, as the line of init says', async () => {
+      const { deps } = setup({}, typing([delegated, owner]));
+      expect((await runInit(deps, options())).ok).toBe(true);
+      const upgraded = await runUpgrade(deps, { home: HOME, dryRun: true, overwrite: [], yes: false });
+      const lines = upgraded.ok ? upgraded.value.lines.map((line) => line.text).join('\n') : '';
+      expect(lines).toContain('block safety: render the text again');
+    });
+
+    it('is current for upgrade when every point is owner', async () => {
+      const { deps } = setup({}, typing([owner, owner]));
+      expect((await runInit(deps, options())).ok).toBe(true);
+      const upgraded = await runUpgrade(deps, { home: HOME, dryRun: true, overwrite: [], yes: false });
+      const lines = upgraded.ok ? upgraded.value.lines.map((line) => line.text).join('\n') : '';
+      expect(lines).toContain('block safety: version 2 is current');
+    });
   });
 });

@@ -77,6 +77,7 @@ const makeNode = async (
       yes: false,
       recipe: undefined,
       layer: undefined,
+      approval: [],
     },
   );
   expect(init.ok).toBe(true);
