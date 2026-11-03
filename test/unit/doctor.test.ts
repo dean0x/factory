@@ -842,7 +842,7 @@ describe('doctor: the root', () => {
   });
 
   it('warns when the root is in no work tree', async () => {
-    const result = await checkRoot(await initialized(), HOME);
+    const result = await checkRoot(await initialized({ git: { noWorkTree: [HOME] } }), HOME);
     expect(result.level).toBe('warn');
     expect(result.text).toContain('is not the top folder of a git work tree of its own');
   });

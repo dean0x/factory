@@ -202,11 +202,20 @@ export const privateFile = {
  */
 export const homeIndex = {
   schema: 1,
-  keys: { schema: 'schema', homes: 'homes', home: 'home', id: 'id', projects: 'projects' },
+  keys: { schema: 'schema', homes: 'homes', home: 'home', id: 'id', projects: 'projects', origin: 'origin' },
+  /** The origin of a root (design 4.3): the root is the owner's own, or it came from another machine or person. */
+  origins: { own: 'own', received: 'received' },
   maxHomes: 200,
   maxProjects: 200,
   maxBytes: maxFileBytes,
 } as const;
+
+/**
+ * The bounds of the files that a received root tracks. `init` lists at most this many tracked files, and it reads at most
+ * this many bytes of one of them. A list over the first bound and a file over the second bound are a stop: the setup
+ * acceptance never covers part of a list or part of a file.
+ */
+export const trackedFiles = { maxCount: 2_000, maxFileBytes } as const;
 
 /**
  * The store of the approval records (design 6): the number of its schema, its keys, the two kinds of record and its
@@ -266,8 +275,13 @@ export const setupAcceptance = {
   fileTypes: ['file', 'link'],
   maxRecords: 200,
   maxBytes: 4 * maxFileBytes,
-  /** The most files in one manifest. */
-  maxManifestFiles: 2_000,
+  /** The most files in one manifest: the most files that a received root can track. */
+  maxManifestFiles: trackedFiles.maxCount,
+  /**
+   * The files of the setup text, as paths below the factory folder. `init` with the yes flag accepts these files alone,
+   * and no other file.
+   */
+  setupTextFiles: [`${dirs.setup}/${files.setupCoordinator}`, `${dirs.setup}/${dirs.roles}/${files.worker}`],
   maxReasonChars: 200,
   maxDisplayBytes: 16_384,
   maxDisplayTotalBytes: 262_144,
@@ -378,6 +392,9 @@ export const values = {
 
 /** The question of `init` about one approval point: it asks this many times, then it stops with a usage error. */
 export const approvalQuestion = { maxAttempts: 3 } as const;
+
+/** The question of `init` about a personal value of a received factory: it asks this many times, then it stops with a usage error. */
+export const ownerQuestion = { maxAttempts: 3, maxNameChars: 80 } as const;
 
 /** The scheme of the only address that a node link accepts. */
 export const address = { scheme: 'file://' } as const;

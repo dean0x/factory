@@ -192,6 +192,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
           uid: owners.get(path) ?? uid ?? DEFAULT_UID,
           mode: modes.get(path) ?? (kind === 'dir' ? PRIVATE_DIR_MODE : PRIVATE_FILE_MODE),
           mtimeMs: mtimes.get(path) ?? clock,
+          size: Buffer.byteLength(files.get(path) ?? '', 'utf8'),
         });
       },
       chmod: async (path, mode) => {

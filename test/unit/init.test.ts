@@ -226,6 +226,7 @@ describe('init: refusals', () => {
   it('refuses when the home already has a config file, and changes nothing', async () => {
     const { deps } = setup();
     deps.seed(`${HOME}/factory.yaml`, 'schema: 1\n');
+    deps.seed(`${HOME}/factory.local.yaml`, 'schema: 1\n');
     const before = snapshot(deps);
     const result = await runInit(deps, options());
     expect(result.ok).toBe(false);
@@ -359,6 +360,7 @@ describe('init: a new root inside a root that the factory list holds', () => {
   it('still refuses with exit 1 when the home has a config file already', async () => {
     const { deps } = setup();
     deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
+    deps.seed(`${HOME}/factory.local.yaml`, 'schema: 1\n');
     const result = await runInit(deps, options());
     expect(refused(result)).toBe('failure');
     expect(messageOf(result)).toContain('already exists');
@@ -528,6 +530,7 @@ describe('init: the proposed home in a git work tree', () => {
   it('fails with exit 1, and proposes nothing, when the top of the work tree holds a config file', async () => {
     const deps = inRepo(answers('y'));
     deps.seed(`${REPO}/factory.yaml`, 'schema: 2\n');
+    deps.seed(`${REPO}/factory.local.yaml`, 'schema: 1\n');
     const before = snapshot(deps);
     const result = await runInit(deps, withHome());
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
@@ -1031,6 +1034,7 @@ describe('init: the state repository', () => {
     const git = log.calls.filter((call) => call.command === 'git' && call.args[1] === staging);
     expect(git.map((call) => call.args.slice(2).join(' '))).toEqual([
       'init -q',
+      'rev-parse --is-inside-work-tree --show-prefix',
       'config user.name',
       'config user.email',
       'add -A',
@@ -1524,6 +1528,7 @@ describe('init: a workspace folder that holds several repos', () => {
     const inNode = (cwd: string = WS, extra: FakeOptions = {}) => {
       const deps = inWorkspace({ ...extra, cwd }, { repos: { ...repos, '/ws/.factory': {} } });
       deps.seed('/ws/factory.yaml', 'schema: 2\n');
+      deps.seed('/ws/factory.local.yaml', 'schema: 1\n');
       deps.seedDir('/ws/sub');
       return deps;
     };
@@ -1584,7 +1589,14 @@ describe('init: a workspace folder that holds several repos', () => {
     });
 
     it.each([
-      ['a config file', (deps: FakeDeps) => deps.seed('/ws/sub/factory.yaml', 'schema: 2\n'), 'factory.yaml already exists in /ws/sub'],
+      [
+        'a config file',
+        (deps: FakeDeps) => {
+          deps.seed('/ws/sub/factory.yaml', 'schema: 2\n');
+          deps.seed('/ws/sub/factory.local.yaml', 'schema: 1\n');
+        },
+        'factory.yaml already exists in /ws/sub',
+      ],
       ['a state folder', (deps: FakeDeps) => deps.seedDir('/ws/sub/.factory'), '.factory already exists in /ws/sub'],
     ])('exits 1 for a folder that holds %s, also when a folder above it is a node home', async (_name, prepare, text) => {
       const deps = inNode('/ws/sub');
@@ -2121,7 +2133,14 @@ describe('init: the checks before a clone', () => {
   });
 
   it.each([
-    ['a config file', (deps: FakeDeps) => deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n'), 'factory.yaml already exists'],
+    [
+      'a config file',
+      (deps: FakeDeps) => {
+        deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
+        deps.seed(`${HOME}/factory.local.yaml`, 'schema: 1\n');
+      },
+      'factory.yaml already exists',
+    ],
     ['a state folder', (deps: FakeDeps) => deps.seedDir(`${HOME}/.factory`), '.factory already exists'],
     ['a home that is a file', (deps: FakeDeps) => deps.seed(HOME, 'x'), `${HOME} is not a folder`],
   ])('refuses %s with exit 1 and runs no clone', async (_name, prepare, text) => {
@@ -2133,9 +2152,10 @@ describe('init: the checks before a clone', () => {
   });
 
   it('gives "already exists" before the error for a missing owner name', async () => {
-    const { result, log } = await initWithUrl({ ownerName: undefined }, { identity: false }, (deps) =>
-      deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n'),
-    );
+    const { result, log } = await initWithUrl({ ownerName: undefined }, { identity: false }, (deps) => {
+      deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
+      deps.seed(`${HOME}/factory.local.yaml`, 'schema: 1\n');
+    });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(messageOf(result)).toContain('factory.yaml already exists');
     expect(log.clones()).toEqual([]);
@@ -2229,7 +2249,7 @@ describe('init: the factory list', () => {
     ]);
     expect(stored(deps)).toEqual({
       schema: 1,
-      homes: [{ home: HOME, id: 'node', projects: ['/w/node/web', '/w/node/api'] }],
+      homes: [{ home: HOME, id: 'node', projects: ['/w/node/web', '/w/node/api'], origin: 'own' }],
     });
     expect(deps.modes.get(INDEX)).toBe(0o600);
     expect(deps.modes.get('/state/factory')).toBe(0o700);
@@ -2242,7 +2262,7 @@ describe('init: the factory list', () => {
     await runInit(deps, options({ home: '/w/real/node', projects: ['/w/via/proj'] }));
     expect(stored(deps)).toEqual({
       schema: 1,
-      homes: [{ home: '/w/real/node', id: 'node', projects: ['/w/real/node/proj'] }],
+      homes: [{ home: '/w/real/node', id: 'node', projects: ['/w/real/node/proj'], origin: 'own' }],
     });
   });
 
@@ -2254,7 +2274,7 @@ describe('init: the factory list', () => {
       schema: 1,
       homes: [
         { home: '/h/other', id: 'other', projects: ['/h/x'] },
-        { home: HOME, id: 'node', projects: ['/w/node/web'] },
+        { home: HOME, id: 'node', projects: ['/w/node/web'], origin: 'own' },
       ],
     });
   });
@@ -2818,6 +2838,7 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
     it('asks after the checks of the home, so a refused home gets no question', async () => {
       const { deps } = setup({}, typing([owner, owner]));
       deps.seed(`${HOME}/factory.yaml`, 'schema: 1\n');
+      deps.seed(`${HOME}/factory.local.yaml`, 'schema: 1\n');
       const result = await runInit(deps, options());
       expect(result.ok).toBe(false);
       expect(deps.prompts).toEqual([]);

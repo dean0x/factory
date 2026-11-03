@@ -51,6 +51,8 @@ interface Setup {
   readonly registered?: boolean;
   /** False: the home has no coordinator folder. Default: true. */
   readonly coordinatorFolder?: boolean;
+  /** The paths of the project folders that exist in the home. Default: the folder of each project of the config. */
+  readonly projectFolders?: readonly string[];
 }
 
 /** A fake of git: it knows only the top folder of the work tree. The tmux log does not record its calls. */
@@ -88,6 +90,9 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
   if (setup.coordinatorFolder !== false) deps.seedDir(COORDINATOR);
+  for (const path of setup.projectFolders ?? config.recipe.projects.map((project) => project.path)) {
+    deps.seedDir(`${HOME}/${path}`);
+  }
   if (setup.registered !== false) registerRoot(deps, HOME, config.core.node.id);
   return { deps, tmux: log };
 };
@@ -260,6 +265,48 @@ describe('start:a new session', () => {
     const call = tmux.calls.find((candidate) => candidate.args[0] === 'new-session')?.args ?? [];
     const launch = call.slice(call.indexOf('--') + 1, call.indexOf(';'));
     expect(launch.slice(launch.indexOf('--add-dir'))).toEqual([...LAUNCH_DIRS, '--add-dir', '/w/node/api']);
+  });
+
+  describe('a project folder that is missing (TP-120)', () => {
+    const twoProjects = (): FactoryConfig => {
+      const config = sampleConfig();
+      const second = { ...config.recipe.projects[0]!, id: 'api', url: 'https://github.com/acme/api', path: 'api' };
+      return { ...config, recipe: { ...config.recipe, projects: [...config.recipe.projects, second] } };
+    };
+
+    it('warns with the path of the folder and adds no --add-dir for it', async () => {
+      const { deps, tmux } = make({ config: twoProjects(), projectFolders: ['web'] });
+      const output = await succeeded(deps);
+      const call = tmux.calls.find((candidate) => candidate.args[0] === 'new-session')?.args ?? [];
+      const added = call.flatMap((arg, index) => (arg === '--add-dir' ? [call[index + 1]] : []));
+      expect(added).toEqual([STATE_DIR, '/w/node/web']);
+      expect(output.warnings).toEqual([expect.stringContaining('/w/node/api')]);
+      expect(output.warnings.join(' ')).toContain('missing');
+    });
+
+    it('still starts the session', async () => {
+      const { deps, tmux } = make({ config: twoProjects(), projectFolders: [] });
+      await succeeded(deps);
+      expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(true);
+    });
+
+    it('treats a project path that is a file as a missing folder', async () => {
+      const { deps } = make({ projectFolders: [] });
+      deps.seed('/w/node/web', 'not a folder');
+      const output = await succeeded(deps);
+      expect(output.warnings).toEqual([expect.stringContaining('/w/node/web')]);
+    });
+
+    it('warns in the dry run, too', async () => {
+      const { deps } = make({ projectFolders: [] });
+      const output = await succeeded(deps, { dryRun: true });
+      expect(output.warnings).toEqual([expect.stringContaining('/w/node/web')]);
+    });
+
+    it('gives no warning when every folder is there', async () => {
+      const { deps } = make();
+      expect((await succeeded(deps)).warnings).toEqual([]);
+    });
   });
 
   it('passes the model and the effort of the config', async () => {

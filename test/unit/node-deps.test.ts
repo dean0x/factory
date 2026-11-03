@@ -401,10 +401,16 @@ describe('node deps: owner and mode', () => {
     const uid = process.getuid?.() ?? null;
     expect(await deps.fs.statInfo(file)).toEqual({
       ok: true,
-      value: { kind: 'file', uid, mode: 0o640, mtimeMs: (await stat(file)).mtimeMs },
+      value: { kind: 'file', uid, mode: 0o640, mtimeMs: (await stat(file)).mtimeMs, size: 1 },
     });
     await chmod(dir, 0o700);
     expect(await deps.fs.statInfo(dir)).toMatchObject({ ok: true, value: { kind: 'dir', uid, mode: 0o700 } });
+  });
+
+  it('tells the size of a file in bytes', async () => {
+    const file = fresh('size.txt');
+    await writeFile(file, 'abcé', 'utf8');
+    expect(await deps.fs.statInfo(file)).toMatchObject({ ok: true, value: { size: 5 } });
   });
 
   it('tells the time of the last change of a file', async () => {

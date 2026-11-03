@@ -14,6 +14,8 @@ const entrySchema = z.strictObject({
   [homeIndex.keys.home]: absolutePath,
   [homeIndex.keys.id]: slug,
   [homeIndex.keys.projects]: z.array(absolutePath).max(homeIndex.maxProjects),
+  // Any value parses. `originOf` is the one reader, and it counts every value but the exact word `own` as received.
+  [homeIndex.keys.origin]: z.unknown().optional(),
 });
 
 const indexSchema = z.strictObject({
@@ -21,8 +23,19 @@ const indexSchema = z.strictObject({
   [homeIndex.keys.homes]: z.array(entrySchema).max(homeIndex.maxHomes),
 });
 
-/** One node home in the index: its folder, its id and the real path of each of its projects. */
+/** One node home in the index: its folder, its id, the real path of each of its projects and its origin. */
 export type HomeEntry = z.infer<typeof entrySchema>;
+
+/** Whether the root is the owner's own or came from another machine or person. */
+export type Origin = (typeof homeIndex.origins)[keyof typeof homeIndex.origins];
+
+/**
+ * The origin of a root, from its entry in the index. This is the one reader. Only the exact value `own` counts as own. A
+ * missing value, any other value and a root with no entry count as received. The origin never comes from a file in the
+ * root, because a pull can change every file there, and it can not change the index.
+ */
+export const originOf = (entry: HomeEntry | null): Origin =>
+  entry?.[homeIndex.keys.origin] === homeIndex.origins.own ? homeIndex.origins.own : homeIndex.origins.received;
 
 /** The index file, in the state folder of the user (see `userStatePathOf`). It is null when no variable names a folder. */
 export const indexPathOf = (deps: Deps): Promise<CliResult<string | null>> => userStatePathOf(deps, files.homeIndex);
@@ -57,9 +70,16 @@ const withEntry = (entries: readonly HomeEntry[], entry: HomeEntry): readonly Ho
  * The text of the index with the entry added. When the index has no room for the entry, the entries whose home is gone
  * are dropped first. A home that cannot be checked stays.
  */
-const textWithEntry = async (deps: Deps, path: string, current: string | null, entry: HomeEntry): Promise<Result<string, string>> => {
+const textWithEntry = async (
+  deps: Deps,
+  path: string,
+  current: string | null,
+  wanted: HomeEntry,
+  settle: Settle,
+): Promise<Result<string, string>> => {
   const entries = entriesOf(current);
   if (!entries.ok) return err(`${path} cannot be read: ${entries.error}`);
+  const entry = settle(entries.value.find((candidate) => candidate[homeIndex.keys.home] === wanted[homeIndex.keys.home]), wanted);
   const added = withEntry(entries.value, entry);
   const next = added.length > homeIndex.maxHomes ? withEntry(await withoutGoneHomes(deps, entries.value), entry) : added;
   if (next.length > homeIndex.maxHomes) return err(`the index lists the most homes that it can: ${homeIndex.maxHomes}`);
@@ -67,22 +87,60 @@ const textWithEntry = async (deps: Deps, path: string, current: string | null, e
 };
 
 /**
+ * What goes into the index for a home: the old entry of the same home, or undefined, and the entry that the caller wants.
+ * The call runs under the lock, so the old entry is the entry that the write replaces.
+ */
+type Settle = (existing: HomeEntry | undefined, wanted: HomeEntry) => HomeEntry;
+
+const asWanted: Settle = (_existing, wanted) => wanted;
+
+/**
  * Put the home in the index file. An entry of the same home is replaced. A file that cannot be read stays as it is.
  * The file is written atomically, with mode 0600, under a lock (see `changePrivateFile`). The error is the reason.
+ * `settle` changes the entry under the lock, from the old entry of the same home.
  */
-export const recordHome = async (deps: Deps, path: string, entry: HomeEntry): Promise<Result<void, string>> => {
+export const recordHome = async (
+  deps: Deps,
+  path: string,
+  entry: HomeEntry,
+  settle: Settle = asWanted,
+): Promise<Result<void, string>> => {
   if (entry[homeIndex.keys.projects].length > homeIndex.maxProjects) {
     return err(`a home can list at most ${homeIndex.maxProjects} projects`);
   }
-  return changePrivateFile(deps, path, homeIndex.maxBytes, (current) => textWithEntry(deps, path, current, entry));
+  return changePrivateFile(deps, path, homeIndex.maxBytes, (current) => textWithEntry(deps, path, current, entry, settle));
 };
 
-/** A node home for the index: its folder, its id and the paths of its projects as its config holds them. */
+/**
+ * A node home for the index: its folder, its id, the paths of its projects as its config holds them, and the origin that
+ * the run asks for. The index may keep another origin than `own` (see `settleOrigin`).
+ */
 export interface IndexedNode {
   readonly home: string;
   readonly id: string;
   readonly projects: readonly string[];
+  readonly origin: Origin;
+  /** True when this run made the root. Only a new root can go from `received` back to `own`. */
+  readonly newRoot?: boolean;
 }
+
+/**
+ * The entry that goes into the index. A received root is always `received`. A root that this run made is `own`. A
+ * root that was there before the run is `own` only when no entry exists for it, or when the old entry is `own` with the
+ * same node id. A config with another node id is the config of another factory. So the origin goes from `own` to
+ * `received`, and it never goes back, unless `init` makes a new root.
+ */
+const settleOrigin =
+  (node: IndexedNode): Settle =>
+  (existing, wanted) => {
+    const { own, received } = homeIndex.origins;
+    const keepsOwn =
+      node.origin === own &&
+      (node.newRoot === true ||
+        existing === undefined ||
+        (originOf(existing) === own && existing[homeIndex.keys.id] === wanted[homeIndex.keys.id]));
+    return { ...wanted, [homeIndex.keys.origin]: keepsOwn ? own : received };
+  };
 
 /**
  * Put a node home in the index, so that a command finds it from a project folder. The error is a sentence that says the
@@ -95,11 +153,16 @@ export const recordNode = async (deps: Deps, indexPath: string | null, node: Ind
   }
   const realHome = await realPathOf(deps, node.home);
   if (!realHome.ok) return err(`The home index ${indexPath} was not updated: ${realHome.error.message}`);
-  const recorded = await recordHome(deps, indexPath, {
-    [homeIndex.keys.home]: realHome.value,
-    [homeIndex.keys.id]: node.id,
-    [homeIndex.keys.projects]: node.projects.map((project) => resolve(realHome.value, project)),
-  });
+  const recorded = await recordHome(
+    deps,
+    indexPath,
+    {
+      [homeIndex.keys.home]: realHome.value,
+      [homeIndex.keys.id]: node.id,
+      [homeIndex.keys.projects]: node.projects.map((project) => resolve(realHome.value, project)),
+    },
+    settleOrigin(node),
+  );
   return recorded.ok ? ok(undefined) : err(`The home index ${indexPath} was not updated: ${recorded.error}`);
 };
 

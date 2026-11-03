@@ -24,12 +24,14 @@ import {
   initRootRepo,
   MAX_SCAN_ENTRIES,
   parseGithubRepo,
+  requireWorkTreeTop,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
+import { recordSetupAcceptance, type AcceptanceInput } from '../core/setup-acceptance.js';
 import { describeIssues } from '../core/zod.js';
 import {
   commands,
@@ -89,6 +91,7 @@ import {
   leftoverTempFolders,
   tempFolderWarning,
 } from './init-home.js';
+import { runReceived } from './init-received.js';
 import { oldFolderWarning, originCredentialsWarning, unsharedWarning } from './project-url.js';
 
 export interface InitOptions {
@@ -107,13 +110,27 @@ export interface InitOptions {
   readonly approval: readonly string[];
 }
 
-interface StateFile {
+export interface StateFile {
   readonly rel: string;
   readonly text: string;
 }
 
+/** A setup acceptance that `init` writes after the entry in the factory list, and whether the yes flag limits it. */
+export interface PlannedAcceptance {
+  readonly input: AcceptanceInput;
+  /** True when no terminal window answered: the writer then takes a first acceptance of the setup text alone. */
+  readonly fromInitYes: boolean;
+}
+
 export interface InitPlan {
   readonly home: string;
+  /**
+   * True for a received factory. The shared file, the root `.gitignore`, the setup texts and the root repo are there
+   * already, so init writes none of them and never removes them. The entry in the factory list gets the origin `received`.
+   */
+  readonly received: boolean;
+  /** The setup acceptance that init writes after the entry in the factory list, or null. */
+  readonly acceptance: PlannedAcceptance | null;
   /** The file of the factory list. `init` writes the root into it as its last step. */
   readonly indexPath: string;
   /** The topmost folder that init creates (the home or one of its parents), or null when the home exists. */
@@ -148,6 +165,8 @@ export interface InitResult {
   readonly rootCommitted: boolean;
   /** The mode that counts for each approval point: a `delegated` point whose record was not written counts as `owner`. */
   readonly approval: ApprovalModes;
+  /** True when the setup acceptance was written. */
+  readonly accepted: boolean;
   readonly warnings: readonly string[];
 }
 
@@ -179,7 +198,7 @@ const parseRecipe = (text: string | undefined): CliResult<(typeof values.recipes
   return usageError(`${flagText(flags.recipe)}: the ${roles.recipe} must be one of: ${values.recipes.join(', ')}`);
 };
 
-const detectGithubLogin = async (deps: Deps): Promise<string | undefined> => {
+export const detectGithubLogin = async (deps: Deps): Promise<string | undefined> => {
   const result = await deps.run('gh', ['api', 'user', '--jq', '.login'], { timeoutMs: GH_TIMEOUT_MS });
   if (!result.ok || result.value.exitCode !== 0) return undefined;
   const login = result.value.stdout.trim();
@@ -274,7 +293,7 @@ const MAX_PARENT_LEVELS = 64;
 const withNewline = (text: string): string => (text.endsWith('\n') ? text : `${text}\n`);
 
 /** The state files. The worker file exists only when the layer has a worker block. */
-const stateFilesOf = (templates: readonly BlockTemplate[], workerText: string | null): CliResult<readonly StateFile[]> => {
+export const stateFilesOf = (templates: readonly BlockTemplate[], workerText: string | null): CliResult<readonly StateFile[]> => {
   const state = nodeStateSchema.safeParse({
     [stateKeys.schemaVersion]: STATE_SCHEMA_VERSION,
     [stateKeys.createdWith]: FACTORY_VERSION,
@@ -295,14 +314,14 @@ const stateFilesOf = (templates: readonly BlockTemplate[], workerText: string | 
   ]);
 };
 
-interface BlockTexts {
+export interface BlockTexts {
   readonly original: string | null;
   readonly claudeText: string;
   readonly workerText: string | null;
 }
 
 /** Render the managed blocks. CLAUDE.md keeps its text, and the blocks go at the end. */
-const blockTexts = async (
+export const blockTexts = async (
   deps: Deps,
   claudePath: string,
   templates: readonly BlockTemplate[],
@@ -431,6 +450,30 @@ const rootTextsOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootTe
   });
 };
 
+/**
+ * The settings of the local file: the owner, no proxy, no worker, the mode of each approval point, and no parent or child.
+ * A new root and a received factory write the same file.
+ */
+export const localSettingsOf = (
+  owner: { readonly ownerName: string; readonly approvals: ApprovalChoice },
+  github: string | undefined,
+  sources: Readonly<Record<string, string>>,
+): unknown => ({
+  [keys.root.schema]: LOCAL_SCHEMA_VERSION,
+  [keys.root.owner]: {
+    [keys.owner.display]: owner.ownerName,
+    ...(github === undefined ? {} : { [keys.owner.github]: github }),
+    [keys.owner.prefix]: defaultOwnerPrefix,
+  },
+  [keys.root.session]: { [keys.session.proxy]: values.noProxy, [keys.session.statusline]: null },
+  [keys.root.proxies]: [],
+  [keys.root.workers]: {},
+  [keys.root.approval]: owner.approvals.modes,
+  [keys.root.parent]: null,
+  [keys.root.children]: [],
+  [keys.root.sources]: sources,
+});
+
 /** The settings of the two config files. The projects are the described projects of the command. */
 const settingsOf = (
   checked: CheckedValues,
@@ -453,21 +496,7 @@ const settingsOf = (
       [keys.recipe.projects]: projects,
     },
   },
-  local: {
-    [keys.root.schema]: LOCAL_SCHEMA_VERSION,
-    [keys.root.owner]: {
-      [keys.owner.display]: checked.ownerName,
-      ...(github === undefined ? {} : { [keys.owner.github]: github }),
-      [keys.owner.prefix]: defaultOwnerPrefix,
-    },
-    [keys.root.session]: { [keys.session.proxy]: values.noProxy, [keys.session.statusline]: null },
-    [keys.root.proxies]: [],
-    [keys.root.workers]: {},
-    [keys.root.approval]: checked.approvals.modes,
-    [keys.root.parent]: null,
-    [keys.root.children]: [],
-    [keys.root.sources]: sources,
-  },
+  local: localSettingsOf(checked, github, sources),
 });
 
 const parseSettings = (input: { readonly shared: unknown; readonly local: unknown }): CliResult<FactoryConfig> => {
@@ -585,6 +614,8 @@ const planChecked = async (
   const texts = renderConfig(config.value);
   return ok({
     home,
+    received: false,
+    acceptance: null,
     indexPath,
     createdRoot: missing.value.at(-1) ?? null,
     config: config.value,
@@ -628,8 +659,10 @@ const SHARED_FILE_MODE = 0o644;
 /**
  * Write the node: first into a staging folder, then the state folder, the coordinator folder with its CLAUDE.md, the
  * setup text and the root `.gitignore`, the local file, the shared config file, the root repo, and last the entry in the
- * factory list. A step that fails undoes the steps before it, and the command exits 1. The approval records come after
- * the entry in the factory list, and a record that fails is a warning, not a failure of the run.
+ * factory list. A step that fails undoes the steps before it, and the command exits 1. The approval records and the setup
+ * acceptance come after the entry in the factory list, and a record that fails is a warning, not a failure of the run.
+ * For a received factory the plan says `received`: the shared file, the root `.gitignore`, the setup texts and the root
+ * repo are there already, so those steps are left out, and the undo never touches them.
  * Before each write, init checks whether the target is there. The record `touched` marks a path only when this run makes
  * it, so the undo never removes a path that was there before. A text that init changed in place (`CLAUDE.md` and
  * `.gitignore`) is written back as it was.
@@ -742,6 +775,10 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
 
   const initialized = await gitInit(deps, staging);
   if (!initialized.ok) return rollback(initialized.error);
+  // The staging folder can sit in a folder of a repo (the root repo of a received factory). A commit must go to the repo of
+  // the state folder, so every git write in it waits until the folder is the top of its own work tree.
+  const stateTop = await requireWorkTreeTop(deps, staging, dirs.state);
+  if (!stateTop.ok) return rollback(stateTop.error);
   const identity = await hasIdentity(deps, staging);
   if (identity) {
     const committed = await commitAll(deps, staging, FIRST_COMMIT_MESSAGE);
@@ -789,11 +826,13 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     touched.setupWorkerFile = true;
   }
 
-  const gitignoreUnchanged = await requireUnchanged(layout.gitignoreFile, plan.gitignoreOriginal, files.gitignore);
-  if (!gitignoreUnchanged.ok) return rollback(gitignoreUnchanged.error);
-  const gitignore = await deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreText);
-  if (!gitignore.ok) return rollback(gitignore.error);
-  touched.gitignore = true;
+  if (!plan.received) {
+    const gitignoreUnchanged = await requireUnchanged(layout.gitignoreFile, plan.gitignoreOriginal, files.gitignore);
+    if (!gitignoreUnchanged.ok) return rollback(gitignoreUnchanged.error);
+    const gitignore = await deps.fs.writeTextAtomic(layout.gitignoreFile, plan.gitignoreText);
+    if (!gitignore.ok) return rollback(gitignore.error);
+    touched.gitignore = true;
+  }
 
   // The local file comes before the shared file, which marks the home as a node. The local file has mode 600 from the start.
   // A local file or a shared file that is there already is never replaced, and the undo never removes it.
@@ -803,32 +842,41 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   if (!local.ok) return rollback(local.error);
   touched.local = true;
 
-  const configAbsent = await requireAbsent(layout.configFile, files.config);
-  if (!configAbsent.ok) return rollback(configAbsent.error);
-  const config = await deps.fs.writeTextAtomic(layout.configFile, plan.configText);
-  if (!config.ok) return rollback(config.error);
-  touched.config = true;
+  // A received factory has its shared file and its root repo already: init never writes or removes them.
+  let rootCommitted = false;
+  if (!plan.received) {
+    const configAbsent = await requireAbsent(layout.configFile, files.config);
+    if (!configAbsent.ok) return rollback(configAbsent.error);
+    const config = await deps.fs.writeTextAtomic(layout.configFile, plan.configText);
+    if (!config.ok) return rollback(config.error);
+    touched.config = true;
 
-  // A git folder that was there before the run is never removed. `initRootRepo` refuses to use it.
-  const gitFolder = await deps.fs.stat(join(plan.home, GIT_ENTRY));
-  if (!gitFolder.ok) return rollback(gitFolder.error);
-  touched.rootGit = gitFolder.value === null;
-  const rootRepo = await initRootRepo(deps, plan.home, {
-    paths: sharedRootPaths,
-    message: ROOT_COMMIT_MESSAGE,
-    branch: DEFAULT_BRANCH,
-  });
-  if (!rootRepo.ok) return rollback(rootRepo.error);
+    // A git folder that was there before the run is never removed. `initRootRepo` refuses to use it.
+    const gitFolder = await deps.fs.stat(join(plan.home, GIT_ENTRY));
+    if (!gitFolder.ok) return rollback(gitFolder.error);
+    touched.rootGit = gitFolder.value === null;
+    const rootRepo = await initRootRepo(deps, plan.home, {
+      paths: sharedRootPaths,
+      message: ROOT_COMMIT_MESSAGE,
+      branch: DEFAULT_BRANCH,
+    });
+    if (!rootRepo.ok) return rollback(rootRepo.error);
+    rootCommitted = rootRepo.value.committed;
+  }
 
   // The entry in the factory list is the last step. When it fails, the root is not registered, so init undoes its work,
   // and also the folders of the list that the write made.
   const listFolders = await missingFolders(deps, dirname(plan.indexPath));
   if (!listFolders.ok) return rollback(listFolders.error);
   touched.listFolders = listFolders.value;
+  // A root that this run makes is the own root of the user. A received factory is always received, also when an old entry
+  // of the folder says own.
   const recorded = await recordNode(deps, plan.indexPath, {
     home: plan.home,
     id: plan.config.core.node.id,
     projects: plan.config.recipe.projects.map((project) => project.path),
+    origin: plan.received ? 'received' : 'own',
+    newRoot: !plan.received,
   });
   if (!recorded.ok) {
     return rollback(
@@ -846,11 +894,15 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     recipes[plan.config.recipe.id].approvalPoints,
     plan.approvals,
   );
+  // The setup acceptance comes last for the same reason. A write that fails is a warning: the run keeps its work, and
+  // `start` stops until the owner accepts the files.
+  const accepted = await recordAcceptance(deps, plan);
 
   return ok({
     committed: identity,
-    rootCommitted: rootRepo.value.committed,
+    rootCommitted,
     approval: approvals.modes,
+    accepted: accepted.accepted,
     warnings: [
       ...(identity
         ? []
@@ -858,12 +910,35 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
             `No git identity: the first commit of ${dirs.state} was not made. ` +
               'Set user.name and user.email, then commit there.',
           ]),
-      ...(rootRepo.value.committed
+      ...(rootCommitted || plan.received
         ? []
         : ['No git identity: the first commit of the config repo was not made. Set user.name and user.email, then commit there.']),
       ...approvals.warnings,
+      ...accepted.warnings,
     ],
   });
+};
+
+/** Write the setup acceptance of the plan through its writer. A write that fails gives a warning and no acceptance. */
+const recordAcceptance = async (
+  deps: Deps,
+  plan: InitPlan,
+): Promise<{ readonly accepted: boolean; readonly warnings: readonly string[] }> => {
+  if (plan.acceptance === null) return { accepted: false, warnings: [] };
+  const written = await recordSetupAcceptance(
+    deps,
+    plan.acceptance.input,
+    plan.acceptance.fromInitYes ? { fromInitYes: true } : {},
+  );
+  return written.ok
+    ? { accepted: true, warnings: [] }
+    : {
+        accepted: false,
+        warnings: [
+          `The setup acceptance was not written (${written.error.message}). ` +
+            `Run "${commandText(commands.init)}" in a terminal window to accept the files.`,
+        ],
+      };
 };
 
 /** The projects of the command: the git work trees that the command found come first, when the home is proposed. */
@@ -879,6 +954,8 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   const chosen = await chooseHome(deps, options);
   if (!chosen.ok) return chosen;
   const { home, found, skipped, truncated } = chosen.value;
+  // A factory that arrived goes its own way: the home holds `factory.yaml` and no local file.
+  if (chosen.value.received) return runReceived(deps, options, indexPath.value, home);
 
   // A bad value must give its error before any clone runs, because a clone costs time and disk.
   const checked = await checkOptions(deps, options, home, indexPath.value);

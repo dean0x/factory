@@ -14,6 +14,8 @@ export interface PathInfo {
   readonly mode: number;
   /** The time of the last change of the content, in milliseconds since the epoch. */
   readonly mtimeMs: number;
+  /** The size of a file in bytes. A link is followed, so the size is the size of the target. */
+  readonly size: number;
 }
 
 /** What a read of the whole file gives: its size, the SHA-256 of its bytes as hex, and its text when the file is small. */

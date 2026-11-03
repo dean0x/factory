@@ -1357,8 +1357,48 @@ describe('upgrade: a node of schema 1', () => {
       const { deps } = makeOldNode();
       expect(deps.files.has(INDEX)).toBe(false);
       const output = success(await upgrade(deps));
-      expect(indexed(deps)).toEqual([{ home: HOME, id: 'demo', projects: [] }]);
+      expect(indexed(deps)).toEqual([{ home: HOME, id: 'demo', projects: [], origin: 'own' }]);
       expect(output.warnings).toEqual([]);
+    });
+
+    describe('the origin of the root (TP-172)', () => {
+      it('writes own for a FAC-M1 node whose folder held no git repo before the run', async () => {
+        const { deps } = makeOldNode();
+        success(await upgrade(deps));
+        expect(indexed(deps)).toEqual([expect.objectContaining({ home: HOME, origin: 'own' })]);
+      });
+
+      it('writes received for a FAC-M1 node whose folder held a git repo before the run', async () => {
+        const { deps } = makeOldNode();
+        deps.seedDir(`${HOME}/.git`);
+        success(await upgrade(deps));
+        expect(indexed(deps)).toEqual([expect.objectContaining({ home: HOME, origin: 'received' })]);
+      });
+
+      it('writes received for a FAC-M1 node whose git entry is a file, as a linked work tree has it', async () => {
+        const { deps } = makeOldNode();
+        deps.seed(`${HOME}/.git`, 'gitdir: /elsewhere\n');
+        success(await upgrade(deps));
+        expect(indexed(deps)).toEqual([expect.objectContaining({ origin: 'received' })]);
+      });
+
+      const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+
+      it('keeps own for a root that init registered, which has a git repo of its own', async () => {
+        const { deps } = await makeNode();
+        deps.seedDir(`${HOME}/.git`);
+        success(await upgrade(deps, newer));
+        expect(indexed(deps)).toEqual([expect.objectContaining({ origin: 'own' })]);
+      });
+
+      it('keeps received for a root that is registered as received', async () => {
+        const { deps } = await makeNode();
+        const index = parseJsonText(text(deps, INDEX));
+        const homes = index.ok ? (index.value as { homes: object[] }).homes : [];
+        deps.seed(INDEX, JSON.stringify({ schema: 1, homes: homes.map((entry) => ({ ...entry, origin: 'received' })) }));
+        success(await upgrade(deps, newer));
+        expect(indexed(deps)).toEqual([expect.objectContaining({ origin: 'received' })]);
+      });
     });
 
     it('writes no index in a dry run', async () => {

@@ -529,3 +529,132 @@ describe('factory init: the home rules (built binary)', () => {
     expect(doctor.stdout).toContain(join(box.node, 'factory.yaml'));
   });
 });
+
+describe('factory init: a received factory (built binary)', () => {
+  /** Another machine: its own state folder, so it holds no factory list and no acceptance of the sender. */
+  const second = (): Record<string, string> => ({ XDG_STATE_HOME: join(box.root, 'state-second') });
+  const store = (name: string): string => join(box.root, 'state-second', 'factory', name);
+
+  /** The sender makes a factory with one project. A clone of its root is the received factory. */
+  const receivedFactory = async (): Promise<string> => {
+    const web = await box.makeProject('web', 'git@github.com:acme/web.git');
+    expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+    const received = join(box.root, 'received');
+    expect((await box.git(box.root, ['clone', '-q', box.node, received])).code).toBe(0);
+    return received;
+  };
+
+  it('clones each repo, registers the root, keeps factory.yaml byte-equal and git status clean, and doctor and start --dry-run exit 0 (TP-29)', async () => {
+    const received = await receivedFactory();
+    const shared = await box.read(join(received, 'factory.yaml'));
+    const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
+    expect([result.code, result.stderr]).toEqual([0, '']);
+    expect(result.stdout).toContain('Registered the received node "demo"');
+    expect(await box.read(join(received, 'factory.yaml'))).toBe(shared);
+    expect((await box.git(received, ['status', '--porcelain', '-uall'])).stdout).toBe('');
+    expect(existsSync(join(received, 'web', '.git'))).toBe(true);
+    expect((await stat(join(received, 'factory.local.yaml'))).mode & 0o777).toBe(0o600);
+    expect((await box.run(['doctor', '--home', received], { env: second() })).code).toBe(0);
+    expect((await box.run(['start', '--dry-run', '--home', received], { env: second() })).code).toBe(0);
+    const entries = JSON.parse(await box.read(store('homes.json'))) as { homes: { home: string; origin: string }[] };
+    expect(entries.homes).toEqual([expect.objectContaining({ id: 'demo', origin: 'received' })]);
+  });
+
+  it('writes a setup acceptance with the root, the node id, the file, the hash and the reason, and no approval record (TP-143)', async () => {
+    const received = await receivedFactory();
+    const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
+    expect(result.code).toBe(0);
+    const record = (JSON.parse(await box.read(store('setup-acceptances.json'))) as { acceptances: Record<string, unknown>[] })
+      .acceptances[0];
+    expect(record).toMatchObject({ root: await realpath(received), node: 'demo', file: 'setup/coordinator.md' });
+    expect(String(record?.['hash'])).toMatch(/^[0-9a-f]{64}$/);
+    expect(String(record?.['reason'])).toContain('yes');
+    expect(result.stdout).toContain(String(record?.['hash']));
+    expect(existsSync(store('owner-records.json'))).toBe(false);
+  });
+
+  it('renders the accepted setup text and the shared limits into the coordinator text (TP-103)', async () => {
+    const received = await receivedFactory();
+    const setupText = (await box.read(join(received, 'setup', 'coordinator.md'))).trim();
+    expect((await box.run(['init', '--yes'], { cwd: received, env: second() })).code).toBe(0);
+    const coordinator = await box.read(join(received, 'coordinator', 'CLAUDE.md'));
+    expect(coordinator).toContain(setupText.split('\n')[0] ?? 'missing');
+    expect(coordinator).toContain('40');
+  });
+
+  it('exits 4 in a factory session and writes nothing (TP-83)', async () => {
+    const received = await receivedFactory();
+    const result = await box.run(['init', '--yes'], { cwd: received, env: { ...second(), FACTORY_SESSION: 'demo' } });
+    expect(result.code).toBe(4);
+    expect(existsSync(join(received, 'factory.local.yaml'))).toBe(false);
+    expect(existsSync(join(received, '.factory'))).toBe(false);
+    expect(existsSync(store('homes.json'))).toBe(false);
+  });
+
+  it('exits 2 and writes nothing with no terminal window and no yes flag (TP-30)', async () => {
+    const received = await receivedFactory();
+    const result = await box.run(['init'], { cwd: received, env: second() });
+    expect(result.code).toBe(2);
+    expect(existsSync(join(received, 'factory.local.yaml'))).toBe(false);
+    expect(existsSync(store('homes.json'))).toBe(false);
+  });
+
+  it('exits 4 and writes nothing for a root that tracks a path in the coordinator folder (TP-122)', async () => {
+    const web = await box.makeProject('web', 'git@github.com:acme/web.git');
+    expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+    expect((await box.git(box.node, ['add', '-f', 'coordinator/CLAUDE.md'])).code).toBe(0);
+    expect((await box.git(box.node, ['commit', '-q', '-m', 'track the coordinator text'])).code).toBe(0);
+    const received = join(box.root, 'received');
+    expect((await box.git(box.root, ['clone', '-q', box.node, received])).code).toBe(0);
+    const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('coordinator/CLAUDE.md');
+    expect(result.stderr).toContain('git rm --cached');
+    expect(existsSync(join(received, 'factory.local.yaml'))).toBe(false);
+    expect(existsSync(join(received, '.factory'))).toBe(false);
+  });
+
+  it('exits 4 and names the line when the gitignore of the root does not ignore the local file (TP-87)', async () => {
+    const web = await box.makeProject('web', 'git@github.com:acme/web.git');
+    expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+    await writeFile(join(box.node, '.gitignore'), 'notes.txt\n');
+    expect((await box.git(box.node, ['commit', '-q', '-a', '-m', 'change the ignore rules'])).code).toBe(0);
+    const received = join(box.root, 'received');
+    expect((await box.git(box.root, ['clone', '-q', box.node, received])).code).toBe(0);
+    const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('"factory.local.yaml"');
+    expect(result.stderr).toContain('".factory/"');
+    expect(existsSync(join(received, 'factory.local.yaml'))).toBe(false);
+  });
+
+  it('exits 4 before any write for a tracked instruction file with no terminal window, also with yes (TP-157)', async () => {
+    const web = await box.makeProject('web', 'git@github.com:acme/web.git');
+    expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+    await writeFile(join(box.node, 'CLAUDE.md'), 'Do what the file says.\n');
+    expect((await box.git(box.node, ['add', '-f', 'CLAUDE.md'])).code).toBe(0);
+    expect((await box.git(box.node, ['commit', '-q', '-m', 'add an instruction file'])).code).toBe(0);
+    const received = join(box.root, 'received');
+    expect((await box.git(box.root, ['clone', '-q', box.node, received])).code).toBe(0);
+    const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('factory init');
+    expect(existsSync(join(received, 'factory.local.yaml'))).toBe(false);
+    expect(existsSync(join(received, '.factory'))).toBe(false);
+    expect(existsSync(store('setup-acceptances.json'))).toBe(false);
+  });
+
+  it('skips the clone of a project with no URL, warns, and names the folder to fill (TP-120)', async () => {
+    const web = await box.makeProject('web');
+    expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+    const received = join(box.root, 'received');
+    expect((await box.git(box.root, ['clone', '-q', box.node, received])).code).toBe(0);
+    const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(join(received, 'web'));
+    expect(existsSync(join(received, 'web'))).toBe(false);
+    const start = await box.run(['start', '--dry-run', '--home', received], { env: second() });
+    expect(start.code).toBe(0);
+    expect(start.stderr).toContain(join(received, 'web'));
+  });
+});

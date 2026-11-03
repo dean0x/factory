@@ -4,6 +4,7 @@ import {
   acceptanceState,
   acceptPromptText,
   acceptSetup,
+  askSetupAcceptance,
   collectManifest,
   manifestChange,
   manifestHash,
@@ -15,7 +16,7 @@ import {
   type Collected,
   type ManifestEntry,
 } from '../../src/core/setup-acceptance.js';
-import { env, setupAcceptance } from '../../src/names.js';
+import { env, maxSetupTextBytes, setupAcceptance, trackedFiles } from '../../src/names.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 
 const ROOT = '/w/root';
@@ -25,6 +26,7 @@ const STORE = '/state/factory/setup-acceptances.json';
 const APPROVAL_STORE = '/state/factory/owner-records.json';
 const NODE = 'demo';
 const SETUP = 'setup/coordinator.md';
+const WORKER_SETUP = 'setup/roles/worker.md';
 
 /** Characters that the source of this file does not hold as they are. */
 const at = (code: number): string => String.fromCodePoint(code);
@@ -218,6 +220,58 @@ describe('setup acceptance: the manifest and its hash (TP-171)', () => {
     expect(await collectManifest(deps, ROOT, paths.slice(1))).toMatchObject({ ok: true });
   });
 
+  describe('the byte cap of one file (TP-167)', () => {
+    const cap = trackedFiles.maxFileBytes;
+
+    it('hashes a file at the cap in full', async () => {
+      const deps = person();
+      const body = 'x'.repeat(cap);
+      deps.seed(`${ROOT}/edge.md`, body);
+      const collected = await collect(deps, ['edge.md']);
+      expect(collected.manifest.entries[0]).toMatchObject({ path: 'edge.md', size: cap, sha256: sha256(body) });
+    });
+
+    it('stops with exit 4 for a file at the cap plus one, names the file and the cap, and reads no byte of it', async () => {
+      const deps = person();
+      deps.seed(`${ROOT}/big.md`, 'x'.repeat(cap + 1));
+      const read: string[] = [];
+      const watched = { ...deps, fs: { ...deps.fs, digestFile: async (path: string, limit: number) => (read.push(path), deps.fs.digestFile(path, limit)) } };
+      const result = await collectManifest(watched, ROOT, ['big.md']);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: expect.stringContaining('git rm --cached') } });
+      expect(!result.ok && result.error.message).toContain('big.md');
+      expect(!result.ok && result.error.message).toContain(String(cap));
+      expect(read).toEqual([]);
+    });
+
+    it('stops for a file that grew past the cap after the size check, because the hash never covers part of a file', async () => {
+      const deps = person();
+      deps.seed(`${ROOT}/grows.md`, 'x');
+      const big = 'x'.repeat(cap + 1);
+      const grown = {
+        ...deps,
+        fs: { ...deps.fs, digestFile: async () => ({ ok: true as const, value: { size: cap + 1, sha256: sha256(big), text: null } }) },
+      };
+      expect(await collectManifest(grown, ROOT, ['grows.md'])).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    });
+
+    it('applies the cap to a file in a set of other files, and gives no manifest at all', async () => {
+      const deps = person();
+      deps.seed(`${ROOT}/big.md`, 'x'.repeat(cap + 1));
+      expect(await collectManifest(deps, ROOT, [SETUP, 'big.md'])).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    });
+  });
+
+  it('keeps the text of a file up to the text limit of the caller, and shows it in the prompt only up to the display bound', async () => {
+    const deps = person();
+    const body = `HEAD-OF-A-LONG-TEXT\n${'y'.repeat(setupAcceptance.maxDisplayBytes + 100)}`;
+    deps.seed(`${ROOT}/long.md`, body);
+    const result = await collectManifest(deps, ROOT, ['long.md'], new Map(), { textLimit: maxSetupTextBytes });
+    expect(result.ok && result.value.texts.get('long.md')).toBe(body);
+    const text = result.ok ? acceptPromptText({ root: ROOT, node: NODE, current: result.value, accepted: null }) : '';
+    expect(text).not.toContain('HEAD-OF-A-LONG-TEXT');
+    expect(text).toContain('does not show the full text of this file');
+  });
+
   it('compares with an accepted manifest: added, removed and changed files', () => {
     const accepted = [entryOf('a', '1'), entryOf('b', '2'), entryOf('c', '3')];
     const current = [entryOf('a', '1'), entryOf('b', '22'), entryOf('d', '4')];
@@ -272,6 +326,15 @@ describe('setup acceptance: the accept prompt (TP-161, TP-162)', () => {
     expect(text).toContain(`Added files:\n  ${SETUP}`);
     expect(text).not.toContain('Changed files');
     expect(text).toContain(current.manifest.hash);
+    expect(text).not.toContain('accepted before');
+  });
+
+  it('prints the hash of the older acceptance next to the new hash, when an older acceptance exists (TP-170)', () => {
+    const accepted = [entryOf(SETUP, 'OLD TEXT')];
+    const current = collectedOf({ [SETUP]: 'NEW TEXT' });
+    const text = acceptPromptText({ root: ROOT, node: NODE, current, accepted });
+    expect(text).toContain(`Hash of all files: ${current.manifest.hash}`);
+    expect(text).toContain(`Hash of the files that you accepted before: ${manifestHash(accepted)}`);
   });
 
   it('shows a control character of a file text and of a file name as an escape, and no raw one', () => {
@@ -335,6 +398,44 @@ describe('setup acceptance: the accept prompt (TP-161, TP-162)', () => {
     deps.seed(`${ROOT}/link.md`, 'text');
     const text = acceptPromptText({ root: ROOT, node: NODE, current: await collect(deps, ['link.md']), accepted: null });
     expect(text).toContain('a link; the text is the text of its target');
+  });
+});
+
+describe('setup acceptance: the question alone', () => {
+  it('asks once and gives the answer, and writes nothing, so the caller writes the record when it is time', async () => {
+    const deps = person({ answer: 'y' });
+    const current = await collect(deps);
+    expect(await askSetupAcceptance(deps, { root: ROOT, node: NODE, current })).toEqual({ ok: true, value: true });
+    expect(deps.prompts).toHaveLength(1);
+    expect(deps.prompts[0]).toContain('Write tests first.');
+    expect(deps.files.has(STORE)).toBe(false);
+  });
+
+  it.each(['', 'n', 'no', 'maybe'])('gives false for the answer "%s"', async (answer) => {
+    const deps = person({ answer });
+    expect(await askSetupAcceptance(deps, { root: ROOT, node: NODE, current: await collect(deps) })).toEqual({ ok: true, value: false });
+  });
+
+  it('shows the hash of the older acceptance of the folder, and the change', async () => {
+    const deps = person();
+    const first = await collect(deps);
+    await recordSetupAcceptance(deps, inputOf(first));
+    deps.seed(`${ROOT}/${SETUP}`, 'Changed text.\n');
+    const second = await collect(deps);
+    await askSetupAcceptance(deps, { root: ROOT, node: NODE, current: second });
+    expect(deps.prompts[0]).toContain(`Hash of the files that you accepted before: ${first.manifest.hash}`);
+    expect(deps.prompts[0]).toContain(`Changed files:\n  ${SETUP}`);
+  });
+
+  it.each([
+    ['a factory session', { env: { XDG_STATE_HOME: STATE, [env.session]: 'demo' } }],
+    ['no terminal window for input', { stdinIsTTY: false }],
+    ['no terminal window for output', { stdoutIsTTY: false }],
+  ])('refuses with %s, and asks nothing', async (_name, options: Options) => {
+    const deps = person(options);
+    const result = await askSetupAcceptance(deps, { root: ROOT, node: NODE, current: await collect(deps) });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(deps.prompts).toEqual([]);
   });
 });
 
@@ -473,6 +574,37 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
       const result = await recordSetupAcceptance(deps, inputOf(collected, { reason: 'init with yes' }), { fromInitYes: true });
       expect(result).toEqual({ ok: true, value: undefined });
       expect(stored(deps).acceptances).toEqual([expect.objectContaining({ root: ROOT, node: NODE, file: SETUP, hash: collected.manifest.hash })]);
+    });
+
+    it('writes a first acceptance of the setup text for init with yes: the coordinator text and the worker text together', async () => {
+      const deps = person({ stdinIsTTY: false, stdoutIsTTY: false });
+      deps.seed(`${ROOT}/${WORKER_SETUP}`, 'Worker text.\n');
+      const collected = await collect(deps, [SETUP, WORKER_SETUP]);
+      const result = await recordSetupAcceptance(deps, inputOf(collected, { reason: 'init with yes' }), { fromInitYes: true });
+      expect(result).toEqual({ ok: true, value: undefined });
+      expect(stored(deps).acceptances[0]?.['manifest'].map((entry: ManifestEntry) => entry.path)).toEqual([SETUP, WORKER_SETUP]);
+    });
+
+    it('writes a first acceptance of the worker text alone for init with yes', async () => {
+      const deps = person({ stdinIsTTY: false, stdoutIsTTY: false });
+      deps.seed(`${ROOT}/${WORKER_SETUP}`, 'Worker text.\n');
+      const collected = await collect(deps, [WORKER_SETUP]);
+      expect(await recordSetupAcceptance(deps, inputOf(collected), { fromInitYes: true })).toMatchObject({ ok: true });
+    });
+
+    it.each([
+      ['a script in the setup folder', 'setup/scripts/run.sh'],
+      ['a file next to the roles text', 'setup/roles/other.md'],
+      ['a setup file with another name', 'setup/extra.md'],
+      ['a root instruction file', 'CLAUDE.md'],
+    ])('refuses a record that covers %s with the setup text, also for init with yes (TP-163)', async (_name, path) => {
+      const deps = person({ stdinIsTTY: false, stdoutIsTTY: false });
+      deps.seed(`${ROOT}/${WORKER_SETUP}`, 'Worker text.\n');
+      deps.seed(`${ROOT}/${path}`, 'x');
+      const collected = await collect(deps, [SETUP, WORKER_SETUP, path]);
+      const result = await recordSetupAcceptance(deps, inputOf(collected), { fromInitYes: true });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: expect.stringContaining('factory init') } });
+      expect(deps.files.has(STORE)).toBe(false);
     });
 
     it('refuses a record that covers a file apart from the setup file, also for init with yes (TP-184)', async () => {

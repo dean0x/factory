@@ -4,7 +4,15 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { CliError } from '../../src/cli/errors.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
-import { LINK_REMEDY, requireNoLinks, requireNoRootLinks, rootGuardPaths } from '../../src/core/root-paths.js';
+import {
+  LINK_REMEDY,
+  requireNoLinks,
+  requireNoRootLinks,
+  requireNoTrackedLinks,
+  rootGuardPaths,
+  trackedProblems,
+  trackedSetOf,
+} from '../../src/core/root-paths.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 
@@ -133,6 +141,129 @@ describe('requireNoLinks', () => {
     const deps = createFakeDeps({ links: { '/link': '/real', [inside.setupDir]: '/outside' } });
     deps.seedDir(inside.setupDir);
     expect(refusal(await requireNoRootLinks(deps, inside)).message).toContain('setup is a link');
+  });
+});
+
+describe('the tracked set of a received root', () => {
+  it('holds every tracked path apart from factory.yaml and the .gitignore of the root', () => {
+    const tracked = [
+      '.claude/settings.json',
+      '.gitignore',
+      '.mcp.json',
+      'CLAUDE.md',
+      'factory.yaml',
+      'setup/coordinator.md',
+      'setup/roles/worker.md',
+      'setup/scripts/run.sh',
+      'setup/.gitignore',
+    ];
+    expect(trackedSetOf(tracked)).toEqual([
+      '.claude/settings.json',
+      '.mcp.json',
+      'CLAUDE.md',
+      'setup/coordinator.md',
+      'setup/roles/worker.md',
+      'setup/scripts/run.sh',
+      'setup/.gitignore',
+    ]);
+  });
+
+  it('needs no name list: a path with an unknown name is in the set', () => {
+    expect(trackedSetOf(['anything/at/all.bin', 'factory.yaml'])).toEqual(['anything/at/all.bin']);
+  });
+
+  it('is empty for a root that tracks only the two paths with their own checks', () => {
+    expect(trackedSetOf(['.gitignore', 'factory.yaml'])).toEqual([]);
+  });
+});
+
+describe('requireNoTrackedLinks (TP-164)', () => {
+  const tracked = ['setup/coordinator.md', 'CLAUDE.md', '.claude/settings.json'];
+  const seededRoot = (links: Readonly<Record<string, string>> = {}): FakeDeps => {
+    const deps = createFakeDeps({ links });
+    for (const path of tracked) deps.seed(`${ROOT}/${path}`, 'text\n');
+    return deps;
+  };
+
+  it('passes plain files', async () => {
+    expect((await requireNoTrackedLinks(seededRoot(), ROOT, tracked)).ok).toBe(true);
+  });
+
+  it('refuses a tracked link named CLAUDE.md with exit 4, one remedy line, and the name', async () => {
+    const error = refusal(await requireNoTrackedLinks(seededRoot({ [`${ROOT}/CLAUDE.md`]: '/outside/notes.md' }), ROOT, tracked));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toBe('CLAUDE.md is a link, so factory does not use it');
+    expect(error.kind === 'safety' && error.hint).toBe(LINK_REMEDY);
+  });
+
+  it('refuses a tracked link in place of a folder', async () => {
+    const error = refusal(await requireNoTrackedLinks(seededRoot({ [`${ROOT}/.claude`]: '/outside' }), ROOT, tracked));
+    expect(error.message).toBe('.claude is a link, so factory does not use it');
+  });
+
+  it('refuses a link in the middle of a tracked path', async () => {
+    const error = refusal(await requireNoTrackedLinks(seededRoot({ [`${ROOT}/setup`]: '/outside' }), ROOT, tracked));
+    expect(error.message).toBe('setup is a link, so factory does not use it');
+  });
+
+  it('refuses a tracked path that climbs out of the root', async () => {
+    expect(refusal(await requireNoTrackedLinks(seededRoot(), ROOT, ['../outside.md'])).kind).toBe('safety');
+  });
+
+  it('passes a tracked path that is not in the work tree any more', async () => {
+    expect((await requireNoTrackedLinks(createFakeDeps(), ROOT, tracked)).ok).toBe(true);
+  });
+});
+
+describe('the tracked paths that stop init (TP-86, TP-122)', () => {
+  const cloneFolders = ['web', 'api'];
+  const kinds = (tracked: readonly string[], clones: readonly string[] = cloneFolders) =>
+    trackedProblems(tracked, clones).map((problem) => [problem.path, problem.kind]);
+
+  it('passes a root that tracks only its setup', () => {
+    expect(kinds(['factory.yaml', '.gitignore', 'setup/coordinator.md', 'setup/roles/worker.md', 'CLAUDE.md'])).toEqual([]);
+  });
+
+  it('names a tracked local file', () => {
+    expect(kinds(['factory.local.yaml'])).toEqual([['factory.local.yaml', 'local-file']]);
+  });
+
+  it.each([['.factory'], ['.factory/node.json'], ['.factory/roles/worker.md']])('names the state path %s', (path) => {
+    expect(kinds([path])).toEqual([[path, 'state-folder']]);
+  });
+
+  it.each([['coordinator'], ['coordinator/CLAUDE.md'], ['coordinator/deep/er/file']])('names the coordinator path %s', (path) => {
+    expect(kinds([path])).toEqual([[path, 'session-folder']]);
+  });
+
+  it.each([['web'], ['web/src/index.ts'], ['api/README.md']])('names the path %s under a clone folder', (path) => {
+    expect(kinds([path])).toEqual([[path, 'clone']]);
+  });
+
+  it('names no clone path when the caller gives no clone folder', () => {
+    expect(kinds(['web/src/index.ts'], [])).toEqual([]);
+  });
+
+  it('compares the names without letter case and in the normal form of Unicode, as a case-blind file system does', () => {
+    expect(kinds(['Factory.Local.YAML', '.FACTORY/node.json', 'Coordinator/CLAUDE.md', 'WEB/x', 'ｗeb/y'])).toEqual([
+      ['Factory.Local.YAML', 'local-file'],
+      ['.FACTORY/node.json', 'state-folder'],
+      ['Coordinator/CLAUDE.md', 'session-folder'],
+      ['WEB/x', 'clone'],
+      ['ｗeb/y', 'clone'],
+    ]);
+  });
+
+  it('does not name a path whose name only starts like a stop path', () => {
+    expect(kinds(['coordinators/x', '.factory-notes/x', 'factory.local.yaml.example', 'webapp/x', 'setup/web/x', 'x/coordinator/y'])).toEqual([]);
+  });
+
+  it('names every problem in the order of the list', () => {
+    expect(kinds(['setup/a', 'coordinator/x', 'factory.local.yaml', '.factory/n'])).toEqual([
+      ['coordinator/x', 'session-folder'],
+      ['factory.local.yaml', 'local-file'],
+      ['.factory/n', 'state-folder'],
+    ]);
   });
 });
 

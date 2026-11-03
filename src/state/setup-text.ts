@@ -34,13 +34,22 @@ export const readSetupFile = async (deps: Deps, layout: Layout, path: string): P
       ? failure(`${shown} is larger than ${maxSetupTextBytes} bytes`, `Shorten ${shown}, ${again}`)
       : read;
   }
-  if (CONTROL_CHARACTER.test(read.value)) {
+  return plainSetupText(shown, read.value);
+};
+
+/**
+ * The text of a setup file from the bytes that were read: plain text with no managed-block marker, with LF line ends.
+ * `init` hashes the bytes of a setup file and renders them from one read, so it takes the text from the digest of the
+ * file and gives it to this function. `shown` is the path of the file for the message.
+ */
+export const plainSetupText = (shown: string, raw: string): CliResult<string> => {
+  if (CONTROL_CHARACTER.test(raw)) {
     return failure(`${shown} is not plain text: it holds a control character`, `Remove the control characters from ${shown}, ${again}`);
   }
-  if (holdsBlockMarker(read.value)) {
+  if (holdsBlockMarker(raw)) {
     return failure(`${shown} holds a line that starts a managed block`, `Remove the marker lines from ${shown}, ${again}`);
   }
-  return ok(read.value.replace(/\r\n?/g, '\n'));
+  return ok(raw.replace(/\r\n?/g, '\n'));
 };
 
 /** The text for a block: null when the file is absent or holds nothing but white space. */

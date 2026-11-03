@@ -3,7 +3,7 @@ import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
-import { commandText, commands, files, places, program, roles, setupAcceptance } from '../names.js';
+import { commandText, commands, files, places, program, roles, setupAcceptance, trackedFiles } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import { ACCEPT_ANSWER, type Deps } from './deps.js';
 import { inFactorySession } from './factory-session.js';
@@ -126,17 +126,31 @@ const escapeOf = (character: string): string => {
 /** The text with each control character shown as an escape, so that the screen shows the text of the bytes. */
 export const visibleText = (value: string): string => value.replace(HIDDEN_CHARACTERS, escapeOf);
 
+const fileTooLarge = (path: string): CliResult<never> =>
+  safetyRefusal(
+    `the file ${visibleText(path)} has more than ${trackedFiles.maxFileBytes} bytes, so ${program} does not hash it`,
+    `Make the file smaller, or remove it from git with "git rm --cached", then run "${commandText(commands.init)}" again.`,
+  );
+
+/** What a caller of `collectManifest` can choose. */
+export interface CollectOptions {
+  /** A file up to this many bytes gives its text, read from the bytes that the hash covers. Default: the display bound. */
+  readonly textLimit?: number;
+}
+
 /**
  * Read each file of the set to its end, and make the manifest from the bytes. The root is the factory folder, and each
- * path is a path below it. A file that is not there, a folder, and a list over the bound are errors: the manifest never
- * covers part of a set or part of a file. A link counts as a link, and its bytes are the bytes that a session reads
- * through it. `blobs` holds the git blob id of each file that git tracks.
+ * path is a path below it. A file that is not there, a folder, a list over the bound and a file over the byte cap are
+ * errors: the manifest never covers part of a set or part of a file. The size of a file is checked before its bytes are
+ * read, and again from the bytes. A link counts as a link, and its bytes are the bytes that a session reads through it.
+ * `blobs` holds the git blob id of each file that git tracks.
  */
 export const collectManifest = async (
   deps: Deps,
   root: string,
   paths: readonly string[],
   blobs: ReadonlyMap<string, string> = new Map(),
+  options: CollectOptions = {},
 ): Promise<CliResult<Collected>> => {
   const unique = [...new Set(paths)];
   if (unique.length > setupAcceptance.maxManifestFiles) return tooManyFiles();
@@ -152,8 +166,15 @@ export const collectManifest = async (
     if (kind.value !== 'file' && kind.value !== 'link') {
       return failure(`the setup path ${visibleText(path)} is ${kind.value === null ? 'not there' : 'not a file'}`);
     }
-    const digest = await deps.fs.digestFile(absolute, setupAcceptance.maxDisplayBytes);
+    const info = await deps.fs.statInfo(absolute);
+    if (!info.ok) return info;
+    if (info.value === null || info.value.kind !== 'file') {
+      return failure(`the setup path ${visibleText(path)} is ${info.value === null ? 'not there' : 'not a file'}`);
+    }
+    if (info.value.size > trackedFiles.maxFileBytes) return fileTooLarge(path);
+    const digest = await deps.fs.digestFile(absolute, options.textLimit ?? setupAcceptance.maxDisplayBytes);
     if (!digest.ok) return digest;
+    if (digest.value.size > trackedFiles.maxFileBytes) return fileTooLarge(path);
     entries.push({ path, type: kind.value, size: digest.value.size, sha256: digest.value.sha256, blob: blobs.get(path) ?? null });
     texts.set(path, digest.value.text);
   }
@@ -235,6 +256,7 @@ export const acceptPromptText = (input: {
     `The setup of the ${places.folder} ${visibleText(root)} (${roles.node} id ${visibleText(node)}) goes into the instructions of the sessions.`,
     `The ${roles.owner} must accept these files before a session starts.`,
     `Hash of all files: ${current.manifest.hash}`,
+    ...(accepted === null ? [] : [`Hash of the files that you accepted before: ${manifestHash(accepted)}`]),
     ...listOf('Added files', change.added),
     ...listOf('Changed files', change.changed),
     ...listOf('Removed files', change.removed),
@@ -243,7 +265,8 @@ export const acceptPromptText = (input: {
   for (const entry of current.manifest.entries) {
     const label = shownIn(change, entry.path);
     if (label === 'unchanged') continue;
-    const text = current.texts.get(entry.path) ?? null;
+    // A caller can keep the text of a larger file for its own use. The prompt shows a file only up to the display bound.
+    const text = entry.size > setupAcceptance.maxDisplayBytes ? null : (current.texts.get(entry.path) ?? null);
     const room = text !== null && shown + entry.size <= setupAcceptance.maxDisplayTotalBytes;
     if (room) shown += entry.size;
     lines.push('', ...fileSection({ root, entry, label, text, room }));
@@ -347,7 +370,8 @@ export interface AcceptanceInput {
 
 /**
  * Only the command `init` with the yes flag passes this. It lets the writer work with no terminal window, for a first
- * acceptance of the setup file alone. A static test finds no other module that names it.
+ * acceptance of the setup text alone: the coordinator text and the worker text, and no other file. A static test finds no
+ * other module that names it.
  */
 export interface AcceptanceOptions {
   readonly fromInitYes?: true;
@@ -385,7 +409,7 @@ const textWithRecord = (
  * Write a setup acceptance. This is the only writer of the store. It refuses inside a factory session. A person in a
  * terminal window (input and output) can write any set. With no terminal window the call writes only for `init` with the
  * yes flag, and only for a first acceptance (no acceptance exists for this folder under any node id) of a set that holds
- * no file apart from the setup file. The yes flag never answers the prompt, so it gets these limits also in a terminal
+ * no file apart from the setup text. The yes flag never answers the prompt, so it gets these limits also in a terminal
  * window.
  */
 export const recordSetupAcceptance = async (
@@ -396,8 +420,8 @@ export const recordSetupAcceptance = async (
   const outside = requireOutsideSession(deps);
   if (!outside.ok) return outside;
   if (options.fromInitYes === true) {
-    if (input.entries.some((entry) => entry.path !== input.file)) {
-      return safetyRefusal('a setup acceptance without a terminal window covers the setup file only', terminalRemedy());
+    if (input.entries.some((entry) => !setupAcceptance.setupTextFiles.some((path) => path === entry.path))) {
+      return safetyRefusal('a setup acceptance without a terminal window covers the setup text only', terminalRemedy());
     }
   } else {
     const window = requireTerminalWindow(deps);
@@ -432,20 +456,15 @@ export const recordSetupAcceptance = async (
 };
 
 /**
- * The accept step for a set of files that a person looks at: it shows the prompt and asks, with no as the default. On
- * yes it writes the acceptance. It needs a terminal window for input and for output, and it refuses inside a factory
- * session. The value is true when the owner accepted. The caller decides when a step may ask at all: a first acceptance
- * belongs to `init`, and a dry run asks nothing.
+ * The question of the accept step, with no write: it shows the prompt and asks, with no as the default. It needs a
+ * terminal window for input and for output, and it refuses inside a factory session. The prompt shows the change against
+ * the newest acceptance for this real folder, and the hash of that acceptance. The value is true when the owner said yes.
+ * A caller that must write the record at a later step (`init` writes it after the entry in the factory list) asks here and
+ * writes with `recordSetupAcceptance`.
  */
-export const acceptSetup = async (
+export const askSetupAcceptance = async (
   deps: Deps,
-  request: {
-    readonly root: string;
-    readonly node: string;
-    readonly file: string;
-    readonly current: Collected;
-    readonly reason: string;
-  },
+  request: { readonly root: string; readonly node: string; readonly current: Collected },
 ): Promise<CliResult<boolean>> => {
   const outside = requireOutsideSession(deps);
   if (!outside.ok) return outside;
@@ -462,8 +481,28 @@ export const acceptSetup = async (
   const answer = await deps.prompt(
     acceptPromptText({ root: real.value, node: request.node, current: request.current, accepted }),
   );
-  if (!answer.ok) return answer;
-  if (!ACCEPT_ANSWER.test(answer.value.trim())) return ok(false);
+  return answer.ok ? ok(ACCEPT_ANSWER.test(answer.value.trim())) : answer;
+};
+
+/**
+ * The accept step for a set of files that a person looks at: it asks (see `askSetupAcceptance`), and on yes it writes the
+ * acceptance. The value is true when the owner accepted. The caller decides when a step may ask at all: a first acceptance
+ * belongs to `init`, and a dry run asks nothing.
+ */
+export const acceptSetup = async (
+  deps: Deps,
+  request: {
+    readonly root: string;
+    readonly node: string;
+    readonly file: string;
+    readonly current: Collected;
+    readonly reason: string;
+  },
+): Promise<CliResult<boolean>> => {
+  const answer = await askSetupAcceptance(deps, request);
+  if (!answer.ok || !answer.value) return answer;
+  const real = await deps.fs.realpath(request.root);
+  if (!real.ok) return real;
   const written = await recordSetupAcceptance(deps, {
     root: real.value,
     node: request.node,

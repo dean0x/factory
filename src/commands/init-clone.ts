@@ -205,6 +205,68 @@ export const planProjects = async (
   return ok(planned);
 };
 
+/** A project as `factory.yaml` lists it. */
+export interface ListedProject {
+  readonly id: string;
+  /** The name of the folder of the project in the root. */
+  readonly path: string;
+  readonly url?: string | undefined;
+}
+
+/** What `init` does with the projects of a received factory. */
+export interface ReceivedProjects {
+  /** The projects that `init` clones, or reuses when the folder is a clone of the repo already. */
+  readonly planned: readonly PlannedProject[];
+  /** One warning for each project that `init` does not clone, with the folder to fill. */
+  readonly warnings: readonly string[];
+}
+
+const notClonedWarning = (project: ListedProject, target: string, why: string): string =>
+  `The project ${project.id} ${why}, so ${program} does not clone it. Put a clone of its repo into ${target}.`;
+
+/**
+ * Decide, with no write, what `init` does with each project of a received factory. The folder of a project is
+ * `<root>/<path>`. A project with an https or ssh URL is cloned. A project with no URL, with a file URL or with a path of
+ * a machine is never cloned: the file came from another machine, so the warning names the folder to fill. A folder that is
+ * there and is not a clone of the repo stays an error. This function writes nothing.
+ */
+export const planReceivedProjects = async (
+  deps: Deps,
+  home: string,
+  projects: readonly ListedProject[],
+): Promise<CliResult<ReceivedProjects>> => {
+  const counted = checkProjectCount(projects.length);
+  if (!counted.ok) return counted;
+  const root = resolve(deps.cwd, home);
+  const realHome = await realPathOf(deps, root);
+  if (!realHome.ok) return realHome;
+  const planned: PlannedProject[] = [];
+  const warnings: string[] = [];
+  for (const project of projects) {
+    const target = join(root, project.path);
+    const parsed = project.url === undefined ? null : parseCloneUrl(project.url);
+    if (parsed === null || !parsed.ok || parsed.value.kind !== 'remote') {
+      const kind = await deps.fs.stat(target);
+      if (!kind.ok) return kind;
+      if (kind.value === null) {
+        warnings.push(notClonedWarning(project, target, parsed === null ? 'has no URL' : 'has a URL that works on one machine only'));
+      }
+    } else {
+      const present = await isPresentClone(deps, realHome.value, parsed.value.url, target);
+      if (!present.ok) return present;
+      planned.push({
+        name: project.path,
+        target,
+        from: parsed.value.url,
+        present: present.value,
+        origin: classifyOrigin(parsed.value.url),
+        oldFolder: null,
+      });
+    }
+  }
+  return ok({ planned, warnings });
+};
+
 /** The paths that a removal step removed, and the paths that it could not remove, each with its reason. */
 interface Removal {
   readonly removed: readonly string[];

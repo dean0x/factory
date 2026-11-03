@@ -130,7 +130,13 @@ const pathKindOf = (info: { isFile(): boolean; isDirectory(): boolean }): PathKi
 const statInfo = async (path: string): Promise<CliResult<PathInfo | null>> => {
   try {
     const info = await stat(path);
-    return ok({ kind: pathKindOf(info), uid: info.uid, mode: info.mode & PERMISSION_BITS, mtimeMs: info.mtimeMs });
+    return ok({
+      kind: pathKindOf(info),
+      uid: info.uid,
+      mode: info.mode & PERMISSION_BITS,
+      mtimeMs: info.mtimeMs,
+      size: info.size,
+    });
   } catch (cause) {
     return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
   }

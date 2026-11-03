@@ -1,6 +1,7 @@
 import { basename, join, resolve } from 'node:path';
-import { failure, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
+import { commands, commandText, program, trackedFiles } from '../names.js';
 import type { Deps } from './deps.js';
 import { ok } from './result.js';
 
@@ -257,6 +258,80 @@ export const commitPaths = async (
 /** Remove the staged changes of `paths` from the index. The files keep their text, and other staged changes stay. */
 export const unstagePaths = (deps: Deps, dir: string, paths: RepoPaths): Promise<CliResult<void>> =>
   gitStep(deps, dir, ['reset', '-q', '--', ...paths.present, ...paths.gone], 'clear the staged files');
+
+/** The paths that a repo tracks, in the order of git, and whether git named more paths than the list can hold. */
+export interface TrackedList {
+  /** At most `maxCount` paths, relative to the top folder of the repo, exactly as git prints them. */
+  readonly paths: readonly string[];
+  /** True when the repo tracks more paths than the list holds. A list that reached its cap is never complete. */
+  readonly reachedCap: boolean;
+}
+
+/** The message of the error of `run` when the output of the program is larger than the program reads. */
+const OUTPUT_TOO_LARGE = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+
+/**
+ * The paths that the repo at `dir` tracks (`git ls-files -z`). The NUL separator keeps a path with a space or a line break
+ * whole. The list holds at most `maxCount` paths. A repo that tracks more gives a list that reached its cap, and output
+ * that is larger than the program reads counts the same way. The caller never uses a list that reached its cap.
+ */
+export const trackedFilesOf = async (
+  deps: Deps,
+  dir: string,
+  maxCount: number = trackedFiles.maxCount,
+): Promise<CliResult<TrackedList>> => {
+  const result = await deps.run('git', ['-C', dir, 'ls-files', '-z'], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) {
+    return result.error.message.endsWith(OUTPUT_TOO_LARGE)
+      ? ok({ paths: [], reachedCap: true })
+      : failure(`cannot list the tracked files of ${dir}: ${result.error.message}`);
+  }
+  if (result.value.exitCode !== 0) {
+    return failure(`cannot list the tracked files of ${dir}: git exited with ${result.value.exitCode}`);
+  }
+  const paths = result.value.stdout.split('\0').filter((path) => path !== '');
+  return ok({ paths: paths.slice(0, maxCount), reachedCap: paths.length > maxCount });
+};
+
+/** The most paths that one ignore check takes. */
+export const MAX_IGNORE_PATHS = 256;
+
+/**
+ * The paths of `paths` that the ignore rules of the repo at `dir` match (`git check-ignore`). A path that the repo tracks
+ * is never ignored in the view of git. Git is asked for one path at a time, and only its exit code counts: 0 means ignored,
+ * 1 means not ignored. The answer of git is never parsed, so a path with an odd name gets a true answer. Any other exit
+ * code is an error, so a failure is never read as "not ignored". At most `MAX_IGNORE_PATHS` paths are asked.
+ */
+export const ignoredPathsOf = async (
+  deps: Deps,
+  dir: string,
+  paths: readonly string[],
+): Promise<CliResult<ReadonlySet<string>>> => {
+  if (paths.length > MAX_IGNORE_PATHS) {
+    return failure(`cannot check ${paths.length} paths against the ignore rules: the most is ${MAX_IGNORE_PATHS}`);
+  }
+  const what = `cannot check the ignore rules of ${dir}`;
+  const ignored = new Set<string>();
+  for (const path of paths) {
+    const result = await deps.run('git', ['-C', dir, 'check-ignore', '-q', '--', path], { timeoutMs: GIT_TIMEOUT_MS });
+    if (!result.ok) return failure(`${what}: ${result.error.message}`);
+    if (result.value.exitCode === 0) ignored.add(path);
+    else if (result.value.exitCode !== 1) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  }
+  return ok(ignored);
+};
+
+/**
+ * `dir` is the top folder of a work tree of its own. A git write in a folder that is inside the work tree of another repo
+ * would change that repo, so the write waits for this check. `what` names the folder for the message.
+ */
+export const requireWorkTreeTop = async (deps: Deps, dir: string, what: string): Promise<CliResult<void>> =>
+  (await isWorkTreeRoot(deps, dir))
+    ? ok(undefined)
+    : safetyRefusal(
+        `${what} ${dir} is not the top folder of a git work tree of its own, so ${program} makes no git change there`,
+        `Move ${dir} away, then run "${commandText(commands.init)}" again.`,
+      );
 
 /** The id of the commit that HEAD names, or null when the repo has no commit. It is an error when git cannot run. */
 export const headOf = async (deps: Deps, dir: string): Promise<CliResult<string | null>> => {

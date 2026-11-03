@@ -12,6 +12,7 @@ import {
   indexPathOf,
   listedRootAbove,
   matchFolder,
+  originOf,
   readHomeIndex,
   recordHome,
   recordNode,
@@ -782,17 +783,18 @@ describe('home index: recording a node', () => {
     return deps;
   };
   const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
+  const own = (home: string, projects: readonly string[], id = 'web'): HomeEntry => ({ ...entry(home, projects, id), origin: 'own' });
 
   it('writes the real path of the root and the folder of each project, and gives ok', async () => {
     const deps = fresh();
-    const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: ['web', 'api'] });
+    const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: ['web', 'api'], origin: 'own' });
     expect(result).toEqual({ ok: true, value: undefined });
-    expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_A, [`${HOME_A}/web`, `${HOME_A}/api`])] });
+    expect(stored(deps)).toEqual({ schema: 1, homes: [own(HOME_A, [`${HOME_A}/web`, `${HOME_A}/api`])] });
   });
 
   it('gives an error that says the index was not updated when no variable names a folder', async () => {
     const deps = fresh();
-    const result = await recordNode(deps, null, { home: HOME_A, id: 'web', projects: [] });
+    const result = await recordNode(deps, null, { home: HOME_A, id: 'web', projects: [], origin: 'own' });
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('was not updated') });
     expect(deps.atomicWrites).toEqual([]);
   });
@@ -800,7 +802,7 @@ describe('home index: recording a node', () => {
   it('gives an error with the path of the index and the reason when the write fails', async () => {
     const deps = fresh();
     deps.seed(INDEX, 'not json');
-    const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [] });
+    const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [], origin: 'own' });
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining(`The home index ${INDEX} was not updated`) });
     expect(deps.files.get(INDEX)).toBe('not json');
   });
@@ -809,7 +811,143 @@ describe('home index: recording a node', () => {
     const deps = fresh();
     deps.seedDir('/state/factory');
     deps.modes.set('/state/factory', 0o775);
-    await expect(recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [] })).resolves.toMatchObject({ ok: false });
+    await expect(recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [], origin: 'own' })).resolves.toMatchObject({
+      ok: false,
+    });
+  });
+});
+
+describe('home index: the origin of a root (TP-159)', () => {
+  const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
+  const withEntries = (homes: readonly object[]): FakeDeps => {
+    const deps = createFakeDeps({ env: {} });
+    deps.seedDir(HOME_A);
+    deps.seed(INDEX, JSON.stringify({ schema: 1, homes }));
+    return deps;
+  };
+  const before = (origin?: unknown, id = 'web'): object => ({
+    home: HOME_A,
+    id,
+    projects: [],
+    ...(origin === undefined ? {} : { origin }),
+  });
+  const after = (origin: string, id = 'web'): object => ({ home: HOME_A, id, projects: [], origin });
+  const record = (deps: FakeDeps, node: Partial<Parameters<typeof recordNode>[2]> & { origin: 'own' | 'received' }, id = 'web') =>
+    recordNode(deps, INDEX, { home: HOME_A, id, projects: [], ...node });
+
+  describe('the one reader', () => {
+    it.each([
+      ['the exact value own', { ...entry(HOME_A, []), origin: 'own' }, 'own'],
+      ['the value received', { ...entry(HOME_A, []), origin: 'received' }, 'received'],
+      ['no value', entry(HOME_A, []), 'received'],
+      ['another letter case', { ...entry(HOME_A, []), origin: 'Own' }, 'received'],
+      ['a value with a blank', { ...entry(HOME_A, []), origin: 'own ' }, 'received'],
+      ['a number', { ...entry(HOME_A, []), origin: 1 }, 'received'],
+      ['a value that is true', { ...entry(HOME_A, []), origin: true }, 'received'],
+      ['an object', { ...entry(HOME_A, []), origin: { own: true } }, 'received'],
+      ['null', { ...entry(HOME_A, []), origin: null }, 'received'],
+      ['no entry at all', null, 'received'],
+    ])('counts %s as %s', (_name, value, expected) => {
+      expect(originOf(value as HomeEntry | null)).toBe(expected);
+    });
+
+    it('reads an index whose entry holds an origin value that it does not know, and counts that entry as received', async () => {
+      const deps = withEntries([before(['a', 'list'])]);
+      const entries = await readHomeIndex(deps, INDEX);
+      expect(entries.ok && entries.value.map((candidate) => originOf(candidate))).toEqual(['received']);
+    });
+
+    it('reads the origin from the entry of the index and from nothing else', async () => {
+      const deps = withEntries([before('own')]);
+      // A file in the root can claim anything. The reader never looks at it.
+      deps.seed(`${HOME_A}/factory.yaml`, 'origin: own\n');
+      deps.seed(`${HOME_A}/factory.local.yaml`, 'origin: own\n');
+      deps.seed(`${HOME_A}/.factory/node.json`, '{"origin":"own"}\n');
+      const entries = await readHomeIndex(deps, INDEX);
+      const found = entries.ok ? await entryOfHome(deps, entries.value, HOME_A) : null;
+      expect(originOf(found)).toBe('own');
+      const other = withEntries([before()]);
+      other.seed(`${HOME_A}/factory.yaml`, 'origin: own\n');
+      const otherEntries = await readHomeIndex(other, INDEX);
+      expect(originOf(otherEntries.ok ? await entryOfHome(other, otherEntries.value, HOME_A) : null)).toBe('received');
+    });
+  });
+
+  describe('a root that init makes (the new-root rule)', () => {
+    it('writes own for a new root with no entry', async () => {
+      const deps = withEntries([]);
+      expect((await record(deps, { origin: 'own', newRoot: true })).ok).toBe(true);
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('own')] });
+    });
+
+    it('writes own over an old entry of the same folder that is received, or that has another id', async () => {
+      const received = withEntries([before('received', 'old')]);
+      await record(received, { origin: 'own', newRoot: true });
+      expect(stored(received)).toEqual({ schema: 1, homes: [after('own')] });
+      const bare = withEntries([before(undefined, 'old')]);
+      await record(bare, { origin: 'own', newRoot: true });
+      expect(stored(bare)).toEqual({ schema: 1, homes: [after('own')] });
+    });
+  });
+
+  describe('a registration again (a root that was there before the run)', () => {
+    it('writes own for a folder that has no entry', async () => {
+      const deps = withEntries([]);
+      await record(deps, { origin: 'own' });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('own')] });
+    });
+
+    it('keeps own for an own entry with the same node id', async () => {
+      const deps = withEntries([before('own')]);
+      await record(deps, { origin: 'own' });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('own')] });
+    });
+
+    it('writes received for an own entry with another node id, and a later registration never writes own again (TP-169)', async () => {
+      const deps = withEntries([before('own', 'old')]);
+      await record(deps, { origin: 'own' }, 'web');
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+      await record(deps, { origin: 'own' }, 'web');
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+      await record(deps, { origin: 'own' }, 'old');
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received', 'old')] });
+    });
+
+    it.each([
+      ['a received entry', 'received'],
+      ['an entry with no origin', undefined],
+      ['an entry with an unknown origin', 'mine'],
+    ])('never goes back to own over %s', async (_name, origin) => {
+      const deps = withEntries([before(origin)]);
+      await record(deps, { origin: 'own' });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+    });
+  });
+
+  describe('a received root', () => {
+    it.each([
+      ['no entry', []],
+      ['an own entry of the same node id', [before('own')]],
+      ['an own entry of another node id', [before('own', 'old')]],
+    ])('writes received over %s', async (_name, homes) => {
+      const deps = withEntries(homes);
+      await record(deps, { origin: 'received' });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+    });
+
+    it('writes received also when the run asks for a new root', async () => {
+      const deps = withEntries([before('own')]);
+      await record(deps, { origin: 'received', newRoot: true });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+    });
+  });
+
+  it('changes the entry of the folder only, and keeps the origin of every other entry as it is', async () => {
+    const other = { home: HOME_B, id: 'api', projects: [], origin: 'own' };
+    const odd = { home: '/w/odd', id: 'odd', projects: [], origin: 'mine' };
+    const deps = withEntries([other, before('own'), odd]);
+    await record(deps, { origin: 'received' });
+    expect(stored(deps)).toEqual({ schema: 1, homes: [other, after('received'), odd] });
   });
 });
 

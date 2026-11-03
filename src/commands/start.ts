@@ -63,7 +63,33 @@ interface StartPlan {
   readonly steps: readonly TmuxArgs[];
   /** The same steps, with the label of the proxy where the URL is. They are safe to print. */
   readonly shown: readonly TmuxArgs[];
+  /** A project folder that is missing: the session does not get it. */
+  readonly warnings: readonly string[];
 }
+
+const missingProjectWarning = (path: string): string =>
+  `The project folder ${path} is missing, so the session does not get it. Clone the repo of the project into that folder.`;
+
+/**
+ * The project folders that exist, and a warning for each one that does not. A received factory lists projects whose
+ * folders can be missing, and a folder that is not there must not go into the session as a folder that it can read.
+ */
+const presentProjects = async (
+  deps: Deps,
+  home: string,
+  projects: readonly { readonly path: string }[],
+): Promise<CliResult<{ readonly folders: readonly string[]; readonly warnings: readonly string[] }>> => {
+  const folders: string[] = [];
+  const warnings: string[] = [];
+  for (const project of projects) {
+    const folder = resolve(home, project.path);
+    const kind = await deps.fs.stat(folder);
+    if (!kind.ok) return kind;
+    if (kind.value === 'dir') folders.push(folder);
+    else warnings.push(missingProjectWarning(folder));
+  }
+  return ok({ folders, warnings });
+};
 
 const shellWord = (word: string): string =>
   /^[A-Za-z0-9_@%+=:,./{}-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
@@ -180,6 +206,8 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
   const proxy = await chooseProxy(deps, config);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
+  const projects = await presentProjects(deps, home, recipe.projects);
+  if (!projects.ok) return projects;
   const path = deps.env[env.path];
   const stepsFor = (proxyBaseUrl: string | null): CliResult<readonly TmuxArgs[]> => {
     const launch = launchArgv({
@@ -191,7 +219,7 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
       model: core.session.model,
       proxyBaseUrl,
       path: path === undefined || path === '' ? null : path,
-      projects: recipe.projects.map((project) => resolve(home, project.path)),
+      projects: projects.value.folders,
     });
     return launch.ok ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value })) : failure(launch.error);
   };
@@ -199,7 +227,7 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
   if (!steps.ok) return steps;
   const shown = stepsFor(proxy.value.label === null ? null : `<${proxy.value.label}>`);
   if (!shown.ok) return shown;
-  return ok({ proxy: proxy.value, steps: steps.value, shown: shown.value });
+  return ok({ proxy: proxy.value, steps: steps.value, shown: shown.value, warnings: projects.value.warnings });
 };
 
 const reachOf = (deps: Deps): Reach => {
@@ -310,7 +338,7 @@ const dryRunOutput = (input: {
         : [text('Calls:'), ...shown.map((line) => text(`  ${line}`))]),
     ],
     json: { schema: schemaIds.start, session: id, started: false, attached: false, proxy, dryRun: true, calls: shown },
-    warnings: [...notes, ...(plan?.proxy.warning === undefined ? [] : [plan.proxy.warning])],
+    warnings: [...notes, ...(plan?.warnings ?? []), ...(plan?.proxy.warning === undefined ? [] : [plan.proxy.warning])],
     failed: false,
   };
 };
@@ -375,7 +403,7 @@ export const runStart = async (deps: Deps, options: StartOptions): Promise<CliRe
       proxy: planned?.proxy.label ?? null,
       ...(ended ? { coordinatorEnded: true } : {}),
     },
-    warnings: [...notes.value, ...(planned?.proxy.warning === undefined ? [] : [planned.proxy.warning])],
+    warnings: [...notes.value, ...(planned?.warnings ?? []), ...(planned?.proxy.warning === undefined ? [] : [planned.proxy.warning])],
     failed: false,
   });
 };

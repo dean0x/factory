@@ -5,9 +5,9 @@ import { printable, type CommandOutput, type OutLine } from '../cli/output.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
-import { commitPaths, hasIdentity, headOf, statusOf, unstagePaths, type RepoPaths } from '../core/git.js';
+import { commitPaths, GIT_ENTRY, hasIdentity, headOf, statusOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
-import { indexPathOf, recordNode } from '../core/home-index.js';
+import { indexPathOf, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
@@ -18,6 +18,7 @@ import {
   dirs,
   flags,
   flagText,
+  homeIndex,
   localFileModes,
   places,
   program,
@@ -107,7 +108,7 @@ const checkStateRepoReady = async (deps: Deps, layout: Layout, touched: readonly
  * Put the upgraded home in the home index, as init does, so that a command finds the home from a project folder.
  * The home is upgraded already, so a problem here is a warning and not a failure.
  */
-const indexUpgraded = async (deps: Deps, home: string): Promise<readonly OutLine[]> => {
+const indexUpgraded = async (deps: Deps, home: string, origin: Origin): Promise<readonly OutLine[]> => {
   const warn = (texts: readonly string[]): readonly OutLine[] => texts.map((text) => ({ level: 'warn', text }));
   const indexPath = await indexPathOf(deps);
   if (!indexPath.ok) return warn([`The home index was not updated: ${indexPath.error.message}`]);
@@ -117,10 +118,23 @@ const indexUpgraded = async (deps: Deps, home: string): Promise<readonly OutLine
     home,
     id: config.value.core.node.id,
     projects: config.value.recipe.projects.map((project) => project.path),
+    origin,
   });
   return recorded.ok
     ? []
     : warn([`${recorded.error} Run "${commandText(commands.init)}" in the ${places.folder} ${home} to register it.`]);
+};
+
+/**
+ * The origin that the upgrade asks for. A FAC-M1 folder that the list does not list is `own` only when it held no git
+ * entry before the run, as every FAC-M1 home. A folder with a git entry may be a copy of another factory, so it is
+ * `received`. A git entry that can not be read counts as present. A folder that the list lists keeps the origin of its
+ * entry, because the list never takes `own` back from `received`.
+ */
+const originBeforeRun = async (deps: Deps, home: string, unregistered: boolean): Promise<Origin> => {
+  if (!unregistered) return homeIndex.origins.own;
+  const entry = await deps.fs.lstat(join(home, GIT_ENTRY));
+  return entry.ok && entry.value === null ? homeIndex.origins.own : homeIndex.origins.received;
 };
 
 /** The commit of the upgrade: the id of HEAD before it, and the paths that it staged. */
@@ -171,6 +185,7 @@ export const runUpgrade = async (
     const consent = await requireRegistrationConsent(deps, home, options);
     if (!consent.ok) return consent;
   }
+  const origin = await originBeforeRun(deps, home, located.value.unregistered);
   const layout = layoutOf(home);
   // The link rule comes first, also in a dry run: no read or write below goes through a link.
   const plain = await requireNoRootLinks(deps, layout);
@@ -372,7 +387,7 @@ export const runUpgrade = async (
 
   const count = written.length + moved.length;
   const pruned = await pruneBackups(deps, home, backupDir.value);
-  const indexed = await indexUpgraded(deps, home);
+  const indexed = await indexUpgraded(deps, home, origin);
   return done(
     [
       { level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` },

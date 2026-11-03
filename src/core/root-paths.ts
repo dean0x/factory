@@ -1,8 +1,9 @@
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { safetyRefusal, type CliResult } from '../cli/errors.js';
-import { commands, commandText, places, program } from '../names.js';
+import { commands, commandText, dirs, files, places, program } from '../names.js';
 import type { Layout } from '../state/layout.js';
 import type { Deps } from './deps.js';
+import { projectFolderKey } from './project-path.js';
 import { ok } from './result.js';
 
 /** The most parts that one path below the factory folder can have. A longer path is not one of ours. */
@@ -67,3 +68,48 @@ export const rootGuardPaths = (layout: Layout): readonly string[] => [
 /** Check the link rule for every path that the commands read or write below the factory folder. */
 export const requireNoRootLinks = (deps: Deps, layout: Layout): Promise<CliResult<void>> =>
   requireNoLinks(deps, layout.home, rootGuardPaths(layout));
+
+/**
+ * The tracked set of a received root: every path that the root repo tracks, apart from `factory.yaml` and the
+ * `.gitignore` of the root, which have their own checks. The set needs no list of names, so a new kind of file is in it
+ * from the first day. The paths are relative to the root and keep the order of the list.
+ */
+export const trackedSetOf = (tracked: readonly string[]): readonly string[] =>
+  tracked.filter((path) => path !== files.config && path !== files.gitignore);
+
+/** The link rule for the paths that a repo tracks, which are relative to the root. A tracked link is a stop (exit 4). */
+export const requireNoTrackedLinks = (deps: Deps, root: string, tracked: readonly string[]): Promise<CliResult<void>> =>
+  requireNoLinks(
+    deps,
+    root,
+    tracked.map((path) => join(root, path)),
+  );
+
+/** Why a tracked path stops `init`. */
+export type TrackedProblemKind = 'local-file' | 'state-folder' | 'session-folder' | 'clone';
+
+export interface TrackedProblem {
+  readonly path: string;
+  readonly kind: TrackedProblemKind;
+}
+
+/**
+ * The tracked paths that stop `init` on a received or a moved root: the local file, a path in the state folder, a path in
+ * the coordinator folder, and (when the caller names the clone folders) a path in a clone folder. The first part of the
+ * path decides, in the normal form of the folder key, so a case-blind file system finds no way around the check.
+ * The problems keep the order of the list.
+ */
+export const trackedProblems = (tracked: readonly string[], cloneFolders: readonly string[]): readonly TrackedProblem[] => {
+  const clones = new Set(cloneFolders.map(projectFolderKey));
+  const kindOf = (path: string): TrackedProblemKind | null => {
+    const first = projectFolderKey(path.split('/', 1)[0] ?? '');
+    if (path.indexOf('/') < 0 && first === projectFolderKey(files.localConfig)) return 'local-file';
+    if (first === projectFolderKey(dirs.state)) return 'state-folder';
+    if (first === projectFolderKey(dirs.coordinator)) return 'session-folder';
+    return clones.has(first) ? 'clone' : null;
+  };
+  return tracked.flatMap((path) => {
+    const kind = kindOf(path);
+    return kind === null ? [] : [{ path, kind }];
+  });
+};

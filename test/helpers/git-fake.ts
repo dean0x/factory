@@ -26,6 +26,19 @@ export interface GitFixture {
   readonly cloneExit?: number;
   /** What a failed `git clone` prints on stderr. Default: a line with no URL. */
   readonly cloneStderr?: string;
+  /** The paths that a work tree tracks, by folder: `git ls-files -z` prints them. A folder with no entry tracks nothing. */
+  readonly tracked?: Readonly<Record<string, readonly string[]>>;
+  /** The exit code of `git ls-files`. Default: 0. */
+  readonly lsFilesExit?: number;
+  /**
+   * The paths that git ignores, by folder, as the rules of `.gitignore` make them. A folder with no entry ignores every
+   * path, as the share list of a factory does.
+   */
+  readonly ignored?: Readonly<Record<string, readonly string[]>>;
+  /** The exit code of `git check-ignore` when it fails. Default: none, the command works. */
+  readonly checkIgnoreExit?: number;
+  /** The folders that stay out of every work tree, also after `git init` ran in them. */
+  readonly noWorkTree?: readonly string[];
 }
 
 export interface GitLog {
@@ -75,6 +88,24 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     const dir = call.args[1] ?? '';
     const rest = call.args.slice(2).join(' ');
     const repo = repoAt(dir);
+    // As real git does: `git init` makes the folder the top of a work tree.
+    if (call.args[2] === 'init') {
+      if (fixture.noWorkTree?.includes(dir) !== true) cloned.set(dir, {});
+      return exited(0);
+    }
+    if (rest === 'ls-files -z') {
+      if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
+      if ((fixture.lsFilesExit ?? 0) !== 0) return exited(fixture.lsFilesExit ?? 0, '', 'fatal: ls-files failed');
+      return exited(0, (fixture.tracked?.[dir] ?? []).map((path) => `${path}\0`).join(''));
+    }
+    if (call.args[2] === 'check-ignore') {
+      if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
+      if (fixture.checkIgnoreExit !== undefined) return exited(fixture.checkIgnoreExit, '', 'fatal: check-ignore failed');
+      const asked = call.args.slice(call.args.indexOf('--') + 1);
+      const rules = fixture.ignored?.[dir];
+      const found = rules === undefined ? asked : asked.filter((path) => rules.includes(path));
+      return found.length === 0 ? exited(1) : exited(0);
+    }
     switch (rest) {
       case 'rev-parse --git-common-dir':
         return repo === undefined ? exited(128) : exited(0, `${repo.commonDir ?? '.git'}\n`);

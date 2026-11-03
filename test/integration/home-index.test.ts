@@ -52,6 +52,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
           home: join(realRoot, 'web-factory'),
           id: 'web-factory',
           projects: [join(realRoot, 'web-factory', 'web')],
+          origin: 'own',
         },
       ],
     });

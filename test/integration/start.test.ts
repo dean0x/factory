@@ -164,6 +164,20 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(await readFile(join(outDir, 'session'), 'utf8')).toBe('demo');
   });
 
+  it('warns for a project folder that is missing and adds no --add-dir for it (TP-120)', async () => {
+    await initNode();
+    const web = join(box.node, 'web');
+    const api = join(box.node, 'api');
+    await rm(api, { recursive: true, force: true });
+    const result = await startFactory();
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(api);
+    expect(result.stderr).toContain('missing');
+    await waitForLaunch();
+    const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
+    expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', join(box.node, '.factory'), '--add-dir', web]);
+  });
+
   it('starts the coordinator in the coordinator folder, and keeps the top of the factory folder as the home (TP-46)', async () => {
     await initNode();
     expect((await startFactory()).code).toBe(0);
