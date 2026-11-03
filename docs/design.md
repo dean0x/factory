@@ -70,7 +70,7 @@ Software recipe: projects are git repos, the output is a pull request, and the a
 
 **Safety is in the code, not only in the text.** factory starts a session only in auto mode, so Claude Code keeps its own permission checks. The program has no flag that skips permission checks. A proxy (a server that passes the model calls on) is an explicit config option, and factory checks that it answers before each start. factory types owner-authority input only for a decision that the owner recorded. A decision answer counts only when it comes from the owner's board account. Each approval point waits for the owner, unless the owner delegated it. A delegation needs an approval record that the owner writes in a terminal window outside a factory session (§6 says what this does not prove).
 
-Software recipe: a release always needs the proof of §6.2.
+Software recipe: with `release: owner`, the owner approves each release. With `release: delegated`, the proof of §6.2 is necessary.
 
 Engineering note: the program is written in TypeScript on Node 22+, the npm package is `@dean0x/factory`, and the licence is MIT. The private state folder is `.factory/` and the config is `factory.yaml`. Claude Code writes a "last seen" note for each session through a hook. The screen layout is a tmux session.
 
@@ -262,48 +262,50 @@ A factory with one project is a node with one project. A factory with many proje
 factory init [--home DIR] [--name N] [--project PATH|URL]... [--recipe NAME] [--layer N]
              [--tracker ID] [--items X] [--decisions X] [--approval POINT=owner|delegated]... [--state-from SRC] [--yes]
                                             # makes a factory, or registers a received one; run it again in the factory folder to change an approval mode (§6)
-factory start [--home DIR]                  # start or attach: the screen session, its windows and the coordinator (§4.11); after a machine restart it resumes each recorded worker; works from a project folder (§4.3)
+factory start [--home DIR]                  # start the factory, or open it when it runs: the screen session, its windows and the coordinator (§4.11); after a machine restart it resumes each recorded worker; works from a project folder (§4.3)
 factory shutdown                            # stop every session of this factory, and nothing else (§4.11)
-factory restart <worker>                    # restart one worker with its session id (§4.11)
+factory restart <worker>                    # restart one worker, and keep its conversation (§4.11)
 factory reboot                              # shut down the whole factory and start it again; each recorded worker resumes (§4.11)
 factory status [--json]                     # each worker with its state, its work item and its idle state; the digest for the owner
 factory dismiss <worker> | --idle           # end a worker and free its work copy; --idle lists the idle workers first, and the owner picks (§4.11)
-factory doctor [--fix]                      # tools, versions, platform, safety posture, hooks, board
-factory upgrade [--dry-run]                 # migrate state and managed blocks (§4.5)
-factory machine                             # CPU, memory, disk, load against the limits
+factory doctor [--fix]                      # check the tools, their versions, the platform, the safety settings, the last-seen notes and the board
+factory upgrade [--dry-run]                 # update the saved state and the parts of the text files that factory writes (§4.5)
+factory machine                             # the use of the processors, the memory and the disk against the limits
 factory help words                          # the plain description of each factory word (docs/glossary.md)
 
 factory project add|remove|list
 factory recipe show                         # the project table of the coordinator, from the config
 factory tracker set <id> [--project P] [--items X] [--decisions X]   # change the board of the node, or of one project (§4.10)
 factory tracker status                      # the board of each project, and the check of its decision store
-factory state remote <url|path> | push | pull   # the private remote of the state folder (§4.3)
+factory state remote <url|path> | push | pull   # set the private backup place of the saved state, and copy the state to it or from it (§4.3)
 
 factory worker new <name> --project P [--copy PATH] [--assignment FILE]
 factory worker list [--json]                # the live workers table
-factory worker send <worker> (--file F | --text T)   # inbox record plus a one-line doorbell
-factory worker relay <worker> --decision D-n   # owner-authority input, from a recorded decision
+factory worker send <worker> (--file F | --text T)   # put a message in the inbox of the worker, and ring its doorbell
+factory worker relay <worker> --decision D-n   # type owner input from a decision that the owner recorded
 factory worker reset <worker> (--clear | --compact) [--assignment FILE]   # the session reset
 factory worker stop|resume <worker>
 factory worker summon <worker> [--for 15m]
 factory worker watch | recover | adopt <name>
-factory inbox next | ack <n>                # read and acknowledge a record of the own inbox (§4.12)
+factory inbox next | ack <n>                # read the next message of the inbox of this session, and mark it as read (§4.12)
 factory layout                              # build the windows again
 
 factory item add|update|move|close|list|import ...   # work items: the board
 factory request add|list|close ...          # items that wait for the owner
 factory decide ask <D-n> --options FILE     # a decision item in the decision store
-factory decide read [<D-n>] [--principle ID]   # read answers by script; record them in the log and profile
-factory decide <D-n> <option> [--note T]    # the owner answers in the CLI (the `local` board, §4.10)
+factory decide read [<D-n>] [--principle ID]   # read the answers with no model use; record them in the decision log and the profile
+factory decide <D-n> <option> [--note T]    # the owner answers in a terminal window, when there is no team board (§4.10)
 factory queue set|show                      # the order of the finished work that waits for an approval point
-factory watch                               # bounded reads of new board changes; wakes the coordinator (§4.10)
+factory watch                               # read the new board changes, a limited number of times; wake the coordinator (§4.10)
 
 factory node tree | children | add-child | remove-child
 factory report [--json] [--since CURSOR]    # digest for the parent (§5)
 factory self reset                          # the session reset of the coordinator itself
-factory adopt <path> [--dry-run]            # import the setup of today into a node (§8)
-factory hook <event> | statusline           # called by Claude Code; not for people (§4.6)
+factory adopt <path> [--dry-run]            # bring the setup of today into a node (§8)
+factory hook <event> | statusline           # Claude Code calls it; not for people (§4.6)
 ```
+
+Engineering note: `start` attaches to the tmux session when it runs, and `restart` resumes the worker with its session id. `doctor` checks the hooks that write the last-seen notes. `upgrade` migrates the state and the managed blocks. `machine` reads CPU, memory, disk and load. `state remote` sets the private git remote of the state folder. `worker send` writes an inbox record and types a one-line doorbell. `decide read` reads the answers by script. `decide <D-n>` is the answer path of the `local` board. `watch` makes bounded reads. `--json` prints JSON, `--dry-run` changes nothing, and `--state-from` takes the work state from another machine (§4.3).
 
 **Software recipe commands** (the commands that the `software` recipe adds)
 
@@ -481,7 +483,7 @@ A factory folder under a linked parent folder works. The link rule checks only t
 
 **Caps.** Each cap in these checks is a named number in the code (`src/names.ts`). The token scan of the tracked files stops reading at its cap of files and at its cap of bytes for each file, and it names what it did not scan. On a received factory, a list of tracked files over its cap, or a file over its byte cap, stops `init` with exit 4 and one remedy line. The acceptance never covers a partial list or part of a file.
 
-Section 6 says what the approval record guard, the session marker, the setup accept prompt and the origin of a factory list entry do not prove.
+Section 6 says what the approval record guard, the setup accept prompt and the origin of a factory list entry do not prove.
 
 #### Work state on a second machine
 
@@ -953,22 +955,32 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 
 | Rule | Text (managed block) | Code enforcement |
 |---|---|---|
-| Every session runs in auto mode | yes | `session.permission_mode` accepts only `auto`. Every launch adds `--permission-mode auto`. |
-| Never skip permissions | yes | factory has no flag or config value that adds the skip flag. `doctor` reports a factory folder or work copy whose settings skip permission prompts, and `start` exits 4 (§4.3, "Stops and warnings"). |
-| A proxy only by explicit config, and only when it answers | yes | Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the local config (§4.6). A health check runs before each launch and in `doctor` and `status`. On failure the default is `stop` with the fix in the message; `direct` is an explicit choice. `doctor` sends the check only when the config comes from `--home` or from the current folder, and the factory folder passes the registration check (§4.3). For a config in a parent folder, `doctor` sends no request and warns to run with `--home DIR`. For a factory folder that fails the registration check, `doctor` sends no request and the check fails. `doctor` warns when the variable is set in the shell. |
-| No proxy keys or passwords in output | yes | `proxies` holds no keys; `doctor` refuses a value that looks like a password or a token there. Output shows only the proxy id and its host and port, never user info, query strings or headers of the base URL. |
-| A denial is final; no laundering through another session | yes | `worker send` and `worker relay` refuse a text that asks a worker to run a command that the node recorded as denied (a `denied` list in state). |
-| Never invent the owner's consent | yes | `worker relay` types the owner prefix only for a decision record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only for an answer from the owner's account on the board, and only when the agents use another account (`tracker.agent_account`). With a shared account, or with `local`, only `factory decide` counts: it needs a terminal window and refuses inside a session that factory started. `doctor` warns on a shared account. |
+| Every session keeps the permission checks of Claude Code | yes | factory starts each session in the one permission mode that keeps these checks, and accepts no other mode. |
+| Never skip permissions | yes | factory has no option that skips permission prompts. `doctor` reports a factory folder or work copy whose settings skip permission prompts, and `start` stops (§4.3, "Stops and warnings"). |
+| A relay server for the model calls only when the owner sets one, and only when it answers | yes | factory uses a relay server only from the local config (§4.6). It checks that the server answers before each start, and in `doctor` and `status`. If the server does not answer, the start stops and the message names the fix. A direct start is an explicit choice. `doctor` sends this check only for a factory folder that passes the registration check (§4.3). |
+| No relay server keys or passwords in output | yes | The relay server setting holds no keys, and `doctor` refuses a value that looks like a password or a token there. Output shows only the name, the host and the port of the relay server. |
+| A denial is final; another session does not do the denied step | yes | `worker send` and `worker relay` refuse a text that asks a worker to run a command that the node recorded as denied. |
+| Never invent the owner's consent | yes | `worker relay` types owner input only for a decision that the owner recorded. A board answer counts only from the owner's own account, and only when the agents use another account. With a shared account, or with no team board, only `factory decide` counts: it needs a terminal window and refuses inside a factory session. `doctor` warns on a shared account. |
 | Decisions stay private | yes | `doctor` fails when the decision store is public, and warns when it is not set (§4.10). |
-| No secrets in output | yes | No command prints env values. `doctor` refuses a value that looks like a password or a token in a tracked file of the factory folder. Process lists show only pid, elapsed time and command name. |
-| Peers never ask the owner directly | yes (role templates) | none (model behavior) |
-| The coordinator instructions never reach a worker | yes | The factory folder has no instruction file at its top. The coordinator text is in `coordinator/CLAUDE.md`, and no project clone or work copy is inside or above that folder (§4.3, the instruction-file rule). |
-| Never bypass the state guard | yes | `init` turns on the guard of the state folder; every state write goes through the helper, which refuses when the guard is off. |
-| Resource limits | yes | `worker new` checks the limits. |
-| Look before typing; target by pane id | yes | Every typed input captures the pane first, refuses an open dialog, clears the input, and checks that the text arrived. Only `src/comms/` types into a pane, and a typed line has at most 300 characters (§4.12). |
-| Supported platforms only | no | Every command refuses on native Windows, with the WSL hint (§4.7). |
+| No secrets in output | yes | No command prints the value of a secret setting. `doctor` refuses a value that looks like a password or a token in a shared file of the factory folder. A list of running programs shows only the number, the run time and the name of each program. |
+| Workers never ask the owner directly | yes (role texts) | none (the model follows the text) |
+| The coordinator instructions never reach a worker | yes | The factory folder has no instruction file at its top. The coordinator text is in `coordinator/CLAUDE.md`, and no project copy or work copy is inside or above that folder (§4.3, the instruction-file rule). |
+| The saved state changes only through factory | yes | `init` turns on a guard for the state folder. Every change of the saved state goes through factory, and factory refuses it when the guard is off. |
+| Resource limits | yes | `worker new` checks the limits of the machine. |
+| Look before typing into a session | yes | Before factory types into a session, it reads the screen of that session, refuses when a question box is open, clears the input line, and checks that the text arrived. Only one part of factory types into a session, and each typed text is short (§4.12). |
+| Supported platforms only | no | Every command refuses on Windows outside WSL, the Linux part of Windows, and says how to use WSL (§4.7). |
 
-Engineering note: the state guard is a git hook of the state folder. `init` sets `core.hooksPath` to turn it on.
+Engineering note: the permission mode is auto mode. `session.permission_mode` accepts only `auto`, and every launch adds `--permission-mode auto`. "Never skip permissions" stops with exit 4.
+
+Engineering note: the relay server is a proxy. Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the local config. The answer check is a health check; on failure the default is `stop`, and `direct` is the explicit choice. For a config in a parent folder, `doctor` sends no request and warns to run with `--home DIR`. For a factory folder that fails the registration check, `doctor` sends no request and the check fails. `doctor` warns when the variable is set in the shell. Output never shows user info, query strings or headers of the base URL.
+
+Engineering note: the denied commands are a `denied` list in the state folder. Owner input is the owner prefix, typed only for a record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only under the same rules; the other account is `tracker.agent_account`, and "no team board" is the `local` board.
+
+Engineering note: no command prints env values. A shared file is a file that the config repo tracks. Process lists show only pid, elapsed time and command name.
+
+Engineering note: the state guard is a git hook of the state folder. `init` sets `core.hooksPath` to turn it on. Every state write goes through the state helper.
+
+Engineering note: factory targets a session by its tmux pane id. It captures the pane first and refuses an open dialog. Only `src/comms/` types into a pane, and a typed line has at most 300 characters.
 
 **Rules of the software recipe**
 
@@ -992,8 +1004,8 @@ factory never reads or writes under `~/.claude/` (settings, rules, skills, trans
 The rules:
 - **The list is shared, the mode is personal.** The list of points comes with the recipe choice, so it is in the shared file. The mode of each point is in the local file (`approval`, §4.4), because a delegation is owner authority, and each machine has its own approval record.
 - **The owner sets a delegation.** A delegation needs an approval record that the owner writes in a terminal window outside a factory session. §6 ("What the guards do not prove") says what this does not prove. The owner sets it with `init` (the prompt, or `--approval <point>=<owner|delegated>`). To change a mode later, the owner runs `factory init` again in the factory folder, in a terminal window outside a factory session. `init` then asks for each approval point again, and the new answer replaces the old mode. `factory decide` answers decisions only; it sets no approval mode. `init --yes` writes `owner` only. A delegated approval counts only for work that the owner approved and assigned.
-- **The approval record.** A delegation is real only with an approval record. The record names the node id, the real path of the factory folder, the point, the mode and the time. Only the approval record writer writes it. The writer needs a terminal window and no `FACTORY_SESSION`, with no exception. The store is a per-user file in the state folder beside the factory list, outside every factory folder, with folder mode 700 and file mode 600. A reader refuses a file of another user or a file that others can write. The store keeps only the newest record for each node id, factory folder and point. The store refuses a file over its size cap, a named number in `src/names.ts`. A record file inside the factory folder or the state folder does not count.
-- **The effective mode.** A matching record has the same node id, the same real path and the same point.
+- **The approval record.** A delegation is real only with an approval record. The record names the node id, the real path of the factory folder, the point, the mode and the time. Only the approval record writer writes it. The writer needs a terminal window and no `FACTORY_SESSION`, with no exception. The store is a per-user file in the state folder beside the factory list, outside every factory folder, with folder mode 700 and file mode 600. A reader refuses a file of another user or a file that others can write. The store keeps only the newest delegation record for each node id, factory folder and point. A release scope (§6.2) is a record of its own kind, with its own key, so it never replaces a delegation record. The store refuses a file over its size cap, a named number in `src/names.ts`. A record file inside the factory folder or the state folder does not count.
+- **The effective mode.** A matching record is a delegation record with the same node id, the same real path and the same point. A release scope is never a matching record.
 
   | Local value | Newest matching record | Effective mode |
   |---|---|---|
@@ -1007,7 +1019,7 @@ The rules:
 - **Delegations are visible.** `start` and `doctor` list each active delegation with its time.
 - **The setup acceptance is not an approval record.** It has its own writer and its own store, and it writes only its own kind. So `init --yes` can never write an approval record (§4.3).
 
-**What the guards do not prove (D-10 A).** The approval record writer refuses in every pane of a factory session and in a process with no terminal window. `start` puts the session marker `FACTORY_SESSION` in the tmux environment before it makes the second pane and every other window. This stops a factory session that sets a delegation through factory in the normal way. It does not replace the permission checks of Claude Code. The guard can not prove that the owner, and not another program of the same user, gives the answer. The same limit applies to the setup accept prompt and to the origin of an entry in the factory list. So these controls stop mistakes, not a determined program. FAC-M5 adds a control that factory does not run itself: the session settings that factory renders hold deny rules for the record commands and for the store path. These rules make the gap smaller. They do not close it, so this text keeps the limit.
+**What the guards do not prove (D-10 A).** The guard can not prove that the owner, and not another program of the same user, gives the answer. The same limit applies to the setup accept prompt and to the origin of an entry in the factory list. These controls stop mistakes, and they do not replace the permission checks of Claude Code. FAC-M5 adds a control outside factory that makes the gap smaller but does not close it.
 
 ### 6.1 Software recipe: what counts as approval and assignment (D-52)
 
@@ -1036,7 +1048,7 @@ An open question of the owner blocks the merge (D-52). `factory check` gives `NO
 
 ### 6.2 Software recipe: releases (D-57)
 
-D-57 is answered: the release is an approval point of its own, with the values `owner` and `delegated` (OD-1). The default is `owner`: every release waits for the owner's go. With `release: delegated`, the proof is an **owner-approved release scope**: the items and the version that the owner approved for release. The owner writes the scope through the approval record writer (§6), with the same rules as any approval record. `factory release check` refuses (exit 4) when no owner-approved release scope names the version. The owner writes the scope with `factory release scope <project> <version>`, in a terminal window outside a factory session, and runs `factory release check` again. The approval of the work (§6.1) does not include the release. `release check` and `release verify` read only and publish nothing in every case. FAC-M5 builds the check and its test.
+D-57 is answered: the release is an approval point of its own, with the values `owner` and `delegated` (OD-1). The default is `owner`: every release waits for the owner's go. With `release: delegated`, the proof is an **owner-approved release scope**: the items and the version that the owner approved for release. The owner writes the scope through the approval record writer (§6), with the same guards as a delegation. The scope is a record of its own kind. Its key is the node id, the real path of the factory folder, the project and the version. So a new scope never ends or changes a delegation, and the effective mode of §6 reads only delegation records. `factory release check` refuses (exit 4) when no owner-approved release scope names the version. The owner writes the scope with `factory release scope <project> <version>`, in a terminal window outside a factory session, and runs `factory release check` again. The approval of the work (§6.1) does not include the release. `release check` and `release verify` read only and publish nothing in every case. FAC-M5 builds the check and its test.
 
 ## 7. Generic names
 

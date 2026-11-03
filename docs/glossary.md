@@ -47,6 +47,9 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **last seen** (was: heartbeat): Last seen is a file for each session. It shows the last activity, the session id and the context percent.
 - **worker window** (was: bench window): The worker window is the screen window that holds the worker sessions. Its name is `workers`.
 - **event file** (was: outbox): The event file is the digest of a node, in `.factory/outbox/`. A script writes it, and a reader follows it.
+- **inbox**: An inbox is a file of messages for one session. The session reads each message and marks it as read.
+- **doorbell**: A doorbell is a one-line note that factory types into a session. It says that a new message waits in the inbox.
+- **digest**: A digest is a short summary of a node: its workers, their work items and the requests that wait for the owner.
 - **proxy**: A proxy is a server that passes the model calls on. Factory uses one only when the config names it and it answers.
 
 ## Words of the software recipe
