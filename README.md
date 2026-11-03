@@ -95,7 +95,7 @@ factory node children
 factory node remove-child api-factory
 ```
 
-On layer 1, `add-child` refuses: the children of a coordinator are cells.
+On layer 1, `add-child` refuses: the children of a coordinator are workers.
 
 ### Upgrade a node
 
@@ -138,11 +138,11 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
       decision-profile/  roadmaps/
 ```
 
-The node home is never inside a git work tree. The coordinator runs in the home. A cell runs in a project checkout, so it never reads the instructions of the coordinator.
+The node home is never inside a git work tree. The coordinator runs in the home. A worker runs in a project checkout, so it never reads the instructions of the coordinator.
 
 ## Words
 
-`factory help words` explains each word. In short: a node has a layer and an owner. Layer 1 is the coordinator of the cells. A recipe says how a kind of work runs, and a variant is one way to run it. A work order is a written task for a cell or a child node.
+`factory help words` explains each word. In short: a node has a layer and an owner. Layer 1 is the coordinator of the workers. A recipe is the kind of work that a factory does, and a setup is one named way to run it. An assignment is a written task for a worker or a child node.
 
 ## Managed blocks
 

@@ -810,7 +810,7 @@ describe('scripts/check-intent-docs.sh, check 2: the label "Design v3 PR"', () =
     ['docs', 'Docs PR'],
     ['code', 'Code PR'],
   ])('exits 1 when the heading has no checkbox for the %s PR', async (kind, title) => {
-    await change('roadmap-v2.md', (text) => text.replace(`- [ ] ${title}`, '- [ ] Something else'));
+    await change('roadmap-v2.md', (text) => text.replace(new RegExp(`- \\[[ xX]\\] ${title}`), '- [ ] Something else'));
     const result = check();
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['2']);
@@ -830,9 +830,9 @@ describe('scripts/check-intent-docs.sh, check 2: the label "Design v3 PR"', () =
     expect(check().code).toBe(0);
   });
 
-  it('accepts ticked checkboxes', async () => {
-    await change('roadmap-v2.md', (text) => text.replace('- [ ] Docs PR', '- [x] Docs PR'));
-    await change('roadmap-v2.md', (text) => text.replace('- [ ] Code PR', '- [X] Code PR'));
+  it('accepts ticked checkboxes, also with a capital X', async () => {
+    await change('roadmap-v2.md', (text) => text.replace(/- \[[ xX]\] Docs PR/, '- [X] Docs PR'));
+    await change('roadmap-v2.md', (text) => text.replace(/- \[[ xX]\] Code PR/, '- [X] Code PR'));
     expect(check().code).toBe(0);
   });
 
@@ -881,7 +881,7 @@ describe('scripts/check-intent-docs.sh, a comment or a heading in fenced code do
     ['docs', 'Docs PR'],
     ['code', 'Code PR'],
   ])('check 2 does not count the checkbox for the %s PR when it is only in fenced code', async (kind, title) => {
-    await change('roadmap-v2.md', (text) => text.replace(new RegExp(`^(- \\[ \\] ${title} .*\\n)`, 'm'), '```\n$1```\n'));
+    await change('roadmap-v2.md', (text) => text.replace(new RegExp(`^(- \\[[ xX]\\] ${title} .*\\n)`, 'm'), '```\n$1```\n'));
     const result = check();
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['2']);

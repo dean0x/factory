@@ -13,36 +13,33 @@ const SENTENCES: Readonly<Record<(typeof terms)[number], string>> = {
   owner:
     'The {{owner}} is the person whose decisions a {{node}} carries. ' +
     'Only the {{owner}} can approve work or answer a decision.',
-  project:
-    'A project is one unit of work that a {{node}} manages. In the software {{recipe}}, a project is one git repo.',
+  project: 'A project is one unit of work that a {{node}} manages.',
   layer:
-    'A layer is the level of a {{node}}, counted from the bottom. Layer 0 is the {{cell}}s. Each layer has its own role.',
-  cell:
-    'A {{cell}} is a {{worker}} session in one checkout. ' +
-    'It does all the steps for one track of one project. Not built yet.',
+    'A layer is the level of a {{node}}, counted from the bottom. Layer 0 is the {{worker}}s. Each layer has its own role.',
+  worker:
+    'A {{worker}} is a session in one work copy. It does all the steps for one track of one project. Not built yet.',
+  coordinator:
+    'A {{coordinator}} is a {{node}} on layer 1. ' +
+    'It runs the {{program}} for its {{owner}} and gives assignments to {{worker}}s.',
   recipe:
-    'A {{recipe}} says which tool runs each step of the work, and what proves it. ' +
-    'Not built yet: this version has only the project settings.',
-  variant:
-    'A {{variant}} is one named way to run a {{recipe}}. The plain {{variant}} uses Claude Code alone. ' +
-    'A project can pick its own {{variant}}.',
-  andon:
-    'An andon is an item that waits for the {{owner}}. It can be a question to answer or an action to do. ' +
+    'A {{recipe}} is the kind of work that a {{program}} does, such as software or marketing. ' +
+    'It sets the approval points. Not built yet.',
+  setup:
+    'A setup is one named way to run a {{recipe}}. It holds the text and scripts that you add to the fixed rules.',
+  request:
+    'A request is an item that waits for the {{owner}}. It can be a question to answer or an action to do. ' +
     'Not built yet.',
-  'work order':
-    'A work order is a written task for a {{cell}} or a child {{node}}. It is a file in {{ordersDir}}.',
-  changeover:
-    'A changeover is a clear or a compact of a session between two phases of work. A saved handoff keeps the state. ' +
+  assignment:
+    'An assignment is a written task for a {{worker}} or a child {{node}}. It is a file in `{{ordersDir}}`.',
+  'session reset':
+    'A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state. ' +
     'Not built yet.',
-  staging:
-    'Staging is the merge order. It lists the finished work that waits to be merged, first item first. ' +
-    'Not built yet.',
-  inspect:
-    'Inspect is the merge check. It reads the pull request and says READY or NOT READY, with the reasons. ' +
-    'Not built yet.',
-  ship:
-    'Ship is the release check. It tests that a release is ready and works after it is out. It never publishes. ' +
-    'Not built yet.',
+  queue:
+    'A queue is the order of the finished work that waits for an approval point, first item first. Not built yet.',
+  check:
+    'A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.',
+  'release check':
+    'The release check tests that a release is ready and works after it is out. It never publishes. Not built yet.',
 };
 
 export interface Word {

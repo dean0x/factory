@@ -145,12 +145,12 @@ describe('node add-child', () => {
     expect(after).toContain('# People edit this file.');
   });
 
-  it('refuses on layer 1, because the children of a coordinator are cells', async () => {
+  it('refuses on layer 1, because the children of a coordinator are workers', async () => {
     const deps = make({ layer: 1, homes: webHome });
     const before = deps.files.get(CONFIG_PATH);
     const result = await node(deps, 'add-child', '/w/web-factory');
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    if (!result.ok) expect(result.error.message).toContain('its children are cells');
+    if (!result.ok) expect(result.error.message).toContain('its children are workers');
     expect(deps.files.get(CONFIG_PATH)).toBe(before);
   });
 

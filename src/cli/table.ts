@@ -113,7 +113,7 @@ export const commandTable: readonly Command[] = [
       [flags.layer]: {
         type: 'string',
         placeholder: 'N',
-        description: `The layer of the ${roles.node}, from 1 to 16. Layer 1 manages ${roles.cell}s. Default: 1.`,
+        description: `The layer of the ${roles.node}, from 1 to 16. Layer 1 manages ${roles.worker}s. Default: 1.`,
       },
       [flags.recipe]: {
         type: 'string',

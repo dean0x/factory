@@ -94,7 +94,7 @@ export const renderConfig = (config: FactoryConfig): string => {
     '',
     `${keys.root.node}:`,
     entry(1, keys.node.id, scalar(core.node.id), 'also the name of the tmux session'),
-    entry(1, keys.node.layer, core.node.layer, `the layer sets the role: layer 1 is the ${roles.coordinator} of the ${roles.cell}s`),
+    entry(1, keys.node.layer, core.node.layer, `the layer sets the role: layer 1 is the ${roles.coordinator} of the ${roles.worker}s`),
     '',
     `${keys.root.owner}:`,
     entry(1, keys.owner.display, quoted(core.owner.display)),
@@ -116,7 +116,7 @@ export const renderConfig = (config: FactoryConfig): string => {
     `# A session uses a proxy only when the config names it. ${capitalize(program)} checks the proxy before each launch.`,
     ...section(0, keys.root.proxies, core.proxies.map(proxyLines)),
     '',
-    `# Overrides for single ${roles.cell}s: <${roles.cell} id>: { ${keys.cell.proxy}: ${values.noProxy} }`,
+    `# Overrides for single ${roles.worker}s: <${roles.worker} id>: { ${keys.cell.proxy}: ${values.noProxy} }`,
     ...(cells.length === 0
       ? [`${keys.root.cells}: {}`]
       : [

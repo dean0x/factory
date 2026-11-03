@@ -119,8 +119,8 @@ const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): 
   const layer = config.core.node.layer;
   if (layer === COORDINATOR_LAYER) {
     return safetyRefusal(
-      `this ${roles.node} is on layer ${COORDINATOR_LAYER}: its children are ${roles.cell}s`,
-      `A ${roles.cell} is not a ${roles.node} home. ${program} adds ${roles.cell}s with a later version.`,
+      `this ${roles.node} is on layer ${COORDINATOR_LAYER}: its children are ${roles.worker}s`,
+      `A ${roles.worker} is not a ${roles.node} home. ${program} adds ${roles.worker}s with a later version.`,
     );
   }
 

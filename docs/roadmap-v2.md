@@ -351,7 +351,7 @@ The import into GitHub issues is not here: it is FAC-M3.
 
 The design v3 PR comes after the FAC-M2 merge and before FAC-M4. It brings D-59, D-60 and Dean's notes F-14 to F-21 into the design, this roadmap, the trace and the code. It is two PRs (D-12 B): the docs PR first, then the code PR. Nothing is released, so both PRs are releasable at merge. Each PR has one checkbox. The first commit of the code PR ticks the first box, because the docs PR is merged by then. The last commit of the code PR ticks the second box. `scripts/check-intent-docs.sh` finds these two boxes under this heading, because rows of `docs/intent-trace.md` name the label "Design v3 PR".
 
-- [ ] Docs PR (branch `design-v3`): the design text, this roadmap, the token budget, the intent trace and the glossary in plain words, the plain-words table and its scan, and the docs checks 8, 9 and 10. No file under `src/` changes.
+- [x] Docs PR (branch `design-v3`): the design text, this roadmap, the token budget, the intent trace and the glossary in plain words, the plain-words table and its scan, and the docs checks 8, 9 and 10. No file under `src/` changes.
 - [ ] Code PR (branch `design-v3-code`): the code and test changes of the points below.
 
 There is one checkbox for each of the eight points of Dean's request, in the same order:

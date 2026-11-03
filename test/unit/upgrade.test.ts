@@ -1470,7 +1470,7 @@ describe('upgrade: a node of schema 1', () => {
     expect(live(deps)).toEqual(before);
   });
 
-  it('stops on a child with a file address, because the children of layer 1 are cells, and changes nothing', async () => {
+  it('stops on a child with a file address, because the children of layer 1 are workers, and changes nothing', async () => {
     const doc = schema1Doc();
     doc.children = [{ id: 'team-a', address: 'file:///work/team-a' }];
     const { deps } = makeOldNode({ doc });

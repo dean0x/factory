@@ -152,7 +152,7 @@ describe('role templates', () => {
 
   it.each([
     ['worker', 0, ['Role', 'Questions and escalation', 'Milestones', 'Denial is final', 'Context budget', 'Heavy tests', 'Disk', 'Writing']],
-    ['coordinator', 1, ['Role', 'Owner authority', 'Merges and releases', 'Cells', 'State files']],
+    ['coordinator', 1, ['Role', 'Owner authority', 'Merges and releases', 'Workers', 'State files']],
     ['manager', 2, ['Role', 'Children', 'Priorities and capacity', 'Owner items', 'Limits']],
   ])('gives the %s template its required sections', (_name, layer, sections) => {
     const headings = headingsOf(roleOf(layer).body);

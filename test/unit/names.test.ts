@@ -18,6 +18,7 @@ import {
   schemaIds,
   stateKeys,
   templateValues,
+  terms,
   tmuxNames,
 } from '../../src/names.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
@@ -38,6 +39,14 @@ const sourceFiles = (dir: string): string[] =>
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) return sourceFiles(path);
     return path.endsWith('.ts') && path !== NAMES_FILE ? [path] : [];
+  });
+
+/** Every `.ts` file under a folder, names.ts included. */
+const allSourceFiles = (dir: string): string[] =>
+  readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) return allSourceFiles(path);
+    return path.endsWith('.ts') ? [path] : [];
   });
 
 const stripComments = (source: string): string =>
@@ -169,8 +178,80 @@ describe('names', () => {
   it('reads the string literals of a text, and leaves out comments, template expressions and placeholders', () => {
     const sample = (text: string): string[] => literalsOf(text);
     expect(sample("const a = 'factory.yaml';")).toEqual(['factory.yaml']);
-    expect(sample('const a = `x ${y} {{cell}} z`;')).toEqual(['x     z']);
+    expect(sample('const a = `x ${y} {{worker}} z`;')).toEqual(['x     z']);
     expect(sample("// a 'comment'\nconst a = 1;")).toEqual([]);
+  });
+});
+
+/** The values that appear more than once in a list. */
+const duplicatesOf = (values: readonly string[]): string[] => [
+  ...new Set(values.filter((value, index) => values.indexOf(value) !== index)),
+];
+
+describe('the role words and the terms', () => {
+  /** The words that decision D-59 replaced in the roles and the terms. */
+  const REPLACED_WORDS = ['cell', 'andon', 'staging', 'inspect', 'ship'];
+  const replacedWord = new RegExp(`(?<![A-Za-z0-9_])(?:${REPLACED_WORDS.join('|')})(?:s|es)?(?![A-Za-z0-9_])`, 'i');
+
+  it('holds no user value for a replaced word in the roles, the terms and the template values', () => {
+    const userValues = [
+      ...Object.values(roles),
+      ...terms,
+      ...Object.keys(templateValues),
+      ...Object.values(templateValues),
+    ];
+    expect(userValues.filter((value) => replacedWord.test(value))).toEqual([]);
+  });
+
+  it('finds a replaced word in a value, also as a plural, and leaves a longer word alone', () => {
+    for (const value of ['cell', 'Cells', '@cell', 'ship', 'andon', 'staging', 'inspect']) {
+      expect(replacedWord.test(value), value).toBe(true);
+    }
+    for (const value of ['worker', 'relationship', 'cellar', 'inspector']) {
+      expect(replacedWord.test(value), value).toBe(false);
+    }
+  });
+
+  it('has one worker role key and no role key or placeholder for a replaced word', () => {
+    const workerKeys = Object.entries(roles)
+      .filter(([, value]) => value === 'worker')
+      .map(([key]) => key);
+    expect(workerKeys).toEqual(['worker']);
+    const keysOfRoles = [...Object.keys(roles), ...Object.keys(templateValues)];
+    expect(keysOfRoles.filter((key) => REPLACED_WORDS.includes(key.toLowerCase()))).toEqual([]);
+  });
+
+  it('has no two role values that are equal', () => {
+    expect(duplicatesOf(Object.values(roles))).toEqual([]);
+  });
+
+  it('has no two term values that are equal', () => {
+    expect(duplicatesOf(terms)).toEqual([]);
+  });
+
+  it('reports a value that stands twice in a list', () => {
+    expect(duplicatesOf(['node', 'worker', 'node', 'node'])).toEqual(['node']);
+    expect(duplicatesOf(['node', 'worker'])).toEqual([]);
+  });
+});
+
+describe('the word desk', () => {
+  const DESK = /(?<![A-Za-z0-9_])desks?(?![A-Za-z0-9_])/i;
+
+  it('is in no file of src, comments included', () => {
+    const files = allSourceFiles(SRC);
+    expect(files.length).toBeGreaterThan(20);
+    const found = files.filter((path) => DESK.test(readFileSync(path, 'utf8')));
+    expect(found.map((path) => relative(SRC, path))).toEqual([]);
+  });
+
+  it('is found in a text that holds the word, also as a plural, and not in a longer word', () => {
+    for (const text of ['a desk', 'The Desk row', 'two desks', '// a review desk']) {
+      expect(DESK.test(text), text).toBe(true);
+    }
+    for (const text of ['a desktop', 'desk_top', 'a plain text']) {
+      expect(DESK.test(text), text).toBe(false);
+    }
   });
 });
 
@@ -221,13 +302,6 @@ describe('the pane options of tmux', () => {
   /** The pane option of FAC-M1 for a work track. The option of v2 is `@cell`. */
   const OLD_PANE_OPTION = '@lane';
 
-  const allSourceFiles = (dir: string): string[] =>
-    readdirSync(dir).flatMap((entry) => {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) return allSourceFiles(path);
-      return path.endsWith('.ts') ? [path] : [];
-    });
-
   it('names the pane options, the cell option among them', () => {
     expect(tmuxNames.optionCell).toBe('@cell');
     expect(tmuxNames.optionNode).toBe('@node');
@@ -262,7 +336,7 @@ describe('template placeholders', () => {
   });
 
   it('fills a placeholder and its capitalized form', () => {
-    expect(fillTemplate(['The {{cell}} and the {{Cell}}.'], { cell: 'worker' })).toBe('The worker and the Worker.');
+    expect(fillTemplate(['The {{worker}} and the {{Worker}}.'], { worker: 'worker' })).toBe('The worker and the Worker.');
   });
 
   it('leaves an unknown placeholder in the text', () => {

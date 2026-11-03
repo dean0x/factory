@@ -66,9 +66,22 @@ describe('the glossary of the program', () => {
     expect(count).toBeLessThanOrEqual(MAX_WORDS);
   });
 
-  it('names the orders folder in the entry for a work order', () => {
-    const text = glossary.find((word) => word.term === 'work order')?.text ?? '';
+  it('names the orders folder in the entry for an assignment', () => {
+    const text = glossary.find((word) => word.term === 'assignment')?.text ?? '';
     expect(text).toContain(templateValues.ordersDir);
+  });
+
+  it('uses the word worker once in the sentence for a worker', () => {
+    const text = glossary.find((word) => word.term === 'worker')?.text ?? '';
+    expect(text.match(/\bworker\b/gi) ?? []).toHaveLength(1);
+  });
+
+  it('names no software word in the sentences for a queue and a check', () => {
+    for (const term of ['queue', 'check']) {
+      const text = glossary.find((word) => word.term === term)?.text ?? '';
+      expect(text.length, term).toBeGreaterThan(0);
+      expect(text, term).not.toMatch(/\b(?:merge|merged|pull request|release|git|CI)\b/i);
+    }
   });
 
   it('has no placeholder left in any text', () => {
@@ -97,17 +110,30 @@ describe('docs/glossary.md', () => {
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([]);
   });
 
-  it.each([...terms])('has exactly one entry for the term "%s" of the program, by the term or by its (was: term) mark', (term) => {
-    const matches = docEntries().filter((entry) => entry.term === term || entry.was === term);
-    expect(matches.map((entry) => entry.term)).toHaveLength(1);
+  it.each([...terms])('has exactly one entry for the term "%s" of the program', (term) => {
+    expect(docEntries().filter((entry) => entry.term === term)).toHaveLength(1);
   });
 
-  it('does not define an old term of the program as the word of an entry', () => {
-    const kept = ['node', 'owner', 'project', 'layer', 'recipe'];
-    const old = terms.filter((term) => !kept.includes(term));
+  it.each([...terms])('holds the same text in the program and in docs/glossary.md for "%s"', (term) => {
+    const word = glossary.find((candidate) => candidate.term === term);
+    const entry = docEntries().find((candidate) => candidate.term === term);
+    expect(word?.text).toBeDefined();
+    expect(word?.text).toBe(entry?.text);
+  });
+
+  it('has the entry of a term in the first part, and the entry of a software recipe term in the second part', () => {
+    const recipeTerms = ['release check'];
+    const core = partEntries(CORE_HEADING).map((entry) => entry.term);
+    const recipe = partEntries(RECIPE_HEADING).map((entry) => entry.term);
+    expect(terms.filter((term) => !recipeTerms.includes(term) && !core.includes(term))).toEqual([]);
+    expect(recipeTerms.filter((term) => !recipe.includes(term))).toEqual([]);
+  });
+
+  it('does not define an old word as the word of an entry, and the program has none as a term', () => {
+    const old = docEntries().flatMap((entry) => (entry.was === undefined ? [] : [entry.was]));
     expect(old.length).toBeGreaterThan(0);
-    const defined = docEntries().filter((entry) => old.some((term) => term === entry.term));
-    expect(defined.map((entry) => entry.term)).toEqual([]);
+    expect(docEntries().filter((entry) => old.includes(entry.term)).map((entry) => entry.term)).toEqual([]);
+    expect(terms.filter((term) => old.includes(term))).toEqual([]);
   });
 
   it('has at most 25 words in each entry', () => {

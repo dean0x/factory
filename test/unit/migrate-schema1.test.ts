@@ -84,7 +84,7 @@ describe('config migration, schema 1 to 2', () => {
     doc.children = [{ id: 'team-a', address: 'file:///work/team-a' }];
     const message = messageOf(migrateConfig(doc));
     expect(message).toContain('children');
-    expect(message).toContain('cells');
+    expect(message).toContain('workers');
     expect(message).toContain('node.layer');
     expect(message).toContain('factory node add-child');
     expect(message).not.toContain('team-a');

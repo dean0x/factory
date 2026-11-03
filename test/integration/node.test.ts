@@ -84,12 +84,12 @@ describe('factory node (built binary)', () => {
     expect(again.stderr).toContain('web is a child of this node already');
   });
 
-  it('refuses a child on layer 1 for a node on layer 1, because its children are cells', async () => {
+  it('refuses a child on layer 1 for a node on layer 1, because its children are workers', async () => {
     await initNode(shop, 'web', 1);
     await initNode(manager, 'mgr', 1);
     const result = await node('add-child', shop);
     expect(result.code).toBe(4);
-    expect(result.stderr).toContain('its children are cells');
+    expect(result.stderr).toContain('its children are workers');
   });
 
   it('refuses a child on another layer than the layer below', async () => {

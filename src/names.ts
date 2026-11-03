@@ -7,7 +7,7 @@
  *
  * A change of a config key, of a state key, of a file name or of a folder name
  * needs a migration (src/migrate), so that existing nodes keep working.
- * Text templates use placeholders such as {{cell}}. The placeholders are filled
+ * Text templates use placeholders such as {{worker}}. The placeholders are filled
  * from `templateValues` below.
  */
 
@@ -16,7 +16,6 @@ export const program = 'factory';
 /** The role words of help and template text. */
 export const roles = {
   node: 'node',
-  cell: 'cell',
   coordinator: 'coordinator',
   manager: 'manager',
   worker: 'worker',
@@ -39,23 +38,24 @@ export const commands = {
 export const helpTopics = { words: 'words' } as const;
 
 /**
- * The factory words that have a plain description in `src/glossary.ts` and in `docs/glossary.md`:
- * the concepts of the design and the shop-floor words that factory uses. A test fails for a term with no entry.
+ * The words that have a plain description in `src/glossary.ts` and in `docs/glossary.md`.
+ * A test fails for a term with no entry, and for a term that has another text in the two places.
  */
 export const terms = [
   'node',
   'owner',
   'project',
   'layer',
-  'cell',
+  'worker',
+  'coordinator',
   'recipe',
-  'variant',
-  'andon',
-  'work order',
-  'changeover',
-  'staging',
-  'inspect',
-  'ship',
+  'setup',
+  'request',
+  'assignment',
+  'session reset',
+  'queue',
+  'check',
+  'release check',
 ] as const;
 
 /** The subcommands of `node`. */
@@ -315,11 +315,10 @@ const keyPath = (...parts: readonly string[]): string => parts.join('.');
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');
 
-/** The values for the placeholders of the templates, for example {{cell}} and {{Cell}}. */
+/** The values for the placeholders of the templates, for example {{worker}} and {{Worker}}. */
 export const templateValues: Readonly<Record<string, string>> = {
   program,
   node: roles.node,
-  cell: roles.cell,
   coordinator: roles.coordinator,
   manager: roles.manager,
   worker: roles.worker,

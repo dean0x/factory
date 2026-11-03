@@ -87,7 +87,7 @@ const migrateProjects = (root: YAMLMap): CliResult<YAMLSeq | undefined> => {
 };
 
 /**
- * The children of a node on layer 1 are cells, and a cell is not a node link. So the list must be empty.
+ * The children of a node on layer 1 are workers, and a worker is not a node link. So the list must be empty.
  * F-13: the address of a child must be a file address. The error names the child and never repeats the address.
  */
 const checkChildren = (root: YAMLMap): CliResult<void> => {
@@ -107,7 +107,7 @@ const checkChildren = (root: YAMLMap): CliResult<void> => {
   }
   if (children.items.length === 0) return ok(undefined);
   return failure(
-    `${keys.root.children}: a ${roles.node} on layer ${COORDINATOR_LAYER} has ${roles.cell}s as its children, ` +
+    `${keys.root.children}: a ${roles.node} on layer ${COORDINATOR_LAYER} has ${roles.worker}s as its children, ` +
       `so this list must be empty. Remove the entries and run the command again. ` +
       `To manage other ${roles.node}s, set ${keys.root.node}.${keys.node.layer} to 2 after the upgrade, ` +
       `and add them with "${commandText(commands.node)} ${nodeCommands.addChild}".`,

@@ -18,7 +18,7 @@ const safety: BlockTemplate = {
 
 /**
  * The managed blocks of a node on this layer: its role block, the safety block, and, on layer 1,
- * the worker block. A cell has no home, so the node just above the cells holds the instructions that the cells follow.
+ * the worker block. A worker has no home, so the node just above the workers holds the instructions that the workers follow.
  * A layer with no role template has the safety block only.
  */
 export const blockTemplatesFor = (layer: number): readonly BlockTemplate[] => {

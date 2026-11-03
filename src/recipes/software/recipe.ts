@@ -28,7 +28,7 @@ const manager: BlockTemplate = {
 };
 
 /**
- * The role template of a layer: the worker for a cell (layer 0), the coordinator for layer 1, and the manager
+ * The role template of a layer: the worker for layer 0, the coordinator for layer 1, and the manager
  * for layer 2. A layer above 2 has no template, because each layer has its own role and the manager text does
  * not fit another layer. This is the only lookup of a role. The caller passes a layer that the config checked.
  */
