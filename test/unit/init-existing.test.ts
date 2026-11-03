@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { appendBlocks, renderBlock } from '../../src/blocks/managed.js';
 import { runInit, type InitOptions } from '../../src/commands/init.js';
 import { sameIdWarnings } from '../../src/commands/init-received.js';
 import { loadConfig, readNodeIdentity } from '../../src/config/load.js';
@@ -13,6 +14,7 @@ import { env, stateKeys } from '../../src/names.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
 import { inspectState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
+import { blockInputOf, blockTemplatesFor } from '../../src/templates/index.js';
 import {
   createFakeDeps,
   exited,
@@ -531,6 +533,153 @@ describe('init: the approval points of a registered root', () => {
     const writes = deps.atomicWrites.filter((path) => [LOCAL, INDEX, RECORDS].includes(path));
     expect(writes.indexOf(LOCAL)).toBeLessThan(writes.indexOf(INDEX));
     expect(writes.indexOf(INDEX)).toBeLessThan(writes.indexOf(RECORDS));
+  });
+});
+
+describe('init: the text of the coordinator follows a changed mode of a registered root', () => {
+  const COORDINATOR_FILE = `${ROOT}/coordinator/CLAUDE.md`;
+  const OWNER: ApprovalModes = { merge: 'owner', release: 'owner' };
+
+  /** The text of the coordinator file for these modes, as `init` and `upgrade` render it. */
+  const textFor = (modes: ApprovalModes, setup: { coordinator: string | null; worker: string | null } = { coordinator: null, worker: null }): string => {
+    const templates = blockTemplatesFor(blockInputOf(configOf({}), setup, modes));
+    const blocks = templates
+      .filter((template) => template.target === 'claudeFile')
+      .map((template) => {
+        const rendered = renderBlock(template);
+        if (!rendered.ok) throw new Error(rendered.error.message);
+        return rendered.value;
+      });
+    return appendBlocks('', blocks);
+  };
+
+  /** A person who gives the answers of the list for the approval points, one after the other, and says no to the files. */
+  const answering = (points: string[]): Prompt => (question) =>
+    ok(question.includes('Approval point') ? (points.shift() ?? '') : question.includes('Accept these files?') ? 'n' : '');
+
+  const withText = (made: Existing, extra: FakeOptions, text: string = textFor(OWNER)) => {
+    const fake = existing(made, extra);
+    fake.deps.seed(COORDINATOR_FILE, text);
+    return fake;
+  };
+
+  const writesOf = (deps: FakeDeps, from = 0): string[] =>
+    deps.atomicWrites.slice(from).filter((path) => [LOCAL, INDEX, COORDINATOR_FILE, RECORDS].includes(path));
+
+  it('names the new mode in the text after the run, and prints no line that asks for an upgrade', async () => {
+    const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(textFor(DELEGATED)).not.toBe(textFor(OWNER));
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(DELEGATED));
+    expect(linesOf(result)).not.toContain('still names');
+    expect(linesOf(result)).toContain('coordinator/CLAUDE.md');
+    expect(result.ok && result.value.json['files']).toContain('coordinator/CLAUDE.md');
+  });
+
+  it('writes the text again when the owner ends a delegation, and the text names the owner', async () => {
+    const points = ['delegated', 'owner'];
+    const { deps } = withText({}, { ...terminal, prompt: answering(points) });
+    expect((await runInit(deps, options())).ok).toBe(true);
+    points.push('owner', 'owner');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(OWNER));
+  });
+
+  it('renders again before the records when a mode goes to owner, and after the records when a mode goes to delegated', async () => {
+    const points = ['delegated', 'owner'];
+    const { deps } = withText({}, { ...terminal, prompt: answering(points) });
+    expect((await runInit(deps, options())).ok).toBe(true);
+    // One record for each point that the owner set: two.
+    expect(writesOf(deps)).toEqual([LOCAL, INDEX, RECORDS, RECORDS, COORDINATOR_FILE]);
+
+    const from = deps.atomicWrites.length;
+    points.push('owner', 'owner');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(writesOf(deps, from)).toEqual([LOCAL, INDEX, COORDINATOR_FILE, RECORDS, RECORDS]);
+  });
+
+  it('leaves the text byte-equal and writes no file when no mode changes, also for a text that differs from the modes', async () => {
+    const stale = textFor(DELEGATED);
+    const { deps } = withText({}, { ...terminal, prompt: answering(['owner', 'owner']) }, stale);
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(stale);
+    expect(deps.atomicWrites).not.toContain(COORDINATOR_FILE);
+    expect(linesOf(result)).not.toContain('coordinator/CLAUDE.md');
+  });
+
+  it('leaves the text byte-equal with the yes flag and with no terminal window, which set no point', async () => {
+    for (const extra of [{ ...terminal, prompt: answering([]) }, { stdinIsTTY: false, stdoutIsTTY: false }]) {
+      const { deps } = withText({ approval: DELEGATED }, extra, textFor(DELEGATED));
+      expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+      expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(DELEGATED));
+      expect(deps.atomicWrites).not.toContain(COORDINATOR_FILE);
+    }
+  });
+
+  it('names the delegation after the run that writes the record the first run could not write', async () => {
+    const { deps } = withText({ approval: DELEGATED }, { ...terminal, prompt: answering(['delegated', 'owner']) });
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(OWNER));
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(DELEGATED));
+  });
+
+  it('keeps the owner in the text for a point whose record can not be written, and warns', async () => {
+    const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) });
+    const result = await runInit(failingWrite(deps, '/owner-records.json'), options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(OWNER));
+    expect(warningsOf(result).some((warning) => warning.includes('counts as owner'))).toBe(true);
+    expect(linesOf(result)).not.toContain('coordinator/CLAUDE.md');
+  });
+
+  it('names the owner in the text when the owner ends a delegation and the record can not be written', async () => {
+    const points = ['delegated', 'owner'];
+    const { deps } = withText({}, { ...terminal, prompt: answering(points) });
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(DELEGATED));
+    points.push('owner', 'owner');
+    expect((await runInit(failingWrite(deps, '/owner-records.json'), options())).ok).toBe(true);
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(OWNER));
+  });
+
+  it('changes neither the text nor the local file when the factory list can not be written', async () => {
+    const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) });
+    const before = rootFiles(deps);
+    const result = await runInit(failingWrite(deps, '/homes.json'), options());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(rootFiles(deps)).toBe(before);
+    expect(deps.atomicWrites).not.toContain(COORDINATOR_FILE);
+  });
+
+  it('keeps an edited block as it is, renders the others, and names the command that says why', async () => {
+    const edited = textFor(OWNER).replace('A merge waits for the go of the owner.', 'A merge waits for nobody.');
+    expect(edited).not.toBe(textFor(OWNER));
+    const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) }, edited);
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.get(COORDINATOR_FILE)).toContain('A merge waits for nobody.');
+    expect(warningsOf(result).join('\n')).toContain(`factory upgrade --home ${ROOT}`);
+    expect(linesOf(result)).toContain('still names');
+  });
+
+  it('leaves the block of the setup text as it is: a render of the modes never carries a text that is not accepted', async () => {
+    const setup = { coordinator: 'Setup text from an older pull.\n', worker: null };
+    const { deps } = withText({}, { ...terminal, prompt: answering(['delegated', 'owner']) }, textFor(OWNER, setup));
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.files.get(COORDINATOR_FILE)).toBe(textFor(DELEGATED, setup));
+    expect(deps.files.get(COORDINATOR_FILE)).toContain('Setup text from an older pull.');
+    expect(deps.files.get(COORDINATOR_FILE)).not.toContain(COORDINATOR_TEXT.trim());
+  });
+
+  it('writes no coordinator file that is not there, and gives no warning for it', async () => {
+    const { deps } = existing({}, { ...terminal, prompt: answering(['delegated', 'owner']) });
+    expect(deps.files.has(COORDINATOR_FILE)).toBe(false);
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.has(COORDINATOR_FILE)).toBe(false);
+    expect(warningsOf(result).join('\n')).not.toContain('coordinator');
   });
 });
 

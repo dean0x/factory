@@ -157,13 +157,17 @@ export const askApprovals = async (
 };
 
 /**
- * The lines of the summary of `init`: the mode that counts for each point. After a recorded delegation the text of the
- * coordinator still names the owner, because `init` renders it before it records anything. The line names the command
- * that renders it again.
+ * The lines of the summary of `init`: the mode that counts for each point. After a recorded delegation on a new root the
+ * text of the coordinator still names the owner, because `init` renders it before it records anything. The line names the
+ * command that renders it again. A run that rendered the text after its records says nothing of the kind (`rendered`).
  */
-export const approvalLines = (home: string, modes: ApprovalModes): readonly { readonly level: 'text'; readonly text: string }[] => [
+export const approvalLines = (
+  home: string,
+  modes: ApprovalModes,
+  rendered = false,
+): readonly { readonly level: 'text'; readonly text: string }[] => [
   { level: 'text', text: `Approval points: ${Object.entries(modes).map(([id, mode]) => `${id} ${mode}`).join(', ')}.` },
-  ...(Object.values(modes).includes(DELEGATED_MODE)
+  ...(!rendered && Object.values(modes).includes(DELEGATED_MODE)
     ? [
         {
           level: 'text' as const,

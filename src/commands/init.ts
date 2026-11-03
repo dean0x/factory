@@ -27,7 +27,7 @@ import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
-import { recordSetupAcceptance, type AcceptanceInput } from '../core/setup-acceptance.js';
+import { entryOfText, recordSetupAcceptance, type AcceptanceInput, type ManifestEntry } from '../core/setup-acceptance.js';
 import { describeIssues } from '../core/zod.js';
 import {
   commands,
@@ -42,8 +42,10 @@ import {
   localFileModes,
   maxFileBytes,
   places,
+  program,
   roles,
   schemaIds,
+  setupAcceptance,
   stateKeys,
   values,
 } from '../names.js';
@@ -68,6 +70,7 @@ import {
   approvalLines,
   approvalsFromFlags,
   askApprovals,
+  initInTerminalWindow,
   NO_APPROVALS,
   recordApprovals,
   type ApprovalChoice,
@@ -88,7 +91,7 @@ import {
   tempFolderWarning,
 } from './init-home.js';
 import { runExisting } from './init-existing.js';
-import { runReceived } from './init-received.js';
+import { acceptanceLines, runReceived } from './init-received.js';
 import { makeStateFolder } from './init-state.js';
 import { oldFolderWarning, originCredentialsWarning, unsharedWarning } from './project-url.js';
 
@@ -116,9 +119,14 @@ export interface StateFile {
 /** A setup acceptance that `init` writes after the entry in the factory list, and whether the yes flag limits it. */
 export interface PlannedAcceptance {
   readonly input: AcceptanceInput;
-  /** True when no terminal window answered: the writer then takes a first acceptance of the setup text alone. */
+  /** True when no answer of the owner backs it: the writer then takes a first acceptance of the setup text alone. */
   readonly fromInitYes: boolean;
+  /** True when the acceptance covers the setup text that this run wrote itself on a new root. */
+  readonly ownText?: true;
 }
+
+/** The reason that the acceptance of the setup text of a new root holds. */
+export const OWN_TEXT_REASON = 'init wrote the setup text: first acceptance of its own text';
 
 export interface InitPlan {
   readonly home: string;
@@ -465,6 +473,40 @@ const rootTextsOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootTe
 };
 
 /**
+ * The first acceptance of the setup text that this run writes. `init` accepts the hash of its own text: the manifest comes
+ * from the text that init writes and the blocks render, so no later read of the files can give other bytes. A setup file
+ * that was there before the run is not text of `init`, so the run accepts nothing and names the command that asks the owner.
+ */
+const ownTextAcceptance = (
+  home: string,
+  node: string,
+  root: RootTexts,
+): { readonly acceptance: PlannedAcceptance | null; readonly warnings: readonly string[] } => {
+  const [coordinator, worker] = setupAcceptance.setupTextFiles;
+  const inSet = [
+    { path: coordinator, written: root.setupCoordinatorText, used: root.setup.coordinator },
+    { path: worker, written: root.setupWorkerText, used: root.setup.worker },
+  ].filter((text) => text.used !== null);
+  const entries: ManifestEntry[] = [];
+  const earlier: string[] = [];
+  for (const text of inSet) {
+    if (text.written === null) earlier.push(text.path);
+    else entries.push(entryOfText(text.path, text.written));
+  }
+  if (earlier.length > 0) {
+    return {
+      acceptance: null,
+      warnings: [
+        `${program} did not write ${earlier.join(', ')}, so it accepts none of the setup text. ` +
+          `${initInTerminalWindow()} Until then, "${commandText(commands.start)}" does not start.`,
+      ],
+    };
+  }
+  const input: AcceptanceInput = { root: home, node, file: coordinator, entries, reason: OWN_TEXT_REASON };
+  return { acceptance: entries.length === 0 ? null : { input, fromInitYes: true, ownText: true }, warnings: [] };
+};
+
+/**
  * The settings of the local file: the owner, no proxy, no worker, the mode of each approval point, and no parent or child.
  * A new root and a received factory write the same file.
  */
@@ -626,10 +668,11 @@ const planChecked = async (
   if (!stateFiles.ok) return stateFiles;
 
   const texts = renderConfig(config.value);
+  const own = ownTextAcceptance(home, config.value.core.node.id, root);
   return ok({
     home,
     received: false,
-    acceptance: null,
+    acceptance: own.acceptance,
     indexPath,
     createdRoot: missing.value.at(-1) ?? null,
     config: config.value,
@@ -649,6 +692,7 @@ const planChecked = async (
         : []),
       ...leftover.value.map(tempFolderWarning),
       ...projects.value.warnings,
+      ...own.warnings,
     ],
   });
 };
@@ -995,6 +1039,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
       ...made.map((target) => ({ level: 'text' as const, text: `Cloned into ${target}.` })),
       ...skipped.map((folder) => ({ level: 'text' as const, text: `Skipped ${folder.path}: ${folder.reason}.` })),
       ...approvalLines(plan.value.home, applied.value.approval),
+      ...(plan.value.acceptance === null ? [] : acceptanceLines(plan.value.acceptance, applied.value.accepted)),
       {
         level: 'text',
         text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${plan.value.home}".`,
@@ -1010,6 +1055,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
       committed: applied.value.committed,
       rootCommitted: applied.value.rootCommitted,
       approval: applied.value.approval,
+      accepted: applied.value.accepted,
       warnings,
     },
     warnings,

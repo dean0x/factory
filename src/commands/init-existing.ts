@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { setApprovalText } from '../config/edit.js';
@@ -30,6 +31,7 @@ import { stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { STATE_LABEL } from '../state/load.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
 import type { SetupTexts } from '../templates/types.js';
+import { renderCoordinatorText, type CoordinatorRender } from '../upgrade/render.js';
 import { recordAcceptance, stateFilesOf, workerTextOf, type InitOptions, type PlannedAcceptance, type StateFile } from './init.js';
 import {
   approvalLines,
@@ -293,12 +295,40 @@ const markerTextOf = (stateFiles: readonly StateFile[]): CliResult<string> => {
   return marker === undefined ? failure(`the ${roles.node} state holds no marker`) : ok(marker.text);
 };
 
+/** The points whose effective mode this run changes, and the effective mode of each point before the run. */
+interface ModeChange {
+  readonly before: ApprovalModes;
+  readonly points: readonly string[];
+}
+
+/**
+ * The effective mode of a point changes when the owner sets it (a flag or an answer) to a mode other than the one that
+ * counts now. A point that the owner did not set keeps its mode, because no record is written for it. A run with no such
+ * point renders no text.
+ */
+const modeChangeOf = async (deps: Deps, checked: Checked, approvals: ApprovalChoice): Promise<ModeChange | null> => {
+  const { config, points, root } = checked;
+  const before = await effectiveModes(deps, root.layout.home, config);
+  const changed = points
+    .filter((point) => approvals.set.includes(point.id) && approvals.modes[point.id] !== before[point.id])
+    .map((point) => point.id);
+  return changed.length === 0 ? null : { before, points: changed };
+};
+
+/** The modes for the first render: each point that changes counts as `owner`, and every other point keeps its mode. */
+const tightModes = (points: readonly ApprovalPoint[], change: ModeChange): ApprovalModes =>
+  Object.fromEntries(
+    points.map((point) => [point.id, change.points.includes(point.id) ? OWNER_MODE : (change.before[point.id] ?? OWNER_MODE)]),
+  );
+
 /** What the run writes. Nothing is written before the plan is complete. */
 interface Plan {
   readonly local: LocalChange | null;
   readonly stateFiles: readonly StateFile[];
   readonly marker: string | null;
   readonly approvals: ApprovalChoice;
+  /** The change of an effective mode, or null when the run renders no text. */
+  readonly modeChange: ModeChange | null;
   readonly acceptance: PlannedAcceptance | null;
 }
 
@@ -329,16 +359,42 @@ const planOf = async (
     stateFiles,
     marker,
     approvals,
+    modeChange: checked.standing.registration === 'registered' ? await modeChangeOf(deps, checked, approvals) : null,
     acceptance: plannedAcceptance(decision, { home: root.layout.home, node: config.core.node.id, setup }),
   });
 };
+
+/** What the render of the coordinator text left after the run. */
+interface TextOutcome {
+  /** True when a render wrote the coordinator file. */
+  readonly wrote: boolean;
+  /** True when the text names the modes that count. False when a block stays as it was, or a render failed. */
+  readonly current: boolean;
+}
 
 interface Applied {
   readonly committed: boolean;
   readonly warnings: readonly string[];
   readonly accepted: boolean;
   readonly approval: ApprovalModes;
+  /** The result of the render of the coordinator text, or null when no mode changed and the run rendered nothing. */
+  readonly text: TextOutcome | null;
 }
+
+const COORDINATOR_PATH = join(dirs.coordinator, files.claudeMd);
+
+/** The warnings of the renders of the coordinator text. A block that stays as it was is named once, from the last render. */
+const renderWarnings = (home: string, tightened: CliResult<CoordinatorRender>, settled: CliResult<CoordinatorRender>): readonly string[] => {
+  const upgrade = `Run "${commandText(commands.upgrade)} ${flagText(flags.home)} ${home}"`;
+  const failed = [tightened, settled].flatMap((run) =>
+    run.ok ? [] : [`The text in ${COORDINATOR_PATH} was not rendered again (${run.error.message}). ${upgrade} to render it again.`],
+  );
+  const kept =
+    settled.ok && settled.value.kept.length > 0
+      ? [`${COORDINATOR_PATH} holds blocks that ${program} does not change here: ${settled.value.kept.join(', ')}. ${upgrade} to see why.`]
+      : [];
+  return [...new Set([...failed, ...kept])];
+};
 
 /**
  * Commit the marker that was written again. A marker with the text that git holds has no change, so nothing is committed.
@@ -447,27 +503,50 @@ const applyExisting = async (
     committed = marker.committed;
     warnings.push(...marker.warnings);
   }
+  // The text of the coordinator follows a changed mode, and it fails closed. The first render comes before any record is
+  // written, and it counts each changed point as `owner`. The second render comes after the records and follows the modes
+  // that count, so a point whose record failed stays `owner`. A run that changes no mode renders nothing.
+  const change = plan.modeChange;
+  const tightened = change === null ? null : await renderCoordinatorText(deps, layout.home, config, tightModes(points, change));
   const records =
     standing.registration === 'registered'
       ? await recordApprovals(deps, layout.home, id, points, plan.approvals)
       : { modes: plan.approvals.modes, warnings: [] };
-  const accepted = await recordAcceptance(deps, plan.acceptance);
   // The mode that counts for each point comes from the records, so a delegation that no record backs counts as `owner`.
   const approval = await effectiveModes(deps, layout.home, {
     ...config,
     core: { ...config.core, approval: plan.approvals.modes },
   });
+  const settled = change === null ? null : await renderCoordinatorText(deps, layout.home, config, approval);
+  const accepted = await recordAcceptance(deps, plan.acceptance);
+  const renders = tightened !== null && settled !== null ? { tightened, settled } : null;
   return ok({
     committed,
     accepted: accepted.accepted,
     approval,
-    warnings: [...warnings, ...records.warnings, ...accepted.warnings],
+    text:
+      renders === null
+        ? null
+        : {
+            wrote: [renders.tightened, renders.settled].some((run) => run.ok && run.value.wrote),
+            current: renders.tightened.ok && renders.settled.ok && renders.settled.value.kept.length === 0,
+          },
+    warnings: [
+      ...warnings,
+      ...records.warnings,
+      ...(renders === null ? [] : renderWarnings(layout.home, renders.tightened, renders.settled)),
+      ...accepted.warnings,
+    ],
   });
 };
 
-const writtenNames = (plan: Plan, repair: Repair): readonly string[] => {
+const writtenNames = (plan: Plan, repair: Repair, text: TextOutcome | null): readonly string[] => {
   const names = { none: [], marker: [STATE_LABEL], folder: [`${dirs.state}/`] };
-  return [...(plan.local === null ? [] : [files.localConfig]), ...names[repair.kind]];
+  return [
+    ...(plan.local === null ? [] : [files.localConfig]),
+    ...(text?.wrote === true ? [COORDINATOR_PATH] : []),
+    ...names[repair.kind],
+  ];
 };
 
 const existingOf = (standing: Standing, repair: Repair): string => {
@@ -478,7 +557,8 @@ const existingOf = (standing: Standing, repair: Repair): string => {
 /**
  * `init` for a folder that holds both config files. Every check comes before the first question, and every question comes
  * before the first write. The run changes nothing else than what the state of the folder needs: it never writes
- * `factory.yaml`, the root `.gitignore`, the setup texts or the coordinator text.
+ * `factory.yaml`, the root `.gitignore` or the setup texts. It renders the blocks of the coordinator text again only when
+ * the owner changes the effective mode of a point.
  */
 export const runExisting = async (
   deps: Deps,
@@ -510,7 +590,7 @@ export const runExisting = async (
   const applied = await applyExisting(deps, checked.value, plan.value, indexPath);
   if (!applied.ok) return applied;
 
-  const written = writtenNames(plan.value, checked.value.repair);
+  const written = writtenNames(plan.value, checked.value.repair, applied.value.text);
   const warnings = [...checked.value.warnings, ...delegationWarnings(checked.value), ...applied.value.warnings];
   const headline = received
     ? `Registered the ${roles.node} "${id}" in ${home}.`
@@ -519,7 +599,7 @@ export const runExisting = async (
     { level: 'text', text: headline },
     ...listing.map((line): OutLine => ({ level: 'text', text: line })),
     ...written.map((name): OutLine => ({ level: 'text', text: `  ${name}` })),
-    ...(received ? [] : approvalLines(home, applied.value.approval)),
+    ...(received ? [] : approvalLines(home, applied.value.approval, applied.value.text?.current === true)),
     ...(plan.value.acceptance === null ? [] : acceptanceLines(plan.value.acceptance, applied.value.accepted)),
     ...(decision.value.kind === 'declined' ? declinedLines() : []),
     { level: 'text', text: `Next: run "${commandText(commands.doctor)} ${flagText(flags.home)} ${home}".` },

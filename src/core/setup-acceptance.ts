@@ -109,6 +109,15 @@ export const manifestOf = (entries: readonly ManifestEntry[]): Manifest => ({
   hash: manifestHash(entries),
 });
 
+/**
+ * The entry of a file whose text the caller holds: the size and the SHA-256 of its UTF-8 bytes, the same values that a read
+ * of the file gives. A caller that wrote the file itself hashes the bytes that it wrote, so no later read can differ.
+ */
+export const entryOfText = (path: string, text: string): ManifestEntry => {
+  const bytes = Buffer.from(text, 'utf8');
+  return { path, type: 'file', size: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex'), blob: null };
+};
+
 const tooManyFiles = (): CliResult<never> =>
   safetyRefusal(
     `the setup holds more than ${setupAcceptance.maxManifestFiles} files`,
@@ -369,9 +378,9 @@ export interface AcceptanceInput {
 }
 
 /**
- * Only the command `init` with the yes flag passes this. It lets the writer work with no terminal window, for a first
- * acceptance of the setup text alone: the coordinator text and the worker text, and no other file. A static test finds no
- * other module that names it.
+ * Only the code of `init` passes this. It lets the writer work with no terminal window, for a first acceptance of the setup
+ * text alone: the coordinator text and the worker text, and no other file. `init` passes it with the yes flag, and on a new
+ * root for the text that it wrote itself. A static test finds no other module that names it.
  */
 export interface AcceptanceOptions {
   readonly fromInitYes?: true;

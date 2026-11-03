@@ -459,10 +459,16 @@ export const sameIdWarnings = async (deps: Deps, indexPath: string, home: string
     .map((entry) => `The ${roles.node} id ${id} is in the ${places.list} for another ${places.folder}: ${entry.home}.`);
 };
 
+/** The lines of an acceptance that no answer of the owner backs: the files, the hash, the folder, the node id and the reason. */
 export const acceptanceLines = (plan: PlannedAcceptance, accepted: boolean): readonly OutLine[] =>
   accepted && plan.fromInitYes
     ? [
-        { level: 'text', text: `Accepted the setup text with ${flagText(flags.yes)}: ${plan.input.entries.map((entry) => entry.path).join(', ')}` },
+        {
+          level: 'text',
+          text:
+            `${plan.ownText === true ? `Accepted the setup text that ${program} wrote` : `Accepted the setup text with ${flagText(flags.yes)}`}: ` +
+            plan.input.entries.map((entry) => entry.path).join(', '),
+        },
         { level: 'text', text: `  Hash: ${manifestOf(plan.input.entries).hash}` },
         { level: 'text', text: `  ${places.folder}: ${plan.input.root}` },
         { level: 'text', text: `  ${roles.node} id: ${plan.input.node}` },

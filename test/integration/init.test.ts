@@ -53,6 +53,22 @@ describe('factory init (built binary)', () => {
     expect(existsSync(join(box.node, 'web', '.git'))).toBe(true);
   });
 
+  it('accepts the setup text that it wrote on a new root, so a second init asks nothing and start --dry-run passes', async () => {
+    expect((await box.run(initArgs())).code).toBe(0);
+    const store = join(box.root, 'home', '.local', 'state', 'factory', 'setup-acceptances.json');
+    const stored = async (): Promise<Record<string, unknown>[]> =>
+      (JSON.parse(await box.read(store)) as { acceptances: Record<string, unknown>[] }).acceptances;
+    expect(await stored()).toEqual([
+      expect.objectContaining({ root: await realpath(box.node), node: 'demo', file: 'setup/coordinator.md' }),
+    ]);
+
+    // No terminal window and no yes flag: a set without an acceptance would stop here with exit 4.
+    const second = await box.run(['init'], { cwd: box.node });
+    expect([second.code, second.stdout]).toEqual([0, expect.not.stringContaining('Accepted the setup text')]);
+    expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
+    expect(await stored()).toHaveLength(1);
+  });
+
   it('writes the url of a project from the origin of its repo, and keeps no local path in factory.yaml', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     const result = await box.run(initArgs(['--project', web]));
@@ -751,6 +767,9 @@ describe('factory init: a folder that holds both config files (built binary)', (
     await writeFile(config, text.replace(/^( {2}id: )demo\b/m, '$1other'));
     const refused = await box.run(['doctor', '--home', box.node]);
     expect(refused.code).toBe(4);
+    // The first init accepted the setup text under the old id. A change of the id needs a terminal window (TP-170), so this
+    // run starts on a machine that holds no acceptance of the folder.
+    await rm(join(box.root, 'home', '.local', 'state', 'factory', 'setup-acceptances.json'));
     const result = await box.run(['init', '--yes'], { cwd: box.node });
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('another id');
@@ -758,6 +777,17 @@ describe('factory init: a folder that holds both config files (built binary)', (
     const entries = (await listed()).filter((entry) => entry.home === real);
     expect(entries).toEqual([expect.objectContaining({ id: 'other', origin: 'received' })]);
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+  });
+
+  it('exits 4 and changes nothing for a folder whose id changed after the first init, with no terminal window and the yes flag (TP-170)', async () => {
+    await registered();
+    const config = join(box.node, 'factory.yaml');
+    await writeFile(config, (await box.read(config)).replace(/^( {2}id: )demo\b/m, '$1other'));
+    const before = await listed();
+    const result = await box.run(['init', '--yes'], { cwd: box.node });
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('factory init');
+    expect(await listed()).toEqual(before);
   });
 
   it('makes the state folder again when it is missing, and commits it (TP-85)', async () => {

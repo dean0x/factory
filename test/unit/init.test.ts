@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
@@ -5,12 +6,14 @@ import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import { applyInit, planInit, runInit, type InitOptions } from '../../src/commands/init.js';
+import { collectSetup, decideAcceptance } from '../../src/commands/init-received.js';
 import { runUpgrade } from '../../src/commands/upgrade.js';
 import { loadConfig } from '../../src/config/load.js';
 import type { Deps } from '../../src/core/deps.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
-import { env, files as fileNames, values } from '../../src/names.js';
+import { acceptanceState, manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
+import { env, files as fileNames, setupAcceptance, values } from '../../src/names.js';
 import { SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
 import { loadState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
@@ -94,7 +97,9 @@ describe('init: the files', () => {
       '.factory/orders/.gitkeep',
       '.factory/.gitignore',
     ];
-    expect([...deps.files.keys()].sort()).toEqual([...expected.map((name) => `${HOME}/${name}`), INDEX].sort());
+    expect([...deps.files.keys()].sort()).toEqual(
+      [...expected.map((name) => `${HOME}/${name}`), INDEX, '/state/factory/setup-acceptances.json'].sort(),
+    );
     expect([...deps.dirs].some((dir) => dir.includes('.tmp-'))).toBe(false);
   });
 
@@ -1167,7 +1172,7 @@ describe('init: rollback', () => {
     expect(message).toContain('/w/fresh: ENOTEMPTY');
   });
 
-  it('writes CLAUDE.md, .gitignore, the local file, the shared file and then the factory list with the atomic write', async () => {
+  it('writes CLAUDE.md, .gitignore, the local file, the shared file, the factory list and then the setup acceptance with the atomic write', async () => {
     const { deps } = setup();
     deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     expect((await runInit(deps, options())).ok).toBe(true);
@@ -1177,6 +1182,7 @@ describe('init: rollback', () => {
       `${HOME}/factory.local.yaml`,
       `${HOME}/factory.yaml`,
       INDEX,
+      '/state/factory/setup-acceptances.json',
     ]);
   });
 
@@ -3123,5 +3129,162 @@ describe('init: the approval points (TP-37, TP-38, TP-81, TP-91)', () => {
       const lines = upgraded.ok ? upgraded.value.lines.map((line) => line.text).join('\n') : '';
       expect(lines).toContain('block safety: version 2 is current');
     });
+  });
+});
+
+describe('init: the first acceptance of the setup text on a new root', () => {
+  const ACCEPTANCES = '/state/factory/setup-acceptances.json';
+  const [COORDINATOR, WORKER] = setupAcceptance.setupTextFiles;
+  const terminal = { stdinIsTTY: true, stdoutIsTTY: true };
+  const inSession = { ...ENV, [env.session]: 'demo' };
+  /** A person who takes the default for each question, and a script that is never asked. */
+  const person = (extra: FakeOptions = {}): FakeOptions => ({ ...extra, prompt: () => ok('') });
+
+  interface Stored {
+    readonly root: string;
+    readonly node: string;
+    readonly file: string;
+    readonly hash: string;
+    readonly reason: string;
+    readonly manifest: readonly { readonly path: string }[];
+  }
+
+  const acceptancesOf = (deps: FakeDeps): Stored[] =>
+    (JSON.parse(deps.files.get(ACCEPTANCES) ?? '{"acceptances":[]}') as { acceptances: Stored[] }).acceptances;
+
+  const entryOf = (path: string, text: string): ManifestEntry => ({
+    path,
+    type: 'file',
+    size: Buffer.byteLength(text, 'utf8'),
+    sha256: createHash('sha256').update(text, 'utf8').digest('hex'),
+    blob: null,
+  });
+
+  /** The hash of the two setup files as they are on disk after the run. */
+  const diskHash = (deps: FakeDeps): string =>
+    manifestHash([COORDINATOR, WORKER].map((path) => entryOf(path, deps.files.get(`${HOME}/${path}`) ?? '')));
+
+  const linesOf = (result: Awaited<ReturnType<typeof runInit>>): string =>
+    result.ok ? result.value.lines.map((line) => line.text).join('\n') : '';
+
+  const warningsOf = (result: Awaited<ReturnType<typeof runInit>>): string[] => (result.ok ? [...result.value.warnings] : []);
+
+  it.each([
+    ['no terminal window', {}, {}],
+    ['no terminal window and the yes flag', {}, { yes: true }],
+    ['a terminal window', terminal, {}],
+    ['a terminal window and the yes flag', terminal, { yes: true }],
+  ])('accepts the hash of the setup text that it wrote, with %s', async (_name, window, flagValues) => {
+    const { deps } = setup({}, person(window));
+    const result = await runInit(deps, options(flagValues));
+    expect(result.ok).toBe(true);
+    expect(acceptancesOf(deps)).toEqual([
+      expect.objectContaining({ root: HOME, node: 'node', file: COORDINATOR, hash: diskHash(deps) }),
+    ]);
+    expect(acceptancesOf(deps)[0]?.manifest.map((entry) => entry.path)).toEqual([COORDINATOR, WORKER]);
+    expect(result.ok && result.value.json['accepted']).toBe(true);
+  });
+
+  it('hashes the bytes that it wrote: the files on disk give the hash of the acceptance, and a second run has nothing to accept', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    const set = await collectSetup(deps, HOME, [COORDINATOR, WORKER]);
+    expect(set.ok).toBe(true);
+    if (!set.ok) return;
+    expect(set.value.collected.manifest.hash).toBe(acceptancesOf(deps)[0]?.hash);
+    expect(await acceptanceState(deps, { root: HOME, node: 'node', hash: set.value.collected.manifest.hash })).toMatchObject({
+      ok: true,
+      value: { state: 'accepted' },
+    });
+    // With no terminal window and no yes flag, a set without an acceptance would stop here with exit 4.
+    expect(await decideAcceptance(deps, { home: HOME, node: 'node', yes: false, setup: set.value })).toMatchObject({
+      ok: true,
+      value: { kind: 'already' },
+    });
+  });
+
+  it('prints the files, the hash, the folder, the node id and the reason', async () => {
+    const { deps } = setup();
+    const result = await runInit(deps, options());
+    const lines = linesOf(result);
+    expect(lines).toContain(`${COORDINATOR}, ${WORKER}`);
+    expect(lines).toContain(diskHash(deps));
+    expect(lines).toContain(`${HOME}`);
+    expect(lines).toContain('node id: node');
+    expect(lines).toContain(acceptancesOf(deps)[0]?.reason ?? 'missing');
+  });
+
+  it('writes the acceptance after the entry in the factory list', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(deps.atomicWrites.filter((path) => path === INDEX || path === ACCEPTANCES)).toEqual([INDEX, ACCEPTANCES]);
+  });
+
+  it.each([{}, { yes: true }])('writes no acceptance when the factory list can not be written (%j)', async (flagValues) => {
+    const { deps } = setup();
+    const result = await runInit(failingWrite(deps, '/homes.json'), options(flagValues));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(deps.files.has(ACCEPTANCES)).toBe(false);
+    expect(deps.atomicWrites.filter((path) => path === ACCEPTANCES)).toEqual([]);
+  });
+
+  it('still succeeds, warns and names the command in a terminal window when the acceptance can not be written', async () => {
+    const { deps } = setup();
+    const result = await runInit(failingWrite(deps, '/setup-acceptances.json'), options());
+    expect(result.ok).toBe(true);
+    const warnings = warningsOf(result).filter((warning) => warning.includes('setup acceptance'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('Run "factory init" in a terminal window');
+    expect(result.ok && result.value.json['accepted']).toBe(false);
+    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
+    expect(deps.files.has(INDEX)).toBe(true);
+    expect(deps.files.has(ACCEPTANCES)).toBe(false);
+  });
+
+  it('writes no acceptance in a factory session, still succeeds, and warns', async () => {
+    const { deps } = setup({}, person({ ...terminal, env: inSession }));
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.has(ACCEPTANCES)).toBe(false);
+    expect(warningsOf(result).join('\n')).toContain('factory session');
+    expect(result.ok && result.value.json['accepted']).toBe(false);
+  });
+
+  it.each([
+    ['the coordinator text', { [COORDINATOR]: 'My own rules.\n' }],
+    ['the worker text', { [WORKER]: 'My own worker rules.\n' }],
+    ['both texts', { [COORDINATOR]: 'My own rules.\n', [WORKER]: 'My own worker rules.\n' }],
+  ])('does not accept a setup file that was there before the run (%s): no acceptance, a warning that names the command', async (_name, before) => {
+    const { deps } = setup();
+    for (const [path, text] of Object.entries(before)) deps.seed(`${HOME}/${path}`, text);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(deps.files.has(ACCEPTANCES)).toBe(false);
+    const warning = warningsOf(result).find((text) => text.includes('did not write'));
+    expect(warning).toContain(Object.keys(before).join(', '));
+    expect(warning).toContain('Run "factory init" in a terminal window');
+    expect(result.ok && result.value.json['accepted']).toBe(false);
+  });
+
+  it('accepts the one text that it wrote when the other file holds only white space', async () => {
+    const { deps } = setup();
+    deps.seed(`${HOME}/${COORDINATOR}`, '  \n');
+    expect((await runInit(deps, options())).ok).toBe(true);
+    expect(acceptancesOf(deps)).toEqual([expect.objectContaining({ hash: expect.any(String) })]);
+    expect(acceptancesOf(deps)[0]?.manifest.map((entry) => entry.path)).toEqual([WORKER]);
+    const set = await collectSetup(deps, HOME, [COORDINATOR, WORKER]);
+    expect(set.ok && set.value.collected.manifest.hash).toBe(acceptancesOf(deps)[0]?.hash);
+  });
+
+  it('makes no second first acceptance: an acceptance of the folder under another node id stays, and the run warns', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options({ name: 'first' }))).ok).toBe(true);
+    const before = deps.files.get(ACCEPTANCES);
+    const other = setup();
+    other.deps.seed(ACCEPTANCES, before ?? '');
+    const result = await runInit(other.deps, options({ name: 'second' }));
+    expect(result.ok).toBe(true);
+    expect(other.deps.files.get(ACCEPTANCES)).toBe(before);
+    expect(warningsOf(result).join('\n')).toContain('Run "factory init" in a terminal window');
   });
 });

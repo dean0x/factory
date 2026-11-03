@@ -6,6 +6,7 @@ import {
   acceptSetup,
   askSetupAcceptance,
   collectManifest,
+  entryOfText,
   manifestChange,
   manifestHash,
   manifestOf,
@@ -98,6 +99,16 @@ describe('setup acceptance: the manifest and its hash (TP-171)', () => {
       { path: '.claude/settings.json', type: 'file', size: 3, sha256: sha256('{}\n'), blob: null },
       { path: SETUP, type: 'file', size: 19, sha256: sha256('Write tests first.\n'), blob },
     ]);
+  });
+
+  it('makes the entry of a text that the caller holds: the entry that a read of the file gives for the same bytes', async () => {
+    const text = `Read the board, ${E_ACUTE} ${EMOJI}.\n`;
+    const deps = person();
+    deps.seed(`${ROOT}/${WORKER_SETUP}`, text);
+    const read = await collect(deps, [WORKER_SETUP]);
+    expect(entryOfText(WORKER_SETUP, text)).toEqual(read.manifest.entries[0]);
+    expect(entryOfText(WORKER_SETUP, text).size).toBe(Buffer.byteLength(text, 'utf8'));
+    expect(manifestOf([entryOfText(WORKER_SETUP, text)]).hash).toBe(read.manifest.hash);
   });
 
   it('hashes a header with the format version and one line for each file, with a NUL byte after the path', async () => {
