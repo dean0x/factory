@@ -127,7 +127,7 @@ const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
 
 /** The blocks that the spec gives for every config, whatever its layer. */
 const fixedBlocks = (templates: readonly BlockTemplate[]): Pick<UpgradeSpec, 'blocksOf'> => ({
-  blocksOf: () => ok({ templates, renames: [] }),
+  blocksOf: async () => ok({ templates, renames: [] }),
 });
 
 const blocksSpec = (templates: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, ...fixedBlocks(templates) });
@@ -2408,5 +2408,64 @@ describe('upgrade: render a changed block again (TP-76)', () => {
     success(await upgrade(deps));
     await deps.fs.remove(`${HOME}/.factory/backups`);
     expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+  });
+});
+
+describe('upgrade: the blocks follow the effective modes (TP-40, TP-67)', () => {
+  const STORE = '/state/factory/owner-records.json';
+  const DELEGATED_TEXT = 'delegated this point';
+
+  const delegateInLocalFile = (deps: FakeDeps): void => {
+    expect(text(deps, LOCAL)).toContain('merge: owner');
+    deps.files.set(LOCAL, text(deps, LOCAL).replace('merge: owner', 'merge: delegated'));
+  };
+
+  const seedRecord = (deps: FakeDeps, mode: string): void =>
+    deps.seed(
+      STORE,
+      `${JSON.stringify({
+        schema: 1,
+        records: [{ kind: 'delegation', node: 'demo', root: HOME, point: 'merge', mode, at: '2030-01-01T00:00:00.000Z' }],
+      })}\n`,
+    );
+
+  it('changes no file for a delegated value that no record backs', async () => {
+    const { deps } = await makeNode();
+    delegateInLocalFile(deps);
+    const before = snapshot(deps);
+    expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(snapshot(deps)).toEqual(before);
+    expect(text(deps, CLAUDE)).not.toContain(DELEGATED_TEXT);
+  });
+
+  it('changes no file when only a record file lies inside the folder', async () => {
+    const { deps } = await makeNode();
+    delegateInLocalFile(deps);
+    deps.seed(`${HOME}/owner-records.json`, text(deps, INDEX));
+    const before = snapshot(deps);
+    expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('renders the coordinator and safety blocks with the text of the delegation when a delegation record backs the value', async () => {
+    const { deps } = await makeNode();
+    delegateInLocalFile(deps);
+    seedRecord(deps, 'delegated');
+    const output = success(await upgrade(deps));
+    expect(text(deps, CLAUDE)).toContain(DELEGATED_TEXT);
+    expect(lineTexts(output)).toContain('block safety: render the text again, because the package or a setting changed it');
+    expect(lineTexts(output)).toContain('block coordinator: render the text again, because the package or a setting changed it');
+  });
+
+  it('renders the owner text again when a newer record ends the delegation', async () => {
+    const { deps } = await makeNode();
+    delegateInLocalFile(deps);
+    seedRecord(deps, 'delegated');
+    success(await upgrade(deps));
+    expect(text(deps, CLAUDE)).toContain(DELEGATED_TEXT);
+    await deps.fs.remove(`${HOME}/.factory/backups`);
+    seedRecord(deps, 'owner');
+    success(await upgrade(deps));
+    expect(text(deps, CLAUDE)).not.toContain(DELEGATED_TEXT);
   });
 });

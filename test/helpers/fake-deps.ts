@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
-import { dirs, env, files as fileNames, homeIndex, program, stateKeys } from '../../src/names.js';
+import { dirs, env, files as fileNames, homeIndex, privateFile, program, stateKeys } from '../../src/names.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 
 export interface RunCall {
@@ -153,6 +154,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         if (text === undefined) return enoent('read', path);
         return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text);
       },
+      digestFile: async (path, textLimit) => {
+        const text = files.get(path);
+        if (text === undefined) return enoent('read', path);
+        const size = Buffer.byteLength(text, 'utf8');
+        return ok({ size, sha256: createHash('sha256').update(text, 'utf8').digest('hex'), text: size <= textLimit ? text : null });
+      },
       writeText: async (path, text) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
         files.set(path, text);
@@ -300,7 +307,7 @@ const factoryListOf = (deps: FakeDeps): string => {
   if (stateHome !== undefined && posix.isAbsolute(stateHome)) return posix.join(stateHome, program, fileNames.homeIndex);
   const userHome = deps.env[env.userHome];
   if (userHome !== undefined && posix.isAbsolute(userHome)) {
-    return posix.join(userHome, ...homeIndex.defaultStateHome, program, fileNames.homeIndex);
+    return posix.join(userHome, ...privateFile.defaultStateHome, program, fileNames.homeIndex);
   }
   throw new Error(`the deps name no state folder: set ${env.stateHome} or ${env.userHome} in the environment`);
 };

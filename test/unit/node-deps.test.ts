@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
@@ -208,6 +209,49 @@ describe('node deps: fs', () => {
 
     it('returns an error with the code for a missing file', async () => {
       const result = await deps.fs.readTextLimited(fresh('limit-missing.txt'), 5);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOENT');
+    });
+  });
+
+  describe('a digest of the bytes of a file (TP-171)', () => {
+    const sha256Of = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
+
+    it('gives the size and the SHA-256 of the bytes, and the text of a file within the text limit', async () => {
+      const file = fresh('digest-small.txt');
+      await writeFile(file, 'abc\n', 'utf8');
+      expect(await deps.fs.digestFile(file, 100)).toEqual({ ok: true, value: { size: 4, sha256: sha256Of('abc\n'), text: 'abc\n' } });
+    });
+
+    it('gives the text of a file that is exactly as large as the limit, and none for one byte more', async () => {
+      const file = fresh('digest-edge.txt');
+      await writeFile(file, 'abcde', 'utf8');
+      expect(await deps.fs.digestFile(file, 5)).toMatchObject({ ok: true, value: { size: 5, text: 'abcde' } });
+      expect(await deps.fs.digestFile(file, 4)).toEqual({ ok: true, value: { size: 5, sha256: sha256Of('abcde'), text: null } });
+    });
+
+    it('hashes all bytes of a file over the text limit, also over many chunks', async () => {
+      const file = fresh('digest-big.bin');
+      const bytes = Buffer.alloc(300_000, 7);
+      await writeFile(file, bytes);
+      expect(await deps.fs.digestFile(file, 10)).toEqual({ ok: true, value: { size: 300_000, sha256: sha256Of(bytes), text: null } });
+    });
+
+    it('hashes the bytes and not the text: bytes that are not valid text still give their own hash', async () => {
+      const file = fresh('digest-binary.bin');
+      const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x80]);
+      await writeFile(file, bytes);
+      expect(await deps.fs.digestFile(file, 100)).toMatchObject({ ok: true, value: { size: 4, sha256: sha256Of(bytes) } });
+    });
+
+    it('hashes a file with no byte', async () => {
+      const file = fresh('digest-empty.txt');
+      await writeFile(file, '');
+      expect(await deps.fs.digestFile(file, 5)).toEqual({ ok: true, value: { size: 0, sha256: sha256Of(''), text: '' } });
+    });
+
+    it('returns an error with the code for a missing file', async () => {
+      const result = await deps.fs.digestFile(fresh('digest-missing.txt'), 5);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.message).toContain('ENOENT');
     });

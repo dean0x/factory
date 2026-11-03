@@ -1,6 +1,7 @@
-import { posix } from 'node:path';
+import { isAbsolute, posix } from 'node:path';
 import { z } from 'zod';
 
+const MAX_PATH_CHARS = 4096;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const SLUG_RULE = 'must be a slug: a-z, 0-9 and hyphen, at most 40 characters, no leading hyphen';
 const MAX_SLUG_LENGTH = 40;
@@ -30,7 +31,14 @@ export const slugify = (text: string): string | null => {
 /** The schema pieces that the core and every recipe share. */
 export const slug = z.string().regex(SLUG_PATTERN, SLUG_RULE);
 
-export const githubLogin = z.string().regex(GITHUB_LOGIN_PATTERN, 'must be a GitHub login');
+/** An absolute path of at most 4096 characters, as a per-user file holds it. */
+export const absolutePath = z
+  .string()
+  .min(1)
+  .max(MAX_PATH_CHARS)
+  .refine((path) => isAbsolute(path), 'must be an absolute path');
+
+export const githubLogin =z.string().regex(GITHUB_LOGIN_PATTERN, 'must be a GitHub login');
 
 export const branchName = z.string().regex(BRANCH_PATTERN, 'must be a branch name');
 

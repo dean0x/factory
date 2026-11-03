@@ -26,6 +26,7 @@ import {
   parseGithubRepo,
 } from '../core/git.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
+import { effectiveModes } from '../core/owner-record.js';
 import { missingFolders } from '../core/paths.js';
 import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
@@ -497,7 +498,8 @@ const checkOptions = async (
   if (!settings.ok) return settings;
   const root = await rootTextsOf(deps, layoutOf(home));
   if (!root.ok) return root;
-  const templates = blockTemplatesFor(blockInputOf(settings.value, root.value.setup));
+  const modes = await effectiveModes(deps, home, settings.value);
+  const templates = blockTemplatesFor(blockInputOf(settings.value, root.value.setup, modes));
   const blocks = await blockTexts(deps, layoutOf(home).claudeMd, templates);
   if (!blocks.ok) return blocks;
   return ok({ ...base, templates, blocks: blocks.value, root: root.value });

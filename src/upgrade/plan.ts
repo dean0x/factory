@@ -24,7 +24,7 @@ import {
 } from '../names.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
-import type { BlockSet, UpgradeFile, UpgradeSpec } from './spec.js';
+import type { BlockSet, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
 
 const MAX_DIFF_LINES = 3;
 const MAX_DIFF_WIDTH = 100;
@@ -139,15 +139,16 @@ const migratedConfig = (config: FilePlan, local: LocalPlan, upgrade: UpgradeSpec
 };
 
 /** The managed blocks of the node, as its config is after the migrations, with the setup texts of the root. */
-export const planBlockSet = (
+export const planBlockSet = async (
   config: FilePlan,
   local: LocalPlan,
   upgrade: UpgradeSpec,
   setup: SetupTexts,
-): CliResult<BlockSet> => {
+  modesOf: ModesOf,
+): Promise<CliResult<BlockSet>> => {
   const migrated = migratedConfig(config, local, upgrade);
   if (!migrated.ok) return migrated;
-  const set = upgrade.blocksOf(migrated.value, setup);
+  const set = await upgrade.blocksOf(migrated.value, setup, modesOf);
   return set.ok ? set : failure(`${upgrade.config.spec.file}: ${set.error.message}`);
 };
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { launchArgv, type LaunchInput } from '../../src/launch/argv.js';
 import { startSteps } from '../../src/launch/tmux.js';
+import { env } from '../../src/names.js';
 import { chainOf } from '../helpers/tmux-fake.js';
 
 const input = (change: Partial<LaunchInput> = {}): LaunchInput => ({
@@ -173,8 +174,21 @@ describe('the tmux calls that start a session', () => {
     const commands = steps.flatMap(chainOf);
     const folders = commands.flatMap((command) => (command.includes('-c') ? [command[command.indexOf('-c') + 1]] : []));
     expect(folders).toEqual(['/w/node/coordinator', '/w/node/coordinator', '/w/node/coordinator']);
-    expect(commands[4]).toEqual(['set-option', '-t', '=demo:', '@factory_home', '/w/node']);
+    expect(commands[5]).toEqual(['set-option', '-t', '=demo:', '@factory_home', '/w/node']);
     expect(commands[0]).toEqual(['new-session', '-d', '-s', 'demo', '-n', 'view', '-c', '/w/node/coordinator', '--', 'claude']);
+  });
+
+  it('puts the session marker in the environment of the session before the second pane and every other window (TP-80)', () => {
+    const steps = startSteps({ id: 'demo', home: '/w/node', coordinatorDir: '/w/node/coordinator', launch: ['claude'] });
+    const commands = steps.flatMap(chainOf);
+    const marker = commands.findIndex((command) => command[0] === 'set-environment' && command.includes(env.session));
+    expect(commands[marker]).toEqual(['set-environment', '-t', '=demo', env.session, 'demo']);
+    const firstPane = commands.findIndex((command) => command[0] === 'new-session');
+    const secondPane = commands.findIndex((command) => command[0] === 'split-window');
+    const otherWindow = commands.findIndex((command) => command[0] === 'new-window');
+    expect(marker).toBeGreaterThan(firstPane);
+    expect(marker).toBeLessThan(secondPane);
+    expect(marker).toBeLessThan(otherWindow);
   });
 
   it('reads a path that ends in a semicolon as one value, and not as the end of a command', () => {
@@ -184,6 +198,7 @@ describe('the tmux calls that start a session', () => {
       'new-session',
       'set-option',
       'set-environment',
+      'set-environment',
       'set-option',
       'set-option',
       'split-window',
@@ -191,7 +206,7 @@ describe('the tmux calls that start a session', () => {
       'new-window',
     ]);
     expect(commands[0]).toEqual(['new-session', '-d', '-s', 'demo', '-n', 'view', '-c', '/w/node;/coordinator;', '--', ...launch]);
-    expect(commands[4]).toEqual(['set-option', '-t', '=demo:', '@factory_home', '/w/node;']);
+    expect(commands[5]).toEqual(['set-option', '-t', '=demo:', '@factory_home', '/w/node;']);
     const folders = commands.flatMap((command) => (command.includes('-c') ? [command[command.indexOf('-c') + 1]] : []));
     expect(folders).toEqual(['/w/node;/coordinator;', '/w/node;/coordinator;', '/w/node;/coordinator;']);
   });
@@ -199,7 +214,7 @@ describe('the tmux calls that start a session', () => {
   it('keeps a backslash before the last semicolon of a value', () => {
     const steps = startSteps({ id: 'demo', home: '/w/node\;', coordinatorDir: '/w/node\;/coordinator\;', launch: ['claude'] });
     expect(steps.flatMap(chainOf)[0]).toContain('/w/node\;/coordinator\;');
-    expect(steps.flatMap(chainOf)).toHaveLength(8);
+    expect(steps.flatMap(chainOf)).toHaveLength(9);
   });
 
   it('leaves a word without a final semicolon as it is, with the one separator of the first call', () => {

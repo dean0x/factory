@@ -6,6 +6,7 @@ import {
   parseConfig,
   sharedConfigSchema,
   splitConfigValue,
+  type FactoryConfig,
   type SharedConfig,
 } from '../config/schema.js';
 import { ok } from '../core/result.js';
@@ -17,6 +18,7 @@ import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
 import { jsonText } from '../state/files.js';
 import { STATE_SPEC, parseJsonText } from '../state/load.js';
+import type { ApprovalModes } from '../recipes/index.js';
 import { nodeStateSchema } from '../state/schema.js';
 import { blockInputOf, blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
@@ -50,11 +52,15 @@ export interface UpgradeSpec {
   /** The value of the local file, taken from a migrated config value that holds the keys of both files. */
   localPartOf(config: unknown): unknown;
   /**
-   * The managed blocks of the node that a config value describes, with the setup texts of the root. The value holds the
-   * keys of both files, in the current schema versions.
+   * The managed blocks of the node that a config value describes, with the setup texts of the root and the effective
+   * mode of each approval point. The value holds the keys of both files, in the current schema versions. `modesOf` gets
+   * the parsed config, because the effective modes follow its node id and its local values.
    */
-  blocksOf(config: unknown, setup: SetupTexts): CliResult<BlockSet>;
+  blocksOf(config: unknown, setup: SetupTexts, modesOf: ModesOf): Promise<CliResult<BlockSet>>;
 }
+
+/** The effective mode of each approval point of a parsed config. */
+export type ModesOf = (config: FactoryConfig) => Promise<ApprovalModes>;
 
 export const finisher =
   <T>(schema: SchemaParser<T>, render: (value: T) => string) =>
@@ -68,11 +74,11 @@ export const finisher =
  * points, the local file sets the owner prefix, and the shared file sets the context limits. The setup texts follow the
  * core blocks.
  */
-const blocksOfNode = (config: unknown, setup: SetupTexts): CliResult<BlockSet> => {
+const blocksOfNode = async (config: unknown, setup: SetupTexts, modesOf: ModesOf): Promise<CliResult<BlockSet>> => {
   const { shared, local } = splitConfigValue(config);
   const parsed = parseConfig(shared, local);
   if (!parsed.success) return failure(describeIssues(parsed.error));
-  const input = blockInputOf(parsed.data, setup);
+  const input = blockInputOf(parsed.data, setup, await modesOf(parsed.data));
   return ok({ templates: blockTemplatesFor(input), renames: roleBlockRenames(input.layer) });
 };
 

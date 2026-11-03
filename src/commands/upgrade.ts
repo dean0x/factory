@@ -2,11 +2,13 @@ import { join, relative } from 'node:path';
 import { fileOfTarget, inspectBlocks, renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { printable, type CommandOutput, type OutLine } from '../cli/output.js';
-import type { Deps } from '../core/deps.js';
+import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
+import { inFactorySession } from '../core/factory-session.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import { commitPaths, hasIdentity, headOf, statusOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { indexPathOf, recordNode } from '../core/home-index.js';
+import { effectiveModes } from '../core/owner-record.js';
 import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
@@ -14,7 +16,6 @@ import {
   commands,
   commandText,
   dirs,
-  env,
   flags,
   flagText,
   localFileModes,
@@ -53,7 +54,6 @@ import {
   type FilesPlan,
 } from '../upgrade/plan.js';
 import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
-import { ACCEPT_ANSWER } from './init-home.js';
 
 export interface UpgradeOptions {
   readonly home: string | undefined;
@@ -139,8 +139,7 @@ const requireRegistrationConsent = async (
   home: string,
   options: UpgradeOptions,
 ): Promise<CliResult<void>> => {
-  const inSession = deps.env[env.session];
-  if (inSession !== undefined && inSession !== '') {
+  if (inFactorySession(deps)) {
     return safetyRefusal(
       `${home} is not in the ${places.list}, and a ${places.session} can not register it`,
       `Run "${commandText(commands.upgrade)} ${flagText(flags.home)} ${home}" in a terminal window outside a ${places.session}.`,
@@ -194,7 +193,9 @@ export const runUpgrade = async (
   if (!rootMoved.ok) return rootMoved;
   // The moves outside the state folder come first. A block file is read at its old place until the move is done.
   const files: FilesPlan = { ...stateFiles.value, moves: [...rootMoved.value, ...stateFiles.value.moves] };
-  const blockSet = planBlockSet(config.value, local.value, upgrade, setup.value);
+  const blockSet = await planBlockSet(config.value, local.value, upgrade, setup.value, (parsed) =>
+    effectiveModes(deps, home, parsed),
+  );
   if (!blockSet.ok) return blockSet;
 
   const known = blockSet.value.templates.map((template) => template.name);

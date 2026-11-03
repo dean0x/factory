@@ -112,6 +112,10 @@ export const files = {
   openQuestions: 'open-questions.md',
   roadmapsReadme: 'README.md',
   homeIndex: 'homes.json',
+  /** The approval records of the user. The per-user state folder holds the file, beside the factory list. */
+  ownerRecords: 'owner-records.json',
+  /** The setup acceptances of the user. The per-user state folder holds the file, beside the factory list. */
+  setupAcceptances: 'setup-acceptances.json',
 } as const;
 
 export const dirs = {
@@ -171,23 +175,101 @@ export const env = {
 export const maxFileBytes = 1_048_576;
 
 /**
- * The per-user index of node homes (design 4.3): the number of its schema, its keys, its default place
- * below the user home, and its bounds. A command finds a home from a project folder through it.
+ * The per-user files (design 4.3): the factory list, the approval records and the setup acceptances. Each one is in the
+ * state folder of the user, outside every factory folder. The folder has mode 0700 and a file has mode 0600. A reader
+ * refuses a folder or a file that another user owns or that a group or other users can write.
  */
-export const homeIndex = {
-  schema: 1,
-  keys: { schema: 'schema', homes: 'homes', home: 'home', id: 'id', projects: 'projects' },
+export const privateFile = {
+  /** The default place of the state folder, below the user home, when no variable names a state folder. */
   defaultStateHome: ['.local', 'state'],
-  maxHomes: 200,
-  maxProjects: 200,
-  maxBytes: maxFileBytes,
-  /** The lock file beside the index: the name of the index and this suffix. */
+  folderMode: 0o700,
+  fileMode: 0o600,
+  /** The permission bits that let a group or another user write. */
+  groupOtherWrite: 0o022,
+  /** The lock file beside a file: the name of the file and this suffix. */
   lockSuffix: '.lock',
   /** A writer tries to take the lock this many times, and waits this long between two tries. */
   lockAttempts: 20,
   lockWaitMs: 50,
   /** A lock that is older than this was left by a process that ended. The next writer takes it. */
   lockStaleMs: 5_000,
+} as const;
+
+/**
+ * The per-user index of node homes (design 4.3): the number of its schema, its keys and its bounds. A command finds a
+ * home from a project folder through it.
+ */
+export const homeIndex = {
+  schema: 1,
+  keys: { schema: 'schema', homes: 'homes', home: 'home', id: 'id', projects: 'projects' },
+  maxHomes: 200,
+  maxProjects: 200,
+  maxBytes: maxFileBytes,
+} as const;
+
+/**
+ * The store of the approval records (design 6): the number of its schema, its keys, the two kinds of record and its
+ * bounds. A `delegation` record holds the mode of one approval point. A `scope` record is a record of its own kind with
+ * its own key, so it never replaces a delegation record.
+ */
+export const ownerRecords = {
+  schema: 1,
+  keys: {
+    schema: 'schema',
+    records: 'records',
+    kind: 'kind',
+    node: 'node',
+    root: 'root',
+    point: 'point',
+    mode: 'mode',
+    project: 'project',
+    version: 'version',
+    items: 'items',
+    at: 'at',
+  },
+  kinds: { delegation: 'delegation', scope: 'scope' },
+  /** The store holds at most this many records, and a reader refuses a file over this many bytes. */
+  maxRecords: 200,
+  maxBytes: maxFileBytes,
+  /** The most items in one scope record, and the most characters in one item, one project id or one version. */
+  maxItems: 100,
+  maxTextChars: 200,
+} as const;
+
+/**
+ * The store of the setup acceptances (design 4.3): the number of its schema, the format version of a manifest, its keys
+ * and its bounds. A record holds the manifest of the accepted files and the combined hash. The display bounds are for the
+ * accept prompt: a file over `maxDisplayBytes` is never shown in part, and the files past `maxDisplayTotalBytes` in all
+ * are not shown either.
+ */
+export const setupAcceptance = {
+  schema: 1,
+  formatVersion: 1,
+  keys: {
+    schema: 'schema',
+    acceptances: 'acceptances',
+    root: 'root',
+    node: 'node',
+    file: 'file',
+    version: 'version',
+    manifest: 'manifest',
+    hash: 'hash',
+    reason: 'reason',
+    at: 'at',
+    path: 'path',
+    type: 'type',
+    size: 'size',
+    sha256: 'sha256',
+    blob: 'blob',
+  },
+  fileTypes: ['file', 'link'],
+  maxRecords: 200,
+  maxBytes: 4 * maxFileBytes,
+  /** The most files in one manifest. */
+  maxManifestFiles: 2_000,
+  maxReasonChars: 200,
+  maxDisplayBytes: 16_384,
+  maxDisplayTotalBytes: 262_144,
 } as const;
 
 /**

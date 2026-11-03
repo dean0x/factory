@@ -2,15 +2,12 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { printable } from '../cli/output.js';
 import { localFileAccess } from '../config/load.js';
-import type { Deps } from '../core/deps.js';
+import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { listRepoChildren, MAX_SCAN_ENTRIES, workTreeTop, type SkippedFolder } from '../core/git.js';
 import { listedRootAbove, readHomeIndex } from '../core/home-index.js';
 import { ok } from '../core/result.js';
 import { commands, commandText, dirs, files, flags, flagText, places, program, roles } from '../names.js';
 import { isStagingDirName, layoutOf } from '../state/layout.js';
-
-/** The answers that mean yes to a question of a command. Any other answer, and an empty one, means no. */
-export const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
 export interface HomeChoice {
   readonly home: string;

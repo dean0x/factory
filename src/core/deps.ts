@@ -16,8 +16,22 @@ export interface PathInfo {
   readonly mtimeMs: number;
 }
 
+/** What a read of the whole file gives: its size, the SHA-256 of its bytes as hex, and its text when the file is small. */
+export interface FileDigest {
+  readonly size: number;
+  readonly sha256: string;
+  /** The text of the bytes that the hash covers, or null when the file has more than the limit of the call. */
+  readonly text: string | null;
+}
+
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
+  /**
+   * Read the file as a stream to its end, and hash all of its bytes. A link is followed. The text comes from the same
+   * bytes as the hash, so the text that a person sees is the text that the hash covers. A file with more than `textLimit`
+   * bytes gives no text; the size and the hash still cover the whole file.
+   */
+  digestFile(path: string, textLimit: number): Promise<CliResult<FileDigest>>;
   /** Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. */
   readTextLimited(path: string, maxBytes: number): Promise<CliResult<string>>;
   writeText(path: string, text: string): Promise<CliResult<void>>;
@@ -89,6 +103,9 @@ export interface FetchStatus {
 
 /** The longest answer that `prompt` returns. A longer line is cut. */
 export const MAX_ANSWER_CHARS = 200;
+
+/** The answers that mean yes to a question of a command. Any other answer, and an empty one, means no. */
+export const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
 export interface Deps {
   readonly fs: Fs;

@@ -276,6 +276,49 @@ describe('doctor: the blocks of a layer', () => {
     deps.files.delete(`${HOME}/factory.yaml`);
     expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'warn', text: 'not checked: factory.yaml is not valid' });
   });
+
+  describe('with a delegated value in the local file (TP-40, TP-67)', () => {
+    const STORE = '/state/factory/owner-records.json';
+
+    const delegateInLocalFile = (deps: FakeDeps): void => {
+      const path = `${HOME}/factory.local.yaml`;
+      const text = deps.files.get(path) ?? '';
+      expect(text).toContain('merge: owner');
+      deps.files.set(path, text.replace('merge: owner', 'merge: delegated'));
+    };
+
+    const record = (point: string, mode: string): string =>
+      `${JSON.stringify({ schema: 1, records: [{ kind: 'delegation', node: 'demo', root: HOME, point, mode, at: '2030-01-01T00:00:00.000Z' }] })}\n`;
+
+    it('checks the blocks against the owner text when no record backs the value', async () => {
+      const deps = await initialized();
+      delegateInLocalFile(deps);
+      expect(await nodeBlocks(deps)).toMatchObject({ id: 'blocks', level: 'ok', text: '5 managed blocks are intact' });
+    });
+
+    it('checks the blocks against the owner text when a record file lies inside the folder only', async () => {
+      const deps = await initialized();
+      delegateInLocalFile(deps);
+      deps.seed(`${HOME}/owner-records.json`, record('merge', 'delegated'));
+      expect(await nodeBlocks(deps)).toMatchObject({ level: 'ok' });
+    });
+
+    it('checks the blocks against the delegated text when a delegation record backs the value', async () => {
+      const deps = await initialized();
+      delegateInLocalFile(deps);
+      deps.seed(STORE, record('merge', 'delegated'));
+      const result = await nodeBlocks(deps);
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain('coordinator');
+    });
+
+    it('checks the blocks against the owner text when the newest record has the mode owner', async () => {
+      const deps = await initialized();
+      delegateInLocalFile(deps);
+      deps.seed(STORE, record('merge', 'owner'));
+      expect(await nodeBlocks(deps)).toMatchObject({ level: 'ok' });
+    });
+  });
 });
 
 describe('doctor: secrets', () => {

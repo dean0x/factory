@@ -12,6 +12,7 @@ import type { Deps } from '../core/deps.js';
 import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
+import { effectiveModes } from '../core/owner-record.js';
 import { isSameOrInsideFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
@@ -424,7 +425,7 @@ export const checkNodeBlocks = async (
   if (!plain.ok) return failedFrom(checkIds.blocks, plain.error);
   const setup = await readSetupTexts(deps, layout);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
-  const input = blockInputOf(state.value, setup.value);
+  const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value));
   const pending = { ...NO_PENDING_FILES, renames: roleBlockRenames(input.layer) };
   return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending));
 };

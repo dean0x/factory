@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { constants, createReadStream, type Stats } from 'node:fs';
 import {
   chmod,
@@ -20,7 +20,7 @@ import { createInterface } from 'node:readline';
 import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
 import { ok } from './result.js';
-import { MAX_ANSWER_CHARS, type Deps, type Fs, type LinkKind, type PathInfo, type PathKind } from './deps.js';
+import { MAX_ANSWER_CHARS, type Deps, type FileDigest, type Fs, type LinkKind, type PathInfo, type PathKind } from './deps.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 30_000;
 const MAX_RUN_OUTPUT_BYTES = 1_048_576;
@@ -76,6 +76,21 @@ const readBounded = async (path: string, maxBytes: number): Promise<string | nul
     size += bytes.length;
   }
   return size > maxBytes ? null : Buffer.concat(chunks).toString('utf8');
+};
+
+/** Hash every byte of the file as a stream. The bytes stay in memory only while the file is within `textLimit`. */
+const digestBytes = async (path: string, textLimit: number): Promise<FileDigest> => {
+  const hash = createHash('sha256');
+  const kept: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of createReadStream(path)) {
+    const bytes = chunk as Buffer;
+    hash.update(bytes);
+    size += bytes.length;
+    if (size <= textLimit) kept.push(bytes);
+    else kept.length = 0;
+  }
+  return { size, sha256: hash.digest('hex'), text: size <= textLimit ? Buffer.concat(kept).toString('utf8') : null };
 };
 
 const MAX_COPY_DEPTH = 64;
@@ -140,6 +155,7 @@ const nodeFs: Fs = {
     if (!text.ok) return text;
     return text.value === null ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text.value);
   },
+  digestFile: (path, textLimit) => guard('read', path, () => digestBytes(path, textLimit)),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
   writeTextExclusive: (path, text, mode) =>
     guard('write', path, async () => {

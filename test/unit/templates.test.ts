@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
+import { effectiveModes, recordDelegation } from '../../src/core/owner-record.js';
 import { values } from '../../src/names.js';
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { roleForLayer, roleNameForLayer } from '../../src/recipes/software/recipe.js';
@@ -7,6 +8,7 @@ import { blockInputOf, blockTemplatesFor, fileTemplates, roleBlockRenames } from
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { allBlocks, blockInput, initOwnerPrefix, layer1Blocks, layer2Blocks, softwareOwnerModes } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
+import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
 const points = recipes[values.recipes[0]].approvalPoints;
@@ -538,6 +540,7 @@ describe('what the blocks depend on, from the config (blockInputOf)', () => {
         },
       },
       { coordinator: 'A.\n', worker: null },
+      softwareOwnerModes,
     );
     expect(input).toEqual({
       layer: 2,
@@ -546,5 +549,69 @@ describe('what the blocks depend on, from the config (blockInputOf)', () => {
       limits: { contextPreparePct: 20, contextMaxPct: 35 },
       setup: { coordinator: 'A.\n', worker: null },
     });
+  });
+
+  it('takes the modes as the caller gives them, and does not read them from the config', () => {
+    const config = sampleConfig();
+    const given: ApprovalModes = { ...softwareOwnerModes, publish: delegated };
+    expect(blockInputOf(config, { coordinator: null, worker: null }, given).modes).toEqual(given);
+  });
+});
+
+describe('the text follows the effective modes (TP-40, TP-67)', () => {
+  const root = '/w/factory-root';
+  const config = sampleConfig();
+  const delegatedConfig = {
+    ...config,
+    core: { ...config.core, approval: { ...config.core.approval, merge: delegated } },
+  };
+  const person = (): FakeDeps => {
+    const deps = createFakeDeps({
+      env: { XDG_STATE_HOME: '/state', HOME: '/home/me' },
+      stdinIsTTY: true,
+      stdoutIsTTY: true,
+    });
+    deps.seedDir(root);
+    return deps;
+  };
+  const bodiesFor = async (deps: FakeDeps): Promise<Record<string, string>> => {
+    const modes = await effectiveModes(deps, root, delegatedConfig);
+    const input = blockInputOf(delegatedConfig, { coordinator: null, worker: null }, modes);
+    return Object.fromEntries(blockTemplatesFor(input).map((template) => [template.name, template.body]));
+  };
+
+  it('renders the owner text for a delegated value with no record', async () => {
+    const bodies = await bodiesFor(person());
+    for (const name of ['coordinator', 'safety']) {
+      expect(bodies[name]).toContain('A merge waits for the go of the owner');
+      expect(bodies[name]).not.toContain('delegated this point');
+    }
+  });
+
+  it('renders the owner text for a delegated value when only a record file lies inside the folder', async () => {
+    const deps = person();
+    deps.seed(`${root}/owner-records.json`, '{"schema":1,"records":[]}');
+    const bodies = await bodiesFor(deps);
+    expect(bodies.safety).toContain('A merge waits for the go of the owner');
+  });
+
+  it('names the proof that the recipe states for the point when a delegation is recorded', async () => {
+    const deps = person();
+    expect(await recordDelegation(deps, { root, node: config.core.node.id, point: 'merge', mode: delegated })).toMatchObject({ ok: true });
+    const bodies = await bodiesFor(deps);
+    for (const name of ['coordinator', 'safety']) {
+      expect(bodies[name]).toContain('one proof of approval and one proof of assignment for that work');
+      expect(bodies[name]).toContain('delegated this point');
+      expect(bodies[name]).not.toContain('A merge waits for the go of the owner');
+      expect(bodies[name]).toContain('A release waits for the go of the owner');
+    }
+  });
+
+  it('renders the owner text again after a newer owner record ends the delegation', async () => {
+    const deps = person();
+    await recordDelegation(deps, { root, node: config.core.node.id, point: 'merge', mode: delegated });
+    await recordDelegation(deps, { root, node: config.core.node.id, point: 'merge', mode: owner });
+    const bodies = await bodiesFor(deps);
+    expect(bodies.safety).toContain('A merge waits for the go of the owner');
   });
 });

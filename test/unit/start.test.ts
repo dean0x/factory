@@ -3,6 +3,7 @@ import { failure } from '../../src/cli/errors.js';
 import { runStart, type StartOptions } from '../../src/commands/start.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
+import { env } from '../../src/names.js';
 import { createFakeDeps, exited, registerRoot, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -13,6 +14,7 @@ const COORDINATOR = '/w/node/coordinator';
 const STATE_DIR = '/w/node/.factory';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
 const REMOVE_PROXY_VARIABLE = 'set-environment -t =demo -r ANTHROPIC_BASE_URL';
+const SET_SESSION_MARKER = `set-environment -t =demo ${env.session} demo`;
 const KEEP_PANE = 'set-option -w -t =demo:view remain-on-exit on';
 const LAUNCH_BASE = [
   'env',
@@ -111,6 +113,7 @@ describe('start:a new session', () => {
       'has-session -t =demo',
       `new-session -d -s demo -n view -c ${COORDINATOR} -- ${[...LAUNCH_BASE, ...LAUNCH_DIRS].join(' ')} ; ${KEEP_PANE}`,
       REMOVE_PROXY_VARIABLE,
+      SET_SESSION_MARKER,
       'set-option -p -t =demo:view.{left} @node demo',
       'set-option -t =demo: @factory_home /w/node',
       `split-window -d -h -t =demo:view -c ${COORDINATOR}`,
@@ -201,8 +204,22 @@ describe('start:a new session', () => {
     expect(removal).toBeLessThan(commands.findIndex((line) => line.startsWith('split-window')));
     expect(removal).toBeLessThan(commands.findIndex((line) => line.startsWith('new-window')));
     const environmentCalls = tmux.calls.filter((call) => call.args[0] === 'set-environment' || call.args[0] === 'setenv');
-    expect(environmentCalls.map((call) => call.args)).toEqual([['set-environment', '-t', '=demo', '-r', 'ANTHROPIC_BASE_URL']]);
+    expect(environmentCalls.map((call) => call.args)).toEqual([
+      ['set-environment', '-t', '=demo', '-r', 'ANTHROPIC_BASE_URL'],
+      ['set-environment', '-t', '=demo', env.session, 'demo'],
+    ]);
     expect(tmux.calls.some((call) => call.args.includes('-g'))).toBe(false);
+  });
+
+  it('puts the session marker in the environment of the session only, before any other window or pane exists (TP-80)', async () => {
+    const { deps, tmux } = make();
+    await succeeded(deps);
+    const commands = tmux.commands();
+    const marker = commands.indexOf(SET_SESSION_MARKER);
+    expect(marker).toBeGreaterThan(commands.findIndex((line) => line.startsWith('new-session')));
+    expect(marker).toBeLessThan(commands.findIndex((line) => line.startsWith('split-window')));
+    expect(marker).toBeLessThan(commands.findIndex((line) => line.startsWith('new-window')));
+    expect(tmux.calls.some((call) => call.args.includes(env.session) && call.args.includes('-g'))).toBe(false);
   });
 
   it('removes the variable from the session also when the config names a proxy, and never sets it there', async () => {
@@ -210,7 +227,7 @@ describe('start:a new session', () => {
     await succeeded(deps);
     expect(tmux.commands()).toContain(REMOVE_PROXY_VARIABLE);
     const environmentCalls = tmux.calls.filter((call) => call.args[0] === 'set-environment');
-    expect(environmentCalls).toHaveLength(1);
+    expect(environmentCalls).toHaveLength(2);
     expect(JSON.stringify(environmentCalls)).not.toContain('127.0.0.1');
   });
 

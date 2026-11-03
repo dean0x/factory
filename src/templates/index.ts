@@ -1,7 +1,7 @@
 import { COORDINATOR_LAYER, WORKER_LAYER, type FactoryConfig } from '../config/schema.js';
 import type { BlockRename } from '../migrate/files.js';
 import { blockNames } from '../names.js';
-import { ownerModes, recipes } from '../recipes/index.js';
+import type { ApprovalModes } from '../recipes/index.js';
 import { approvalRules, homeRoleBlockNames, roleForLayer, roleNameForLayer } from '../recipes/software/recipe.js';
 import { PROFILE_INDEX_LINES, PROFILE_README_LINES } from './decision-profile.js';
 import { coordinatorValuesFor, fillTemplate } from './fill.js';
@@ -45,12 +45,12 @@ export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] =
 };
 
 /**
- * What the blocks of a node depend on, from its config and its setup texts. Every approval point waits for the owner
- * here. The effective modes come in a later step.
+ * What the blocks of a node depend on, from its config, its setup texts and the effective mode of each approval point.
+ * The text names the proof of a point only when its effective mode is `delegated`.
  */
-export const blockInputOf = (config: FactoryConfig, setup: SetupTexts): BlockInput => ({
+export const blockInputOf = (config: FactoryConfig, setup: SetupTexts, modes: ApprovalModes): BlockInput => ({
   layer: config.core.node.layer,
-  modes: ownerModes(recipes[config.recipe.id].approvalPoints),
+  modes,
   ownerPrefix: config.core.owner.prefix,
   limits: {
     contextPreparePct: config.core.limits.context_prepare_pct,

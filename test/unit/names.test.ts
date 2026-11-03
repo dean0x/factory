@@ -580,3 +580,66 @@ describe('the approval points of a recipe', () => {
     expect(violationsInText("const a = 'delegated';", join(SRC, 'sample.ts'))).toEqual(['sample.ts: "delegated" is a name']);
   });
 });
+
+describe('the writers of the approval record and of the setup acceptance (TP-39, TP-144)', () => {
+  const OWNER_RECORD = join(SRC, 'core', 'owner-record.ts');
+  const SETUP_ACCEPTANCE = join(SRC, 'core', 'setup-acceptance.ts');
+  const PRIVATE_FILE = join(SRC, 'core', 'private-file.ts');
+  const HOME_INDEX = join(SRC, 'core', 'home-index.ts');
+
+  const rel = (paths: readonly string[]): string[] => paths.map((path) => relative(SRC, path)).sort();
+  const textOf = (path: string): string => readFileSync(path, 'utf8');
+  const withText = (pattern: RegExp): string[] =>
+    allSourceFiles(SRC).filter((path) => path !== NAMES_FILE && pattern.test(textOf(path)));
+  const importPathsOf = (source: string): string[] =>
+    [...source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]/g)].map((match) => match[1] ?? '');
+
+  it('has the store file of the approval record in one module only: the owner record writer', () => {
+    expect(rel(withText(/\bownerRecords\b/))).toEqual(['core/owner-record.ts']);
+  });
+
+  it('has the private file writer in the three modules that own a store, and in no other module', () => {
+    expect(rel(withText(/\bchangePrivateFile\b/))).toEqual(
+      rel([HOME_INDEX, OWNER_RECORD, SETUP_ACCEPTANCE, PRIVATE_FILE]),
+    );
+  });
+
+  it('has one copy of the lock for the per-user files: the private file module', () => {
+    const users = withText(/\blockSuffix\b|\blockAttempts\b|\blockStaleMs\b/);
+    expect(rel(users)).toEqual(['core/private-file.ts']);
+  });
+
+  it('has no module that writes the approval record apart from the owner record writer', () => {
+    const writes = withText(/\b(?:recordDelegation|recordScope)\b/);
+    expect(rel(writes.filter((path) => path !== OWNER_RECORD))).toEqual([]);
+  });
+
+  it('keeps the setup acceptance writer apart: it imports nothing of the approval store and names none of it', () => {
+    const source = textOf(SETUP_ACCEPTANCE);
+    expect(importPathsOf(source).filter((path) => /owner-record/.test(path))).toEqual([]);
+    expect(source).not.toMatch(/\bownerRecords\b|\bfiles\.ownerRecords\b|\brecordDelegation\b|\brecordScope\b/);
+  });
+
+  it('keeps the owner record writer apart from the setup acceptance store, too', () => {
+    const source = textOf(OWNER_RECORD);
+    expect(importPathsOf(source).filter((path) => /setup-acceptance/.test(path))).toEqual([]);
+    expect(source).not.toMatch(/\bsetupAcceptance\b|\bfiles\.setupAcceptances\b/);
+  });
+
+  it('has the setup acceptance store file in the setup acceptance writer only', () => {
+    expect(rel(withText(/\bfiles\.setupAcceptances\b/))).toEqual(['core/setup-acceptance.ts']);
+  });
+
+  it('lets no module but the code of init pass the limits of init with yes to the setup acceptance writer', () => {
+    const callers = withText(/\bfromInitYes\b/).filter((path) => path !== SETUP_ACCEPTANCE);
+    expect(callers.filter((path) => !/commands\/init[^/]*\.ts$/.test(path))).toEqual([]);
+  });
+
+  it('gives both writers one guard: no factory session, and the terminal window', () => {
+    for (const path of [OWNER_RECORD, SETUP_ACCEPTANCE]) {
+      expect(textOf(path), relative(SRC, path)).toMatch(/\binFactorySession\(/);
+      expect(textOf(path), relative(SRC, path)).toMatch(/\bstdinIsTTY\b/);
+    }
+  });
+
+});

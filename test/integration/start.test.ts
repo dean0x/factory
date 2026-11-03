@@ -66,6 +66,10 @@ const probeProxy = (dir: string): string =>
     '',
   ].join('\n');
 
+/** A script that writes the value of the session marker of its own environment to a file. */
+const probeMarker = (dir: string): string =>
+  ['#!/bin/sh', `dir='${dir}'`, 'echo "${FACTORY_SESSION-unset}" > "$dir/window-marker"', ''].join('\n');
+
 /** The panes of the session with their ids and process ids. A pane that starts or ends changes the text. */
 const paneSnapshot = async (): Promise<string> =>
   (await tmux(['list-panes', '-s', '-t', '=demo', '-F', '#{window_name} #{pane_id} #{pane_pid} #{pane_dead}'])).stdout;
@@ -254,6 +258,21 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     await chmod(probe, 0o755);
     expect((await tmux(['new-window', '-d', '-t', '=demo:', '-n', 'probe', probe])).code).toBe(0);
     expect((await waitForFile('window-proxy')).trim()).toBe('no');
+  });
+
+  it('puts the session marker in the environment of the session, so a later window carries it (TP-80)', async () => {
+    await initNode();
+    expect((await startFactory()).code).toBe(0);
+    await waitForLaunch();
+
+    const environment = await tmux(['show-environment', '-t', '=demo', 'FACTORY_SESSION']);
+    expect(environment.stdout.trim()).toBe('FACTORY_SESSION=demo');
+
+    const probe = join(box.root, 'bin', 'probe-marker');
+    await writeFile(probe, probeMarker(outDir));
+    await chmod(probe, 0o755);
+    expect((await tmux(['new-window', '-d', '-t', '=demo:', '-n', 'probe', probe])).code).toBe(0);
+    expect((await waitForFile('window-marker')).trim()).toBe('demo');
   });
 
   it('marks the session and the panes with the options of factory', async () => {
