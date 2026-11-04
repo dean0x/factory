@@ -1188,11 +1188,7 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
     const underUser = (calls: readonly Call[], user: string): readonly Call[] =>
       calls.filter((call) => call.path.toLowerCase() === user.toLowerCase() || call.path.toLowerCase().startsWith(`${user.toLowerCase()}/`));
 
-    /**
-     * The settings scan alone, with a file system that notes every call. The whole scan of a root also asks the file
-     * system about the folder of Claude Code when it checks the path of the factory list (home-index.test.ts pins that
-     * check), so the calls of the settings scan are shown apart from it.
-     */
+    /** The settings scan alone, with a file system that notes every call. */
     const settingsScan = async (deps: FakeDeps, projects: readonly string[] = ['web'], tracked: readonly string[] = [], root = HOME) => {
       const { guarded, calls } = recorded(deps);
       const findings = await scanSettings(guarded, root, projects, tracked);
@@ -1277,6 +1273,31 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       const { findings, calls } = await settingsScan(deps, ['web'], ['.claude/settings.json']);
       expect(findings).toEqual([]);
       expect(underUser(calls, `${HOME}/.claude`)).toEqual([]);
+    });
+
+    it.each(['own', 'received'] as const)(
+      'makes no call and gives no finding for a file that git tracks in the user settings folder, on a %s root that is the user home folder',
+      async (origin) => {
+        const tracked = ['README.md', '.claude/settings.json', '.claude/notes.txt', '.claude/rules/a.md'];
+        const deps = make({ origin, env: { HOME: HOME }, tracked });
+        deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
+        deps.seed(`${HOME}/.claude/notes.txt`, `The key is ${FAKE_GITHUB_TOKEN}.\n`);
+        if (origin === 'received') await acceptTracked(deps, ['README.md']);
+        const { guarded, calls } = recorded(deps);
+        const found = await scanRoot(guarded, HOME, sampleConfig());
+        expect(found.findings).toEqual([]);
+        expect(underUser(calls, `${HOME}/.claude`)).toEqual([]);
+        expect(calls.some((call) => call.path === `${HOME}/README.md`)).toBe(true);
+      },
+    );
+
+    it('still scans a file that git tracks next to the user settings folder, and in a folder with a similar name', async () => {
+      const tracked = ['.claude-notes/a.txt', 'docs/.claude/b.txt'];
+      const deps = make({ env: { HOME: HOME }, tracked });
+      deps.seed(`${HOME}/.claude-notes/a.txt`, `The key is ${FAKE_GITHUB_TOKEN}.\n`);
+      deps.seed(`${HOME}/docs/.claude/b.txt`, `The key is ${FAKE_GITHUB_TOKEN}.\n`);
+      expect(textOf(await scan(deps), checkIds.rootFiles)).toContain('.claude-notes/a.txt');
+      expect(textOf(await scan(deps), checkIds.rootFiles)).toContain('docs/.claude/b.txt');
     });
   });
 

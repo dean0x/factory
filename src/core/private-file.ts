@@ -2,7 +2,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { safetyRefusal, type CliResult } from '../cli/errors.js';
 import { commands, commandText, dirs, env, places, privateFile, program } from '../names.js';
 import type { Deps, PathInfo } from './deps.js';
-import { isSameOrInsideFolder } from './paths.js';
+import { isWrittenInside } from './paths.js';
 import { err, ok, type Result } from './result.js';
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -19,8 +19,8 @@ const absoluteEnv = (environment: Environment, name: string): string | undefined
 /**
  * The place of a per-user file: below the state home when that variable holds an absolute path, else below `.local/state`
  * of the user home. It is null when neither variable names a folder. A path inside the folder of Claude Code is refused.
- * The two paths are compared as they are written, and again with their links resolved. On macOS the comparison ignores
- * the case of letters. A link that cannot be resolved is an error.
+ * The two paths are compared as they are written, and no call of the file system is made: nothing asks about the folder
+ * of Claude Code, and a link into it is not detected. On macOS the comparison ignores the case of letters.
  */
 export const userStatePathOf = async (deps: Deps, fileName: string): Promise<CliResult<string | null>> => {
   const userHome = absoluteEnv(deps.env, env.userHome);
@@ -32,9 +32,7 @@ export const userStatePathOf = async (deps: Deps, fileName: string): Promise<Cli
   const path = join(stateHome, program, fileName);
   if (userHome === undefined) return ok(path);
   const claudeDir = join(userHome, dirs.claude);
-  const inside = await isSameOrInsideFolder(deps, claudeDir, path);
-  if (!inside.ok) return inside;
-  if (inside.value) {
+  if (isWrittenInside(deps, claudeDir, path)) {
     return safetyRefusal(
       `the file would be ${path}, inside ${claudeDir}`,
       `Claude Code owns that folder. Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,

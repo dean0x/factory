@@ -3,6 +3,7 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
 import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps } from './deps.js';
+import { isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
 
 const GIT_TIMEOUT_MS = 15_000;
@@ -261,7 +262,10 @@ export const unstagePaths = (deps: Deps, dir: string, paths: RepoPaths): Promise
 
 /** The paths that a repo tracks, in the order of git, and whether git named more paths than the list can hold. */
 export interface TrackedList {
-  /** At most `maxCount` paths, relative to the top folder of the repo, exactly as git prints them. */
+  /**
+   * At most `maxCount` paths, relative to the top folder of the repo, exactly as git prints them. A path in the user
+   * settings folder of Claude Code is not in the list, so that no reader of the list asks about that folder.
+   */
   readonly paths: readonly string[];
   /** True when the repo tracks more paths than the list holds. A list that reached its cap is never complete. */
   readonly reachedCap: boolean;
@@ -273,7 +277,9 @@ const OUTPUT_TOO_LARGE = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
 /**
  * The paths that the repo at `dir` tracks (`git ls-files -z`). The NUL separator keeps a path with a space or a line break
  * whole. The list holds at most `maxCount` paths. A repo that tracks more gives a list that reached its cap, and output
- * that is larger than the program reads counts the same way. The caller never uses a list that reached its cap.
+ * that is larger than the program reads counts the same way. The caller never uses a list that reached its cap. A path that
+ * is, or is inside, the user settings folder of Claude Code is left out before the count, by its written path: no reader
+ * of tracked files may ask the file system about that folder.
  */
 export const trackedFilesOf = async (
   deps: Deps,
@@ -289,7 +295,10 @@ export const trackedFilesOf = async (
   if (result.value.exitCode !== 0) {
     return failure(`cannot list the tracked files of ${dir}: git exited with ${result.value.exitCode}`);
   }
-  const paths = result.value.stdout.split('\0').filter((path) => path !== '');
+  const userFolder = userClaudeFolderOf(deps);
+  const paths = result.value.stdout
+    .split('\0')
+    .filter((path) => path !== '' && (userFolder === null || !isWrittenInside(deps, userFolder, join(dir, path))));
   return ok({ paths: paths.slice(0, maxCount), reachedCap: paths.length > maxCount });
 };
 

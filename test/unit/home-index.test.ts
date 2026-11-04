@@ -22,7 +22,7 @@ import {
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { changePrivateFile } from '../../src/core/private-file.js';
 import { ok } from '../../src/core/result.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 
 const INDEX = '/state/factory/homes.json';
 const HOME_A = '/w/web-factory';
@@ -103,31 +103,33 @@ describe('home index: the path', () => {
     }
   });
 
-  describe('the folder of Claude Code is compared by real path', () => {
+  describe('the folder of Claude Code is compared by written path', () => {
     const environment = { HOME: '/home/me', XDG_STATE_HOME: '/state' };
+    const underClaude = (seen: readonly string[]): readonly string[] =>
+      seen.filter((path) => path === '/home/me/.claude' || path.startsWith('/home/me/.claude/'));
 
-    it('refuses a state folder that is a link into the folder of Claude Code', async () => {
-      const result = await pathFor(environment, {
+    it('makes no call of the file system at or under the folder of Claude Code', async () => {
+      for (const state of ['/state', '/home/me/.claude/state', '/home/me/.claude', '/home/me/.claude-state']) {
+        const deps = createFakeDeps({ env: { HOME: '/home/me', XDG_STATE_HOME: state }, links: { '/state': '/home/me/.claude/state' } });
+        deps.seedDir('/state');
+        deps.seedDir('/home/me/.claude');
+        const seen: string[] = [];
+        await indexPathOf(withFsWatch(deps, (_method, path) => seen.push(path)));
+        expect(underClaude(seen)).toEqual([]);
+      }
+    });
+
+    it('does not follow a link: a state folder linked into the folder of Claude Code is not detected', async () => {
+      const linkedIn = await pathFor(environment, {
         links: { '/state': '/home/me/.claude/state' },
         folders: ['/state', '/home/me/.claude'],
       });
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    });
-
-    it('refuses a state folder that does not exist yet, below a link into the folder of Claude Code', async () => {
-      const result = await pathFor(
-        { HOME: '/home/me', XDG_STATE_HOME: '/state/deep/er' },
-        { links: { '/state': '/home/me/.claude' }, folders: ['/state', '/home/me/.claude'] },
-      );
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    });
-
-    it('refuses a folder of Claude Code that is a link to the state folder', async () => {
-      const result = await pathFor(environment, {
+      expect(linkedIn).toEqual({ ok: true, value: INDEX });
+      const claudeLinkedOut = await pathFor(environment, {
         links: { '/home/me/.claude': '/state' },
         folders: ['/state', '/home/me/.claude'],
       });
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(claudeLinkedOut).toEqual({ ok: true, value: INDEX });
     });
 
     it('refuses a different letter case on macOS', async () => {
@@ -148,12 +150,6 @@ describe('home index: the path', () => {
       const result = await pathFor(environment, { links: { '/state': '/data/state' }, folders: ['/state', '/home/me/.claude'] });
       expect(result).toEqual({ ok: true, value: INDEX });
     });
-
-    it('stops with the error when it cannot resolve the links of the path', async () => {
-      const deps = createFakeDeps({ env: environment });
-      const result = await indexPathOf({ ...deps, fs: { ...deps.fs, realpath: async () => failure('cannot resolve /: EACCES') } });
-      expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('EACCES') } });
-    });
   });
 
   describe('with a real file system', () => {
@@ -173,9 +169,10 @@ describe('home index: the path', () => {
       env: { HOME: join(folder, 'home'), XDG_STATE_HOME: state },
     });
 
-    it('refuses a state folder that is a link into the fake folder of Claude Code', async () => {
-      expect(await indexPathOf(realDeps(join(folder, 'via-link')))).toMatchObject({ ok: false, error: { kind: 'safety' } });
-      expect(await indexPathOf(realDeps(join(folder, 'via-link', 'state')))).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    it('does not follow a link into the fake folder of Claude Code, and refuses a written path inside it', async () => {
+      const linked = join(folder, 'via-link');
+      expect(await indexPathOf(realDeps(linked))).toEqual({ ok: true, value: join(linked, 'factory', 'homes.json') });
+      expect(await indexPathOf(realDeps(join(folder, 'home', '.claude', 'state')))).toMatchObject({ ok: false, error: { kind: 'safety' } });
     });
 
     it('accepts a state folder that holds no link into it', async () => {

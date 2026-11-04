@@ -1,11 +1,11 @@
-import { basename, join, relative, resolve, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 import { safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ignoredPathsOf, isWorkTreeRoot, trackedFilesOf, type TrackedList } from '../core/git.js';
 import { originOfHome, type Origin } from '../core/home-index.js';
 import { delegationReport, type DelegationReport } from '../core/owner-record.js';
-import { comparable, isSameOrInside } from '../core/paths.js';
+import { comparable, isSameOrInside, isWrittenInside, userClaudeFolderOf } from '../core/paths.js';
 import { describeProjectPathIssue, projectFolderKey, projectPathIssue } from '../core/project-path.js';
 import { ok } from '../core/result.js';
 import {
@@ -456,18 +456,12 @@ interface SettingsSource {
 
 const isSettingsName = (name: string): boolean => name.startsWith(claudeSettings.prefix) && name.endsWith(claudeSettings.suffix);
 
-/** The user settings folder of Claude Code, as it is written. A check never reads in it: its settings are the choice of the user. */
-const userSettingsFolder = (deps: Deps): string | null => {
-  const userHome = deps.env[env.userHome];
-  return userHome === undefined || userHome === '' ? null : join(resolve(userHome), dirs.claude);
-};
-
 /**
- * True when `path` is the user settings folder or is inside it. The two paths are compared as they are written, with the
- * case rule of the platform. No call of the file system is made, so that nothing asks about the user settings folder.
+ * True when `path` is the user settings folder of Claude Code or is inside it. A check never reads in it: its settings are
+ * the choice of the user. The two paths are compared as they are written, so that nothing asks about that folder.
  */
 const inUserFolder = (deps: Deps, userFolder: string | null, path: string): boolean =>
-  userFolder !== null && isSameOrInside(comparable(deps, userFolder), comparable(deps, resolve(path)));
+  userFolder !== null && isWrittenInside(deps, userFolder, path);
 
 interface FolderSettings {
   readonly sources: readonly SettingsSource[];
@@ -617,7 +611,7 @@ export const scanSettings = async (
   tracked: readonly string[],
 ): Promise<readonly RootFinding[]> => {
   const id = checkIds.permissionMode;
-  const userFolder = userSettingsFolder(deps);
+  const userFolder = userClaudeFolderOf(deps);
   const folders = [
     { path: home, presence: null },
     { path: join(home, dirs.coordinator), presence: `the ${roles.coordinator} folder` },

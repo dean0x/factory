@@ -899,8 +899,9 @@ describe('the instruction files (TP-32, TP-34)', () => {
     expect(withText(/\bhomedir\b|\buserInfo\b/)).toEqual([]);
   });
 
-  it('keeps the settings scan from resolving links on the user Claude folder: root-content.ts calls neither realPathOf nor isSameOrInsideFolder', () => {
-    expect(withText(/\brealPathOf\b|\bisSameOrInsideFolder\b/).filter((path) => path === 'commands/root-content.ts')).toEqual([]);
+  it('keeps the readers from resolving links on the user Claude folder: root-content.ts, private-file.ts and git.ts call neither realPathOf nor isSameOrInsideFolder', () => {
+    const readers = ['commands/root-content.ts', 'core/private-file.ts', 'core/git.ts'];
+    expect(withText(/\brealPathOf\b|\bisSameOrInsideFolder\b/).filter((path) => readers.includes(path))).toEqual([]);
   });
 
   it('builds the path of the user Claude folder in three modules only, and they compare it without a read', () => {
@@ -908,8 +909,8 @@ describe('the instruction files (TP-32, TP-34)', () => {
     // below the user home and the Claude folder needs both words in one module. Another module with both is a new
     // reader of that folder, and this test makes a person look at it first.
     expect(withText(/\benv\.userHome\b/).filter((path) => withText(/\bdirs\.claude\b/).includes(path))).toEqual([
-      'commands/root-content.ts',
       'core/instruction-files.ts',
+      'core/paths.ts',
       'core/private-file.ts',
     ]);
   });

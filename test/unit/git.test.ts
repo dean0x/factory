@@ -389,6 +389,42 @@ describe('git: the tracked files of a repo (TP-167)', () => {
     expect((await listed({ tracked: { [ROOT]: names(4) } }, 3)).result).toMatchObject({ ok: true, value: { reachedCap: true } });
   });
 
+  describe('the user settings folder of Claude Code', () => {
+    const tracked = ['a.md', '.claude/x.json', '.claude/rules/y.md', '.claudex/z.md', '.CLAUDE/w.md'];
+    const listedFor = (env: Record<string, string>, os: string, max?: number) => {
+      const { handler } = gitHandler({ repos: { [ROOT]: {} }, tracked: { [ROOT]: tracked } });
+      return trackedFilesOf(createFakeDeps({ run: handler, env, os }), ROOT, ...(max === undefined ? [] : [max]));
+    };
+
+    it('leaves out a path in it, by the written path, when the folder is the user home folder', async () => {
+      expect(await listedFor({ HOME: ROOT }, 'linux')).toEqual({
+        ok: true,
+        value: { paths: ['a.md', '.claudex/z.md', '.CLAUDE/w.md'], reachedCap: false },
+      });
+    });
+
+    it('ignores the case of letters on macOS only', async () => {
+      expect(await listedFor({ HOME: ROOT }, 'darwin')).toEqual({
+        ok: true,
+        value: { paths: ['a.md', '.claudex/z.md'], reachedCap: false },
+      });
+    });
+
+    it('leaves out the path when the folder is above the user home folder', async () => {
+      const { handler } = gitHandler({ repos: { '/': {} }, tracked: { '/': ['r/.claude/x.json', 'r/b.md'] } });
+      const result = await trackedFilesOf(createFakeDeps({ run: handler, env: { HOME: ROOT }, os: 'linux' }), '/');
+      expect(result).toEqual({ ok: true, value: { paths: ['r/b.md'], reachedCap: false } });
+    });
+
+    it('keeps every path when HOME is not set, and counts the cap without the left-out paths', async () => {
+      expect(await listedFor({}, 'linux')).toMatchObject({ ok: true, value: { paths: tracked } });
+      expect(await listedFor({ HOME: ROOT }, 'linux', 3)).toEqual({
+        ok: true,
+        value: { paths: ['a.md', '.claudex/z.md', '.CLAUDE/w.md'], reachedCap: false },
+      });
+    });
+  });
+
   it('says that the list reached its cap when the output of git is larger than the program reads', async () => {
     const { result } = await listed({}, undefined, () => failure('cannot run git: ERR_CHILD_PROCESS_STDIO_MAXBUFFER'));
     expect(result).toEqual({ ok: true, value: { paths: [], reachedCap: true } });
