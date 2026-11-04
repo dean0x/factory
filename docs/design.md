@@ -279,7 +279,7 @@ factory tracker set <id> [--project P] [--items X] [--decisions X]   # change th
 factory tracker status                      # the board of each project, and the check of its decision store
 factory state remote <url|path> | push | pull   # set the private backup place of the saved state, and copy the state to it or from it (§4.3)
 
-factory worker new <name> --project P [--copy PATH] [--assignment FILE]
+factory worker new <id> --project P [--yes] [--copy PATH] [--assignment FILE]
 factory worker list [--json]                # the live workers table
 factory worker send <worker> (--file F | --text T)   # put a message in the inbox of the worker, and ring its doorbell
 factory worker relay <worker> --decision D-n   # type owner input from a decision that the owner recorded
@@ -656,6 +656,15 @@ children: []                 # nodes this node manages, each { id, address } (§
   - The quota fields are `rate_limits.five_hour.used_percentage` and `rate_limits.seven_day.used_percentage`. They exist only for claude.ai subscribers, and only after the first API response. Each window can be absent. Absent means unknown.
   - The cost field is `cost.total_cost_usd`. It is an estimate at list price.
 - **Settings in work copies.** Before a worker starts in a work copy, factory checks the Claude Code settings files of that work copy for a setting that skips permission prompts. If it finds one, the start exits 4 with one remedy line (§4.3, "Stops and warnings"). The check runs for every start of a worker, also for `restart` and `reboot`.
+- **`worker new <id> --project P [--yes]`.** The command makes one worker. It runs the same checks as `start` first (the tools, the safety block, the instruction-file warning), and it needs the tmux session of the node. With no session it exits 3 and names `factory start`. Before it writes anything, it checks that the project is listed and that the id is a slug, is not the node id, has no record, has no work copy folder and has no branch `worker/<id>` in the clone (exit 2). It checks that `work-copies/` and `work-copies/<project>/` are not a link or a file (exit 4), and it asks for the consent to write the hook settings (above). Then it does these steps in order:
+  1. `git worktree add -b worker/<id> work-copies/<project>/<id>` in the clone of the project. The new branch starts at the head of the clone.
+  2. It writes the record of the worker, before the launch, so the hook of the session can write its last-seen line (§4.6, "Last-seen hook").
+  3. It adds the entry `/.claude/settings.local.json` to `info/exclude` in the common git folder of the clone, once. The file is shared by all work copies of the clone, so a work copy that holds only the hook settings counts as clean (§4.11, "Pushed"). It keeps every other line. It writes the file under a lock file with an atomic rename, and it refuses a link at the folder or at the file.
+  4. It writes the hook settings file of the work copy. With a terminal window and no `--yes`, the question comes here, after the work copy and the record exist.
+  5. It prints the warning about the machine, the same check as `factory machine`. The warning never stops the command.
+  6. It launches the worker (above), in a new pane of the `workers` window, and it marks the pane `@worker`.
+
+  A failure after step 1 keeps the work copy and the record and undoes nothing. The message names `factory dismiss <id>`. The output is two short lines, or the object `factory.worker-new/v1` with `--json`.
 - **Fixtures from the real program.** FAC-M4 captures one payload for each hook event from the installed Claude Code. It commits them as test fixtures. The hook tests parse these fixtures. The four hook payloads come from Claude Code 2.1.318 in print mode (`test/fixtures/claude/payloads.json`). Print mode draws no status line, so the status line payload is built from the field names of the devflow HUD, which reads the live payload; checked against the Claude Code status line docs. The fixture marks it as not captured. The tests of the wrapper (`test/unit/statusline.test.ts`) parse it. An interactive capture replaces it.
 - **No reads under `~/.claude`.** The last-seen file gives every fact that the scripts read under `~/.claude` today: the last activity (working, idle, stopped), the session id (to resume a worker after a restart) and the context percent. So no factory code and no role template reads or copies a file under `~/.claude`. The instruction "avoid reads under ~/.claude" is not necessary, and the templates do not contain it. A static test fails on any code path that opens a file there.
 

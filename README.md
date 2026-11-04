@@ -24,6 +24,7 @@ You need:
 | --- | --- |
 | `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
+| `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
 | `factory doctor` | Run 25 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
@@ -197,6 +198,28 @@ The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy co
 `start` also makes sure that `coordinator/.claude/settings.local.json` holds the last-seen hook and the status line wrapper (`factory hook EVENT` and `factory hook statusline`). It prints the exact change and the file first, then it asks (the default is no) in a terminal window. It keeps every other key of the file, and it names a status line that it replaces. After your answer, `start` reads the file again. If the file changed in the meantime so that the change differs from the one you saw, `start` writes nothing and exits with code 1. `--yes` is the yes outside a factory session. With no terminal window and no `--yes`, `start` writes nothing, starts nothing and exits with code 2. Inside a factory session, `--yes` gives no consent, so the exit code is also 2, also in a terminal window. Run the command outside the factory session, or answer the question without `--yes`. If you answer no, `start` goes on without the hook and prints one line: factory has no last-seen record of the coordinator, so a restart or a reboot can not resume the session by its id. To add the hook later, run `start` again and answer yes. When the entries are in place, `start` asks nothing and writes nothing, and the file gives no warning. `--dry-run` shows the change and writes nothing. A link at `.claude/` or at the file, or a real path outside `coordinator/`, stops `start` with exit code 4. A file that is not a JSON object stops it with exit code 1 and stays as it is.
 
 A second `start` starts no second coordinator. It attaches to the session. If the program of the coordinator has ended, `start` says so and names the commands that remove the session and start it again. `--dry-run` prints the tmux calls and starts no session. `start` counts a `factory.yaml` only at a registered factory (see "Find the factory folder"). So a `factory.yaml` that a cloned repo holds never starts a session.
+
+### Make a worker
+
+```sh
+factory worker new alpha --project web
+factory worker new alpha --project web --yes
+```
+
+`worker new` makes one worker. The session of the node must run, so run `factory start` first. Without the session, `worker new` exits with code 3 and names `factory start`. It runs the same checks as `start`: the tools, the safety block, the stops for the settings files, and the warning for instruction files. A stop exits with code 4, and nothing changes.
+
+Before the first change, `worker new` checks these facts, and it exits with code 2 when one is false: the project is listed in the config, the id is a slug, the id is not the id of the node, and the id has no record, no folder in `work-copies/` and no branch `worker/ID` in the clone. It exits with code 4 when `work-copies/` or `work-copies/PROJECT/` is a link or a file.
+
+Then it does these steps in order:
+
+1. It makes the work copy `work-copies/PROJECT/ID` with `git worktree add -b worker/ID`. The new branch starts at the head of the clone.
+2. It writes the record of the worker in `.factory/workers/ID/`.
+3. It adds the line `/.claude/settings.local.json` to `info/exclude` in the git folder of the clone, once. Git then shows the work copy as clean when it holds only the hook settings.
+4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
+5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
+6. It starts the worker in a new pane of the window `workers`. The worker gets one `--add-dir`, its inbox folder.
+
+If a step after the first fails, the work copy and the record stay, and nothing is undone. The message names `factory dismiss ID` as the command that ends the worker. That command comes in a later version. Until then, remove the work copy with `git worktree remove`.
 
 ### Child nodes
 
