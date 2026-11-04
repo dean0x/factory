@@ -9,19 +9,12 @@ import { ok } from '../core/result.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import { toolNames } from '../core/tools.js';
 import { workerLaunchArgv } from '../launch/argv.js';
-import {
-  isPaneId,
-  killPaneArgs,
-  paneListArgs,
-  parsePaneListSoft,
-  setPaneOptionArgs,
-  splitWorkerPaneArgs,
-  tileWorkersArgs,
-} from '../launch/tmux.js';
+import { isPaneId, killPaneArgs, setPaneOptionArgs, splitWorkerPaneArgs, tileWorkersArgs } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
 import { commandLines, commands, commandText, dirs, env, keys, places, roles, tmuxNames, values } from '../names.js';
 import { checkProxyHealth, type ProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
+import { confirmLaunch } from './confirm.js';
 import { workCopyOf } from './registry.js';
 
 /**
@@ -283,21 +276,6 @@ const markPane = async (deps: Deps, pane: string, workerId: string): Promise<Cli
 };
 
 /**
- * Reads the pane list once and requires the new pane to run. A pane that ended at once, or that is not in the list, is a failed
- * launch. A pane with a strange worker mark does not stop this check. Nothing is undone: the pane stays for a person to read.
- */
-const requireRunningPane = async (deps: Deps, session: string, pane: string, workerId: string): Promise<CliResult<void>> => {
-  const remedy = `Run ${tryAgain(workerId)}.`;
-  const listed = await tmuxStep(deps, paneListArgs(session));
-  if (!listed.ok) return failure(`cannot check the pane ${pane}: ${listed.error.message}`, remedy);
-  const rows = parsePaneListSoft(listed.value);
-  if (!rows.ok) return failure(`cannot check the pane ${pane}: ${rows.error}`, remedy);
-  const row = rows.value.find((candidate) => candidate.paneId === pane);
-  if (row !== undefined && !row.dead) return ok(undefined);
-  return failure(`the pane ${pane} of the ${roles.worker} ${workerId} ${row === undefined ? 'is gone' : 'ended'} at once`, remedy);
-};
-
-/**
  * Starts the program of a worker in a new pane of the workers window, in its work copy. In order:
  * 1. the work copy, which must be exactly the folder of this worker below the work copies folder with no link in its path, and its
  *    settings files (a failure is exit 4, and nothing starts);
@@ -306,7 +284,9 @@ const requireRunningPane = async (deps: Deps, session: string, pane: string, wor
  * 4. the argument list, with auto mode and the resume id when there is one;
  * 5. the pane, and the worker mark on the pane id;
  * 6. the tile of the workers window, so that the next launch finds room (a failed tile is a warning);
- * 7. for a launch with a resume id: one read of the pane list, because a resume of a session that does not exist ends at once.
+ * 7. the wait for the pane to prove itself (`confirmLaunch`): the pane must still run the launch after the first wait, and a launch
+ *    with a resume id must also see the SessionStart line of the new session. A pane that ends is exit 1. A resume that the line
+ *    does not confirm is exit 3 with "resume not confirmed". Nothing is undone: the pane stays for a person to read.
  * The caller makes the work copy and the record, and it checks that the tmux session is its own.
  */
 export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Promise<CliResult<WorkerLaunch>> => {
@@ -334,15 +314,20 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   if (!argv.ok) return failure(argv.error);
 
   const session = config.core.node.id;
+  const launchedAt = deps.now();
   const pane = await startPane(deps, session, workerId, workCopy, argv.value);
   if (!pane.ok) return pane;
   const marked = await markPane(deps, pane.value, workerId);
   if (!marked.ok) return marked;
   const tileWarnings = await tilePanes(deps, session);
-  if (resumeId !== undefined) {
-    const running = await requireRunningPane(deps, session, pane.value, workerId);
-    if (!running.ok) return running;
-  }
+  const confirmed = await confirmLaunch(deps, {
+    home,
+    paneId: pane.value,
+    workerId,
+    launchedAt,
+    resuming: resumeId !== undefined,
+  });
+  if (!confirmed.ok) return confirmed;
   return ok({
     paneId: pane.value,
     proxy: proxy.value.label,

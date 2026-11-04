@@ -91,6 +91,33 @@ export const requireBoundPane = async (deps: Deps, request: BindRequest): Promis
 };
 
 /**
+ * What one read of a pane that a launch made finds: `running` (the program runs and the start command is the launch of the
+ * worker), `ended` (the program ended and tmux keeps the pane), `gone` (tmux has no such pane any more) or `other` (the pane is
+ * there, but its start command is not the launch of the worker).
+ */
+export type PaneLife = 'running' | 'ended' | 'gone' | 'other';
+
+/**
+ * Reads the pane that a launch made, by its id, and tells if the program of the launch of this worker still runs in it. The pane
+ * id was printed by the launch itself, so a pane that tmux can not read is `gone`: tmux removes a pane when its program ends,
+ * unless the window keeps it. The mark of the pane is not read, because the question is only if the launch still runs. A call that
+ * tmux does not answer, and an answer that is not the line of this pane, are failures.
+ */
+export const readPaneLife = async (deps: Deps, request: Omit<BindRequest, 'again'>): Promise<CliResult<PaneLife>> => {
+  const { home, paneId, workerId } = request;
+  const args = paneBindArgs(paneId, workerId);
+  if (!args.ok) return failure(args.error);
+  const read = await tmuxCall(deps, args.value);
+  if (!read.ok) return failure(`cannot read the pane ${paneId}: ${read.error.message}`);
+  if (read.value.exitCode !== 0) return ok('gone');
+  const bind = parsePaneBind(read.value.stdout);
+  if (!bind.ok) return failure(`cannot read the pane ${paneId}: ${bind.error}`);
+  if (bind.value.paneId !== paneId) return failure(`cannot read the pane ${paneId}: the read gives another pane`);
+  if (!startsWorker(bind.value.startCommand, home, workerId)) return ok('other');
+  return ok(bind.value.dead ? 'ended' : 'running');
+};
+
+/**
  * Ends a pane by its id. A pane id is never used again by the same tmux server, so the id names this pane and no other. The value
  * is `gone` when the pane did not exist any more: tmux removes a pane when its program ends, unless the window keeps it.
  */

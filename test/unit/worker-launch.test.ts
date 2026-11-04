@@ -4,11 +4,12 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
-import { parentSessionEnv } from '../../src/names.js';
+import { launchConfirm, parentSessionEnv } from '../../src/names.js';
 import { launchWorker, newProxyAnswers, type WorkerLaunch, type WorkerLaunchRequest } from '../../src/workers/launch.js';
 import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { atWait, endsPane, startsSession, withProgram, type Program } from '../helpers/worker-program.js';
 
 const HOME = '/h/node';
 const COPY = '/h/node/work-copies/web/alpha';
@@ -19,6 +20,7 @@ const LOCAL_URL = 'http://127.0.0.1:8080/secret-path';
 const OTHER_URL = 'http://127.0.0.1:9090';
 const UUID = '0b9f3c1e-5d2a-4e7b-9c10-a1b2c3d4e5f6';
 const FIRST_NEW_PANE = '%3';
+const POINTER = '/h/node/.factory/workers/alpha/last-session';
 
 interface Setup {
   readonly tmux?: TmuxFixture;
@@ -28,6 +30,8 @@ interface Setup {
   /** An answer for a tmux call, or undefined to let the fake answer. */
   readonly answer?: (call: RunCall) => CliResult<RunOutput> | undefined;
   readonly work?: readonly string[];
+  /** What the program of a new pane does while the launch waits. Default: a launch with a resume id starts its session. */
+  readonly program?: Program;
 }
 
 interface Made {
@@ -83,10 +87,10 @@ const make = (setup: Setup = {}): Made => {
       base.warn(message);
     },
   };
-  return { deps, tmux: log, events };
+  return { deps: withProgram(deps, log, setup.program ?? startsSession(HOME, 'alpha')), tmux: log, events };
 };
 
-const request = (change: Partial<WorkerLaunchRequest> = {}): WorkerLaunchRequest => ({
+const request =(change: Partial<WorkerLaunchRequest> = {}): WorkerLaunchRequest => ({
   home: HOME,
   config: configWith(),
   workerId: 'alpha',
@@ -163,6 +167,7 @@ describe('the launch of a worker: the pane and the argument list', () => {
       `split-window -d -P -F #{pane_id} -t =demo:workers -c ${COPY} -- ${wordsOf(made.tmux).join(' ')}`,
       `set-option -p -t ${FIRST_NEW_PANE} @worker alpha`,
       'select-layout -t =demo:workers tiled',
+      expect.stringMatching(`^display-message -p -t ${FIRST_NEW_PANE} #\\{pane_id\\}\\|`),
     ]);
     expect(made.tmux.panes().at(-1)).toMatchObject({
       id: FIRST_NEW_PANE,
@@ -330,9 +335,11 @@ describe('the launch of a worker: the window workers stays tiled', () => {
       'tmux split-window',
       'tmux set-option',
       'tmux select-layout',
+      'tmux display-message',
       'tmux split-window',
       'tmux set-option',
       'tmux select-layout',
+      'tmux display-message',
     ]);
   });
 
@@ -371,7 +378,7 @@ describe('the launch of a worker: the proxy (TP-61)', () => {
     const outcome = await launched(made, { proxy: null });
     expect(outcome.proxy).toBeNull();
     expect(made.deps.fetched).toEqual([]);
-    expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux select-layout']);
+    expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux display-message']);
   });
 
   it('checks the proxy of the session once before the pane, and passes its URL', async () => {
@@ -379,7 +386,7 @@ describe('the launch of a worker: the proxy (TP-61)', () => {
     const outcome = await launched(made, { proxy: LOCAL_URL }, { config: configWith({ session: 'local' }) });
     expect(outcome.proxy).toBe('local (127.0.0.1:8080)');
     expect(made.deps.fetched).toEqual([`${LOCAL_URL}/health`]);
-    expect(made.events).toEqual(['fetch', 'tmux split-window', 'tmux set-option', 'tmux select-layout']);
+    expect(made.events).toEqual(['fetch', 'tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux display-message']);
   });
 
   it('prefers the proxy of the worker over the proxy of the session', async () => {
@@ -559,7 +566,7 @@ describe('the launch of a worker: the settings of the work copy (TP-15, TP-16)',
     await launched(made, { proxy: null });
     expect(made.deps.warned).toHaveLength(1);
     expect(made.deps.warned[0]).toContain('is a settings file in a work copy');
-    expect(made.events).toEqual(['warn', 'tmux split-window', 'tmux set-option', 'tmux select-layout']);
+    expect(made.events).toEqual(['warn', 'tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux display-message']);
   });
 
   it('gives no warning for the settings file that the program writes itself', async () => {
@@ -584,7 +591,7 @@ describe('the launch of a worker: the instruction files above the work copy (TP-
     expect(made.deps.warned).toHaveLength(1);
     expect(made.deps.warned[0]).toContain(path);
     expect(made.deps.warned[0]).toContain('Move each file out of those folders, or keep it on purpose');
-    expect(made.events).toEqual(['warn', 'tmux split-window', 'tmux set-option', 'tmux select-layout']);
+    expect(made.events).toEqual(['warn', 'tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux display-message']);
   });
 
   it('names every file that it finds in one line', async () => {
@@ -629,15 +636,23 @@ describe('the launch of a worker: the instruction files above the work copy (TP-
     const made = make();
     made.deps.seed('/h/node/work-copies/CLAUDE.md', '');
     await launched(made, { proxy: LOCAL_URL }, { config: configWith({ session: 'local' }) });
-    expect(made.events).toEqual(['warn', 'fetch', 'tmux split-window', 'tmux set-option', 'tmux select-layout']);
+    expect(made.events).toEqual([
+      'warn',
+      'fetch',
+      'tmux split-window',
+      'tmux set-option',
+      'tmux select-layout',
+      'tmux display-message',
+    ]);
   });
 });
 
 describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
-  const listCalls = (made: Made): readonly string[][] =>
-    made.tmux.calls.filter((call) => call.args[0] === 'list-panes').map((call) => [...call.args]);
+  /** The panes that the launch read after the start, in order. */
+  const readPanes = (made: Made): readonly string[] =>
+    made.tmux.calls.filter((call) => call.args[0] === 'display-message').map((call) => call.args[3] ?? '');
 
-  it('passes the id once after --resume, before the folder, and reads the pane list once after the mark', async () => {
+  it('passes the id once after --resume, before the folder, and reads the new pane by its id after the mark', async () => {
     const made = make();
     const outcome = await launched(made, { proxy: null }, { resumeId: UUID });
     expect(outcome.paneId).toBe(FIRST_NEW_PANE);
@@ -645,14 +660,39 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     expect(words.filter((word) => word === '--resume')).toHaveLength(1);
     expect(words[words.indexOf('--resume') + 1]).toBe(UUID);
     expect(words.indexOf('--resume')).toBeLessThan(words.indexOf('--add-dir'));
-    expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux list-panes']);
-    expect(listCalls(made)).toEqual([['list-panes', '-s', '-t', '=demo:', '-F', '#{pane_id}|#{pane_pid}|#{pane_dead}|#{@worker}']]);
+    expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux display-message']);
+    expect(readPanes(made)).toEqual([FIRST_NEW_PANE]);
   });
 
   it('checks the proxy before the pane for a resume, too', async () => {
     const made = make();
     await launched(made, { proxy: LOCAL_URL }, { resumeId: UUID, config: configWith({ session: 'local' }) });
-    expect(made.events).toEqual(['fetch', 'tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux list-panes']);
+    expect(made.events).toEqual(['fetch', 'tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux display-message']);
+  });
+
+  it('waits before each check, and confirms at the check where the SessionStart line of the new session shows', async () => {
+    const made = make({ program: atWait(4, startsSession(HOME, 'alpha')) });
+    await launched(made, { proxy: null }, { resumeId: UUID });
+    expect(made.deps.sleeps).toEqual([launchConfirm.intervalMs, launchConfirm.intervalMs, launchConfirm.intervalMs, launchConfirm.intervalMs]);
+    expect(readPanes(made)).toEqual([FIRST_NEW_PANE, FIRST_NEW_PANE, FIRST_NEW_PANE, FIRST_NEW_PANE]);
+  });
+
+  it('is not confirmed (exit 3) when no line shows within the bound, and it keeps the pane', async () => {
+    const made = make({ program: () => undefined });
+    const error = await failed(made, { resumeId: UUID });
+    expect(error.kind).toBe('not-ready');
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain(`resume not confirmed: the pane ${FIRST_NEW_PANE} of the worker alpha runs`);
+    expect(made.deps.sleeps).toHaveLength(launchConfirm.attempts);
+    expect(readPanes(made)).toHaveLength(launchConfirm.attempts);
+    expect(made.events).not.toContain('tmux kill-pane');
+    expect(panesOf(made)).toBe(START_PANES + 1);
+  });
+
+  it('reads the line of the worker again at each check, so that a line that appears late still confirms', async () => {
+    const made = make({ program: atWait(launchConfirm.attempts, startsSession(HOME, 'alpha')) });
+    await launched(made, { proxy: null }, { resumeId: UUID });
+    expect(made.deps.sleeps).toHaveLength(launchConfirm.attempts);
   });
 
   it.each([['not-a-uuid'], [UUID.toUpperCase()], [`${UUID} --dangerously-skip-permissions`], ['--resume']])(
@@ -667,15 +707,16 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     },
   );
 
-  it('reports a pane that is dead at once as a failed launch, names the pane, and offers resume only', async () => {
+  it('reports a pane that is dead at once as a failed resume (exit 1), names the pane, and names the pointer file to delete', async () => {
     const made = make({ tmux: { newPanesEndAtOnce: true } });
     const error = await failed(made, { resumeId: UUID });
     expect(error.kind).toBe('failure');
     expect(exitCodeOf[error.kind]).toBe(1);
-    expect(error.message).toContain(FIRST_NEW_PANE);
-    expect(error.message).toContain('alpha');
-    expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
-    expect(listCalls(made)).toHaveLength(1);
+    expect(error.message).toBe(`resume failed: the pane ${FIRST_NEW_PANE} of the worker alpha ended after the start`);
+    expect(error.hint).toContain(`delete the file ${POINTER}. Then run "factory worker resume alpha".`);
+    expect(error.hint).not.toContain('dismiss');
+    expect(readPanes(made)).toEqual([FIRST_NEW_PANE]);
+    expect(made.deps.sleeps).toHaveLength(1);
   });
 
   it('keeps the pane and its mark after a failed launch: nothing is undone', async () => {
@@ -685,36 +726,46 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     expect(made.events).not.toContain('tmux kill-pane');
   });
 
-  it('reads the dead flag only after a launch with a resume id', async () => {
-    const made = make({ tmux: { newPanesEndAtOnce: true } });
-    const outcome = await launched(made, { proxy: null });
-    expect(outcome.paneId).toBe(FIRST_NEW_PANE);
-    expect(listCalls(made)).toEqual([]);
+  it('reports a pane that tmux removed during the wait as gone, and stops the wait there', async () => {
+    const made = make({ program: atWait(3, endsPane) });
+    const error = await failed(made, { resumeId: UUID });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe(`resume failed: the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
+    expect(made.deps.sleeps).toHaveLength(3);
   });
 
-  it('reports a pane that is not in the list as a failed launch', async () => {
-    const made = make({ answer: (call) => (call.args[0] === 'list-panes' ? exited(0, '%0|4000|0|\n%1|4001|0|\n') : undefined) });
+  it('counts a pane that tmux can not read as gone', async () => {
+    const made = make({ tmux: { failing: 'display-message' } });
     const error = await failed(made, { resumeId: UUID });
-    expect(error.kind).toBe('failure');
-    expect(error.message).toContain(FIRST_NEW_PANE);
-    expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('is gone');
   });
 
-  it('reports a pane list that tmux can not give as a failure, and keeps the pane', async () => {
-    const made = make({ tmux: { failing: 'list-panes' } });
+  it('reports a pane whose start command is not the launch of the worker as failed, and keeps the pane', async () => {
+    const made = make({
+      answer: (call) => (call.args[0] === 'display-message' ? exited(0, `${FIRST_NEW_PANE}|4000|0|1|0|0|0|sleep 300\n`) : undefined),
+    });
     const error = await failed(made, { resumeId: UUID });
-    expect(error.kind).toBe('failure');
-    expect(error.message).toContain('list-panes');
-    expect(error.hint).toContain('factory worker resume alpha');
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe(`resume failed: the pane ${FIRST_NEW_PANE} of the worker alpha no longer runs the launch of the worker`);
+    expect(made.events).not.toContain('tmux kill-pane');
+  });
+
+  it('reports a call of tmux that does not run as a failure, and keeps the pane', async () => {
+    const made = make({ answer: (call) => (call.args[0] === 'display-message' ? failure('tmux did not answer in time') : undefined) });
+    const error = await failed(made, { resumeId: UUID });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe(`cannot read the pane ${FIRST_NEW_PANE}: tmux did not answer in time`);
+    expect(error.hint).toBe('Run "factory worker list" to see if the worker alpha has a live pane.');
     expect(panesOf(made)).toBe(START_PANES + 1);
   });
 
-  it('reports a pane list with a malformed line as a failure', async () => {
-    const made = make({ tmux: { panes: [{ session: 'demo', pid: 0 }] } });
+  it('reports an answer that is not the line of one pane as a failure', async () => {
+    const made = make({ answer: (call) => (call.args[0] === 'display-message' ? exited(0, 'zzz-odd-output\n') : undefined) });
     const error = await failed(made, { resumeId: UUID });
-    expect(error.kind).toBe('failure');
-    expect(error.message).toContain('line');
-    expect(error.hint).toContain('factory worker resume alpha');
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(`cannot read the pane ${FIRST_NEW_PANE}`);
+    expect(error.message).not.toContain('zzz-odd-output');
   });
 
   it('is not blocked by a pane whose worker mark is not a worker id', async () => {
@@ -734,6 +785,35 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     });
     const outcome = await launched(made, { proxy: null }, { resumeId: UUID });
     expect(outcome.paneId).toBe('%5');
+  });
+});
+
+describe('the launch of a worker: a launch with no resume id checks the pane once', () => {
+  const readPanes = (made: Made): number => made.tmux.calls.filter((call) => call.args[0] === 'display-message').length;
+
+  it('waits one interval, reads the pane once, and needs no line of the worker', async () => {
+    const made = make({ program: () => undefined });
+    const outcome = await launched(made, { proxy: null });
+    expect(outcome.paneId).toBe(FIRST_NEW_PANE);
+    expect(made.deps.sleeps).toEqual([launchConfirm.intervalMs]);
+    expect(readPanes(made)).toBe(1);
+  });
+
+  it('fails when the pane is dead at once, and offers the resume command only', async () => {
+    const made = make({ tmux: { newPanesEndAtOnce: true } });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe(`the pane ${FIRST_NEW_PANE} of the worker alpha ended after the start`);
+    expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
+    expect(made.tmux.panes().at(-1)).toMatchObject({ id: FIRST_NEW_PANE, dead: true, options: { '@worker': 'alpha' } });
+  });
+
+  it('fails when tmux removed the pane during the wait', async () => {
+    const made = make({ program: atWait(1, endsPane) });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
+    expect(error.hint).not.toContain(POINTER);
   });
 });
 

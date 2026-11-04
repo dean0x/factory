@@ -27,7 +27,7 @@ You need:
 | `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
-| `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker. See "Resume a worker". |
+| `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker, and it says "Resumed" only after the new session wrote its SessionStart line. See "Resume a worker". |
 | `factory worker summon ID [--for TIME]` | Show the pane of the worker in the slot of the window `view` for `TIME` (default 15m, from 1m to 2h). The board comes back by itself. See "Summon a worker". |
 | `factory layout` | Make the window `workers` if it is missing, tile its panes, and put the board back in the slot of the window `view` after a summon. See "Make the windows again". |
 | `factory doctor` | Run 25 checks. See "Doctor". |
@@ -222,7 +222,7 @@ Then it does these steps in order:
 3. It adds the line `/.claude/settings.local.json` to `info/exclude` in the git folder of the clone, once. Git then shows the work copy as clean when it holds only the hook settings.
 4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
-6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its inbox folder.
+6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its inbox folder. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
 
 If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. The command `factory dismiss` is not built in this version.
 
@@ -268,6 +268,12 @@ factory worker resume alpha
 `worker resume` starts a stopped worker again, in a new pane of the window `workers`, in its work copy. It runs the same checks as `worker new`: the tools, the safety block, the stops for the settings files (exit code 4, and nothing changes), and the tmux session of the node (exit code 3, and the message names `factory start`). The id must have a record, else the command exits with code 2. It exits with code 2 when a live pane of the worker exists: the worker runs already. A pane of the worker whose program has ended is removed first. If a summon left that pane in the slot of the window `view`, the board comes back into the slot first.
 
 The new program continues the earlier conversation of the worker, with `--resume`, only when the last-seen line belongs to the worker. A program in a pane can write the pointer to its own last session, so the command checks three facts: the session id is a UUID, the line records the id of this worker as its session marker, and no other worker has a pointer to the same session. The session of the coordinator and the session of another worker never pass. If a check fails, or the worker has no valid line, the command starts a new conversation and prints one warning. The warning says that the earlier conversation is NOT resumed, why, and that a new conversation starts.
+
+A resume with `--resume` prints "Resumed" only after the new session proves itself. The command checks up to 10 times, one second apart. At each check, the pane must still run the launch of the worker, and the last-seen line of the worker must hold the event `SessionStart`, written after the start, with the id of the worker as its session marker. The exit codes are these:
+
+- 0: the session proved itself. The command prints "Resumed".
+- 1: the pane is gone or its program ended. The message starts with "resume failed". A usual cause is a pointer to a session that has no transcript. To start a new conversation, delete the file `.factory/workers/ID/last-session` (the message gives the full path), then run `factory worker resume ID`.
+- 3: the pane runs, but no matching line came within 10 seconds. The message starts with "resume not confirmed" and names the pane. Run `factory worker summon ID` to look at it. If the earlier conversation did not load, run `factory worker stop ID`, delete the same file, and run `factory worker resume ID`.
 
 ### Summon a worker
 

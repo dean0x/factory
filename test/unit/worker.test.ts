@@ -6,7 +6,7 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { maxFileBytes, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { launchConfirm, maxFileBytes, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -28,6 +28,7 @@ import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { launchWordsOf } from '../helpers/worker-launch-words.js';
+import { atWait, endsPane, startsSession, withProgram, type Program } from '../helpers/worker-program.js';
 
 const HOME = '/w/node';
 const CLONE = '/w/node/web';
@@ -120,6 +121,8 @@ interface Setup {
   readonly notRepo?: boolean;
   /** After a TERM, a process still runs for this many checks, and then it ends. Default: 0. */
   readonly termEndsAfterChecks?: number;
+  /** What the program of a new pane does while the launch waits. Default: nothing, the pane stays alive and writes nothing. */
+  readonly program?: Program;
 }
 
 interface Made {
@@ -267,7 +270,13 @@ const make = (setup: Setup = {}): Made => {
       base?.warn(message);
     },
   };
-  return { deps, tmux: log, events, files: new Map(base.files), dirs: new Set(base.dirs) };
+  return {
+    deps: setup.program === undefined ? deps : withProgram(deps, log, setup.program),
+    tmux: log,
+    events,
+    files: new Map(base.files),
+    dirs: new Set(base.dirs),
+  };
 };
 
 /** The coordinator file of an earlier package: the safety block is intact, but its text differs from the one that the package renders. */
@@ -920,6 +929,32 @@ describe('worker new: a failure after the work copy exists', () => {
     expect(made.deps.files.get(EXCLUDE)).toBe(`${TEMPLATE}${ENTRY}\n`);
   });
 
+  it('fails when the new pane ends after the start, and names the steps that remove the worker by hand', async () => {
+    const made = make({ program: atWait(1, endsPane) });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone`);
+    expectKeptCopyHint(error);
+    expect(error.hint).toContain(RESUME);
+    expect(made.deps.dirs.has(COPY)).toBe(true);
+    expect(made.deps.files.has(RECORD)).toBe(true);
+  });
+
+  it('fails when the program of the new pane ended at once and tmux keeps the pane', async () => {
+    const made = make({ tmux: { newPanesEndAtOnce: true } });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha ended`);
+    expectKeptCopyHint(error);
+  });
+
+  it('checks the new pane once, after one wait, and then reports the worker', async () => {
+    const made = make();
+    const output = await succeeded(made);
+    expect(plainText(output)).toContain(`It runs in the pane ${FIRST_NEW_PANE}`);
+    expect(made.deps.sleeps).toEqual([launchConfirm.intervalMs]);
+  });
+
   it('undoes nothing: it runs no remove call and no git call besides the first one', async () => {
     const made = make({ tmux: { failing: 'split-window' } });
     await failed(made);
@@ -1023,6 +1058,8 @@ interface SeedLine {
   readonly event?: HookEvent | null;
   /** The session marker of the line. Null: the line has none. Default: alpha. */
   readonly marker?: string | null;
+  /** The time of the event. Default: `SEEN_AT`, which is the time of the fake clock at the start of a run. */
+  readonly at?: string;
 }
 
 interface Seeded {
@@ -1043,7 +1080,7 @@ const lineText = (line: SeedLine): string => {
     schema: schemaIds.lastSeen,
     session_id: line.session,
     event,
-    event_at: event === null ? null : SEEN_AT,
+    event_at: event === null ? null : (line.at ?? SEEN_AT),
     context_pct: event === null ? 40 : null,
     pct_at: event === null ? SEEN_AT : null,
     ...(marker === null ? {} : { session_marker: marker }),
@@ -1053,9 +1090,10 @@ const lineText = (line: SeedLine): string => {
 /**
  * The made fake, with the records of the workers alpha (unless the setup says no) and beta, the work copy of alpha with its
  * settings file, and the pointers and lines of the setup. The files and the events of the setup do not count as changes.
+ * The program of a pane that resumes a session starts that session, unless the setup gives another program.
  */
 const withWorkers = async (setup: Setup = {}, change: Seeded = {}): Promise<Made> => {
-  const made = make(setup);
+  const made = make({ program: startsSession(HOME, 'alpha'), ...setup });
   const { deps } = made;
   const must = (result: { readonly ok: boolean; readonly error?: { readonly message: string } }): void => {
     if (!result.ok) throw new Error(result.error?.message ?? 'the seed failed');
@@ -1342,10 +1380,13 @@ describe('worker resume: the session of the worker (TP-30)', () => {
     });
   });
 
-  it('makes no work copy, no record and no file', async () => {
+  it('makes no work copy, no record and no file, besides the line that the hook of the new session writes', async () => {
     const made = await withWorkers();
     await resumed(made);
-    expect(new Map(made.deps.files)).toEqual(made.files);
+    const heartbeat = `${layoutOf(HOME).heartbeatDir}/`;
+    const withoutLines = (files: ReadonlyMap<string, string>): Map<string, string> =>
+      new Map([...files].filter(([path]) => !path.startsWith(heartbeat)));
+    expect(withoutLines(made.deps.files)).toEqual(withoutLines(made.files));
     expect(made.events).not.toContain('git worktree-add');
   });
 
@@ -1407,6 +1448,134 @@ describe('worker resume: the session of the worker (TP-30)', () => {
     expect(error.message).toContain('does not answer');
     expect(error.hint).toContain('"factory worker resume alpha"');
     expect(made.events).not.toContain('tmux split-window');
+  });
+});
+
+describe('worker resume: the command says Resumed only when the session wrote its SessionStart line (bounded wait)', () => {
+  const POINTER_FILE = `${RECORD_DIR}/last-session`;
+  const LINE_FILE = `${layoutOf(HOME).heartbeatDir}/${ALPHA_SESSION}`;
+  /** A time after the start of the run: the fake clock starts at `SEEN_AT`. */
+  const LATER = '2030-01-02T03:04:07.000Z';
+  const EARLIER = '2030-01-02T03:04:04.000Z';
+
+  /** The program writes this text as the line of the session at the first wait. */
+  const writesLine = (text: string): Program =>
+    atWait(1, ({ deps }) => {
+      deps.seed(LINE_FILE, text);
+    });
+
+  /** The resume must stop as "not confirmed": exit 3, the pane stays, and the text never says Resumed. */
+  const notConfirmed = async (made: Made): Promise<CliError> => {
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain('resume not confirmed');
+    expect(error.message).toContain(FIRST_NEW_PANE);
+    expect(`${error.message} ${error.hint ?? ''}`).not.toContain('Resumed');
+    expect(made.tmux.panes().some((pane) => pane.id === FIRST_NEW_PANE)).toBe(true);
+    expect(killed(made)).toEqual([]);
+    return error;
+  };
+
+  it('says Resumed at the wait where the line appears, and not before', async () => {
+    const made = await withWorkers({ program: atWait(3, startsSession(HOME, 'alpha')) });
+    const output = await resumed(made);
+    expect(plainText(output)).toContain('Resumed the worker alpha');
+    expect(made.deps.sleeps).toEqual([launchConfirm.intervalMs, launchConfirm.intervalMs, launchConfirm.intervalMs]);
+  });
+
+  it('waits before the first check, so that the program has time to start', async () => {
+    const made = await withWorkers();
+    await resumed(made);
+    expect(made.deps.sleeps).toEqual([launchConfirm.intervalMs]);
+  });
+
+  it('says "resume not confirmed" with the pane id and a manual step, and no Resumed, when the line never appears', async () => {
+    const made = await withWorkers({ program: () => undefined });
+    const error = await notConfirmed(made);
+    expect(error.message).toContain(`${(launchConfirm.attempts * launchConfirm.intervalMs) / 1000} seconds`);
+    expect(error.hint).toContain('"factory worker summon alpha"');
+    expect(error.hint).toContain('"factory worker stop alpha"');
+    expect(error.hint).toContain(POINTER_FILE);
+    expect(error.hint).toContain(RESUME);
+    expect(error.hint).not.toContain('dismiss');
+    expect(made.deps.sleeps).toHaveLength(launchConfirm.attempts);
+  });
+
+  it('keeps the old line when the pointer names a session that the program did not start again', async () => {
+    const made = await withWorkers({ program: () => undefined });
+    await notConfirmed(made);
+    expect(made.deps.files.get(LINE_FILE)).toBe(lineText({ session: ALPHA_SESSION }));
+  });
+
+  it('counts a line that is not valid as not confirmed', async () => {
+    const error = await notConfirmed(await withWorkers({ program: writesLine('not json\n') }));
+    expect(error.message).toContain('not valid');
+  });
+
+  it('counts a line of another session marker as not confirmed, also with the right event and a later time', async () => {
+    const other = lineText({ session: ALPHA_SESSION, event: 'SessionStart', marker: 'beta', at: LATER });
+    const error = await notConfirmed(await withWorkers({ program: writesLine(other) }));
+    expect(error.message).toContain('beta');
+  });
+
+  it('counts a line with no session marker as not confirmed', async () => {
+    const bare = lineText({ session: ALPHA_SESSION, event: 'SessionStart', marker: null, at: LATER });
+    await notConfirmed(await withWorkers({ program: writesLine(bare) }));
+  });
+
+  it.each([[EARLIER], [SEEN_AT]])('counts a SessionStart line of the time %s, which is not after the launch, as not confirmed', async (at) => {
+    const made = await withWorkers({ program: () => undefined }, { lines: [{ session: ALPHA_SESSION, event: 'SessionStart', at }] });
+    await notConfirmed(made);
+  });
+
+  it('counts a line of a later time with another event as not confirmed', async () => {
+    const stop = lineText({ session: ALPHA_SESSION, event: 'Stop', at: LATER });
+    const error = await notConfirmed(await withWorkers({ program: writesLine(stop) }));
+    expect(error.message).toContain('Stop');
+  });
+
+  it('fails the resume when the pane is gone at the second wait, and names the pointer file that starts a new conversation', async () => {
+    const made = await withWorkers({ program: atWait(2, endsPane) });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('resume failed');
+    expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone`);
+    expect(error.hint).toContain(`delete the file ${POINTER_FILE}`);
+    expect(error.hint).toContain(RESUME);
+    expect(error.hint).not.toContain('dismiss');
+    expect(`${error.message} ${error.hint ?? ''}`).not.toContain('Resumed');
+    expect(made.deps.sleeps).toHaveLength(2);
+  });
+
+  it('fails the resume when the program ended at once and tmux keeps the pane', async () => {
+    const made = await withWorkers({ tmux: { newPanesEndAtOnce: true } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha ended`);
+    expect(error.hint).toContain(POINTER_FILE);
+    expect(killed(made)).toEqual([]);
+  });
+
+  it('counts a pane that tmux can not read as gone, and fails the resume', async () => {
+    const made = await withWorkers({ tmux: { failing: 'display-message' } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('is gone');
+  });
+
+  it('checks the pane only, after one wait, for a new conversation, because no line of an earlier session can confirm it', async () => {
+    const made = await withWorkers({}, { pointer: null, lines: [] });
+    const output = await resumed(made);
+    expect(plainText(output)).toContain('Started the worker alpha again');
+    expect(made.deps.sleeps).toEqual([launchConfirm.intervalMs]);
+  });
+
+  it('fails a new conversation when its pane ends, and does not name the pointer file', async () => {
+    const made = await withWorkers({ program: atWait(1, endsPane) }, { pointer: null, lines: [] });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone`);
+    expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
   });
 });
 

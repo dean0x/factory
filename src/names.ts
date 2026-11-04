@@ -671,6 +671,14 @@ export const stopFallback: StopWay = stopWay.term;
  */
 export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
 
+/**
+ * The wait after the pane of a worker starts (design 4.11): the launch checks at most `attempts` times, and waits `intervalMs`
+ * before each check. So the wait is at most `attempts` times `intervalMs`. A launch with a session to resume checks the pane and
+ * the last-seen line of the worker at each check, and it is confirmed when the pane runs and the line holds the hook event `event`,
+ * written after the start, with the session marker of the worker. Any other launch checks the pane once, after one wait.
+ */
+export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionStart' } as const;
+
 /** The words of `worker list`: the titles of the columns, the pane column, the state of a worker and the mark of its context. */
 export const workerListWords = {
   columns: { id: 'ID', project: 'PROJECT', pane: 'PANE', state: 'STATE', context: 'CONTEXT', mark: 'MARK' },
