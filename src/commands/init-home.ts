@@ -185,7 +185,7 @@ export const chooseHome = async (
 
 /**
  * The temp folders in the home that a stopped `init` left: the staging folders of the state repo. The list is empty when
- * the home does not exist. The names are read from the folder, up to `MAX_SCAN_ENTRIES` of them. Nothing is removed.
+ * the home does not exist. It names all staging folders of the home, up to `MAX_SCAN_ENTRIES` of them. Nothing is removed.
  */
 export const leftoverTempFolders = async (deps: Deps, home: string): Promise<CliResult<readonly string[]>> => {
   const kind = await deps.fs.stat(home);
@@ -195,8 +195,8 @@ export const leftoverTempFolders = async (deps: Deps, home: string): Promise<Cli
   if (!names.ok) return names;
   return ok(
     names.value
-      .slice(0, MAX_SCAN_ENTRIES)
       .filter(isStagingDirName)
+      .slice(0, MAX_SCAN_ENTRIES)
       .map((name) => join(home, name)),
   );
 };

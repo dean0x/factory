@@ -6,12 +6,13 @@ import {
   rootCheckResults,
   rootNotices,
   scanRoot,
+  scanSettings,
   scanTrackedTexts,
   withSetupAccepted,
   type RootFinding,
   type RootScan,
 } from '../../src/commands/root-content.js';
-import { failure } from '../../src/cli/errors.js';
+import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import {
   checkIds,
@@ -77,6 +78,33 @@ const of = (found: RootScan, id: string): readonly RootFinding[] => found.findin
 const levelsOf = (found: RootScan, id: string): readonly string[] => of(found, id).map((finding) => finding.level);
 
 const textOf = (found: RootScan, id: string): string => of(found, id).map((finding) => `${finding.text} ${finding.remedy}`).join(' | ');
+
+/** The stop that `start` gives for the findings (its exit code and its text), or null when there is none. */
+const stopOf = (found: RootScan): { readonly code: number; readonly message: string } | null => {
+  const result = requireRootClean(found);
+  return result.ok ? null : { code: exitCodeOf[result.error.kind], message: `${result.error.message} ${result.error.hint ?? ''}` };
+};
+
+interface Call {
+  readonly method: string;
+  readonly path: string;
+}
+
+/** Deps whose file system notes the method and every path argument of each call. */
+const recorded = (deps: FakeDeps): { readonly guarded: FakeDeps; readonly calls: readonly Call[] } => {
+  const calls: Call[] = [];
+  const fs = new Proxy(deps.fs, {
+    get: (target, key, receiver) => {
+      const member: unknown = Reflect.get(target, key, receiver);
+      if (typeof member !== 'function') return member;
+      return (...args: unknown[]) => {
+        for (const arg of args) if (typeof arg === 'string') calls.push({ method: String(key), path: arg });
+        return member.apply(target, args);
+      };
+    },
+  });
+  return { guarded: { ...deps, fs }, calls };
+};
 
 const withConfig = (change: (config: FactoryConfig) => FactoryConfig): FactoryConfig => change(sampleConfig());
 
@@ -1119,20 +1147,36 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       expect(levelsOf(await scan(quiet), checkIds.permissionMode)).not.toContain('fail');
     });
 
-    it('warns when it can not tell whether a settings folder exists', async () => {
+    it('stops with exit 4 and names the command when it can not tell whether a settings folder exists', async () => {
       const deps = make();
-      const denied = { ...deps, fs: { ...deps.fs, stat: async () => ({ ok: false as const, error: { kind: 'failure' as const, message: 'cannot stat: EACCES' } }) } };
+      const denied = { ...deps, fs: { ...deps.fs, lstat: async () => ({ ok: false as const, error: { kind: 'failure' as const, message: 'cannot stat: EACCES' } }) } };
       const found = await scanRoot(denied, HOME, sampleConfig());
-      expect(levelsOf(found, checkIds.permissionMode)).toContain('warn');
+      expect(levelsOf(found, checkIds.permissionMode)).toContain('fail');
       expect(textOf(found, checkIds.permissionMode)).toContain('EACCES');
+      expect(textOf(found, checkIds.permissionMode)).toContain('factory doctor');
+      expect(stopOf(found)?.code).toBe(4);
     });
 
-    it('warns when a settings folder can not be listed', async () => {
+    it('stops with exit 4 and names the command when a settings folder can not be listed', async () => {
       const deps = make();
       deps.seedDir(`${HOME}/web/.claude`);
       const denied = { ...deps, fs: { ...deps.fs, list: async () => ({ ok: false as const, error: { kind: 'failure' as const, message: 'cannot list: EACCES' } }) } };
       const found = await scanRoot(denied, HOME, sampleConfig());
+      expect(levelsOf(found, checkIds.permissionMode)).toContain('fail');
       expect(textOf(found, checkIds.permissionMode)).toContain('EACCES');
+      expect(textOf(found, checkIds.permissionMode)).toContain('factory doctor');
+      expect(stopOf(found)?.code).toBe(4);
+    });
+
+    it('stops with exit 4 and reads nothing when a settings file is a link', async () => {
+      const deps = make({ links: { [`${HOME}/web/.claude/settings.json`]: `${HOME}/elsewhere.json` } });
+      deps.seed(`${HOME}/web/.claude/settings.json`, '{}');
+      const { guarded, calls } = recorded(deps);
+      const found = await scanRoot(guarded, HOME, sampleConfig());
+      expect(textOf(found, checkIds.permissionMode)).toContain('web/.claude/settings.json (a link)');
+      expect(textOf(found, checkIds.permissionMode)).toContain('factory doctor');
+      expect(stopOf(found)?.code).toBe(4);
+      expect(calls.filter((call) => call.path === `${HOME}/web/.claude/settings.json` && call.method !== 'lstat')).toEqual([]);
     });
   });
 
@@ -1140,84 +1184,99 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
     const USER = '/users/example';
     const BYPASS = JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } });
 
-    /** Deps that note every list and read inside a path. */
-    const watched = (deps: FakeDeps) => {
-      const touched: string[] = [];
-      const note = (path: string): void => void touched.push(path);
-      const guarded = {
-        ...deps,
-        fs: {
-          ...deps.fs,
-          list: async (path: string) => (note(path), deps.fs.list(path)),
-          readText: async (path: string) => (note(path), deps.fs.readText(path)),
-          readTextLimited: async (path: string, max: number) => (note(path), deps.fs.readTextLimited(path, max)),
-        },
-      };
-      return { guarded, touched };
+    /** The calls with a path that is the user settings folder or inside it, by the way the path is written. */
+    const underUser = (calls: readonly Call[], user: string): readonly Call[] =>
+      calls.filter((call) => call.path.toLowerCase() === user.toLowerCase() || call.path.toLowerCase().startsWith(`${user.toLowerCase()}/`));
+
+    /**
+     * The settings scan alone, with a file system that notes every call. The whole scan of a root also asks the file
+     * system about the folder of Claude Code when it checks the path of the factory list (home-index.test.ts pins that
+     * check), so the calls of the settings scan are shown apart from it.
+     */
+    const settingsScan = async (deps: FakeDeps, projects: readonly string[] = ['web'], tracked: readonly string[] = [], root = HOME) => {
+      const { guarded, calls } = recorded(deps);
+      const findings = await scanSettings(guarded, root, projects, tracked);
+      return { findings, calls };
     };
 
-    it('reads nothing when the root is the user home folder', async () => {
-      const deps = make({ env: { HOME: HOME } });
-      deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
-      const { guarded, touched } = watched(deps);
-      const found = await scanRoot(guarded, HOME, sampleConfig());
-      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
-      expect(textOf(found, checkIds.permissionMode)).toContain('not checked');
-      expect(touched.filter((path) => path.includes('.claude'))).toEqual([]);
+    it('makes no call and gives no finding when a project folder is the user home folder', async () => {
+      const userHome = `${HOME}/web`;
+      const deps = make({ env: { HOME: userHome } });
+      deps.seed(`${userHome}/.claude/settings.json`, BYPASS);
+      const { findings, calls } = await settingsScan(deps);
+      expect(findings).toEqual([]);
+      expect(underUser(calls, `${userHome}/.claude`)).toEqual([]);
     });
 
-    it('reads nothing when a settings folder is a link to the user settings folder', async () => {
+    it('makes no call and gives no finding when the root is the user home folder', async () => {
+      const deps = make({ env: { HOME: HOME } });
+      deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
+      const { findings, calls } = await settingsScan(deps);
+      expect(findings).toEqual([]);
+      expect(underUser(calls, `${HOME}/.claude`)).toEqual([]);
+    });
+
+    it('stops with exit 4 and follows no link when a settings folder is a link to a folder in the test home', async () => {
       const deps = make({ env: { HOME: USER }, links: { [`${HOME}/web/.claude`]: `${USER}/.claude` } });
       deps.seedDir(`${HOME}/web/.claude`);
       deps.seed(`${USER}/.claude/settings.json`, BYPASS);
-      const { guarded, touched } = watched(deps);
-      const found = await scanRoot(guarded, HOME, sampleConfig());
-      expect(textOf(found, checkIds.permissionMode)).toContain('not checked');
-      expect(touched.filter((path) => path.includes('.claude'))).toEqual([]);
+      const { findings, calls } = await settingsScan(deps);
+      expect(findings.map((entry) => `${entry.level} ${entry.text} ${entry.remedy}`).join(' | ')).toContain('web/.claude is a link');
+      expect(findings.map((entry) => entry.remedy).join(' ')).toContain('factory doctor');
+      expect(underUser(calls, `${USER}/.claude`)).toEqual([]);
+      expect(calls.filter((call) => call.method === 'realpath')).toEqual([]);
+      expect(calls.filter((call) => call.path.startsWith(`${HOME}/web/.claude`) && call.method !== 'lstat')).toEqual([]);
+      expect(stopOf(await scan(deps))?.code).toBe(4);
     });
 
-    it('skips a settings folder in other letter case on macOS, and compares exactly on other platforms', async () => {
+    it('stops with exit 4 and does not look inside a project folder that is a link', async () => {
+      const deps = make({ env: { HOME: USER }, links: { [`${HOME}/web`]: USER } });
+      deps.seed(`${USER}/.claude/settings.json`, BYPASS);
+      const { findings, calls } = await settingsScan(deps);
+      expect(findings.map((entry) => entry.text).join(' | ')).toContain('web is a link');
+      expect(findings.map((entry) => entry.remedy).join(' ')).toContain('factory doctor');
+      expect(calls.filter((call) => call.path.startsWith(`${HOME}/web/`))).toEqual([]);
+      expect(underUser(calls, `${USER}/.claude`)).toEqual([]);
+      expect(stopOf(await scan(deps))?.code).toBe(4);
+    });
+
+    it('skips a settings folder in other letter case on macOS without a call, and compares exactly on other platforms', async () => {
       const folder = '/users/example';
       const mac = make({ env: { HOME: '/Users/Example' }, os: 'darwin' });
       mac.seed(`${folder}/.claude/settings.json`, BYPASS);
-      const macFound = await scanRoot(mac, folder, sampleConfig());
-      expect(levelsOf(macFound, checkIds.permissionMode)).toEqual(['warn']);
-      expect(textOf(macFound, checkIds.permissionMode)).toContain('not checked');
+      const macScan = await settingsScan(mac, ['web'], [], folder);
+      expect(macScan.findings).toEqual([]);
+      expect(underUser(macScan.calls, '/Users/Example/.claude')).toEqual([]);
       const linux = make({ env: { HOME: '/Users/Example' }, os: 'linux' });
       linux.seed(`${folder}/.claude/settings.json`, BYPASS);
-      expect(levelsOf(await scanRoot(linux, folder, sampleConfig()), checkIds.permissionMode)).toContain('fail');
+      expect((await settingsScan(linux, ['web'], [], folder)).findings.map((entry) => entry.level)).toContain('fail');
     });
 
-    it('skips every settings folder of a root that is below the user settings folder', async () => {
+    it('skips every settings folder of a root that is below the user settings folder without a call', async () => {
       const root = `${USER}/.claude/node`;
       const deps = make({ env: { HOME: USER } });
       deps.seed(`${root}/.claude/settings.json`, BYPASS);
       deps.seed(`${root}/coordinator/.claude/settings.json`, BYPASS);
-      const { guarded, touched } = watched(deps);
-      const found = await scanRoot(guarded, root, sampleConfig());
-      expect(levelsOf(found, checkIds.permissionMode)).not.toContain('fail');
-      expect(textOf(found, checkIds.permissionMode)).toContain('not checked');
-      expect(touched.filter((path) => path.includes('.claude'))).toEqual([]);
+      const { findings, calls } = await settingsScan(deps, ['web'], [], root);
+      expect(findings).toEqual([]);
+      expect(underUser(calls, `${USER}/.claude`)).toEqual([]);
     });
 
-    it('warns once, and reads nothing, when it can not resolve the links of the paths', async () => {
+    it('runs no realpath on the settings folders or the settings files of the root', async () => {
       const deps = make({ env: { HOME: USER } });
       deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
-      const denied = {
-        ...deps,
-        fs: { ...deps.fs, realpath: async () => failure('cannot resolve /: EACCES') },
-      } as FakeDeps;
-      const { guarded, touched } = watched(denied);
-      const found = await scanRoot(guarded, HOME, sampleConfig());
-      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
-      expect(textOf(found, checkIds.permissionMode)).toContain('EACCES');
-      expect(touched.filter((path) => path.includes('.claude'))).toEqual([]);
+      deps.seed(`${HOME}/web/.claude/settings.local.json`, '{}');
+      const { findings, calls } = await settingsScan(deps, ['web'], ['web/.claude/settings.local.json']);
+      expect(findings.map((entry) => entry.level)).toContain('fail');
+      expect(calls.filter((call) => call.method === 'realpath')).toEqual([]);
     });
 
-    it('skips a tracked settings path that is inside the user settings folder', async () => {
-      const deps = make({ env: { HOME: HOME }, tracked: ['.claude/settings.json'] });
+    it('skips a tracked settings path that is inside the user settings folder without a call', async () => {
+      const deps = make({ env: { HOME: HOME } });
       deps.seed(`${HOME}/.claude/settings.json`, BYPASS);
-      expect(levelsOf(await scan(deps), checkIds.permissionMode)).not.toContain('fail');
+      const { findings, calls } = await settingsScan(deps, ['web'], ['.claude/settings.json']);
+      expect(findings).toEqual([]);
+      expect(underUser(calls, `${HOME}/.claude`)).toEqual([]);
     });
   });
 

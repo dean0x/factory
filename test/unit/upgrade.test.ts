@@ -2540,6 +2540,17 @@ describe('upgrade: a write path that is not a plain file, on a real disk', () =>
       },
     ],
     [
+      'a link to a plain file',
+      async (path, base) => {
+        await writeFile(join(base, 'target.txt'), 'kept', 'utf8');
+        await symlink(join(base, 'target.txt'), path);
+      },
+      async (path, base) => {
+        expect((await lstat(path)).isSymbolicLink()).toBe(true);
+        expect(await readFile(join(base, 'target.txt'), 'utf8')).toBe('kept');
+      },
+    ],
+    [
       'a link to nothing',
       async (path, base) => symlink(join(base, 'missing'), path),
       async (path) => expect((await lstat(path)).isSymbolicLink()).toBe(true),

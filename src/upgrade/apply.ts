@@ -271,7 +271,8 @@ export interface NewFile {
 
 /**
  * Write the files whose text changes. Each file is inside the node home `home`. Each old text goes to `written` first.
- * A path that holds a folder or a link is a stop before the write, because `restore` removes a path that the run made.
+ * A path that is not a plain file is a stop before the write, a link to a file also, because `restore` removes a path that
+ * the run made.
  * `command` is the command that the person runs again after the stop.
  */
 export const writeAll = async (
@@ -282,18 +283,18 @@ export const writeAll = async (
   command: CommandName,
 ): Promise<CliResult<void>> => {
   for (const file of newFiles) {
+    const entry = await deps.fs.lstat(file.path);
+    if (!entry.ok) return entry;
+    if (entry.value !== null && entry.value !== 'file') {
+      return failure(
+        `${relative(home, file.path)} is not a plain file, so ${program} does not write it. ` +
+          `Move it away, then run "${commandText(command)}" again`,
+      );
+    }
     const previous = await readIfFile(deps, file.path);
     if (!previous.ok) return previous;
     if (previous.value === file.text) continue;
     if (previous.value === null) {
-      const entry = await deps.fs.lstat(file.path);
-      if (!entry.ok) return entry;
-      if (entry.value !== null) {
-        return failure(
-          `${relative(home, file.path)} is not a plain file, so ${program} does not write it. ` +
-            `Move it away, then run "${commandText(command)}" again`,
-        );
-      }
       const folder = await deps.fs.mkdir(dirname(file.path));
       if (!folder.ok) return folder;
     }

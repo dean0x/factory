@@ -5,7 +5,7 @@ import type { Deps } from '../core/deps.js';
 import { ignoredPathsOf, isWorkTreeRoot, trackedFilesOf, type TrackedList } from '../core/git.js';
 import { originOfHome, type Origin } from '../core/home-index.js';
 import { delegationReport, type DelegationReport } from '../core/owner-record.js';
-import { comparable, isSameOrInside, isSameOrInsideFolder } from '../core/paths.js';
+import { comparable, isSameOrInside } from '../core/paths.js';
 import { describeProjectPathIssue, projectFolderKey, projectPathIssue } from '../core/project-path.js';
 import { ok } from '../core/result.js';
 import {
@@ -456,35 +456,80 @@ interface SettingsSource {
 
 const isSettingsName = (name: string): boolean => name.startsWith(claudeSettings.prefix) && name.endsWith(claudeSettings.suffix);
 
-/** The user settings folder of Claude Code. A check never reads in it: its settings are the choice of the user. */
+/** The user settings folder of Claude Code, as it is written. A check never reads in it: its settings are the choice of the user. */
 const userSettingsFolder = (deps: Deps): string | null => {
   const userHome = deps.env[env.userHome];
   return userHome === undefined || userHome === '' ? null : join(resolve(userHome), dirs.claude);
 };
 
-const inUserFolder = async (deps: Deps, userFolder: string | null, path: string): Promise<CliResult<boolean>> =>
-  userFolder === null ? ok(false) : isSameOrInsideFolder(deps, userFolder, resolve(path));
+/**
+ * True when `path` is the user settings folder or is inside it. The two paths are compared as they are written, with the
+ * case rule of the platform. No call of the file system is made, so that nothing asks about the user settings folder.
+ */
+const inUserFolder = (deps: Deps, userFolder: string | null, path: string): boolean =>
+  userFolder !== null && isSameOrInside(comparable(deps, userFolder), comparable(deps, resolve(path)));
 
-/** The settings files that a folder holds: the files of its settings folder. A folder with none gives nothing. */
+interface FolderSettings {
+  readonly sources: readonly SettingsSource[];
+  readonly findings: readonly RootFinding[];
+}
+
+const NO_SETTINGS: FolderSettings = { sources: [], findings: [] };
+
+/** The stop for a folder that the scan did not follow, because a link may lead out of the factory folder. */
+const linkStop = (id: string, shown: string): FolderSettings => ({
+  sources: [],
+  findings: [
+    finding(
+      id,
+      'fail',
+      `${shown} is a link, so ${program} does not use it`,
+      `Make ${shown} a plain folder, or remove it, then ${doctorAgain}.`,
+    ),
+  ],
+});
+
+/** The stop for a folder that the scan could not read to the end. */
+const unfinishedStop = (id: string, shown: string, reason: string): FolderSettings => ({
+  sources: [],
+  findings: [
+    finding(
+      id,
+      'fail',
+      `the scan of ${shown} did not finish: ${reason}`,
+      `Make ${shown} a folder that ${program} can read, or remove it, then ${doctorAgain}.`,
+    ),
+  ],
+});
+
+/**
+ * The settings files that a folder holds: the files of its settings folder. A folder with none gives nothing. A link
+ * stops the scan, and so does a folder that can not be read to the end. A settings folder that is the user settings
+ * folder, or is inside it, is skipped before any call of the file system.
+ */
 const settingsOfFolder = async (
   deps: Deps,
   home: string,
   userFolder: string | null,
   folder: { readonly path: string; readonly presence: string | null },
-): Promise<{ readonly sources: readonly SettingsSource[]; readonly findings: readonly RootFinding[] }> => {
+): Promise<FolderSettings> => {
   const id = checkIds.permissionMode;
   const settingsFolder = join(folder.path, dirs.claude);
-  const shown = homeRelative(home, settingsFolder);
-  const guard = await inUserFolder(deps, userFolder, settingsFolder);
-  if (!guard.ok) return { sources: [], findings: [notChecked(id, guard.error.message)] };
-  if (guard.value) {
-    return { sources: [], findings: [notChecked(id, `${shown} is, or is inside, the user settings folder of Claude Code`)] };
+  if (inUserFolder(deps, userFolder, settingsFolder)) return NO_SETTINGS;
+  const shown = shownPath(homeRelative(home, settingsFolder));
+  if (folder.path !== home) {
+    const container = await deps.fs.lstat(folder.path);
+    const shownContainer = shownPath(homeRelative(home, folder.path));
+    if (!container.ok) return unfinishedStop(id, shownContainer, container.error.message);
+    if (container.value === 'link') return linkStop(id, shownContainer);
+    if (container.value === null) return NO_SETTINGS;
   }
-  const kind = await deps.fs.stat(settingsFolder);
-  if (!kind.ok) return { sources: [], findings: [notChecked(id, kind.error.message)] };
-  if (kind.value !== 'dir') return { sources: [], findings: [] };
+  const kind = await deps.fs.lstat(settingsFolder);
+  if (!kind.ok) return unfinishedStop(id, shown, kind.error.message);
+  if (kind.value === 'link') return linkStop(id, shown);
+  if (kind.value !== 'dir') return NO_SETTINGS;
   const names = await deps.fs.list(settingsFolder);
-  if (!names.ok) return { sources: [], findings: [notChecked(id, names.error.message)] };
+  if (!names.ok) return unfinishedStop(id, shown, names.error.message);
   const settings = names.value.filter(isSettingsName).sort();
   return {
     sources: settings.slice(0, MAX_SETTINGS_FILES).map((name) => ({
@@ -562,9 +607,10 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
 /**
  * The settings files that a session reads from the factory folder: the files in the settings folder of the factory folder
  * itself, of the coordinator folder and of each project folder, and each Claude settings path that the root repo tracks,
- * at any depth (AC-21). A file is read once. The user settings folder of Claude Code is never read.
+ * at any depth (AC-21). A file is read once. A link is never followed: a link to a folder or to a file stops the scan. The
+ * user settings folder of Claude Code is never read, and no call of the file system names it.
  */
-const scanSettings = async (
+export const scanSettings = async (
   deps: Deps,
   home: string,
   projectPaths: readonly string[],
@@ -587,13 +633,7 @@ const scanSettings = async (
   const unread: string[] = [];
   for (const path of tracked.filter(isClaudeSettingsPath)) {
     const absolute = join(home, path);
-    if (sources.has(absolute)) continue;
-    const guard = await inUserFolder(deps, userFolder, absolute);
-    if (!guard.ok) {
-      findings.push(notChecked(id, guard.error.message));
-      continue;
-    }
-    if (guard.value) continue;
+    if (sources.has(absolute) || inUserFolder(deps, userFolder, absolute)) continue;
     const kind = await deps.fs.lstat(absolute);
     if (!kind.ok) {
       unread.push(`${shownPath(path)} (cannot be read)`);
@@ -603,6 +643,11 @@ const scanSettings = async (
     else if (kind.value === 'file') sources.set(absolute, { absolute, display: path, presence: null });
   }
   for (const source of sources.values()) {
+    const kind = await deps.fs.lstat(source.absolute);
+    if (!kind.ok || kind.value === 'link') {
+      unread.push(`${shownPath(source.display)} (${kind.ok ? 'a link' : 'cannot be read'})`);
+      continue;
+    }
     const text = await deps.fs.readTextLimited(source.absolute, trackedFiles.maxFileBytes);
     if (text.ok) findings.push(...judgeSettings(source, text.value));
     else unread.push(`${shownPath(source.display)} (cannot be read)`);

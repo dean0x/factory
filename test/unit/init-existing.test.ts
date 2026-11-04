@@ -9,7 +9,7 @@ import { locateHome } from '../../src/core/home.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { env, stateKeys } from '../../src/names.js';
+import { env, stateKeys, values } from '../../src/names.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
 import { inspectState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
@@ -101,16 +101,26 @@ interface Existing {
    * terminal window, so a run with the yes flag has nothing to accept. A test about the acceptance sets this.
    */
   readonly unaccepted?: true;
+  /** The base URL of the one proxy that the local file defines and the session uses. Default: no proxy. */
+  readonly proxyUrl?: string;
 }
 
 const configOf = (made: Existing): FactoryConfig => {
   const base = sampleConfig();
+  const proxied =
+    made.proxyUrl === undefined
+      ? {}
+      : {
+          session: { ...base.core.session, proxy: 'gate' },
+          proxies: [{ id: 'gate', base_url: made.proxyUrl, health: '/health', on_fail: values.onFail[0] }],
+        };
   return {
     ...base,
     core: {
       ...base.core,
       node: { ...base.core.node, id: made.id ?? base.core.node.id },
       approval: made.approval ?? base.core.approval,
+      ...proxied,
     },
   };
 };
@@ -801,6 +811,25 @@ describe('init: a moved root, with no entry in the factory list (TP-82)', () => 
     expect(text).toContain(ROOT);
     expect(text).toContain('demo');
     expect(text).toContain('has no entry');
+  });
+
+  it('shows the proxy host of the local file also with the yes flag, and still registers the root', async () => {
+    const { deps } = moved({ proxyUrl: 'http://203.0.113.9:8080/v1' });
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(linesOf(result)).toContain('Proxy: gate (203.0.113.9:8080)');
+    expect(linesOf(result)).not.toContain('/v1');
+    expect(entryOf(deps)).toMatchObject({ id: 'demo', origin: 'received' });
+  });
+
+  it('shows the proxy host of the local file in the question, and says none when the local file names no proxy', async () => {
+    const asked: string[] = [];
+    const proxied = moved({ proxyUrl: 'https://proxy.example.net/v1' }, { ...terminal, prompt: person({}, asked) });
+    expect((await runInit(proxied.deps, options())).ok).toBe(true);
+    expect(asked[0]).toContain('Proxy: gate (proxy.example.net:443)');
+
+    const plain = moved();
+    expect(linesOf(await runInit(plain.deps, options({ yes: true })))).toContain('Proxy: none');
   });
 
   it('shows them before the first question on a terminal window and registers after a yes', async () => {

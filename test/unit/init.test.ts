@@ -1517,6 +1517,15 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(snapshot(deps)).toBe(before);
   });
 
+  it('warns about a temp folder that comes after the first 200 names of the folder', async () => {
+    const deps = inWorkspace({}, { repos: { '/ws/.factory.tmp-4243': {} } });
+    for (let i = 0; i < 205; i += 1) deps.seedDir(`/ws/.a${String(i).padStart(3, '0')}`);
+    const plan = await planInit(deps, options({ home: WS }));
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.value.warnings.some((text) => text.includes('the temp folder /ws/.factory.tmp-4243'))).toBe(true);
+  });
+
   it.each([['.factory.tmp-'], ['.factory.tmp-4a'], ['.factory.tmp']])(
     'does not call %s a temp folder, because the name is not the name of a temp folder',
     async (name) => {

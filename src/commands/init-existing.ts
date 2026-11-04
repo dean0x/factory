@@ -27,6 +27,7 @@ import {
   values,
 } from '../names.js';
 import { ownerModes, type ApprovalModes, type ApprovalPoint, type RecipeRegistry } from '../recipes/index.js';
+import { parseProxyUrl, proxyLabel } from '../safety/proxy.js';
 import { stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { STATE_LABEL } from '../state/load.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
@@ -199,11 +200,20 @@ const checkExisting = async (
   });
 };
 
+/** The proxy that the session of the local file uses: its id, host and port, or none. Nothing else of the URL. */
+const proxyLineOf = (config: FactoryConfig): string => {
+  const wanted = config.core.session.proxy;
+  const proxy = config.core.proxies.find((candidate) => candidate.id === wanted);
+  const base = proxy === undefined ? null : parseProxyUrl(proxy.base_url);
+  return `Proxy: ${proxy !== undefined && base?.ok === true ? proxyLabel(proxy.id, base.value) : wanted}`;
+};
+
 /** The lines that the owner reads before the question to register the folder. */
-const listingOf = (home: string, id: string, standing: Standing): readonly string[] => [
+const listingOf = (home: string, id: string, standing: Standing, config: FactoryConfig): readonly string[] => [
   `Folder: ${home}`,
   `${roles.node} id: ${id}`,
   `Reason: ${standing.reason ?? ''}`,
+  proxyLineOf(config),
 ];
 
 /** The owner agrees to register a folder that the factory list does not count. The yes flag agrees without a question. */
@@ -579,7 +589,7 @@ export const runExisting = async (
 
   const setup = await collectSetup(deps, home, root.set, commands.init);
   if (!setup.ok) return setup;
-  const listing = received ? listingOf(home, id, standing) : [];
+  const listing = received ? listingOf(home, id, standing, config) : [];
   const asking = received ? withFirstQuestion(deps, listing.join('\n')) : deps;
   if (received) {
     const agreed = await askRegistration(asking, options, home);

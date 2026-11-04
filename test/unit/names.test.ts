@@ -13,6 +13,7 @@ import {
   instructionFiles,
   keys,
   marker,
+  maxFileBytes,
   nodeCommands,
   permissionSkipList,
   program,
@@ -21,10 +22,12 @@ import {
   schema1,
   schema2,
   schemaIds,
+  setupAcceptance,
   stateKeys,
   templateValues,
   terms,
   tmuxNames,
+  trackedFiles,
   values,
 } from '../../src/names.js';
 import { projectPathIssue } from '../../src/core/project-path.js';
@@ -781,7 +784,7 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
   const HOME_INDEX = join(SRC, 'core', 'home-index.ts');
 
   const rel = (paths: readonly string[]): string[] => paths.map((path) => relative(SRC, path)).sort();
-  const textOf = (path: string): string => readFileSync(path, 'utf8');
+  const textOf = (path: string): string => stripComments(readFileSync(path, 'utf8'));
   const withText = (pattern: RegExp): string[] =>
     allSourceFiles(SRC).filter((path) => path !== NAMES_FILE && pattern.test(textOf(path)));
   const importPathsOf = (source: string): string[] =>
@@ -836,7 +839,22 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
       expect(textOf(path), relative(SRC, path)).toMatch(/\bstdinIsTTY\b/);
     }
   });
+});
 
+describe('the caps that the change log and the pull request state', () => {
+  it('holds the list of tracked files to 2,000 files', () => {
+    expect(trackedFiles.maxCount).toBe(2000);
+  });
+
+  it('holds each file that factory reads to 1 MiB', () => {
+    expect(maxFileBytes).toBe(1_048_576);
+    expect(trackedFiles.maxFileBytes).toBe(1_048_576);
+  });
+
+  it('shows at most 16,384 bytes of one file and 262,144 bytes in all in the accept prompt', () => {
+    expect(setupAcceptance.maxDisplayBytes).toBe(16_384);
+    expect(setupAcceptance.maxDisplayTotalBytes).toBe(262_144);
+  });
 });
 
 describe('the instruction files (TP-32, TP-34)', () => {
@@ -879,6 +897,10 @@ describe('the instruction files (TP-32, TP-34)', () => {
 
   it('reads nothing under the user Claude folder: no source file takes the home of the user from the OS', () => {
     expect(withText(/\bhomedir\b|\buserInfo\b/)).toEqual([]);
+  });
+
+  it('keeps the settings scan from resolving links on the user Claude folder: root-content.ts calls neither realPathOf nor isSameOrInsideFolder', () => {
+    expect(withText(/\brealPathOf\b|\bisSameOrInsideFolder\b/).filter((path) => path === 'commands/root-content.ts')).toEqual([]);
   });
 
   it('builds the path of the user Claude folder in three modules only, and they compare it without a read', () => {
