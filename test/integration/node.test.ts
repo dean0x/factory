@@ -2,7 +2,7 @@ import { chmod, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MANAGER_LAYER } from '../../src/config/schema.js';
-import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 let manager: string;
@@ -21,11 +21,12 @@ afterEach(async () => {
 afterAll(removeOpenSandboxes);
 
 const initNode = async (home: string, name: string, layer: number): Promise<void> => {
-  const args = ['init', '--home', home, '--name', name, '--owner-name', 'Test Owner', '--layer', String(layer)];
+  const args = ['init', '--yes', '--home', home, '--name', name, '--owner-name', 'Test Owner', '--layer', String(layer)];
   const result = await box.run(args);
-  // A layer above 2 has no role template, and init warns about it. Any other layer prints nothing on stderr.
+  // A layer above 2 has no role template, and init warns about it. Any other layer prints nothing on stderr, but the
+  // notice of the hook change that the yes flag prints.
   if (layer > MANAGER_LAYER) expect(result.stderr).toContain(`Layer ${layer} has no role template`);
-  else expect(result.stderr).toBe('');
+  else expect(withoutHookNotice(result.stderr)).toBe('');
   expect(result.code).toBe(0);
 };
 

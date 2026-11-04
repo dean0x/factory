@@ -19,7 +19,7 @@ const FIXTURE = JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'claud
 beforeEach(async () => {
   box = await makeSandbox();
   home = join(box.root, 'web-factory');
-  const made = await box.run(['init', '--home', home, '--name', NODE_ID, '--owner-name', 'Test Owner']);
+  const made = await box.run(['init', '--yes', '--home', home, '--name', NODE_ID, '--owner-name', 'Test Owner']);
   expect(made.code).toBe(0);
 });
 

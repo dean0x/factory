@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -129,25 +129,20 @@ const ownSettings = (): Record<string, unknown> => ({
 
 const settingsFileOf = (): string => join(box.node, 'coordinator', '.claude', 'settings.local.json');
 
-const seedHookSettings = async (): Promise<void> => {
-  await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
-  await writeFile(settingsFileOf(), `${JSON.stringify(ownSettings(), null, 2)}\n`);
-};
-
 /**
- * Make the node with the clones of two work trees. The result is the folders of the clones in the root. The coordinator
- * folder gets the settings of Claude Code with the own entries, so that `start` asks nothing. With `hookSettings: false`
- * it gets none.
+ * Make the node with the clones of two work trees. The result is the folders of the clones in the root. `init --yes`
+ * writes the settings of Claude Code with the own entries into the coordinator folder, so that `start` asks nothing. With
+ * `hookSettings: false` the test removes that settings folder again.
  */
 const initNode = async ({ hookSettings = true }: { hookSettings?: boolean } = {}): Promise<string[]> => {
   const web = await box.makeProject('web');
   const api = await box.makeProject('api');
   const result = await box.run(
-    ['init', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner', '--project', web, '--project', api],
+    ['init', '--yes', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner', '--project', web, '--project', api],
     { env: tmuxEnv },
   );
   expect(result.code).toBe(0);
-  if (hookSettings) await seedHookSettings();
+  if (!hookSettings) await rm(join(box.node, 'coordinator', '.claude'), { recursive: true, force: true });
   return [join(box.node, 'web'), join(box.node, 'api')];
 };
 
@@ -325,11 +320,10 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
   it('passes a project folder that ends in a semicolon to claude as one value', async () => {
     const odd = await box.makeProject('odd;');
     const init = await box.run(
-      ['init', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner', '--project', odd],
+      ['init', '--yes', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner', '--project', odd],
       { env: tmuxEnv },
     );
     expect(init.code).toBe(0);
-    await seedHookSettings();
     expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
     const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
@@ -476,8 +470,8 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     await mkdir(real, { recursive: true });
     await symlink(real, linked);
     const home = join(linked, 'factory');
-    const init = await box.run(['init', '--home', home, '--name', 'demo', '--owner-name', 'Test Owner'], { env: tmuxEnv });
-    expect({ code: init.code, stderr: init.stderr }).toEqual({ code: 0, stderr: '' });
+    const init = await box.run(['init', '--yes', '--home', home, '--name', 'demo', '--owner-name', 'Test Owner'], { env: tmuxEnv });
+    expect({ code: init.code, stderr: withoutHookNotice(init.stderr) }).toEqual({ code: 0, stderr: '' });
 
     const byFlag = await box.run(['start', '--dry-run', '--home', home], { env: tmuxEnv });
     expect({ code: byFlag.code, stderr: byFlag.stderr }).toEqual({ code: 0, stderr: '' });

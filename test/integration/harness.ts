@@ -74,6 +74,12 @@ const tmuxDirOf = (root: string): string => join(root, 'tmux');
 /** The socket of the tmux server of a sandbox. A tmux that gets TMUX_TMPDIR puts its socket below `tmux-<uid>`. */
 export const tmuxSocketOf = (root: string): string => join(tmuxDirOf(root), `tmux-${process.getuid?.() ?? 0}`, 'default');
 
+/** The notice that the yes flag prints: the change of the hook settings, with its target. */
+const HOOK_NOTICE = /warning: This changes the settings of Claude Code in [^\n]*:\n(?: {2}[^\n]*\n)+/;
+
+/** The text of stderr without the notice of the hook change. */
+export const withoutHookNotice = (stderr: string): string => stderr.replace(HOOK_NOTICE, '');
+
 /** The roots of the sandboxes that are not removed yet. */
 const openRoots = new Set<string>();
 

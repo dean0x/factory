@@ -20,6 +20,7 @@ const initNode = async (): Promise<void> => {
   const web = await box.makeProject('web', 'git@github.com:acme/web.git');
   const result = await box.run([
     'init',
+    '--yes',
     '--home',
     box.node,
     '--name',
@@ -265,7 +266,7 @@ describe('the root checks of factory doctor and factory start (built binary)', (
 
   it('fails doctor, and stops start, for a setting that skips permission prompts in the coordinator folder (TP-133)', async () => {
     await initNode();
-    await mkdir(join(box.node, 'coordinator', '.claude'));
+    await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
     await writeFile(
       join(box.node, 'coordinator', '.claude', 'settings.local.json'),
       '{"permissions":{"defaultMode":"bypassPermissions"}}\n',

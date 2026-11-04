@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { setupAcceptance } from '../../src/names.js';
 import { oldWordsIn } from '../helpers/old-words.js';
-import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 
@@ -21,7 +21,7 @@ afterEach(async () => {
 afterAll(removeOpenSandboxes);
 
 const initNode = async (): Promise<void> => {
-  const result = await box.run(['init', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner']);
+  const result = await box.run(['init', '--yes', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner']);
   expect(result.code).toBe(0);
 };
 
@@ -170,8 +170,8 @@ describe('factory upgrade (built binary)', () => {
     await mkdir(real, { recursive: true });
     await symlink(real, linked);
     const home = join(linked, 'factory');
-    const init = await box.run(['init', '--home', home, '--name', 'demo', '--owner-name', 'Test Owner']);
-    expect({ code: init.code, stderr: init.stderr }).toEqual({ code: 0, stderr: '' });
+    const init = await box.run(['init', '--yes', '--home', home, '--name', 'demo', '--owner-name', 'Test Owner']);
+    expect({ code: init.code, stderr: withoutHookNotice(init.stderr) }).toEqual({ code: 0, stderr: '' });
     const upgrade = await box.run(['upgrade', '--home', home]);
     expect(upgrade.code).toBe(0);
     expect(upgrade.stdout).toContain('Nothing to upgrade.');
@@ -409,7 +409,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
   /** A new node of the current version: its files are the oracle for the text of an upgraded node. */
   const freshNode = async (): Promise<string> => {
     const home = join(box.root, 'fresh');
-    const result = await box.run(['init', '--home', home, '--name', 'fresh', '--owner-name', 'Test Owner']);
+    const result = await box.run(['init', '--yes', '--home', home, '--name', 'fresh', '--owner-name', 'Test Owner']);
     expect(result.code).toBe(0);
     return join(home, '.factory');
   };
