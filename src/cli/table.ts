@@ -176,15 +176,22 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   {
     name: commands.start,
     summary: `Start the session of the ${roles.node} in tmux, or attach to it.`,
-    usage: `${commandText(commands.start)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}]`,
+    usage: `${commandText(commands.start)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}] [${flagText(flags.yes)}]`,
     options: {
       [flags.home]: foundHomeOption,
       [flags.dryRun]: {
         type: 'boolean',
         description: 'Show the tmux calls and the launch. Start no session and change no file.',
       },
+      [flags.yes]: {
+        type: 'boolean',
+        description:
+          `Agree to the change of the Claude Code settings of the ${roles.coordinator} (the hook and the status line), with no question. ` +
+          `Not allowed inside a ${places.session}.`,
+      },
     },
-    run: (given, deps) => runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }, registry),
+    run: (given, deps) =>
+      runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun), yes: given.bool(flags.yes) }, registry),
   },
   {
     name: commands.node,

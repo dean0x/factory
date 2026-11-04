@@ -76,6 +76,14 @@ The factory list and the registration
 - `start` checks the `safety` block of `coordinator/CLAUDE.md` first. It renders the block again when the block is intact and the current text differs. It exits with code 4 when the block is edited or missing, or when `coordinator/` or `coordinator/CLAUDE.md` is a link, also in a dry run.
 - `start` exits with code 4 and starts no session when a check of the factory folder fails. The checks are in "Security" below.
 
+The last-seen hook and the settings write
+
+- New command `factory hook EVENT`, for Claude Code and not for people. For `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`, it writes one last-seen line (session id, event, time and context percent) to `.factory/state/heartbeat/<session>`. It exits with code 0 and prints nothing to stdout on every path. It writes nothing for an input that is not valid, and it never opens the transcript path.
+- `start` makes sure that `coordinator/.claude/settings.local.json` holds the hook for each event and the status line wrapper. It prints the exact change and the file first, and it asks in a terminal window (the default is no). New flag `start --yes` agrees with no question. It keeps the other keys of the file, and it names a status line that it replaces.
+- With no terminal window and no `--yes`, `start` writes nothing and exits with code 2. Inside a factory session, `--yes` gives no consent, so the exit code is also 2. An answer of no goes on without the hook, and `start` prints one line that names the effect: no last-seen record, so a restart or a reboot can not resume the session by its id. Run `start` again and answer yes to add it.
+- A second `start` finds the entries in place, asks nothing, writes nothing, and the file gives no warning. `start --dry-run` shows the change and writes nothing.
+- A `.claude` folder or a settings file that is a link, or whose real path is outside `coordinator/`, stops `start` with exit code 4 and nothing is written. A file that is not a JSON object stops it with exit code 1 and stays as it is. The write never touches the settings folder of Claude Code in your user folder.
+
 `upgrade`
 
 - `factory upgrade` migrates a node of version 0.1.0 in one step. It writes `factory.yaml` and `factory.local.yaml` from the values of the old file. A comment of the old file does not stay. It moves the files, renames the managed block, backs up first, and restores the files when a step fails.
@@ -109,7 +117,7 @@ Platforms and help
 
 Security
 
-- `start` and `doctor` find a Claude settings file that skips the permission prompts, that sets or clears `FACTORY_SESSION`, or that sets the proxy or the credential of the session in `env`, in `coordinator/`, in a project folder or at a tracked path. `doctor` fails and `start` exits with code 4. A settings file in `coordinator/` or in a project folder that runs a command (a hook, a status line or a key helper) stops them too. The hook and the status line that `factory` writes itself do not count.
+- `start` and `doctor` find a Claude settings file that skips the permission prompts, that sets or clears an `env` variable whose name starts with `FACTORY_`, or that sets the proxy or the credential of the session in `env`, in `coordinator/`, in a project folder or at a tracked path. `doctor` fails and `start` exits with code 4. A settings file in `coordinator/` or in a project folder that runs a command (a hook, a status line or a key helper) stops them too. The hook and the status line that `factory` writes itself do not count.
 - A check of a security boundary that can not finish stops `start` with exit code 4, and `doctor` fails: git fails, a settings folder holds more than 64 settings files, or a settings file can not be read.
 - The token scan names a tracked file that holds a NUL byte (a binary file or a file in UTF-16) as not scanned. A base64 secret that holds a slash and no plus sign is no longer taken for a path.
 - `start` and `doctor` warn about a rule that allows a whole tool and about a setting that approves project MCP servers.

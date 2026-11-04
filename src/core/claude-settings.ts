@@ -88,15 +88,21 @@ export interface HookSettingsRequest {
   readonly session: HookSession;
   /** True when the person gave the yes flag. */
   readonly yes: boolean;
+  /** True for a dry run: the call checks the target and returns the change. It asks nothing and writes nothing. */
+  readonly dryRun: boolean;
   /** The command that asks. The remedy of a stop names it. */
   readonly command: CommandName;
 }
 
-/** What the call did: it found the entries in place, wrote them, or the person answered no. */
+/**
+ * What the call did: it found the entries in place, wrote them, or the person answered no. A dry run that finds a change to
+ * make gives the text of the change and writes nothing.
+ */
 export type HookSettingsOutcome =
   | { readonly kind: 'in-place'; readonly file: string }
   | { readonly kind: 'written'; readonly file: string }
-  | { readonly kind: 'declined'; readonly file: string };
+  | { readonly kind: 'declined'; readonly file: string }
+  | { readonly kind: 'would-write'; readonly file: string; readonly change: string };
 
 /** The most characters of an existing status line that the shown change repeats. */
 const MAX_SHOWN_CHARS = 120;
@@ -276,7 +282,8 @@ const askConsent = async (deps: Deps, request: HookSettingsRequest, shown: strin
  * come first: a link, a real path outside the session folder or inside the user settings folder is a stop (exit 4), and a
  * file that is not a JSON object is a failure (exit 1) that leaves its bytes. Entries in place need no question and no
  * write. Else the change is shown with its target, the person consents, and the write keeps every other key. With no
- * terminal and no consent, the call writes nothing and gives a usage error (exit 2).
+ * terminal and no consent, the call writes nothing and gives a usage error (exit 2). A dry run makes the same checks, then
+ * returns the change with no question and no write.
  */
 export const ensureHookSettings = async (deps: Deps, request: HookSettingsRequest): Promise<CliResult<HookSettingsOutcome>> => {
   const target = targetOf(request.folder);
@@ -291,7 +298,9 @@ export const ensureHookSettings = async (deps: Deps, request: HookSettingsReques
   const change = addOwnEntries(existing.value, target.file, request.command);
   if (!change.ok) return change;
   if (change.value.lines.length === 0) return ok({ kind: 'in-place', file: target.file });
-  const consent = await askConsent(deps, request, shownChange(target.file, change.value.lines), parts.value.exists);
+  const shown = shownChange(target.file, change.value.lines);
+  if (request.dryRun) return ok({ kind: 'would-write', file: target.file, change: shown });
+  const consent = await askConsent(deps, request, shown, parts.value.exists);
   if (!consent.ok) return consent;
   if (!consent.value) return ok({ kind: 'declined', file: target.file });
   const info = parts.value.exists ? await deps.fs.statInfo(target.file) : ok(null);

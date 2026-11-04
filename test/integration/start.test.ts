@@ -119,8 +119,27 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
-/** Make the node with the clones of two work trees. The result is the folders of the clones in the root. */
-const initNode = async (): Promise<string[]> => {
+const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'];
+
+/** The settings of Claude Code that the program writes into the coordinator folder. The command texts are the contract. */
+const ownSettings = (): Record<string, unknown> => ({
+  hooks: Object.fromEntries(HOOK_EVENTS.map((event) => [event, [{ hooks: [{ type: 'command', command: `factory hook ${event}` }] }]])),
+  statusLine: { type: 'command', command: 'factory hook statusline' },
+});
+
+const settingsFileOf = (): string => join(box.node, 'coordinator', '.claude', 'settings.local.json');
+
+const seedHookSettings = async (): Promise<void> => {
+  await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
+  await writeFile(settingsFileOf(), `${JSON.stringify(ownSettings(), null, 2)}\n`);
+};
+
+/**
+ * Make the node with the clones of two work trees. The result is the folders of the clones in the root. The coordinator
+ * folder gets the settings of Claude Code with the own entries, so that `start` asks nothing. With `hookSettings: false`
+ * it gets none.
+ */
+const initNode = async ({ hookSettings = true }: { hookSettings?: boolean } = {}): Promise<string[]> => {
   const web = await box.makeProject('web');
   const api = await box.makeProject('api');
   const result = await box.run(
@@ -128,8 +147,12 @@ const initNode = async (): Promise<string[]> => {
     { env: tmuxEnv },
   );
   expect(result.code).toBe(0);
+  if (hookSettings) await seedHookSettings();
   return [join(box.node, 'web'), join(box.node, 'api')];
 };
+
+/** Every path below a folder, as relative paths. */
+const treeOf = async (folder: string): Promise<string[]> => (await readdir(folder, { recursive: true })).sort();
 
 describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', () => {
   it('prints the warning about an instruction file above the root on stderr, and still exits 0 (TP-33)', async () => {
@@ -306,6 +329,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
       { env: tmuxEnv },
     );
     expect(init.code).toBe(0);
+    await seedHookSettings();
     expect((await startFactory()).code).toBe(0);
     await waitForLaunch();
     const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
@@ -469,6 +493,93 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     const stopped = await box.run(['start', '--dry-run', '--home', home], { env: tmuxEnv });
     expect(stopped.code).toBe(4);
     expect(stopped.stderr).toContain('coordinator/CLAUDE.md is a link');
+    expect(existsSync(socket)).toBe(false);
+  });
+});
+
+describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (built binary, AC-6, TP-16, TP-17, TP-18, TP-19)', () => {
+  const noSession = async (): Promise<void> => {
+    expect((await tmux(['-S', socket, 'has-session', '-t', '=demo'])).code).not.toBe(0);
+    expect(existsSync(socket)).toBe(false);
+  };
+
+  it('exits 2 with no terminal and no --yes, names the change and the target, and writes and starts nothing (TP-16)', async () => {
+    await initNode({ hookSettings: false });
+    const before = await treeOf(box.node);
+    const result = await startFactory();
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain(settingsFileOf());
+    expect(result.stderr).toContain('factory hook Stop');
+    expect(result.stderr).toContain('factory hook statusline');
+    expect(result.stderr).toContain('--yes');
+    expect(await treeOf(box.node)).toEqual(before);
+    await noSession();
+  });
+
+  it('writes only the settings file of the coordinator with --yes, and leaves the Claude folder of the test home as it was (TP-17)', async () => {
+    await initNode({ hookSettings: false });
+    const userClaude = join(box.env['HOME'] ?? '', '.claude');
+    await mkdir(userClaude, { recursive: true });
+    await writeFile(join(userClaude, 'settings.json'), '{"model":"sonnet"}\n');
+    const userBefore = await treeOf(userClaude);
+    const before = await treeOf(box.node);
+
+    const result = await startFactory('--yes');
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain(settingsFileOf());
+    expect(result.stderr).toContain('factory hook SessionStart');
+    expect(await waitForLaunch()).toEqual(['launched']);
+
+    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual(ownSettings());
+    expect((await stat(settingsFileOf())).mode & 0o777).toBe(0o600);
+    const added = (await treeOf(box.node)).filter((path) => !before.includes(path));
+    expect(added).toEqual(['coordinator/.claude', 'coordinator/.claude/settings.local.json']);
+    expect(await treeOf(userClaude)).toEqual(userBefore);
+    expect(await readFile(join(userClaude, 'settings.json'), 'utf8')).toBe('{"model":"sonnet"}\n');
+  });
+
+  it('keeps the other keys of the settings file with --yes (TP-17)', async () => {
+    await initNode({ hookSettings: false });
+    await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
+    await writeFile(settingsFileOf(), '{"model":"opus"}\n');
+    const result = await startFactory('--yes');
+    expect(result.code).toBe(0);
+    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual({ model: 'opus', ...ownSettings() });
+    await waitForLaunch();
+  });
+
+  it('asks nothing, writes nothing and shows no presence warning on the second start (TP-18, AC-11)', async () => {
+    await initNode({ hookSettings: false });
+    expect((await startFactory('--yes')).code).toBe(0);
+    await waitForLaunch();
+    const written = await readFile(settingsFileOf(), 'utf8');
+    const before = await treeOf(box.node);
+
+    const again = await startFactory();
+    expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(await readFile(settingsFileOf(), 'utf8')).toBe(written);
+    expect(await treeOf(box.node)).toEqual(before);
+  });
+
+  it('exits 2 with --yes inside a factory session, and writes and starts nothing (TP-19)', async () => {
+    await initNode({ hookSettings: false });
+    const before = await treeOf(box.node);
+    const result = await box.run(['start', '--home', box.node, '--yes'], { env: { ...tmuxEnv, FACTORY_SESSION: 'demo' } });
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain(settingsFileOf());
+    expect(await treeOf(box.node)).toEqual(before);
+    await noSession();
+  });
+
+  it('shows the change with --dry-run, exits 0, and writes and starts nothing', async () => {
+    await initNode({ hookSettings: false });
+    const before = await treeOf(box.node);
+    const result = await startFactory('--dry-run');
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(settingsFileOf());
+    expect(result.stdout).toContain('factory hook Stop');
+    expect(result.stdout).toContain('A real run asks before it writes this change.');
+    expect(await treeOf(box.node)).toEqual(before);
     expect(existsSync(socket)).toBe(false);
   });
 });

@@ -6,10 +6,11 @@ import { collectSetup } from '../../src/commands/init-received.js';
 import type { StartOptions } from '../../src/commands/start.js';
 import { runStart } from '../helpers/package-registry.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
-import { env, trackedFiles } from '../../src/names.js';
+import { env, hookNames, trackedFiles } from '../../src/names.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { claudeFileText, softwareOwnerModes, workerFileText } from '../helpers/blocks.js';
 import {
@@ -17,6 +18,7 @@ import {
   exited,
   registerRoot,
   withFailingWrites,
+  withFsWatch,
   type FakeDeps,
   type FetchHandler,
   type PromptHandler,
@@ -31,6 +33,9 @@ import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers
 const HOME = '/w/node';
 const COORDINATOR = '/w/node/coordinator';
 const CLAUDE_FILE = '/w/node/coordinator/CLAUDE.md';
+const SETTINGS_FILE = '/w/node/coordinator/.claude/settings.local.json';
+/** The settings file as the writer of the hook settings leaves it. */
+const OWN_SETTINGS = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
 const STATE_DIR = '/w/node/.factory';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
 const REMOVE_PROXY_VARIABLE = 'set-environment -t =demo -r ANTHROPIC_BASE_URL';
@@ -73,6 +78,8 @@ interface Setup {
   readonly coordinatorFolder?: boolean;
   /** The text of coordinator/CLAUDE.md. Default: the blocks as the package renders them for the config. False: no file. */
   readonly claudeFile?: string | false;
+  /** The text of coordinator/.claude/settings.local.json. Default: the own entries, so `start` asks nothing. False: no file. */
+  readonly hookSettings?: string | false;
   /** The paths of the project folders that exist in the home. Default: the folder of each project of the config. */
   readonly projectFolders?: readonly string[];
   /** The paths that git tracks in the home. Default: none. */
@@ -152,6 +159,9 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
   if (setup.coordinatorFolder !== false && setup.claudeFile !== false) {
     deps.seed(CLAUDE_FILE, setup.claudeFile ?? claudeFileText(config));
   }
+  if (setup.coordinatorFolder !== false && setup.hookSettings !== false) {
+    deps.seed(SETTINGS_FILE, setup.hookSettings ?? OWN_SETTINGS);
+  }
   for (const path of setup.projectFolders ?? config.recipe.projects.map((project) => project.path)) {
     deps.seedDir(`${HOME}/${path}`);
   }
@@ -161,7 +171,7 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
 };
 
 const startFactory = async (deps: FakeDeps, options: Partial<StartOptions> = {}) =>
-  runStart(deps, { home: HOME, dryRun: false, ...options });
+  runStart(deps, { home: HOME, dryRun: false, yes: false, ...options });
 
 const succeeded = async (deps: FakeDeps, options: Partial<StartOptions> = {}) => {
   const result = await startFactory(deps, options);
@@ -398,7 +408,7 @@ describe('start:attach', () => {
   it('fails when the attach ends with a non-zero exit code', async () => {
     const { deps } = make({ tty: true });
     const broken = { ...deps, runAttached: async () => ok(1) };
-    const result = await runStart(broken, { home: HOME, dryRun: false });
+    const result = await runStart(broken, { home: HOME, dryRun: false, yes: false });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) expect(result.error.message).toContain('attach ended with exit code 1');
   });
@@ -602,7 +612,7 @@ describe('start:a step that fails', () => {
         return deps.run(command, args, runOptions);
       },
     };
-    const result = await runStart(ended, { home: HOME, dryRun: false });
+    const result = await runStart(ended, { home: HOME, dryRun: false, yes: false });
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) {
       expect(result.error.message).toBe(
@@ -628,7 +638,7 @@ describe('start:a step that fails', () => {
       run: async (command: string, args: readonly string[], runOptions?: Parameters<typeof deps.run>[2]) =>
         args[0] === 'kill-session' ? failure('cannot run tmux: EPERM') : deps.run(command, args, runOptions),
     };
-    const result = await runStart(broken, { home: HOME, dryRun: false });
+    const result = await runStart(broken, { home: HOME, dryRun: false, yes: false });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('remove it with "tmux kill-session -t =demo"');
   });
@@ -700,6 +710,183 @@ describe('start:--dry-run', () => {
   });
 });
 
+describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16, TP-17, TP-18, TP-19)', () => {
+  const noFile = { hookSettings: false } as const;
+  const WRITE_CALLS = ['writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'mkdir', 'chmod', 'copyTree', 'removeEmptyDir'];
+  const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(SETTINGS_FILE) ?? 'null');
+  const launched = (tmux: TmuxLog): boolean => tmux.commands().some((command) => command.startsWith('new-session'));
+  const otherFiles = (deps: FakeDeps): string =>
+    JSON.stringify([...deps.files.entries()].filter(([path]) => path !== SETTINGS_FILE).sort()) + [...deps.dirs].sort().join(',');
+  const failed = async (deps: FakeDeps, options: Partial<StartOptions> = {}) => {
+    const result = await startFactory(deps, options);
+    if (result.ok) throw new Error('start should have stopped');
+    return result.error;
+  };
+
+  describe('on a terminal window (TP-15)', () => {
+    it('prints the exact change and the target before the write, and writes after a yes', async () => {
+      const seen: { fileAtQuestion: boolean | null } = { fileAtQuestion: null };
+      const held: { deps?: FakeDeps } = {};
+      const made = make({
+        ...noFile,
+        tty: true,
+        prompt: () => {
+          seen.fileAtQuestion = held.deps?.files.has(SETTINGS_FILE) ?? null;
+          return ok('y');
+        },
+      });
+      held.deps = made.deps;
+      await succeeded(made.deps);
+      expect(seen.fileAtQuestion).toBe(false);
+      expect(made.deps.prompts).toHaveLength(1);
+      const question = made.deps.prompts[0] ?? '';
+      expect(question).toContain(SETTINGS_FILE);
+      for (const event of hookNames.events) expect(question).toContain(`"factory hook ${event}"`);
+      expect(question).toContain('"factory hook statusline"');
+      expect(question).toContain('[y/N]');
+      expect(settingsOf(made.deps)).toEqual(ownSettingsEntries);
+      expect(launched(made.tmux)).toBe(true);
+    });
+  });
+
+  describe('with no terminal window and no yes flag (TP-16)', () => {
+    it('writes nothing, starts nothing and exits 2 with the change, the target and the remedy', async () => {
+      const { deps, tmux } = make(noFile);
+      const before = JSON.stringify([...deps.files.entries()].sort()) + [...deps.dirs].sort().join(',');
+      const error = await failed(deps);
+      expect(error.kind).toBe('usage');
+      expect(error.message).toContain(SETTINGS_FILE);
+      expect(error.message).toContain('"factory hook Stop"');
+      expect(error.hint).toContain('factory start');
+      expect(error.hint).toContain('--yes');
+      expect(JSON.stringify([...deps.files.entries()].sort()) + [...deps.dirs].sort().join(',')).toBe(before);
+      expect(launched(tmux)).toBe(false);
+    });
+  });
+
+  describe('with the yes flag (TP-17)', () => {
+    it('writes only the settings file of the coordinator, keeps its other keys and prints the change first', async () => {
+      const { deps, tmux } = make({ hookSettings: '{"model":"opus"}\n' });
+      const before = otherFiles(deps);
+      await succeeded(deps, { yes: true });
+      expect(settingsOf(deps)).toEqual({ model: 'opus', ...ownSettingsEntries });
+      expect(otherFiles(deps)).toBe(before);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.warned.some((line) => line.includes(SETTINGS_FILE) && line.includes('"factory hook Stop"'))).toBe(true);
+      expect(launched(tmux)).toBe(true);
+    });
+
+    it('creates the .claude folder and the file when both are missing', async () => {
+      const { deps } = make(noFile);
+      await succeeded(deps, { yes: true });
+      expect(deps.dirs.has(`${COORDINATOR}/.claude`)).toBe(true);
+      expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    });
+  });
+
+  describe('a second start (TP-18, AC-11)', () => {
+    it('asks nothing, writes nothing and shows no presence warning for the file that the first start wrote', async () => {
+      const { deps } = make(noFile);
+      await succeeded(deps, { yes: true });
+      const writes: string[] = [];
+      const watched = withFsWatch(deps, (method, path) => {
+        if (WRITE_CALLS.includes(method) && path.startsWith(`${COORDINATOR}/.claude`)) writes.push(`${method} ${path}`);
+      });
+      const warnedBefore = deps.warned.length;
+      const output = await succeeded(watched);
+      expect(output.failed).toBe(false);
+      expect(deps.prompts).toEqual([]);
+      expect(writes).toEqual([]);
+      const warned = [...deps.warned.slice(warnedBefore), ...output.warnings, ...output.lines.filter((line) => line.level === 'warn').map((line) => line.text)];
+      expect(warned.filter((line) => line.includes('settings.local.json'))).toEqual([]);
+    });
+
+    it('asks nothing and writes nothing when the entries are in place with another layout', async () => {
+      const { deps } = make({ hookSettings: JSON.stringify(ownSettingsEntries) });
+      const before = deps.files.get(SETTINGS_FILE);
+      await succeeded(deps);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.files.get(SETTINGS_FILE)).toBe(before);
+    });
+  });
+
+  describe('inside a factory session (TP-19)', () => {
+    it('exits 2 with the yes flag, writes nothing and starts nothing', async () => {
+      const { deps, tmux } = make({ ...noFile, env: { [env.session]: 'demo' } });
+      const before = JSON.stringify([...deps.files.entries()].sort());
+      const error = await failed(deps, { yes: true });
+      expect(error.kind).toBe('usage');
+      expect(error.message).toContain(SETTINGS_FILE);
+      expect(JSON.stringify([...deps.files.entries()].sort())).toBe(before);
+      expect(deps.files.has(SETTINGS_FILE)).toBe(false);
+      expect(launched(tmux)).toBe(false);
+    });
+  });
+
+  describe('an answer of no on a terminal window', () => {
+    it('goes on without the hook, writes nothing and prints one notice that names the effect and the way to add it', async () => {
+      const { deps, tmux } = make({ ...noFile, tty: true, prompt: () => ok('n') });
+      await succeeded(deps);
+      expect(deps.files.has(SETTINGS_FILE)).toBe(false);
+      expect(launched(tmux)).toBe(true);
+      const notices = deps.warned.filter((line) => line.includes('resume the session by its id'));
+      expect(notices).toHaveLength(1);
+      expect(notices[0]).toContain('last-seen');
+      expect(notices[0]).toContain('"factory start"');
+      expect(notices[0]).toContain('answer yes');
+      expect(notices[0]).not.toContain('\n');
+    });
+  });
+
+  describe('an error of the writer', () => {
+    it('stops start with the exit code of the writer and starts nothing, for a file that is not a JSON object', async () => {
+      const { deps, tmux } = make({ hookSettings: '[]\n' });
+      const error = await failed(deps, { yes: true });
+      expect(error.kind).toBe('failure');
+      expect(error.message).toContain('is not a JSON object');
+      expect(deps.files.get(SETTINGS_FILE)).toBe('[]\n');
+      expect(launched(tmux)).toBe(false);
+    });
+
+    it('stops with exit 4 for a .claude folder that is a link, and starts nothing', async () => {
+      const { deps, tmux } = make({ ...noFile, links: { [`${COORDINATOR}/.claude`]: '/outside' } });
+      deps.seedDir('/outside');
+      const error = await failed(deps, { yes: true });
+      expect(error.kind).toBe('safety');
+      expect(launched(tmux)).toBe(false);
+      expect(deps.files.has('/outside/settings.local.json')).toBe(false);
+    });
+  });
+
+  describe('--dry-run', () => {
+    it('shows the change and the target, and asks and writes nothing, also with no terminal window', async () => {
+      const { deps, tmux } = make(noFile);
+      const before = JSON.stringify([...deps.files.entries()].sort()) + [...deps.dirs].sort().join(',');
+      const output = await succeeded(deps, { dryRun: true });
+      const text = output.lines.map((line) => line.text).join('\n');
+      expect(text).toContain(SETTINGS_FILE);
+      expect(text).toContain('"factory hook Stop"');
+      expect(text).toContain('A real run asks before it writes this change.');
+      expect(output.failed).toBe(false);
+      expect(deps.prompts).toEqual([]);
+      expect(JSON.stringify([...deps.files.entries()].sort()) + [...deps.dirs].sort().join(',')).toBe(before);
+      expect(launched(tmux)).toBe(false);
+    });
+
+    it('says that a real run writes the change with the yes flag', async () => {
+      const { deps } = make(noFile);
+      const output = await succeeded(deps, { dryRun: true, yes: true });
+      expect(output.lines.map((line) => line.text).join('\n')).toContain('A real run writes this change.');
+    });
+
+    it('shows no change when the entries are in place', async () => {
+      const { deps } = make();
+      const output = await succeeded(deps, { dryRun: true });
+      expect(output.lines.map((line) => line.text).join('\n')).not.toContain('This changes the settings');
+    });
+  });
+});
+
 describe('start:the home and the config', () => {
   it('fails when the config is missing or invalid', async () => {
     const { deps } = make();
@@ -719,7 +906,7 @@ describe('start:the home and the config', () => {
 
   it('finds the home from FACTORY_HOME', async () => {
     const { deps } = make({ env: { FACTORY_HOME: HOME } });
-    const result = await runStart(deps, { home: undefined, dryRun: true });
+    const result = await runStart(deps, { home: undefined, dryRun: true, yes: false });
     expect(result.ok).toBe(true);
   });
 
@@ -749,7 +936,7 @@ describe('start:the registration check', () => {
   ])('applies to a home from %s', async (_name, setup, home) => {
     const { deps, tmux } = make({ ...setup, registered: false });
     deps.seedDir(deps.cwd);
-    const result = await runStart(deps, { home, dryRun: true });
+    const result = await runStart(deps, { home, dryRun: true, yes: false });
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     expect(tmux.calls).toEqual([]);
   });
@@ -775,7 +962,7 @@ describe('start:the registration check', () => {
       registerRoot(deps, HOME, 'demo', [`${HOME}/web`]);
       seedConfig(deps, `${HOME}/web`, withProxy('stop'));
       deps.seedDir(`${HOME}/web/src`);
-      const result = await runStart(deps, { home: undefined, dryRun });
+      const result = await runStart(deps, { home: undefined, dryRun, yes: false });
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
       if (!result.ok) {
         expect(result.error.message).toContain(`${HOME}/web/factory.yaml`);
@@ -794,9 +981,9 @@ describe('start:the registration check', () => {
     deps.seed('/w/other/coordinator/CLAUDE.md', claudeFileText(other));
     deps.seedDir(`${HOME}/deep`);
     deps.seedDir('/w/other/deep');
-    const first = await runStart(deps, { home: undefined, dryRun: true });
+    const first = await runStart(deps, { home: undefined, dryRun: true, yes: false });
     expect(first.ok && first.value.json['session']).toBe('demo');
-    const second = await runStart({ ...deps, cwd: '/w/other/deep' }, { home: undefined, dryRun: true });
+    const second = await runStart({ ...deps, cwd: '/w/other/deep' }, { home: undefined, dryRun: true, yes: false });
     expect(second.ok && second.value.json['session']).toBe('other');
   });
 });
@@ -1188,8 +1375,7 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
   });
 
   it('goes on, with a warning, for a settings file in the coordinator folder and for a whole-tool allow rule (TP-154)', async () => {
-    const { deps } = make();
-    deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify({ permissions: { allow: ['Bash'] } }));
+    const { deps } = make({ hookSettings: JSON.stringify({ ...ownSettingsEntries, permissions: { allow: ['Bash'] } }) });
     const output = await succeeded(deps);
     expect(output.json).toMatchObject({ started: true });
     expect(deps.warned.join(' ')).toContain('coordinator/.claude/settings.local.json');

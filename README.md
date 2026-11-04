@@ -23,7 +23,7 @@ You need:
 | Command | What it does |
 | --- | --- |
 | `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. |
-| `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. |
+| `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory doctor` | Run 25 checks. See "Doctor". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. It does its work only when `FACTORY_HOME` is set. It exits with code 0 and prints nothing to stdout on every path. |
@@ -183,11 +183,14 @@ The setup text goes into the instructions of a session, so it needs your accepta
 ```sh
 factory start --dry-run
 factory start
+factory start --yes
 ```
 
 `start` starts a tmux session with the id of the node. It works from the factory folder, from `coordinator/` and from a project clone. The coordinator runs in the window `view`, in the folder `coordinator/` of the factory folder. If that folder is missing, its safety block is missing, so `start` exits with code 4 and names `factory upgrade --overwrite safety`. The session option `@factory_home` and the variable `FACTORY_HOME` name the factory folder. The coordinator runs in auto permission mode, with one `--add-dir` for the state folder `.factory/` and one for each project. There is no `--add-dir` for the top of the factory folder. It runs with the `PATH` of the shell that ran `start`, not the `PATH` of a tmux server that started before. The window `workers` is empty.
 
 The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy comes only from the config, and only when it answers. The shells of the slot and of the worker window get no `ANTHROPIC_BASE_URL` either: `start` removes it from the environment of the session, and from no other session. `start` also sets `FACTORY_SESSION` to the node id in the environment of the session, so the shells of the slot and of the worker window carry it like the coordinator does.
+
+`start` also makes sure that `coordinator/.claude/settings.local.json` holds the last-seen hook and the status line wrapper (`factory hook EVENT` and `factory hook statusline`). It prints the exact change and the file first, then it asks (the default is no) in a terminal window. It keeps every other key of the file, and it names a status line that it replaces. `--yes` is the yes outside a factory session. With no terminal window and no `--yes`, `start` writes nothing, starts nothing and exits with code 2. Inside a factory session, `--yes` gives no consent, so the exit code is also 2. If you answer no, `start` goes on without the hook and prints one line: factory has no last-seen record of the coordinator, so a restart or a reboot can not resume the session by its id. To add the hook later, run `start` again and answer yes. When the entries are in place, `start` asks nothing and writes nothing, and the file gives no warning. `--dry-run` shows the change and writes nothing. A link at `.claude/` or at the file, or a real path outside `coordinator/`, stops `start` with exit code 4. A file that is not a JSON object stops it with exit code 1 and stays as it is.
 
 A second `start` starts no second coordinator. It attaches to the session. If the program of the coordinator has ended, `start` says so and names the commands that remove the session and start it again. `--dry-run` prints the tmux calls and starts no session. `start` counts a `factory.yaml` only at a registered factory (see "Find the factory folder"). So a `factory.yaml` that a cloned repo holds never starts a session.
 

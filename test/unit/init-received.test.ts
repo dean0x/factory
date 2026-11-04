@@ -645,7 +645,7 @@ describe('init: the setup acceptance of a received root', () => {
       expect(linesOf(result)).toContain('terminal window');
 
       const askedByInit = asked.length;
-      const started = await runStart(deps, { home: ROOT, dryRun: false });
+      const started = await runStart(deps, { home: ROOT, dryRun: false, yes: false });
       expect(started).toMatchObject({ ok: false, error: { kind: 'safety' } });
       expect(messageOf(started)).toContain('factory init');
       expect(messageOf(started)).toContain('terminal window');
@@ -701,7 +701,7 @@ describe('init: the setup acceptance of a received root', () => {
         run: async (command: string, args: readonly string[], runOptions?: { readonly cwd?: string }) =>
           command === 'tmux' ? handler({ command, args, cwd: runOptions?.cwd }) : deps.run(command, args, runOptions),
       };
-      const dry = await runStart(withTmux, { home: ROOT, dryRun: true });
+      const dry = await runStart(withTmux, { home: ROOT, dryRun: true, yes: false });
       expect(dry.ok).toBe(true);
       const calls = dry.ok ? (dry.value.json['calls'] as string[]) : [];
       const launch = calls.find((line) => line.includes('new-session')) ?? '';

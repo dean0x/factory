@@ -262,7 +262,7 @@ A factory with one project is a node with one project. A factory with many proje
 factory init [--home DIR] [--name N] [--project PATH|URL]... [--recipe NAME] [--layer N]
              [--tracker ID] [--items X] [--decisions X] [--approval POINT=owner|delegated]... [--state-from SRC] [--yes]
                                             # makes a factory, or registers a received one; run it again in the factory folder to change an approval mode (§6)
-factory start [--home DIR]                  # start the factory, or open it when it runs: the screen session, its windows and the coordinator (§4.11); after a machine restart it resumes each recorded worker; works from a project folder (§4.3)
+factory start [--home DIR] [--dry-run] [--yes]  # start the factory, or open it when it runs: the screen session, its windows and the coordinator (§4.11); after a machine restart it resumes each recorded worker; works from a project folder (§4.3)
 factory shutdown                            # stop every session of this factory, and nothing else (§4.11)
 factory restart <worker>                    # restart one worker, and keep its conversation (§4.11)
 factory reboot                              # shut down the whole factory and start it again; each recorded worker resumes (§4.11)

@@ -183,7 +183,7 @@ describe('the fixture recipe: doctor, upgrade and start (TP-98, TP-137)', () => 
 
   it('start --dry-run shows the calls and prints no software word', async () => {
     const { deps } = await initialized();
-    const output = succeeded(await runStart(deps, { home: HOME, dryRun: true }, publishRegistry));
+    const output = succeeded(await runStart(deps, { home: HOME, dryRun: true, yes: false }, publishRegistry));
     expect(textOf(output)).toContain('Dry run');
     expect(softwareWordsIn(textOf(output))).toEqual([]);
   });

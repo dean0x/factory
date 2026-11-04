@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import {
   ensureHookSettings,
+  isOwnSettingsText,
   ownSettingsEntries,
   type HookSettingsOutcome,
   type HookSettingsRequest,
@@ -75,6 +76,7 @@ const request = (overrides: Partial<HookSettingsRequest> = {}): HookSettingsRequ
   folder: FOLDER,
   session: 'coordinator',
   yes: false,
+  dryRun: false,
   command: commands.start,
   ...overrides,
 });
@@ -336,6 +338,63 @@ describe('hook settings: consent without a terminal or with the yes flag (TP-19)
     const deps = createFakeDeps({ env: { HOME: USER_HOME, FACTORY_SESSION: '' } });
     deps.seedDir(FOLDER);
     expect(outcomeOf(await ensureHookSettings(deps, request({ yes: true }))).kind).toBe('written');
+  });
+});
+
+describe('hook settings: the dry run', () => {
+  it('shows the change and the target, and asks and writes nothing, also with no terminal and no consent', async () => {
+    const log: string[] = [];
+    const deps = makeDeps({ log });
+    const before = snapshot(deps);
+    const outcome = outcomeOf(await ensureHookSettings(logged(deps, log), request({ dryRun: true })));
+    if (outcome.kind !== 'would-write') throw new Error(`the kind is ${outcome.kind}`);
+    expect(outcome.file).toBe(FILE);
+    expect(outcome.change).toContain(FILE);
+    for (const event of hookNames.events) expect(outcome.change).toContain(`factory hook ${event}`);
+    expect(outcome.change).toContain('factory hook statusline');
+    expect(log).toEqual([]);
+    expect(deps.prompts).toEqual([]);
+    expect(deps.warned).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('shows the same change as the question of a real run', async () => {
+    const dry = outcomeOf(await ensureHookSettings(makeDeps(), request({ dryRun: true })));
+    const deps = makeDeps({ tty: true, answer: 'n' });
+    await ensureHookSettings(deps, request());
+    expect(dry.kind === 'would-write' && deps.prompts[0]?.startsWith(dry.change)).toBe(true);
+  });
+
+  it('finds the entries in place and shows nothing', async () => {
+    const deps = makeDeps();
+    deps.seed(FILE, JSON.stringify(EXPECTED_ENTRIES));
+    expect(outcomeOf(await ensureHookSettings(deps, request({ dryRun: true })))).toEqual({ kind: 'in-place', file: FILE });
+  });
+
+  it('stops on a link as a real run does, and on a file that is not a JSON object', async () => {
+    const linked = createFakeDeps({ links: { [CLAUDE]: '/outside' }, env: { HOME: USER_HOME } });
+    linked.seedDir(FOLDER);
+    expect(errorOf(await ensureHookSettings(linked, request({ dryRun: true }))).kind).toBe('safety');
+    const broken = makeDeps();
+    broken.seed(FILE, '[]');
+    expect(errorOf(await ensureHookSettings(broken, request({ dryRun: true }))).kind).toBe('failure');
+  });
+});
+
+describe('hook settings: the file that the writer makes is the own file', () => {
+  it('passes the exact check for the own file, with the indented layout of the writer', async () => {
+    const deps = makeDeps();
+    await ensureHookSettings(deps, request({ yes: true }));
+    const text = deps.files.get(FILE) ?? '';
+    expect(text).toContain('\n  ');
+    expect(isOwnSettingsText(text)).toBe(true);
+  });
+
+  it('does not pass it when another key stays in the file', async () => {
+    const deps = makeDeps();
+    deps.seed(FILE, '{"model":"opus"}');
+    await ensureHookSettings(deps, request({ yes: true }));
+    expect(isOwnSettingsText(deps.files.get(FILE) ?? '')).toBe(false);
   });
 });
 
