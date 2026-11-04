@@ -150,8 +150,8 @@ describe('factory hook (built binary)', () => {
         schema: 'factory.worker/v1',
         id,
         project: 'web',
-        work_copy: join(box.root, 'work-copies', 'web-fix-login'),
-        branch: 'fix/login',
+        work_copy: join(home, 'work-copies', 'web', id),
+        branch: `worker/${id}`,
         created_at: new Date().toISOString(),
       };
       await writeFile(join(folder, 'worker.json'), `${JSON.stringify(record, null, 2)}\n`);

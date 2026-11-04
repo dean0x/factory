@@ -238,6 +238,56 @@ describe('the launch of a worker: the pane and the argument list', () => {
     expect(made.events).toEqual([]);
   });
 
+  describe('a work copy that is not the folder of this worker below the work copies folder', () => {
+    it.each([
+      ['the home folder of the user', '/Users/someone'],
+      ['the factory folder', HOME],
+      ['the coordinator folder', `${HOME}/coordinator`],
+      ['the clone of a project', `${HOME}/web`],
+      ['the work copies folder', `${HOME}/work-copies`],
+      ['the folder of a project', `${HOME}/work-copies/web`],
+      ['the folder of another worker', COPY_BETA],
+      ['a folder below the work copy', `${COPY}/sub`],
+      ['a path with a dot-dot part that leads to the work copy', `${HOME}/work-copies/web/../web/alpha`],
+      ['a path with a dot-dot part that leads out of the factory folder', `${HOME}/work-copies/web/alpha/../../../../x/web/alpha`],
+      ['a path with a trailing slash', `${COPY}/`],
+      ['a folder outside the factory folder', '/elsewhere/web/alpha'],
+    ])('stops with exit 4 for %s, and starts nothing', async (_name, workCopy) => {
+      const made = make({ work: [workCopy, COPY] });
+      const error = await failed(made, { workCopy });
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.message).toContain('work copy');
+      expect(error.message).toContain('work-copies/');
+      expect(made.events).toEqual([]);
+      expect(panesOf(made)).toBe(START_PANES);
+    });
+
+    it.each([
+      ['the work copies folder', `${HOME}/work-copies`],
+      ['the folder of the project', `${HOME}/work-copies/web`],
+    ])('stops with exit 4 when %s is a link, and starts nothing', async (_name, link) => {
+      const made = make({ links: { [link]: '/elsewhere/folder' } });
+      made.deps.seedDir('/elsewhere/folder');
+      const error = await failed(made);
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(made.events).toEqual([]);
+      expect(panesOf(made)).toBe(START_PANES);
+    });
+
+    it('stops with exit 4 for a link at the work copy even when the target is a folder of the factory folder', async () => {
+      const made = make({ links: { [COPY]: `${HOME}/web` } });
+      made.deps.seedDir(`${HOME}/web`);
+      expect(exitCodeOf[(await failed(made)).kind]).toBe(4);
+      expect(made.events).toEqual([]);
+    });
+
+    it('starts the worker in the folder that the project and the id give', async () => {
+      const made = make();
+      await launched(made, { proxy: null });
+      expect(made.tmux.panes().at(-1)).toMatchObject({ cwd: COPY });
+    });
+  });
+
   it('fails when the session of tmux does not exist, and leaves no pane', async () => {
     const made = make({ tmux: { sessions: {} } });
     const error = await failed(made);

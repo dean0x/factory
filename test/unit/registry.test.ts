@@ -21,20 +21,27 @@ const worker = (change: Partial<NewWorker> = {}): NewWorker => ({
   id: 'web-search',
   project: 'web',
   workCopy: '/h/node/work-copies/web/web-search',
-  branch: 'factory/web-search',
+  branch: 'worker/web-search',
   ...change,
 });
 
-/** The record as the file holds it. The keys are written out here, so a test pins the format that a reader of the file sees. */
-const fileOf = (fields: Record<string, unknown> = {}): Record<string, unknown> => ({
-  schema: schemaIds.workerRecord,
-  id: 'web-search',
-  project: 'web',
-  work_copy: '/h/node/work-copies/web/web-search',
-  branch: 'factory/web-search',
-  created_at: T0,
-  ...fields,
-});
+/**
+ * The record as the file holds it. The keys are written out here, so a test pins the format that a reader of the file sees. The
+ * work copy and the branch are the ones that `worker new` derives from the project and the id, unless the fields change them.
+ */
+const fileOf = (fields: Record<string, unknown> = {}): Record<string, unknown> => {
+  const id = typeof fields['id'] === 'string' ? fields['id'] : 'web-search';
+  const project = typeof fields['project'] === 'string' ? fields['project'] : 'web';
+  return {
+    schema: schemaIds.workerRecord,
+    id,
+    project,
+    work_copy: `${HOME}/work-copies/${project}/${id}`,
+    branch: `worker/${id}`,
+    created_at: T0,
+    ...fields,
+  };
+};
 
 const recordPath = (id: string): string => `${WORKERS}/${id}/worker.json`;
 
@@ -85,7 +92,7 @@ describe('writeWorkerRecord (TP-9)', () => {
       id: 'web-search',
       project: 'web',
       workCopy: '/h/node/work-copies/web/web-search',
-      branch: 'factory/web-search',
+      branch: 'worker/web-search',
       createdAt: T0,
     });
     expect(stored(deps)).toEqual(fileOf());
@@ -102,7 +109,7 @@ describe('writeWorkerRecord (TP-9)', () => {
   it('writes one file for each of two workers, and neither file holds the other worker', async () => {
     const deps = make();
     await writeWorkerRecord(deps, HOME, worker());
-    await writeWorkerRecord(deps, HOME, worker({ id: 'api-fix', project: 'api', workCopy: '/h/node/work-copies/api/api-fix', branch: 'factory/api-fix' }));
+    await writeWorkerRecord(deps, HOME, worker({ id: 'api-fix', project: 'api', workCopy: '/h/node/work-copies/api/api-fix', branch: 'worker/api-fix' }));
     expect([...deps.files.keys()].filter((path) => path.endsWith('/worker.json')).sort()).toEqual([
       recordPath('api-fix'),
       recordPath('web-search'),
@@ -214,7 +221,7 @@ describe('readWorkerRecord', () => {
     seedRecord(deps);
     expect(await readOf(deps)).toEqual({
       state: 'valid',
-      record: { id: 'web-search', project: 'web', workCopy: '/h/node/work-copies/web/web-search', branch: 'factory/web-search', createdAt: T0 },
+      record: { id: 'web-search', project: 'web', workCopy: '/h/node/work-copies/web/web-search', branch: 'worker/web-search', createdAt: T0 },
     });
   });
 
@@ -279,6 +286,86 @@ describe('readWorkerRecord', () => {
     const read = await readOf(deps);
     expect(read).toMatchObject({ state: 'invalid' });
     expect(JSON.stringify(read)).not.toContain('secret');
+  });
+
+  describe('a record whose work copy or branch is not the one that the project and the id give', () => {
+    const EXPECTED_COPY = `${HOME}/work-copies/web/web-search`;
+
+    it.each([
+      ['the home folder of the user', '/Users/someone'],
+      ['the factory folder', HOME],
+      ['the coordinator folder', `${HOME}/coordinator`],
+      ['the clone of the project', `${HOME}/web`],
+      ['a folder of another project', `${HOME}/work-copies/api/web-search`],
+      ['the folder of another worker', `${HOME}/work-copies/web/other`],
+      ['the folder of the project, with no id', `${HOME}/work-copies/web`],
+      ['a folder below the work copy', `${EXPECTED_COPY}/sub`],
+      ['a path with a dot-dot part that leads to the work copy', `${HOME}/work-copies/web/../web/web-search`],
+      ['a path with a dot part', `${HOME}/work-copies/web/./web-search`],
+      ['a path with a double slash', `${HOME}/work-copies//web/web-search`],
+      ['a path with a trailing slash', `${EXPECTED_COPY}/`],
+      ['the work copy of the same name in another factory folder', '/other/node/work-copies/web/web-search'],
+    ])('gives invalid, marked as a mismatch, for a work copy that is %s', async (_name, workCopy) => {
+      const deps = make();
+      seedRecord(deps, 'web-search', { work_copy: workCopy });
+      const read = await readOf(deps);
+      expect(read).toMatchObject({ state: 'invalid', mismatch: true });
+      expect(JSON.stringify(read)).toContain('work copy');
+      expect(JSON.stringify(read)).toContain(EXPECTED_COPY);
+    });
+
+    it.each([
+      ['the branch of another worker', 'worker/other'],
+      ['a branch of the project', 'main'],
+      ['a branch with another prefix', 'factory/web-search'],
+      ['the branch with a part below it', 'worker/web-search/x'],
+    ])('gives invalid, marked as a mismatch, for a branch that is %s', async (_name, branch) => {
+      const deps = make();
+      seedRecord(deps, 'web-search', { branch });
+      const read = await readOf(deps);
+      expect(read).toMatchObject({ state: 'invalid', mismatch: true });
+      expect(JSON.stringify(read)).toContain('branch');
+      expect(JSON.stringify(read)).toContain('worker/web-search');
+    });
+
+    it('gives valid for the work copy and the branch that the project and the id give', async () => {
+      const deps = make();
+      seedRecord(deps);
+      expect(await readOf(deps)).toMatchObject({ state: 'valid', record: { workCopy: EXPECTED_COPY, branch: 'worker/web-search' } });
+    });
+
+    it('checks the work copy against the factory folder that the caller names', async () => {
+      const deps = make();
+      seedRecord(deps);
+      expect(valueOf(await readWorkerRecord(deps, '/h/other', 'web-search'))).toMatchObject({ state: 'absent' });
+      deps.seed(`/h/other/.factory/workers/web-search/worker.json`, `${JSON.stringify(fileOf())}\n`);
+      expect(valueOf(await readWorkerRecord(deps, '/h/other', 'web-search'))).toMatchObject({ state: 'invalid', mismatch: true });
+    });
+
+    it('marks no other invalid record as a mismatch', async () => {
+      const deps = make();
+      seedRecord(deps, 'web-search', { branch: '-x' });
+      expect(await readOf(deps)).not.toHaveProperty('mismatch');
+    });
+
+    it('does not repeat the written value in the reason', async () => {
+      const deps = make();
+      seedRecord(deps, 'web-search', { work_copy: '/secret-folder-value', branch: 'secret-branch-value' });
+      expect(JSON.stringify(await readOf(deps))).not.toContain('secret');
+      seedRecord(deps, 'web-search', { branch: 'secret-branch-value' });
+      expect(JSON.stringify(await readOf(deps))).not.toContain('secret');
+    });
+
+    it('names the worker in the list of invalid records, and lists the valid records all the same', async () => {
+      const deps = make();
+      seedRecord(deps, 'api-fix', { project: 'api' });
+      seedRecord(deps, 'web-search', { work_copy: HOME });
+      const list = await listOf(deps);
+      expect(list.workers.map((entry) => entry.id)).toEqual(['api-fix']);
+      expect(list.invalid).toHaveLength(1);
+      expect(list.invalid[0]).toMatchObject({ name: 'web-search' });
+      expect(list.invalid[0]?.reason).toContain('work copy');
+    });
   });
 
   it('gives invalid for a file that is a link, a folder that is a link and a workers folder that is a link, and reads no file', async () => {
@@ -356,7 +443,7 @@ describe('listWorkerRecords', () => {
   it('lists the two records that two writes made (TP-9)', async () => {
     const deps = make();
     await writeWorkerRecord(deps, HOME, worker());
-    await writeWorkerRecord(deps, HOME, worker({ id: 'api-fix', project: 'api', workCopy: '/h/node/work-copies/api/api-fix', branch: 'factory/api-fix' }));
+    await writeWorkerRecord(deps, HOME, worker({ id: 'api-fix', project: 'api', workCopy: '/h/node/work-copies/api/api-fix', branch: 'worker/api-fix' }));
     expect((await listOf(deps)).workers.map((entry) => entry.id)).toEqual(['api-fix', 'web-search']);
   });
 

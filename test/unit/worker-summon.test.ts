@@ -63,6 +63,19 @@ const swaps = (made: SlotMade): string[] => made.tmux.commands().filter((command
 
 const TOKEN_PATTERN = /^%[0-9]+:[0-9a-f]{32}$/;
 
+describe('worker summon: a record that is not the record of its worker', () => {
+  it('stops with exit 4, names the record file, and moves no pane', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    const file = '/w/node/.factory/workers/alpha/worker.json';
+    const record = JSON.parse(made.deps.files.get(file) ?? 'null') as Record<string, unknown>;
+    made.deps.seed(file, `${JSON.stringify({ ...record, work_copy: HOME })}\n`);
+    const error = await failedWith(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(file);
+    expect(swaps(made)).toEqual([]);
+  });
+});
+
 describe('worker summon: the pane goes into the slot of the view window (TP-31)', () => {
   it('swaps the pane of the worker with the board pane, and keeps the other panes where they are', async () => {
     const made = await makeSlot(ALPHA_ONLY);

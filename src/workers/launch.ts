@@ -1,11 +1,12 @@
-import { dirname, isAbsolute } from 'node:path';
-import { failure, type CliResult } from '../cli/errors.js';
+import { basename, dirname, isAbsolute } from 'node:path';
+import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { checkFolderSettings, requireNoFailures, warningLines } from '../commands/root-content.js';
 import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
 import { ok } from '../core/result.js';
+import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import { toolNames } from '../core/tools.js';
 import { workerLaunchArgv } from '../launch/argv.js';
 import {
@@ -18,9 +19,10 @@ import {
   tileWorkersArgs,
 } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
-import { commandLines, commands, commandText, dirs, env, keys, roles, tmuxNames, values } from '../names.js';
+import { commandLines, commands, commandText, dirs, env, keys, places, roles, tmuxNames, values } from '../names.js';
 import { checkProxyHealth, type ProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
+import { workCopyOf } from './registry.js';
 
 /**
  * The one path that starts a worker (design 4.6): `worker new`, `worker resume`, and later `restart`, `reboot` and the restore
@@ -141,14 +143,29 @@ const tryAgainOrEnd = (workerId: string): string =>
   `"${resumeCommand(workerId)}" to try again, or "${dismissCommand(workerId)}" to end the ${roles.worker}`;
 
 /**
- * The work copy must be an absolute path and a folder. tmux starts a pane in another folder when the folder of `-c` is
- * missing, and the program would then run outside the work copy. A link passes here: the settings check stops it.
+ * The work copy must be the folder of this worker: exactly `work-copies/<project>/<id>` of the factory folder, as the path is
+ * written, and a folder. A path in another place, a path of another worker and a path with a dot-dot part are a security stop
+ * (exit 4), because the folder of the launch is the main permission scope of the session. No part of the path from the work copies
+ * folder down may be a link (exit 4). tmux starts a pane in another folder when the folder of `-c` is missing, and the program would
+ * then run outside the work copy, so a folder that is not there is a failure.
  */
-const requireWorkCopy = async (deps: Deps, workerId: string, workCopy: string): Promise<CliResult<void>> => {
+const requireWorkCopy = async (deps: Deps, home: string, workerId: string, workCopy: string): Promise<CliResult<void>> => {
   if (!isAbsolute(workCopy)) return failure(`the work copy of the ${roles.worker} ${workerId} is not an absolute path`);
+  const project = basename(dirname(workCopy));
+  if (!isSlug(project) || workCopy !== workCopyOf(home, project, workerId)) {
+    return safetyRefusal(
+      `the work copy of the ${roles.worker} ${workerId} is not the folder ${dirs.workCopies}/<project>/${workerId} of this ${places.folder}, so the launch starts no session there`,
+      `Check the record of the ${roles.worker}. Then run "${resumeCommand(workerId)}" again.`,
+    );
+  }
+  const linked = await requireNoLinks(deps, home, [workCopy]);
+  if (!linked.ok) return linked;
   const kind = await deps.fs.lstat(workCopy);
   if (!kind.ok) return kind;
-  if (kind.value === 'dir' || kind.value === 'link') return ok(undefined);
+  if (kind.value === 'dir') return ok(undefined);
+  if (kind.value === 'link') {
+    return safetyRefusal(`the work copy of the ${roles.worker} ${workerId} became a link`, LINK_REMEDY);
+  }
   return failure(
     `the work copy ${workCopy} of the ${roles.worker} ${workerId} is not a folder`,
     `Restore the folder, or end the ${roles.worker} with "${dismissCommand(workerId)}".`,
@@ -266,7 +283,8 @@ const requireRunningPane = async (deps: Deps, session: string, pane: string, wor
 
 /**
  * Starts the program of a worker in a new pane of the workers window, in its work copy. In order:
- * 1. the settings files of the work copy (a failure is exit 4, and nothing starts);
+ * 1. the work copy, which must be exactly the folder of this worker below the work copies folder with no link in its path, and its
+ *    settings files (a failure is exit 4, and nothing starts);
  * 2. the instruction files above the work copy (a warning);
  * 3. the proxy of the worker, with its health check;
  * 4. the argument list, with auto mode and the resume id when there is one;
@@ -278,7 +296,7 @@ const requireRunningPane = async (deps: Deps, session: string, pane: string, wor
 export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Promise<CliResult<WorkerLaunch>> => {
   const { home, config, workerId, workCopy, resumeId } = request;
   if (!isSlug(workerId)) return failure(`the launch refuses a ${roles.worker} id that is not a slug`);
-  const folder = await requireWorkCopy(deps, workerId, workCopy);
+  const folder = await requireWorkCopy(deps, home, workerId, workCopy);
   if (!folder.ok) return folder;
   const settings = await requireCleanSettings(deps, home, workCopy);
   if (!settings.ok) return settings;

@@ -825,7 +825,7 @@ describe('the session pointer of a worker', () => {
     const MARKED_BY_WORKER = { session_marker: WORKER };
 
     const addWorker = async (deps: FakeDeps, id: string): Promise<void> => {
-      const made = await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `/w/${id}`, branch: `worker/${id}` });
+      const made = await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${HOME}/work-copies/web/${id}`, branch: `worker/${id}` });
       if (!made.ok) throw new Error(made.error.message);
     };
 

@@ -328,7 +328,7 @@ describe('factory hook statusline: the guards of the write', () => {
 
   it('writes the percent for the id of a worker that has a record in the registry (TP-125)', async () => {
     const deps = make({ env: { FACTORY_SESSION: 'fix-login' } });
-    const record = { id: 'fix-login', project: 'web', workCopy: '/h/factory/work-copies/web-fix-login', branch: 'fix/login' };
+    const record = { id: 'fix-login', project: 'web', workCopy: '/h/factory/work-copies/web/fix-login', branch: 'worker/fix-login' };
     expect((await writeWorkerRecord(deps, HOME, record)).ok).toBe(true);
     const result = await statusline(deps);
     expect(result).toEqual({ code: 0, out: 'context 8%', err: '' });
@@ -337,7 +337,7 @@ describe('factory hook statusline: the guards of the write', () => {
 
   it('does not rewrite the line of a session of the node when a worker names that session', async () => {
     const deps = make({ env: { FACTORY_SESSION: 'fix-login' } });
-    const record = { id: 'fix-login', project: 'web', workCopy: '/h/factory/work-copies/web-fix-login', branch: 'fix/login' };
+    const record = { id: 'fix-login', project: 'web', workCopy: '/h/factory/work-copies/web/fix-login', branch: 'worker/fix-login' };
     expect((await writeWorkerRecord(deps, HOME, record)).ok).toBe(true);
     expect((await writeLastSeen(deps, HOME, SESSION, { kind: 'percent', percent: 3 }, NODE_ID)).ok).toBe(true);
     const before = deps.files.get(FILE);

@@ -501,6 +501,19 @@ describe('worker list: a record that is not valid', () => {
     expect(output.failed).toBe(false);
   });
 
+  it('names a worker whose record points to a work copy that is not its own, and lists the other workers', async () => {
+    const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop', percent: 5 } }, { id: 'beta' }] });
+    const forged = JSON.parse(made.deps.files.get('/w/node/.factory/workers/beta/worker.json') ?? 'null') as Record<string, unknown>;
+    broken(made, 'beta', `${JSON.stringify({ ...forged, work_copy: HOME })}\n`);
+    const output = await listed(made);
+    expect(rowsOf(output).map((row) => row.id)).toEqual(['alpha']);
+    expect(output.warnings).toHaveLength(1);
+    expect(output.warnings[0]).toContain('beta');
+    expect(output.warnings[0]).toContain('work copy');
+    expect(jsonOf(output).invalid).toEqual([{ name: 'beta', reason: expect.stringContaining('work copy') }]);
+    expect(output.failed).toBe(false);
+  });
+
   it('names a folder that holds no record', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     made.deps.seedDir('/w/node/.factory/workers/empty');

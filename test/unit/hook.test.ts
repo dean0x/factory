@@ -240,8 +240,8 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
     const written = await writeWorkerRecord(deps, HOME, {
       id: WORKER_ID,
       project: 'web',
-      workCopy: '/h/factory/work-copies/web-fix-login',
-      branch: 'fix/login',
+      workCopy: '/h/factory/work-copies/web/fix-login',
+      branch: 'worker/fix-login',
     });
     expect(written.ok).toBe(true);
     return deps;
@@ -308,6 +308,19 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
     const deps = await makeWorker();
     deps.files.set(paths.recordFile, content);
     await refuses(deps);
+  });
+
+  it.each([
+    ['the home folder of the user', { work_copy: '/Users/someone' }],
+    ['the factory folder', { work_copy: HOME }],
+    ['a work copy of another project', { work_copy: '/h/factory/work-copies/api/fix-login' }],
+    ['a work copy with a dot-dot part', { work_copy: '/h/factory/work-copies/web/../web/fix-login' }],
+    ['the branch of another worker', { branch: 'worker/other' }],
+  ])('writes nothing for a record whose work copy or branch is not its own: %s', async (_name, fields) => {
+    const deps = await makeWorker();
+    const record = JSON.parse(deps.files.get(paths.recordFile) ?? 'null') as Record<string, unknown>;
+    deps.files.set(paths.recordFile, JSON.stringify({ ...record, ...fields }));
+    expect(await refuses(deps)).toContain('FACTORY_SESSION');
   });
 
   it('writes nothing when the record names another id than its folder', async () => {

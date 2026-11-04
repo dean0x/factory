@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { z } from 'zod';
 import { absolutePath, branchName, isSlug, slug } from '../config/primitives.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
@@ -40,11 +41,24 @@ export interface WorkerRecord {
 /** What a caller gives to make a record. The write sets the schema id and the time. */
 export type NewWorker = Omit<WorkerRecord, 'createdAt'>;
 
-/** What a read finds: a valid record, a file that is not valid and the reason, or no record. */
+/**
+ * What a read finds: a valid record, a file that is not valid and the reason, or no record. A file that is well formed but names
+ * a work copy or a branch that is not the one of its worker is invalid with `mismatch` set: a command that starts or ends a session
+ * stops with a security refusal for it, and every other reader treats it as any invalid file.
+ */
 export type WorkerRead =
   | { readonly state: 'valid'; readonly record: WorkerRecord }
-  | { readonly state: 'invalid'; readonly reason: string }
+  | { readonly state: 'invalid'; readonly reason: string; readonly mismatch?: true }
   | { readonly state: 'absent' };
+
+/** The branch of a worker. It starts at the head of the clone of the project. */
+export const branchOf = (id: string): string => `${roles.worker}/${id}`;
+
+/**
+ * The work copy of a worker: `work-copies/<project>/<id>` of the factory folder. The path is fully derived from the project and the
+ * id, so a reader compares the written path with this one and trusts no other.
+ */
+export const workCopyOf = (home: string, project: string, id: string): string => join(layoutOf(home).workCopiesDir, project, id);
 
 /** A folder of the workers folder that holds no valid record: its name as text for a person, and the reason. */
 export interface InvalidWorker {
@@ -77,14 +91,25 @@ const recordOf = (file: z.infer<typeof recordSchema>): WorkerRecord => ({
 
 const invalid = (reason: string): CliResult<WorkerRead> => ok({ state: 'invalid', reason });
 
-/** The record of a file text for the worker of this folder name, or the reason that the text is not a valid record. */
-const readOfText = (text: string, id: string): CliResult<WorkerRead> => {
+const mismatch = (reason: string): CliResult<WorkerRead> => ok({ state: 'invalid', reason, mismatch: true });
+
+/**
+ * The record of a file text for the worker of this folder name, or the reason that the text is not a valid record. A record is
+ * valid only when its work copy is exactly the path that the home, the project and the id give, and its branch is the branch of
+ * the id: the file is the one place where a launch reads the folder to start a session in, so no other folder passes. The reason
+ * names the expected value and never the written one.
+ */
+const readOfText = (text: string, id: string, home: string): CliResult<WorkerRead> => {
   const json = parseJsonText(text);
   if (!json.ok) return invalid(json.error);
   const parsed = recordSchema.safeParse(json.value);
   if (!parsed.success) return invalid(describeIssues(parsed.error));
   if (parsed.data[keys.id] !== id) return invalid('the id differs from the folder name');
-  return ok({ state: 'valid', record: recordOf(parsed.data) });
+  const record = recordOf(parsed.data);
+  const expectedCopy = workCopyOf(home, record.project, record.id);
+  if (record.workCopy !== expectedCopy) return mismatch(`the work copy of the record is not ${expectedCopy}`);
+  if (record.branch !== branchOf(record.id)) return mismatch(`the branch of the record is not ${branchOf(record.id)}`);
+  return ok({ state: 'valid', record });
 };
 
 /** What a read of one file in the folder of a worker finds: the text, a file that can not be read and the reason, or no file. */
@@ -128,11 +153,11 @@ export const readWorkerFile = async (
   return text.ok ? ok({ state: 'text', text: text.value }) : text;
 };
 
-/** Read the record of a worker. The checks of the read are those of `readWorkerFile`. */
+/** Read the record of a worker. The checks of the read are those of `readWorkerFile`, then those of `readOfText`. */
 export const readWorkerRecord = async (deps: Deps, home: string, id: string): Promise<CliResult<WorkerRead>> => {
   const found = await readWorkerFile(deps, home, id, { of: 'recordFile', what: 'the record', maxBytes: workerRecord.maxBytes });
   if (!found.ok) return found;
-  return found.value.state === 'text' ? readOfText(found.value.text, id) : ok(found.value);
+  return found.value.state === 'text' ? readOfText(found.value.text, id, home) : ok(found.value);
 };
 
 /** Whether the folder exists. A link is a security stop (exit 4) and is never followed. A path of another kind is a failure. */

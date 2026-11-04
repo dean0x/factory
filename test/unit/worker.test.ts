@@ -1284,3 +1284,47 @@ describe('worker resume: a conversation that does not belong to the worker is no
     expect((await resumed(made)).warnings).toHaveLength(1);
   });
 });
+
+describe('worker stop and resume: a record that is not the record of its worker is exit 4', () => {
+  /** The record of alpha as the file holds it, with the fields of the change. A program with write access to the state folder can do this. */
+  const forge = (made: Made, fields: Record<string, unknown>): void => {
+    const record = JSON.parse(made.deps.files.get(RECORD) ?? 'null') as Record<string, unknown>;
+    made.deps.seed(RECORD, `${JSON.stringify({ ...record, ...fields })}\n`);
+  };
+
+  const FORGED: readonly (readonly [string, Record<string, unknown>])[] = [
+    ['the home folder of the user', { work_copy: '/Users/someone' }],
+    ['the factory folder', { work_copy: HOME }],
+    ['the coordinator folder', { work_copy: `${HOME}/coordinator` }],
+    ['a folder of another project', { work_copy: `${COPIES}/api/alpha` }],
+    ['a path with a dot-dot part', { work_copy: `${PROJECT_COPIES}/../web/alpha` }],
+    ['a branch of another worker', { branch: 'worker/beta' }],
+  ];
+
+  it.each(FORGED)('refuses to resume a worker whose record has %s, names the file, and starts nothing', async (_name, fields) => {
+    const made = await withWorkers();
+    forge(made, fields);
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(RECORD);
+    expect(error.message).toMatch(/work copy|branch/);
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.tmux.panes()).toHaveLength(3);
+  });
+
+  it.each(FORGED)('refuses to stop a worker whose record has %s, and sends nothing', async (_name, fields) => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] } });
+    forge(made, fields);
+    const error = await stopFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(RECORD);
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
+  });
+
+  it('resumes the worker whose record has the work copy and the branch that its project and id give', async () => {
+    const made = await withWorkers();
+    expect(await resumed(made)).toMatchObject({ failed: false });
+    expect(made.tmux.panes().at(-1)).toMatchObject({ cwd: COPY });
+  });
+});
