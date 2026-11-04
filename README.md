@@ -22,7 +22,7 @@ You need:
 
 | Command | What it does |
 | --- | --- |
-| `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. |
+| `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory doctor` | Run 25 checks. See "Doctor". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
@@ -55,6 +55,8 @@ The place of the factory folder is decided in this order:
 5. Else the factory folder is the current folder.
 
 For a proposal, `init` asks you to confirm it in a terminal window. With `--yes`, it uses the proposal and asks nothing. With no terminal window and no `--yes`, it prints the proposal and exits with code 2.
+
+`init` also makes sure that `coordinator/.claude/settings.local.json` holds the last-seen hook and the status line wrapper (`factory hook EVENT` and `factory hook statusline`). This holds for a new factory, a received factory and a registered one. `init` asks after its last write, and after the question about the setup text when there is one. In a terminal window it prints the exact change and the file, then asks (the default is no). `--yes` is the yes outside a factory session. With no terminal window and no `--yes`, `init` checks this before its first write, writes nothing and exits with code 2, so a script that runs `init` needs `--yes`. Inside a factory session, `--yes` gives no consent, so the exit code is also 2. If you answer no, `init` goes on without the hook and prints one line: factory has no last-seen record of the coordinator, so a restart or a reboot can not resume the session by its id. To add the hook later, run `init` again and answer yes. When the entries are in place, `init` asks nothing and writes nothing.
 
 `init` stops with exit code 1 for a factory folder inside a folder that the factory list holds, and names the remedy. A factory folder can sit beside another one. The factory folder is a git repo of its own, so `init` has no rule about a git work tree around it.
 
@@ -148,7 +150,7 @@ cd <folder>
 factory init
 ```
 
-`init` clones each project and registers the folder. In a terminal window it asks, in this order: your personal values (the owner name and login), the mode of each approval point, and the acceptance of the setup text and of every other file that the config repo tracks. Then `factory start` works. `--yes` does not accept the files of a received factory. With no terminal window, or with `--yes`, `init` stops on a received factory that tracks setup text or other files. A script can not receive such a factory.
+`init` clones each project and registers the folder. In a terminal window it asks, in this order: your personal values (the owner name and login), the mode of each approval point, the acceptance of the setup text and of every other file that the config repo tracks, and a yes or a no for the hook settings of the coordinator. Then `factory start` works. `--yes` does not accept the files of a received factory. With no terminal window, or with `--yes`, `init` stops on a received factory that tracks setup text or other files. A script can not receive such a factory.
 
 A received factory is a trust boundary: the files of another person are not trusted until you accept them. See "The setup text" and "Safety defaults".
 
