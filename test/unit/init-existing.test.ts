@@ -25,6 +25,7 @@ import {
 import { loadConfig, readNodeIdentity, runInit } from '../helpers/package-registry.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { acceptSetupText } from '../helpers/setup-acceptance.js';
 
 const ROOT = '/w/node';
 const STATE = `${ROOT}/.factory`;
@@ -95,6 +96,11 @@ interface Existing {
   readonly tracked?: readonly string[];
   readonly texts?: Readonly<Record<string, string>>;
   readonly fixture?: GitFixture;
+  /**
+   * True: the owner has not accepted the setup text of the root. Default: the owner accepted the setup text before, in a
+   * terminal window, so a run with the yes flag has nothing to accept. A test about the acceptance sets this.
+   */
+  readonly unaccepted?: true;
 }
 
 const configOf = (made: Existing): FactoryConfig => {
@@ -141,6 +147,7 @@ const existing = (made: Existing = {}, extra: FakeOptions = {}) => {
     if (path === 'factory.yaml' || path === '.gitignore' || path === 'factory.local.yaml') continue;
     deps.seed(`${ROOT}/${path}`, texts[path] ?? `${path}\n`);
   }
+  if (made.unaccepted !== true) acceptSetupText(deps, ROOT, made.id ?? 'demo', tracked, texts);
   const entry = made.entry === undefined ? (made.id ?? 'demo') : made.entry;
   if (entry !== null) {
     registerRoot(deps, ROOT, entry, [`${ROOT}/web`]);
@@ -209,7 +216,7 @@ const stateGit = (log: { calls: { command: string; args: readonly string[] }[] }
 describe('init: a registered root, the checks and the acceptance (TP-181)', () => {
   it('asks on a terminal window, writes the acceptance, and changes no other file', async () => {
     const asked: string[] = [];
-    const { deps } = existing({}, { ...terminal, prompt: person({}, asked) });
+    const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person({}, asked) });
     const before = rootFiles(deps);
     const result = await runInit(deps, options());
     expect(result.ok).toBe(true);
@@ -221,25 +228,36 @@ describe('init: a registered root, the checks and the acceptance (TP-181)', () =
   });
 
   it('writes the acceptance only after the entry in the factory list', async () => {
-    const { deps } = existing({}, { ...terminal, prompt: person() });
+    const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person() });
     expect((await runInit(deps, options())).ok).toBe(true);
     const writes = deps.atomicWrites.filter((path) => [INDEX, ACCEPTANCES].includes(path));
     expect(writes).toEqual([INDEX, ACCEPTANCES]);
   });
 
-  it('takes the first acceptance of the setup text alone with the yes flag and no terminal window', async () => {
-    const { deps } = existing();
-    const before = rootFiles(deps);
+  it('exits 4 with the yes flag and no terminal window for a setup text with no acceptance, names the command, and writes nothing', async () => {
+    const { deps } = existing({ unaccepted: true });
+    const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
-    expect(result.ok).toBe(true);
-    expect(acceptancesOf(deps)).toEqual([expect.objectContaining({ root: ROOT, node: 'demo', hash: SETUP_HASH })]);
-    expect(acceptancesOf(deps)[0]?.reason).toContain('yes');
-    expect(linesOf(result)).toContain(SETUP_HASH);
-    expect(rootFiles(deps)).toBe(before);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('factory init');
+    expect(messageOf(result)).toContain('terminal window');
+    expect(acceptancesOf(deps)).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('exits 4 with the yes flag in a terminal window, asks nothing about the files, and writes nothing', async () => {
+    const asked: string[] = [];
+    const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person({}, asked) });
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('factory init');
+    expect(asked.some((question) => question.includes('Accept these files?'))).toBe(false);
+    expect(snapshot(deps)).toBe(before);
   });
 
   it('writes no acceptance when the owner answers no, changes no file, and names the command', async () => {
-    const { deps } = existing({}, { ...terminal, prompt: person({ accept: 'n' }) });
+    const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person({ accept: 'n' }) });
     const before = rootFiles(deps);
     const result = await runInit(deps, options());
     expect(result.ok).toBe(true);
@@ -471,7 +489,7 @@ describe('init: the approval points of a registered root', () => {
 
   it('asks the points before the question about the files', async () => {
     const asked: string[] = [];
-    const { deps } = existing({}, { ...terminal, prompt: person({}, asked) });
+    const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person({}, asked) });
     expect((await runInit(deps, options())).ok).toBe(true);
     const order = asked.map((question) => (question.includes('Approval point') ? 'point' : question.includes('Accept') ? 'accept' : 'other'));
     expect(order).toEqual(['point', 'point', 'accept']);
@@ -591,7 +609,7 @@ describe('init: the approval points of a registered root', () => {
   });
 
   it('puts the old local file back and writes no record when the factory list can not be written', async () => {
-    const { deps } = existing({}, { ...terminal, prompt: person({ accept: 'n', points: ['delegated', 'owner'] }) });
+    const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person({ accept: 'n', points: ['delegated', 'owner'] }) });
     const before = rootFiles(deps);
     const result = await runInit(failingWrite(deps, '/homes.json'), options());
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
@@ -831,7 +849,7 @@ describe('init: a moved root, with no entry in the factory list (TP-82)', () => 
   });
 
   it('exits 4 before any write for a tracked instruction file with no terminal window, also with the yes flag (TP-157)', async () => {
-    const { deps } = moved({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'] });
+    const { deps } = moved({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'], unaccepted: true });
     const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
@@ -840,10 +858,10 @@ describe('init: a moved root, with no entry in the factory list (TP-82)', () => 
     expect(deps.files.has(ACCEPTANCES)).toBe(false);
   });
 
-  it('asks for the listed files on a terminal window, also with the yes flag, and writes the acceptance on yes', async () => {
+  it('asks for the listed files on a terminal window, and writes the acceptance on yes', async () => {
     const asked: string[] = [];
-    const { deps } = moved({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'] }, { ...terminal, prompt: person({}, asked) });
-    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+    const { deps } = moved({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'], unaccepted: true }, { ...terminal, prompt: person({}, asked) });
+    expect((await runInit(deps, options())).ok).toBe(true);
     expect(asked.some((question) => question.includes('CLAUDE.md'))).toBe(true);
     expect(acceptancesOf(deps)).toHaveLength(1);
   });
@@ -902,9 +920,9 @@ describe('init: a moved root, with no entry in the factory list (TP-82)', () => 
   });
 
   it('exits 1 and changes nothing when the factory list can not be written (TP-95)', async () => {
-    const { deps } = moved({}, terminal);
+    const { deps } = moved({ unaccepted: true }, { ...terminal, prompt: person() });
     const before = snapshot(deps);
-    const result = await runInit(failingWrite(deps, '/homes.json'), options({ yes: true }));
+    const result = await runInit(failingWrite(deps, '/homes.json'), options());
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(snapshot(deps)).toBe(before);
     expect(deps.files.has(ACCEPTANCES)).toBe(false);

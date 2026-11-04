@@ -406,8 +406,8 @@ export const setupAcceptance = {
   /** The most files in one manifest: the most files that a received root can track. */
   maxManifestFiles: trackedFiles.maxCount,
   /**
-   * The files of the setup text, as paths below the factory folder. `init` with the yes flag accepts these files alone,
-   * and no other file.
+   * The files of the setup text, as paths below the factory folder. `init` accepts these files alone, and no other file,
+   * without an answer of the owner, and only the text that it wrote itself.
    */
   setupTextFiles: [`${dirs.setup}/${files.setupCoordinator}`, `${dirs.setup}/${dirs.roles}/${files.worker}`],
   maxReasonChars: 200,

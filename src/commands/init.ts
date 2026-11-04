@@ -124,13 +124,14 @@ export interface StateFile {
   readonly text: string;
 }
 
-/** A setup acceptance that `init` writes after the entry in the factory list, and whether the yes flag limits it. */
+/** A setup acceptance that `init` writes after the entry in the factory list, and whether the writer limits it. */
 export interface PlannedAcceptance {
   readonly input: AcceptanceInput;
-  /** True when no answer of the owner backs it: the writer then takes a first acceptance of the setup text alone. */
+  /**
+   * True when no answer of the owner backs it: the acceptance covers the setup text that this run wrote itself on a new
+   * root, and the writer then takes a first acceptance of the setup text alone.
+   */
   readonly fromInitYes: boolean;
-  /** True when the acceptance covers the setup text that this run wrote itself on a new root. */
-  readonly ownText?: true;
 }
 
 /** The reason that the acceptance of the setup text of a new root holds. */
@@ -513,7 +514,7 @@ const ownTextAcceptance = (
     };
   }
   const input: AcceptanceInput = { root: home, node, file: coordinator, entries, reason: OWN_TEXT_REASON };
-  return { acceptance: entries.length === 0 ? null : { input, fromInitYes: true, ownText: true }, warnings: [] };
+  return { acceptance: entries.length === 0 ? null : { input, fromInitYes: true }, warnings: [] };
 };
 
 /**

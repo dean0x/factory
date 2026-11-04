@@ -87,7 +87,6 @@ import { planReceivedProjects, runClones, undoClones } from './init-clone.js';
  */
 
 export const ACCEPT_REASON = `the ${roles.owner} accepted these files in a terminal window with ${commands.init}`;
-export const YES_REASON = 'init with the yes flag: first acceptance of the setup text';
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
 /** What `checkReceivedRoot` finds in a received root, before anything is written. */
@@ -265,14 +264,14 @@ export type AcceptanceDecision =
   /** An acceptance for this root, this node id and this hash exists already. */
   | { readonly kind: 'already' }
   /** `init` writes an acceptance after the entry in the factory list. */
-  | { readonly kind: 'record'; readonly fromInitYes: boolean }
+  | { readonly kind: 'record' }
   /** The owner said no. */
   | { readonly kind: 'declined' };
 
 /**
- * Decide the setup acceptance. The yes flag accepts only a first acceptance of the setup text alone, and never the listed
- * files: those get the question on a terminal window, and a run with no terminal window stops (exit 4) before any write.
- * Any other case is a change, and only the owner in a terminal window accepts it.
+ * Decide the setup acceptance. The files of this folder come from another person, so only the owner accepts them: at the
+ * question of a terminal window, which shows the text. The yes flag never accepts them, and a run with no terminal window
+ * or with the yes flag stops (exit 4) before any write. `init` accepts setup text that it wrote itself in another place.
  */
 export const decideAcceptance = async (
   asking: Deps,
@@ -283,16 +282,15 @@ export const decideAcceptance = async (
   const state = await acceptanceState(asking, { root: home, node, hash: setup.collected.manifest.hash });
   if (!state.ok) return state;
   if (state.value.state === 'accepted') return ok({ kind: 'already' });
-  if (yes && state.value.state === 'none' && setup.listed.length === 0) return ok({ kind: 'record', fromInitYes: true });
-  if (!(asking.stdinIsTTY && asking.stdoutIsTTY)) {
+  if (yes || !(asking.stdinIsTTY && asking.stdoutIsTTY)) {
     return safetyRefusal(
-      `the setup of the ${places.folder} needs an acceptance, and no terminal window can ask for it`,
-      `${initInTerminalWindow()} Or remove the listed files from the config repo.`,
+      `the setup of the ${places.folder} needs an acceptance, and only the ${roles.owner} can give it at the question of a terminal window`,
+      `${initInTerminalWindow()} Do not pass ${flagText(flags.yes)}.`,
     );
   }
   const answer = await askSetupAcceptance(asking, { root: home, node, current: setup.collected });
   if (!answer.ok) return answer;
-  return ok(answer.value ? { kind: 'record', fromInitYes: false } : { kind: 'declined' });
+  return ok(answer.value ? { kind: 'record' } : { kind: 'declined' });
 };
 
 /** The setup texts that the blocks may use: the texts of accepted files, and none after a no or with no acceptance. */
@@ -306,13 +304,13 @@ export const plannedAcceptance = (
 ): PlannedAcceptance | null =>
   decision.kind === 'record'
     ? {
-        fromInitYes: decision.fromInitYes,
+        fromInitYes: false,
         input: {
           root: request.home,
           node: request.node,
           file: setupAcceptance.setupTextFiles[0],
           entries: request.setup.collected.manifest.entries,
-          reason: decision.fromInitYes ? YES_REASON : ACCEPT_REASON,
+          reason: ACCEPT_REASON,
         },
       }
     : null;
@@ -447,9 +445,7 @@ export const acceptanceLines = (plan: PlannedAcceptance, accepted: boolean): rea
     ? [
         {
           level: 'text',
-          text:
-            `${plan.ownText === true ? `Accepted the setup text that ${program} wrote` : `Accepted the setup text with ${flagText(flags.yes)}`}: ` +
-            plan.input.entries.map((entry) => entry.path).join(', '),
+          text: `Accepted the setup text that ${program} wrote: ${plan.input.entries.map((entry) => entry.path).join(', ')}`,
         },
         { level: 'text', text: `  Hash: ${manifestOf(plan.input.entries).hash}` },
         { level: 'text', text: `  ${places.folder}: ${plan.input.root}` },

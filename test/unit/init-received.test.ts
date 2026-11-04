@@ -17,6 +17,7 @@ import {
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { runInit } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { acceptSetupText } from '../helpers/setup-acceptance.js';
 
 const ROOT = '/w/recv';
 const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
@@ -63,6 +64,11 @@ interface Received {
   /** The text of each file by its path below the root. A tracked path with no text gets a short text. */
   readonly texts?: Readonly<Record<string, string>>;
   readonly fixture?: GitFixture;
+  /**
+   * True: the owner has not accepted the setup text of the root. Default: the owner accepted the setup text before, in a
+   * terminal window, so a run with the yes flag has nothing to accept. A test about the acceptance sets this.
+   */
+  readonly unaccepted?: true;
 }
 
 const received = (made: Received = {}, extra: FakeOptions = {}) => {
@@ -82,6 +88,7 @@ const received = (made: Received = {}, extra: FakeOptions = {}) => {
     if (path === 'factory.yaml' || path === '.gitignore' || path === 'factory.local.yaml') continue;
     deps.seed(`${ROOT}/${path}`, texts[path] ?? `${path}\n`);
   }
+  if (made.unaccepted !== true) acceptSetupText(deps, ROOT, made.config?.core.node.id ?? 'demo', tracked, texts);
   return { deps, log };
 };
 
@@ -287,6 +294,7 @@ describe('init: the files that a received root tracks (TP-86, TP-122, TP-124)', 
     deps.seedDir(ROOT);
     deps.seed(`${ROOT}/factory.yaml`, renderConfig(sampleConfig()).shared);
     for (const [path, text] of Object.entries(SETUP_FILES)) deps.seed(`${ROOT}/${path}`, text);
+    acceptSetupText(deps, ROOT, 'demo', TRACKED_SETUP, SETUP_FILES);
     const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
@@ -412,7 +420,7 @@ describe('init: the setup acceptance of a received root', () => {
   describe('the files of the set, listed before any write (TP-126, TP-156, TP-163, TP-182, TP-183)', () => {
     it('shows the setup text and its hash and asks, and with yes it renders the setup block and records the hash', async () => {
       const asked: string[] = [];
-      const { deps } = received({}, { ...terminal, prompt: person('y', asked) });
+      const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y', asked) });
       const result = await runInit(deps, options());
       expect(result.ok).toBe(true);
       const question = asked.find((text) => text.includes('Accept these files?')) ?? '';
@@ -423,7 +431,7 @@ describe('init: the setup acceptance of a received root', () => {
     });
 
     it('renders no setup block and names the accept command after a no, and writes no acceptance', async () => {
-      const { deps } = received({}, { ...terminal, prompt: person('n') });
+      const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('n') });
       const result = await runInit(deps, options());
       expect(result.ok).toBe(true);
       expect(deps.files.has(ACCEPTANCES)).toBe(false);
@@ -436,8 +444,8 @@ describe('init: the setup acceptance of a received root', () => {
     it('lists a tracked script in the setup folder before any write, and the manifest covers it', async () => {
       const asked: string[] = [];
       const tracked = [...TRACKED_SETUP, 'setup/check.sh'];
-      const { deps } = received({ tracked, texts: { 'setup/check.sh': 'echo hi\n' } }, { ...terminal, prompt: person('y', asked) });
-      const result = await runInit(deps, options({ yes: true }));
+      const { deps } = received({ tracked, texts: { 'setup/check.sh': 'echo hi\n' }, unaccepted: true }, { ...terminal, prompt: person('y', asked) });
+      const result = await runInit(deps, options());
       expect(result.ok).toBe(true);
       const question = asked.find((text) => text.includes('Accept these files?')) ?? '';
       expect(question).toContain('setup/check.sh');
@@ -461,16 +469,16 @@ describe('init: the setup acceptance of a received root', () => {
       expect(acceptancesOf(deps)[0]?.manifest).toHaveLength(5);
     });
 
-    it('asks with yes on a terminal window, because yes never answers the prompt for listed files', async () => {
+    it('asks once for the setup text and the listed files together', async () => {
       const asked: string[] = [];
-      const { deps } = received({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'] }, { ...terminal, prompt: person('y', asked) });
-      expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+      const { deps } = received({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'], unaccepted: true }, { ...terminal, prompt: person('y', asked) });
+      expect((await runInit(deps, options())).ok).toBe(true);
       expect(asked.filter((text) => text.includes('Accept these files?'))).toHaveLength(1);
     });
 
     it('writes no acceptance after a no on listed files, names the command, and renders no setup block', async () => {
-      const { deps } = received({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'] }, { ...terminal, prompt: person('n') });
-      const result = await runInit(deps, options({ yes: true }));
+      const { deps } = received({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'], unaccepted: true }, { ...terminal, prompt: person('n') });
+      const result = await runInit(deps, options());
       expect(result.ok).toBe(true);
       expect(deps.files.has(ACCEPTANCES)).toBe(false);
       expect(linesOf(result)).toContain('factory init');
@@ -480,10 +488,10 @@ describe('init: the setup acceptance of a received root', () => {
     it('asks for the listed files when the setup text is empty (TP-182)', async () => {
       const asked: string[] = [];
       const { deps } = received(
-        { tracked: [...TRACKED_SETUP, 'CLAUDE.md'], texts: { 'setup/coordinator.md': '', 'setup/roles/worker.md': '\n' } },
+        { tracked: [...TRACKED_SETUP, 'CLAUDE.md'], texts: { 'setup/coordinator.md': '', 'setup/roles/worker.md': '\n' }, unaccepted: true },
         { ...terminal, prompt: person('n', asked) },
       );
-      expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+      expect((await runInit(deps, options())).ok).toBe(true);
       const question = asked.find((text) => text.includes('Accept these files?')) ?? '';
       expect(question).toContain('CLAUDE.md');
       expect(question).not.toContain('---- setup/coordinator.md');
@@ -516,21 +524,41 @@ describe('init: the setup acceptance of a received root', () => {
     });
   });
 
-  describe('with the yes flag and no terminal window (TP-127, TP-143, TP-157, TP-170)', () => {
-    it('records the first acceptance of the setup text alone, and prints the files, the hash, the root, the node id and the reason', async () => {
-      const { deps } = received();
-      const result = await runInit(deps, options({ yes: true }));
+  describe('a received setup text needs the owner at the prompt (TP-127, TP-143, TP-157, TP-170)', () => {
+    it('accepts the setup text when a person answers yes at the prompt in a terminal window, and the prompt shows the text', async () => {
+      const asked: string[] = [];
+      const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y', asked) });
+      const result = await runInit(deps, options());
       expect(result.ok).toBe(true);
-      const record = acceptancesOf(deps)[0];
-      expect(record).toMatchObject({ root: ROOT, node: 'demo', file: 'setup/coordinator.md', hash: SETUP_HASH });
-      expect(record?.reason).toContain('yes');
-      const text = linesOf(result);
-      expect(text).toContain('setup/coordinator.md');
-      expect(text).toContain(SETUP_HASH);
-      expect(text).toContain(ROOT);
-      expect(text).toContain('demo');
-      expect(text).toContain(record?.reason ?? 'missing');
+      expect(asked.filter((text) => text.includes('Accept these files?'))).toHaveLength(1);
+      expect(asked.find((text) => text.includes('Accept these files?'))).toContain(COORDINATOR_TEXT.trim());
+      expect(acceptancesOf(deps)).toEqual([expect.objectContaining({ root: ROOT, node: 'demo', hash: SETUP_HASH })]);
+      expect(acceptancesOf(deps)[0]?.reason).not.toContain('yes');
       expect(coordinatorText(deps)).toContain(COORDINATOR_TEXT.trim());
+    });
+
+    it('exits 4 with no terminal window, names the command in a terminal window, and writes nothing', async () => {
+      const { deps } = received({ unaccepted: true });
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(result)).toContain('factory init');
+      expect(messageOf(result)).toContain('terminal window');
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it('exits 4 with the yes flag in a terminal window, asks nothing about the files, and writes nothing', async () => {
+      const asked: string[] = [];
+      const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y', asked) });
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(result)).toContain('factory init');
+      expect(messageOf(result)).toContain('terminal window');
+      expect(asked.some((text) => text.includes('Accept these files?'))).toBe(false);
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
+      expect(snapshot(deps)).toBe(before);
     });
 
     it('leaves the approval store unchanged', async () => {
@@ -572,9 +600,9 @@ describe('init: the setup acceptance of a received root', () => {
       expect((await runInit(first.deps, options({ yes: true }))).ok).toBe(true);
       const other = { ...sampleConfig(), core: { ...sampleConfig().core, node: { id: 'other', layer: 1 } } };
       const asked: string[] = [];
-      const { deps } = received({ config: other }, { ...terminal, prompt: person('y', asked) });
+      const { deps } = received({ config: other, unaccepted: true }, { ...terminal, prompt: person('y', asked) });
       deps.seed(ACCEPTANCES, first.deps.files.get(ACCEPTANCES) ?? '');
-      expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+      expect((await runInit(deps, options())).ok).toBe(true);
       expect(asked.find((text) => text.includes('Accept these files?'))).toContain(`accepted before: ${SETUP_HASH}`);
       expect(acceptancesOf(deps).map((record) => record.node).sort()).toEqual(['demo', 'other']);
     });
@@ -582,19 +610,20 @@ describe('init: the setup acceptance of a received root', () => {
 
   describe('the acceptance comes after the entry in the factory list', () => {
     it('writes no acceptance, and undoes the work, when the entry in the factory list fails', async () => {
-      const { deps } = received({}, terminal);
+      const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y') });
       const before = snapshot(deps);
-      const result = await runInit(withFailingWrites(deps, (path) => path === INDEX), options({ yes: true }));
+      const result = await runInit(withFailingWrites(deps, (path) => path === INDEX), options());
       expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
       expect(deps.files.has(ACCEPTANCES)).toBe(false);
       expect(snapshot(deps)).toBe(before);
     });
 
     it('keeps the run when the acceptance cannot be written, and warns', async () => {
-      const { deps } = received();
-      const result = await runInit(withFailingWrites(deps, (path) => path === ACCEPTANCES), options({ yes: true }));
+      const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y') });
+      const result = await runInit(withFailingWrites(deps, (path) => path === ACCEPTANCES), options());
       expect(result.ok).toBe(true);
       expect(deps.files.has(`${ROOT}/factory.local.yaml`)).toBe(true);
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
     });
   });
 });

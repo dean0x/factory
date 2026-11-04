@@ -397,8 +397,8 @@ export interface AcceptanceInput {
 
 /**
  * Only the code of `init` passes this. It lets the writer work with no terminal window, for a first acceptance of the setup
- * text alone: the coordinator text and the worker text, and no other file. `init` passes it with the yes flag, and on a new
- * root for the text that it wrote itself. A static test finds no other module that names it.
+ * text alone: the coordinator text and the worker text, and no other file. `init` passes it only on a new root, for the
+ * text that it wrote itself. A static test finds no other module that names it.
  */
 export interface AcceptanceOptions {
   readonly fromInitYes?: true;
@@ -434,10 +434,9 @@ const textWithRecord = (
 
 /**
  * Write a setup acceptance. This is the only writer of the store. It refuses inside a factory session. A person in a
- * terminal window (input and output) can write any set. With no terminal window the call writes only for `init` with the
- * yes flag, and only for a first acceptance (no acceptance exists for this folder under any node id) of a set that holds
- * no file apart from the setup text. The yes flag never answers the prompt, so it gets these limits also in a terminal
- * window.
+ * terminal window (input and output) can write any set. With no terminal window the call writes only for `init` on a new
+ * root, and only for a first acceptance (no acceptance exists for this folder under any node id) of a set that holds no
+ * file apart from the setup text. That call has these limits also in a terminal window, because no answer backs it.
  */
 export const recordSetupAcceptance = async (
   deps: Deps,

@@ -28,6 +28,12 @@ const initArgs = (extra: readonly string[] = []): string[] => [
   ...extra,
 ];
 
+/** The factory removes its setup text from the root repo. A run with the yes flag has nothing to accept then. */
+const dropSetupText = async (): Promise<void> => {
+  expect((await box.git(box.node, ['rm', '-q', '--', 'setup/coordinator.md', 'setup/roles/worker.md'])).code).toBe(0);
+  expect((await box.git(box.node, ['commit', '-q', '-m', 'remove the setup text'])).code).toBe(0);
+};
+
 describe('factory init (built binary)', () => {
   it('creates the node and exits 0', async () => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
@@ -564,10 +570,14 @@ describe('factory init: a received factory (built binary)', () => {
   const second = (): Record<string, string> => ({ XDG_STATE_HOME: join(box.root, 'state-second') });
   const store = (name: string): string => join(box.root, 'state-second', 'factory', name);
 
-  /** The sender makes a factory with one project. A clone of its root is the received factory. */
-  const receivedFactory = async (): Promise<string> => {
+  /**
+   * The sender makes a factory with one project. A clone of its root is the received factory. It has no setup text unless
+   * `keepSetup` is set, because the yes flag can not accept a received setup text.
+   */
+  const receivedFactory = async (options: { readonly keepSetup?: true } = {}): Promise<string> => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+    if (options.keepSetup !== true) await dropSetupText();
     const received = join(box.root, 'received');
     expect((await box.git(box.root, ['clone', '-q', box.node, received])).code).toBe(0);
     return received;
@@ -589,26 +599,23 @@ describe('factory init: a received factory (built binary)', () => {
     expect(entries.homes).toEqual([expect.objectContaining({ id: 'demo', origin: 'received' })]);
   });
 
-  it('writes a setup acceptance with the root, the node id, the file, the hash and the reason, and no approval record (TP-143)', async () => {
-    const received = await receivedFactory();
+  it('exits 4 with the yes flag for a received setup text, names the command, and writes no acceptance (TP-143)', async () => {
+    const received = await receivedFactory({ keepSetup: true });
     const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
-    expect(result.code).toBe(0);
-    const record = (JSON.parse(await box.read(store('setup-acceptances.json'))) as { acceptances: Record<string, unknown>[] })
-      .acceptances[0];
-    expect(record).toMatchObject({ root: await realpath(received), node: 'demo', file: 'setup/coordinator.md' });
-    expect(String(record?.['hash'])).toMatch(/^[0-9a-f]{64}$/);
-    expect(String(record?.['reason'])).toContain('yes');
-    expect(result.stdout).toContain(String(record?.['hash']));
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('Run "factory init" in a terminal window');
+    expect(existsSync(store('setup-acceptances.json'))).toBe(false);
     expect(existsSync(store('owner-records.json'))).toBe(false);
+    expect(existsSync(join(received, 'factory.local.yaml'))).toBe(false);
+    expect(existsSync(join(received, '.factory'))).toBe(false);
   });
 
-  it('renders the accepted setup text and the shared limits into the coordinator text (TP-103)', async () => {
+  it('renders the shared limits into the coordinator text (TP-103)', async () => {
     const received = await receivedFactory();
-    const setupText = (await box.read(join(received, 'setup', 'coordinator.md'))).trim();
     expect((await box.run(['init', '--yes'], { cwd: received, env: second() })).code).toBe(0);
     const coordinator = await box.read(join(received, 'coordinator', 'CLAUDE.md'));
-    expect(coordinator).toContain(setupText.split('\n')[0] ?? 'missing');
     expect(coordinator).toContain('40');
+    expect(existsSync(store('setup-acceptances.json'))).toBe(false);
   });
 
   it('exits 4 in a factory session and writes nothing (TP-83)', async () => {
@@ -676,6 +683,7 @@ describe('factory init: a received factory (built binary)', () => {
   it('skips the clone of a project with no URL, warns, and names the folder to fill (TP-120)', async () => {
     const web = await box.makeProject('web');
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+    await dropSetupText();
     const received = join(box.root, 'received');
     expect((await box.git(box.root, ['clone', '-q', box.node, received])).code).toBe(0);
     const result = await box.run(['init', '--yes'], { cwd: received, env: second() });
@@ -701,9 +709,10 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
   };
 
-  /** The same factory in another place: the folder moves, and the factory list keeps the old place. */
+  /** The same factory in another place: the folder moves, and the factory list keeps the old place. It has no setup text. */
   const moved = async (): Promise<string> => {
     await registered();
+    await dropSetupText();
     const place = join(box.root, 'moved');
     await rename(box.node, place);
     return place;
@@ -771,15 +780,13 @@ describe('factory init: a folder that holds both config files (built binary)', (
 
   it('registers a folder whose entry has another node id, with the origin received (TP-84)', async () => {
     await registered();
+    await dropSetupText();
     const config = join(box.node, 'factory.yaml');
     const text = await box.read(config);
     expect(text).toMatch(/^ {2}id: demo\b/m);
     await writeFile(config, text.replace(/^( {2}id: )demo\b/m, '$1other'));
     const refused = await box.run(['doctor', '--home', box.node]);
     expect(refused.code).toBe(4);
-    // The first init accepted the setup text under the old id. A change of the id needs a terminal window (TP-170), so this
-    // run starts on a machine that holds no acceptance of the folder.
-    await rm(join(box.root, 'home', '.local', 'state', 'factory', 'setup-acceptances.json'));
     const result = await box.run(['init', '--yes'], { cwd: box.node });
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('another id');

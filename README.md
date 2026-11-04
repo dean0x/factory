@@ -147,7 +147,7 @@ cd <folder>
 factory init
 ```
 
-`init` clones each project and registers the folder. In a terminal window it asks, in this order: your personal values (the owner name and login), the mode of each approval point, and the acceptance of the setup text and of every other file that the config repo tracks. Then `factory start` works. With no terminal window, `init` stops on a received factory that tracks other files, also with `--yes`. A script can not receive such a factory.
+`init` clones each project and registers the folder. In a terminal window it asks, in this order: your personal values (the owner name and login), the mode of each approval point, and the acceptance of the setup text and of every other file that the config repo tracks. Then `factory start` works. `--yes` does not accept the files of a received factory. With no terminal window, or with `--yes`, `init` stops on a received factory that tracks setup text or other files. A script can not receive such a factory.
 
 A received factory is a trust boundary: the files of another person are not trusted until you accept them. See "The setup text" and "Safety defaults".
 
