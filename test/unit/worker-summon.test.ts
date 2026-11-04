@@ -176,7 +176,7 @@ describe('worker summon: the timer and the token (TP-32)', () => {
     expect(token).toBe(made.deps.randomTexts[0]);
     const fixed = text.replace(token, 'TOKEN').replace(/%[0-9]+/g, 'PANE').replace(/^sleep [0-9]+/, 'sleep SECONDS');
     expect(fixed).toBe(
-      "sleep SECONDS; tmux if-shell -F -t PANE '##{==:##{@slot_summon},PANE:TOKEN}' 'swap-pane -d -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
+      "sleep SECONDS; tmux if-shell -F -t PANE '##{==:##{@slot_summon},PANE:TOKEN}' 'swap-pane -d -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'; true",
     );
     expect(text).toMatch(/^[A-Za-z0-9 %#{}=:,@;'_-]+$/);
   });
@@ -248,6 +248,38 @@ describe('worker summon: the timer and the token (TP-32)', () => {
       expect(made.deps.randomTexts).toEqual([]);
     },
   );
+});
+
+describe('worker summon: a timer that fires when a pane is gone', () => {
+  it('ends the shell with exit 0, and shows no error screen in any pane, when the summoned pane was closed during the wait', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    await summoned(made);
+    made.serverCall(['kill-pane', '-t', ALPHA]);
+    const before = JSON.stringify(made.tmux.panes());
+    expect(made.runShell(timers(made)[0] ?? '')).toBe(0);
+    expect(made.tmux.modes()).toEqual({});
+    // The swap failed, so no pane moved and the summon mark stays for `layout` to clear.
+    expect(JSON.stringify(made.tmux.panes())).toBe(before);
+    expect(optionsOf(made, BOARD)['@slot_summon']).toMatch(TOKEN_PATTERN);
+  });
+
+  it('ends the shell with exit 0, and shows no error screen in any pane, when the board pane was closed during the wait', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    await summoned(made);
+    made.serverCall(['kill-pane', '-t', BOARD]);
+    const before = JSON.stringify(made.tmux.panes());
+    expect(made.runShell(timers(made)[0] ?? '')).toBe(0);
+    expect(made.tmux.modes()).toEqual({});
+    expect(JSON.stringify(made.tmux.panes())).toBe(before);
+  });
+
+  it('ends the shell with exit 0 when the timer works, and the board is back in the slot', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    await summoned(made);
+    expect(made.runShell(timers(made)[0] ?? '')).toBe(0);
+    expect(made.tmux.modes()).toEqual({});
+    expect(windowsOf(made)).toMatchObject({ [BOARD]: 'view', [ALPHA]: 'workers' });
+  });
 });
 
 describe('worker summon: the session of the node (TP-127)', () => {

@@ -1,8 +1,10 @@
 import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { shellWord } from '../core/shell-word.js';
 import { toolNames } from '../core/tools.js';
 import {
+  joinPaneArgs,
   parseSlotList,
   parseSummonMark,
   setPaneOptionArgs,
@@ -252,6 +254,22 @@ export const restoreSlot = async (deps: Deps, state: SlotState): Promise<CliResu
   const cleared = await tmuxStep(deps, unset.value);
   if (!cleared.ok) return cleared;
   return ok({ kind: 'restored', board: board.paneId, pane: held.paneId });
+};
+
+/**
+ * The hint for a board pane that is not in the window `view` after `restoreSlot`: the tmux command that joins it to a pane of that
+ * window. A restore that swapped the board back leaves no hint. A session with no pane in the window `view` has none too, because
+ * no command can join a pane to a window that is not there. Nothing joins by itself: a person can have moved the board on purpose,
+ * so factory names the command and the person runs it.
+ */
+export const boardJoinHint = (state: SlotState, outcome: RestoreOutcome): string | null => {
+  const { board, rows } = state;
+  const beside = rows.find(inView);
+  if (board === null || beside === undefined || outcome.kind === 'restored' || inView(board)) return null;
+  const join = joinPaneArgs(board.paneId, beside.paneId);
+  if (!join.ok) return null;
+  const command = [toolNames.tmux, ...join.value].map(shellWord).join(' ');
+  return `The board pane ${board.paneId} is not in the window ${tmuxNames.windowView}, so the slot holds no board. Run "${command}" to bring it back.`;
 };
 
 /**

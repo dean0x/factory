@@ -26,7 +26,7 @@ const must = (result: Result<TmuxArgs, string>): TmuxArgs => {
 };
 
 const fakeTmux = (fixture?: TmuxFixture) => {
-  const { handler, log } = tmuxHandler(fixture);
+  const { handler, log, runShell } = tmuxHandler(fixture);
   const run = (args: readonly string[]) => {
     const result = handler({ command: 'tmux', args, cwd: undefined });
     if (!result.ok) throw new Error(result.error.message);
@@ -42,7 +42,7 @@ const fakeTmux = (fixture?: TmuxFixture) => {
       expect(run(step).exitCode).toBe(0);
     }
   };
-  return { run, log, rowsOf, startSession };
+  return { run, log, rowsOf, startSession, runShell };
 };
 
 const where = (log: ReturnType<typeof fakeTmux>['log']) => log.panes().map((pane) => `${pane.id}@${pane.window}`);
@@ -341,6 +341,50 @@ describe('the tmux fake: the shell text of a summon', () => {
   it('refuses a text that is not a wait and a tmux call', () => {
     expect(() => tmuxCallOfShellText('echo hi')).toThrow('not the shell text of a summon');
     expect(() => tmuxCallOfShellText('sleep 1; ls -l')).toThrow('not the shell text of a summon');
+  });
+
+  it('leaves the `; true` after the call out of the call', () => {
+    const text = must(summonTimerArgs({ seconds: 900, board: '%5', pane: '%3', token: TOKEN })).at(-1) ?? '';
+    expect(text.endsWith("'; true")).toBe(true);
+    expect(tmuxCallOfShellText(text).at(-1)).toBe('swap-pane -d -s %3 -t %5 ; set-option -p -u -t %5 @slot_summon');
+  });
+});
+
+describe('the tmux fake: the shell of a run-shell text', () => {
+  const failing = "sleep 1; tmux if-shell -F -t %99 '1' 'set-option -p -t %0 @a 1'";
+  const working = "sleep 1; tmux if-shell -F -t %0 '1' 'set-option -p -t %0 @a 1'";
+
+  it('gives exit 0 and shows no screen when the call works', () => {
+    const { log, runShell } = fakeTmux({ sessions: { demo: null } });
+    expect(runShell(working, '%0')).toBe(0);
+    expect(log.modes()).toEqual({});
+    expect(log.panes()[0]?.options).toMatchObject({ '@a': '1' });
+  });
+
+  it('gives the exit code of the call, and puts the pane that ran run-shell in view mode, when the text has no `; true`', () => {
+    const { log, run, runShell } = fakeTmux({ sessions: { demo: null } });
+    expect(runShell(failing, '%1')).toBe(1);
+    expect(log.modes()).toEqual({ '%1': `'${failing}' returned 1` });
+    expect(run(['display-message', '-p', '-t', '%1', '#{pane_in_mode}']).stdout).toBe('1\n');
+    expect(run(['display-message', '-p', '-t', '%0', '#{pane_in_mode}']).stdout).toBe('0\n');
+  });
+
+  it('gives exit 0 and shows no screen when the failed call is followed by `; true`', () => {
+    const { log, runShell } = fakeTmux({ sessions: { demo: null } });
+    expect(runShell(`${failing}; true`, '%0')).toBe(0);
+    expect(log.modes()).toEqual({});
+  });
+
+  it('records the exit code of each run, and shows no screen in a pane that is gone', () => {
+    const { log, run, runShell } = fakeTmux({ sessions: { demo: null } });
+    run(['kill-pane', '-t', '%1']);
+    expect(runShell(failing, '%1')).toBe(1);
+    expect(runShell(working, '%0')).toBe(0);
+    expect(log.modes()).toEqual({});
+    expect(log.shellRuns()).toEqual([
+      { text: failing, exitCode: 1 },
+      { text: working, exitCode: 0 },
+    ]);
   });
 });
 

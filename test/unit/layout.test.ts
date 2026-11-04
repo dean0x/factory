@@ -223,6 +223,66 @@ describe('layout: the board returns to the slot (TP-31)', () => {
   });
 });
 
+describe('layout: a board pane that is not in the window view', () => {
+  /** The command that brings the board pane back. It names the real pane and the real window, and it runs in a shell as it stands. */
+  const JOIN_BOARD = `tmux join-pane -d -h -s ${BOARD} -t ${COORDINATOR}`;
+  const warningsOf = (output: CommandOutput): string => output.warnings.join('\n');
+
+  it('names the tmux command that joins the board pane back, when the summon mark named a pane that is gone', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    await summonAlpha(made);
+    made.serverCall(['kill-pane', '-t', ALPHA]);
+    const output = await laidOut(made);
+    expect(output.json).toMatchObject({ slot: 'cleared' });
+    expect(optionsOf(made, BOARD)['@slot_summon']).toBeUndefined();
+    expect(warningsOf(output)).toContain(`The board pane ${BOARD} is not in the window view`);
+    expect(warningsOf(output)).toContain(`"${JOIN_BOARD}"`);
+  });
+
+  it('clears the mark that a timer left, when the worker pane was gone at the end of the wait, and names the command', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    const timer = await summonAlpha(made);
+    made.serverCall(['kill-pane', '-t', ALPHA]);
+    expect(made.runShell(timer)).toBe(0);
+    expect(made.tmux.modes()).toEqual({});
+    expect(optionsOf(made, BOARD)['@slot_summon']).toBeDefined();
+    const output = await laidOut(made);
+    expect(optionsOf(made, BOARD)['@slot_summon']).toBeUndefined();
+    expect(warningsOf(output)).toContain(`"${JOIN_BOARD}"`);
+  });
+
+  it('names the same command when no summon mark is set and the board pane is in the window workers', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    made.serverCall(['swap-pane', '-s', BOARD, '-t', WORKERS_SHELL]);
+    expect(windowsOf(made)[BOARD]).toBe('workers');
+    const output = await laidOut(made);
+    expect(output.json).toMatchObject({ slot: 'none' });
+    expect(warningsOf(output)).toContain(`The board pane ${BOARD} is not in the window view`);
+    expect(warningsOf(output)).toContain(`"${JOIN_BOARD}"`);
+    expect(callsOf(made, 'join-pane')).toEqual([]);
+  });
+
+  it('gives no hint for a board pane that is in the slot, or that layout swapped back', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    expect((await laidOut(made)).warnings).toEqual([]);
+    await summonAlpha(made);
+    const output = await laidOut(made);
+    expect(output.json).toMatchObject({ slot: 'restored' });
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('gives no join-pane hint when the window view is gone, because no command can join a pane to it', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    made.serverCall(['swap-pane', '-s', BOARD, '-t', WORKERS_SHELL]);
+    made.serverCall(['kill-pane', '-t', COORDINATOR]);
+    made.serverCall(['kill-pane', '-t', WORKERS_SHELL]);
+    const output = await laidOut(made);
+    expect(output.json).toMatchObject({ view: 'missing', slot: 'none' });
+    expect(warningsOf(output)).toContain('The window view does not exist');
+    expect(warningsOf(output)).not.toContain('join-pane');
+  });
+});
+
 describe('layout: the session of the node (TP-127)', () => {
   it('exits 3 and names factory start when no tmux session of the node runs', async () => {
     const made = await makeSlot({ tmux: { sessions: {} } });

@@ -290,6 +290,26 @@ describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binar
     expect(await activePaneOf('view')).toBe(coordinator);
   });
 
+  it('names a tmux command that brings the board back when the summoned pane is gone, and that command works', async () => {
+    await startedWorker();
+    expect((await summon('alpha', '--for', '30m')).code).toBe(0);
+    const inView = (await tmux(['list-panes', '-t', '=demo:view', '-F', '#{pane_id} #{@worker}'])).stdout.split('\n');
+    const worker = inView.find((line) => line.endsWith(' alpha'))?.split(' ')[0] ?? '';
+    expect(worker).toMatch(/^%\d+$/);
+    expect((await tmux(['kill-pane', '-t', worker])).code).toBe(0);
+
+    const result = await layout();
+    expect(result.code).toBe(0);
+    const hint = /"(tmux join-pane [^"]+)"/.exec(result.stderr)?.[1];
+    expect(hint).toBeDefined();
+    expect((await marksOf('view')).some((line) => line.includes('|board|'))).toBe(false);
+
+    // The command is the text of the hint as it stands: tmux joins the board pane to the window view again.
+    const [, ...args] = (hint ?? '').split(' ');
+    expect((await tmux(args)).code).toBe(0);
+    expect(await marksOf('view')).toContain('|board|');
+  });
+
   it('exits 2 for a time outside the bounds and moves no pane (TP-32)', async () => {
     await startedWorker();
     const before = await marksOf('view');

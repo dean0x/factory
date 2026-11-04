@@ -202,6 +202,19 @@ export const swapPaneArgs = (source: string, target: string): Result<TmuxArgs, s
   return to.ok ? ok(call('swap-pane', '-d', '-s', from.value, '-t', to.value)) : to;
 };
 
+/**
+ * Moves a pane next to another pane, by their ids: the pane goes to the right of the other pane and into its window, as `start`
+ * puts the board next to the coordinator. The flag `-d` keeps the focus where it is. Both panes are named by id, so the call has no
+ * word that a shell expands. The call is for a person to type: it is the tmux command that brings a board pane back into the
+ * window `view` when no factory command can.
+ */
+export const joinPaneArgs = (pane: string, beside: string): Result<TmuxArgs, string> => {
+  const source = paneTarget(pane);
+  if (!source.ok) return source;
+  const target = paneTarget(beside);
+  return target.ok ? ok(call('join-pane', '-d', '-h', '-s', source.value, '-t', target.value)) : target;
+};
+
 const TILED_LAYOUT = 'tiled';
 
 /** Puts the panes of the workers window in a grid of equal tiles. */
@@ -292,6 +305,10 @@ const keptForShell = (format: string): string => format.replaceAll('#', '##');
  * pane is still the one of this summon. A newer summon, or `layout`, changes the mark, so an older timer does nothing.
  * The condition is escaped for the format expansion of `run-shell`: without the escape, tmux would compare the mark at the start
  * of the timer, in the pane of the caller, and the comparison at the end of the wait would be a fixed `0` or `1`.
+ * The text ends with `; true`. A tmux call that fails at the end of the wait (the summoned pane or the board pane is gone) would
+ * make the shell exit with 1, and `run-shell` then shows that code as an error screen in the current pane, which can be a pane
+ * that the person uses. With `; true` the shell exits with 0, and the failed call changes nothing: the summon mark stays, and
+ * `layout` clears it.
  * The text holds the digits of the wait, the token, pane ids and fixed words. Every variable part is checked, and the whole text
  * is checked once more against the set of characters that these parts and words use.
  */
@@ -313,7 +330,7 @@ export const summonTimerArgs = (input: {
   if (!unset.ok) return unset;
   const restore = [...swap.value, NEXT_COMMAND, ...unset.value].join(' ');
   const condition = keptForShell(`#{==:#{${tmuxNames.optionSummon}},${mark.value}}`);
-  const text = `sleep ${seconds}; ${toolNames.tmux} if-shell -F -t ${board} '${condition}' '${restore}'`;
+  const text = `sleep ${seconds}; ${toolNames.tmux} if-shell -F -t ${board} '${condition}' '${restore}'; true`;
   return SUMMON_TEXT_PATTERN.test(text) ? runShellBackgroundArgs(text) : refuse('a shell text with a character that a summon does not use');
 };
 

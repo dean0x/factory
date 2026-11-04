@@ -67,6 +67,17 @@ export interface TmuxLog {
   layouts(): Readonly<Record<string, string>>;
   /** The id of the active pane of a window: the pane that gets the keys of the person. Undefined for a window with no pane. */
   activePane(session: string, window: string): string | undefined;
+  /** The panes that show a mode screen, from the pane id to the text of the screen. A `run-shell` text that exits with a code other than 0 makes one. */
+  modes(): Readonly<Record<string, string>>;
+  /** Every run of a shell text by `runShell`, with the exit code of the shell, in order. */
+  shellRuns(): readonly ShellRun[];
+}
+
+/** One run of the shell text of a `run-shell` call. */
+export interface ShellRun {
+  readonly text: string;
+  /** The exit code of the shell: the code of its last command. */
+  readonly exitCode: number;
 }
 
 /** The commands that fail for a session that does not exist, when their target names a session. */
@@ -214,17 +225,25 @@ const expandFormat = (format: string, valueOf: (key: string) => string): string 
   return text;
 };
 
+/** The shell text of a summon: a wait, one tmux call, and an optional `; true` after the call. The call is the lazy group. */
+const SHELL_TEXT_PATTERN = /^sleep [0-9]+; tmux (.*?)( *; true)?$/s;
+
+/** What the shell of a summon runs: the tmux call as an argument list, and whether `; true` comes after it. */
+interface ShellText {
+  readonly call: readonly string[];
+  readonly endsWithTrue: boolean;
+}
+
 /**
- * The tmux call inside the shell text of a summon, as an argument list, with no wait: the text is `sleep N; tmux ...`, and a word
- * in single quotes is one word. A test runs this call at once, as the shell would run it after the wait.
+ * Reads the shell text of a summon: `sleep N; tmux ...`, with an optional `; true`. A word in single quotes is one word.
  *
  * tmux `run-shell` expands the formats of its text before the shell gets it, in the context of the pane that ran the summon. That
  * pane has no summon mark, so the fake expands each format of a key to an empty text. A format that the text does not escape
  * (`##{` for `#{`) is gone before the wait starts, as with real tmux.
  */
-export const tmuxCallOfShellText = (shellText: string): readonly string[] => {
+const parseShellText = (shellText: string): ShellText => {
   const text = expandFormat(shellText, () => '');
-  const match = /^sleep [0-9]+; tmux (.*)$/s.exec(text);
+  const match = SHELL_TEXT_PATTERN.exec(text);
   if (match === null) throw new Error('the text is not the shell text of a summon');
   const words: string[] = [];
   let word = '';
@@ -244,11 +263,19 @@ export const tmuxCallOfShellText = (shellText: string): readonly string[] => {
     }
   }
   if (started) words.push(word);
-  return words;
+  return { call: words, endsWithTrue: match[2] !== undefined };
 };
 
+/**
+ * The tmux call inside the shell text of a summon, as an argument list, with no wait. A test runs this call at once, as the shell
+ * would run it after the wait. The `; true` after the call is not part of the call.
+ */
+export const tmuxCallOfShellText = (shellText: string): readonly string[] => parseShellText(shellText).call;
+
 /** A fake of the tmux program: it knows sessions, their home option, their windows and panes, and records every call. */
-export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; log: TmuxLog } => {
+export const tmuxHandler = (
+  fixture: TmuxFixture = {},
+): { handler: RunHandler; log: TmuxLog; runShell: (shellText: string, from: string) => number } => {
   const calls: RunCall[] = [];
   const sessions = new Map<string, string | null>();
   const version = fixture.version === undefined ? 'tmux 3.4' : fixture.version;
@@ -259,6 +286,9 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
   const layouts = new Map<string, string>();
   /** The id of the active pane of each window, by `session:window`. A window with no entry has its first pane active. */
   const activeIds = new Map<string, string>();
+  /** The mode screens: the pane id and the text of the screen. */
+  const modeScreens = new Map<string, string>();
+  const runs: ShellRun[] = [];
 
   const explicitIds = (fixture.panes ?? []).flatMap((pane) => (pane.id === undefined ? [] : [pane.id]));
   for (const id of explicitIds) {
@@ -369,6 +399,8 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
         return pane.dead ? '1' : '0';
       case 'pane_active':
         return activeIn(pane.session, pane.window) === pane ? '1' : '0';
+      case 'pane_in_mode':
+        return modeScreens.has(pane.id) ? '1' : '0';
       case 'pane_current_path':
         return pane.cwd ?? '';
       case 'pane_index':
@@ -549,14 +581,36 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
     }
     return result;
   };
+
+  /**
+   * Runs the shell text of a `run-shell` call as its shell runs it after the wait: the tmux call of the text, then `true` when the
+   * text ends with `; true`. The exit code of the shell is the code of its last command. Like tmux, a code other than 0 puts the
+   * pane that ran `run-shell` (`from`, a pane id) in view mode, with a screen that names the text and the code. A pane that is
+   * gone shows nothing. The result is the exit code of the shell.
+   */
+  const runShell = (shellText: string, from: string): number => {
+    const { call, endsWithTrue } = parseShellText(shellText);
+    const result = handler({ command: 'tmux', args: call, cwd: undefined });
+    const callCode = result.ok ? result.value.exitCode : 1;
+    const exitCode = endsWithTrue ? 0 : callCode;
+    runs.push({ text: shellText, exitCode });
+    if (exitCode !== 0 && panes.some((pane) => pane.id === from)) {
+      modeScreens.set(from, `'${shellText}' returned ${exitCode}`);
+    }
+    return exitCode;
+  };
+
   return {
     handler,
+    runShell,
     log: {
       calls,
       commands: () => calls.map((call) => `${call.command === 'tmux' ? '' : `${call.command} `}${call.args.join(' ')}`),
       sessions: () => sessions,
       layouts: () => Object.fromEntries(layouts),
       activePane: (session, window) => activeIn(session, window)?.id,
+      modes: () => Object.fromEntries([...modeScreens].filter(([id]) => panes.some((pane) => pane.id === id))),
+      shellRuns: () => runs,
       panes: () =>
         panes.map((pane) => ({
           id: pane.id,

@@ -23,7 +23,15 @@ export interface SlotMade {
   readonly tmux: TmuxLog;
   /** Runs one tmux call, as the tmux server would run a call of its own. The result is the exit code and the texts. */
   readonly serverCall: (args: readonly string[]) => { readonly exitCode: number; readonly stdout: string; readonly stderr: string };
+  /**
+   * Runs the shell text of a timer as its shell runs it after the wait, and gives the exit code of the shell. The pane that ran
+   * `run-shell` is `from`, by default the coordinator pane. A code other than 0 puts that pane in view mode (`tmux.modes()`).
+   */
+  readonly runShell: (shellText: string, from?: string) => number;
 }
+
+/** The coordinator pane of the fixture: the first pane that the session of the node holds. */
+export const COORDINATOR_PANE = '%0';
 
 /** A pane of a worker, in the session of the node. The first one that a setup lists gets `%3`, because the session holds `%0` to `%2`. */
 export const workerPane = (worker: string, change: Partial<PaneFixture> = {}): PaneFixture => ({
@@ -37,7 +45,7 @@ export const makeSlot = async (setup: SlotSetup = {}): Promise<SlotMade> => {
   const sessions = setup.tmux?.sessions ?? { [NODE]: HOME };
   // The panes of the setup belong to the session of the node, so a setup with no such session has no panes.
   const panes = NODE in sessions ? (setup.panes ?? []) : [];
-  const { handler, log } = tmuxHandler({ sessions, panes, ...setup.tmux });
+  const { handler, log, runShell } = tmuxHandler({ sessions, panes, ...setup.tmux });
   const deps = createFakeDeps({
     cwd: '/w',
     os: 'darwin',
@@ -61,5 +69,5 @@ export const makeSlot = async (setup: SlotSetup = {}): Promise<SlotMade> => {
     if (!result.ok) throw new Error(result.error.message);
     return result.value;
   };
-  return { deps, tmux: log, serverCall };
+  return { deps, tmux: log, serverCall, runShell: (shellText, from = COORDINATOR_PANE) => runShell(shellText, from) };
 };

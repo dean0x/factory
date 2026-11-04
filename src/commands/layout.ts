@@ -9,7 +9,7 @@ import { requireSession, tmuxStep } from '../launch/tmux-run.js';
 import { commands, commandText, roles, schemaIds, tmuxNames } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
-import { readSlotRows, restoreSlot, slotStateOf, type RestoreOutcome } from '../workers/slot.js';
+import { boardJoinHint, readSlotRows, restoreSlot, slotStateOf, type RestoreOutcome } from '../workers/slot.js';
 
 export interface LayoutOptions {
   readonly home: string | undefined;
@@ -45,7 +45,8 @@ const slotOutput = (outcome: RestoreOutcome): { readonly lines: readonly OutLine
  * 2. a missing window `workers` is made, in the folder of the coordinator, and its panes are tiled. The window `view` holds the
  *    coordinator, so `start` makes it, and a session that lacks it gets a warning;
  * 3. a pane that a summon put in the slot goes back, and the board is in the slot again. The summon mark is unset, so the timer
- *    of the summon does nothing.
+ *    of the summon does nothing. A board pane that is still outside the window `view` (the summoned pane is gone, or a person
+ *    moved the board) gets a warning that names the tmux command that joins it to the window again.
  * It works on a session that has only the window `view`, and it writes no file.
  */
 export const runLayout = async (deps: Deps, options: LayoutOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
@@ -82,6 +83,7 @@ export const runLayout = async (deps: Deps, options: LayoutOptions, registry: Re
 
   const view = hasWindow(tmuxNames.windowView) ? 'present' : 'missing';
   const slot = slotOutput(restored.value);
+  const joinHint = boardJoinHint(state.value, restored.value);
   const viewWarning =
     view === 'missing'
       ? [
@@ -102,7 +104,7 @@ export const runLayout = async (deps: Deps, options: LayoutOptions, registry: Re
       slot: restored.value.kind,
       ...(restored.value.kind === 'none' ? {} : { board: restored.value.board, pane: restored.value.pane }),
     },
-    warnings: [...viewWarning, ...slot.warnings],
+    warnings: [...viewWarning, ...slot.warnings, ...(joinHint === null ? [] : [joinHint])],
     failed: false,
   });
 };

@@ -297,7 +297,7 @@ factory layout
 
 1. A missing window `workers` is made, in the folder of the coordinator.
 2. The panes of the window `workers` are tiled.
-3. If a summon moved the board out of the slot, the board goes back to the slot of the window `view`, and the summon mark is cleared. A timer that still waits then does nothing. If the mark names a pane that is gone, the command clears the mark and prints a warning.
+3. If a summon moved the board out of the slot, the board goes back to the slot of the window `view`, and the summon mark is cleared. A timer that still waits then does nothing. If the mark names a pane that is gone, the command clears the mark and prints a warning. If the board pane is still outside the window `view` (with a mark or without), a second warning names the `tmux join-pane` command that puts it back. The command does not run that command itself.
 
 It works on a session that has only the window `view`. It never makes the window `view`, because that window holds the coordinator: if it is missing, the command warns and names `factory start`. The tmux session must run (exit code 3, and the message names `factory start`) and belong to this factory folder (exit code 4). The command writes no file.
 
