@@ -1,7 +1,7 @@
 import { inspectSharedConfig } from '../config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { commands, commandText, files, keys, program, roles } from '../names.js';
+import { commands, commandText, files, keys, places, program } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { checkFileAddress } from './address.js';
 
@@ -49,7 +49,7 @@ export const fileTransport = (deps: Deps, registry: RecipeRegistry): Transport =
         return unknown(state.message);
       case 'older':
         return unknown(
-          `${files.config} has ${keys.root.schema} ${state.version}: run "${commandText(commands.upgrade)}" in that ${roles.node} home`,
+          `${files.config} has ${keys.root.schema} ${state.version}: run "${commandText(commands.upgrade)}" in that ${places.folder}`,
           state.version,
         );
       case 'newer':

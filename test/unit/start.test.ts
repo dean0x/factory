@@ -469,7 +469,7 @@ describe('start:a session that runs already', () => {
     const { deps, tmux } = make({ tmux: { sessions } });
     const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    if (!result.ok) expect(result.error.message).toBe('a tmux session demo belongs to another node home');
+    if (!result.ok) expect(result.error.message).toBe('a tmux session demo belongs to another factory folder');
     expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
   });
 

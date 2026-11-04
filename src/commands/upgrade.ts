@@ -176,7 +176,7 @@ const requireRegistrationConsent = async (
 /** The line for the root repo that the run made. Git with no identity makes the repo and no commit, which is a warning. */
 const rootRepoLine = (made: MadeRootRepo): OutLine =>
   made.committed
-    ? { level: 'ok', text: `Made the root a git repo. Its first commit holds ${made.paths.join(', ')}.` }
+    ? { level: 'ok', text: `Made the ${places.folder} a git repo. Its first commit holds ${made.paths.join(', ')}.` }
     : { level: 'warn', text: rootRepo.noIdentity };
 
 const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };

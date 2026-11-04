@@ -1,7 +1,7 @@
 import { isSameOrInside } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
-import { env, roles, values } from '../names.js';
+import { env, places, roles, values } from '../names.js';
 
 export interface LaunchInput {
   /** The node home, the root of the config repo: an absolute path. It is `FACTORY_HOME`, and no `--add-dir` names it. */
@@ -42,17 +42,17 @@ const refuse = (what: string): Result<never, string> => err(`the launch refuses 
  * The values are checked here, because a value that starts with a dash could read as a flag.
  */
 export const launchArgv = (input: LaunchInput): Result<readonly string[], string> => {
-  if (!isAbsolute(input.home)) return refuse(`a ${roles.node} home that is not an absolute path`);
+  if (!isAbsolute(input.home)) return refuse(`a ${places.folder} that is not an absolute path`);
   if (!isAbsolute(input.coordinatorDir) || input.coordinatorDir === input.home || !isSameOrInside(input.home, input.coordinatorDir)) {
-    return refuse(`a ${roles.coordinator} folder that is not a folder inside the ${roles.node} home`);
+    return refuse(`a ${roles.coordinator} folder that is not a folder inside the ${places.folder}`);
   }
   if (!isAbsolute(input.stateDir) || input.stateDir === input.home || !isSameOrInside(input.home, input.stateDir)) {
-    return refuse(`a state folder that is not a folder inside the ${roles.node} home`);
+    return refuse(`a state folder that is not a folder inside the ${places.folder}`);
   }
   if (!input.projects.every(isAbsolute)) return refuse('a project path that is not an absolute path');
   // The home holds the config. A session that gets it, or a folder above it, reads and writes the config.
   if (input.projects.some((project) => isSameOrInside(project, input.home))) {
-    return refuse(`a project folder that is the ${roles.node} home or holds it`);
+    return refuse(`a project folder that is the ${places.folder} or holds it`);
   }
   if (input.path === '') return refuse('an empty PATH');
   if (!values.efforts.some((effort) => effort === input.effort)) {

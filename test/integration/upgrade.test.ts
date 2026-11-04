@@ -447,7 +447,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
     expect(upgraded.stdout).toContain('Changed 10 files.');
-    expect(upgraded.stdout).toContain('Made the root a git repo. Its first commit holds .gitignore, factory.yaml.');
+    expect(upgraded.stdout).toContain('Made the factory folder a git repo. Its first commit holds .gitignore, factory.yaml.');
     expect(existsSync(join(box.node, 'CLAUDE.md'))).toBe(false);
     expect(await box.read(join(box.node, ...COORDINATOR_FILE))).toContain('factory:begin coordinator');
 
@@ -508,7 +508,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
     expect(doctor.stdout).toMatch(/root\s+the factory folder is the top folder of its own git work tree and holds the share list/);
-    expect(doctor.stdout).toMatch(/root-repo\s+the root repo tracks no path that must stay on this machine/);
+    expect(doctor.stdout).toMatch(/root-repo\s+the git repo of the factory folder tracks no path that must stay on this machine/);
     expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
   });
 

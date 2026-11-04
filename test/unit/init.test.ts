@@ -461,8 +461,8 @@ describe('init: the proposed home in a git work tree', () => {
       const result = await runInit(deps, withHome());
       expect({ answer, ok: result.ok }).toEqual({ answer, ok: true });
       expect(homeQuestions(deps)).toHaveLength(1);
-      expect(deps.prompts[0]).toContain(`The proposed node home is ${PROPOSAL}`);
-      expect(deps.prompts[0]).toContain('Create the node home here? [y/N]');
+      expect(deps.prompts[0]).toContain(`The proposed factory folder is ${PROPOSAL}`);
+      expect(deps.prompts[0]).toContain('Create the factory folder here? [y/N]');
       expect(await projectsOf(deps)).toEqual([['web', 'web']]);
     }
   });
@@ -492,7 +492,7 @@ describe('init: the proposed home in a git work tree', () => {
     const before = snapshot(deps);
     const result = await runInit(deps, withHome());
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
-    expect(messageOf(result)).toContain(`The proposed node home is ${PROPOSAL}`);
+    expect(messageOf(result)).toContain(`The proposed factory folder is ${PROPOSAL}`);
     expect(messageOf(result)).toContain('--yes');
     expect(deps.prompts).toEqual([]);
     expect(snapshot(deps)).toBe(before);
@@ -1434,7 +1434,7 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     const message = messageOf(result);
     expect(message).toContain('this folder holds the git repos api, web');
-    expect(message).toContain(`The proposed node home is ${PROPOSAL}`);
+    expect(message).toContain(`The proposed factory folder is ${PROPOSAL}`);
     expect(message).toContain('/ws/web-search');
     expect(message).toContain('--yes');
     expect(snapshot(deps)).toBe(before);
@@ -1447,7 +1447,7 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(homeQuestions(deps)).toHaveLength(1);
     expect(deps.prompts[0]).toContain('this folder holds the git repos api, web');
     expect(deps.prompts[0]).toContain('/ws/web-search');
-    expect(deps.prompts[0]).toContain('Create the node home here? [y/N]');
+    expect(deps.prompts[0]).toContain('Create the factory folder here? [y/N]');
   });
 
   it('replaces the control characters of a folder name in the question', async () => {
@@ -1510,7 +1510,7 @@ describe('init: a workspace folder that holds several repos', () => {
     if (!plan.ok) return;
     const warning = plan.value.warnings.find((text) => text.includes('temp folder'));
     expect(warning).toBe(
-      'The node home holds the temp folder /ws/.factory.tmp-4242, left by a stopped init. ' +
+      'The factory folder holds the temp folder /ws/.factory.tmp-4242, left by a stopped init. ' +
         'Remove /ws/.factory.tmp-4242 by hand when no init runs.',
     );
     expect(oldWordsIn(warning ?? '')).toEqual([]);
@@ -1941,7 +1941,7 @@ describe('init: a project URL', () => {
       const { done } = run({}, [URL_TOKEN]);
       const result = await done;
       expect(!result.ok && result.error.hint).toContain('https URL with no user name, or an ssh URL');
-      expect(!result.ok && result.error.hint).toContain('run the same command again');
+      expect(!result.ok && result.error.hint).toContain('Then run "factory init" again.');
     });
 
     it.each([

@@ -1011,6 +1011,15 @@ describe('home index: finding the home of a folder', () => {
     expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: HOME_A });
   });
 
+  it('stops with a usage error that names both factory folders when two entries hold the folder', async () => {
+    const deps = withIndex([entry(HOME_A, ['/w/web'], 'a'), entry(HOME_B, ['/w/web'], 'b')], { cwd: '/w/web/src' });
+    const result = await findHomeInIndex(deps);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    if (result.ok) return;
+    expect(result.error.message).toContain(`is in a project of more than one factory folder: ${HOME_B}, ${HOME_A}`);
+    expect(result.error.hint).toContain('--home DIR');
+  });
+
   it('gives null when no entry holds the folder', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/api'])], { cwd: '/w/web' });
     expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });

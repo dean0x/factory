@@ -240,7 +240,7 @@ const chosenHome = async (
   if (!indexed.ok) return indexed;
   if (indexed.value !== null) return ok({ home: indexed.value, source: 'index' });
   return usageError(
-    `no ${files.config} found in this folder or in a parent folder, and no ${roles.node} home lists this folder`,
+    `no ${files.config} found in this folder or in a parent folder, and no ${places.folder} in the ${places.list} lists this folder`,
     `Run "${commandText(commands.init)}" here, or use ${flagText(flags.home)} DIR.`,
   );
 };

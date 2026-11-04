@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { err, ok, type Result } from '../core/result.js';
-import { address, program, roles } from '../names.js';
+import { address, places, program } from '../names.js';
 
 export const MAX_ADDRESS_LENGTH = 4096;
 
@@ -40,7 +40,7 @@ export interface ChildTarget {
  * The result holds the clean path and the address for it. Any other kind of address is refused (F-13).
  */
 export const childTarget = (cwd: string, argument: string): Result<ChildTarget, string> => {
-  if (argument === '') return err(`the path of the ${roles.node} home is empty`);
+  if (argument === '') return err(`the path of the ${places.folder} is empty`);
   const typed = SCHEME_START.test(argument) ? checkFileAddress(argument) : ok(argument);
   if (!typed.ok) return typed;
   const path = resolve(cwd, typed.value);

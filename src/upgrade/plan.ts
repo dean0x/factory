@@ -21,6 +21,7 @@ import {
   flagText,
   helpTopics,
   overwriteCommand,
+  places,
   program,
   setupBlockNames,
   setupFileOf,
@@ -403,7 +404,7 @@ const rootLines = (root: RootPlan): OutLine[] => {
     render: [`${ignore}: render the share list again. Your lines stay as they are.`],
     current: [],
   };
-  const repo = root.repo ? ['make the root a git repo, with a first commit of the shared files'] : [];
+  const repo = root.repo ? [`make the ${places.folder} a git repo, with a first commit of the shared files`] : [];
   return [...gitignore[root.gitignore.action], ...repo].map((text): OutLine => ({ level: 'text', text }));
 };
 

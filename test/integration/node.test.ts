@@ -120,10 +120,10 @@ describe('factory node (built binary)', () => {
     await initNode(manager, 'mgr', 2);
     const inside = await node('add-child', manager);
     expect(inside.code).toBe(1);
-    expect(inside.stderr).toContain('Name a folder outside this node home');
+    expect(inside.stderr).toContain('Name a folder outside this factory folder');
     const above = await node('add-child', box.root);
     expect(above.code).toBe(1);
-    expect(above.stderr).toContain('Name a folder that does not hold this node home');
+    expect(above.stderr).toContain('Name a folder that does not hold this factory folder');
   });
 
   it('refuses an address that is not a file address with exit code 2', async () => {

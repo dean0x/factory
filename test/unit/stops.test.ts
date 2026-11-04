@@ -3,7 +3,7 @@ import { exitCodeOf, safetyRefusal, usageError, type CliError, type CliResult } 
 import { renderError } from '../../src/cli/output.js';
 import { parseProjectUrl } from '../../src/commands/init-clone.js';
 import { MAX_CLONE_URL_CHARS } from '../../src/core/clone-url.js';
-import { env } from '../../src/names.js';
+import { commands, env, program } from '../../src/names.js';
 import { claudeFileText } from '../helpers/blocks.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
@@ -17,8 +17,11 @@ const CLAUDE = `${HOME}/coordinator/CLAUDE.md`;
 const INDEX = '/state/factory/homes.json';
 const MARKER = `${HOME}/.factory/node.json`;
 
-/** A remedy line names a command when it quotes one, or when it sends the user to the command that just ran. */
-const NAMES_A_COMMAND = /"(?:factory|git|chmod) [^"]+"|\bthe (?:same )?command\b/;
+/** A remedy line names a command by name: it quotes a `factory <command>` form, for example "factory init". */
+const NAMES_A_COMMAND = new RegExp(`"${program} (?:${Object.values(commands).join('|')})(?: [^"]*)?"`);
+
+/** A pointer to the command that just ran names no command, so a remedy line does not use one. */
+const POINTS_AT_A_COMMAND = /\bthe (?:same )?command\b/i;
 
 /** The stop (exit 4) or the error that a result holds. A result that succeeded is a failure of the test. */
 const errorOf = (result: CliResult<unknown>): CliError => {
@@ -27,8 +30,8 @@ const errorOf = (result: CliResult<unknown>): CliError => {
 };
 
 /**
- * The checks of one refusal (AC-37): the exit code, one reason line and one remedy line. A stop names a command in its
- * remedy line. The text that the command prints holds exactly these two lines.
+ * The checks of one refusal (AC-37): the exit code, one reason line and one remedy line. Every remedy line names a command
+ * by name, and none says "the same command". The text that the command prints holds exactly these two lines.
  */
 const expectRemedy = (error: CliError, exitCode: number): void => {
   expect(exitCodeOf[error.kind], error.message).toBe(exitCode);
@@ -37,7 +40,8 @@ const expectRemedy = (error: CliError, exitCode: number): void => {
   expect(remedy).not.toBe('');
   expect(remedy).not.toContain('\n');
   expect(error.message).not.toContain('\n');
-  if (exitCode === 4) expect(remedy, error.message).toMatch(NAMES_A_COMMAND);
+  expect(remedy, error.message).toMatch(NAMES_A_COMMAND);
+  expect(remedy, error.message).not.toMatch(POINTS_AT_A_COMMAND);
   expect(renderError(error)).toBe(`error: ${error.message}\n${remedy}\n`);
 };
 
@@ -122,9 +126,16 @@ describe('the refusal helper', () => {
       'error: a reason\nRun "factory doctor".\n',
     );
     expect(NAMES_A_COMMAND.test('Run "factory init" in the factory folder /w.')).toBe(true);
-    expect(NAMES_A_COMMAND.test('Remove it from git with "git rm --cached x", then run again.')).toBe(true);
-    expect(NAMES_A_COMMAND.test('Rename the repo. Then run the same command again.')).toBe(true);
+    expect(NAMES_A_COMMAND.test('Run "factory upgrade --overwrite safety" in a terminal window.')).toBe(true);
+    expect(NAMES_A_COMMAND.test('Remove it from git with "git rm --cached x", then run again.')).toBe(false);
+    expect(NAMES_A_COMMAND.test('Rename the repo. Then run the same command again.')).toBe(false);
     expect(NAMES_A_COMMAND.test('Fix the problem.')).toBe(false);
+  });
+
+  it('finds a pointer to the command that just ran, which a remedy line does not use', () => {
+    expect(POINTS_AT_A_COMMAND.test('Rename the repo. Then run the same command again.')).toBe(true);
+    expect(POINTS_AT_A_COMMAND.test('Move it away, then run the command again.')).toBe(true);
+    expect(POINTS_AT_A_COMMAND.test('Rename the repo. Then run "factory init" again.')).toBe(false);
   });
 });
 
@@ -257,9 +268,15 @@ describe('the errors of the URL rules (exit 2)', () => {
     ['a scheme that is not allowed', 'ftp://example.com/acme/web.git'],
     ['no path', 'https://example.com'],
   ])('prints one remedy line for a URL that is %s, and does not repeat the value', (_name, url) => {
-    const error = errorOf(parseProjectUrl(url));
+    const error = errorOf(parseProjectUrl(url, commands.init));
     expectRemedy(error, 2);
     expect(`${error.message} ${error.hint ?? ''}`).not.toContain('secret');
     expect(`${error.message} ${error.hint ?? ''}`).not.toContain('ghp_');
+  });
+
+  it('names the command that ran in the remedy line', () => {
+    const url = 'https://user:secret@example.com/acme/web.git';
+    expect(errorOf(parseProjectUrl(url, commands.init)).hint).toContain(`Then run "${program} ${commands.init}" again.`);
+    expect(errorOf(parseProjectUrl(url, commands.upgrade)).hint).toContain(`Then run "${program} ${commands.upgrade}" again.`);
   });
 });

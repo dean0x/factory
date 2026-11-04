@@ -399,7 +399,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect((await tmux(['new-session', '-d', '-s', 'demo', 'sleep', '300'])).code).toBe(0);
     const result = await startFactory();
     expect(result.code).toBe(4);
-    expect(result.stderr).toContain('a tmux session demo belongs to another node home');
+    expect(result.stderr).toContain('a tmux session demo belongs to another factory folder');
   });
 
   it('exits 4 in a project clone that holds its own config with a proxy entry, and starts nothing (TP-16)', async () => {

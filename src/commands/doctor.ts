@@ -96,7 +96,7 @@ export const checkConfig = (state: DocState<FactoryConfig>): CheckResult => {
         ? check(
             checkIds.config,
             'fail',
-            `${files.localConfig} not found. Run "${commandText(commands.init)} ${flagText(flags.home)} DIR" for the home of this ${roles.node}.`,
+            `${files.localConfig} not found. Run "${commandText(commands.init)} ${flagText(flags.home)} DIR" for this ${places.folder}.`,
           )
         : check(checkIds.config, 'fail', `${files.config} not found`);
     case 'unparsable':

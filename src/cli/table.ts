@@ -112,7 +112,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         multiple: true,
         placeholder: 'PATH|URL',
         description:
-          'A git work tree to clone into the home folder, or the URL of a repo to clone into it ' +
+          `A git work tree to clone into the ${places.folder}, or the URL of a repo to clone into it ` +
           '(https://, ssh:// or user@host:path). Repeat the flag for more projects.',
       },
       [flags.layer]: {

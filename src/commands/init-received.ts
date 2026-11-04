@@ -104,7 +104,7 @@ export interface ReceivedRoot {
 const requireNoTrackedProblems = (problems: readonly TrackedProblem[]): CliResult<void> =>
   problems.length === 0
     ? ok(undefined)
-    : safetyRefusal(`the root repo tracks files that must stay on this machine: ${describeTrackedProblems(problems)}`, REMOVE_REMEDY);
+    : safetyRefusal(`the git repo of the ${places.folder} tracks files that must stay on this machine: ${describeTrackedProblems(problems)}`, REMOVE_REMEDY);
 
 /** On a received root, a state folder in any form is a stop. The folder holds the history of a node, so init never replaces it. */
 const requireNoStateFolder = async (deps: Deps, layout: Layout): Promise<CliResult<void>> => {
@@ -493,7 +493,7 @@ export const runReceived = async (
   if (!outside.ok) return outside;
   const leftover = await leftoverTempFolders(deps, home);
   if (!leftover.ok) return leftover;
-  const projects = await planReceivedProjects(deps, home, shared.recipe.projects);
+  const projects = await planReceivedProjects(deps, home, shared.recipe.projects, commands.init);
   if (!projects.ok) return projects;
   const setup = await collectSetup(deps, home, root.value.set);
   if (!setup.ok) return setup;

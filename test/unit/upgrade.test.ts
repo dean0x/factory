@@ -331,7 +331,7 @@ describe('upgrade: the root repo (TP-23)', () => {
     expect(output.json).toMatchObject({ changed: true, gitignore: 'current', rootRepo: true, committed: false });
     expect(output.warnings).toEqual([]);
     expect(output.lines.map((line) => line.text)).toContain(
-      'Made the root a git repo. Its first commit holds .gitignore, factory.yaml, setup.',
+      'Made the factory folder a git repo. Its first commit holds .gitignore, factory.yaml, setup.',
     );
   });
 
@@ -339,7 +339,7 @@ describe('upgrade: the root repo (TP-23)', () => {
     const { deps, gitSince } = await makeNode();
     deps.dirs.delete(ROOT_GIT);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
-    expect(lineTexts(output)).toContain('make the root a git repo, with a first commit of the shared files');
+    expect(lineTexts(output)).toContain('make the factory folder a git repo, with a first commit of the shared files');
     expect(output.json).toMatchObject({ changed: true, dryRun: true, rootRepo: true });
     expect(gitWrites(gitSince())).toEqual([]);
   });
@@ -1580,7 +1580,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(output.json).toMatchObject({ gitignore: 'create', rootRepo: true });
       expect(output.warnings).toEqual([]);
       expect(output.lines.map((line) => line.text)).toContain(
-        'Made the root a git repo. Its first commit holds .gitignore, factory.yaml.',
+        'Made the factory folder a git repo. Its first commit holds .gitignore, factory.yaml.',
       );
       const commands = gitWrites(gitSince());
       expect(commands.slice(0, 3)).toEqual([
@@ -1629,7 +1629,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(lineTexts(output)).toEqual(
         expect.arrayContaining([
           '.gitignore: new file, with the share list',
-          'make the root a git repo, with a first commit of the shared files',
+          'make the factory folder a git repo, with a first commit of the shared files',
         ]),
       );
       expect(output.json).toMatchObject({ gitignore: 'create', rootRepo: true });

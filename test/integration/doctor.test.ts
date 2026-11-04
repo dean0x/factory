@@ -243,7 +243,7 @@ describe('the root checks of factory doctor and factory start (built binary)', (
     expect((await box.git(box.node, ['add', '-f', 'factory.local.yaml'])).code).toBe(0);
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(1);
-    expect(doctor.stdout).toMatch(/root-repo\s+the root repo tracks files that must stay on this machine: the local file factory\.local\.yaml/);
+    expect(doctor.stdout).toMatch(/root-repo\s+the git repo of the factory folder tracks files that must stay on this machine: the local file factory\.local\.yaml/);
     expect(doctor.stdout).toContain('git rm --cached');
     const start = await box.run(['start', '--dry-run', '--home', box.node]);
     expect(start.code).toBe(4);

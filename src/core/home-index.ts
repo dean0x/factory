@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
-import { env, files, flagText, flags, homeIndex, places, roles } from '../names.js';
+import { env, files, flagText, flags, homeIndex, places } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
 import { comparable, isSameOrInside, realPathOf } from './paths.js';
@@ -82,7 +82,7 @@ const textWithEntry = async (
   const entry = settle(entries.value.find((candidate) => candidate[homeIndex.keys.home] === wanted[homeIndex.keys.home]), wanted);
   const added = withEntry(entries.value, entry);
   const next = added.length > homeIndex.maxHomes ? withEntry(await withoutGoneHomes(deps, entries.value), entry) : added;
-  if (next.length > homeIndex.maxHomes) return err(`the index lists the most homes that it can: ${homeIndex.maxHomes}`);
+  if (next.length > homeIndex.maxHomes) return err(`the ${places.list} lists the most ${places.folder}s that it can: ${homeIndex.maxHomes}`);
   return ok(`${JSON.stringify({ [homeIndex.keys.schema]: homeIndex.schema, [homeIndex.keys.homes]: next }, null, 2)}\n`);
 };
 
@@ -106,7 +106,7 @@ export const recordHome = async (
   settle: Settle = asWanted,
 ): Promise<Result<void, string>> => {
   if (entry[homeIndex.keys.projects].length > homeIndex.maxProjects) {
-    return err(`a home can list at most ${homeIndex.maxProjects} projects`);
+    return err(`a ${places.folder} can list at most ${homeIndex.maxProjects} projects`);
   }
   return changePrivateFile(deps, path, homeIndex.maxBytes, (current) => textWithEntry(deps, path, current, entry, settle));
 };
@@ -307,7 +307,7 @@ export const findHomeInIndex = async (deps: Deps): Promise<CliResult<string | nu
       return ok(match.home);
     case 'tie':
       return usageError(
-        `the folder ${folder.value} is in a project of more than one ${roles.node} home: ${match.homes.join(', ')}`,
+        `the folder ${folder.value} is in a project of more than one ${places.folder}: ${match.homes.join(', ')}`,
         `Use ${flagText(flags.home)} DIR to choose one.`,
       );
     default: {

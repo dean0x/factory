@@ -10,7 +10,7 @@ import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { isSameOrInside, realPathOf } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
-import { commands, commandText, files, flags, flagText, nodeCommands, program, roles, schemaIds } from '../names.js';
+import { commands, commandText, files, flags, flagText, nodeCommands, places, program, roles, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 
@@ -126,14 +126,14 @@ const requireApart = async (deps: Deps, home: string, child: string): Promise<Cl
   if (!realChild.ok) return realChild;
   if (isSameOrInside(realHome.value, realChild.value)) {
     return failure(
-      `the child home ${child} is this ${roles.node} home, or inside it`,
-      `Name a folder outside this ${roles.node} home, then add the child again.`,
+      `the child folder ${child} is this ${places.folder}, or inside it`,
+      `Name a folder outside this ${places.folder}, then add the child again.`,
     );
   }
   if (isSameOrInside(realChild.value, realHome.value)) {
     return failure(
-      `the child home ${child} holds this ${roles.node} home`,
-      `Name a folder that does not hold this ${roles.node} home, then add the child again.`,
+      `the child folder ${child} holds this ${places.folder}`,
+      `Name a folder that does not hold this ${places.folder}, then add the child again.`,
     );
   }
   return ok(undefined);
@@ -162,7 +162,7 @@ const runAddChild = async (
   if (layer === COORDINATOR_LAYER) {
     return usageError(
       `this ${roles.node} is on layer ${COORDINATOR_LAYER}: its children are ${roles.worker}s`,
-      `A ${roles.worker} is not a ${roles.node} home. ${program} adds ${roles.worker}s with a later version.`,
+      `A ${roles.worker} is not a ${places.folder}. ${program} adds ${roles.worker}s with a later version.`,
     );
   }
 

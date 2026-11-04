@@ -649,7 +649,7 @@ export const planInit = async (
   const home = resolve(deps.cwd, options.home ?? '.');
   const checked = await checkOptions(deps, options, home, indexPath.value, registry);
   if (!checked.ok) return checked;
-  const planned = await planProjects(deps, home, options.projects);
+  const planned = await planProjects(deps, home, options.projects, commands.init);
   if (!planned.ok) return planned;
   return planChecked(deps, options, checked.value, indexPath.value, planned.value, registry);
 };
@@ -1027,7 +1027,7 @@ export const runInit = async (
   // The clones come before the plan, because the plan reads each project. Every check of the paths of the projects
   // comes before the first clone. When a later step fails, the clones that this run made are removed again.
   // A folder that was there before the run is never removed.
-  const projects = await planProjects(deps, home, projectsOf(deps, options.projects, found));
+  const projects = await planProjects(deps, home, projectsOf(deps, options.projects, found), commands.init);
   if (!projects.ok) return projects;
   // Git makes the folders above a clone by itself. This run makes the root and its parents first, so that the undo can
   // remove them.

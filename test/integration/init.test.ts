@@ -441,7 +441,7 @@ describe('factory init: a workspace folder (built binary)', () => {
     const ws = await makeWorkspace();
     const result = await box.run(['init', ...ownerArgs], { cwd: ws });
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain('The proposed node home is');
+    expect(result.stderr).toContain('The proposed factory folder is');
     expect(result.stderr).toContain('ws-factory');
     expect(result.stderr).toContain('web-search');
     expect(existsSync(join(ws, 'ws-factory'))).toBe(false);
@@ -470,7 +470,7 @@ describe('factory init: the home rules (built binary)', () => {
     const web = await box.makeProject('web');
     const result = await box.run(['init', ...ownerArgs], { cwd: web });
     expect(result.code).toBe(2);
-    expect(result.stderr).toContain('The proposed node home is');
+    expect(result.stderr).toContain('The proposed factory folder is');
     expect(result.stderr).toContain('web-factory');
     expect(result.stderr).toContain('--yes');
     expect(existsSync(join(box.root, 'web-factory'))).toBe(false);

@@ -35,6 +35,7 @@ import {
   flagText,
   keys,
   overwriteCommand,
+  places,
   program,
   roles,
   schemaIds,
@@ -176,7 +177,7 @@ const requireOwnSession = async (deps: Deps, id: string, home: string): Promise<
   if (!shown.ok) return shown;
   if (await isSameHome(deps, shown.value.trim(), home)) return ok(undefined);
   return safetyRefusal(
-    `a tmux session ${id} belongs to another ${roles.node} home`,
+    `a tmux session ${id} belongs to another ${places.folder}`,
     `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session.`,
   );
 };
@@ -404,11 +405,11 @@ const dryRunOutput = (input: {
   return {
     lines: [
       text('Dry run: no session starts and no file changes.'),
-      text(`${capitalize(roles.node)} home: ${home}`),
+      text(`${capitalize(places.folder)}: ${home}`),
       ...problems.map((problem): OutLine => ({ level: 'warn', text: `${problem}. A real run stops here.` })),
       text(
         exists
-          ? `The session ${id} runs already. A real run checks that it belongs to this ${roles.node} home.`
+          ? `The session ${id} runs already. A real run checks that it belongs to this ${places.folder}.`
           : `The session ${id} does not run. A real run starts it.`,
       ),
       ...(plan === null ? [] : [text(`Proxy: ${proxy ?? values.noProxy}`)]),

@@ -263,17 +263,17 @@ const scanRepo = async (
   const clones = problems.filter((problem) => problem.kind === 'clone' && !received);
   const workCopies = trackedUnder(tracked, dirs.workCopies);
   if (stops.length > 0) {
-    findings.push(finding(id, 'fail', `the root repo tracks files that must stay on this machine: ${describeTrackedProblems(stops)}`, REMOVE_REMEDY));
+    findings.push(finding(id, 'fail', `the git repo of the ${places.folder} tracks files that must stay on this machine: ${describeTrackedProblems(stops)}`, REMOVE_REMEDY));
   }
   if (clones.length > 0) {
-    findings.push(finding(id, 'warn', `the root repo tracks ${describeTrackedProblems(clones)}`, 'Stop tracking them with "git rm --cached", or keep them on purpose.'));
+    findings.push(finding(id, 'warn', `the git repo of the ${places.folder} tracks ${describeTrackedProblems(clones)}`, 'Stop tracking them with "git rm --cached", or keep them on purpose.'));
   }
   if (workCopies.length > 0) {
     findings.push(
       finding(
         id,
         'warn',
-        `the root repo tracks ${namedItems(workCopies.map(shownPath))} in the work copies folder`,
+        `the git repo of the ${places.folder} tracks ${namedItems(workCopies.map(shownPath))} in the work copies folder`,
         'Stop tracking them with "git rm --cached", or keep them on purpose.',
       ),
     );
@@ -286,7 +286,7 @@ const scanRepo = async (
         finding(
           id,
           'warn',
-          `the root repo tracks ${namedItems(shared.map(shownPath))}, an instruction file or a settings file that goes to every receiver of the ${places.folder}`,
+          `the git repo of the ${places.folder} tracks ${namedItems(shared.map(shownPath))}, an instruction file or a settings file that goes to every receiver of the ${places.folder}`,
           'Stop tracking the file with "git rm --cached", or keep it on purpose.',
         ),
       );
@@ -611,7 +611,7 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
           finding(
             checkIds.rootFiles,
             'warn',
-            `the root repo tracks more than ${trackedFiles.maxCount} files, and the scan for tokens read the first ${trackedFiles.maxCount}`,
+            `the git repo of the ${places.folder} tracks more than ${trackedFiles.maxCount} files, and the scan for tokens read the first ${trackedFiles.maxCount}`,
             'Remove the files that the folder does not need from git with "git rm --cached".',
           ),
         ]
@@ -659,7 +659,7 @@ export const withSetupAccepted = (scan: RootScan): RootScan => ({
 });
 
 const OK_TEXT: Readonly<Record<string, string>> = {
-  [checkIds.rootRepo]: `the root repo tracks no path that must stay on this machine, and git ignores ${files.localConfig} and ${dirs.state}/`,
+  [checkIds.rootRepo]: `the git repo of the ${places.folder} tracks no path that must stay on this machine, and git ignores ${files.localConfig} and ${dirs.state}/`,
   [checkIds.rootFiles]: 'no tracked text file holds a token, a file URL or a user folder path',
   [checkIds.projectPaths]: `every project folder is inside the ${places.folder}`,
   [checkIds.permissionMode]: 'no settings file skips the permission checks',

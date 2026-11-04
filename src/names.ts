@@ -45,6 +45,9 @@ export const commands = {
   help: 'help',
 } as const;
 
+/** The name of a command, as `commands` holds it. */
+export type CommandName = (typeof commands)[keyof typeof commands];
+
 /** The topics of `help`. */
 export const helpTopics = { words: 'words' } as const;
 

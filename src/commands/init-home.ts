@@ -60,18 +60,18 @@ const confirmProposal = async (
   reason: string,
 ): Promise<CliResult<HomeChoice>> => {
   if (yes) return ok(choice);
-  const about = `${reason}.${describeSkipped(choice.skipped)} The proposed ${roles.node} home is ${choice.home}`;
+  const about = `${reason}.${describeSkipped(choice.skipped)} The proposed ${places.folder} is ${choice.home}`;
   if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
     return usageError(
       about,
       `Run the command again with ${flagText(flags.yes)} to use it, or with ${flagText(flags.home)} DIR to choose another folder.`,
     );
   }
-  const answer = await deps.prompt(printable(`${about}\nCreate the ${roles.node} home here? [y/N] `));
+  const answer = await deps.prompt(printable(`${about}\nCreate the ${places.folder} here? [y/N] `));
   if (!answer.ok) return answer;
   if (ACCEPT_ANSWER.test(answer.value.trim())) return ok(choice);
   return usageError(
-    `the ${roles.node} home ${choice.home} was not accepted`,
+    `the ${places.folder} ${choice.home} was not accepted`,
     `Pass ${flagText(flags.home)} DIR to choose a folder.`,
   );
 };
@@ -148,7 +148,7 @@ export const chooseHome = async (
     return kind.ok ? ok({ home, ...NOT_PROPOSED, kind: kind.value }) : kind;
   }
   const refuse = (folder: string): CliResult<never> =>
-    usageError(`cannot make a ${roles.node} home name from the folder ${folder}`, `Pass ${flagText(flags.home)} DIR.`);
+    usageError(`cannot make a name for the ${places.folder} from the folder ${folder}`, `Pass ${flagText(flags.home)} DIR.`);
 
   const top = await workTreeTop(deps, deps.cwd);
   if (top !== null) {
@@ -200,5 +200,5 @@ export const leftoverTempFolders = async (deps: Deps, home: string): Promise<Cli
 
 /** The warning for a temp folder that a stopped `init` left. The remedy is to remove it by hand. */
 export const tempFolderWarning = (folder: string): string =>
-  `The ${roles.node} home holds the temp folder ${folder}, left by a stopped ${commands.init}. ` +
+  `The ${places.folder} holds the temp folder ${folder}, left by a stopped ${commands.init}. ` +
   `Remove ${folder} by hand when no ${commands.init} runs.`;

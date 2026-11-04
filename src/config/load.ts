@@ -13,7 +13,7 @@ import {
   type DocState,
   type VersionSpec,
 } from '../migrate/inspect.js';
-import { commands, commandText, files, flags, flagText, keys, localFileModes, program, roles } from '../names.js';
+import { commands, commandText, files, flags, flagText, keys, localFileModes, places, program, roles } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { slug } from './primitives.js';
@@ -86,7 +86,7 @@ const combine = (shared: DocState<SharedConfig>, local: DocState<LocalConfig>): 
 export const requireInit = (): CliResult<never> =>
   usageError(
     `${files.localConfig} not found`,
-    `Run "${commandText(commands.init)} ${flagText(flags.home)} DIR" for the home of this ${roles.node}.`,
+    `Run "${commandText(commands.init)} ${flagText(flags.home)} DIR" for this ${places.folder}.`,
   );
 
 /** The config from the state of its files. A missing local file is a usage error that names `init`. */
@@ -111,7 +111,7 @@ export type LocalAccess =
   /** Group or others can read the file. The value is the permission bits. */
   | { readonly kind: 'wide'; readonly mode: number };
 
-const LOCAL_FILE_REMEDY = `Check the file, set the mode to 600 with "chmod 600 ${files.localConfig}", then run the command again.`;
+const LOCAL_FILE_REMEDY = `Check the file, set the mode to 600 with "chmod 600 ${files.localConfig}", then run "${commandText(commands.doctor)}".`;
 
 /** The remedy line for a local file that is a link: the file is written again by `init`. */
 const LOCAL_FILE_LINK_REMEDY = `Move ${files.localConfig} away, then run "${commandText(commands.init)}" to write a new one.`;
@@ -147,7 +147,7 @@ export const wideModeNote = (mode: number, fixed: boolean): string =>
   fixed
     ? `${program} set the mode of ${files.localConfig} to 600. It was ${mode.toString(8)}, so other accounts could read it.`
     : `${files.localConfig} has the mode ${mode.toString(8)}, so other accounts can read it. ` +
-      `Run "chmod 600 ${files.localConfig}" in the ${roles.node} home.`;
+      `Run "chmod 600 ${files.localConfig}" in the ${places.folder}.`;
 
 /**
  * Deal with a local file that group or others can read. With `fix`, the mode goes back to 600. Else nothing changes,

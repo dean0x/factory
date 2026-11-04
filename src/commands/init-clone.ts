@@ -13,7 +13,7 @@ import { gitClone, isWorkTreeRoot, originUrlOf, withoutUserinfo } from '../core/
 import { comparable, isSameOrInside, missingFolders, realPathOf } from '../core/paths.js';
 import { describeProjectPathIssue, projectFolderKey, projectPathIssue } from '../core/project-path.js';
 import { err, ok } from '../core/result.js';
-import { flags, flagText, places, program } from '../names.js';
+import { commandText, flags, flagText, places, program, type CommandName } from '../names.js';
 
 export const MAX_PROJECTS = 100;
 
@@ -39,47 +39,56 @@ export interface PlannedProject {
   readonly oldFolder: string | null;
 }
 
+/** The last sentence of a remedy line of the project rules. It names the command that ran, so a person need not guess it. */
+const runAgain = (command: CommandName): string => `Then run "${commandText(command)}" again.`;
+
 /**
  * Read a value of the project flag as a repo URL. The accepted forms are https://, ssh://, user@host:path and a file
  * URL. The result is null when the value is a path of this machine. The rules of the clone URL decide: a user name in
  * an https URL, a password or a token in any form, a scheme that is not allowed and a hyphen at the start are refused
  * with a usage error before any clone, and the error does not repeat the value.
  */
-export const parseProjectUrl = (argument: string): CliResult<RepoUrl | null> => {
+export const parseProjectUrl = (argument: string, command: CommandName): CliResult<RepoUrl | null> => {
   const parsed = parseCloneUrl(argument);
   if (!parsed.ok) {
     return usageError(
       `${flagText(flags.project)}: ${cloneIssueReason(parsed.error)}`,
-      `${CLONE_URL_REMEDY} Then run the same command again.`,
+      `${CLONE_URL_REMEDY} ${runAgain(command)}`,
     );
   }
   if (parsed.value.kind === 'local') return ok(null);
   return ok({ url: parsed.value.url, name: parsed.value.name });
 };
 
-const PLAIN_NAME_REMEDY = 'A repo name has letters, digits, dot, hyphen and underscore, and starts with a letter or a digit.';
-
 /** The name of a repo in a URL must be a plain folder name. */
-const checkPlainName = (name: string): CliResult<void> =>
+const checkPlainName = (name: string, command: CommandName): CliResult<void> =>
   isPlainRepoName(name)
     ? ok(undefined)
-    : usageError(`${flagText(flags.project)}: the repo name in the URL is not a plain name`, PLAIN_NAME_REMEDY);
+    : usageError(
+        `${flagText(flags.project)}: the repo name in the URL is not a plain name`,
+        `A repo name has letters, digits, dot, hyphen and underscore, and starts with a letter or a digit. ${runAgain(command)}`,
+      );
 
 /**
  * The project path rule (design 4.3): the name of the folder is one name that the root does not keep for itself.
  * A name that breaks the rule is a stop (exit 4), before any clone.
  */
-const checkProjectName = (name: string): CliResult<void> => {
+const checkProjectName = (name: string, command: CommandName): CliResult<void> => {
   const issue = projectPathIssue(name);
   if (issue === null) return ok(undefined);
   return safetyRefusal(
     `the project folder name "${name}" ${describeProjectPathIssue(issue)}`,
-    `Use one folder name that is not reserved: rename the repo or the folder. Then run the same command again.`,
+    `Use one folder name that is not reserved: rename the repo or the folder. ${runAgain(command)}`,
   );
 };
 
 /** The folder of a project is inside the root and is not the root. A link to a folder outside the root is refused. */
-const requireInsideRoot = async (deps: Deps, realHome: string, target: string): Promise<CliResult<true>> => {
+const requireInsideRoot = async (
+  deps: Deps,
+  realHome: string,
+  target: string,
+  command: CommandName,
+): Promise<CliResult<true>> => {
   const real = await realPathOf(deps, target);
   if (!real.ok) return real;
   const root = comparable(deps, realHome);
@@ -87,7 +96,7 @@ const requireInsideRoot = async (deps: Deps, realHome: string, target: string): 
   if (folder !== root && isSameOrInside(root, folder)) return ok(true);
   return safetyRefusal(
     `the project folder ${target} is outside the ${places.folder}: it resolves to ${real.value}`,
-    `Replace it with a clone of the repo inside the ${places.folder}. Then run the same command again.`,
+    `Replace it with a clone of the repo inside the ${places.folder}. ${runAgain(command)}`,
   );
 };
 
@@ -95,16 +104,22 @@ const requireInsideRoot = async (deps: Deps, realHome: string, target: string): 
  * True when `target` is a work tree whose origin is `from`. A target that does not exist is not present. A target that
  * exists in any other way is refused. A present target must be inside the root after its links are resolved.
  */
-const isPresentClone = async (deps: Deps, realHome: string, from: string, target: string): Promise<CliResult<boolean>> => {
+const isPresentClone = async (
+  deps: Deps,
+  realHome: string,
+  from: string,
+  target: string,
+  command: CommandName,
+): Promise<CliResult<boolean>> => {
   const kind = await deps.fs.stat(target);
   if (!kind.ok) return kind;
   if (kind.value === null) return ok(false);
   if (kind.value === 'dir' && (await isWorkTreeRoot(deps, target)) && (await originUrlOf(deps, target)) === from) {
-    return requireInsideRoot(deps, realHome, target);
+    return requireInsideRoot(deps, realHome, target, command);
   }
   return failure(
     `${target} exists and is not a clone of ${withoutUserinfo(from)}`,
-    `${program} clones only into a folder that does not exist. Move the folder, or choose another repo.`,
+    `${program} clones only into a folder that does not exist. Move the folder, or choose another repo. ${runAgain(command)}`,
   );
 };
 
@@ -118,22 +133,26 @@ const planUrlProject = async (
   home: string,
   realHome: string,
   repo: RepoUrl,
+  command: CommandName,
 ): Promise<CliResult<PlannedProject>> => {
-  const plain = checkPlainName(repo.name);
+  const plain = checkPlainName(repo.name, command);
   if (!plain.ok) return plain;
-  const named = checkProjectName(repo.name);
+  const named = checkProjectName(repo.name, command);
   if (!named.ok) return named;
   const target = join(home, repo.name);
-  const present = await isPresentClone(deps, realHome, repo.url, target);
+  const present = await isPresentClone(deps, realHome, repo.url, target, command);
   if (!present.ok) return present;
   return ok({ name: repo.name, target, from: repo.url, present: present.value, origin: classifyOrigin(repo.url), oldFolder: null });
 };
 
 /** The folder name of a repo that has a shareable or a file origin: the last part of the origin URL. */
-const nameOfOrigin = (origin: Exclude<OriginClass, { readonly kind: 'other' }>): CliResult<string> => {
+const nameOfOrigin = (
+  origin: Exclude<OriginClass, { readonly kind: 'other' }>,
+  command: CommandName,
+): CliResult<string> => {
   const parsed = parseCloneUrl(origin.url);
   if (!parsed.ok || parsed.value.kind === 'local') return failure('the origin of a repo is not a URL');
-  const plain = checkPlainName(parsed.value.name);
+  const plain = checkPlainName(parsed.value.name, command);
   return plain.ok ? ok(parsed.value.name) : plain;
 };
 
@@ -147,6 +166,7 @@ const planLocalProject = async (
   home: string,
   realHome: string,
   argument: string,
+  command: CommandName,
 ): Promise<CliResult<PlannedProject>> => {
   const absolute = resolve(deps.cwd, argument);
   if (!(await isWorkTreeRoot(deps, absolute))) {
@@ -155,9 +175,9 @@ const planLocalProject = async (
   const real = await realPathOf(deps, absolute);
   if (!real.ok) return real;
   const origin = classifyOrigin(await originUrlOf(deps, absolute));
-  const name = origin.kind === 'other' ? ok(basename(real.value)) : nameOfOrigin(origin);
+  const name = origin.kind === 'other' ? ok(basename(real.value)) : nameOfOrigin(origin, command);
   if (!name.ok) return name;
-  const named = checkProjectName(name.value);
+  const named = checkProjectName(name.value, command);
   if (!named.ok) return named;
   const from = origin.kind === 'other' ? real.value : origin.url;
   const target = join(home, name.value);
@@ -165,10 +185,10 @@ const planLocalProject = async (
   const targetReal = await realPathOf(deps, target);
   if (!targetReal.ok) return targetReal;
   if (comparable(deps, targetReal.value) === comparable(deps, real.value)) {
-    const inside = await requireInsideRoot(deps, realHome, target);
+    const inside = await requireInsideRoot(deps, realHome, target, command);
     return inside.ok ? ok({ name: name.value, target, from, present: true, origin, oldFolder: null }) : inside;
   }
-  const present = await isPresentClone(deps, realHome, from, target);
+  const present = await isPresentClone(deps, realHome, from, target, command);
   if (!present.ok) return present;
   return ok({ name: name.value, target, from, present: present.value, origin, oldFolder: real.value });
 };
@@ -176,12 +196,14 @@ const planLocalProject = async (
 /**
  * Decide, with no write, what each project of the command is and where its folder is: `<root>/<name>`. A project is a URL
  * or a git work tree of this machine. A target that is a clone of the same repo is reused. Two projects can not take
- * one folder, also when only the letter case differs. This function writes nothing.
+ * one folder, also when only the letter case differs. This function writes nothing. `command` is the command that
+ * runs: the remedy line of a refused project names it.
  */
 export const planProjects = async (
   deps: Deps,
   home: string,
   projects: readonly string[],
+  command: CommandName,
 ): Promise<CliResult<readonly PlannedProject[]>> => {
   const counted = checkProjectCount(projects.length);
   if (!counted.ok) return counted;
@@ -190,12 +212,12 @@ export const planProjects = async (
   if (!realHome.ok) return realHome;
   const planned: PlannedProject[] = [];
   for (const argument of projects) {
-    const parsed = parseProjectUrl(argument);
+    const parsed = parseProjectUrl(argument, command);
     if (!parsed.ok) return parsed;
     const project =
       parsed.value === null
-        ? await planLocalProject(deps, root, realHome.value, argument)
-        : await planUrlProject(deps, root, realHome.value, parsed.value);
+        ? await planLocalProject(deps, root, realHome.value, argument, command)
+        : await planUrlProject(deps, root, realHome.value, parsed.value, command);
     if (!project.ok) return project;
     if (planned.some((other) => projectFolderKey(other.name) === projectFolderKey(project.value.name))) {
       return usageError(`two projects take the folder ${project.value.name}`);
@@ -234,6 +256,7 @@ export const planReceivedProjects = async (
   deps: Deps,
   home: string,
   projects: readonly ListedProject[],
+  command: CommandName,
 ): Promise<CliResult<ReceivedProjects>> => {
   const counted = checkProjectCount(projects.length);
   if (!counted.ok) return counted;
@@ -252,7 +275,7 @@ export const planReceivedProjects = async (
         warnings.push(notClonedWarning(project, target, parsed === null ? 'has no URL' : 'has a URL that works on one machine only'));
       }
     } else {
-      const present = await isPresentClone(deps, realHome.value, parsed.value.url, target);
+      const present = await isPresentClone(deps, realHome.value, parsed.value.url, target, command);
       if (!present.ok) return present;
       planned.push({
         name: project.path,

@@ -516,6 +516,65 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
   });
 });
 
+describe('the words home and root for a factory folder in the text of the source (TP-138)', () => {
+  /**
+   * The words that the table of plain words rules out in user text for the folder of a factory: home and root, as whole
+   * words. The flag `--home`, the variable `FACTORY_HOME`, and a name with a hyphen or an underscore are names of code,
+   * so they do not match. The capital letters of `HOME` are the variable of the account.
+   */
+  const FOLDER_WORD = /(?<![A-Za-z0-9_$-])(?:[Hh]ome|[Rr]oot)s?(?![A-Za-z0-9_-])/;
+
+  /**
+   * The literals where the words stay, by exact value. Each one is a name of code and no text: the flag `home`, the
+   * keys and the file name of the factory list (design 4.3 keeps `homes.json`), the key `root` of the record files,
+   * and the id `root` of a doctor check.
+   */
+  const KEPT: ReadonlySet<string> = new Set<string>(['home', 'homes', 'homes.json', 'root']);
+
+  const folderWordHits = (source: string, path: string): string[] =>
+    literalsOf(source)
+      .filter((literal) => !IMPORT_PATH.test(literal) && !KEPT.has(literal) && FOLDER_WORD.test(literal))
+      .map((literal) => `${relative(SRC, path)}: "${literal}"`);
+
+  it('finds no home and no root in the string literals of src', () => {
+    const files = allSourceFiles(SRC);
+    expect(files.length).toBeGreaterThan(60);
+    expect(files.flatMap((path) => folderWordHits(readFileSync(path, 'utf8'), path))).toEqual([]);
+  });
+
+  it('finds the words as whole words in a literal, and leaves names of code and comments alone', () => {
+    const path = join(SRC, 'commands', 'sample.ts');
+    expect(folderWordHits("const a = 'the root repo tracks it';", path)).toHaveLength(1);
+    expect(folderWordHits("const a = 'a tmux session of another home';", path)).toHaveLength(1);
+    expect(folderWordHits('const a = `the child homes ${x}`;', path)).toHaveLength(1);
+    expect(folderWordHits("const a = 'Root folder';", path)).toHaveLength(1);
+    expect(folderWordHits("const a = 'name it with --home';", path)).toEqual([]);
+    expect(folderWordHits("const a = 'FACTORY_HOME';", path)).toEqual([]);
+    expect(folderWordHits("const a = 'Set HOME to a folder';", path)).toEqual([]);
+    expect(folderWordHits("const a = 'root-repo';", path)).toEqual([]);
+    expect(folderWordHits("const a = 'homepage';", path)).toEqual([]);
+    expect(folderWordHits("// the root repo\nconst root = 'plain';", path)).toEqual([]);
+    expect(folderWordHits("import { a } from '../core/root-paths.js';", path)).toEqual([]);
+  });
+});
+
+describe('the name of the worker window in the docs that a user reads (TP-138)', () => {
+  /**
+   * The README and the docs that explain the tool name the window `workers`. The old name `bench` stays only where the
+   * design and the glossary quote it as an old word: `docs/design.md` (its history rows) and `docs/glossary.md`.
+   */
+  const USER_DOCS = ['README.md', 'docs/roadmap-v2.md', 'docs/token-budget.md'];
+  const textOf = (name: string): string => readFileSync(join(__dirname, '..', '..', name), 'utf8');
+
+  it.each(USER_DOCS)('does not name the old window bench in %s', (name) => {
+    expect(textOf(name).match(/\bbench\b/gi) ?? []).toEqual([]);
+  });
+
+  it('names the window workers in the README', () => {
+    expect(textOf('README.md')).toContain(`window \`${tmuxNames.windowWorkers}\``);
+  });
+});
+
 describe('the pane options of tmux', () => {
   /** The pane option of FAC-M1 for a work track, and the pane option of the first schema 2 draft. */
   const OLD_PANE_OPTIONS = ['@lane', '@cell'];

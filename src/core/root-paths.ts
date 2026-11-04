@@ -189,11 +189,10 @@ export const namedItems = (items: readonly string[]): string =>
   (items.length > MAX_NAMED_ITEMS ? ` and ${items.length - MAX_NAMED_ITEMS} more` : '');
 
 /** The remedy line for the tracked paths that must stay on this machine. */
-export const REMOVE_REMEDY =
-  'Remove each of them from git with "git rm --cached", commit the change, then run the command again.';
+export const REMOVE_REMEDY = `Remove each of them from git with "git rm --cached", commit the change, then run "${commandText(commands.doctor)}".`;
 
 /** The stop for a list of tracked files over its cap, and its remedy line. */
-export const TRACKED_CAP_MESSAGE = `the root repo tracks more than ${trackedFiles.maxCount} files, so ${program} does not hash them`;
+export const TRACKED_CAP_MESSAGE = `the git repo of the ${places.folder} tracks more than ${trackedFiles.maxCount} files, so ${program} does not hash them`;
 export const TRACKED_CAP_REMEDY = `Remove the files that the ${places.folder} does not need from git with "git rm --cached", then run "${commandText(commands.init)}" again.`;
 
 const trackedProblemText = (problem: TrackedProblem): string => {

@@ -221,7 +221,7 @@ describe('node add-child', () => {
     const older = make({ homes: { '/w/old': 'schema: 1\n' } });
     const olderResult = await node(older, 'add-child', '/w/old');
     expect(olderResult).toMatchObject({ ok: false, error: { kind: 'failure' } });
-    if (!olderResult.ok) expect(olderResult.error.message).toContain('run "factory upgrade" in that node home');
+    if (!olderResult.ok) expect(olderResult.error.message).toContain('run "factory upgrade" in that factory folder');
 
     const newer = make({ homes: { '/w/new': 'schema: 3\n' } });
     const newerResult = await node(newer, 'add-child', '/w/new');
@@ -250,10 +250,10 @@ describe('node add-child', () => {
   });
 
   it.each([
-    ['this home', '/w/mgr', 'is this node home, or inside it'],
-    ['a folder inside this home', '/w/mgr/sub', 'is this node home, or inside it'],
-    ['a folder above this home', '/w', 'holds this node home'],
-    ['the root folder', '/', 'holds this node home'],
+    ['this home', '/w/mgr', 'is this factory folder, or inside it'],
+    ['a folder inside this home', '/w/mgr/sub', 'is this factory folder, or inside it'],
+    ['a folder above this home', '/w', 'holds this factory folder'],
+    ['the root folder', '/', 'holds this factory folder'],
   ])('fails for %s, and names a remedy', async (_name, path, message) => {
     const deps = make({ homes: { [path]: null } });
     const result = await node(deps, 'add-child', path);

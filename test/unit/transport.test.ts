@@ -84,7 +84,7 @@ describe('file transport: ping', () => {
     expect(result).toMatchObject({ kind: 'unknown', schema: 1 });
     if (result.kind === 'unknown') {
       expect(result.reason).toContain('schema 1');
-      expect(result.reason).toContain('run "factory upgrade" in that node home');
+      expect(result.reason).toContain('run "factory upgrade" in that factory folder');
     }
   });
 
