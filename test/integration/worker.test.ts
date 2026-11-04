@@ -1,8 +1,8 @@
 import { execFile, spawnSync } from 'node:child_process';
-import { chmod, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -20,7 +20,11 @@ let tmuxEnv: Record<string, string>;
 let socket: string;
 let outDir: string;
 
-/** The fake claude writes what the test needs to know, then sleeps. It writes the file `launches` last. */
+/**
+ * The fake claude writes what the test needs to know, then sleeps. It writes the file `launches` last.
+ * A launch with `--resume <id>` acts like the program: when the file `no-transcript` is in the folder, the session can not be
+ * loaded, and the program ends at once with an error. Else the hook of the new session writes its SessionStart line.
+ */
 const fakeClaude = (dir: string): string =>
   [
     '#!/bin/sh',
@@ -30,6 +34,19 @@ const fakeClaude = (dir: string): string =>
     'printf \'%s\' "$FACTORY_SESSION" > "$dir/session"',
     'printf \'%s\' "$FACTORY_INBOX" > "$dir/inbox"',
     'pwd -P > "$dir/cwd"',
+    'resume=""',
+    'prev=""',
+    'for arg in "$@"; do',
+    '  if [ "$prev" = "--resume" ]; then resume="$arg"; fi',
+    '  prev="$arg"',
+    'done',
+    'if [ -n "$resume" ] && [ -e "$dir/no-transcript" ]; then',
+    '  echo "No conversation found with session ID: $resume" >&2',
+    '  exit 1',
+    'fi',
+    'if [ -n "$resume" ]; then',
+    `  printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$resume" | '${process.execPath}' '${DIST}' hook SessionStart`,
+    'fi',
     'echo launched >> "$dir/launches"',
     'exec sleep 300',
     '',
@@ -349,5 +366,95 @@ describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binar
     const result = await summon('alpha');
     expect(result.code).toBe(3);
     expect(result.stderr).toContain('"factory start"');
+  });
+});
+
+/** A session id of the program: a UUID with lower case letters. */
+const SESSION = '5d8e2c1a-7f3b-4a96-8c4d-0e1f2a3b4c5d';
+
+const stop = (...extra: string[]): Promise<RunResult> => box.run(['worker', 'stop', '--home', box.node, ...extra], { env: tmuxEnv });
+
+const resume = (...extra: string[]): Promise<RunResult> => box.run(['worker', 'resume', '--home', box.node, ...extra], { env: tmuxEnv });
+
+/** The SessionStart hook of the first session of alpha: it writes the pointer and the last-seen line, as the hook of the program does. */
+const sessionStarted = (): Promise<RunResult> =>
+  box.run(['hook', 'SessionStart'], {
+    cwd: box.node,
+    env: { FACTORY_HOME: box.node, FACTORY_SESSION: 'alpha' },
+    input: JSON.stringify({ session_id: SESSION, hook_event_name: 'SessionStart' }),
+  });
+
+/** The pane id and the process id of the live pane that carries the mark of a worker. */
+const livePaneOf = async (id: string): Promise<{ readonly pane: string; readonly pid: number }> => {
+  const lines = (await tmux(['list-panes', '-t', '=demo:workers', '-F', '#{pane_id} #{pane_pid} #{pane_dead} #{@worker}'])).stdout.split('\n');
+  const [pane = '', pid = ''] = lines.find((line) => line.endsWith(` 0 ${id}`))?.split(' ') ?? [];
+  return { pane, pid: Number(pid) };
+};
+
+/** The live panes that carry the mark of a worker. */
+const livePanes = async (id: string): Promise<string[]> =>
+  (await tmux(['list-panes', '-t', '=demo:workers', '-F', '#{pane_dead} #{@worker}'])).stdout.split('\n').filter((line) => line === `0 ${id}`);
+
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe.skipIf(!hasTmux)('factory worker stop and factory worker resume (built binary, separate tmux server)', () => {
+  it('ends the program of the pane of the worker, closes the pane, and leaves no process of that pane (TP-26)', async () => {
+    await startedWorker();
+    expect((await sessionStarted()).code).toBe(0);
+    const { pane, pid } = await livePaneOf('alpha');
+    expect(pane).toMatch(/^%\d+$/);
+    expect(pid).toBeGreaterThan(1);
+    expect(isAlive(pid)).toBe(true);
+
+    const stopped = await stop('alpha');
+    expect(stopped.code, stopped.stderr).toBe(0);
+    expect(stopped.stdout).toContain('Stopped the worker alpha.');
+    expect(stopped.stdout).toContain(`The process ${pid} of the pane ${pane} ended after kill -TERM. The session was idle.`);
+    expect((await workerPanes()).filter((line) => line.endsWith(' alpha'))).toEqual([]);
+    for (let step = 0; step < STOP_STEPS && isAlive(pid); step += 1) await sleep(POLL_STEP_MS);
+    expect(isAlive(pid)).toBe(false);
+  });
+
+  it('resumes a stopped worker with the session of its pointer, and says Resumed after the hook of the new session wrote its line', async () => {
+    await startedWorker();
+    expect((await sessionStarted()).code).toBe(0);
+    expect((await stop('alpha')).code).toBe(0);
+
+    const resumed = await resume('alpha');
+    expect(resumed.code, resumed.stderr).toBe(0);
+    expect(resumed.stdout).toContain('Resumed the worker alpha');
+    const argv = (await outOf('argv')).split('\n');
+    expect(argv[argv.indexOf('--resume') + 1]).toBe(SESSION);
+    const line = JSON.parse(await readFile(join(box.node, '.factory', 'state', 'heartbeat', SESSION), 'utf8')) as Record<string, unknown>;
+    expect(line).toMatchObject({ event: 'SessionStart', session_marker: 'alpha' });
+    expect(await livePanes('alpha')).toHaveLength(1);
+  });
+
+  it('exits 1 for a session that can not be loaded, names the pointer file, and the delete of that file starts a new conversation', async () => {
+    await startedWorker();
+    expect((await sessionStarted()).code).toBe(0);
+    expect((await stop('alpha')).code).toBe(0);
+    await writeFile(join(outDir, 'no-transcript'), '');
+
+    const failed = await resume('alpha');
+    expect(failed.code).toBe(1);
+    expect(failed.stdout).not.toContain('Resumed');
+    expect(failed.stderr).toContain('resume failed');
+    const pointer = join(box.node, '.factory', 'workers', 'alpha', 'last-session');
+    expect(failed.stderr).toContain(pointer);
+    expect(await livePanes('alpha')).toEqual([]);
+
+    await unlink(pointer);
+    const again = await resume('alpha');
+    expect(again.code, again.stderr).toBe(0);
+    expect(again.stdout).toContain('Started the worker alpha again');
+    expect(await livePanes('alpha')).toHaveLength(1);
   });
 });
