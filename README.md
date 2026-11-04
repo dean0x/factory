@@ -25,10 +25,11 @@ You need:
 | `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
+| `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory doctor` | Run 25 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
-| `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. It exits with code 0 and prints nothing to stdout on every path. |
+| `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
 | `factory hook statusline` | For Claude Code, not for people. It is the status line of the coordinator. It records the context percent of the session in the last-seen record, then prints the output of the command in `session.statusline` of `factory.local.yaml` as it is (the command gets the same input, and has 2 seconds; at the limit, every process that it started stops, and a SIGTERM, SIGHUP or SIGINT of the wrapper stops them too; a SIGKILL of the wrapper leaves them running). With no command, or with a command that fails or takes too long, it prints `context N%`. When the input gives no percent, or is not whole after 2 seconds, it prints `context ?%`. It exits with code 0 on every path and prints at most one line on stderr. The field names of the input come from the devflow HUD, which reads the live payload; checked against the Claude Code status line docs. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
@@ -220,6 +221,25 @@ Then it does these steps in order:
 6. It starts the worker in a new pane of the window `workers`. The worker gets one `--add-dir`, its inbox folder.
 
 If a step after the first fails, the work copy and the record stay, and nothing is undone. The message names `factory dismiss ID` as the command that ends the worker. That command comes in a later version. Until then, remove the work copy with `git worktree remove`.
+
+### List the workers
+
+```sh
+factory worker list
+factory worker list --json
+```
+
+`worker list` shows one line for each worker, in the order of the ids. It changes nothing, so it also runs when no tmux session of the node runs.
+
+| Column | Meaning |
+| --- | --- |
+| `ID`, `PROJECT` | The id of the worker and its project. |
+| `PANE` | The id of the pane of the worker in the window `workers`. `dead` means that the program of the pane has ended. `none` means that the worker has no pane, also when no tmux session of the node runs. |
+| `STATE` | `at prompt` after the hook events `SessionStart` and `Stop`. `busy` after `UserPromptSubmit` and `PreCompact`. `unknown` when the worker has no valid last-seen line. |
+| `CONTEXT` | The context percent of the last-seen line, or `?` when it is not known. |
+| `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. |
+
+A folder of `.factory/workers/` with no valid record is named in a warning, and the other workers are listed. If one pane has a worker mark that is not a worker id, the list skips that pane. If two panes carry the mark of one worker, the list shows the first live pane and warns with both ids. A tmux session of the same name that belongs to another factory folder stops the command with exit code 4. A last-seen line is a hint: the list never takes it as proof of which session wrote it.
 
 ### Child nodes
 

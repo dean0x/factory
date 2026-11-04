@@ -154,7 +154,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] `inbox next` prints the oldest unhandled record, and `inbox ack <n>` moves record `n` to `handled/`. Both exit 2 when `FACTORY_INBOX` is not set (tests).
 - [ ] A test with a fake session: after a clear or a restart, the worker finds its waiting records in the inbox.
 - [ ] Static test: no module outside `src/comms/` reads or writes inbox files, and only `src/comms/` calls tmux `send-keys`. A unit test shows that a typed line of more than 300 characters is refused. A test with a fake comms module shows that `worker reset --assignment` and `worker recover` use `worker send`.
-- [ ] `worker list` marks a worker above `context_prepare_pct` as `PREPARE` and above `context_max_pct` as `MAX`, with fake last-seen values at 29, 30, 40 and 41 percent.
+- [ ] `worker list` marks a worker at or above `context_prepare_pct` as `PREPARE` and above `context_max_pct` as `MAX`, with fake last-seen values at 29, 30, 40 and 41 percent (no mark, `PREPARE`, `PREPARE`, `MAX`).
 - [ ] `session.agent: claude` loads. Any other value fails and names the key. A static test finds no start of an agent program except through `session.agent`.
 - [ ] `machine` tests: fixture files for macOS (`memory_pressure` and `sysctl` output) and for Linux (`/proc/meminfo`, `/proc/loadavg`) give the same verdict format, with a fake platform for each. `worker new` refuses a work copy that another worker uses, and refuses when a resource limit fails (fake machine facts).
 - [ ] `project add|remove|list` change only `recipe.projects[]`, keep the comments of `factory.yaml`, and refuse a project path that the folder rules refuse (tests).

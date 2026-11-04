@@ -122,6 +122,7 @@ Roles, layers and nodes
 - The role of a node comes from its layer. Layer 1 has the coordinator template. Layer 2 has the manager template. A layer above 2 has no role template yet: `coordinator/CLAUDE.md` holds the safety block only, `init` prints a warning, and `doctor` warns.
 - New commands `factory node children`, `factory node add-child PATH` and `factory node remove-child ID`. A child must be one layer lower, and its id must differ from the id of this node. `add-child` refuses on layer 1, because the children of a coordinator are workers. The commands keep the comments and the key order of `factory.yaml`.
 - New command `factory worker new ID --project PROJECT [--yes]`. It makes a work copy of the project on the new branch `worker/ID`, writes the record of the worker, hides the hook settings of the work copy from git, and starts the worker in a pane of the window `workers`.
+- New command `factory worker list`. It shows each worker with its pane, its state from the last hook event, its context percent and the mark `PREPARE` or `MAX`, and it changes nothing. The hook of a worker now also writes `.factory/workers/ID/last-session`, so the last-seen line is found from the id of the worker.
 
 Platforms and help
 
