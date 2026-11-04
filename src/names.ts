@@ -41,6 +41,7 @@ export const commands = {
   node: 'node',
   doctor: 'doctor',
   upgrade: 'upgrade',
+  hook: 'hook',
   version: 'version',
   help: 'help',
 } as const;
@@ -134,6 +135,8 @@ export const dirs = {
   orders: 'orders',
   backups: 'backups',
   runtime: 'state',
+  /** The folder of the last-seen files, inside the run-time folder: one file for each session. */
+  heartbeat: 'heartbeat',
   locks: 'locks',
   claude: '.claude',
   /** The folder of the coordinator session, below the root. It holds the rendered `CLAUDE.md`, and git ignores it. */
@@ -169,6 +172,12 @@ export const shareListLabel = 'share list';
 
 /** The settings files of Claude Code in a project: `<prefix>*<suffix>` inside the `.claude` folder. */
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
+
+/** The settings file of Claude Code that is not shared: `settings.local.json` in the `.claude` folder of a session folder. */
+export const localSettingsFile = `${claudeSettings.prefix}.local${claudeSettings.suffix}`;
+
+/** The `type` of a settings entry that runs a command: a hook handler or the status line. */
+export const settingsCommandType = 'command';
 
 /**
  * The keys of a Claude Code settings file that the checks of the root read. The settings page
@@ -249,7 +258,7 @@ export const instructionFiles = [
   `${dirs.claude}/${files.claudeMd}`,
   `${dirs.claude}/rules`,
   `${dirs.claude}/${claudeSettings.prefix}${claudeSettings.suffix}`,
-  `${dirs.claude}/${claudeSettings.prefix}.local${claudeSettings.suffix}`,
+  `${dirs.claude}/${localSettingsFile}`,
   '.github/copilot-instructions.md',
   '.cursor/rules',
 ] as const;
@@ -258,6 +267,8 @@ export const env = {
   proxyBaseUrl: 'ANTHROPIC_BASE_URL',
   /** The folders where the shell looks for a program. */
   path: 'PATH',
+  /** The start of the name of every variable that the program sets for a session. A settings file may not set one. */
+  factoryPrefix: 'FACTORY_',
   home: 'FACTORY_HOME',
   session: 'FACTORY_SESSION',
   /** The folder of the per-user state. The home index lives below it. */
@@ -502,6 +513,97 @@ export const stateKeys = {
   blocks: 'blocks',
 } as const;
 
+/**
+ * The hook of Claude Code that records the last-seen line of a session (design 4.6): the word after the program name,
+ * the fixed list of events and the bounds. The settings of a session folder call `<program> hook <event>` for each event,
+ * and `<program> hook statusline` for the status line. Claude Code names the events on its hooks page
+ * (https://code.claude.com/docs/en/hooks).
+ */
+export const hookNames = {
+  command: commands.hook,
+  /** The word of the status line call. It is also the config key of the command of the owner. */
+  statusline: keys.session.statusline,
+  events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'],
+  /** The only keys that the hook reads from the input of Claude Code. Every other key of the input is dropped unread. */
+  inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name' },
+  /** The most bytes of hook input that the program reads. A larger input is refused and nothing is written. */
+  maxStdinBytes: maxFileBytes,
+  /** The hook reads its input for at most this many milliseconds. An input that is not whole by then is an error. */
+  stdinTimeoutMs: 2_000,
+  /** The status line wrapper waits this many milliseconds for the command of the owner. */
+  statuslineTimeoutMs: 2_000,
+  /** The program that runs the command of the owner, as `<shell> -c <command>`. */
+  shell: '/bin/sh',
+  /** The signals that stop the status line wrapper. The wrapper stops the command group of the owner, then exits 0. */
+  stopSignals: ['SIGTERM', 'SIGHUP', 'SIGINT'],
+  /** The only keys that the status line wrapper reads from the input of Claude Code, besides the session id. Every other key is dropped unread. */
+  statuslineKeys: {
+    contextWindow: 'context_window',
+    usedPercentage: 'used_percentage',
+    windowSize: 'context_window_size',
+    currentUsage: 'current_usage',
+    inputTokens: 'input_tokens',
+    cacheCreationTokens: 'cache_creation_input_tokens',
+    cacheReadTokens: 'cache_read_input_tokens',
+  },
+  /** The mark in place of the number in the fallback line, when the input gives no context percent. */
+  unknownPercent: '?',
+  /**
+   * The lock file beside a last-seen line: the session id and `suffix`, in the heartbeat folder. The hook and the status
+   * line wrapper hold it while they read, merge and write the line. A writer tries `attempts` times and waits `waitMs`
+   * between two tries, so it waits 300 ms at most, then it writes nothing. A lock that is older than `staleMs` was left
+   * by a process that ended, and the next writer takes it over.
+   */
+  heartbeatLock: {
+    suffix: '.lock',
+    takeoverSuffix: privateFile.takeoverSuffix,
+    mode: privateFile.fileMode,
+    attempts: 7,
+    waitMs: 50,
+    staleMs: 2_000,
+  },
+} as const;
+
+/** One event of the fixed list. */
+export type HookEvent = (typeof hookNames.events)[number];
+
+/** The session folders that get the hook settings: the folder of the coordinator, and the work copy of a worker. */
+export const hookSessions = { coordinator: roles.coordinator, workCopy: 'work-copy' } as const;
+
+/** The kind of a session folder that gets the hook settings. */
+export type HookSession = (typeof hookSessions)[keyof typeof hookSessions];
+
+/** The command of a settings entry for an event, for example `factory hook Stop`. */
+export const hookCommandOf = (event: string): string => commandText(`${hookNames.command} ${event}`);
+
+/**
+ * The line that the status line wrapper prints when the config names no command of the owner, or the command fails:
+ * `context N%`. When the input gives no context percent, the number is a mark: `context ?%`.
+ */
+export const statuslineTextOf = (percent: number | null): string => `context ${percent ?? hookNames.unknownPercent}%`;
+
+/**
+ * The last-seen line (design 4.6): one JSON text for each session, in the heartbeat folder of the run-time folder. It
+ * holds the session id, the last hook event with its time, and the context percent with its time. The name of the file
+ * is the session id, so the id must match the pattern before it is used in a path.
+ */
+export const lastSeen = {
+  keys: {
+    schema: 'schema',
+    sessionId: 'session_id',
+    event: 'event',
+    eventAt: 'event_at',
+    contextPct: 'context_pct',
+    pctAt: 'pct_at',
+  },
+  /** The id of a session: a UUID with lower case letters. */
+  sessionIdPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /** A reader refuses a file of more bytes than this. */
+  maxBytes: 4_096,
+  minPercent: 0,
+  maxPercent: 100,
+} as const;
+
 /** The words that a config value can take. */
 export const values = {
   permissionMode: 'auto',
@@ -612,8 +714,10 @@ export const schemaIds = {
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   upgrade: `${program}.upgrade/v1`,
+  hook: `${program}.hook/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
+  lastSeen: `${program}.last-seen/v1`,
 } as const;
 
 /** Placeholders of the prefix that marks input with the authority of the owner. */
@@ -637,6 +741,9 @@ export const overwriteCommand = (block: string): string =>
 
 /** The path of a key inside the config, for example `limits.disk_free_min_gb`. */
 const keyPath = (...parts: readonly string[]): string => parts.join('.');
+
+/** The config key that names the status line command of the owner: `session.statusline`. */
+export const statuslineKeyPath = keyPath(keys.root.session, keys.session.statusline);
 
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');
@@ -682,7 +789,6 @@ export const templateValues: Readonly<Record<string, string>> = {
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,
-  claudeDir: dirs.claude,
 };
 
 /**

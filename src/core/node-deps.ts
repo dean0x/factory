@@ -6,6 +6,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   realpath,
@@ -14,18 +15,39 @@ import {
   rmdir,
   stat,
   writeFile,
+  type FileHandle,
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
+import type { Readable, Writable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
+import { hookNames } from '../names.js';
 import { isSameOrInside } from './paths.js';
 import { ok } from './result.js';
-import { MAX_ANSWER_CHARS, type Deps, type FileDigest, type Fs, type LinkKind, type PathInfo, type PathKind } from './deps.js';
+import {
+  MAX_ANSWER_CHARS,
+  type Deps,
+  type FileDigest,
+  type Fs,
+  type LinkKind,
+  type PathInfo,
+  type PathKind,
+  type RunOptions,
+  type RunOutput,
+} from './deps.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 30_000;
 const MAX_RUN_OUTPUT_BYTES = 1_048_576;
+/** The value of `process.platform` on native Windows, which has no process groups of this kind. */
+const NATIVE_WINDOWS = 'win32';
+/** The signal that stops a process group at the time limit. A process can not catch it. */
+const GROUP_STOP_SIGNAL = 'SIGKILL';
+/** After the stop of a group, the run waits this long for the first process to end. Then the run ends without it. */
+const GROUP_STOP_GRACE_MS = 200;
+/** The code that Node gives to the error of an abort. A run that is aborted before it starts fails with this code. */
+const ABORT_CODE = 'ABORT_ERR';
 
 const errorCode = (cause: unknown): string => {
   if (typeof cause === 'object' && cause !== null && 'code' in cause) {
@@ -75,6 +97,42 @@ const digestBytes = async (path: string, textLimit: number, maxBytes: number): P
   }
   if (size > maxBytes) return null;
   return { size, sha256: hash.digest('hex'), text: size <= textLimit ? Buffer.concat(kept).toString('utf8') : null };
+};
+
+/**
+ * The text of the input, or null when it holds more than `maxBytes`. At most `maxBytes` plus one byte is kept, and the
+ * rest of an input that is too large stays unread: the stream is closed. When the input is not whole after `timeoutMs`
+ * milliseconds, the stream is closed and the read fails with the code ETIMEDOUT. The timer ends with the read.
+ */
+const readStreamBounded = async (input: Readable, maxBytes: number, timeoutMs: number): Promise<string | null> => {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  const timer = setTimeout(() => input.destroy(Object.assign(new Error('the input is not whole in time'), { code: 'ETIMEDOUT' })), timeoutMs);
+  try {
+    for await (const chunk of input) {
+      const kept = (chunk as Buffer).subarray(0, maxBytes + 1 - size);
+      chunks.push(kept);
+      size += kept.length;
+      if (size > maxBytes) return null;
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+};
+
+/** True when a person types at the standard input of this process. */
+const stdinIsTerminal = (): boolean => process.stdin.isTTY === true;
+
+/** The standard input as text. A terminal gives empty text at once: it has no end, so a read would wait for a person. */
+const readStdin = async (maxBytes: number): Promise<CliResult<string>> => {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    return failure(`cannot read stdin: ${maxBytes} is not a number of bytes`);
+  }
+  if (stdinIsTerminal()) return ok('');
+  const text = await guard('read', 'stdin', () => readStreamBounded(process.stdin, maxBytes, hookNames.stdinTimeoutMs));
+  if (!text.ok) return text;
+  return text.value === null ? failure(`cannot read stdin: larger than ${maxBytes} bytes`) : ok(text.value);
 };
 
 const MAX_COPY_DEPTH = 64;
@@ -185,6 +243,43 @@ const writeAtomic = async (path: string, text: string, within: string, mode: num
   });
 };
 
+/**
+ * Remove the file at `path` after a failed write, but only when the path still holds the file that the write created
+ * (`created`). A file that another process put there in the meantime stays. With no knowledge of the created file, the
+ * file at the path is removed: the path was new when the write began.
+ */
+const removeCreated = async (path: string, created: Stats | undefined): Promise<void> => {
+  const now = await lstat(path).catch(() => null);
+  if (now === null) return;
+  if (created !== undefined && (now.dev !== created.dev || now.ino !== created.ino)) return;
+  await rm(path, { force: true }).catch(() => undefined);
+};
+
+/**
+ * Create the file with the flag `wx` and write the text. The value is false when the path exists already. A write that
+ * fails after the create (a full disk, an I/O error) closes the file and removes it, so the failure leaves no part of a file.
+ */
+const createExclusive = async (path: string, text: string, mode: number): Promise<boolean> => {
+  let handle: FileHandle;
+  try {
+    handle = await open(path, 'wx', mode);
+  } catch (cause) {
+    if (errorCode(cause) === 'EEXIST') return false;
+    throw cause;
+  }
+  let created: Stats | undefined;
+  try {
+    created = await handle.stat();
+    await handle.writeFile(text, 'utf8');
+    await handle.close();
+    return true;
+  } catch (cause) {
+    await handle.close().catch(() => undefined);
+    await removeCreated(path, created);
+    throw cause;
+  }
+};
+
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   readTextLimited: async (path, maxBytes) => {
@@ -194,16 +289,7 @@ const nodeFs: Fs = {
   },
   digestFile: (path, textLimit, maxBytes) => guard('read', path, () => digestBytes(path, textLimit, maxBytes)),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
-  writeTextExclusive: (path, text, mode) =>
-    guard('write', path, async () => {
-      try {
-        await writeFile(path, text, { encoding: 'utf8', flag: 'wx', mode });
-        return true;
-      } catch (cause) {
-        if (errorCode(cause) === 'EEXIST') return false;
-        throw cause;
-      }
-    }),
+  writeTextExclusive: (path, text, mode) => guard('write', path, () => createExclusive(path, text, mode)),
   writeTextAtomic: (path, text, within, mode) => writeAtomic(path, text, within, mode),
   stat: async (path) => {
     const info = await statInfo(path);
@@ -229,32 +315,134 @@ const nodeFs: Fs = {
   copyTree: (from, to, skip) => guard('copy', from, () => copyEntry(from, to, skip, 0)),
 };
 
+/** The environment of a program: the one of this process as it is, or with the C locale and no prompt of git. */
+const runEnvOf = (options: RunOptions | undefined): NodeJS.ProcessEnv =>
+  options?.inheritEnv === true ? process.env : { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' };
+
+/** Write the text to the standard input of the program, then end that input. With no text, the input stays as it is. */
+const feedInput = (stdin: Writable | null, input: string | undefined): void => {
+  if (input === undefined) return;
+  // A program that ends before it reads the text closes the pipe: that is no error of this run.
+  stdin?.once('error', () => undefined);
+  stdin?.end(input, 'utf8');
+};
+
+const runPlain = (command: string, args: readonly string[], options: RunOptions | undefined): Promise<CliResult<RunOutput>> =>
+  new Promise((resolve) => {
+    const child = execFile(
+      command,
+      [...args],
+      {
+        cwd: options?.cwd ?? process.cwd(),
+        timeout: options?.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+        maxBuffer: MAX_RUN_OUTPUT_BYTES,
+        encoding: 'utf8',
+        windowsHide: true,
+        env: runEnvOf(options),
+      },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve(ok({ exitCode: 0, stdout, stderr }));
+        } else if (typeof error.code === 'number') {
+          resolve(ok({ exitCode: error.code, stdout, stderr }));
+        } else {
+          resolve(failure(`cannot run ${command}: ${String(error.code ?? error.signal ?? 'error')}`));
+        }
+      },
+    );
+    feedInput(child.stdin, options?.input);
+  });
+
+/** Stop every process of the group that `pid` leads. */
+const stopGroup = (pid: number | undefined): void => {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, GROUP_STOP_SIGNAL);
+  } catch {
+    // The group has no process left (ESRCH): the run ends the same way.
+  }
+};
+
+/**
+ * Run the program as the leader of a new process group (`RunOptions.processGroup`). At the time limit, or when the output
+ * passes the byte cap, every process of the group is stopped and the output pipes are closed. So the run ends at the limit
+ * also when a process outside the group holds a pipe. The run ends when the first process has ended and the pipes are
+ * closed. If the stop does not end the first process, the run ends `GROUP_STOP_GRACE_MS` after the stop, with the failure
+ * of the stop. The abort of `RunOptions.signal` stops the group in the same way. The value has the same form as the value
+ * of `runPlain`.
+ */
+const runInGroup = (command: string, args: readonly string[], options: RunOptions): Promise<CliResult<RunOutput>> =>
+  new Promise((resolve) => {
+    if (options.signal?.aborted === true) {
+      resolve(failure(`cannot run ${command}: ${ABORT_CODE}`));
+      return;
+    }
+    const child = spawn(command, [...args], { cwd: options.cwd ?? process.cwd(), env: runEnvOf(options), detached: true });
+    const output = { stdout: [] as Buffer[], stderr: [] as Buffer[], bytes: 0, tooLarge: false };
+    const text = (chunks: Buffer[]): string => Buffer.concat(chunks).toString('utf8');
+    const timers: { limit?: NodeJS.Timeout; grace?: NodeJS.Timeout } = {};
+    let settled = false;
+
+    const settle = (result: CliResult<RunOutput>): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timers.limit);
+      clearTimeout(timers.grace);
+      options.signal?.removeEventListener('abort', stop);
+      child.stdout.off('data', onStdout);
+      child.stderr.off('data', onStderr);
+      child.off('close', onClose);
+      resolve(result);
+    };
+    const stoppedResult = (): CliResult<RunOutput> =>
+      output.tooLarge
+        ? failure(`cannot run ${command}: its output is larger than ${MAX_RUN_OUTPUT_BYTES} bytes`)
+        : failure(`cannot run ${command}: ${GROUP_STOP_SIGNAL}`);
+    const stop = (): void => {
+      stopGroup(child.pid);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      // The first process may stay alive after the stop. Then the run does not wait for its end.
+      timers.grace ??= setTimeout(() => {
+        child.stdin.destroy();
+        child.unref();
+        settle(stoppedResult());
+      }, GROUP_STOP_GRACE_MS);
+    };
+    const keep =
+      (chunks: Buffer[]) =>
+      (chunk: Buffer): void => {
+        output.bytes += chunk.length;
+        if (output.bytes <= MAX_RUN_OUTPUT_BYTES) chunks.push(chunk);
+        else {
+          output.tooLarge = true;
+          stop();
+        }
+      };
+    const onStdout = keep(output.stdout);
+    const onStderr = keep(output.stderr);
+    const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (output.tooLarge) settle(stoppedResult());
+      else if (code === null) settle(failure(`cannot run ${command}: ${String(signal ?? 'error')}`));
+      else settle(ok({ exitCode: code, stdout: text(output.stdout), stderr: text(output.stderr) }));
+    };
+
+    timers.limit = setTimeout(stop, options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
+    options.signal?.addEventListener('abort', stop, { once: true });
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
+    // This listener stays after the run ends: an error event with no listener would end the process.
+    child.on('error', (error) => settle(failure(`cannot run ${command}: ${errorCode(error)}`)));
+    child.on('close', onClose);
+    feedInput(child.stdin, options.input);
+  });
+
 export const createNodeDeps = (): Deps => ({
   fs: nodeFs,
   run: (command, args, options) =>
-    new Promise((resolve) => {
-      execFile(
-        command,
-        [...args],
-        {
-          cwd: options?.cwd ?? process.cwd(),
-          timeout: options?.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
-          maxBuffer: MAX_RUN_OUTPUT_BYTES,
-          encoding: 'utf8',
-          windowsHide: true,
-          env: options?.inheritEnv === true ? process.env : { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' },
-        },
-        (error, stdout, stderr) => {
-          if (error === null) {
-            resolve(ok({ exitCode: 0, stdout, stderr }));
-          } else if (typeof error.code === 'number') {
-            resolve(ok({ exitCode: error.code, stdout, stderr }));
-          } else {
-            resolve(failure(`cannot run ${command}: ${String(error.code ?? error.signal ?? 'error')}`));
-          }
-        },
-      );
-    }),
+    options?.processGroup === true && process.platform !== NATIVE_WINDOWS
+      ? runInGroup(command, args, options)
+      : runPlain(command, args, options),
   runAttached: (command, args) =>
     new Promise((resolve) => {
       const child = spawn(command, [...args], { stdio: 'inherit', windowsHide: true });
@@ -263,8 +451,9 @@ export const createNodeDeps = (): Deps => ({
         resolve(code === null ? failure(`${command} was stopped by ${String(signal)}`) : ok(code)),
       );
     }),
-  stdinIsTTY: process.stdin.isTTY === true,
+  stdinIsTTY: stdinIsTerminal(),
   stdoutIsTTY: process.stdout.isTTY === true,
+  readStdin,
   prompt: (question) =>
     new Promise((resolve) => {
       const lines = createInterface({ input: process.stdin, output: process.stderr });
@@ -282,6 +471,7 @@ export const createNodeDeps = (): Deps => ({
     process.stderr.write(renderWarnings([message]));
   },
   env: process.env,
+  signals: process,
   fetch: async (url, timeoutMs) => {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual' });

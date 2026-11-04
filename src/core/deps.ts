@@ -40,7 +40,8 @@ export interface Fs {
   writeText(path: string, text: string): Promise<CliResult<void>>;
   /**
    * Create a file that does not exist, with `mode`, and write the text. The value is true when this call created the
-   * file, and false when the path exists already (a link counts, and it is not followed). Then nothing changes.
+   * file, and false when the path exists already (a link counts, and it is not followed). Then nothing changes. When the
+   * write fails after the create, the call removes the file that it created and returns the error.
    */
   writeTextExclusive(path: string, text: string, mode: number): Promise<CliResult<boolean>>;
   /**
@@ -90,6 +91,23 @@ export interface RunOptions {
    * would pass that environment on to them.
    */
   readonly inheritEnv?: boolean;
+  /**
+   * The text for the standard input of the program. It is written as UTF-8, and then the input ends. A program that
+   * ends before it reads all of the text is no error. The time limit applies as before. By default the program gets no text.
+   */
+  readonly input?: string;
+  /**
+   * True to start the program as the leader of a new process group with no terminal, and to stop every process of that
+   * group when the time limit passes. A shell command with a pipe or a list starts more processes than the shell, and a
+   * stop of the shell alone leaves them running. The run also stops its wait for the output at the limit. If the first
+   * process does not end after the stop, the run ends a short time later with the failure of the stop. Not on Windows.
+   */
+  readonly processGroup?: boolean;
+  /**
+   * With `processGroup`: when this signal aborts, the run stops every process of the group at once and ends as it does at
+   * the time limit. A signal that has aborted already starts no program. A run with no `processGroup` ignores the signal.
+   */
+  readonly signal?: AbortSignal;
 }
 
 export interface RunOutput {
@@ -113,6 +131,15 @@ export const MAX_ANSWER_CHARS = 200;
 /** The answers that mean yes to a question of a command. Any other answer, and an empty one, means no. */
 export const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
+/**
+ * The signals that this process gets. A signal that has a handler no longer ends the process: the code that installs a
+ * handler must remove it when it has no more need of it.
+ */
+export interface SignalSource {
+  on(signal: NodeJS.Signals, handler: () => void): unknown;
+  off(signal: NodeJS.Signals, handler: () => void): unknown;
+}
+
 export interface Deps {
   readonly fs: Fs;
   /** Run a program. It never uses a shell. A non-zero exit code is not an error. */
@@ -126,6 +153,13 @@ export interface Deps {
   readonly stdinIsTTY: boolean;
   /** True when a person reads the output of this process on a terminal. */
   readonly stdoutIsTTY: boolean;
+  /**
+   * Read the standard input of this process to its end, as UTF-8 text. It reads at most `maxBytes` plus one byte: an input
+   * of more than `maxBytes` bytes is an error, and the rest stays unread. An input that is not whole after a fixed time
+   * limit is an error too: a pipe that stays open and sends nothing does not hold the program. When a person types at
+   * the input, the value is empty text at once, and nothing is read.
+   */
+  readStdin(maxBytes: number): Promise<CliResult<string>>;
   /** Ask one question and read one line of the answer, at most `MAX_ANSWER_CHARS` characters. The question goes to stderr. */
   prompt(question: string): Promise<CliResult<string>>;
   /**
@@ -134,6 +168,7 @@ export interface Deps {
    */
   warn(message: string): void;
   readonly env: Readonly<Record<string, string | undefined>>;
+  readonly signals: SignalSource;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;
   now(): Date;

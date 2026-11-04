@@ -99,6 +99,7 @@ import {
   tempFolderWarning,
 } from './init-home.js';
 import { runExisting } from './init-existing.js';
+import { checkHookConsent, writeHookSettings } from './init-hook.js';
 import { acceptanceLines, CHECK_FLAGS_REMEDY, OWNER_NAME_REMEDY, runReceived } from './init-received.js';
 import { makeStateFolder } from './init-state.js';
 import { oldFolderWarning, originCredentialsWarning, unsharedWarning } from './project-url.js';
@@ -1038,6 +1039,9 @@ export const runInit = async (
   // A folder that was there before the run is never removed.
   const projects = await planProjects(deps, home, projectsOf(deps, options.projects, found), commands.init);
   if (!projects.ok) return projects;
+  // The hook settings come after the last write. A run that can not get the consent for them stops here, before any write.
+  const consent = await checkHookConsent(deps, home, options.yes);
+  if (!consent.ok) return consent;
   // Git makes the folders above a clone by itself. This run makes the root and its parents first, so that the undo can
   // remove them.
   const parents = projects.value.some((project) => !project.present) ? await makeRootFolders(deps, home) : ok([]);
@@ -1050,8 +1054,11 @@ export const runInit = async (
   if (!plan.ok) return undoClones(deps, made, parents.value, plan.error);
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);
+  // The node is made and listed. A failure of the hook settings leaves it, and a second run of init finishes the step.
+  const hook = await writeHookSettings(deps, plan.value.home, options.yes);
+  if (!hook.ok) return hook;
   const notes = truncated ? [`Only the first ${MAX_SCAN_ENTRIES} entries of ${deps.cwd} were read.`] : [];
-  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...notes];
+  const warnings = [...plan.value.warnings, ...applied.value.warnings, ...hook.value.warnings, ...notes];
 
   const written = [
     files.config,
@@ -1061,6 +1068,7 @@ export const runInit = async (
     ...(plan.value.setupWorkerText === null ? [] : [join(dirs.setup, dirs.roles, files.worker)]),
     join(dirs.coordinator, files.claudeMd),
     `${dirs.state}/`,
+    ...hook.value.written,
   ];
   return ok({
     lines: [

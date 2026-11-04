@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { appendBlocks, renderBlock } from '../../src/blocks/managed.js';
+import { failure } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import type { InitOptions } from '../../src/commands/init.js';
 import { sameIdWarnings } from '../../src/commands/init-received.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { Deps } from '../../src/core/deps.js';
 import { locateHome } from '../../src/core/home.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
@@ -25,12 +28,17 @@ import {
 import { loadConfig, readNodeIdentity, runInit } from '../helpers/package-registry.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { captureSink } from '../helpers/sink.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
 
 const ROOT = '/w/node';
 const STATE = `${ROOT}/.factory`;
 const MARKER = `${STATE}/node.json`;
 const LOCAL = `${ROOT}/factory.local.yaml`;
+const COORDINATOR = `${ROOT}/coordinator`;
+const HOOK_FILE = `${COORDINATOR}/.claude/settings.local.json`;
+/** The question about the hook settings starts with the line that shows the change. */
+const HOOK_QUESTION = 'This changes the settings of Claude Code';
 const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
 const INDEX = '/state/factory/homes.json';
 const ACCEPTANCES = '/state/factory/setup-acceptances.json';
@@ -66,6 +74,8 @@ interface Answers {
   readonly accept?: string;
   /** The answers for the approval points, in order. A point after the last answer gets the default. */
   readonly points?: readonly string[];
+  /** The answer to the question about the hook settings. Default: no. */
+  readonly hook?: string;
 }
 
 /** A person at the terminal. Every question that the list does not name gets its default (an empty answer). */
@@ -76,6 +86,7 @@ const person = (answers: Answers = {}, asked: string[] = []): Prompt => {
     if (question.includes('Register this')) return ok(answers.register ?? 'y');
     if (question.includes('Accept these files?')) return ok(answers.accept ?? 'y');
     if (question.includes('Approval point')) return ok(points.shift() ?? '');
+    if (question.includes(HOOK_QUESTION)) return ok(answers.hook ?? '');
     return ok('');
   };
 };
@@ -103,6 +114,11 @@ interface Existing {
   readonly unaccepted?: true;
   /** The base URL of the one proxy that the local file defines and the session uses. Default: no proxy. */
   readonly proxyUrl?: string;
+  /**
+   * False: the coordinator folder is there, and its settings file for the hook is not. Default: an earlier run of init wrote
+   * the file, so the entries are in place and a run asks nothing about them.
+   */
+  readonly hookInPlace?: false;
 }
 
 const configOf = (made: Existing): FactoryConfig => {
@@ -158,6 +174,8 @@ const existing = (made: Existing = {}, extra: FakeOptions = {}) => {
     deps.seed(`${ROOT}/${path}`, texts[path] ?? `${path}\n`);
   }
   if (made.unaccepted !== true) acceptSetupText(deps, ROOT, made.id ?? 'demo', tracked, texts);
+  if (made.hookInPlace === false) deps.seedDir(COORDINATOR);
+  else deps.seed(HOOK_FILE, JSON.stringify(ownSettingsEntries));
   const entry = made.entry === undefined ? (made.id ?? 'demo') : made.entry;
   if (entry !== null) {
     registerRoot(deps, ROOT, entry, [`${ROOT}/web`]);
@@ -1263,6 +1281,140 @@ describe('init: the warning for another entry with the same node id', () => {
   it('names each other entry', async () => {
     const warnings = await sameIdWarnings(withLink(), INDEX, '/w/third', 'demo');
     expect(warnings).toHaveLength(2);
+  });
+});
+
+describe('init: the hook settings of a registered root (TP-16)', () => {
+  const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(HOOK_FILE) ?? 'null');
+
+  it('asks nothing and writes nothing when the entries are in place, also with no terminal window and no yes flag', async () => {
+    const { deps } = existing();
+    const before = rootFiles(deps);
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.prompts).toEqual([]);
+    expect(deps.warned).toEqual([]);
+    expect(rootFiles(deps)).toBe(before);
+    expect(result.ok && result.value.json['files']).not.toContain('coordinator/.claude/settings.local.json');
+  });
+
+  it('writes the own entries with the yes flag, prints the change first, and lists the file', async () => {
+    const { deps } = existing({ hookInPlace: false });
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(deps.warned.filter((text) => text.startsWith(HOOK_QUESTION))).toEqual([expect.stringContaining(HOOK_FILE)]);
+    expect(result.ok && result.value.json['files']).toContain('coordinator/.claude/settings.local.json');
+  });
+
+  it('asks after the question about the files, and writes after a yes', async () => {
+    const asked: string[] = [];
+    const { deps } = existing({ hookInPlace: false, unaccepted: true }, { ...terminal, prompt: person({ hook: 'y' }, asked) });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    const order = asked.map((question) => (question.includes('Accept these files?') ? 'files' : question.startsWith(HOOK_QUESTION) ? 'hook' : 'other'));
+    expect(order.filter((kind) => kind !== 'other')).toEqual(['files', 'hook']);
+    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+  });
+
+  it('goes on after a no, writes no file, and names the command in the notice', async () => {
+    const { deps } = existing({ hookInPlace: false }, { ...terminal, prompt: person({ hook: 'n' }) });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.has(HOOK_FILE)).toBe(false);
+    expect(warningsOf(result).join(' ')).toContain('run "factory init" again and answer yes');
+  });
+
+  it('stops with exit 2 before any write with no terminal window and no yes flag, and shows the change and the target', async () => {
+    const { deps } = existing({ hookInPlace: false, approval: DELEGATED });
+    const before = snapshot(deps);
+    const result = await runInit(deps, options());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain(HOOK_FILE);
+    expect(messageOf(result)).toContain('--yes');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('stops with exit 1 before any write for a settings file that is not a JSON object', async () => {
+    const { deps } = existing({ hookInPlace: false });
+    deps.seed(HOOK_FILE, '[]');
+    const before = snapshot(deps);
+    expect(await runInit(deps, options({ yes: true }))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  describe('a failure of the hook step after the last write: the root stays registered', () => {
+    /** The command line of a person on a terminal window. The hook question is the last question. */
+    const runOnTerminal = async (deps: FakeDeps) => {
+      const sink = captureSink();
+      const code = await runCli(['init', '--home', ROOT], deps, sink);
+      return { code, shown: sink.errors.join('') };
+    };
+
+    const expectRootKept = (deps: FakeDeps): void => {
+      expect(deps.files.has(MARKER)).toBe(true);
+      expect(deps.files.has(`${ROOT}/factory.yaml`)).toBe(true);
+      expect(indexOf(deps)).toEqual([expect.objectContaining({ home: ROOT, id: 'demo' })]);
+    };
+
+    it('exits 1 and names the cause when the question gets no answer, and writes no settings file', async () => {
+      const { deps } = existing({ hookInPlace: false }, { ...terminal, prompt: person({ hook: 'y' }) });
+      const before = rootFiles(deps);
+      const asked: string[] = [];
+      const silent: FakeDeps = {
+        ...deps,
+        prompt: async (question) => {
+          if (!question.startsWith(HOOK_QUESTION)) return deps.prompt(question);
+          asked.push(question);
+          return failure('no answer was given');
+        },
+      };
+      const { code, shown } = await runOnTerminal(silent);
+      expect(code).toBe(1);
+      expect(shown).toContain('error: no answer was given');
+      expect(asked).toHaveLength(1);
+      expectRootKept(deps);
+      expect(deps.files.has(HOOK_FILE)).toBe(false);
+      expect(rootFiles(deps)).toBe(before);
+    });
+
+    it('exits 1 and names the file and the cause when the write of the settings file fails, and writes no settings file', async () => {
+      const { deps } = existing({ hookInPlace: false }, { ...terminal, prompt: person({ hook: 'y' }) });
+      const before = rootFiles(deps);
+      const full: FakeDeps = {
+        ...deps,
+        fs: {
+          ...deps.fs,
+          writeTextExclusive: async (path, text, mode) =>
+            path.includes('settings.local.json') ? failure(`cannot write ${path}: disk full`) : deps.fs.writeTextExclusive(path, text, mode),
+        },
+      };
+      const { code, shown } = await runOnTerminal(full);
+      expect(code).toBe(1);
+      expect(shown).toContain('error: cannot write');
+      expect(shown).toContain('settings.local.json');
+      expect(shown).toContain('disk full');
+      expectRootKept(deps);
+      expect(rootFiles(deps)).toBe(before);
+    });
+
+    it('exits 1 with the remedy line when the file changes while the question waits, and keeps the file as the other program left it', async () => {
+      const { deps } = existing({ hookInPlace: false }, { ...terminal, prompt: person({ hook: 'y' }) });
+      const saved = JSON.stringify({ model: 'opus', ...ownSettingsEntries });
+      const changing: FakeDeps = {
+        ...deps,
+        prompt: async (question) => {
+          if (question.startsWith(HOOK_QUESTION)) deps.seed(HOOK_FILE, saved);
+          return deps.prompt(question);
+        },
+      };
+      const { code, shown } = await runOnTerminal(changing);
+      expect(code).toBe(1);
+      expect(shown).toContain(`error: cannot write ${HOOK_FILE}: it changed while the question waited`);
+      expect(shown).toContain('Then run "factory init" again.');
+      expectRootKept(deps);
+      expect(deps.files.get(HOOK_FILE)).toBe(saved);
+    });
   });
 });
 

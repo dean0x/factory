@@ -96,7 +96,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
   it('lets doctor and start --dry-run find each of two roots of one HOME from its own folder, and never the other root (TP-31)', async () => {
     await initWeb();
     const second = join(box.root, 'second-home');
-    expect((await box.run(['init', '--home', second, '--name', 'second', ...owner], withState())).code).toBe(0);
+    expect((await box.run(['init', '--yes', '--home', second, '--name', 'second', ...owner], withState())).code).toBe(0);
     const roots = [
       { id: 'web-factory', home: join(realRoot, 'web-factory'), other: join(realRoot, 'second-home') },
       { id: 'second', home: join(realRoot, 'second-home'), other: join(realRoot, 'web-factory') },
@@ -133,7 +133,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
   it('exits 2 and names both homes when two homes list the same project folder', async () => {
     const web = await initWeb();
     const second = join(box.root, 'second-home');
-    const init = await box.run(['init', '--home', second, '--name', 'second', ...owner], withState());
+    const init = await box.run(['init', '--yes', '--home', second, '--name', 'second', ...owner], withState());
     expect(init.code).toBe(0);
     const folder = join(await realpath(web), 'src');
     await mkdir(folder, { recursive: true });
@@ -156,7 +156,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
   it('finds the home that is there when the other home of the same project folder is gone', async () => {
     const web = await initWeb();
     const second = join(box.root, 'second-home');
-    expect((await box.run(['init', '--home', second, '--name', 'second', ...owner], withState())).code).toBe(0);
+    expect((await box.run(['init', '--yes', '--home', second, '--name', 'second', ...owner], withState())).code).toBe(0);
     await listProjects({ 'web-factory': [await realpath(web)], second: [await realpath(web)] });
     await rm(join(box.root, 'web-factory'), { recursive: true, force: true });
     const result = await box.run(['doctor'], { cwd: web, ...withState() });

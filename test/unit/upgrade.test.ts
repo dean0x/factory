@@ -90,7 +90,7 @@ const makeNode = async (
       ownerName: 'Test Owner',
       ownerGithub: undefined,
       projects: [],
-      yes: false,
+      yes: true,
       recipe: undefined,
       layer: undefined,
       approval: [],

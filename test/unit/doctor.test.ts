@@ -84,7 +84,7 @@ const initialized = async (setup: Setup = {}): Promise<FakeDeps> => {
     ownerName: 'Test Owner',
     ownerGithub: undefined,
     projects: [],
-    yes: false,
+    yes: true,
     recipe: undefined,
     layer: undefined,
     approval: [],

@@ -138,6 +138,7 @@ describe('layout', () => {
       workerMd: '/h/node/.factory/roles/worker.md',
       backupsDir: '/h/node/.factory/backups',
       runtimeDir: '/h/node/.factory/state',
+      heartbeatDir: '/h/node/.factory/state/heartbeat',
       locksDir: '/h/node/.factory/locks',
     });
   });

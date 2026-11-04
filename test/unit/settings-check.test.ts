@@ -79,28 +79,48 @@ describe('the permission-skip list (TP-133)', () => {
   });
 });
 
-describe('the session marker in the environment values (TP-179)', () => {
+describe('the variables with the prefix of the program in the environment values (TP-179, TP-23)', () => {
+  it('has the prefix that the names of the session variables start with', () => {
+    expect(env.session.startsWith(env.factoryPrefix)).toBe(true);
+    expect(env.home.startsWith(env.factoryPrefix)).toBe(true);
+  });
+
   it.each([
-    ['sets it', { env: { [env.session]: 'other' } }],
-    ['clears it', { env: { [env.session]: '' } }],
-    ['sets it in other letter case', { env: { factory_session: 'x' } }],
+    ['sets the session marker', { env: { [env.session]: 'other' } }],
+    ['clears the session marker', { env: { [env.session]: '' } }],
+    ['sets the session marker in other letter case', { env: { factory_session: 'x' } }],
+    ['sets the home variable', { env: { [env.home]: '/elsewhere' } }],
+    ['sets a variable that the program does not use', { env: { FACTORY_ANYTHING: '1' } }],
+    ['sets the prefix alone', { env: { [env.factoryPrefix]: '1' } }],
   ])('finds a file that %s', (_name, value) => {
-    expect(analyzeSettings(JSON.stringify(value)).changesSessionMarker).toBe(true);
+    expect(analyzeSettings(JSON.stringify(value)).changesFactoryEnv).toBe(true);
   });
 
   it.each([
     ['another variable', { env: { OTHER: '1' } }],
+    ['a name that has the prefix in its middle', { env: { MY_FACTORY_HOME: '1' } }],
+    ['a name that has the program name and no underscore', { env: { FACTORYHOME: '1' } }],
     ['the name in a value', { env: { OTHER: env.session } }],
     ['the name in another place', { hooks: { env: { [env.session]: 'x' } } }],
     ['no env', {}],
   ])('finds nothing for %s', (_name, value) => {
-    expect(analyzeSettings(JSON.stringify(value)).changesSessionMarker).toBe(false);
+    expect(analyzeSettings(JSON.stringify(value)).changesFactoryEnv).toBe(false);
   });
 
-  it('finds it also in a file that is not valid JSON', () => {
-    const facts = analyzeSettings(`{"env": {"${env.session}": ""},`);
+  it.each([
+    ['the session marker', env.session],
+    ['the home variable', env.home],
+    ['a variable that the program does not use', 'FACTORY_ANYTHING'],
+  ])('finds %s also in a file that is not valid JSON', (_name, name) => {
+    const facts = analyzeSettings(`{"env": {"${name}": ""},`);
     expect(facts.valid).toBe(false);
-    expect(facts.changesSessionMarker).toBe(true);
+    expect(facts.changesFactoryEnv).toBe(true);
+  });
+
+  it('finds nothing in a file that is not valid JSON when the prefix stands only inside a value', () => {
+    const facts = analyzeSettings(`{"env": {"OTHER": "${env.home}"},`);
+    expect(facts.valid).toBe(false);
+    expect(facts.changesFactoryEnv).toBe(false);
   });
 
   it('is not a skip setting: it has its own result', () => {
@@ -108,16 +128,16 @@ describe('the session marker in the environment values (TP-179)', () => {
     expect(facts.skips).toEqual([]);
   });
 
-  it('finds it when the file writes the env key twice and only the first one holds it', () => {
-    const first = `{"env": {"${env.session}": ""}, "env": {"OTHER": "1"}}`;
-    const last = `{"env": {"OTHER": "1"}, "env": {"${env.session}": ""}}`;
-    expect(analyzeSettings(first).changesSessionMarker).toBe(true);
-    expect(analyzeSettings(last).changesSessionMarker).toBe(true);
+  it.each([env.session, env.home, 'FACTORY_ANYTHING'])('finds %s when the file writes the env key twice and only one of them holds it', (name) => {
+    const first = `{"env": {"${name}": ""}, "env": {"OTHER": "1"}}`;
+    const last = `{"env": {"OTHER": "1"}, "env": {"${name}": ""}}`;
+    expect(analyzeSettings(first).changesFactoryEnv).toBe(true);
+    expect(analyzeSettings(last).changesFactoryEnv).toBe(true);
   });
 
   it('finds nothing when the file writes the env key twice and the name stands only as a value', () => {
     const text = `{"env": {"A": "1"}, "env": {"OTHER": "${env.session}"}}`;
-    expect(analyzeSettings(text).changesSessionMarker).toBe(false);
+    expect(analyzeSettings(text).changesFactoryEnv).toBe(false);
   });
 });
 
@@ -293,7 +313,7 @@ describe('a text that is not a settings object', () => {
     expect(analyzeSettings('{}')).toEqual({
       valid: true,
       skips: [],
-      changesSessionMarker: false,
+      changesFactoryEnv: false,
       movesTraffic: [],
       runsCommands: [],
       wholeToolRules: [],

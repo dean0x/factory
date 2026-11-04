@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { failure } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import type { InitOptions } from '../../src/commands/init.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { ok } from '../../src/core/result.js';
@@ -16,9 +19,10 @@ import {
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
-import { runInit, runStart } from '../helpers/package-registry.js';
+import { runDoctor, runInit, runStart } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
+import { captureSink } from '../helpers/sink.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const ROOT = '/w/recv';
@@ -50,11 +54,16 @@ const options = (extra: Partial<InitOptions> = {}): InitOptions => ({
 
 type Prompt = NonNullable<FakeOptions['prompt']>;
 
-/** A person at the terminal: the accept prompt gets `accept`, and every other question gets its default. */
+/** The question about the hook settings starts with the line that shows the change. */
+const HOOK_QUESTION = 'This changes the settings of Claude Code';
+const HOOK_FILE = `${ROOT}/coordinator/.claude/settings.local.json`;
+
+/** A person at the terminal: the accept prompt gets `accept`, the hook question gets `hook`, and every other question gets its default. */
 const person =
-  (accept: string, asked: string[] = []): Prompt =>
+  (accept: string, asked: string[] = [], hook = ''): Prompt =>
   (question) => {
     asked.push(question);
+    if (question.startsWith(HOOK_QUESTION)) return ok(hook);
     return ok(question.includes('Accept these files?') ? accept : '');
   };
 
@@ -154,12 +163,13 @@ describe('init: a received factory (TP-29, TP-30)', () => {
     const { deps } = received({ tracked: ['.gitignore', 'factory.yaml'] }, { ...terminal, prompt: person('n', asked) });
     const result = await runInit(deps, options({ ownerName: undefined }));
     expect(result.ok).toBe(true);
-    expect(asked).toHaveLength(4);
+    expect(asked).toHaveLength(5);
     expect(asked[0]).toContain('Your name');
     expect(asked[0]).toContain('https://github.com/acme/web.git');
     expect(asked[1]).toContain('Your GitHub login');
     expect(asked[2]).toContain('Approval point merge');
     expect(asked[3]).toContain('Approval point release');
+    expect(asked[4]).toContain('This changes the settings of Claude Code in /w/recv/coordinator/.claude/settings.local.json');
   });
 
   it('takes the answers for the owner fields into the local file', async () => {
@@ -645,7 +655,7 @@ describe('init: the setup acceptance of a received root', () => {
       expect(linesOf(result)).toContain('terminal window');
 
       const askedByInit = asked.length;
-      const started = await runStart(deps, { home: ROOT, dryRun: false });
+      const started = await runStart(deps, { home: ROOT, dryRun: false, yes: false });
       expect(started).toMatchObject({ ok: false, error: { kind: 'safety' } });
       expect(messageOf(started)).toContain('factory init');
       expect(messageOf(started)).toContain('terminal window');
@@ -701,7 +711,7 @@ describe('init: the setup acceptance of a received root', () => {
         run: async (command: string, args: readonly string[], runOptions?: { readonly cwd?: string }) =>
           command === 'tmux' ? handler({ command, args, cwd: runOptions?.cwd }) : deps.run(command, args, runOptions),
       };
-      const dry = await runStart(withTmux, { home: ROOT, dryRun: true });
+      const dry = await runStart(withTmux, { home: ROOT, dryRun: true, yes: false });
       expect(dry.ok).toBe(true);
       const calls = dry.ok ? (dry.value.json['calls'] as string[]) : [];
       const launch = calls.find((line) => line.includes('new-session')) ?? '';
@@ -725,6 +735,170 @@ describe('init: the setup acceptance of a received root', () => {
       expect(result.ok).toBe(true);
       expect(deps.files.has(`${ROOT}/factory.local.yaml`)).toBe(true);
       expect(deps.files.has(ACCEPTANCES)).toBe(false);
+    });
+  });
+});
+
+describe('init: the hook settings of a received factory (TP-16, TP-26, TP-27)', () => {
+  const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(HOOK_FILE) ?? 'null');
+
+  it('TP-26: shows the hook change after the question about the files, and the person accepts it; then start --dry-run asks and shows nothing', async () => {
+    const asked: string[] = [];
+    const { deps } = received({ unaccepted: true }, { ...terminal, prompt: person('y', asked, 'y'), env: { ...ENV, PATH: '/bin' } });
+    deps.seed('/bin/tmux', '');
+    deps.seed('/bin/claude', '');
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    const kinds = asked.map((question) => (question.includes('Accept these files?') ? 'files' : question.startsWith(HOOK_QUESTION) ? 'hook' : 'other'));
+    expect(kinds.filter((kind) => kind !== 'other')).toEqual(['files', 'hook']);
+    const hook = asked.find((question) => question.startsWith(HOOK_QUESTION)) ?? '';
+    expect(hook).toContain(HOOK_FILE);
+    expect(hook).toContain('factory hook Stop');
+    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+
+    const { handler } = tmuxHandler();
+    const withTmux = {
+      ...deps,
+      run: async (command: string, args: readonly string[], runOptions?: { readonly cwd?: string }) =>
+        command === 'tmux' ? handler({ command, args, cwd: runOptions?.cwd }) : deps.run(command, args, runOptions),
+    };
+    const promptsBefore = deps.prompts.length;
+    const dry = await runStart(withTmux, { home: ROOT, dryRun: true, yes: false });
+    expect(dry.ok).toBe(true);
+    expect(deps.prompts).toHaveLength(promptsBefore);
+    const lines = dry.ok ? dry.value.lines.map((line) => line.text).join('\n') : '';
+    expect(lines).not.toContain(HOOK_QUESTION);
+
+    // The fake root has no state repo, so doctor can not exit 0 here (the integration test covers that). The check of the
+    // settings files passes with the file that init wrote, and gives no warning for it.
+    const doctor = await runDoctor(withTmux, { home: ROOT });
+    const checked = doctor.ok ? doctor.value.lines.map((line) => `${line.level}: ${line.text}`) : [];
+    expect(checked.filter((line) => line.startsWith('ok: permission-mode'))).toHaveLength(1);
+    expect(checked.filter((line) => /settings/i.test(line) && line.startsWith('warn'))).toEqual([]);
+  });
+
+  it('TP-27: stops with exit 4 on a received factory that tracks other files, with no terminal window and the yes flag, and writes nothing', async () => {
+    const { deps } = received({ unaccepted: true });
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(deps.files.has(HOOK_FILE)).toBe(false);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('TP-27: stops with exit 2 on a received factory that tracks other files, with no terminal window and no yes flag, and writes nothing', async () => {
+    const { deps } = received({ unaccepted: true });
+    const before = snapshot(deps);
+    const result = await runInit(deps, options());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(deps.files.has(HOOK_FILE)).toBe(false);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('TP-16: with no terminal window and no yes flag, writes nothing and exits 2', async () => {
+    const { deps } = received();
+    const before = snapshot(deps);
+    expect(await runInit(deps, options())).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('writes the own entries with the yes flag when the files need no acceptance, and prints the change first', async () => {
+    const { deps } = received({ tracked: ['.gitignore', 'factory.yaml'] });
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    expect(deps.warned.filter((text) => text.startsWith(HOOK_QUESTION))).toEqual([expect.stringContaining(HOOK_FILE)]);
+    expect(deps.prompts).toEqual([]);
+    expect(result.ok && result.value.json['files']).toContain('coordinator/.claude/settings.local.json');
+  });
+
+  it('goes on after a no: the root stays registered, no settings file is written, and the notice names the command', async () => {
+    const { deps } = received({ tracked: ['.gitignore', 'factory.yaml'] }, { ...terminal, prompt: person('y', [], 'n') });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.has(HOOK_FILE)).toBe(false);
+    expect(indexOf(deps).homes).toEqual([expect.objectContaining({ home: ROOT, origin: 'received' })]);
+    expect(result.ok && result.value.warnings.join(' ')).toContain('run "factory init" again and answer yes');
+  });
+
+  it('stops with exit 1 before any write for a settings file that is not a JSON object', async () => {
+    const { deps } = received({ tracked: ['.gitignore', 'factory.yaml'] });
+    deps.seed(HOOK_FILE, '[]');
+    const before = snapshot(deps);
+    expect(await runInit(deps, options({ yes: true }))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  describe('a failure of the hook step after the last write: the root stays registered', () => {
+    const tracked = ['.gitignore', 'factory.yaml'];
+
+    /** The command line of a person on a terminal window. The hook question is the last question. */
+    const runOnTerminal = async (deps: FakeDeps) => {
+      const sink = captureSink();
+      const code = await runCli(['init', '--home', ROOT, '--owner-name', 'Test Owner'], deps, sink);
+      return { code, shown: sink.errors.join('') };
+    };
+
+    const expectRootKept = (deps: FakeDeps): void => {
+      expect(deps.files.has(`${ROOT}/factory.local.yaml`)).toBe(true);
+      expect(deps.files.has(`${ROOT}/.factory/node.json`)).toBe(true);
+      expect(indexOf(deps).homes).toEqual([expect.objectContaining({ home: ROOT, origin: 'received' })]);
+    };
+
+    it('exits 1 and names the cause when the question gets no answer, and writes no settings file', async () => {
+      const { deps } = received({ tracked }, { ...terminal, prompt: person('y', [], 'y') });
+      const asked: string[] = [];
+      const silent: FakeDeps = {
+        ...deps,
+        prompt: async (question) => {
+          if (!question.startsWith(HOOK_QUESTION)) return deps.prompt(question);
+          asked.push(question);
+          return failure('no answer was given');
+        },
+      };
+      const { code, shown } = await runOnTerminal(silent);
+      expect(code).toBe(1);
+      expect(shown).toContain('error: no answer was given');
+      expect(asked).toHaveLength(1);
+      expectRootKept(deps);
+      expect(deps.files.has(HOOK_FILE)).toBe(false);
+    });
+
+    it('exits 1 and names the file and the cause when the write of the settings file fails, and writes no settings file', async () => {
+      const { deps } = received({ tracked }, { ...terminal, prompt: person('y', [], 'y') });
+      const full: FakeDeps = {
+        ...deps,
+        fs: {
+          ...deps.fs,
+          writeTextExclusive: async (path, text, mode) =>
+            path.includes('settings.local.json') ? failure(`cannot write ${path}: disk full`) : deps.fs.writeTextExclusive(path, text, mode),
+        },
+      };
+      const { code, shown } = await runOnTerminal(full);
+      expect(code).toBe(1);
+      expect(shown).toContain('error: cannot write');
+      expect(shown).toContain('settings.local.json');
+      expect(shown).toContain('disk full');
+      expectRootKept(deps);
+      expect([...deps.files.keys()].filter((path) => path.includes('settings.local.json'))).toEqual([]);
+    });
+
+    it('exits 1 with the remedy line when the file changes while the question waits, and keeps the file as the other program left it', async () => {
+      const { deps } = received({ tracked }, { ...terminal, prompt: person('y', [], 'y') });
+      const saved = JSON.stringify({ model: 'opus', ...ownSettingsEntries });
+      const changing: FakeDeps = {
+        ...deps,
+        prompt: async (question) => {
+          if (question.startsWith(HOOK_QUESTION)) deps.seed(HOOK_FILE, saved);
+          return deps.prompt(question);
+        },
+      };
+      const { code, shown } = await runOnTerminal(changing);
+      expect(code).toBe(1);
+      expect(shown).toContain(`error: cannot write ${HOOK_FILE}: it changed while the question waited`);
+      expect(shown).toContain('Then run "factory init" again.');
+      expectRootKept(deps);
+      expect(deps.files.get(HOOK_FILE)).toBe(saved);
     });
   });
 });

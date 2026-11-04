@@ -1,6 +1,7 @@
 import { basename, join, relative, sep } from 'node:path';
 import { safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
+import { isOwnSettingsText } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { ignoredPathsOf, isWorkTreeRoot, trackedFilesOf, type TrackedList } from '../core/git.js';
 import { originOfHome, type Origin } from '../core/home-index.js';
@@ -546,9 +547,11 @@ const settingsOfFolder = async (
 };
 
 /**
- * One settings file: its failures and warnings. A setting that skips the permission prompts, a change of the session
- * marker and a setting of the proxy or the credential of the session are failures. A setting that runs a command is a
- * failure where a settings file is not expected (`presence` is set), and a warning in the factory folder itself.
+ * One settings file: its failures and warnings. A setting that skips the permission prompts, a variable with the prefix of
+ * the program in the env values and a setting of the proxy or the credential of the session are failures. A setting that
+ * runs a command is a failure where a settings file is not expected (`presence` is set), and a warning in the factory folder
+ * itself. The warning that a settings file is there is not given for a file that holds exactly the entries that the program
+ * writes (`isOwnSettingsText`); every other finding stays for such a file.
  */
 const judgeSettings = (source: SettingsSource, text: string): readonly RootFinding[] => {
   const id = checkIds.permissionMode;
@@ -557,7 +560,7 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
   const commandNames = facts.runsCommands.join(', ');
   const reasons = [
     ...(facts.skips.length === 0 ? [] : [`skips the permission checks (${facts.skips.join('; ')})`]),
-    ...(facts.changesSessionMarker ? [`sets or clears ${env.session} in its env values`] : []),
+    ...(facts.changesFactoryEnv ? [`sets or clears a variable with the prefix ${env.factoryPrefix} in its env values`] : []),
     ...(facts.movesTraffic.length === 0
       ? []
       : [`sets the proxy or the credential of the session in its env values (${facts.movesTraffic.join(', ')})`]),
@@ -570,7 +573,7 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
       ? []
       : [finding(id, 'fail', `${shown} ${reasons.join(' and ')}`, `Remove the setting from ${shown}, then ${doctorAgain}.`)]),
     ...(facts.valid ? [] : [finding(id, 'warn', `${shown} is not valid JSON, so Claude Code does not read it`, `Fix or remove ${shown}.`)]),
-    ...(source.presence === null
+    ...(source.presence === null || isOwnSettingsText(text)
       ? []
       : [finding(id, 'warn', `${shown} is a settings file in ${source.presence}, and the sessions of Claude Code read it`, 'Remove the file, or keep it on purpose.')]),
     ...(source.presence !== null || facts.runsCommands.length === 0
@@ -598,6 +601,59 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
   ];
 };
 
+interface JudgedSources {
+  readonly findings: readonly RootFinding[];
+  /** The files that were not read, each with the reason: a link, or a file that can not be read. */
+  readonly unread: readonly string[];
+}
+
+/** Reads each source once and judges it. A link is never followed: it is not read. */
+const judgeSources = async (deps: Deps, sources: Iterable<SettingsSource>): Promise<JudgedSources> => {
+  const findings: RootFinding[] = [];
+  const unread: string[] = [];
+  for (const source of sources) {
+    const kind = await deps.fs.lstat(source.absolute);
+    if (!kind.ok || kind.value === 'link') {
+      unread.push(`${shownPath(source.display)} (${kind.ok ? 'a link' : 'cannot be read'})`);
+      continue;
+    }
+    const text = await deps.fs.readTextLimited(source.absolute, trackedFiles.maxFileBytes);
+    if (text.ok) findings.push(...judgeSettings(source, text.value));
+    else unread.push(`${shownPath(source.display)} (cannot be read)`);
+  }
+  return { findings, unread };
+};
+
+/** The failure for the files that the scan did not read, or no finding when it read every file. */
+const unreadFindings = (unread: readonly string[]): readonly RootFinding[] =>
+  unread.length === 0
+    ? []
+    : [
+        finding(
+          checkIds.permissionMode,
+          'fail',
+          `the scan of the settings files did not read ${namedItems(unread)}`,
+          `Make each file a plain file that ${program} can read, or remove it, then ${doctorAgain}.`,
+        ),
+      ];
+
+/**
+ * The failures and warnings for the settings files of one session folder, for the work copy of a worker (design 4.4): the
+ * same judgment as the scan of the root, with the same stops for a link and for a file that can not be read. `home` is the
+ * factory folder that the shown paths are relative to, and `presence` names the place for the warning that a settings file is
+ * there. The settings file that the program writes itself gives no warning. The check only reads.
+ */
+export const checkFolderSettings = async (
+  deps: Deps,
+  home: string,
+  folder: string,
+  presence: string,
+): Promise<readonly RootFinding[]> => {
+  const found = await settingsOfFolder(deps, home, userClaudeFolderOf(deps), { path: folder, presence });
+  const judged = await judgeSources(deps, found.sources);
+  return withoutRepeats([...found.findings, ...judged.findings, ...unreadFindings(judged.unread)]);
+};
+
 /**
  * The settings files that a session reads from the factory folder: the files in the settings folder of the factory folder
  * itself, of the coordinator folder and of each project folder, and each Claude settings path that the root repo tracks,
@@ -610,7 +666,6 @@ export const scanSettings = async (
   projectPaths: readonly string[],
   tracked: readonly string[],
 ): Promise<readonly RootFinding[]> => {
-  const id = checkIds.permissionMode;
   const userFolder = userClaudeFolderOf(deps);
   const folders = [
     { path: home, presence: null },
@@ -624,35 +679,20 @@ export const scanSettings = async (
     findings.push(...found.findings);
     for (const source of found.sources) sources.set(source.absolute, source);
   }
-  const unread: string[] = [];
+  const unreadTracked: string[] = [];
   for (const path of tracked.filter(isClaudeSettingsPath)) {
     const absolute = join(home, path);
     if (sources.has(absolute) || inUserFolder(deps, userFolder, absolute)) continue;
     const kind = await deps.fs.lstat(absolute);
     if (!kind.ok) {
-      unread.push(`${shownPath(path)} (cannot be read)`);
+      unreadTracked.push(`${shownPath(path)} (cannot be read)`);
       continue;
     }
-    if (kind.value === 'link') unread.push(`${shownPath(path)} (a link)`);
+    if (kind.value === 'link') unreadTracked.push(`${shownPath(path)} (a link)`);
     else if (kind.value === 'file') sources.set(absolute, { absolute, display: path, presence: null });
   }
-  for (const source of sources.values()) {
-    const kind = await deps.fs.lstat(source.absolute);
-    if (!kind.ok || kind.value === 'link') {
-      unread.push(`${shownPath(source.display)} (${kind.ok ? 'a link' : 'cannot be read'})`);
-      continue;
-    }
-    const text = await deps.fs.readTextLimited(source.absolute, trackedFiles.maxFileBytes);
-    if (text.ok) findings.push(...judgeSettings(source, text.value));
-    else unread.push(`${shownPath(source.display)} (cannot be read)`);
-  }
-  const unreadFinding = finding(
-    id,
-    'fail',
-    `the scan of the settings files did not read ${namedItems(unread)}`,
-    `Make each file a plain file that ${program} can read, or remove it, then ${doctorAgain}.`,
-  );
-  return withoutRepeats([...findings, ...(unread.length === 0 ? [] : [unreadFinding])]);
+  const judged = await judgeSources(deps, sources.values());
+  return withoutRepeats([...findings, ...judged.findings, ...unreadFindings([...unreadTracked, ...judged.unread])]);
 };
 
 // ---- The approval points ----

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { posix } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
@@ -16,6 +17,12 @@ export interface RunCall {
   readonly inheritEnv?: boolean;
   /** The time limit that the caller asked for. */
   readonly timeoutMs?: number;
+  /** The text that the caller gave to the standard input of the program. */
+  readonly input?: string;
+  /** True when the caller asked to run the program in its own process group. */
+  readonly processGroup?: boolean;
+  /** The signal that stops the program when it aborts. */
+  readonly signal?: AbortSignal;
 }
 
 export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
@@ -40,6 +47,8 @@ export interface FakeOptions {
   readonly stdinIsTTY?: boolean;
   /** A person reads the output on a terminal. Default: false. */
   readonly stdoutIsTTY?: boolean;
+  /** The text on the standard input, as `readStdin` reads it. A terminal gives no text. Default: empty. */
+  readonly stdin?: string;
   /** The answer to a question. Default: no answer. */
   readonly prompt?: PromptHandler;
   /** The result of a program that uses the terminal. Default: exit code 0. */
@@ -72,6 +81,8 @@ export interface FakeDeps extends Deps {
   readonly mtimes: Map<string, number>;
   /** The waits of `sleep`, in order. */
   readonly sleeps: number[];
+  /** The signals of the process. A test sends a signal with `emit`, and counts the handlers with `listenerCount`. */
+  readonly signals: EventEmitter;
   /** Move the clock on by `ms` milliseconds. `sleep` does the same. */
   advance(ms: number): void;
   seed(path: string, text: string): void;
@@ -144,6 +155,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     owners,
     mtimes,
     sleeps,
+    signals: new EventEmitter(),
     advance: (ms) => {
       clock += ms;
     },
@@ -282,6 +294,9 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         cwd: runOptions?.cwd,
         inheritEnv: runOptions?.inheritEnv === true,
         ...(runOptions?.timeoutMs === undefined ? {} : { timeoutMs: runOptions.timeoutMs }),
+        ...(runOptions?.input === undefined ? {} : { input: runOptions.input }),
+        ...(runOptions?.processGroup === undefined ? {} : { processGroup: runOptions.processGroup }),
+        ...(runOptions?.signal === undefined ? {} : { signal: runOptions.signal }),
       };
       calls.push(call);
       return (options.run ?? (() => missingProgram(command)))(call);
@@ -293,6 +308,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     },
     stdinIsTTY: options.stdinIsTTY ?? false,
     stdoutIsTTY: options.stdoutIsTTY ?? false,
+    readStdin: async (maxBytes) => {
+      // The same results as the real read: a terminal gives empty text, and an input over the limit is an error.
+      if (options.stdinIsTTY === true) return ok('');
+      const text = options.stdin ?? '';
+      return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read stdin: larger than ${maxBytes} bytes`) : ok(text);
+    },
     prompt: async (question: string) => {
       prompts.push(question);
       return (options.prompt ?? (() => failure('no answer was given')))(question);

@@ -15,6 +15,7 @@ export const stateRel = {
   gitignore: files.gitignore,
   backups: dirs.backups,
   runtime: dirs.runtime,
+  heartbeat: join(dirs.runtime, dirs.heartbeat),
   locks: dirs.locks,
 } as const;
 
@@ -43,6 +44,8 @@ export interface Layout {
   readonly backupsDir: string;
   /** The run-time folders. Their files are not part of the state repository. */
   readonly runtimeDir: string;
+  /** The last-seen files, one for each session. It is inside the run-time folder. */
+  readonly heartbeatDir: string;
   readonly locksDir: string;
 }
 
@@ -69,6 +72,7 @@ export const layoutOf = (home: string): Layout => {
     workerMd: join(stateDir, stateRel.worker),
     backupsDir: join(stateDir, stateRel.backups),
     runtimeDir: join(stateDir, stateRel.runtime),
+    heartbeatDir: join(stateDir, stateRel.heartbeat),
     locksDir: join(stateDir, stateRel.locks),
   };
 };

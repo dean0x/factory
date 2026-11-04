@@ -1,5 +1,6 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
+import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
 import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
@@ -16,10 +17,12 @@ import {
   flagShorts,
   flagText,
   helpTopics,
+  hookNames,
   nodeCommands,
   places,
   program,
   roles,
+  schemaIds,
   values,
 } from '../names.js';
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
@@ -70,6 +73,23 @@ const foundHomeOption: FlagOption = {
     `above the current folder, else the ${places.folder} that the ${places.list} gives for the current folder.`,
 };
 
+/**
+ * The hook that Claude Code runs. `runCli` routes it before the flags are read. An event prints none of its output, so that
+ * it exits 0 with an empty stdout on every path, and the word `statusline` prints the status line (see `runStatusline`). The
+ * table holds it for the help.
+ */
+export const hookCommandFor = (registry: RecipeRegistry): Command => ({
+  name: commands.hook,
+  summary: `Record when a ${places.session} was last seen. Claude Code runs it, not a person.`,
+  usage: `${commandText(commands.hook)} ${[...hookNames.events, hookNames.statusline].join('|')}`,
+  options: {},
+  positionals: true,
+  run: async (given, deps) => {
+    const done = await runHook(deps, given.positionals(), registry);
+    return done.ok ? ok({ lines: [], json: { schema: schemaIds.hook }, warnings: [], failed: false }) : done;
+  },
+});
+
 /** The commands. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */
 export const commandTableFor = (registry: RecipeRegistry): readonly Command[] => [
   {
@@ -90,7 +110,11 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       },
       [flags.yes]: {
         type: 'boolean',
-        description: `Use the proposed ${places.folder}. Ask no question. Every approval point is ${values.approvalModes[0]}.`,
+        description:
+          `Use the proposed ${places.folder}. Ask no question. Every approval point is ${values.approvalModes[0]}. ` +
+          `Agree to the change of the Claude Code settings of the ${roles.coordinator} (the hook and the status line). ` +
+          `With no terminal window and no ${flagText(flags.yes)}, the command stops before it writes a file. ` +
+          `Inside a ${places.session}, the flag gives no consent for these settings.`,
       },
       [flags.name]: {
         type: 'string',
@@ -157,15 +181,22 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   {
     name: commands.start,
     summary: `Start the session of the ${roles.node} in tmux, or attach to it.`,
-    usage: `${commandText(commands.start)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}]`,
+    usage: `${commandText(commands.start)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}] [${flagText(flags.yes)}]`,
     options: {
       [flags.home]: foundHomeOption,
       [flags.dryRun]: {
         type: 'boolean',
         description: 'Show the tmux calls and the launch. Start no session and change no file.',
       },
+      [flags.yes]: {
+        type: 'boolean',
+        description:
+          `Agree to the change of the Claude Code settings of the ${roles.coordinator} (the hook and the status line), with no question. ` +
+          `Not allowed inside a ${places.session}.`,
+      },
     },
-    run: (given, deps) => runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }, registry),
+    run: (given, deps) =>
+      runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun), yes: given.bool(flags.yes) }, registry),
   },
   {
     name: commands.node,
@@ -220,6 +251,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         registry,
       ),
   },
+  hookCommandFor(registry),
   {
     name: commands.version,
     summary: 'Print the version.',

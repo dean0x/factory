@@ -43,6 +43,7 @@ import {
   type ApprovalChoice,
 } from './init-approval.js';
 import { checkHomeOutsideRoots, leftoverTempFolders, nodeExists, tempFolderWarning } from './init-home.js';
+import { checkHookConsent, writeHookSettings } from './init-hook.js';
 import {
   acceptanceLines,
   checkReceivedRoot,
@@ -602,14 +603,20 @@ export const runExisting = async (
   if (!approvals.ok) return approvals;
   const decision = await decideAcceptance(asking, { home, node: id, yes: options.yes, setup: setup.value });
   if (!decision.ok) return decision;
+  // The hook settings come after the last write. The check of their target and of the consent comes before the first write.
+  const consent = await checkHookConsent(deps, home, options.yes);
+  if (!consent.ok) return consent;
   const plan = await planOf(deps, checked.value, approvals.value, decision.value, setup.value);
   if (!plan.ok) return plan;
 
   const applied = await applyExisting(deps, checked.value, plan.value, indexPath);
   if (!applied.ok) return applied;
+  // The root is registered. A failure of the hook settings leaves it, and a second run of init finishes the step.
+  const hook = await writeHookSettings(deps, home, options.yes);
+  if (!hook.ok) return hook;
 
-  const written = writtenNames(plan.value, checked.value.repair, applied.value.text);
-  const warnings = [...checked.value.warnings, ...delegationWarnings(checked.value), ...applied.value.warnings];
+  const written = [...writtenNames(plan.value, checked.value.repair, applied.value.text), ...hook.value.written];
+  const warnings = [...checked.value.warnings, ...delegationWarnings(checked.value), ...applied.value.warnings, ...hook.value.warnings];
   const headline = received
     ? `Registered the ${roles.node} "${id}" in ${home}.`
     : `The ${roles.node} "${id}" in ${home} is registered.`;

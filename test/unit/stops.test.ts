@@ -69,7 +69,7 @@ const makeNode = async (): Promise<FakeDeps> => {
       ownerName: 'Test Owner',
       ownerGithub: undefined,
       projects: [],
-      yes: false,
+      yes: true,
       recipe: undefined,
       layer: undefined,
       approval: [],
@@ -93,7 +93,7 @@ const runWith = (deps: FakeDeps, git: GitFixture = {}): FakeDeps => {
 
 /** The commands that look up the factory folder and read its local file. Each one runs on the node as a dry run. */
 const COMMANDS: readonly (readonly [string, (deps: FakeDeps) => Promise<CliResult<unknown>>])[] = [
-  ['start', (deps) => runStart(deps, { home: HOME, dryRun: true })],
+  ['start', (deps) => runStart(deps, { home: HOME, dryRun: true, yes: false })],
   ['doctor', (deps) => runDoctor(deps, { home: HOME })],
   ['node', (deps) => runNode(deps, { home: HOME, words: ['children'] })],
   ['upgrade', (deps) => runUpgrade(deps, { home: HOME, dryRun: true, overwrite: [], yes: true })],
@@ -374,7 +374,7 @@ describe.each(COMMANDS)('stops of %s (exit 4)', (name, run) => {
 const USER_CLAUDE = '/users/me/.claude';
 
 const IN_USER_CLAUDE: readonly (readonly [string, (deps: FakeDeps, home: string) => Promise<CliResult<unknown>>])[] = [
-  ['start', (deps, home) => runStart(deps, { home, dryRun: true })],
+  ['start', (deps, home) => runStart(deps, { home, dryRun: true, yes: false })],
   ['doctor', (deps, home) => runDoctor(deps, { home })],
   ['node', (deps, home) => runNode(deps, { home, words: ['children'] })],
   ['upgrade', (deps, home) => runUpgrade(deps, { home, dryRun: true, overwrite: [], yes: true })],
@@ -407,7 +407,7 @@ describe('doctor and a local file with a wrong mode', () => {
 });
 
 describe('stops of start (exit 4)', () => {
-  const start = (deps: FakeDeps, git: GitFixture = {}) => runStart(runWith(deps, git), { home: HOME, dryRun: true });
+  const start = (deps: FakeDeps, git: GitFixture = {}) => runStart(runWith(deps, git), { home: HOME, dryRun: true, yes: false });
   const rendered = claudeFileText(sampleConfig());
 
   it('prints one remedy line that names a command for an edited safety block', async () => {

@@ -4,6 +4,7 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
+import { declinedHookText, ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
@@ -33,6 +34,7 @@ import {
   files,
   flags,
   flagText,
+  hookSessions,
   keys,
   overwriteCommand,
   places,
@@ -56,6 +58,8 @@ import { acceptReason, settleSetup } from './setup-check.js';
 export interface StartOptions {
   readonly home: string | undefined;
   readonly dryRun: boolean;
+  /** True when the person gave the yes flag. It is the consent to the change of the hook settings. */
+  readonly yes: boolean;
 }
 
 const TMUX_TIMEOUT_MS = 15_000;
@@ -372,6 +376,15 @@ const startSession = async (deps: Deps, id: string, steps: readonly TmuxArgs[]):
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 
+/** The lines of a dry run about the hook settings: the change that a real run makes, or none when the entries are in place. */
+const hookLines = (hook: HookSettingsOutcome, yes: boolean): readonly OutLine[] =>
+  hook.kind === 'would-write'
+    ? [
+        ...hook.change.split('\n').map(text),
+        text(yes ? 'A real run writes this change.' : 'A real run asks before it writes this change.'),
+      ]
+    : [];
+
 /** The warning for a session whose coordinator pane stays after its program ended, with the remedy. */
 const coordinatorEndedLines = (id: string, home: string): readonly OutLine[] => [
   { level: 'warn', text: `The ${roles.coordinator} of the session ${id} has ended.` },
@@ -395,10 +408,14 @@ const dryRunOutput = (input: {
   readonly how: Reach;
   readonly problems: readonly string[];
   readonly plan: StartPlan | null;
+  /** What the check of the hook settings found. */
+  readonly hook: HookSettingsOutcome;
+  /** True when the person gave the yes flag. */
+  readonly yes: boolean;
   /** Notes about the files of the config, for example a local file that others can read. */
   readonly notes: readonly string[];
 }): CommandOutput => {
-  const { home, id, exists, how, problems, plan, notes } = input;
+  const { home, id, exists, how, problems, plan, hook, yes, notes } = input;
   const last = reachArgs(how, id);
   const shown = [...(plan?.shown ?? []), ...(last === null ? [] : [last])].map(commandLine);
   const proxy = plan?.proxy.label ?? null;
@@ -407,6 +424,7 @@ const dryRunOutput = (input: {
       text('Dry run: no session starts and no file changes.'),
       text(`${capitalize(places.folder)}: ${home}`),
       ...problems.map((problem): OutLine => ({ level: 'warn', text: `${problem}. A real run stops here.` })),
+      ...hookLines(hook, yes),
       text(
         exists
           ? `The session ${id} runs already. A real run checks that it belongs to this ${places.folder}.`
@@ -477,6 +495,18 @@ export const runStart = async (
     );
   }
 
+  // The hook settings of the coordinator come after the root checks and the tool check, and before the session lookup and any
+  // launch. A no on a terminal window goes on without the hook. Any error of the writer is a stop with its own exit code.
+  const hook = await ensureHookSettings(deps, {
+    folder: layoutOf(home).coordinatorDir,
+    session: hookSessions.coordinator,
+    yes: options.yes,
+    dryRun,
+    command: commands.start,
+  });
+  if (!hook.ok) return hook;
+  if (hook.value.kind === 'declined') deps.warn(declinedHookText(hook.value.file, commands.start));
+
   const exists = await sessionExists(deps, id);
   if (exists && !dryRun) {
     const own = await requireOwnSession(deps, id, home);
@@ -488,7 +518,11 @@ export const runStart = async (
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
 
-  if (dryRun) return ok(dryRunOutput({ home, id, exists, how, problems, plan: planned, notes: [...notes.value, ...safety.value] }));
+  if (dryRun) {
+    return ok(
+      dryRunOutput({ home, id, exists, how, problems, plan: planned, hook: hook.value, yes: options.yes, notes: [...notes.value, ...safety.value] }),
+    );
+  }
 
   if (planned !== null) {
     const started = await startSession(deps, id, planned.steps);

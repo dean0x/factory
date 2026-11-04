@@ -362,7 +362,7 @@ describe('words of the old names', () => {
       ownerName: 'Test Owner',
       ownerGithub: undefined,
       projects: [],
-      yes: false,
+      yes: true,
       recipe: undefined,
       layer: undefined,
       approval: [],
@@ -492,13 +492,19 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
   ]);
 
   /**
+   * The names on disk that stay although the table of plain words has a plain word for them (the file name stays): the
+   * folder of the last-seen files. Only `names.ts` holds them, and text for a user says "last seen".
+   */
+  const DISK_NAMES: ReadonlySet<string> = new Set([dirs.heartbeat]);
+
+  /**
    * The old words and the scanned jargon words that a string literal of the source holds, with the file. Comments and
-   * import paths are not text. A name of an older layout in `names.ts` is no text either.
+   * import paths are not text. A name of an older layout in `names.ts` is no text either, and neither is a name on disk.
    */
   const plainWordHits = (source: string, path: string): string[] =>
     literalsOf(source)
       .filter((literal) => !IMPORT_PATH.test(literal))
-      .filter((literal) => path !== NAMES_FILE || !OLD_LAYOUT_NAMES.has(literal))
+      .filter((literal) => path !== NAMES_FILE || !(OLD_LAYOUT_NAMES.has(literal) || DISK_NAMES.has(literal)))
       .flatMap((literal) => plainWordsIn(literal).map((word) => `${relative(SRC, path)}: "${literal}" holds ${word}`));
 
   it('scans every folder that prints text, and the top files of src', () => {
@@ -557,6 +563,8 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
     expect(plainWordHits("// the staging folder\nconst staging = 'plain';", path)).toEqual([]);
     expect(plainWordHits("const schema1 = { keys: { lanes: 'lanes' } };", NAMES_FILE)).toEqual([]);
     expect(plainWordHits("const a = 'lanes';", path)).toHaveLength(1);
+    expect(plainWordHits("const dirs = { heartbeat: 'heartbeat' };", NAMES_FILE)).toEqual([]);
+    expect(plainWordHits("const a = 'heartbeat';", path)).toHaveLength(1);
     expect(plainWordHits("// the heartbeat\nconst heartbeat = 'plain';", path)).toEqual([]);
     expect(plainWordHits("import { a } from '../migrate/inspect.js';", path)).toEqual([]);
   });
@@ -805,6 +813,11 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
     expect(rel(users)).toEqual(['core/private-file.ts']);
   });
 
+  it('has one copy of the take-over of a stale lock: the file lock module, which the other locks call', () => {
+    expect(rel(withText(/\bdropStaleLock\b|\bremoveSeenLock\b|\bdropStaleClaim\b/))).toEqual(['core/file-lock.ts']);
+    expect(rel(withText(/\btakeLock\b/))).toEqual(['core/file-lock.ts', 'core/private-file.ts', 'core/safe-write.ts']);
+  });
+
   it('has no module that writes the approval record apart from the owner record writer', () => {
     const callersOf = (pattern: RegExp): string[] => rel(withText(pattern).filter((path) => path !== OWNER_RECORD));
     expect(callersOf(/\brecordScope\b/)).toEqual([]);
@@ -904,15 +917,24 @@ describe('the instruction files (TP-32, TP-34)', () => {
     expect(withText(/\brealPathOf\b|\bisSameOrInsideFolder\b/).filter((path) => readers.includes(path))).toEqual([]);
   });
 
-  it('builds the path of the user Claude folder in three modules only, and they compare it without a read', () => {
+  it('TP-25: every use of the Claude folder name in src is on the allow list, and no template holds a user Claude path', () => {
     // dirs.claude is the only place of the folder name outside names.ts (see the test of the names above), so a path
     // below the user home and the Claude folder needs both words in one module. Another module with both is a new
     // reader of that folder, and this test makes a person look at it first.
-    expect(withText(/\benv\.userHome\b/).filter((path) => withText(/\bdirs\.claude\b/).includes(path))).toEqual([
-      'core/instruction-files.ts',
-      'core/paths.ts',
-      'core/private-file.ts',
-    ]);
+    const joinsUserHome = ['core/instruction-files.ts', 'core/paths.ts', 'core/private-file.ts'];
+    // These modules join the name with a folder that the command gives them: a session folder or a root. They never take
+    // the home of the user, so the settings writer can not reach the user folder by a join.
+    const joinsGivenFolder = ['commands/root-content.ts', 'core/claude-settings.ts', 'core/root-paths.ts'];
+    const usesName = withText(/\bdirs\.claude\b/).filter((path) => path !== 'names.ts');
+    expect(usesName).toEqual([...joinsGivenFolder, ...joinsUserHome].sort());
+    expect(withText(/\benv\.userHome\b/).filter((path) => usesName.includes(path))).toEqual(joinsUserHome);
+    expect(withText(/\buserHome\b/).filter((path) => joinsGivenFolder.includes(path))).toEqual([]);
+
+    // A template can not name the folder: it has no value for it, and no text of a block or a file holds it.
+    expect(Object.keys(templateValues)).not.toContain('claudeDir');
+    expect(Object.values(templateValues)).not.toContain(dirs.claude);
+    const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
+    expect(texts.filter((text) => text.includes(dirs.claude))).toEqual([]);
   });
 });
 

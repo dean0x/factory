@@ -1,12 +1,30 @@
 import { createHash } from 'node:crypto';
+import { getEventListeners } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+  type FileHandle,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
+import { setTimeout as wait } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
+import { hookNames } from '../../src/names.js';
 
 const deps = createNodeDeps();
 let dir = '';
@@ -47,6 +65,183 @@ describe('node deps: run', () => {
   it('runs in the folder that the caller names', async () => {
     const result = await deps.run('pwd', [], { cwd: dir });
     expect(result.ok && result.value.stdout.trim().endsWith(dir.split('/').pop() ?? '?')).toBe(true);
+  });
+
+  describe('the input of the program', () => {
+    const echo = ['-e', 'process.stdin.pipe(process.stdout)'];
+
+    it('gives the input text to the program on its standard input, with all bytes', async () => {
+      const result = await deps.run('node', echo, { input: 'héllo\nsecond line' });
+      expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: 'héllo\nsecond line', stderr: '' } });
+    });
+
+    it('gives an empty input as an input that has ended', async () => {
+      const result = await deps.run('node', echo, { input: '' });
+      expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: '', stderr: '' } });
+    });
+
+    it('is no error when the program ends before it reads a large input', async () => {
+      const result = await deps.run('node', ['-e', 'process.exit(5)'], { input: 'x'.repeat(2_000_000) });
+      expect(result.ok && result.value.exitCode).toBe(5);
+    });
+
+    it('still ends the program when the time limit passes', async () => {
+      const started = Date.now();
+      const result = await deps.run('node', ['-e', 'process.stdin.resume(); setTimeout(() => {}, 20000)'], {
+        input: 'text',
+        timeoutMs: 200,
+      });
+      expect(result.ok).toBe(false);
+      expect(Date.now() - started).toBeLessThan(10_000);
+    });
+  });
+
+  describe('a run in its own process group', () => {
+    /**
+     * The times of the tests with a late write. A process that the stop missed writes its file `LATE_SECONDS` after the start.
+     * A run that works ends within a few hundred milliseconds, so `STOPPED_BY_MS` is far from both ends, and a loaded machine
+     * does not fail a good run. A run with no stop ends at the late write, after `STOPPED_BY_MS`. `LATE_WAIT_MS` is the wait
+     * after the end of the run, and it covers the late write with a margin.
+     */
+    const LATE_SECONDS = 2;
+    const STOPPED_BY_MS = 1_500;
+    const LATE_WAIT_MS = 3_000;
+
+    const exists = (path: string): Promise<boolean> =>
+      stat(path).then(
+        () => true,
+        () => false,
+      );
+
+    it('gives the exit code, the output and the input like a plain run', async () => {
+      const result = await deps.run('/bin/sh', ['-c', 'cat; echo note >&2; exit 4'], { input: 'héllo', processGroup: true });
+      expect(result).toEqual({ ok: true, value: { exitCode: 4, stdout: 'héllo', stderr: 'note\n' } });
+    });
+
+    it('returns an error when the program does not exist', async () => {
+      const result = await deps.run('factory-no-such-program', [], { processGroup: true });
+      expect(result).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run factory-no-such-program: ENOENT' } });
+    });
+
+    it('stops every process of a pipe when the time limit passes, not only the shell', async () => {
+      const late = fresh('late-pipe');
+      const started = Date.now();
+      const result = await deps.run('/bin/sh', ['-c', `(sleep ${LATE_SECONDS}; echo late > '${late}') | cat`], {
+        timeoutMs: 200,
+        processGroup: true,
+      });
+      expect(result.ok).toBe(false);
+      expect(Date.now() - started).toBeLessThan(STOPPED_BY_MS);
+      await wait(LATE_WAIT_MS);
+      expect(await exists(late)).toBe(false);
+    });
+
+    it('ends at the time limit when a process that the shell left holds the output pipe, and stops that process', async () => {
+      const late = fresh('late-background');
+      const started = Date.now();
+      const result = await deps.run('/bin/sh', ['-c', `echo first; (sleep ${LATE_SECONDS}; echo late > '${late}') &`], {
+        timeoutMs: 300,
+        processGroup: true,
+      });
+      expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: 'first\n', stderr: '' } });
+      expect(Date.now() - started).toBeLessThan(STOPPED_BY_MS);
+      await wait(LATE_WAIT_MS);
+      expect(await exists(late)).toBe(false);
+    });
+
+    it('returns an error and stops the group when the output passes the byte cap', async () => {
+      const late = fresh('late-cap');
+      const result = await deps.run('/bin/sh', ['-c', `head -c 1100000 /dev/zero; sleep ${LATE_SECONDS}; echo late > '${late}'`], {
+        processGroup: true,
+      });
+      expect(result).toEqual({
+        ok: false,
+        error: { kind: 'failure', message: 'cannot run /bin/sh: its output is larger than 1048576 bytes' },
+      });
+      await wait(LATE_WAIT_MS);
+      expect(await exists(late)).toBe(false);
+    });
+
+    describe('with an abort signal', () => {
+      it('stops every process of the group and ends the run when the signal aborts', async () => {
+        const late = fresh('late-abort');
+        const controller = new AbortController();
+        const started = Date.now();
+        const pending = deps.run('/bin/sh', ['-c', `(sleep ${LATE_SECONDS}; echo late > '${late}') | cat`], {
+          processGroup: true,
+          signal: controller.signal,
+        });
+        await wait(150);
+        controller.abort();
+        expect(await pending).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run /bin/sh: SIGKILL' } });
+        expect(Date.now() - started).toBeLessThan(STOPPED_BY_MS);
+        await wait(LATE_WAIT_MS);
+        expect(await exists(late)).toBe(false);
+      });
+
+      it('starts no program when the signal has aborted already', async () => {
+        const marker = fresh('never-started');
+        const controller = new AbortController();
+        controller.abort();
+        const result = await deps.run('/bin/sh', ['-c', `echo started > '${marker}'`], {
+          processGroup: true,
+          signal: controller.signal,
+        });
+        expect(result).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run /bin/sh: ABORT_ERR' } });
+        await wait(300);
+        expect(await exists(marker)).toBe(false);
+      });
+
+      it('keeps no listener on the signal after the run ends', async () => {
+        const controller = new AbortController();
+        const result = await deps.run('/bin/sh', ['-c', 'echo done'], { processGroup: true, signal: controller.signal });
+        expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: 'done\n', stderr: '' } });
+        expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+      });
+    });
+
+    describe('when the stop does not end the first process of the group', () => {
+      const realKill = process.kill.bind(process);
+      let leaders: number[] = [];
+
+      beforeEach(() => {
+        leaders = [];
+        // The stop signal to a group has no effect, as for a process in an uninterruptible wait.
+        vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: string | number) => {
+          if (pid >= 0) return realKill(pid, signal);
+          leaders.push(-pid);
+          return true;
+        }) as typeof process.kill);
+      });
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+        for (const leader of leaders) {
+          try {
+            realKill(-leader, 'SIGKILL');
+          } catch {
+            // The group has ended already.
+          }
+        }
+      });
+
+      it('ends shortly after the time limit with the failure of the stop', async () => {
+        const started = Date.now();
+        const result = await deps.run('/bin/sh', ['-c', 'sleep 4'], { timeoutMs: 200, processGroup: true });
+        expect(result).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run /bin/sh: SIGKILL' } });
+        expect(Date.now() - started).toBeLessThan(2_000);
+      });
+
+      it('ends shortly after the byte cap with the failure of the cap', async () => {
+        const started = Date.now();
+        const result = await deps.run('/bin/sh', ['-c', 'head -c 1100000 /dev/zero; sleep 4'], { processGroup: true });
+        expect(result).toEqual({
+          ok: false,
+          error: { kind: 'failure', message: 'cannot run /bin/sh: its output is larger than 1048576 bytes' },
+        });
+        expect(Date.now() - started).toBeLessThan(2_000);
+      });
+    });
   });
 
   describe('the environment of the program', () => {
@@ -146,6 +341,145 @@ describe('node deps: the terminal', () => {
       const result = await answer;
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.message).toBe('no answer was given');
+    });
+  });
+
+  describe('readStdin', () => {
+    const realStdin = process.stdin;
+    let input = new PassThrough();
+
+    const replaceStdin = (stream: Readable): void => {
+      Object.defineProperty(process, 'stdin', { value: stream, configurable: true });
+    };
+
+    beforeEach(() => {
+      input = new PassThrough();
+      replaceStdin(input);
+    });
+
+    afterEach(() => {
+      Object.defineProperty(process, 'stdin', { value: realStdin, configurable: true });
+    });
+
+    it('returns the whole text of the input when it ends', async () => {
+      const text = createNodeDeps().readStdin(1024);
+      input.write('{"a":');
+      input.end('"b"}');
+      expect(await text).toEqual({ ok: true, value: '{"a":"b"}' });
+    });
+
+    it('returns empty text for an input with no bytes', async () => {
+      const text = createNodeDeps().readStdin(1024);
+      input.end();
+      expect(await text).toEqual({ ok: true, value: '' });
+    });
+
+    it('accepts an input of exactly the limit (TP-8)', async () => {
+      const text = createNodeDeps().readStdin(5);
+      input.end('12345');
+      expect(await text).toEqual({ ok: true, value: '12345' });
+    });
+
+    it('returns an error for an input of one byte more than the limit (TP-8)', async () => {
+      const text = createNodeDeps().readStdin(5);
+      input.end('123456');
+      const result = await text;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toBe('cannot read stdin: larger than 5 bytes');
+    });
+
+    it('counts bytes and not characters', async () => {
+      const six = 'ééé';
+      const within = createNodeDeps().readStdin(6);
+      input.end(six);
+      expect(await within).toEqual({ ok: true, value: six });
+
+      input = new PassThrough();
+      replaceStdin(input);
+      const over = createNodeDeps().readStdin(5);
+      input.end(six);
+      expect((await over).ok).toBe(false);
+    });
+
+    it('stops at the limit when the input never ends', async () => {
+      const endless = new Readable({
+        highWaterMark: 1,
+        read() {
+          this.push('a');
+        },
+      });
+      replaceStdin(endless);
+      const result = await Promise.race([createNodeDeps().readStdin(100), wait(5000).then(() => 'still reading' as const)]);
+      endless.destroy();
+      expect(result).not.toBe('still reading');
+      if (result !== 'still reading') expect(result.ok).toBe(false);
+    });
+
+    describe('the time limit', () => {
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('returns an error when the input stays open and sends nothing', async () => {
+        const text = createNodeDeps().readStdin(1024);
+        await vi.advanceTimersByTimeAsync(hookNames.stdinTimeoutMs);
+        expect(await text).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot read stdin: ETIMEDOUT' } });
+        expect(input.destroyed).toBe(true);
+      });
+
+      it('returns an error when some bytes came and the input stays open', async () => {
+        const text = createNodeDeps().readStdin(1024);
+        input.write('{"a":');
+        await vi.advanceTimersByTimeAsync(hookNames.stdinTimeoutMs);
+        expect(await text).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot read stdin: ETIMEDOUT' } });
+      });
+
+      it('returns the text when the input ends before the limit, and leaves no timer', async () => {
+        const text = createNodeDeps().readStdin(1024);
+        input.end('abc');
+        await vi.advanceTimersByTimeAsync(hookNames.stdinTimeoutMs - 1);
+        expect(await text).toEqual({ ok: true, value: 'abc' });
+        expect(vi.getTimerCount()).toBe(0);
+      });
+
+      it('leaves no timer when the input is larger than the byte cap', async () => {
+        const text = createNodeDeps().readStdin(2);
+        input.end('abc');
+        expect((await text).ok).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      });
+    });
+
+    it('returns an error when the input fails', async () => {
+      const text = createNodeDeps().readStdin(1024);
+      input.destroy(Object.assign(new Error('read failed'), { code: 'EIO' }));
+      expect(await text).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot read stdin: EIO' } });
+    });
+
+    it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('returns an error for the limit %s', async (limit) => {
+      const result = await createNodeDeps().readStdin(limit);
+      expect(result.ok).toBe(false);
+    });
+
+    it('returns empty text at once when a person types at the input (TP-124)', async () => {
+      const terminal = Object.assign(new PassThrough(), { isTTY: true });
+      replaceStdin(terminal);
+      const result = await Promise.race([createNodeDeps().readStdin(1024), wait(2000).then(() => 'blocked' as const)]);
+      expect(result).toEqual({ ok: true, value: '' });
+      terminal.destroy();
+    });
+
+    it('leaves the text on a terminal unread', async () => {
+      const terminal = Object.assign(new PassThrough(), { isTTY: true });
+      replaceStdin(terminal);
+      terminal.write('typed text');
+      await createNodeDeps().readStdin(1024);
+      expect(terminal.read()?.toString()).toBe('typed text');
+      terminal.destroy();
     });
   });
 
@@ -512,6 +846,50 @@ describe('node deps: exclusive write', () => {
     const result = await deps.fs.writeTextExclusive(join(fresh('no-folder'), 'x.lock'), 'x', 0o600);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
+
+  describe('when the write fails after the file was created', () => {
+    const full = (): Error => Object.assign(new Error('no space left'), { code: 'ENOSPC' });
+    const exists = (path: string): Promise<boolean> =>
+      stat(path).then(
+        () => true,
+        () => false,
+      );
+
+    /** The class of the open files: a write to a full disk is a failure of the write method after the create succeeded. */
+    const handleClass = async (): Promise<FileHandle> => {
+      const probe = fresh('probe');
+      await writeFile(probe, '', 'utf8');
+      const handle = await open(probe);
+      await handle.close();
+      return Object.getPrototypeOf(handle) as FileHandle;
+    };
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('returns the error and removes the file that it created', async () => {
+      const file = fresh('exclusive-full.lock');
+      vi.spyOn(await handleClass(), 'writeFile').mockRejectedValueOnce(full());
+      expect(await deps.fs.writeTextExclusive(file, 'text', 0o600)).toEqual({
+        ok: false,
+        error: { kind: 'failure', message: `cannot write ${file}: ENOSPC` },
+      });
+      expect(await exists(file)).toBe(false);
+    });
+
+    it('leaves a file that another process put at the path in the meantime', async () => {
+      const file = fresh('exclusive-replaced.lock');
+      vi.spyOn(await handleClass(), 'writeFile').mockImplementationOnce(async () => {
+        await rm(file);
+        await writeFile(file, 'other process', 'utf8');
+        throw full();
+      });
+      const result = await deps.fs.writeTextExclusive(file, 'text', 0o600);
+      expect(result.ok).toBe(false);
+      expect(await readFile(file, 'utf8')).toBe('other process');
+    });
   });
 });
 

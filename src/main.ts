@@ -1,5 +1,6 @@
+import { ignoreBrokenPipe } from './cli/broken-pipe.js';
 import { renderInternalError } from './cli/output.js';
-import { runCli } from './cli/run.js';
+import { isHookRoute, runCli } from './cli/run.js';
 import { createNodeDeps } from './core/node-deps.js';
 
 const writer =
@@ -10,8 +11,12 @@ const writer =
     });
 
 const stderr = writer(process.stderr);
+const argv = process.argv.slice(2);
 
-const exitCode = await runCli(process.argv.slice(2), createNodeDeps(), {
+// The hook route exits 0 on every path, also when Claude Code closes a pipe before the route writes to it.
+if (isHookRoute(argv)) ignoreBrokenPipe([process.stdout, process.stderr]);
+
+const exitCode = await runCli(argv, createNodeDeps(), {
   stdout: writer(process.stdout),
   stderr,
   isTTY: process.stdout.isTTY,

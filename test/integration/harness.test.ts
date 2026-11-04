@@ -110,7 +110,7 @@ describe('the tmux isolation of the sandbox', () => {
     await mkdir(bin, { recursive: true });
     await writeFile(join(bin, 'tmux'), probeTmux(seen));
     await chmod(join(bin, 'tmux'), 0o755);
-    expect((await box.run(['init', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner'])).code).toBe(0);
+    expect((await box.run(['init', '--yes', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner'])).code).toBe(0);
 
     const dry = await box.run(['start', '--home', box.node, '--dry-run'], {
       env: { PATH: `${bin}:${box.env['PATH'] ?? ''}`, TMUX: '/somewhere/else,1,0' },
