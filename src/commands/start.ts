@@ -4,7 +4,7 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
+import { declinedHookText, ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
@@ -376,13 +376,6 @@ const startSession = async (deps: Deps, id: string, steps: readonly TmuxArgs[]):
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 
-/** The notice for a no to the hook settings: the effect, and the way to add them later. */
-const declinedHookText = (file: string): string =>
-  `The hook settings in ${file} stay as they are, so Claude Code does not call the hook. ` +
-  `${capitalize(program)} has no last-seen record of the ${roles.coordinator}, ` +
-  'and a restart or a reboot can not resume the session by its id. ' +
-  `To add the settings later, run "${commandText(commands.start)}" again and answer yes.`;
-
 /** The lines of a dry run about the hook settings: the change that a real run makes, or none when the entries are in place. */
 const hookLines = (hook: HookSettingsOutcome, yes: boolean): readonly OutLine[] =>
   hook.kind === 'would-write'
@@ -512,7 +505,7 @@ export const runStart = async (
     command: commands.start,
   });
   if (!hook.ok) return hook;
-  if (hook.value.kind === 'declined') deps.warn(declinedHookText(hook.value.file));
+  if (hook.value.kind === 'declined') deps.warn(declinedHookText(hook.value.file, commands.start));
 
   const exists = await sessionExists(deps, id);
   if (exists && !dryRun) {

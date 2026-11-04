@@ -4,9 +4,11 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import {
+  declinedHookText,
   ensureHookSettings,
   isOwnSettingsText,
   ownSettingsEntries,
+  requireHookConsent,
   type HookSettingsOutcome,
   type HookSettingsRequest,
 } from '../../src/core/claude-settings.js';
@@ -14,7 +16,7 @@ import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import { commands, hookNames, maxFileBytes, ownHookCommand } from '../../src/names.js';
-import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, withFsWatch, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 
 const FOLDER = '/h/factory/coordinator';
 const CLAUDE = `${FOLDER}/.claude`;
@@ -378,6 +380,104 @@ describe('hook settings: the dry run', () => {
     const broken = makeDeps();
     broken.seed(FILE, '[]');
     expect(errorOf(await ensureHookSettings(broken, request({ dryRun: true }))).kind).toBe('failure');
+  });
+});
+
+describe('hook settings: the check before the first write of a command (TP-16)', () => {
+  const asked = (overrides: Partial<HookSettingsRequest> = {}): Omit<HookSettingsRequest, 'dryRun'> => {
+    const { dryRun: _dryRun, ...rest } = request({ command: commands.init, ...overrides });
+    return rest;
+  };
+
+  /** A session folder that does not exist yet: the command makes it after the check. */
+  const newFolder = (overrides: FakeOptions = {}): FakeDeps =>
+    createFakeDeps({ env: { HOME: USER_HOME }, ...overrides });
+
+  it('with no terminal and no yes flag: exit 2 with the change, the target and the command, and nothing written', async () => {
+    const deps = newFolder();
+    const before = snapshot(deps);
+    const error = errorOf(await requireHookConsent(deps, asked()));
+    expect(error.kind).toBe('usage');
+    expect(error.message).toContain(FILE);
+    for (const event of hookNames.events) expect(error.message).toContain(`factory hook ${event}`);
+    expect(error.message).toContain('factory hook statusline');
+    expect(error.hint).toContain('factory init');
+    expect(error.hint).toContain('--yes');
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it('shows the same change as the question of a real run', async () => {
+    const real = makeDeps({ tty: true, answer: 'n' });
+    await ensureHookSettings(real, request());
+    const error = errorOf(await requireHookConsent(makeDeps(), asked()));
+    expect(real.prompts[0]?.startsWith(error.message)).toBe(true);
+  });
+
+  it('with only the input on a terminal: it is no terminal, so exit 2', async () => {
+    const deps = newFolder({ stdinIsTTY: true, stdoutIsTTY: false });
+    expect(errorOf(await requireHookConsent(deps, asked())).kind).toBe('usage');
+  });
+
+  it('with the yes flag outside a factory session: goes on, and asks and writes nothing', async () => {
+    const log: string[] = [];
+    const deps = makeDeps({ log });
+    expect(await requireHookConsent(logged(deps, log), asked({ yes: true }))).toEqual(ok(undefined));
+    expect(log).toEqual([]);
+    expect(deps.prompts).toEqual([]);
+    expect(deps.files.size).toBe(0);
+  });
+
+  it('with the yes flag inside a factory session, for the coordinator, and no terminal: exit 2', async () => {
+    const deps = newFolder({ env: { HOME: USER_HOME, FACTORY_SESSION: 'node-1' } });
+    const error = errorOf(await requireHookConsent(deps, asked({ yes: true })));
+    expect(error.kind).toBe('usage');
+    expect(error.hint).toContain('--yes');
+  });
+
+  it('on a terminal: goes on without a question, because the question comes after the writes', async () => {
+    const deps = newFolder({ stdinIsTTY: true, stdoutIsTTY: true, prompt: () => ok('n') });
+    expect(await requireHookConsent(deps, asked())).toEqual(ok(undefined));
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it('with the entries in place: goes on with no terminal and no yes flag', async () => {
+    const deps = makeDeps();
+    deps.seed(FILE, JSON.stringify(EXPECTED_ENTRIES));
+    expect(await requireHookConsent(deps, asked())).toEqual(ok(undefined));
+  });
+
+  it('with a file that lacks some entries: names only the missing entries in the stop', async () => {
+    const deps = makeDeps();
+    const { hooks, statusLine } = EXPECTED_ENTRIES;
+    deps.seed(FILE, JSON.stringify({ hooks: { SessionStart: hooks.SessionStart }, statusLine }));
+    const error = errorOf(await requireHookConsent(deps, asked()));
+    expect(error.message).toContain('factory hook Stop');
+    expect(error.message).not.toContain('factory hook SessionStart');
+  });
+
+  it('stops before the first write on a link, also on a terminal (exit 4)', async () => {
+    const linked = createFakeDeps({ links: { [CLAUDE]: '/outside' }, env: { HOME: USER_HOME }, stdinIsTTY: true, stdoutIsTTY: true });
+    linked.seedDir(FOLDER);
+    expect(errorOf(await requireHookConsent(linked, asked())).kind).toBe('safety');
+  });
+
+  it('stops before the first write on a file that is not a JSON object, also with the yes flag (exit 1)', async () => {
+    const deps = makeDeps();
+    deps.seed(FILE, '[]');
+    expect(errorOf(await requireHookConsent(deps, asked({ yes: true }))).kind).toBe('failure');
+    expect(deps.files.get(FILE)).toBe('[]');
+  });
+});
+
+describe('the notice for a no to the hook settings', () => {
+  it('names the file, the effect, and the command that asked', () => {
+    for (const command of [commands.start, commands.init]) {
+      const text = declinedHookText(FILE, command);
+      expect(text).toContain(FILE);
+      expect(text).toContain('does not call the hook');
+      expect(text).toContain(`run "factory ${command}" again and answer yes`);
+    }
   });
 });
 
