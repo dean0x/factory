@@ -420,7 +420,7 @@ export const runUpgrade = async (
       : [{ path: layout.localConfigFile, text: localText.value, mode: localFileModes.private }]),
     ...(configText.value === null ? [] : [{ path: layout.configFile, text: configText.value }]),
   ];
-  const wrote = await writeAll(deps, home, newFiles, written);
+  const wrote = await writeAll(deps, home, newFiles, written, commands.upgrade);
   if (!wrote.ok) return abort(wrote.error.message);
 
   // The root repo comes after the files that its first commit holds, and before the commit of the state repo.

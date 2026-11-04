@@ -48,7 +48,7 @@ export const writeBlockPlans = async (
   }
 
   const written: Written[] = [];
-  const wrote = await writeAll(deps, home, texts.value, written);
+  const wrote = await writeAll(deps, home, texts.value, written, command);
   const paths: RepoPaths = { present: inStateRepo(layout, written.map((entry) => entry.path)), gone: [] };
   const committed = wrote.ok && paths.present.length > 0 ? await commitPaths(deps, layout.stateDir, paths, COMMIT_MESSAGE) : wrote;
   if (committed.ok) return ok(written.length > 0);

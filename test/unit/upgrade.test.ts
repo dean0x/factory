@@ -9,14 +9,14 @@ import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
-import { env, setupBlockNames } from '../../src/names.js';
+import { commands, env, setupBlockNames } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
 import { jsonText, SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
 import { parseJsonText } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
-import { backup } from '../../src/upgrade/apply.js';
+import { backup, restore, writeAll, type Written } from '../../src/upgrade/apply.js';
 import { finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
 import { currentSpec, parseConfigTexts, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { fileTemplates } from '../../src/templates/index.js';
@@ -1985,6 +1985,19 @@ describe('upgrade: a node of schema 1', () => {
       expect(deps.prompts).toEqual([]);
     });
 
+    it('exits 4 inside a factory session that has a terminal window, also with a yes answer, and asks nothing (TP-89)', async () => {
+      const { deps } = makeOldNode();
+      const before = snapshot(deps);
+      const inSession = { ...deps, env: { ...deps.env, FACTORY_SESSION: 'demo' } };
+      for (const options of [{ yes: true }, { yes: false }, { yes: true, dryRun: true }]) {
+        const error = refusal(await upgradeAsOwner(inSession, { ...options, answer: 'y' }));
+        expect(error.kind).toBe('safety');
+        expect(error.hint).toContain('outside a factory session');
+      }
+      expect(snapshot(deps)).toEqual(before);
+      expect(deps.prompts).toEqual([]);
+    });
+
     it('runs with the yes flag and the home flag, and registers the folder (TP-89)', async () => {
       const { deps } = makeOldNode();
       const output = success(await upgradeAsOwner(deps, { yes: true }));
@@ -2488,6 +2501,80 @@ describe('upgrade: the backup on a real disk', () => {
     if (!result.ok) expect(result.error.message).toContain('ENOTSUP');
     expect(await readdir(join(home, '.factory', 'backups'))).toEqual([OLDER]);
     expect(await readFile(join(home, '.factory', 'backups', OLDER, 'factory.yaml'), 'utf8')).toBe('old backup');
+  });
+});
+
+describe('upgrade: a write path that is not a plain file, on a real disk', () => {
+  const real = createNodeDeps();
+  let root = '';
+  let counter = 0;
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), 'factory-upgrade-write-'));
+  });
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  /** What stands at the path of the write, and what the test checks about it after the run. */
+  const shapes: ReadonlyArray<readonly [string, (path: string, base: string) => Promise<void>, (path: string, base: string) => Promise<void>]> = [
+    [
+      'a folder',
+      async (path) => {
+        await mkdir(path);
+        await writeFile(join(path, 'keep.txt'), 'kept', 'utf8');
+      },
+      async (path) => expect(await readFile(join(path, 'keep.txt'), 'utf8')).toBe('kept'),
+    ],
+    [
+      'a link to a folder',
+      async (path, base) => {
+        await mkdir(join(base, 'elsewhere'));
+        await writeFile(join(base, 'elsewhere', 'keep.txt'), 'kept', 'utf8');
+        await symlink(join(base, 'elsewhere'), path);
+      },
+      async (path, base) => {
+        expect((await lstat(path)).isSymbolicLink()).toBe(true);
+        expect(await readFile(join(base, 'elsewhere', 'keep.txt'), 'utf8')).toBe('kept');
+      },
+    ],
+    [
+      'a link to nothing',
+      async (path, base) => symlink(join(base, 'missing'), path),
+      async (path) => expect((await lstat(path)).isSymbolicLink()).toBe(true),
+    ],
+  ];
+
+  it.each(shapes)('stops at %s, records no change for it, and leaves it as it is after the files are put back', async (_name, make, check) => {
+    const base = join(root, `case-${(counter += 1)}`);
+    const home = join(base, 'home');
+    await mkdir(home, { recursive: true });
+    const made = join(home, 'made.md');
+    const path = join(home, 'new.md');
+    await make(path, base);
+
+    const written: Written[] = [];
+    const result = await writeAll(
+      real,
+      home,
+      [
+        { path: made, text: 'made by the run\n' },
+        { path, text: 'new text\n' },
+      ],
+      written,
+      commands.upgrade,
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('new.md is not a plain file');
+      expect(result.error.message).toContain('factory upgrade');
+    }
+    expect(written.map((entry) => entry.path)).toEqual([made]);
+    expect(await restore(real, home, written)).toEqual([]);
+    await expect(lstat(made)).rejects.toThrow();
+    await check(path, base);
   });
 });
 

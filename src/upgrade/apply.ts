@@ -8,7 +8,7 @@ import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
 import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
-import { commands, commandText, dirs, files, localFileModes, program, rootRepo, stateKeys } from '../names.js';
+import { commands, commandText, dirs, files, localFileModes, program, rootRepo, stateKeys, type CommandName } from '../names.js';
 import { sharedRootPaths } from '../state/files.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import type { BlockPlan, FilePlan, LocalPlan, MovePlan } from './plan.js';
@@ -269,18 +269,31 @@ export interface NewFile {
   readonly mode?: number;
 }
 
-/** Write the files whose text changes. Each file is inside the node home `home`. Each old text goes to `written` first. */
+/**
+ * Write the files whose text changes. Each file is inside the node home `home`. Each old text goes to `written` first.
+ * A path that holds a folder or a link is a stop before the write, because `restore` removes a path that the run made.
+ * `command` is the command that the person runs again after the stop.
+ */
 export const writeAll = async (
   deps: Deps,
   home: string,
   newFiles: readonly NewFile[],
   written: Written[],
+  command: CommandName,
 ): Promise<CliResult<void>> => {
   for (const file of newFiles) {
     const previous = await readIfFile(deps, file.path);
     if (!previous.ok) return previous;
     if (previous.value === file.text) continue;
     if (previous.value === null) {
+      const entry = await deps.fs.lstat(file.path);
+      if (!entry.ok) return entry;
+      if (entry.value !== null) {
+        return failure(
+          `${relative(home, file.path)} is not a plain file, so ${program} does not write it. ` +
+            `Move it away, then run "${commandText(command)}" again`,
+        );
+      }
       const folder = await deps.fs.mkdir(dirname(file.path));
       if (!folder.ok) return folder;
     }

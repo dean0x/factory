@@ -10,7 +10,7 @@ import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { isSameOrInside, realPathOf } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
-import { commands, commandText, files, flags, flagText, nodeCommands, places, program, roles, schemaIds } from '../names.js';
+import { commands, commandText, files, flags, flagText, maxFileBytes, nodeCommands, places, program, roles, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 
@@ -52,9 +52,9 @@ const openNode = async (
   const notes = await settleLocalMode(deps, home, true);
   if (!notes.ok) return notes;
   const layout = layoutOf(home);
-  const sharedText = await deps.fs.readText(layout.configFile);
+  const sharedText = await deps.fs.readTextLimited(layout.configFile, maxFileBytes);
   if (!sharedText.ok) return sharedText;
-  const localText = await deps.fs.readText(layout.localConfigFile);
+  const localText = await deps.fs.readTextLimited(layout.localConfigFile, maxFileBytes);
   if (!localText.ok) return localText;
   return ok({
     home,

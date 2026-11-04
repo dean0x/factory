@@ -411,8 +411,28 @@ describe('node: the local file', () => {
 
   it('keeps the mode 600 of the local file after a change of the children', async () => {
     const deps = make({ homes: webHome });
+    deps.modes.set(LOCAL_PATH, 0o600);
     await succeeded(deps, 'add-child', '/w/web-factory');
-    expect(deps.modes.get(LOCAL_PATH) ?? 0o600).toBe(0o600);
+    expect(deps.modes.get(LOCAL_PATH)).toBe(0o600);
+  });
+
+  it('reads the two config files with the byte cap only, also when it changes them', async () => {
+    for (const words of [['children'], ['add-child', '/w/web-factory'], ['remove-child', 'web']]) {
+      const deps = make({ homes: webHome, children: [{ id: 'web', address: 'file:///w/web-factory' }] });
+      const unbounded: string[] = [];
+      const watched: FakeDeps = {
+        ...deps,
+        fs: {
+          ...deps.fs,
+          readText: async (path: string) => (unbounded.push(path), deps.fs.readText(path)),
+        },
+      };
+      await node(watched, ...words);
+      expect({ words, unbounded: unbounded.filter((path) => path === CONFIG_PATH || path === LOCAL_PATH) }).toEqual({
+        words,
+        unbounded: [],
+      });
+    }
   });
 
   it('never changes the shared file', async () => {
