@@ -26,6 +26,8 @@ You need:
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
+| `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
+| `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker. See "Resume a worker". |
 | `factory doctor` | Run 25 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
@@ -240,6 +242,30 @@ factory worker list --json
 | `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. |
 
 A folder of `.factory/workers/` with no valid record is named in a warning, and the other workers are listed. If one pane has a worker mark that is not a worker id, the list skips that pane. If two panes carry the mark of one worker, the list shows the first live pane and warns with both ids. A tmux session of the same name that belongs to another factory folder stops the command with exit code 4. A last-seen line is a hint: the list never takes it as proof of which session wrote it.
+
+### Stop a worker
+
+```sh
+factory worker stop alpha
+```
+
+`worker stop` ends the program of the pane of one worker and closes the pane. The id must have a record, else the command exits with code 2. It sends `kill -TERM` to the process of the pane, for an idle session and for a busy session. It never sends `KILL`. It waits up to 30 seconds for the process to end. If the process is still there, the command exits with code 1 and names the process id.
+
+The command exits with code 3 only when it does not know the state of the session: the worker has no valid last-seen line, the line holds no event, or the line does not belong to the worker. The message names the pane and the process id, and the remedy names the signal that you can send by hand. The command sends nothing in that case.
+
+These cases exit with code 2 and send nothing: two live panes carry the mark of the worker, and the pane of the worker is the pane that runs the command. A worker with no pane gives exit code 0, and nothing changes. A pane whose program has ended is closed with no signal. Before it sends the signal, the command reads the pane again by its id. If the pane id or the mark of the worker differs, it exits with code 4 and sends nothing. A program in a pane can set the mark to any text, so the command never trusts the first list alone.
+
+The tests of the table in `docs/session-stop.md` used background shell tasks only. A cron or a background subagent in a busy session can be lost without a record.
+
+### Resume a worker
+
+```sh
+factory worker resume alpha
+```
+
+`worker resume` starts a stopped worker again, in a new pane of the window `workers`, in its work copy. It runs the same checks as `worker new`: the tools, the safety block, the stops for the settings files (exit code 4, and nothing changes), and the tmux session of the node (exit code 3, and the message names `factory start`). The id must have a record, else the command exits with code 2. It exits with code 2 when a live pane of the worker exists: the worker runs already. A pane of the worker whose program has ended is removed first.
+
+The new program continues the earlier conversation of the worker, with `--resume`, only when the last-seen line belongs to the worker. A program in a pane can write the pointer to its own last session, so the command checks three facts: the session id is a UUID, the line records the id of this worker as its session marker, and no other worker has a pointer to the same session. The session of the coordinator and the session of another worker never pass. If a check fails, or the worker has no valid line, the command starts a new conversation and prints one warning. The warning says that the earlier conversation is NOT resumed, why, and that a new conversation starts.
 
 ### Child nodes
 

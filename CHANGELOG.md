@@ -123,6 +123,8 @@ Roles, layers and nodes
 - New commands `factory node children`, `factory node add-child PATH` and `factory node remove-child ID`. A child must be one layer lower, and its id must differ from the id of this node. `add-child` refuses on layer 1, because the children of a coordinator are workers. The commands keep the comments and the key order of `factory.yaml`.
 - New command `factory worker new ID --project PROJECT [--yes]`. It makes a work copy of the project on the new branch `worker/ID`, writes the record of the worker, hides the hook settings of the work copy from git, and starts the worker in a pane of the window `workers`.
 - New command `factory worker list`. It shows each worker with its pane, its state from the last hook event, its context percent and the mark `PREPARE` or `MAX`, and it changes nothing. The hook of a worker now also writes `.factory/workers/ID/last-session`, so the last-seen line is found from the id of the worker.
+- New command `factory worker stop ID`. It sends `kill -TERM` to the process of the pane of the worker, waits for its end, and closes the pane. It never sends `KILL`, and it exits with code 3 only when the state of the session is not known. A last-seen line now also records a session marker (`session_marker`), the id of the node or of the worker that wrote it.
+- New command `factory worker resume ID`. It starts a stopped worker again in a new pane, with the same checks as `worker new`. It continues the earlier conversation only when the last-seen line belongs to the worker. Else it starts a new conversation and warns that the earlier one is not resumed.
 
 Platforms and help
 

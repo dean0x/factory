@@ -54,6 +54,8 @@ Idle means that no tool, no agent and no prompt is in flight. Busy means that a 
 | `agent view delete` | idle | no | open | open | open | not safe | V3 |
 | `agent view delete` | busy | no | open | open | open | not safe | I2 |
 
+Fact 4 in the table was tested with background shell tasks only. No run used a cron or a background subagent. So a `yes` for fact 4 in a busy row says that a background shell task is recorded, and it says nothing about a cron or a background subagent. The stop code cannot see a cron or a background subagent either: it knows only the last hook event of the session. See "Not tested".
+
 ## The safe way for each case
 
 - Idle: `kill -TERM`. `/exit` is also safe.
