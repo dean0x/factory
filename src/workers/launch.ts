@@ -17,7 +17,7 @@ import {
   splitWorkerPaneArgs,
 } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
-import { commands, commandText, dirs, env, keys, program, roles, tmuxNames, values } from '../names.js';
+import { commands, commandText, dirs, env, keys, roles, tmuxNames, values } from '../names.js';
 import { checkProxyHealth, type ProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
 
@@ -42,7 +42,7 @@ export interface ProxyWish {
   readonly id: string;
   /** The config key that holds the id, as a person reads it. */
   readonly setting: string;
-  /** The command line that a person runs again after the fix. */
+  /** The command that a person runs again after the fix, without the program name: for example `start`. */
   readonly retry: string;
 }
 
@@ -55,7 +55,7 @@ export type ProxyAnswers = Map<string, ProxyHealth>;
 export const newProxyAnswers = (): ProxyAnswers => new Map();
 
 /** The proxy of the session: `session.proxy` of the config. */
-export const sessionProxyWish = (config: FactoryConfig, retry: string = commandText(commands.start)): ProxyWish => ({
+export const sessionProxyWish = (config: FactoryConfig, retry: string = commands.start): ProxyWish => ({
   id: config.core.session.proxy,
   setting: `${keys.root.session}.${keys.session.proxy}`,
   retry,
@@ -96,7 +96,7 @@ export const chooseProxy = async (
   }
   return failure(
     `${health.label} does not answer`,
-    `Start the proxy, or set ${wish.setting} to ${values.noProxy} for the session. Then run "${wish.retry}" again.`,
+    `Start the proxy, or set ${wish.setting} to ${values.noProxy} for the session. Then run "${commandText(wish.retry)}" again.`,
   );
 };
 
@@ -110,7 +110,7 @@ export interface WorkerLaunchRequest {
   readonly workCopy: string;
   /** The id of the earlier session to resume: a UUID. Absent for a new worker. */
   readonly resumeId?: string;
-  /** The command line that a person runs again after a fix, for example `factory worker new`. */
+  /** The command that a person runs again after a fix of the proxy, without the program name: for example `worker new`. */
   readonly retry: string;
   /** The answers of the run, for the proxy check. Absent: this launch asks its proxy by itself. */
   readonly proxyAnswers?: ProxyAnswers;
@@ -129,8 +129,12 @@ export interface WorkerLaunch {
 const WORK_COPY_PLACE = 'a work copy';
 
 /** The command that starts a stopped worker again, and the command that ends it. */
-const resumeCommand = (workerId: string): string => `${program} ${roles.worker} resume ${workerId}`;
-const dismissCommand = (workerId: string): string => `${program} dismiss ${workerId}`;
+const resumeCommand = (workerId: string): string => commandText(`${roles.worker} resume ${workerId}`);
+const dismissCommand = (workerId: string): string => commandText(`dismiss ${workerId}`);
+
+/** The two ways out of a failed launch, for the end of a remedy line: start the worker again, or end it. */
+const tryAgainOrEnd = (workerId: string): string =>
+  `"${resumeCommand(workerId)}" to try again, or "${dismissCommand(workerId)}" to end the ${roles.worker}`;
 
 /**
  * The work copy must be an absolute path and a folder. tmux starts a pane in another folder when the folder of `-c` is
@@ -206,10 +210,10 @@ const markPane = async (deps: Deps, pane: string, workerId: string): Promise<Cli
   const close = killPaneArgs(pane);
   const closed = close.ok && (await tmuxStep(deps, close.value)).ok;
   return closed
-    ? failure(`${set.error.message}, so the pane ${pane} was closed`)
+    ? failure(`${set.error.message}, so the pane ${pane} was closed`, `Run ${tryAgainOrEnd(workerId)}.`)
     : failure(
         `${set.error.message}, and the pane ${pane} stays open with no ${roles.worker} mark`,
-        `Close it with "${toolNames.tmux} kill-pane -t ${pane}".`,
+        `Close the pane with "${toolNames.tmux} kill-pane -t ${pane}". Then run ${tryAgainOrEnd(workerId)}.`,
       );
 };
 
@@ -218,7 +222,7 @@ const markPane = async (deps: Deps, pane: string, workerId: string): Promise<Cli
  * launch. A pane with a strange worker mark does not stop this check. Nothing is undone: the pane stays for a person to read.
  */
 const requireRunningPane = async (deps: Deps, session: string, pane: string, workerId: string): Promise<CliResult<void>> => {
-  const remedy = `Run "${resumeCommand(workerId)}" to try again, or "${dismissCommand(workerId)}" to end the ${roles.worker}.`;
+  const remedy = `Run ${tryAgainOrEnd(workerId)}.`;
   const listed = await tmuxStep(deps, paneListArgs(session));
   if (!listed.ok) return failure(`cannot check the pane ${pane}: ${listed.error.message}`, remedy);
   const rows = parsePaneListSoft(listed.value);

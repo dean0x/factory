@@ -91,7 +91,7 @@ const request = (change: Partial<WorkerLaunchRequest> = {}): WorkerLaunchRequest
   config: configWith(),
   workerId: 'alpha',
   workCopy: COPY,
-  retry: 'factory worker new',
+  retry: 'worker new',
   ...change,
 });
 
@@ -307,7 +307,7 @@ describe('the launch of a worker: the proxy (TP-61)', () => {
     const made = make({ fetch: silent });
     const error = await failed(made, {
       config: configWith({ workers: { alpha: { proxy: 'other' } } }),
-      retry: 'factory worker resume alpha',
+      retry: 'worker resume alpha',
     });
     expect(error.hint).toBe(
       'Start the proxy, or set workers.alpha.proxy to none for the session. Then run "factory worker resume alpha" again.',
