@@ -422,6 +422,20 @@ const isAlive = (pid: number): boolean => {
   }
 };
 
+/**
+ * The time limit of a case that stops a worker. The case makes a worker (about five seconds), and `worker stop` waits for the end of the
+ * process for up to 30 seconds (`stopPoll`). `worker resume` waits for the new session for up to 10 seconds (`launchConfirm`). So the
+ * limit of the suite (30 seconds) can not cover the bounded waits of one case.
+ */
+const STOP_CASE_MS = 120_000;
+
+/** Stops the worker alpha, and requires exit 0. The message holds the text of stderr, so a failure shows its cause. */
+const stoppedAlpha = async (): Promise<RunResult> => {
+  const stopped = await stop('alpha');
+  expect(stopped.code, stopped.stderr).toBe(0);
+  return stopped;
+};
+
 describe.skipIf(!hasTmux)('factory worker stop and factory worker resume (built binary, separate tmux server)', () => {
   it('ends the program of the pane of the worker, closes the pane, and leaves no process of that pane (TP-26)', async () => {
     await startedWorker();
@@ -431,19 +445,18 @@ describe.skipIf(!hasTmux)('factory worker stop and factory worker resume (built 
     expect(pid).toBeGreaterThan(1);
     expect(isAlive(pid)).toBe(true);
 
-    const stopped = await stop('alpha');
-    expect(stopped.code, stopped.stderr).toBe(0);
+    const stopped = await stoppedAlpha();
     expect(stopped.stdout).toContain('Stopped the worker alpha.');
     expect(stopped.stdout).toContain(`The process ${pid} of the pane ${pane} ended after kill -TERM. The session was idle.`);
     expect((await workerPanes()).filter((line) => line.endsWith(' alpha'))).toEqual([]);
     for (let step = 0; step < STOP_STEPS && isAlive(pid); step += 1) await sleep(POLL_STEP_MS);
     expect(isAlive(pid)).toBe(false);
-  });
+  }, STOP_CASE_MS);
 
   it('resumes a stopped worker with the session of its pointer, and says Resumed after the hook of the new session wrote its line', async () => {
     await startedWorker();
     expect((await sessionStarted()).code).toBe(0);
-    expect((await stop('alpha')).code).toBe(0);
+    await stoppedAlpha();
 
     const resumed = await resume('alpha');
     expect(resumed.code, resumed.stderr).toBe(0);
@@ -453,16 +466,16 @@ describe.skipIf(!hasTmux)('factory worker stop and factory worker resume (built 
     const line = JSON.parse(await readFile(join(box.node, '.factory', 'state', 'heartbeat', SESSION), 'utf8')) as Record<string, unknown>;
     expect(line).toMatchObject({ event: 'SessionStart', session_marker: 'alpha' });
     expect(await livePanes('alpha')).toHaveLength(1);
-  });
+  }, STOP_CASE_MS);
 
   it('exits 1 for a session that can not be loaded, names the pointer file, and the delete of that file starts a new conversation', async () => {
     await startedWorker();
     expect((await sessionStarted()).code).toBe(0);
-    expect((await stop('alpha')).code).toBe(0);
+    await stoppedAlpha();
     await writeFile(join(outDir, 'no-transcript'), '');
 
     const failed = await resume('alpha');
-    expect(failed.code).toBe(1);
+    expect(failed.code, failed.stderr).toBe(1);
     expect(failed.stdout).not.toContain('Resumed');
     expect(failed.stderr).toContain('resume failed');
     const pointer = join(box.node, '.factory', 'workers', 'alpha', 'last-session');
@@ -474,5 +487,5 @@ describe.skipIf(!hasTmux)('factory worker stop and factory worker resume (built 
     expect(again.code, again.stderr).toBe(0);
     expect(again.stdout).toContain('Started the worker alpha again');
     expect(await livePanes('alpha')).toHaveLength(1);
-  });
+  }, STOP_CASE_MS);
 });
