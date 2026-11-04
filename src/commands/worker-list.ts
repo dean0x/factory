@@ -1,15 +1,15 @@
-import { failure, type CliResult } from '../cli/errors.js';
+import type { CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
-import { paneListArgs, parsePaneListSoft, type PaneRow } from '../launch/tmux.js';
-import { requireOwnSession, sessionExists, tmuxStep } from '../launch/tmux-run.js';
+import type { PaneRow } from '../launch/tmux.js';
 import { commands, hookNames, keys, lastSeen, roles, schemaIds, workerListWords } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { promptStateOf, readWorkerLastSeen } from '../workers/last-seen.js';
 import type { MachineLimits } from '../workers/machine.js';
+import { readPanes } from '../workers/panes.js';
 import { listWorkerRecords, type WorkerRecord } from '../workers/registry.js';
 
 export interface WorkerListOptions {
@@ -32,21 +32,6 @@ interface WorkerEntry {
 }
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
-
-/**
- * The panes of the tmux session of the node, from one list call, or null when no session of this factory runs. A session
- * of the same name that belongs to another factory folder is a stop (exit 4), as for `worker new`. A pane with a bad worker
- * mark is a pane with no worker, and the list stays whole.
- */
-const readPanes = async (deps: Deps, id: string, home: string): Promise<CliResult<readonly PaneRow[] | null>> => {
-  if (!(await sessionExists(deps, id))) return ok(null);
-  const own = await requireOwnSession(deps, id, home);
-  if (!own.ok) return own;
-  const listed = await tmuxStep(deps, paneListArgs(id));
-  if (!listed.ok) return listed;
-  const rows = parsePaneListSoft(listed.value);
-  return rows.ok ? ok(rows.value) : failure(`cannot read the list of panes: ${rows.error}`);
-};
 
 /** The mark of a context percent: the max mark above the max limit, the prepare mark from the prepare limit up to it. */
 const markOf = (percent: number | null, limits: MachineLimits): Mark | null => {

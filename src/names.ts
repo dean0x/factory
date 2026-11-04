@@ -81,12 +81,14 @@ export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as cons
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
 /** The subcommands of `worker`. */
-export const workerCommands = { new: 'new', list: 'list' } as const;
+export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume' } as const;
 
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
   workerNew: `${commands.worker} ${workerCommands.new}`,
   workerList: `${commands.worker} ${workerCommands.list}`,
+  workerStop: `${commands.worker} ${workerCommands.stop}`,
+  workerResume: `${commands.worker} ${workerCommands.resume}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -295,6 +297,8 @@ export const env = {
   session: 'FACTORY_SESSION',
   /** The inbox folder of a worker. Only the launch of a worker sets it. */
   inbox: 'FACTORY_INBOX',
+  /** The id of the tmux pane that a process runs in. tmux sets it for each program that it starts in a pane. */
+  tmuxPane: 'TMUX_PANE',
   /** The folder of the per-user state. The home index lives below it. */
   stateHome: 'XDG_STATE_HOME',
   userHome: 'HOME',
@@ -622,6 +626,31 @@ export const eventState = {
   PreCompact: 'busy',
 } as const satisfies Readonly<Record<HookEvent, 'prompt' | 'busy'>>;
 
+/**
+ * The ways that the stop code uses to end a session. Each is a way of the table of docs/session-stop.md that has the verdict
+ * `safe`. `check-session-stop` and a test read the table, so a change of the table or of these names that makes them differ
+ * fails a test.
+ */
+export const stopWay = { term: 'kill -TERM' } as const;
+
+export type StopWay = (typeof stopWay)[keyof typeof stopWay];
+
+/** The two cases of the table of ways to stop a session: the session waits at the prompt, or it works. */
+export type StopCase = 'idle' | 'busy';
+
+/** The safe way for each case. A case with no safe way has null and uses `stopFallback`. */
+export const stopWays: Readonly<Record<StopCase, StopWay | null>> = { idle: stopWay.term, busy: stopWay.term };
+
+/** The way for a case that has no safe way: the prompt fallback of the table. */
+export const stopFallback: StopWay = stopWay.term;
+
+/**
+ * The wait for the end of a process after TERM: the stop checks `attempts` times, and waits `intervalMs` before each check. So
+ * the wait is at most `attempts` times `intervalMs`. A session of the program ended 4 to 6 seconds after TERM in every run of
+ * docs/session-stop.md. The stop never sends KILL: a process that does not end in the wait is a failure that names the pid.
+ */
+export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
+
 /** The words of `worker list`: the titles of the columns, the pane column, the state of a worker and the mark of its context. */
 export const workerListWords = {
   columns: { id: 'ID', project: 'PROJECT', pane: 'PANE', state: 'STATE', context: 'CONTEXT', mark: 'MARK' },
@@ -662,7 +691,7 @@ export const lastSeen = {
     contextPct: 'context_pct',
     pctAt: 'pct_at',
     /** The id that the session marker held when the line was made: the id of the node, or the id of a worker. */
-    owner: 'owner',
+    sessionMarker: 'session_marker',
   },
   /** The id of a session: a UUID with lower case letters. */
   sessionIdPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
@@ -863,6 +892,8 @@ export const schemaIds = {
   machine: `${program}.machine/v1`,
   workerNew: `${program}.worker-new/v1`,
   workerList: `${program}.worker-list/v1`,
+  workerStop: `${program}.worker-stop/v1`,
+  workerResume: `${program}.worker-resume/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
   version: `${program}.version/v1`,

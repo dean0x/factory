@@ -18,10 +18,10 @@ import { listWorkerRecords, readWorkerFile } from './registry.js';
  * file, a pointer in its own folder that holds the id of its newest session, so the line of a worker is found from the id
  * of the worker. This module is the only writer and the only reader of both files.
  *
- * The line also records its owner: the id that the session marker held when the line was made, which is the id of the node
- * for a coordinator session and the id of a worker for a worker session. A program in a worker pane can write the pointer of
- * its own worker, so a command that acts on a session of a worker (stop, resume) reads the line with `readOwnLastSeen`,
- * which accepts a session only when its line names this worker as the owner.
+ * The line also records the session marker: the id that the session marker held when the line was made, which is the id of the
+ * node for a coordinator session and the id of a worker for a worker session. A program in a worker pane can write the pointer
+ * of its own worker, so a command that acts on a session of a worker (stop, resume) reads the line with `readOwnLastSeen`,
+ * which accepts a session only when the line carries the id of this worker as its session marker.
  */
 
 const keys = lastSeen.keys;
@@ -36,7 +36,7 @@ const lastSeenSchema = z
     [keys.eventAt]: time.nullable(),
     [keys.contextPct]: z.number().min(lastSeen.minPercent).max(lastSeen.maxPercent).nullable(),
     [keys.pctAt]: time.nullable(),
-    [keys.owner]: slug.optional(),
+    [keys.sessionMarker]: slug.optional(),
   })
   .superRefine((line, ctx) => {
     if ((line[keys.event] === null) !== (line[keys.eventAt] === null)) {
@@ -119,7 +119,7 @@ const lineWith = (
   eventAt: string | null,
   percent: number | null,
   percentAt: string | null,
-  owner: string | undefined,
+  marker: string | undefined,
 ): LastSeen => ({
   [keys.schema]: schemaIds.lastSeen,
   [keys.sessionId]: sessionId,
@@ -127,13 +127,13 @@ const lineWith = (
   [keys.eventAt]: eventAt,
   [keys.contextPct]: percent,
   [keys.pctAt]: percentAt,
-  ...(owner === undefined ? {} : { [keys.owner]: owner }),
+  ...(marker === undefined ? {} : { [keys.sessionMarker]: marker }),
 });
 
 /**
  * The line after a change: the part that the change does not set is the stored part, or empty when there is none. A stored
- * line keeps its owner, or keeps having none: a write never gives an owner to a line that has none. A line that is new, or
- * that replaces a text that is not valid, gets the owner of the writer.
+ * line keeps its session marker, or keeps having none: a write never gives a marker to a line that has none. A line that is
+ * new, or that replaces a text that is not valid, gets the marker of the writer.
  */
 const changedLine = (
   stored: LastSeen | null,
@@ -142,16 +142,16 @@ const changedLine = (
   at: string,
   writer: string | undefined,
 ): LastSeen => {
-  const owner = stored === null ? writer : stored[keys.owner];
+  const marker = stored === null ? writer : stored[keys.sessionMarker];
   return change.kind === 'event'
-    ? lineWith(sessionId, change.event, at, stored?.[keys.contextPct] ?? null, stored?.[keys.pctAt] ?? null, owner)
+    ? lineWith(sessionId, change.event, at, stored?.[keys.contextPct] ?? null, stored?.[keys.pctAt] ?? null, marker)
     : lineWith(
         sessionId,
         stored?.[keys.event] ?? null,
         stored?.[keys.eventAt] ?? null,
         change.percent,
         change.percent === null ? null : at,
-        owner,
+        marker,
       );
 };
 
@@ -179,18 +179,19 @@ const nextLine = (
  * is a failure (exit 1): that update is skipped, and the next event or refresh sets it again. A lock path that is a link is a
  * security stop (exit 4). The value is the line.
  *
- * `owner` is the id of the session marker of the writer (a slug). A new line records it. A stored line that names another owner
- * is never changed: the write is a failure, so a session of one owner can not rewrite the line of a session of another.
+ * `marker` is the id that the session marker of the writer holds (a slug). A new line records it. A stored line that records
+ * another marker is never changed: the write is a failure, so a session of one node or worker can not rewrite the line of a
+ * session of another.
  */
 export const writeLastSeen = async (
   deps: Deps,
   home: string,
   sessionId: string,
   change: LastSeenChange,
-  owner?: string,
+  marker?: string,
 ): Promise<CliResult<LastSeen>> => {
   if (!isSessionId(sessionId)) return failure('cannot record the last-seen line: the session id is not a UUID');
-  const allowed = nextLine(null, sessionId, change, deps.now(), owner);
+  const allowed = nextLine(null, sessionId, change, deps.now(), marker);
   if (!allowed.ok) return allowed;
   const layout = layoutOf(home);
   const target = {
@@ -204,11 +205,11 @@ export const writeLastSeen = async (
     const stored = await readLastSeen(deps, home, sessionId);
     if (!stored.ok) return stored;
     const storedLine = stored.value.state === 'valid' ? stored.value.line : null;
-    const storedOwner = storedLine?.[keys.owner];
-    if (owner !== undefined && storedOwner !== undefined && storedOwner !== owner) {
-      return failure(`cannot record the last-seen line: the session belongs to ${storedOwner}, not to ${owner}`);
+    const storedMarker = storedLine?.[keys.sessionMarker];
+    if (marker !== undefined && storedMarker !== undefined && storedMarker !== marker) {
+      return failure(`cannot record the last-seen line: the session belongs to ${storedMarker}, not to ${marker}`);
     }
-    const next = nextLine(storedLine, sessionId, change, deps.now(), owner);
+    const next = nextLine(storedLine, sessionId, change, deps.now(), marker);
     if (!next.ok) return next;
     const written = await writeInFolder(deps, target, `${JSON.stringify(next.value)}\n`);
     return written.ok ? next : written;
@@ -252,13 +253,13 @@ export const writeWorkerSession = async (
 export const readWorkerLastSeen = async (deps: Deps, home: string, workerId: string): Promise<CliResult<LastSeenRead>> => {
   const pointer = await readPointer(deps, home, workerId);
   if (!pointer.ok) return pointer;
-  if (pointer.value.state !== 'session') return ok(pointer.value);
+  if (pointer.value.state !== 'found') return ok(pointer.value);
   return readLastSeen(deps, home, pointer.value.sessionId);
 };
 
 /** What the pointer of a worker holds: a session id, a file that is not valid and the reason, or no file. */
 type PointerRead =
-  | { readonly state: 'session'; readonly sessionId: string }
+  | { readonly state: 'found'; readonly sessionId: string }
   | { readonly state: 'invalid'; readonly reason: string }
   | { readonly state: 'absent' };
 
@@ -272,7 +273,7 @@ const readPointer = async (deps: Deps, home: string, workerId: string): Promise<
   if (pointer.value.state !== 'text') return ok(pointer.value);
   const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;
   return isSessionId(sessionId)
-    ? ok({ state: 'session', sessionId })
+    ? ok({ state: 'found', sessionId })
     : ok({ state: 'invalid', reason: 'the pointer does not hold a session id' });
 };
 
@@ -296,7 +297,7 @@ const otherHolderOf = async (deps: Deps, home: string, workerId: string, session
     if (record.id === workerId) continue;
     const pointer = await readPointer(deps, home, record.id);
     if (!pointer.ok) return pointer;
-    if (pointer.value.state === 'session' && pointer.value.sessionId === sessionId) return ok(record.id);
+    if (pointer.value.state === 'found' && pointer.value.sessionId === sessionId) return ok(record.id);
   }
   return ok(null);
 };
@@ -305,8 +306,8 @@ const otherHolderOf = async (deps: Deps, home: string, workerId: string, session
  * The last-seen line of the newest session of a worker, for a command that acts on that session (stop, resume). A program in a
  * worker pane can write the pointer of its own worker, so the line counts only when all of these hold:
  * - the pointer and the line are valid (`readWorkerLastSeen`), else the state is unknown with `no-line`;
- * - the line records this worker as its owner. A session of the coordinator, of another worker, and a line that records no
- *   owner all fail here, so the state is unknown with `not-owned`;
+ * - the line records the id of this worker as its session marker. A session of the coordinator, of another worker, and a line
+ *   that records no session marker all fail here, so the state is unknown with `not-owned`;
  * - no other worker has a pointer that names the same session.
  * The failure is a fault of the file system only.
  */
@@ -316,9 +317,12 @@ export const readOwnLastSeen = async (deps: Deps, home: string, workerId: string
   if (read.value.state === 'absent') return unknown('no-line', `the ${roles.worker} has no last-seen line`);
   if (read.value.state === 'invalid') return unknown('no-line', `the last-seen line is not valid: ${read.value.reason}`);
   const { line } = read.value;
-  const owner = line[keys.owner];
-  if (owner !== workerId) {
-    return unknown('not-owned', owner === undefined ? 'the last-seen line records no owner' : `the last-seen line belongs to the session of ${owner}`);
+  const marker = line[keys.sessionMarker];
+  if (marker !== workerId) {
+    return unknown(
+      'not-owned',
+      marker === undefined ? 'the last-seen line records no session marker' : `the last-seen line belongs to the session of ${marker}`,
+    );
   }
   const holder = await otherHolderOf(deps, home, workerId, line[keys.sessionId]);
   if (!holder.ok) return holder;

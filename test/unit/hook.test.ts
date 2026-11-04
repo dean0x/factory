@@ -81,7 +81,7 @@ describe('factory hook: the last-seen line of each captured payload (TP-5)', () 
       event_at: NOW,
       context_pct: null,
       pct_at: null,
-      owner: NODE_ID,
+      session_marker: NODE_ID,
     });
     expect([...deps.files.keys()].filter((path) => path.startsWith(`${FOLDER}/`))).toEqual([FILE]);
   });
@@ -264,7 +264,7 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
       event_at: NOW,
       context_pct: null,
       pct_at: null,
-      owner: WORKER_ID,
+      session_marker: WORKER_ID,
     });
     expect([...deps.files.keys()].filter((path) => path.startsWith(`${FOLDER}/`))).toEqual([FILE]);
   });
@@ -499,7 +499,7 @@ describe('factory hook: the transcript is never opened (TP-10)', () => {
     const deps = make({ stdin: payload('UserPromptSubmit') });
     await runHook(deps, ['UserPromptSubmit']);
     expect(Object.keys(lineOf(deps) as Record<string, unknown>).sort()).toEqual(
-      ['context_pct', 'event', 'event_at', 'owner', 'pct_at', 'schema', 'session_id'],
+      ['context_pct', 'event', 'event_at', 'pct_at', 'schema', 'session_id', 'session_marker'],
     );
   });
 });

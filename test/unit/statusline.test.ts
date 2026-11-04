@@ -100,7 +100,7 @@ describe('factory hook statusline: the command of the owner (TP-13)', () => {
       event_at: null,
       context_pct: 8,
       pct_at: NOW,
-      owner: NODE_ID,
+      session_marker: NODE_ID,
     });
     expect(heartbeatFiles(deps)).toEqual([FILE]);
   });
@@ -332,7 +332,7 @@ describe('factory hook statusline: the guards of the write', () => {
     expect((await writeWorkerRecord(deps, HOME, record)).ok).toBe(true);
     const result = await statusline(deps);
     expect(result).toEqual({ code: 0, out: 'context 8%', err: '' });
-    expect(lineOf(deps)).toMatchObject({ session_id: SESSION, context_pct: 8, pct_at: NOW, owner: 'fix-login' });
+    expect(lineOf(deps)).toMatchObject({ session_id: SESSION, context_pct: 8, pct_at: NOW, session_marker: 'fix-login' });
   });
 
   it('does not rewrite the line of a session of the node when a worker names that session', async () => {
@@ -481,7 +481,7 @@ describe('factory hook statusline: the input', () => {
     const text = deps.files.get(FILE) ?? '';
     expect(text).not.toContain('transcript');
     expect(text).not.toContain('placeholder');
-    expect(Object.keys(lineOf(deps) as Record<string, unknown>).sort()).toEqual(['context_pct', 'event', 'event_at', 'owner', 'pct_at', 'schema', 'session_id']);
+    expect(Object.keys(lineOf(deps) as Record<string, unknown>).sort()).toEqual(['context_pct', 'event', 'event_at', 'pct_at', 'schema', 'session_id', 'session_marker']);
   });
 
   it.each([
