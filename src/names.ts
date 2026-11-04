@@ -41,6 +41,7 @@ export const commands = {
   node: 'node',
   doctor: 'doctor',
   upgrade: 'upgrade',
+  hook: 'hook',
   version: 'version',
   help: 'help',
 } as const;
@@ -511,10 +512,12 @@ export const stateKeys = {
  * (https://code.claude.com/docs/en/hooks).
  */
 export const hookNames = {
-  command: 'hook',
+  command: commands.hook,
   /** The word of the status line call. It is also the config key of the command of the owner. */
   statusline: keys.session.statusline,
   events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'],
+  /** The only keys that the hook reads from the input of Claude Code. Every other key of the input is dropped unread. */
+  inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name' },
   /** The most bytes of hook input that the program reads. A larger input is refused and nothing is written. */
   maxStdinBytes: maxFileBytes,
   /** The status line wrapper waits this many milliseconds for the command of the owner. */
@@ -659,6 +662,7 @@ export const schemaIds = {
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   upgrade: `${program}.upgrade/v1`,
+  hook: `${program}.hook/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
   lastSeen: `${program}.last-seen/v1`,

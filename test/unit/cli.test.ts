@@ -95,7 +95,10 @@ describe('the refusal on Windows', () => {
     ['--version'],
     ['help'],
     ['bogus'],
-    ...commandTable.flatMap((command) => [[command.name], [command.name, '--help'], [command.name, '--json']]),
+    // The hook of Claude Code exits 0 on every platform, so the tests of the hook cover it (test/unit/hook.test.ts).
+    ...commandTable
+      .filter((command) => command.name !== 'hook')
+      .flatMap((command) => [[command.name], [command.name, '--help'], [command.name, '--json']]),
   ];
 
   it.each(argvOfEachCommand.map((argv) => [argv.join(' ') || '(no arguments)', argv] as const))(

@@ -26,6 +26,7 @@ You need:
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. |
 | `factory doctor` | Run 25 checks. See "Doctor". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
+| `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. It does its work only when `FACTORY_HOME` is set. It exits with code 0 and prints nothing to stdout on every path. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
 | `factory node remove-child ID` | Remove a child from the config. The files of the child stay. |

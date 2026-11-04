@@ -1,5 +1,6 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
+import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
 import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
@@ -16,10 +17,12 @@ import {
   flagShorts,
   flagText,
   helpTopics,
+  hookNames,
   nodeCommands,
   places,
   program,
   roles,
+  schemaIds,
   values,
 } from '../names.js';
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
@@ -69,6 +72,22 @@ const foundHomeOption: FlagOption = {
     `The ${places.folder}. Default: ${env.home}, else the folder of the nearest config file ` +
     `above the current folder, else the ${places.folder} that the ${places.list} gives for the current folder.`,
 };
+
+/**
+ * The hook that Claude Code runs. `runCli` routes it before the flags are read and prints none of its output, so that it
+ * exits 0 with an empty stdout on every path. The table holds it for the help.
+ */
+export const hookCommandFor = (registry: RecipeRegistry): Command => ({
+  name: commands.hook,
+  summary: `Record when a ${places.session} was last seen. Claude Code runs it, not a person.`,
+  usage: `${commandText(commands.hook)} ${hookNames.events.join('|')}`,
+  options: {},
+  positionals: true,
+  run: async (given, deps) => {
+    const done = await runHook(deps, given.positionals(), registry);
+    return done.ok ? ok({ lines: [], json: { schema: schemaIds.hook }, warnings: [], failed: false }) : done;
+  },
+});
 
 /** The commands. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */
 export const commandTableFor = (registry: RecipeRegistry): readonly Command[] => [
@@ -220,6 +239,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         registry,
       ),
   },
+  hookCommandFor(registry),
   {
     name: commands.version,
     summary: 'Print the version.',

@@ -17,7 +17,11 @@ export interface Sandbox {
   readonly root: string;
   readonly node: string;
   readonly env: Readonly<Record<string, string>>;
-  run(args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<RunResult>;
+  /** `input` is the text on the standard input of the program, and then the input ends. Without it, the input stays open. */
+  run(
+    args: readonly string[],
+    options?: { cwd?: string; env?: Readonly<Record<string, string>>; input?: string },
+  ): Promise<RunResult>;
   git(cwd: string, args: readonly string[]): Promise<RunResult>;
   /**
    * Make a git work tree at `<root>/<name>`. With an origin, the work tree gets that remote, and a clone of the origin
@@ -33,13 +37,19 @@ const exec = (
   args: readonly string[],
   cwd: string,
   env: Readonly<Record<string, string>>,
+  input?: string,
 ): Promise<RunResult> =>
   new Promise((resolve) => {
-    execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: 60_000 }, (error, stdout, stderr) => {
+    const child = execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: 60_000 }, (error, stdout, stderr) => {
       // A spawn error, a timeout or a signal has no numeric exit code. -1 is a value that no test expects.
       const code = error === null ? 0 : typeof error.code === 'number' ? error.code : -1;
       resolve({ code, stdout, stderr });
     });
+    if (input !== undefined) {
+      // A program that ends before it reads its input closes the pipe, and the write then fails. That is no fault of the test.
+      child.stdin?.on('error', () => undefined);
+      child.stdin?.end(input);
+    }
   });
 
 /** A step of the setup. The sandbox fails closed: a step that does not exit with 0 stops the setup of the test. */
@@ -151,7 +161,7 @@ const buildSandbox = async (root: string): Promise<Sandbox> => {
     node: join(root, 'node'),
     env,
     run: (args, options) =>
-      exec('node', [DIST, ...args], options?.cwd ?? root, withoutTmux({ ...env, ...options?.env })),
+      exec('node', [DIST, ...args], options?.cwd ?? root, withoutTmux({ ...env, ...options?.env }), options?.input),
     git: (cwd, args) => exec('git', args, cwd, env),
     makeProject: async (name, origin) => {
       const path = join(root, name);
