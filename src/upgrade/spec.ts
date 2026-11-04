@@ -1,10 +1,10 @@
 import { failure, type CliResult } from '../cli/errors.js';
-import { LOCAL_SPEC, parseYamlText, SHARED_SPEC } from '../config/load.js';
+import { LOCAL_SPEC, parseYamlText, sharedSpecFor } from '../config/load.js';
 import { renderLocalConfig, renderSharedConfig } from '../config/render.js';
 import {
   localConfigSchema,
   parseConfig,
-  sharedConfigSchema,
+  sharedConfigSchemaFor,
   splitConfigValue,
   type FactoryConfig,
   type SharedConfig,
@@ -18,7 +18,7 @@ import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
 import { jsonText } from '../state/files.js';
 import { STATE_SPEC, parseJsonText } from '../state/load.js';
-import type { ApprovalModes } from '../recipes/index.js';
+import type { ApprovalModes, RecipeRegistry } from '../recipes/index.js';
 import { nodeStateSchema } from '../state/schema.js';
 import { blockInputOf, blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
@@ -70,29 +70,33 @@ export const finisher =
   };
 
 /**
- * The blocks come from the merged config of the two files: the layer sets the role, the recipe sets the approval
+ * The blocks come from the combined config of the two files: the layer sets the role, the recipe sets the approval
  * points, the local file sets the owner prefix, and the shared file sets the context limits. The setup texts follow the
  * core blocks.
  */
-const blocksOfNode = async (config: unknown, setup: SetupTexts, modesOf: ModesOf): Promise<CliResult<BlockSet>> => {
-  const { shared, local } = splitConfigValue(config);
-  const parsed = parseConfig(shared, local);
-  if (!parsed.success) return failure(describeIssues(parsed.error));
-  const input = blockInputOf(parsed.data, setup, await modesOf(parsed.data));
-  return ok({ templates: blockTemplatesFor(input), renames: roleBlockRenames(input.layer) });
-};
+const blocksOfNode =
+  (registry: RecipeRegistry) =>
+  async (config: unknown, setup: SetupTexts, modesOf: ModesOf): Promise<CliResult<BlockSet>> => {
+    const { shared, local } = splitConfigValue(config);
+    const parsed = parseConfig(shared, local, registry);
+    if (!parsed.success) return failure(describeIssues(parsed.error));
+    const input = blockInputOf(parsed.data, setup, await modesOf(parsed.data));
+    return ok({ templates: blockTemplatesFor(input), renames: roleBlockRenames(parsed.data.entry, input.layer) });
+  };
 
 /** A migrated value holds the keys of both files. The shared file takes its part of them. */
-const sharedPartSchema: SchemaParser<SharedConfig> = {
-  safeParse: (raw) => sharedConfigSchema.safeParse(splitConfigValue(raw).shared),
+const sharedPartSchema = (registry: RecipeRegistry): SchemaParser<SharedConfig> => {
+  const schema = sharedConfigSchemaFor(registry);
+  return { safeParse: (raw) => schema.safeParse(splitConfigValue(raw).shared) };
 };
 
-export const currentSpec: UpgradeSpec = {
+/** How `upgrade` handles the files of a node. The registry sets the recipes that the shared file can name. */
+export const specFor = (registry: RecipeRegistry): UpgradeSpec => ({
   config: {
-    spec: SHARED_SPEC,
+    spec: sharedSpecFor(registry),
     parse: parseYamlText,
     migrations: configMigrations,
-    finish: finisher(sharedPartSchema, renderSharedConfig),
+    finish: finisher(sharedPartSchema(registry), renderSharedConfig),
   },
   local: {
     spec: LOCAL_SPEC,
@@ -109,5 +113,5 @@ export const currentSpec: UpgradeSpec = {
   files: fileSteps,
   rootMoves,
   localPartOf: (config) => splitConfigValue(config).local,
-  blocksOf: blocksOfNode,
-};
+  blocksOf: blocksOfNode(registry),
+});

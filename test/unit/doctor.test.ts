@@ -5,7 +5,6 @@ import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import {
   checkBlocks,
-  checkChildren,
   checkConfig,
   checkConfigVersion,
   checkIndex,
@@ -25,11 +24,8 @@ import {
   checkTempFolders,
   checkTools,
   checkTracker,
-  runDoctor,
   type CheckResult,
 } from '../../src/commands/doctor.js';
-import { runInit } from '../../src/commands/init.js';
-import { inspectConfig } from '../../src/config/load.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
@@ -41,6 +37,7 @@ import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
+import { checkChildren, inspectConfig, runDoctor, runInit } from '../helpers/package-registry.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -1277,6 +1274,7 @@ describe('doctor: projects that the factory can not share (F-17c)', () => {
   const configWith = (projects: readonly Record<string, unknown>[], sources: Record<string, string> = {}): FactoryConfig => {
     const sample = sampleConfig();
     return {
+      entry: sample.entry,
       core: { ...sample.core, sources },
       recipe: { ...sample.recipe, projects: projects as unknown as FactoryConfig['recipe']['projects'] },
     };

@@ -1,18 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { localFileAccess, parseYamlText, settleLocalMode } from '../../src/config/load.js';
+import { renderConfig } from '../../src/config/render.js';
+import type { FactoryConfig } from '../../src/config/schema.js';
+import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import {
   inspectConfig,
   inspectSharedConfig,
   loadConfig,
-  localFileAccess,
+  parseConfig,
   parseConfigTexts,
-  parseYamlText,
   readNodeIdentity,
-  settleLocalMode,
-} from '../../src/config/load.js';
-import { renderConfig } from '../../src/config/render.js';
-import { parseConfig, type FactoryConfig } from '../../src/config/schema.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
-import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
+} from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
 const HOME = '/node';
@@ -492,6 +491,7 @@ describe('renderConfig', () => {
     const base = sampleConfig();
     const [firstPoint] = Object.keys(base.core.approval);
     return {
+      entry: base.entry,
       core: {
         ...base.core,
         owner: { ...base.core.owner, display: 'Name: "quoted" # not a comment', github: 'some-login' },

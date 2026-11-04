@@ -1,8 +1,7 @@
 import { COORDINATOR_LAYER, WORKER_LAYER, type FactoryConfig } from '../config/schema.js';
 import type { BlockRename } from '../migrate/files.js';
 import { blockNames } from '../names.js';
-import type { ApprovalModes } from '../recipes/index.js';
-import { approvalRules, homeRoleBlockNames, roleForLayer, roleNameForLayer } from '../recipes/software/recipe.js';
+import { approvalLines, type ApprovalModes, type RecipeEntry } from '../recipes/index.js';
 import { PROFILE_INDEX_LINES, PROFILE_README_LINES } from './decision-profile.js';
 import { coordinatorValuesFor, fillTemplate } from './fill.js';
 import { ROADMAPS_README_LINES } from './roadmaps.js';
@@ -11,14 +10,17 @@ import { SETUP_COORDINATOR_LINES, SETUP_WORKER_LINES } from './setup.js';
 import type { BlockInput, BlockTemplate, SetupTexts } from './types.js';
 
 /**
- * The safety block belongs to the core. Every role gets it. Its approval point lines follow the modes, and it holds the
- * owner prefix. It lives in the coordinator folder, so its paths are written from that folder.
+ * The safety block belongs to the core. Every role gets it. Its approval point lines follow the modes, the recipe adds
+ * its own lines, and it holds the owner prefix. It lives in the coordinator folder, so its paths are written from that folder.
  */
 const safetyFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.safety,
   version: 2,
   target: 'claudeFile',
-  body: fillTemplate(safetyLines(approvalRules(input.modes)), coordinatorValuesFor(input)),
+  body: fillTemplate(
+    safetyLines(approvalLines(input.recipe.approvalPoints, input.modes), input.recipe.safetyLines),
+    coordinatorValuesFor(input),
+  ),
 });
 
 const NO_SETUP: SetupTexts = { coordinator: null, worker: null };
@@ -42,8 +44,9 @@ const setupBlock = (name: string, target: BlockTemplate['target'], text: string 
  * one. The text of the blocks follows `input`.
  */
 export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] => {
-  const role = roleForLayer(input);
-  const worker = input.layer === COORDINATOR_LAYER ? roleForLayer({ ...input, layer: WORKER_LAYER }) : null;
+  const role = input.recipe.roles.templateFor(input);
+  const worker =
+    input.layer === COORDINATOR_LAYER ? input.recipe.roles.templateFor({ ...input, layer: WORKER_LAYER }) : null;
   const core = [role, safetyFor(input), worker].filter((template): template is BlockTemplate => template !== null);
   const hasWorkerFile = core.some((template) => template.target === 'workerFile');
   return [
@@ -58,6 +61,7 @@ export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] =
  * The text names the proof of a point only when its effective mode is `delegated`.
  */
 export const blockInputOf = (config: FactoryConfig, setup: SetupTexts, modes: ApprovalModes): BlockInput => ({
+  recipe: config.entry,
   layer: config.core.node.layer,
   modes,
   ownerPrefix: config.core.owner.prefix,
@@ -72,10 +76,10 @@ export const blockInputOf = (config: FactoryConfig, setup: SetupTexts, modes: Ap
  * The role blocks that another layer would hold, each as the old name of the role block of this layer.
  * A node whose layer was changed by hand holds one of them. A layer with no role template renames nothing.
  */
-export const roleBlockRenames = (layer: number): readonly BlockRename[] => {
-  const name = roleNameForLayer(layer);
+export const roleBlockRenames = (recipe: RecipeEntry, layer: number): readonly BlockRename[] => {
+  const name = recipe.roles.nameForLayer(layer);
   if (name === null) return [];
-  return homeRoleBlockNames.filter((other) => other !== name).map((from) => ({ from, to: name }));
+  return recipe.roles.homeBlockNames.filter((other) => other !== name).map((from) => ({ from, to: name }));
 };
 
 export const fileTemplates = {

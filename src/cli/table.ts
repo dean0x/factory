@@ -22,6 +22,7 @@ import {
   roles,
   values,
 } from '../names.js';
+import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import type { CommandOutput } from './output.js';
@@ -69,7 +70,8 @@ const foundHomeOption: FlagOption = {
     'above the current folder, else the home that lists the current folder in the home index.',
 };
 
-export const commandTable: readonly Command[] = [
+/** The commands. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */
+export const commandTableFor = (registry: RecipeRegistry): readonly Command[] => [
   {
     name: commands.init,
     summary: `Create a ${roles.node} in a folder.`,
@@ -121,7 +123,9 @@ export const commandTable: readonly Command[] = [
       [flags.recipe]: {
         type: 'string',
         placeholder: 'ID',
-        description: `The ${roles.recipe} for the kind of work. One of: ${values.recipes.join(', ')}. Default: ${values.recipes[0]}.`,
+        description:
+          `The ${roles.recipe} for the kind of work. One of: ${recipeIds(registry).join(', ')}. ` +
+          `Default: ${registry[0].id}.`,
       },
       [flags.approval]: {
         type: 'string',
@@ -134,17 +138,21 @@ export const commandTable: readonly Command[] = [
       },
     },
     run: (given, deps) =>
-      runInit(deps, {
-        home: given.string(flags.home),
-        name: given.string(flags.name),
-        ownerName: given.string(flags.ownerName),
-        ownerGithub: given.string(flags.ownerGithub),
-        projects: given.strings(flags.project),
-        yes: given.bool(flags.yes),
-        recipe: given.string(flags.recipe),
-        layer: given.string(flags.layer),
-        approval: given.strings(flags.approval),
-      }),
+      runInit(
+        deps,
+        {
+          home: given.string(flags.home),
+          name: given.string(flags.name),
+          ownerName: given.string(flags.ownerName),
+          ownerGithub: given.string(flags.ownerGithub),
+          projects: given.strings(flags.project),
+          yes: given.bool(flags.yes),
+          recipe: given.string(flags.recipe),
+          layer: given.string(flags.layer),
+          approval: given.strings(flags.approval),
+        },
+        registry,
+      ),
   },
   {
     name: commands.start,
@@ -157,7 +165,7 @@ export const commandTable: readonly Command[] = [
         description: 'Show the tmux calls and the launch. Start no session and change no file.',
       },
     },
-    run: (given, deps) => runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }),
+    run: (given, deps) => runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }, registry),
   },
   {
     name: commands.node,
@@ -169,14 +177,14 @@ export const commandTable: readonly Command[] = [
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: { [flags.home]: foundHomeOption },
-    run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }),
+    run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
   },
   {
     name: commands.doctor,
     summary: `Check the ${roles.node}, its config and its state.`,
     usage: `${commandText(commands.doctor)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
-    run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }),
+    run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }, registry),
   },
   {
     name: commands.upgrade,
@@ -201,12 +209,16 @@ export const commandTable: readonly Command[] = [
       },
     },
     run: (given, deps) =>
-      runUpgrade(deps, {
-        home: given.string(flags.home),
-        dryRun: given.bool(flags.dryRun),
-        overwrite: given.strings(flags.overwrite),
-        yes: given.bool(flags.yes),
-      }),
+      runUpgrade(
+        deps,
+        {
+          home: given.string(flags.home),
+          dryRun: given.bool(flags.dryRun),
+          overwrite: given.strings(flags.overwrite),
+          yes: given.bool(flags.yes),
+        },
+        registry,
+      ),
   },
   {
     name: commands.version,
@@ -216,6 +228,9 @@ export const commandTable: readonly Command[] = [
     run: async () => ok(runVersion(FACTORY_VERSION)),
   },
 ];
+
+/** The commands of the package: the table for the package registry. */
+export const commandTable: readonly Command[] = commandTableFor(recipes);
 
 type ParsedValue = string | boolean | readonly (string | boolean)[] | undefined;
 

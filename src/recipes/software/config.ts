@@ -3,6 +3,7 @@ import { branchName, slug, uniqueIds } from '../../config/primitives.js';
 import { checkProjectUrl, describeCloneIssue, normalFormOf } from '../../core/clone-url.js';
 import { describeProjectPathIssue, projectFolderKey, projectPathIssue } from '../../core/project-path.js';
 import { keys, roles, values } from '../../names.js';
+import { mergeMethods, softwareProjectKeys } from './words.js';
 
 const MAX_PROJECTS = 100;
 /** The longest name of a folder that common file systems accept. */
@@ -35,9 +36,7 @@ const projectSchema = z.strictObject({
     .optional(),
   [keys.project.path]: projectPathSchema,
   [keys.project.defaultBranch]: branchName,
-  [keys.project.mergeMethod]: z.enum(values.mergeMethods, {
-    error: `must be one of: ${values.mergeMethods.join(', ')}`,
-  }),
+  [softwareProjectKeys.mergeMethod]: z.enum(mergeMethods, { error: `must be one of: ${mergeMethods.join(', ')}` }),
   [keys.project.variant]: variantSchema.optional(),
   [keys.project.gate]: z.strictObject({ [keys.gate.checks]: z.array(z.string().min(1).max(500)).max(50) }),
   [keys.project.heavyTest]: z.string().min(1).max(500).optional(),
@@ -88,6 +87,3 @@ export const softwareRecipeSchema = z
     uniqueIds(ctx, [keys.recipe.projects], keys.project.id, recipe.projects);
     uniqueProjectTargets(ctx, recipe.projects);
   });
-
-export type SoftwareRecipe = z.infer<typeof softwareRecipeSchema>;
-export type ProjectConfig = SoftwareRecipe[typeof keys.recipe.projects][number];

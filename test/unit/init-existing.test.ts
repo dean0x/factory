@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { appendBlocks, renderBlock } from '../../src/blocks/managed.js';
-import { runInit, type InitOptions } from '../../src/commands/init.js';
+import type { InitOptions } from '../../src/commands/init.js';
 import { sameIdWarnings } from '../../src/commands/init-received.js';
-import { loadConfig, readNodeIdentity } from '../../src/config/load.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { locateHome } from '../../src/core/home.js';
@@ -23,6 +22,7 @@ import {
   type FakeDeps,
   type FakeOptions,
 } from '../helpers/fake-deps.js';
+import { loadConfig, readNodeIdentity, runInit } from '../helpers/package-registry.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 

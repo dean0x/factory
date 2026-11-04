@@ -6,13 +6,22 @@ import {
   commandText,
   files,
   keys,
+  layers,
   prefixPlaceholders,
   roles,
   schema2,
   values,
 } from '../names.js';
 import { checkLocalSource, describeCloneIssue } from '../core/clone-url.js';
-import { ownerModes, recipes, type ApprovalModes, type RecipeConfig } from '../recipes/index.js';
+import {
+  findRecipe,
+  ownerModes,
+  recipeIds,
+  type ApprovalModes,
+  type RecipeConfig,
+  type RecipeEntry,
+  type RecipeRegistry,
+} from '../recipes/index.js';
 import { parseProxyUrl } from '../safety/proxy.js';
 import { folderKey, githubLogin, slug, uniqueIds } from './primitives.js';
 
@@ -26,16 +35,16 @@ export const SPLIT_SCHEMA_VERSION = 2;
 export const LOCAL_SCHEMA_VERSION = 1;
 
 /** A worker is layer 0 and has no node home. */
-export const WORKER_LAYER = 0;
+export const WORKER_LAYER = layers.worker;
 
 /** The layer of the node that manages workers. */
-export const COORDINATOR_LAYER = 1;
+export const COORDINATOR_LAYER = layers.coordinator;
 
 /** The layer of the node that manages coordinators. It is the highest layer that has a role template. */
-export const MANAGER_LAYER = 2;
+export const MANAGER_LAYER = layers.manager;
 
 /** The highest layer of a node. */
-export const MAX_LAYER = 16;
+export const MAX_LAYER = layers.max;
 
 const MAX_WORKERS = 200;
 const MAX_CHILDREN = 200;
@@ -176,20 +185,24 @@ const addressSchema = z.string().superRefine((value, ctx) => {
 
 const linkSchema = z.strictObject({ [keys.link.id]: slug, [keys.link.address]: addressSchema });
 
-/** The core reads only the id of the recipe block. The recipe parser reads the rest. */
-const recipeBlockSchema = z.looseObject({
-  [keys.recipe.id]: z.enum(values.recipes, { error: `must be one of: ${values.recipes.join(', ')}` }),
-});
+/** The core reads only the id of the recipe block, and checks it against the ids of the registry. The recipe parser reads the rest. */
+const recipeBlockSchemaFor = (ids: readonly string[]) => {
+  const error = `must be one of: ${ids.join(', ')}`;
+  return z.looseObject({
+    [keys.recipe.id]: z.string({ error }).refine((id) => ids.includes(id), { error }),
+  });
+};
 
 /** The shared file: what makes the same factory on every machine. It holds no personal key and no key of one machine. */
-const sharedCoreSchema = z.strictObject({
-  [keys.root.schema]: z.literal(CONFIG_SCHEMA_VERSION),
-  [keys.root.node]: nodeSchema,
-  [keys.root.session]: sharedSessionSchema,
-  [keys.root.limits]: limitsSchema,
-  [keys.root.tracker]: trackerSchema,
-  [keys.root.recipe]: recipeBlockSchema,
-});
+const sharedCoreSchemaFor = (ids: readonly string[]) =>
+  z.strictObject({
+    [keys.root.schema]: z.literal(CONFIG_SCHEMA_VERSION),
+    [keys.root.node]: nodeSchema,
+    [keys.root.session]: sharedSessionSchema,
+    [keys.root.limits]: limitsSchema,
+    [keys.root.tracker]: trackerSchema,
+    [keys.root.recipe]: recipeBlockSchemaFor(ids),
+  });
 
 /** The local file: what is personal, a credential, or true for one machine only (design 4.4). */
 const localFileSchema = z
@@ -236,7 +249,7 @@ const localFileSchema = z
     }
   });
 
-type ParsedShared = z.infer<typeof sharedCoreSchema>;
+type ParsedShared = z.infer<ReturnType<typeof sharedCoreSchemaFor>>;
 type ParsedLocal = z.infer<typeof localFileSchema>;
 
 /** Every key of the shared file except its `schema` key and the inside of the `recipe` block. */
@@ -245,10 +258,11 @@ export type SharedCore = Omit<ParsedShared, typeof keys.root.schema | typeof key
 /** Every key of the local file except its `schema` key. A point that `approval` does not name is not in the map yet. */
 export type LocalCore = Omit<ParsedLocal, typeof keys.root.schema>;
 
-/** The shared file, parsed: the core, and the parsed block of the recipe. */
+/** The shared file, parsed: the core, the parsed block of the recipe, and the entry of that recipe in the registry. */
 export interface SharedConfig {
   readonly core: SharedCore;
   readonly recipe: RecipeConfig;
+  readonly entry: RecipeEntry;
 }
 
 /** The local file, parsed. */
@@ -261,10 +275,11 @@ export type CoreConfig = Omit<SharedCore, typeof keys.root.session> &
     readonly approval: ApprovalModes;
   };
 
-/** The config as the commands use it: both files combined, with the recipe block parsed. */
+/** The config as the commands use it: both files combined, with the recipe block parsed and the entry of the recipe. */
 export interface FactoryConfig {
   readonly core: CoreConfig;
   readonly recipe: RecipeConfig;
+  readonly entry: RecipeEntry;
 }
 
 export type ProxyConfig = z.infer<typeof proxySchema>;
@@ -326,43 +341,50 @@ const olderLayoutPaths = (raw: unknown): readonly (readonly string[])[] => {
  * The parser of the shared file, in three steps that each fail closed. A key of the older layout gets the remake
  * message. A key that belongs in the local file is refused with its name and the name of the local file. Then the
  * core parses every key except the inside of the `recipe` block, and the parser of the recipe that the core named
- * parses the block. An issue of the recipe has the path of the block in front, so it names the key in the file.
+ * in the registry parses the block. An issue of the recipe has the path of the block in front, so it names the key in the file.
  */
-export const sharedConfigSchema: SchemaParser<SharedConfig> = {
-  safeParse: (raw) => {
-    const older = olderLayoutPaths(raw);
-    if (older.length > 0) {
-      return {
-        success: false,
-        error: errorOf(
-          older.map((path) =>
-            customIssue(
-              path,
-              `is from an older layout of ${files.config}. Make the ${roles.node} again with "${commandText(commands.init)}"`,
+export const sharedConfigSchemaFor = (registry: RecipeRegistry): SchemaParser<SharedConfig> => {
+  const coreSchema = sharedCoreSchemaFor(recipeIds(registry));
+  return {
+    safeParse: (raw) => {
+      const older = olderLayoutPaths(raw);
+      if (older.length > 0) {
+        return {
+          success: false,
+          error: errorOf(
+            older.map((path) =>
+              customIssue(
+                path,
+                `is from an older layout of ${files.config}. Make the ${roles.node} again with "${commandText(commands.init)}"`,
+              ),
             ),
           ),
-        ),
-      };
-    }
-    const local = localKeyPaths(raw);
-    if (local.length > 0) {
-      return {
-        success: false,
-        error: errorOf(
-          local.map((path) => customIssue(path, `is a local key: put it in ${files.localConfig}, not in ${files.config}`)),
-        ),
-      };
-    }
-    const core = sharedCoreSchema.safeParse(raw);
-    if (!core.success) return { success: false, error: core.error };
-    const { [keys.root.schema]: _schema, [keys.root.recipe]: block, ...rest } = core.data;
-    const recipe = recipes[block.id].schema.safeParse(block);
-    if (!recipe.success) {
-      const issues = recipe.error.issues.map((issue) => ({ ...issue, path: [keys.root.recipe, ...issue.path] }));
-      return { success: false, error: errorOf(issues) };
-    }
-    return { success: true, data: { core: rest, recipe: recipe.data } };
-  },
+        };
+      }
+      const local = localKeyPaths(raw);
+      if (local.length > 0) {
+        return {
+          success: false,
+          error: errorOf(
+            local.map((path) => customIssue(path, `is a local key: put it in ${files.localConfig}, not in ${files.config}`)),
+          ),
+        };
+      }
+      const core = coreSchema.safeParse(raw);
+      if (!core.success) return { success: false, error: core.error };
+      const { [keys.root.schema]: _schema, [keys.root.recipe]: block, ...rest } = core.data;
+      const entry = findRecipe(registry, block.id);
+      if (entry === undefined) {
+        return { success: false, error: errorOf([customIssue([keys.root.recipe, keys.recipe.id], `names no ${roles.recipe} of the registry`)]) };
+      }
+      const recipe = entry.schema.safeParse(block);
+      if (!recipe.success) {
+        const issues = recipe.error.issues.map((issue) => ({ ...issue, path: [keys.root.recipe, ...issue.path] }));
+        return { success: false, error: errorOf(issues) };
+      }
+      return { success: true, data: { core: rest, recipe: recipe.data, entry } };
+    },
+  };
 };
 
 /** The parser of the local file. */
@@ -402,7 +424,7 @@ export const mergeConfig = (
   shared: SharedConfig,
   local: LocalConfig,
 ): { readonly success: true; readonly data: FactoryConfig } | { readonly success: false; readonly error: z.ZodError } => {
-  const points = recipes[shared.recipe.id].approvalPoints;
+  const points = shared.entry.approvalPoints;
   const known = points.map((point) => point.id);
   const unknown = Object.keys(local.approval)
     .filter((id) => !known.includes(id))
@@ -426,6 +448,7 @@ export const mergeConfig = (
         approval: { ...ownerModes(points), ...approval },
       },
       recipe: shared.recipe,
+      entry: shared.entry,
     },
   };
 };
@@ -436,8 +459,8 @@ export type ConfigParse =
   | { readonly success: false; readonly file: string; readonly error: z.ZodError };
 
 /** Parse the two raw files and combine them. The first problem stops the parse and names its file. */
-export const parseConfig = (sharedRaw: unknown, localRaw: unknown): ConfigParse => {
-  const shared = sharedConfigSchema.safeParse(sharedRaw);
+export const parseConfig = (sharedRaw: unknown, localRaw: unknown, registry: RecipeRegistry): ConfigParse => {
+  const shared = sharedConfigSchemaFor(registry).safeParse(sharedRaw);
   if (!shared.success) return { success: false, file: files.config, error: shared.error };
   const local = localConfigSchema.safeParse(localRaw);
   if (!local.success) return { success: false, file: files.localConfig, error: local.error };
@@ -460,6 +483,7 @@ export const sharedOf = (config: FactoryConfig): SharedConfig => {
       },
     },
     recipe: config.recipe,
+    entry: config.entry,
   };
 };
 

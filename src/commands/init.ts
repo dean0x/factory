@@ -63,8 +63,13 @@ import { rootGitignoreOf } from '../state/gitignore.js';
 import { layoutOf, stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
 import { readSetupFile, renderableSetupText } from '../state/setup-text.js';
-import { recipes, type ApprovalModes } from '../recipes/index.js';
-import { roleNameForLayer } from '../recipes/software/recipe.js';
+import {
+  findRecipe,
+  recipeIds,
+  type ApprovalModes,
+  type RecipeEntry,
+  type RecipeRegistry,
+} from '../recipes/index.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates } from '../templates/index.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import { FACTORY_VERSION } from '../version.js';
@@ -197,11 +202,12 @@ const parseLayer = (text: string | undefined): CliResult<number> => {
   return usageError(`${flagText(flags.layer)}: must be a whole number from ${COORDINATOR_LAYER} to ${MAX_LAYER}`);
 };
 
-const parseRecipe = (text: string | undefined): CliResult<(typeof values.recipes)[number]> => {
-  if (text === undefined) return ok(values.recipes[0]);
-  const recipe = values.recipes.find((id) => id === text);
+const parseRecipe = (text: string | undefined, registry: RecipeRegistry): CliResult<RecipeEntry> => {
+  const [first] = registry;
+  if (text === undefined) return ok(first);
+  const recipe = findRecipe(registry, text);
   if (recipe !== undefined) return ok(recipe);
-  return usageError(`${flagText(flags.recipe)}: the ${roles.recipe} must be one of: ${values.recipes.join(', ')}`);
+  return usageError(`${flagText(flags.recipe)}: the ${roles.recipe} must be one of: ${recipeIds(registry).join(', ')}`);
 };
 
 export const detectGithubLogin = async (deps: Deps): Promise<string | undefined> => {
@@ -253,7 +259,11 @@ const urlFieldsOf = (
  * The project entry of a folder in the root. The clone is there already, so the default branch comes from the clone. The
  * url, the GitHub repo and the local source come from the origin of the repo that the clone started from.
  */
-const describeProject = async (deps: Deps, planned: PlannedProject): Promise<CliResult<DescribedProject>> => {
+const describeProject = async (
+  deps: Deps,
+  planned: PlannedProject,
+  recipe: RecipeEntry,
+): Promise<CliResult<DescribedProject>> => {
   const id = slugify(planned.name);
   if (id === null) return usageError(`cannot make a project id from the folder name ${planned.name}`);
   const repo = planned.origin.kind === 'shareable' ? parseGithubRepo(planned.origin.url) : null;
@@ -266,7 +276,7 @@ const describeProject = async (deps: Deps, planned: PlannedProject): Promise<Cli
       ...(repo === null ? {} : { [keys.project.repo]: repo }),
       [keys.project.path]: planned.name,
       [keys.project.defaultBranch]: branch,
-      [keys.project.mergeMethod]: values.mergeMethods[0],
+      ...recipe.projectDefaults,
       [keys.project.gate]: { [keys.gate.checks]: [] },
     },
     path: planned.name,
@@ -278,14 +288,18 @@ const describeProject = async (deps: Deps, planned: PlannedProject): Promise<Cli
   });
 };
 
-const describeProjects = async (deps: Deps, planned: readonly PlannedProject[]): Promise<CliResult<DescribedProjects>> => {
+const describeProjects = async (
+  deps: Deps,
+  planned: readonly PlannedProject[],
+  recipe: RecipeEntry,
+): Promise<CliResult<DescribedProjects>> => {
   const counted = checkProjectCount(planned.length);
   if (!counted.ok) return counted;
   const projects: unknown[] = [];
   const sources: (readonly [string, string])[] = [];
   const warnings: string[] = [];
   for (const project of planned) {
-    const described = await describeProject(deps, project);
+    const described = await describeProject(deps, project, recipe);
     if (!described.ok) return described;
     projects.push(described.value.project);
     if (described.value.source !== null) sources.push([described.value.path, described.value.source]);
@@ -380,7 +394,7 @@ export const blockTexts = async (
 /** The values that a clone does not change. */
 interface CheckedValues {
   readonly layer: number;
-  readonly recipe: (typeof values.recipes)[number];
+  readonly recipe: RecipeEntry;
   readonly ownerName: string;
   /** The id of the node. */
   readonly id: string;
@@ -538,7 +552,7 @@ const settingsOf = (
     [keys.root.limits]: DEFAULT_LIMITS,
     [keys.root.tracker]: { [keys.tracker.kind]: values.trackerLocal },
     [keys.root.recipe]: {
-      [keys.recipe.id]: checked.recipe,
+      [keys.recipe.id]: checked.recipe.id,
       [keys.recipe.variant]: values.variants[0],
       [keys.recipe.projects]: projects,
     },
@@ -546,8 +560,11 @@ const settingsOf = (
   local: localSettingsOf(checked, github, sources),
 });
 
-const parseSettings = (input: { readonly shared: unknown; readonly local: unknown }): CliResult<FactoryConfig> => {
-  const parsed = parseConfig(input.shared, input.local);
+const parseSettings = (
+  input: { readonly shared: unknown; readonly local: unknown },
+  registry: RecipeRegistry,
+): CliResult<FactoryConfig> => {
+  const parsed = parseConfig(input.shared, input.local, registry);
   return parsed.success
     ? ok(parsed.data)
     : usageError(`invalid settings: ${parsed.file}: ${describeIssues(parsed.error)}`, 'Check the flags.');
@@ -563,6 +580,7 @@ const checkOptions = async (
   options: InitOptions,
   home: string,
   indexPath: string,
+  registry: RecipeRegistry,
 ): Promise<CliResult<CheckedOptions>> => {
   // The link rule comes first: a link in the setup folder or the coordinator folder stops the command before any write.
   const plain = await requireNoRootLinks(deps, layoutOf(home));
@@ -571,10 +589,10 @@ const checkOptions = async (
   if (!fresh.ok) return fresh;
   const layer = parseLayer(options.layer);
   if (!layer.ok) return layer;
-  const recipe = parseRecipe(options.recipe);
+  const recipe = parseRecipe(options.recipe, registry);
   if (!recipe.ok) return recipe;
   // Every check of the approval flag comes before the first clone and before any write.
-  const approvals = approvalsFromFlags(deps, options.yes, recipes[recipe.value].approvalPoints, options.approval);
+  const approvals = approvalsFromFlags(deps, options.yes, recipe.value.approvalPoints, options.approval);
   if (!approvals.ok) return approvals;
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
   if (!outside.ok) return outside;
@@ -592,7 +610,10 @@ const checkOptions = async (
   const base = { layer: layer.value, recipe: recipe.value, ownerName, id, approvals: approvals.value };
   // The text of the blocks follows the modes of a root that has no record yet, so it names the owner for each point.
   // After a recorded delegation, `upgrade` renders the text again.
-  const settings = parseSettings(settingsOf({ ...base, approvals: NO_APPROVALS }, options.ownerGithub, { projects: [], sources: {} }));
+  const settings = parseSettings(
+    settingsOf({ ...base, approvals: NO_APPROVALS }, options.ownerGithub, { projects: [], sources: {} }),
+    registry,
+  );
   if (!settings.ok) return settings;
   const root = await rootTextsOf(deps, layoutOf(home));
   if (!root.ok) return root;
@@ -618,15 +639,19 @@ const requireIndexPath = async (deps: Deps): Promise<CliResult<string>> => {
 };
 
 /** Read the system and decide what init writes. This function writes nothing. */
-export const planInit = async (deps: Deps, options: InitOptions): Promise<CliResult<InitPlan>> => {
+export const planInit = async (
+  deps: Deps,
+  options: InitOptions,
+  registry: RecipeRegistry,
+): Promise<CliResult<InitPlan>> => {
   const indexPath = await requireIndexPath(deps);
   if (!indexPath.ok) return indexPath;
   const home = resolve(deps.cwd, options.home ?? '.');
-  const checked = await checkOptions(deps, options, home, indexPath.value);
+  const checked = await checkOptions(deps, options, home, indexPath.value, registry);
   if (!checked.ok) return checked;
   const planned = await planProjects(deps, home, options.projects);
   if (!planned.ok) return planned;
-  return planChecked(deps, options, checked.value, indexPath.value, planned.value);
+  return planChecked(deps, options, checked.value, indexPath.value, planned.value, registry);
 };
 
 /**
@@ -639,6 +664,7 @@ const planChecked = async (
   checked: CheckedOptions,
   indexPath: string,
   planned: readonly PlannedProject[],
+  registry: RecipeRegistry,
 ): Promise<CliResult<InitPlan>> => {
   const { layer, templates, blocks, root } = checked;
   const home = resolve(deps.cwd, options.home ?? '.');
@@ -650,10 +676,10 @@ const planChecked = async (
   if (!leftover.ok) return leftover;
   const github = options.ownerGithub ?? (await detectGithubLogin(deps));
 
-  const projects = await describeProjects(deps, planned);
+  const projects = await describeProjects(deps, planned, checked.recipe);
   if (!projects.ok) return projects;
 
-  const config = parseSettings(settingsOf(checked, github, projects.value));
+  const config = parseSettings(settingsOf(checked, github, projects.value), registry);
   if (!config.ok) return config;
   const stateFiles = stateFilesOf(templates, blocks.workerText);
   if (!stateFiles.ok) return stateFiles;
@@ -678,7 +704,7 @@ const planChecked = async (
     stateFiles: stateFiles.value,
     approvals: checked.approvals,
     warnings: [
-      ...(roleNameForLayer(layer) === null
+      ...(checked.recipe.roles.nameForLayer(layer) === null
         ? [`Layer ${layer} has no role template: ${files.claudeMd} holds the safety block only.`]
         : []),
       ...leftover.value.map(tempFolderWarning),
@@ -917,7 +943,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     deps,
     plan.home,
     plan.config.core.node.id,
-    recipes[plan.config.recipe.id].approvalPoints,
+    plan.config.entry.approvalPoints,
     plan.approvals,
   );
   // The setup acceptance comes last for the same reason. A write that fails is a warning: the run keeps its work, and
@@ -967,7 +993,11 @@ const projectsOf = (deps: Deps, flagValues: readonly string[], found: readonly s
   ...flagValues.filter((argument) => !found.includes(resolve(deps.cwd, argument))),
 ];
 
-export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResult<CommandOutput>> => {
+export const runInit = async (
+  deps: Deps,
+  options: InitOptions,
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
   // The place of the factory list is checked before init writes anything.
   const indexPath = await requireIndexPath(deps);
   if (!indexPath.ok) return indexPath;
@@ -978,17 +1008,17 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   await warnInstructionFiles(deps, home);
   // A factory that is there already goes its own way. With no local file, it arrived; with both config files, `init` ran
   // here before, or the folder moved.
-  if (chosen.value.kind === 'received') return runReceived(deps, options, indexPath.value, home);
-  if (chosen.value.kind === 'both') return runExisting(deps, options, indexPath.value, home);
+  if (chosen.value.kind === 'received') return runReceived(deps, options, indexPath.value, home, registry);
+  if (chosen.value.kind === 'both') return runExisting(deps, options, indexPath.value, home, registry);
 
   // A bad value must give its error before any clone runs, because a clone costs time and disk.
-  const checked = await checkOptions(deps, options, home, indexPath.value);
+  const checked = await checkOptions(deps, options, home, indexPath.value, registry);
   if (!checked.ok) return checked;
   // The questions come after the checks, so a refused run asks nothing, and before the first clone.
   const asked = await askApprovals(
     deps,
     options.yes,
-    recipes[checked.value.recipe].approvalPoints,
+    checked.value.recipe.approvalPoints,
     checked.value.approvals,
   );
   if (!asked.ok) return asked;
@@ -1007,7 +1037,7 @@ export const runInit = async (deps: Deps, options: InitOptions): Promise<CliResu
   if (!cloned.ok) return cloned;
   const made = cloned.value;
 
-  const plan = await planChecked(deps, { ...options, home }, answered, indexPath.value, projects.value);
+  const plan = await planChecked(deps, { ...options, home }, answered, indexPath.value, projects.value, registry);
   if (!plan.ok) return undoClones(deps, made, parents.value, plan.error);
   const applied = await applyInit(deps, plan.value);
   if (!applied.ok) return undoClones(deps, made, parents.value, applied.error);

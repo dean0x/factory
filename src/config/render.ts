@@ -1,6 +1,5 @@
 import { address, capitalize, files, keys, program, roles, values } from '../names.js';
-import type { RecipeConfig } from '../recipes/index.js';
-import type { ProjectConfig } from '../recipes/software/config.js';
+import type { RecipeConfig, RecipeEntry, RecipeProject } from '../recipes/index.js';
 import {
   CONFIG_SCHEMA_VERSION,
   LOCAL_SCHEMA_VERSION,
@@ -46,16 +45,23 @@ const gateLines = (depth: number, checks: readonly string[]): string[] =>
         ...checks.map((check) => `${pad(depth + 2)}- ${quoted(check)}`),
       ];
 
-/** The lines of one project. `depth` is the depth of the list item. */
-const projectLines = (project: ProjectConfig, depth: number): string[] => [
+/** The keys of the recipe, as the entry names them. A key with no text value is left out. */
+const recipeKeyLines = (recipeEntry: RecipeEntry, project: RecipeProject, depth: number): string[] =>
+  recipeEntry.projectKeys.flatMap((key) => {
+    const value = project[key];
+    return typeof value === 'string' ? [entry(depth, key, scalar(value))] : [];
+  });
+
+/** The lines of one project. `depth` is the depth of the list item. The recipe sets its own keys. */
+const projectLines = (recipeEntry: RecipeEntry, project: RecipeProject, depth: number): string[] => [
   itemEntry(depth, keys.project.id, scalar(project.id)),
   ...(project.url === undefined ? [] : [entry(depth + 1, keys.project.url, quoted(project.url))]),
   ...(project.repo === undefined ? [] : [entry(depth + 1, keys.project.repo, quoted(project.repo))]),
   entry(depth + 1, keys.project.path, quoted(project.path)),
-  entry(depth + 1, keys.project.defaultBranch, quoted(project.default_branch)),
-  entry(depth + 1, keys.project.mergeMethod, project.merge_method),
+  ...(project.default_branch === undefined ? [] : [entry(depth + 1, keys.project.defaultBranch, quoted(project.default_branch))]),
+  ...recipeKeyLines(recipeEntry, project, depth + 1),
   ...(project.variant === undefined ? [] : [entry(depth + 1, keys.project.variant, project.variant)]),
-  ...gateLines(depth + 1, project.gate.checks),
+  ...(project.gate === undefined ? [] : gateLines(depth + 1, project.gate.checks)),
   ...(project.heavy_test === undefined ? [] : [entry(depth + 1, keys.project.heavyTest, quoted(project.heavy_test))]),
 ];
 
@@ -72,13 +78,13 @@ const trackerLines = (tracker: TrackerConfig): string[] =>
         entry(1, keys.tracker.watchInterval, tracker.watch_interval),
       ];
 
-/** The `recipe` block. A recipe renders its own keys. */
-const recipeLines = (recipe: RecipeConfig): string[] => [
+/** The `recipe` block. The entry of the recipe names the keys that a project holds besides the keys of the core. */
+const recipeLines = (recipeEntry: RecipeEntry, recipe: RecipeConfig): string[] => [
   `${keys.root.recipe}:`,
   entry(1, keys.recipe.id, recipe.id),
   entry(1, keys.recipe.variant, recipe.variant, `the default ${roles.variant} for every project`),
   `${pad(1)}# Each project path is relative to this folder.`,
-  ...section(1, keys.recipe.projects, recipe.projects.map((project) => projectLines(project, 2))),
+  ...section(1, keys.recipe.projects, recipe.projects.map((project) => projectLines(recipeEntry, project, 2))),
 ];
 
 const childLines = (link: LinkConfig): string[] => [
@@ -104,7 +110,7 @@ const sourceLines = (sources: Readonly<Record<string, string>>): string[] => {
 
 /** The text of the shared file, with comments. Git tracks the file, and it travels to every machine. */
 export const renderSharedConfig = (shared: SharedConfig): string => {
-  const { core, recipe } = shared;
+  const { core, recipe, entry: recipeEntry } = shared;
   const lines: string[] = [
     `# ${files.config}: the shared configuration of this ${roles.node}. Git tracks it, and it goes to every machine.`,
     `# Do not put keys, tokens or passwords here. What is personal or true for one machine only is in ${files.localConfig}.`,
@@ -133,7 +139,7 @@ export const renderSharedConfig = (shared: SharedConfig): string => {
     `${keys.root.tracker}:`,
     ...trackerLines(core.tracker),
     '',
-    ...recipeLines(recipe),
+    ...recipeLines(recipeEntry, recipe),
   ];
   return `${lines.join('\n')}\n`;
 };

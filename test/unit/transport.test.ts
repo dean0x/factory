@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { fileTransport, type Transport } from '../../src/comms/transport.js';
+import type { Transport } from '../../src/comms/transport.js';
+import { fileTransport } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';

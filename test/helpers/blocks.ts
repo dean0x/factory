@@ -1,12 +1,15 @@
 import { renderBlock } from '../../src/blocks/managed.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
-import { defaultOwnerPrefix, values } from '../../src/names.js';
+import { defaultOwnerPrefix } from '../../src/names.js';
 import { ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
 import type { BlockInput, BlockTemplate, SetupTexts } from '../../src/templates/types.js';
 
+/** The software recipe, the first recipe of the package. */
+export const [softwareRecipe] = recipes;
+
 /** The mode of each approval point of the software recipe, the default: every point waits for the owner. */
-export const softwareOwnerModes: ApprovalModes = ownerModes(recipes[values.recipes[0]].approvalPoints);
+export const softwareOwnerModes: ApprovalModes = ownerModes(softwareRecipe.approvalPoints);
 
 /** An owner prefix without a contraction, so that the style tests of the template texts check the template and not the value. */
 export const plainOwnerPrefix = '[From {owner}, typed by {node}, {date}]';
@@ -25,6 +28,7 @@ export const initSetupTexts: SetupTexts = {
 
 /** The input of the blocks of a node on this layer, with the defaults of a new node. `overrides` change single parts. */
 export const blockInput = (layer: number, overrides: Partial<Omit<BlockInput, 'layer'>> = {}): BlockInput => ({
+  recipe: softwareRecipe,
   layer,
   modes: softwareOwnerModes,
   ownerPrefix: plainOwnerPrefix,

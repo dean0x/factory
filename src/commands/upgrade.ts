@@ -14,7 +14,8 @@ import {
   unstagePaths,
   type RepoPaths,
 } from '../core/git.js';
-import { locateHomeFolder } from '../core/home.js';
+import { locateHomeFolder, type NodeIdReader } from '../core/home.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { isSameOrInside } from '../core/paths.js';
@@ -72,7 +73,7 @@ import {
   settleSetupBlocks,
   type FilesPlan,
 } from '../upgrade/plan.js';
-import { currentSpec, type UpgradeSpec } from '../upgrade/spec.js';
+import { specFor, type UpgradeSpec } from '../upgrade/spec.js';
 import { acceptReason, checkRootSetup, settleSetup } from './setup-check.js';
 
 export interface UpgradeOptions {
@@ -101,11 +102,16 @@ const checkStateRepoReady = (deps: Deps, layout: Layout, touched: readonly strin
  * Put the upgraded home in the home index, as init does, so that a command finds the home from a project folder.
  * The home is upgraded already, so a problem here is a warning and not a failure.
  */
-const indexUpgraded = async (deps: Deps, home: string, origin: Origin): Promise<readonly OutLine[]> => {
+const indexUpgraded = async (
+  deps: Deps,
+  home: string,
+  origin: Origin,
+  registry: RecipeRegistry,
+): Promise<readonly OutLine[]> => {
   const warn = (texts: readonly string[]): readonly OutLine[] => texts.map((text) => ({ level: 'warn', text }));
   const indexPath = await indexPathOf(deps);
   if (!indexPath.ok) return warn([`The home index was not updated: ${indexPath.error.message}`]);
-  const config = await loadConfig(deps, home);
+  const config = await loadConfig(deps, home, registry);
   if (!config.ok) return warn([`The home index was not updated: ${config.error.message}`]);
   const recorded = await recordNode(deps, indexPath.value, {
     home,
@@ -145,6 +151,7 @@ const requireRegistrationConsent = async (
   deps: Deps,
   home: string,
   options: UpgradeOptions,
+  registry: RecipeRegistry,
 ): Promise<CliResult<void>> => {
   if (inFactorySession(deps)) {
     return safetyRefusal(
@@ -157,7 +164,7 @@ const requireRegistrationConsent = async (
   if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
     return usageError(`${home} is not in the ${places.list}, and ${program} registers it only after your yes`, again);
   }
-  const identity = await readNodeIdentity(deps, home);
+  const identity = await readNodeIdentity(deps, home, registry);
   const who = identity.ok ? ` (${roles.node} id ${identity.value.id})` : '';
   const answer = await deps.prompt(
     printable(`The ${places.list} has no entry for ${home}${who}. Upgrade it and register it? [y/N] `),
@@ -187,8 +194,9 @@ const acceptedSetupTexts = async (
   home: string,
   unregistered: boolean,
   dryRun: boolean,
+  registry: RecipeRegistry,
 ): Promise<CliResult<SetupTexts>> => {
-  const identity = await readNodeIdentity(deps, home);
+  const identity = await readNodeIdentity(deps, home, registry);
   if (!identity.ok) return ok(NO_SETUP_TEXTS);
   const node = identity.value.id;
   const received = !unregistered && (await originOfHome(deps, home)) === homeIndex.origins.received;
@@ -200,7 +208,8 @@ const acceptedSetupTexts = async (
 export const runUpgrade = async (
   deps: Deps,
   options: UpgradeOptions,
-  upgrade: UpgradeSpec = currentSpec,
+  registry: RecipeRegistry,
+  upgrade: UpgradeSpec = specFor(registry),
 ): Promise<CliResult<CommandOutput>> => {
   // The safety rules are a security boundary, so only the owner replaces the block, outside a session, also with yes.
   if (inFactorySession(deps) && options.overwrite.includes(blockNames.safety)) {
@@ -209,11 +218,12 @@ export const runUpgrade = async (
       `Run "${overwriteCommand(blockNames.safety)}" in a terminal window outside a ${places.session}.`,
     );
   }
-  const located = await locateHomeFolder(deps, options.home, readNodeIdentity, { allowUnregisteredSchema1: true });
+  const readIdentity: NodeIdReader = (readDeps, folder) => readNodeIdentity(readDeps, folder, registry);
+  const located = await locateHomeFolder(deps, options.home, readIdentity, { allowUnregisteredSchema1: true });
   if (!located.ok) return located;
   const home = located.value.home;
   if (located.value.unregistered) {
-    const consent = await requireRegistrationConsent(deps, home, options);
+    const consent = await requireRegistrationConsent(deps, home, options, registry);
     if (!consent.ok) return consent;
   }
   const origin = await originBeforeRun(deps, home, located.value.unregistered);
@@ -221,7 +231,7 @@ export const runUpgrade = async (
   // The link rule comes first, also in a dry run: no read or write below goes through a link.
   const plain = await requireNoRootLinks(deps, layout);
   if (!plain.ok) return plain;
-  const setup = await acceptedSetupTexts(deps, home, located.value.unregistered, options.dryRun);
+  const setup = await acceptedSetupTexts(deps, home, located.value.unregistered, options.dryRun, registry);
   if (!setup.ok) return setup;
 
   const config = await planFile(deps, layout.configFile, upgrade.config);
@@ -456,7 +466,7 @@ export const runUpgrade = async (
 
   const count = written.length + moved.length;
   const pruned = [...(await pruneBackups(deps, home, backupDir.value)), ...(await pruneBlockBackups(deps, home))];
-  const indexed = await indexUpgraded(deps, home, origin);
+  const indexed = await indexUpgraded(deps, home, origin, registry);
   return done(
     [
       ...savedBlocks.value.map((saved): OutLine => ({

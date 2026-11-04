@@ -11,6 +11,7 @@ import { locateHomeFolder } from '../core/home.js';
 import { isSameOrInside, realPathOf } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
 import { commands, commandText, files, flags, flagText, nodeCommands, program, roles, schemaIds } from '../names.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 
 export interface NodeOptions {
@@ -37,12 +38,16 @@ const SUBCOMMANDS = Object.values(nodeCommands).join(', ');
 const needsUsage = (what: string): CliResult<never> =>
   usageError(what, `Run "${commandText(commands.node)} ${flagText(flags.help)}".`);
 
-const openNode = async (deps: Deps, homeFlag: string | undefined): Promise<CliResult<OpenNode>> => {
-  const located = await locateHomeFolder(deps, homeFlag, readNodeIdentity);
+const openNode = async (
+  deps: Deps,
+  homeFlag: string | undefined,
+  registry: RecipeRegistry,
+): Promise<CliResult<OpenNode>> => {
+  const located = await locateHomeFolder(deps, homeFlag, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry));
   if (!located.ok) return located;
   const home = located.value.home;
   // The loader checks the owner and the mode of the local file, and a missing local file is a usage error.
-  const config = await loadConfig(deps, home);
+  const config = await loadConfig(deps, home, registry);
   if (!config.ok) return config;
   const notes = await settleLocalMode(deps, home, true);
   if (!notes.ok) return notes;
@@ -78,10 +83,11 @@ const rowLines = (rows: readonly ChildRow[]): OutLine[] => {
 const childrenOutput = async (
   deps: Deps,
   node: { readonly home: string; readonly config: FactoryConfig; readonly notes: readonly string[] },
+  registry: RecipeRegistry,
   intro: readonly OutLine[],
   change?: Change,
 ): Promise<CommandOutput> => {
-  const rows = await probeChildren(fileTransport(deps), node.config.core.children);
+  const rows = await probeChildren(fileTransport(deps, registry), node.config.core.children);
   return {
     lines: [...intro, ...rowLines(rows)],
     json: {
@@ -104,9 +110,10 @@ const writeEdited = async (
   deps: Deps,
   node: OpenNode,
   edited: Result<string, string>,
+  registry: RecipeRegistry,
 ): Promise<CliResult<FactoryConfig>> => {
   if (!edited.ok) return failure(edited.error);
-  const checked = parseConfigTexts(node.sharedText, edited.value);
+  const checked = parseConfigTexts(node.sharedText, edited.value, registry);
   if (!checked.ok) return err({ ...checked.error, message: `${checked.error.message}. Nothing was changed.` });
   const written = await deps.fs.writeTextAtomic(node.localFile, edited.value, node.home);
   return written.ok ? ok(checked.value) : written;
@@ -132,14 +139,23 @@ const requireApart = async (deps: Deps, home: string, child: string): Promise<Cl
   return ok(undefined);
 };
 
-const runChildren = async (deps: Deps, options: NodeOptions): Promise<CliResult<CommandOutput>> => {
-  const node = await openNode(deps, options.home);
+const runChildren = async (
+  deps: Deps,
+  options: NodeOptions,
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const node = await openNode(deps, options.home, registry);
   if (!node.ok) return node;
-  return ok(await childrenOutput(deps, node.value, []));
+  return ok(await childrenOutput(deps, node.value, registry, []));
 };
 
-const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): Promise<CliResult<CommandOutput>> => {
-  const node = await openNode(deps, options.home);
+const runAddChild = async (
+  deps: Deps,
+  options: NodeOptions,
+  registry: RecipeRegistry,
+  argument: string,
+): Promise<CliResult<CommandOutput>> => {
+  const node = await openNode(deps, options.home, registry);
   if (!node.ok) return node;
   const { home, config } = node.value;
   const layer = config.core.node.layer;
@@ -155,7 +171,7 @@ const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): 
   const apart = await requireApart(deps, home, target.value.path);
   if (!apart.ok) return apart;
 
-  const answer = await fileTransport(deps).ping(target.value.address);
+  const answer = await fileTransport(deps, registry).ping(target.value.address);
   if (answer.kind === 'unknown') {
     return failure(`cannot add the child: ${answer.reason}`, 'Start the child, then add it again.');
   }
@@ -176,7 +192,7 @@ const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): 
     const intro: OutLine[] = [
       { level: 'warn', text: `${answer.id} is a child of this ${roles.node} already. Nothing changed.` },
     ];
-    return ok(await childrenOutput(deps, { home, config, notes: node.value.notes }, intro));
+    return ok(await childrenOutput(deps, { home, config, notes: node.value.notes }, registry, intro));
   }
   if (known !== undefined) {
     return failure(
@@ -186,19 +202,24 @@ const runAddChild = async (deps: Deps, options: NodeOptions, argument: string): 
   }
 
   const edited = addChildText(node.value.localText, { id: answer.id, address: target.value.address });
-  const written = await writeEdited(deps, node.value, edited);
+  const written = await writeEdited(deps, node.value, edited, registry);
   if (!written.ok) return written;
   const intro: OutLine[] = [{ level: 'text', text: `Added the child ${answer.id} (layer ${answer.layer}).` }];
   return ok(
-    await childrenOutput(deps, { home, config: written.value, notes: node.value.notes }, intro, {
+    await childrenOutput(deps, { home, config: written.value, notes: node.value.notes }, registry, intro, {
       action: 'add',
       id: answer.id,
     }),
   );
 };
 
-const runRemoveChild = async (deps: Deps, options: NodeOptions, id: string): Promise<CliResult<CommandOutput>> => {
-  const node = await openNode(deps, options.home);
+const runRemoveChild = async (
+  deps: Deps,
+  options: NodeOptions,
+  registry: RecipeRegistry,
+  id: string,
+): Promise<CliResult<CommandOutput>> => {
+  const node = await openNode(deps, options.home, registry);
   if (!node.ok) return node;
   if (!node.value.config.core.children.some((child) => child.id === id)) {
     return usageError(
@@ -207,33 +228,38 @@ const runRemoveChild = async (deps: Deps, options: NodeOptions, id: string): Pro
     );
   }
 
-  const written = await writeEdited(deps, node.value, removeChildText(node.value.localText, id));
+  const written = await writeEdited(deps, node.value, removeChildText(node.value.localText, id), registry);
   if (!written.ok) return written;
   const intro: OutLine[] = [{ level: 'text', text: `Removed the child ${id}. Its files stay as they are.` }];
   return ok(
     await childrenOutput(
       deps,
       { home: node.value.home, config: written.value, notes: node.value.notes },
+      registry,
       intro,
       { action: 'remove', id },
     ),
   );
 };
 
-export const runNode = async (deps: Deps, options: NodeOptions): Promise<CliResult<CommandOutput>> => {
+export const runNode = async (
+  deps: Deps,
+  options: NodeOptions,
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
   const [subcommand, ...args] = options.words;
   switch (subcommand) {
     case undefined:
       return needsUsage(`${commandText(commands.node)} needs a subcommand: ${SUBCOMMANDS}`);
     case nodeCommands.children:
-      return args.length === 0 ? runChildren(deps, options) : needsUsage(`${subcommand} takes no argument`);
+      return args.length === 0 ? runChildren(deps, options, registry) : needsUsage(`${subcommand} takes no argument`);
     case nodeCommands.addChild:
       return args.length === 1 && args[0] !== undefined
-        ? runAddChild(deps, options, args[0])
+        ? runAddChild(deps, options, registry, args[0])
         : needsUsage(`${subcommand} takes one argument: a path or a file address`);
     case nodeCommands.removeChild:
       return args.length === 1 && args[0] !== undefined
-        ? runRemoveChild(deps, options, args[0])
+        ? runRemoveChild(deps, options, registry, args[0])
         : needsUsage(`${subcommand} takes one argument: the id of a child`);
     default:
       return needsUsage(`unknown subcommand "${subcommand}". The subcommands are: ${SUBCOMMANDS}`);

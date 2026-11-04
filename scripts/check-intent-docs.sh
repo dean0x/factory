@@ -373,10 +373,12 @@ first=$(awk '
 ' "$design") || first=$awk_failed
 report 9 "design.md has the headings for core and setup and for extension points" "$first"
 
-# 10. The core parts of the design and of the glossary hold no word of the software recipe list: merge, pull request,
-# release (also release check and release scope), CI log, PR, CI, git and tmux. A word also counts as a plural, a past
-# form or an -ing form, in any letter case; git and tmux count only as the word itself. PR and CI count only in capital
-# letters. A word inside a longer word (.gitignore) does not count, and a code span counts. The core parts are:
+# 10. The core parts of the design and of the glossary hold no word of the software recipe list, and no word of git or
+# tmux. The software recipe list is a copy of softwareWordList in src/recipes/software/words.ts. A unit test keeps the two
+# equal, in the same order. A word also counts as a plural, a past form or an -ing form, in any letter case; git and tmux
+# count only as the word itself. An all-capital word (PR, CI) counts only in capital letters. A word that starts with
+# another word of the list (release check) is found by that word. A word inside a longer word (.gitignore) does not
+# count, and a code span counts. The core parts are:
 #   a. design.md, the section "Summary for Dean (one page)", down to the next heading of level 1 or 2;
 #   b. design.md, the section "4.1 Concepts", down to the next heading of level 1 to 3;
 #   c. design.md 4.2, the fenced lines under "**Core commands**", down to "**Software recipe commands**";
@@ -387,16 +389,17 @@ report 9 "design.md has the headings for core and setup and for extension points
 # "> ") is not checked. The parts c and d have no such line. A line in fenced code is not a heading and ends no part; a
 # fence starts only at column 0. Each part needs at least one line to check. The output names the first hit, or the part
 # that is missing.
-first=$(awk '
+software_words="merge|pull request|release|release check|release scope|CI log|PR|CI"
+first=$(awk -v software_words="$software_words" '
   function recipe_word(line,   low, word) {
     low = tolower(line)
-    if (match(low, /(^|[^a-z0-9_])(merg(e[sd]?|ing)|pull requests?|releas(e[sd]?|ing)|ci logs?|git|tmux)($|[^a-z0-9_])/)) {
+    if (match(low, lower_re)) {
       word = substr(low, RSTART, RLENGTH)
       sub(/^[^a-z]+/, "", word)
       sub(/[^a-z]+$/, "", word)
       return word
     }
-    if (match(line, /(^|[^A-Za-z0-9_])(PRs?|CIs?)($|[^A-Za-z0-9_])/)) {
+    if (match(line, abbr_re)) {
       word = substr(line, RSTART, RLENGTH)
       sub(/^[^A-Z]+/, "", word)
       sub(/[^A-Za-z]+$/, "", word)
@@ -407,8 +410,32 @@ first=$(awk '
   function exempt(line) {
     return line ~ /^(- |> )?(Software recipe|Engineering note):/
   }
+  # The expressions of the words come from software_words. A word of all capital letters is an abbreviation and counts in
+  # capital letters only. The last word of a phrase also counts as a plural, a past form and an -ing form.
   BEGIN {
     split("Summary for Dean|4.1 Concepts|4.2 Core commands|6 Rules for every factory|Words of every factory", name, "[|]")
+    count = split(software_words, listed, "[|]")
+    for (i = 1; i <= count; i++) {
+      if (listed[i] ~ /^[A-Z]+$/) {
+        abbr_re = abbr_re (abbr_re == "" ? "" : "|") listed[i] "s?"
+        continue
+      }
+      lowered = tolower(listed[i])
+      covered = 0
+      for (j = 1; j <= count; j++) {
+        if (j != i && listed[j] !~ /^[A-Z]+$/ && index(lowered, tolower(listed[j]) " ") == 1) covered = 1
+      }
+      if (covered) continue
+      pieces = split(lowered, piece, " ")
+      last = piece[pieces]
+      if (last ~ /e$/) piece[pieces] = substr(last, 1, length(last) - 1) "(e[sd]?|ing)"
+      else piece[pieces] = last "(s|ed|ing)?"
+      form = piece[1]
+      for (k = 2; k <= pieces; k++) form = form " +" piece[k]
+      lower_re = lower_re (lower_re == "" ? "" : "|") form
+    }
+    lower_re = "(^|[^a-z0-9_])(" lower_re "|git|tmux)($|[^a-z0-9_])"
+    abbr_re = "(^|[^A-Za-z0-9_])(" abbr_re ")($|[^A-Za-z0-9_])"
   }
   # The files are design.md, then glossary.md. cur is the number of the part that is open (0: none).
   FNR == 1 {

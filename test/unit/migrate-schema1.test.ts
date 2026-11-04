@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sha256Hex } from '../../src/blocks/managed.js';
-import { localConfigSchema, sharedConfigSchema, splitConfigValue } from '../../src/config/schema.js';
+import { localConfigSchema, splitConfigValue } from '../../src/config/schema.js';
+import { sharedConfigSchema } from '../helpers/package-registry.js';
 import { configMigrations } from '../../src/migrate/config.js';
 import { fileSteps, stepsBetween } from '../../src/migrate/files.js';
 import { planMigrations, runMigrations } from '../../src/migrate/runner.js';

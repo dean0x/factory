@@ -44,6 +44,7 @@ import {
 } from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import { safetyTemplateFor } from '../templates/index.js';
 import type { SetupTexts } from '../templates/types.js';
 import { planBlock } from '../upgrade/plan.js';
@@ -421,15 +422,19 @@ const dryRunOutput = (input: {
   };
 };
 
-export const runStart = async (deps: Deps, options: StartOptions): Promise<CliResult<CommandOutput>> => {
+export const runStart = async (
+  deps: Deps,
+  options: StartOptions,
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
   // The registration check of the lookup keeps a config file of a cloned repo out: its proxy would get the requests of
   // the session. A config that does not pass it is a stop here, before any proxy check or launch.
-  const located = await locateHomeFolder(deps, options.home, readNodeIdentity);
+  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry));
   if (!located.ok) return located;
   const home = located.value.home;
   // The warning about instruction files comes before any change or launch, and it never stops the command.
   await warnInstructionFiles(deps, home);
-  const loaded = await loadConfig(deps, home);
+  const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return loaded;
   const id = loaded.value.core.node.id;
   const { dryRun } = options;

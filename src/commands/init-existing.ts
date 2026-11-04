@@ -26,7 +26,7 @@ import {
   schemaIds,
   values,
 } from '../names.js';
-import { ownerModes, recipes, type ApprovalModes, type ApprovalPoint } from '../recipes/index.js';
+import { ownerModes, type ApprovalModes, type ApprovalPoint, type RecipeRegistry } from '../recipes/index.js';
 import { stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { STATE_LABEL } from '../state/load.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
@@ -95,11 +95,12 @@ interface Checked {
   readonly standing: Standing;
   readonly repair: Repair;
   readonly points: readonly ApprovalPoint[];
+  readonly registry: RecipeRegistry;
   readonly warnings: readonly string[];
 }
 
-const standingOf = async (deps: Deps, home: string): Promise<CliResult<Standing>> => {
-  const problem = await entryProblemOf(deps, home, readNodeIdentity);
+const standingOf = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CliResult<Standing>> => {
+  const problem = await entryProblemOf(deps, home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry));
   if (!problem.ok) return problem;
   const found = problem.value;
   if (found === null) return ok({ registration: 'registered', reason: null });
@@ -147,6 +148,7 @@ const checkExisting = async (
   options: InitOptions,
   indexPath: string,
   home: string,
+  registry: RecipeRegistry,
 ): Promise<CliResult<Checked>> => {
   if (inFactorySession(deps)) {
     return safetyRefusal(
@@ -155,12 +157,12 @@ const checkExisting = async (
     );
   }
   // A shared file that is not valid is the case of a node that exists: `doctor` names the problem.
-  const shared = await inspectSharedConfig(deps, home);
+  const shared = await inspectSharedConfig(deps, home, registry);
   if (shared.kind !== 'valid') return nodeExists(home);
 
-  const root = await checkReceivedRoot(deps, home, { keepState: true });
+  const root = await checkReceivedRoot(deps, home, registry, { keepState: true });
   if (!root.ok) return root;
-  const config = await loadConfig(deps, home);
+  const config = await loadConfig(deps, home, registry);
   if (!config.ok) return config;
   const given = [
     ...valueFlagsOf(options),
@@ -177,7 +179,7 @@ const checkExisting = async (
   if (!outside.ok) return outside;
   const leftover = await leftoverTempFolders(deps, home);
   if (!leftover.ok) return leftover;
-  const standing = await standingOf(deps, home);
+  const standing = await standingOf(deps, home, registry);
   if (!standing.ok) return standing;
   const repair = await repairOf(deps, root.value.layout);
   if (!repair.ok) return repair;
@@ -187,7 +189,8 @@ const checkExisting = async (
     config: config.value,
     standing: standing.value,
     repair: repair.value,
-    points: recipes[config.value.recipe.id].approvalPoints,
+    points: config.value.entry.approvalPoints,
+    registry,
     warnings: [
       ...root.value.warnings,
       ...(await sameIdWarnings(deps, indexPath, home, config.value.core.node.id)),
@@ -279,7 +282,7 @@ const localChangeOf = async (
   if (!local.ok) return local;
   const edited = setApprovalText(local.value, modes);
   if (!edited.ok) return failure(`${files.localConfig}: ${edited.error}`);
-  const parsed = parseConfigTexts(shared.value, edited.value);
+  const parsed = parseConfigTexts(shared.value, edited.value, checked.registry);
   return parsed.ok ? ok({ text: edited.value, previous: local.value }) : parsed;
 };
 
@@ -565,8 +568,9 @@ export const runExisting = async (
   options: InitOptions,
   indexPath: string,
   home: string,
+  registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
-  const checked = await checkExisting(deps, options, indexPath, home);
+  const checked = await checkExisting(deps, options, indexPath, home, registry);
   if (!checked.ok) return checked;
   const { config, root, standing } = checked.value;
   const id = config.core.node.id;

@@ -3,7 +3,7 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { files, ownerRecords, places, values } from '../names.js';
-import { ownerModes, recipes, type ApprovalMode, type ApprovalModes } from '../recipes/index.js';
+import { ownerModes, type ApprovalMode, type ApprovalModes } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
 import { inFactorySession } from './factory-session.js';
@@ -257,7 +257,7 @@ export interface DelegationReport {
  * when a local value asks for a delegation.
  */
 export const delegationReport = async (deps: Deps, root: string, config: FactoryConfig): Promise<DelegationReport> => {
-  const points = recipes[config.recipe.id].approvalPoints;
+  const points = config.entry.approvalPoints;
   const asked = points.filter((point) => config.core.approval[point.id] === DELEGATED_MODE);
   if (asked.length === 0) return { modes: ownerModes(points), active: [], unmatched: [] };
   const records = await delegationsOf(deps, root, config.core.node.id);

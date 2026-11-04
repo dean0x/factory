@@ -2,8 +2,9 @@ import type { Deps } from '../core/deps.js';
 import { commands, commandText, flags, flagShorts, flagText, helpTopics, program, schemaIds } from '../names.js';
 import { exitCodeOf, failure } from './errors.js';
 import { detectStyle, renderError, renderJson, renderText, renderWarnings } from './output.js';
+import { recipes, type RecipeRegistry } from '../recipes/index.js';
 import {
-  commandTable,
+  commandTableFor,
   globalOptions,
   parseFlags,
   renderCommandHelp,
@@ -24,9 +25,15 @@ const EXIT_USAGE = 2;
 /** The value of `process.platform` on native Windows, where the tmux and shell steps cannot work. */
 const NATIVE_WINDOWS = 'win32';
 
-const findCommand = (name: string) => commandTable.find((command) => command.name === name);
-
-export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): Promise<number> => {
+/** Run one command line. The registry sets the recipes that the commands accept. The package registry is the default. */
+export const runCli = async (
+  argv: readonly string[],
+  deps: Deps,
+  sink: Sink,
+  registry: RecipeRegistry = recipes,
+): Promise<number> => {
+  const table = commandTableFor(registry);
+  const findCommand = (name: string) => table.find((command) => command.name === name);
   if (deps.platform.os === NATIVE_WINDOWS) {
     const unsupported = failure(`${program} runs on macOS and Linux`, 'Use WSL, then run the command again.');
     await sink.stderr(renderError(unsupported.error));
@@ -43,7 +50,7 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
       );
       return exitCodeOf[parsed.error.kind];
     }
-    const output = wordsOutput();
+    const output = await wordsOutput(deps, registry);
     if (parsed.value.bool(flags.json)) {
       await sink.stdout(renderJson(output.json));
     } else {

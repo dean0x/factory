@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { runInit, type InitOptions } from '../../src/commands/init.js';
+import type { InitOptions } from '../../src/commands/init.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
@@ -15,6 +15,7 @@ import {
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { runInit } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 
 const ROOT = '/w/recv';

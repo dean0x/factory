@@ -35,8 +35,7 @@ import {
 } from '../core/setup-acceptance.js';
 import { describeIssues } from '../core/zod.js';
 import { refuse } from '../migrate/inspect.js';
-import { roleNameForLayer } from '../recipes/software/recipe.js';
-import { recipes } from '../recipes/index.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import {
   commands,
   commandText,
@@ -169,6 +168,7 @@ const checkIgnoreRules = async (
 export const checkReceivedRoot = async (
   deps: Deps,
   home: string,
+  registry: RecipeRegistry,
   checks: { readonly keepState?: boolean } = {},
 ): Promise<CliResult<ReceivedRoot>> => {
   const layout = layoutOf(home);
@@ -191,7 +191,7 @@ export const checkReceivedRoot = async (
   const linked = await requireNoTrackedLinks(deps, home, set);
   if (!linked.ok) return linked;
 
-  const shared = await inspectSharedConfig(deps, home);
+  const shared = await inspectSharedConfig(deps, home, registry);
   if (shared.kind !== 'valid') return refuse(shared, files.config);
   const projectPaths = shared.value.recipe.projects.map((project) => project.path);
   const problems = requireNoTrackedProblems(trackedProblems(tracked, projectPaths));
@@ -467,6 +467,7 @@ export const runReceived = async (
   options: InitOptions,
   indexPath: string,
   home: string,
+  registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
   if (inFactorySession(deps)) {
     return safetyRefusal(`"${commandText(commands.init)}" does not register a received ${places.folder} in a ${places.session}`, initInTerminalWindow());
@@ -481,11 +482,11 @@ export const runReceived = async (
   const applies = requireFlagsThatApply(options);
   if (!applies.ok) return applies;
 
-  const root = await checkReceivedRoot(deps, home);
+  const root = await checkReceivedRoot(deps, home, registry);
   if (!root.ok) return root;
   const { shared } = root.value;
   const id = shared.core.node.id;
-  const points = recipes[shared.recipe.id].approvalPoints;
+  const points = shared.entry.approvalPoints;
   const flagged = approvalsFromFlags(deps, options.yes, points, options.approval);
   if (!flagged.ok) return flagged;
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
@@ -606,7 +607,7 @@ const planReceived = async (deps: Deps, input: ReceivedInput): Promise<CliResult
     stateFiles: stateFiles.value,
     approvals,
     warnings: [
-      ...(roleNameForLayer(layer) === null ? [`Layer ${layer} has no role template: ${files.claudeMd} holds the safety block only.`] : []),
+      ...(config.value.entry.roles.nameForLayer(layer) === null ? [`Layer ${layer} has no role template: ${files.claudeMd} holds the safety block only.`] : []),
       ...input.warnings,
     ],
   });

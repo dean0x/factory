@@ -111,7 +111,7 @@ describe('parseJsonText and initial files', () => {
   });
 
   it('writes the initial files with the shapes of the plan', () => {
-    expect(JSON.parse(initialBoardText())).toEqual({ merge: [], items: [] });
+    expect(JSON.parse(initialBoardText())).toEqual({ queue: [], items: [] });
     expect(JSON.parse(initialWaitingText())).toEqual({ intro: '', groups: [], items: [] });
     expect(JSON.parse(initialDecisionLogText())).toEqual({ rows: [] });
     expect(initialBoardText().endsWith('\n')).toBe(true);

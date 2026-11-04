@@ -5,10 +5,8 @@ import { parseBlocks, verifyBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
-import { applyInit, planInit, runInit, type InitOptions } from '../../src/commands/init.js';
+import { applyInit, type InitOptions } from '../../src/commands/init.js';
 import { collectSetup, decideAcceptance } from '../../src/commands/init-received.js';
-import { runUpgrade } from '../../src/commands/upgrade.js';
-import { loadConfig } from '../../src/config/load.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
@@ -21,6 +19,7 @@ import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { layer2Blocks } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
+import { loadConfig, planInit, runInit, runUpgrade } from '../helpers/package-registry.js';
 import {
   createFakeDeps,
   exited,
@@ -191,7 +190,7 @@ describe('init: the files', () => {
     const { deps } = setup();
     await runInit(deps, options());
     const read = (name: string): unknown => JSON.parse(deps.files.get(`${HOME}/.factory/${name}`) ?? 'null');
-    expect(read('board.json')).toEqual({ merge: [], items: [] });
+    expect(read('board.json')).toEqual({ queue: [], items: [] });
     expect(read('waiting.json')).toEqual({ intro: '', groups: [], items: [] });
     expect(read('decision-log.json')).toEqual({ rows: [] });
     expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\n');

@@ -28,9 +28,9 @@ import {
 } from '../../src/names.js';
 import { projectPathIssue } from '../../src/core/project-path.js';
 import { commandTable, renderCommandHelp, renderHelp } from '../../src/cli/table.js';
-import { runInit } from '../../src/commands/init.js';
 import { glossary } from '../../src/glossary.js';
 import { recipes } from '../../src/recipes/index.js';
+import { mergeMethods, softwareProjectKeys } from '../../src/recipes/software/words.js';
 import { fillTemplate } from '../../src/templates/fill.js';
 import { fileTemplates } from '../../src/templates/index.js';
 import { allBlocks } from '../helpers/blocks.js';
@@ -38,6 +38,8 @@ import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { OLD_WORD_ENDINGS, OLD_WORD_LIST, oldWordsIn } from '../helpers/old-words.js';
+import { runInit } from '../helpers/package-registry.js';
+import { allSourceFiles, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
@@ -52,30 +54,6 @@ const sourceFiles = (dir: string): string[] =>
     if (statSync(path).isDirectory()) return sourceFiles(path);
     return path.endsWith('.ts') && path !== NAMES_FILE ? [path] : [];
   });
-
-/** Every `.ts` file under a folder, names.ts included. */
-const allSourceFiles = (dir: string): string[] =>
-  readdirSync(dir).flatMap((entry) => {
-    const path = join(dir, entry);
-    if (statSync(path).isDirectory()) return allSourceFiles(path);
-    return path.endsWith('.ts') ? [path] : [];
-  });
-
-const stripComments = (source: string): string =>
-  source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-
-/** The text of every string literal. Template expressions and {{placeholders}} are blanked. */
-const literalsOf = (source: string): string[] => {
-  const code = stripComments(source);
-  const tokens = [
-    ...(code.match(/'(?:[^'\\\n]|\\.)*'/g) ?? []),
-    ...(code.match(/"(?:[^"\\\n]|\\.)*"/g) ?? []),
-    ...(code.match(/`(?:[^`\\]|\\.)*`/g) ?? []),
-  ];
-  return tokens.map((token) =>
-    token.slice(1, -1).replace(/\$\{[^}]*\}/g, ' ').replace(/\{\{[A-Za-z]+\}\}/g, ' '),
-  );
-};
 
 const flat = (...groups: readonly Record<string, unknown>[]): string[] =>
   groups.flatMap((group) => Object.values(group).flatMap((value) => (typeof value === 'string' ? [value] : [])));
@@ -107,10 +85,18 @@ const EXACT_NAMES = new Set([
 
 /**
  * The approval point ids of every recipe. They are config keys, so no file may hold one as a literal,
- * except the approval file of a recipe (`src/recipes/<id>/approval.ts`), which owns the names of its recipe.
+ * except the approval file and the words file of a recipe (`src/recipes/<id>/approval.ts` and `words.ts`),
+ * which own the names of their recipe.
  */
-const POINT_IDS = new Set(Object.values(recipes).flatMap((entry) => entry.approvalPoints.map((point) => point.id)));
-const RECIPE_APPROVAL_FILE = /[\\/]recipes[\\/][^\\/]+[\\/]approval\.ts$/;
+const POINT_IDS = new Set(recipes.flatMap((entry) => entry.approvalPoints.map((point) => point.id)));
+const RECIPE_APPROVAL_FILE = /[\\/]recipes[\\/][^\\/]+[\\/](?:approval|words)\.ts$/;
+
+/**
+ * The project key and the values of a recipe. They are config names, so the same rule holds for them.
+ */
+const RECIPE_NAMES = new Set<string>(
+  [softwareProjectKeys.mergeMethod, ...mergeMethods].filter((name) => !POINT_IDS.has(name)),
+);
 
 /** Names that a string literal must never hold as a part, matched as whole words. */
 const WORD_NAMES = [
@@ -152,6 +138,7 @@ const violationsInText = (source: string, path: string): string[] => {
   for (const literal of literalsOf(source)) {
     if (IMPORT_PATH.test(literal)) continue;
     if (POINT_IDS.has(literal) && !RECIPE_APPROVAL_FILE.test(path)) found.push(`"${literal}" is an approval point id`);
+    if (RECIPE_NAMES.has(literal) && !RECIPE_APPROVAL_FILE.test(path)) found.push(`"${literal}" is a name of a recipe`);
     if (!GIT_VOCABULARY_FILES.has(path)) {
       if (EXACT_NAMES.has(literal)) found.push(`"${literal}" is a name`);
       for (const flag of flat(flags)) {
@@ -381,10 +368,6 @@ describe('words of the old names', () => {
 describe('the old words in the exit check', () => {
   const exitCheck = readFileSync(EXIT_CHECK, 'utf8');
 
-  /** The value of a shell variable that a line of the script sets with double quotes: `name="value"`. */
-  const shellValue = (script: string, name: string): string | undefined =>
-    new RegExp(`^${name}="([^"\\n]*)"$`, 'm').exec(script)?.[1];
-
   it('has eight old words in the helper', () => {
     expect([...OLD_WORD_LIST]).toEqual(['lane', 'pack', 'brief', 'cell', 'andon', 'staging', 'inspect', 'ship']);
   });
@@ -509,10 +492,6 @@ describe('the approval points of a recipe', () => {
   const recipeWordLines = (source: string): string[] =>
     source.split('\n').flatMap((line, index) => (line.match(RECIPE_WORD) === null ? [] : [`line ${index + 1}: ${line.trim()}`]));
 
-  /** The module path of every import, re-export and dynamic import of a source text. */
-  const importPathsOf = (source: string): string[] =>
-    [...source.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"]+)['"]/g)].map((match) => match[1] ?? '');
-
   const filesIn = (folders: readonly string[]): string[] => folders.flatMap(allSourceFiles);
 
   it('finds no merge or release word in any string or comment of src/core, src/config or src/templates', () => {
@@ -556,11 +535,21 @@ describe('the approval points of a recipe', () => {
     expect(paths.filter((path) => APPROVAL_IMPORT.test(path))).toHaveLength(4);
   });
 
-  it('keeps the approval file apart: it imports only the names file, and the registry imports it', () => {
+  it('keeps the approval file apart: it imports only the names file, and the entry file of the recipe imports it', () => {
     const imports = importPathsOf(readFileSync(APPROVAL_FILE, 'utf8'));
     expect(imports.filter((path) => !path.endsWith('/names.js'))).toEqual([]);
-    const registry = readFileSync(join(SRC, 'recipes', 'index.ts'), 'utf8');
-    expect(importPathsOf(registry).some((path) => APPROVAL_IMPORT.test(path))).toBe(true);
+    const entry = readFileSync(join(SRC, 'recipes', 'software', 'entry.ts'), 'utf8');
+    expect(importPathsOf(entry)).toContain('./approval.js');
+  });
+
+  it('accepts the project key and the values of a recipe in its words file, and refuses them in other files', () => {
+    const names = [softwareProjectKeys.mergeMethod, ...mergeMethods];
+    expect(names).toEqual(['merge_method', 'squash', 'merge', 'rebase']);
+    for (const name of names) {
+      expect(violationsInText(`const a = '${name}';`, join(SRC, 'recipes', 'software', 'words.ts'))).toEqual([]);
+      expect(violationsInText(`const a = '${name}';`, join(SRC, 'sample.ts')).length).toBeGreaterThan(0);
+      expect(violationsInText(`const a = '${name}';`, join(SRC, 'recipes', 'software', 'recipe.ts')).length).toBeGreaterThan(0);
+    }
   });
 
   it('accepts the approval point ids in the approval file of a recipe, and refuses them in other files', () => {

@@ -66,8 +66,10 @@ export const terms = [
   'session reset',
   'queue',
   'check',
-  'release check',
 ] as const;
+
+/** The layers of a node, from the bottom: the workers, the coordinator, the manager, and the highest layer. */
+export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as const;
 
 /** The subcommands of `node`. */
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
@@ -447,7 +449,6 @@ export const keys = {
     repo: 'repo',
     path: 'path',
     defaultBranch: 'default_branch',
-    mergeMethod: 'merge_method',
     variant: 'variant',
     gate: 'gate',
     heavyTest: 'heavy_test',
@@ -473,7 +474,6 @@ export const values = {
   noProxy: 'none',
   onFail: ['stop', 'direct'],
   loadCpuCount: 'cpu_count',
-  mergeMethods: ['squash', 'merge', 'rebase'],
   variants: ['plain'],
   recipes: ['software'],
   /** The mode of an approval point of any recipe. The first one is the default: the point waits for the owner. */

@@ -3,7 +3,7 @@ import { dirs, files, marker, shareListLabel } from '../names.js';
 
 export const jsonText = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
-export const initialBoardText = (): string => jsonText({ merge: [], items: [] });
+export const initialBoardText = (): string => jsonText({ queue: [], items: [] });
 
 export const initialWaitingText = (): string => jsonText({ intro: '', groups: [], items: [] });
 

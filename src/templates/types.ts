@@ -1,5 +1,5 @@
 import type { BlockSpec } from '../blocks/managed.js';
-import type { ApprovalModes } from '../recipes/index.js';
+import type { ApprovalModes, RecipeEntry } from '../recipes/index.js';
 
 /** The file that holds a managed block. */
 export type BlockTarget = 'claudeFile' | 'workerFile';
@@ -24,10 +24,11 @@ export interface ContextLimits {
 }
 
 /**
- * What the text of the managed blocks of a node depends on: the layer, the mode of each approval point, the owner prefix
- * of the local file, the context limits of the shared file and the setup texts.
+ * What the text of the managed blocks of a node depends on: the recipe, the layer, the mode of each approval point, the
+ * owner prefix of the local file, the context limits of the shared file and the setup texts.
  */
 export interface BlockInput {
+  readonly recipe: RecipeEntry;
   readonly layer: number;
   readonly modes: ApprovalModes;
   readonly ownerPrefix: string;

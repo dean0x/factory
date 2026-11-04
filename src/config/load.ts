@@ -14,6 +14,7 @@ import {
   type VersionSpec,
 } from '../migrate/inspect.js';
 import { commands, commandText, files, flags, flagText, keys, localFileModes, program, roles } from '../names.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { slug } from './primitives.js';
 import {
@@ -22,7 +23,7 @@ import {
   localConfigSchema,
   mergeConfig,
   mixConfigValue,
-  sharedConfigSchema,
+  sharedConfigSchemaFor,
   type FactoryConfig,
   type LocalConfig,
   type SharedConfig,
@@ -48,13 +49,13 @@ export const parseYamlText = (text: string): Result<unknown, string> => {
   }
 };
 
-/** The shared file, `factory.yaml`: its own key `schema` and its own version. */
-export const SHARED_SPEC: VersionSpec<SharedConfig> = {
+/** The shared file, `factory.yaml`: its own key `schema` and its own version. The registry sets the recipes it accepts. */
+export const sharedSpecFor = (registry: RecipeRegistry): VersionSpec<SharedConfig> => ({
   file: CONFIG_LABEL,
   key: keys.root.schema,
   supported: CONFIG_SCHEMA_VERSION,
-  schema: sharedConfigSchema,
-};
+  schema: sharedConfigSchemaFor(registry),
+});
 
 /** The local file, `factory.local.yaml`: its own key `schema` and its own version. */
 export const LOCAL_SPEC: VersionSpec<LocalConfig> = {
@@ -96,8 +97,12 @@ export const configResult = (state: DocState<FactoryConfig>): CliResult<FactoryC
 };
 
 /** The config from the text of the two files: the YAML, the versions, the core, the recipe and the join of the two. */
-export const parseConfigTexts = (sharedText: string, localText: string): CliResult<FactoryConfig> =>
-  configResult(combine(stateOfText(sharedText, SHARED_SPEC), stateOfText(localText, LOCAL_SPEC)));
+export const parseConfigTexts = (
+  sharedText: string,
+  localText: string,
+  registry: RecipeRegistry,
+): CliResult<FactoryConfig> =>
+  configResult(combine(stateOfText(sharedText, sharedSpecFor(registry)), stateOfText(localText, LOCAL_SPEC)));
 
 /** What the local file is, for the load. A file of another account, or one that others can write, is a refusal. */
 export type LocalAccess =
@@ -158,8 +163,11 @@ export const settleLocalMode = async (deps: Deps, home: string, fix: boolean): P
 };
 
 /** The shared file alone. A ping needs only the id and the layer of a node, and it reads no local file. */
-export const inspectSharedConfig = (deps: Deps, home: string): Promise<DocState<SharedConfig>> =>
-  inspectFile(deps, layoutOf(home).configFile, parseYamlText, SHARED_SPEC);
+export const inspectSharedConfig = (
+  deps: Deps,
+  home: string,
+  registry: RecipeRegistry,
+): Promise<DocState<SharedConfig>> => inspectFile(deps, layoutOf(home).configFile, parseYamlText, sharedSpecFor(registry));
 
 /** The node id of an older layout of the shared file, or null when the value holds none that is a valid id. */
 const nodeIdOfRaw = (raw: unknown): string | null => {
@@ -173,8 +181,12 @@ const nodeIdOfRaw = (raw: unknown): string | null => {
  * an older layout gives its id and its version too, so that `upgrade` can name it. The error is the reason when the
  * file gives no id. The local file is not read.
  */
-export const readNodeIdentity = async (deps: Deps, home: string): Promise<Result<NodeIdentity, string>> => {
-  const state = await inspectSharedConfig(deps, home);
+export const readNodeIdentity = async (
+  deps: Deps,
+  home: string,
+  registry: RecipeRegistry,
+): Promise<Result<NodeIdentity, string>> => {
+  const state = await inspectSharedConfig(deps, home, registry);
   switch (state.kind) {
     case 'valid':
       return ok({ id: state.value.core.node.id, schema: state.version });
@@ -200,8 +212,12 @@ export const readNodeIdentity = async (deps: Deps, home: string): Promise<Result
  * Both files, as one state. The local file is read only after the check of its owner and its mode. The shared file
  * comes first: while it is not valid, the local file is not looked at.
  */
-export const inspectConfig = async (deps: Deps, home: string): Promise<DocState<FactoryConfig>> => {
-  const shared = await inspectSharedConfig(deps, home);
+export const inspectConfig = async (
+  deps: Deps,
+  home: string,
+  registry: RecipeRegistry,
+): Promise<DocState<FactoryConfig>> => {
+  const shared = await inspectSharedConfig(deps, home, registry);
   if (shared.kind !== 'valid') return shared;
   const access = await localFileAccess(deps, home);
   if (!access.ok) {
@@ -213,5 +229,5 @@ export const inspectConfig = async (deps: Deps, home: string): Promise<DocState<
   return combine(shared, await inspectFile(deps, layoutOf(home).localConfigFile, parseYamlText, LOCAL_SPEC));
 };
 
-export const loadConfig = async (deps: Deps, home: string): Promise<CliResult<FactoryConfig>> =>
-  configResult(await inspectConfig(deps, home));
+export const loadConfig = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CliResult<FactoryConfig>> =>
+  configResult(await inspectConfig(deps, home, registry));

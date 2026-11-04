@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { runNode, type NodeOptions } from '../../src/commands/node.js';
-import { parseConfigTexts } from '../../src/config/load.js';
+import type { NodeOptions } from '../../src/commands/node.js';
+import { parseConfigTexts, runNode } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';

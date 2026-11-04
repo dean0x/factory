@@ -1,4 +1,5 @@
 import { terms } from './names.js';
+import type { RecipeEntry } from './recipes/index.js';
 import { fillTemplate } from './templates/fill.js';
 
 /**
@@ -38,8 +39,6 @@ const SENTENCES: Readonly<Record<(typeof terms)[number], string>> = {
     'A queue is the order of the finished work that waits for an approval point, first item first. Not built yet.',
   check:
     'A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.',
-  'release check':
-    'The release check tests that a release is ready and works after it is out. It never publishes. Not built yet.',
 };
 
 export interface Word {
@@ -47,5 +46,9 @@ export interface Word {
   readonly text: string;
 }
 
-/** The plain description of each term, in the order of `terms`. */
+/** The plain description of each term of every recipe, in the order of `terms`. */
 export const glossary: readonly Word[] = terms.map((term) => ({ term, text: fillTemplate([SENTENCES[term]]) }));
+
+/** The plain description of each word of one recipe, in the order of its entry. */
+export const recipeGlossary = (recipe: RecipeEntry): readonly Word[] =>
+  recipe.glossary.map((entry) => ({ term: entry.term, text: fillTemplate([entry.text]) }));

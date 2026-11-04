@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { parseConfigTexts } from '../../src/config/load.js';
+import { parseConfigTexts } from '../helpers/package-registry.js';
 
 const DESIGN = join(__dirname, '..', '..', 'docs', 'design.md');
 const SECTION = '### 4.4 ';

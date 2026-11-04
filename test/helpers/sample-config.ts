@@ -1,9 +1,10 @@
 import { renderConfig } from '../../src/config/render.js';
-import { parseConfig, splitConfigValue, type FactoryConfig } from '../../src/config/schema.js';
+import { splitConfigValue, type FactoryConfig } from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
-import { files, values } from '../../src/names.js';
+import { files } from '../../src/names.js';
 import { ownerModes, recipes } from '../../src/recipes/index.js';
 import type { FakeDeps } from './fake-deps.js';
+import { parseConfig } from './package-registry.js';
 
 export const sampleConfig = (): FactoryConfig => ({
   core: {
@@ -22,7 +23,7 @@ export const sampleConfig = (): FactoryConfig => ({
       context_prepare_pct: 30,
       context_max_pct: 40,
     },
-    approval: ownerModes(recipes[values.recipes[0]].approvalPoints),
+    approval: ownerModes(recipes[0].approvalPoints),
     tracker: { kind: 'local' },
     parent: null,
     children: [],
@@ -42,6 +43,7 @@ export const sampleConfig = (): FactoryConfig => ({
       },
     ],
   },
+  entry: recipes[0],
 });
 
 /**

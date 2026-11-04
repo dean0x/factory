@@ -1,4 +1,4 @@
-import type { ProjectConfig } from '../recipes/software/config.js';
+import type { RecipeProject } from '../recipes/index.js';
 import { checkProjectUrl } from '../core/clone-url.js';
 import { commands, commandText, files, keys, program } from '../names.js';
 
@@ -15,7 +15,7 @@ const reasonText: Readonly<Record<UnsharedReason, string>> = {
  * Why the project can not be shared, or null when its URL is one that a host serves. A project with no URL is no
  * error: it works on this machine only.
  */
-export const unsharedReasonOf = (project: ProjectConfig): UnsharedReason | null => {
+export const unsharedReasonOf = (project: RecipeProject): UnsharedReason | null => {
   if (project.url === undefined) return 'no-url';
   const checked = checkProjectUrl(project.url);
   if (!checked.ok || checked.value.kind === 'remote') return null;

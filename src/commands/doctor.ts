@@ -41,7 +41,7 @@ import {
   shareListLabel,
   values,
 } from '../names.js';
-import { roleNameForLayer } from '../recipes/software/recipe.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { findTokenPaths } from '../safety/secrets.js';
 import { locateShareList } from '../state/files.js';
@@ -258,13 +258,17 @@ const plural = (count: number, one: string, many: string): string => (count === 
  * Ping each child once. A child that does not answer is a warning, because a node can be off. A child on a layer other
  * than the one below this node is a failure, because the config is wrong.
  */
-export const checkChildren = async (deps: Deps, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+export const checkChildren = async (
+  deps: Deps,
+  state: DocState<FactoryConfig>,
+  registry: RecipeRegistry,
+): Promise<CheckResult> => {
   if (state.kind !== 'valid') return notChecked(checkIds.children, `${files.config} is not valid`);
   const { children, node } = state.value.core;
   if (children.length === 0) return check(checkIds.children, 'ok', 'no child is configured');
 
   const needed = node.layer - 1;
-  const rows = await probeChildren(fileTransport(deps), children);
+  const rows = await probeChildren(fileTransport(deps, registry), children);
   const wrong = rows.flatMap((row) =>
     row.status === 'ok' && row.layer !== needed
       ? [`wrong layer: ${row.id} is on layer ${row.layer}, but layer ${needed} is needed`]
@@ -360,7 +364,7 @@ export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
 export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
   if (state.kind !== 'valid') return notChecked(checkIds.roles, `${files.config} is not valid`);
   const { layer } = state.value.core.node;
-  const role = roleNameForLayer(layer);
+  const role = state.value.entry.roles.nameForLayer(layer);
   return role === null
     ? check(checkIds.roles, 'warn', `layer ${layer} has no role template: ${files.claudeMd} holds the safety block only`)
     : check(checkIds.roles, 'ok', `layer ${layer} has the ${role} role template`);
@@ -412,7 +416,7 @@ export const checkNodeBlocks = async (
   const setup = await readSetupTexts(deps, layout);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
   const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value));
-  const pending = { ...NO_PENDING_FILES, renames: [...blockRenamesOf(fileSteps), ...roleBlockRenames(input.layer)] };
+  const pending = { ...NO_PENDING_FILES, renames: [...blockRenamesOf(fileSteps), ...roleBlockRenames(input.recipe, input.layer)] };
   return checkBlocks(await inspectBlocks(deps, home, blockTemplatesFor(input), pending));
 };
 
@@ -614,8 +618,8 @@ interface CheckRun {
 const skippedProxyCheck = (): CheckResult =>
   notChecked(checkIds.proxy, 'a root check failed, so no health request went to a proxy');
 
-const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
-  const config = await inspectConfig(deps, home);
+const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CheckRun> => {
+  const config = await inspectConfig(deps, home, registry);
   const state = await inspectState(deps, home);
   const rootScan = await scanRoot(deps, home, config.kind === 'valid' ? config.value : null);
   const [
@@ -637,7 +641,7 @@ const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
     checkIndex(deps),
     checkNodeBlocks(deps, home, config),
     checkSetupText(deps, home),
-    checkChildren(deps, config),
+    checkChildren(deps, config, registry),
     checkInstructionFiles(deps, home),
     hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config),
     checkTools(deps),
@@ -678,12 +682,16 @@ const runChecks = async (deps: Deps, home: string): Promise<CheckRun> => {
 const count = (results: readonly CheckResult[], level: CheckLevel): number =>
   results.filter((result) => result.level === level).length;
 
-export const runDoctor = async (deps: Deps, options: DoctorOptions): Promise<CliResult<CommandOutput>> => {
-  const located = await locateHomeFolder(deps, options.home, readNodeIdentity);
+export const runDoctor = async (
+  deps: Deps,
+  options: DoctorOptions,
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry));
   if (!located.ok) return located;
   const home = located.value.home;
 
-  const { results, localMissing, localUnsafe } = await runChecks(deps, home);
+  const { results, localMissing, localUnsafe } = await runChecks(deps, home, registry);
   const summary = { ok: count(results, 'ok'), warn: count(results, 'warn'), fail: count(results, 'fail') };
   const width = Math.max(...results.map((result) => result.id.length));
   const lines: OutLine[] = [

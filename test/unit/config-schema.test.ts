@@ -1,16 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { isSlug, slugify } from '../../src/config/primitives.js';
-import {
-  localConfigSchema,
-  mergeConfig,
-  parseConfig,
-  sharedConfigSchema,
-  splitConfigValue,
-} from '../../src/config/schema.js';
+import { localConfigSchema, mergeConfig, splitConfigValue } from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
 import { files, values } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { parseProxyUrl } from '../../src/safety/proxy.js';
+import { parseConfig, sharedConfigSchema } from '../helpers/package-registry.js';
 import { parseMixed, sampleConfig, sampleFiles, sampleObject } from '../helpers/sample-config.js';
 
 type Raw = Record<string, any>;
@@ -71,7 +66,7 @@ describe('config schema 2', () => {
     const others = Object.entries(modes).filter(([id]) => id !== POINT);
     expect(others.length).toBeGreaterThan(0);
     expect(others.every(([, mode]) => mode === 'owner')).toBe(true);
-    expect(Object.keys(modes).sort()).toEqual(recipes.software.approvalPoints.map((point) => point.id).sort());
+    expect(Object.keys(modes).sort()).toEqual(recipes[0].approvalPoints.map((point) => point.id).sort());
   });
 
   it('refuses an approval point that the recipe does not list, names the key, and puts the issue in the local file', () => {
@@ -274,8 +269,8 @@ describe('config schema 2', () => {
     });
 
     it('has one entry in the registry for each recipe id that the core accepts, with a parser and a list of approval points', () => {
-      expect(Object.keys(recipes)).toEqual([...values.recipes]);
-      for (const entry of Object.values(recipes)) {
+      expect(recipes.map((entry) => entry.id)).toEqual([...values.recipes]);
+      for (const entry of recipes) {
         expect(typeof entry.schema.safeParse).toBe('function');
         expect(entry.approvalPoints.length).toBeGreaterThan(0);
       }
