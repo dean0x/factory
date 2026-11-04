@@ -17,16 +17,30 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
-import type { Readable } from 'node:stream';
+import type { Readable, Writable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
 import { isSameOrInside } from './paths.js';
 import { ok } from './result.js';
-import { MAX_ANSWER_CHARS, type Deps, type FileDigest, type Fs, type LinkKind, type PathInfo, type PathKind } from './deps.js';
+import {
+  MAX_ANSWER_CHARS,
+  type Deps,
+  type FileDigest,
+  type Fs,
+  type LinkKind,
+  type PathInfo,
+  type PathKind,
+  type RunOptions,
+  type RunOutput,
+} from './deps.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 30_000;
 const MAX_RUN_OUTPUT_BYTES = 1_048_576;
+/** The value of `process.platform` on native Windows, which has no process groups of this kind. */
+const NATIVE_WINDOWS = 'win32';
+/** The signal that stops a process group at the time limit. A process can not catch it. */
+const GROUP_STOP_SIGNAL = 'SIGKILL';
 
 const errorCode = (cause: unknown): string => {
   if (typeof cause === 'object' && cause !== null && 'code' in cause) {
@@ -260,37 +274,103 @@ const nodeFs: Fs = {
   copyTree: (from, to, skip) => guard('copy', from, () => copyEntry(from, to, skip, 0)),
 };
 
+/** The environment of a program: the one of this process as it is, or with the C locale and no prompt of git. */
+const runEnvOf = (options: RunOptions | undefined): NodeJS.ProcessEnv =>
+  options?.inheritEnv === true ? process.env : { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' };
+
+/** Write the text to the standard input of the program, then end that input. With no text, the input stays as it is. */
+const feedInput = (stdin: Writable | null, input: string | undefined): void => {
+  if (input === undefined) return;
+  // A program that ends before it reads the text closes the pipe: that is no error of this run.
+  stdin?.once('error', () => undefined);
+  stdin?.end(input, 'utf8');
+};
+
+const runPlain = (command: string, args: readonly string[], options: RunOptions | undefined): Promise<CliResult<RunOutput>> =>
+  new Promise((resolve) => {
+    const child = execFile(
+      command,
+      [...args],
+      {
+        cwd: options?.cwd ?? process.cwd(),
+        timeout: options?.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
+        maxBuffer: MAX_RUN_OUTPUT_BYTES,
+        encoding: 'utf8',
+        windowsHide: true,
+        env: runEnvOf(options),
+      },
+      (error, stdout, stderr) => {
+        if (error === null) {
+          resolve(ok({ exitCode: 0, stdout, stderr }));
+        } else if (typeof error.code === 'number') {
+          resolve(ok({ exitCode: error.code, stdout, stderr }));
+        } else {
+          resolve(failure(`cannot run ${command}: ${String(error.code ?? error.signal ?? 'error')}`));
+        }
+      },
+    );
+    feedInput(child.stdin, options?.input);
+  });
+
+/** Stop every process of the group that `pid` leads. */
+const stopGroup = (pid: number | undefined): void => {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, GROUP_STOP_SIGNAL);
+  } catch {
+    // The group has no process left (ESRCH): the run ends the same way.
+  }
+};
+
+/**
+ * Run the program as the leader of a new process group (`RunOptions.processGroup`). At the time limit, or when the output
+ * passes the byte cap, every process of the group is stopped and the output pipes are closed. So the run ends at the limit
+ * also when a process outside the group holds a pipe. The value has the same form as the value of `runPlain`.
+ */
+const runInGroup = (command: string, args: readonly string[], options: RunOptions): Promise<CliResult<RunOutput>> =>
+  new Promise((resolve) => {
+    const child = spawn(command, [...args], { cwd: options.cwd ?? process.cwd(), env: runEnvOf(options), detached: true });
+    const output = { stdout: [] as Buffer[], stderr: [] as Buffer[], bytes: 0, tooLarge: false };
+    const stop = (): void => {
+      stopGroup(child.pid);
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
+    const timer = setTimeout(stop, options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
+    const keep =
+      (chunks: Buffer[]) =>
+      (chunk: Buffer): void => {
+        output.bytes += chunk.length;
+        if (output.bytes <= MAX_RUN_OUTPUT_BYTES) chunks.push(chunk);
+        else {
+          output.tooLarge = true;
+          stop();
+        }
+      };
+    child.stdout.on('data', keep(output.stdout));
+    child.stderr.on('data', keep(output.stderr));
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      resolve(failure(`cannot run ${command}: ${errorCode(error)}`));
+    });
+    child.once('close', (code, signal) => {
+      clearTimeout(timer);
+      if (output.tooLarge) resolve(failure(`cannot run ${command}: its output is larger than ${MAX_RUN_OUTPUT_BYTES} bytes`));
+      else if (code === null) resolve(failure(`cannot run ${command}: ${String(signal ?? 'error')}`));
+      else {
+        const text = (chunks: Buffer[]): string => Buffer.concat(chunks).toString('utf8');
+        resolve(ok({ exitCode: code, stdout: text(output.stdout), stderr: text(output.stderr) }));
+      }
+    });
+    feedInput(child.stdin, options.input);
+  });
+
 export const createNodeDeps = (): Deps => ({
   fs: nodeFs,
   run: (command, args, options) =>
-    new Promise((resolve) => {
-      const child = execFile(
-        command,
-        [...args],
-        {
-          cwd: options?.cwd ?? process.cwd(),
-          timeout: options?.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
-          maxBuffer: MAX_RUN_OUTPUT_BYTES,
-          encoding: 'utf8',
-          windowsHide: true,
-          env: options?.inheritEnv === true ? process.env : { ...process.env, LC_ALL: 'C', GIT_TERMINAL_PROMPT: '0' },
-        },
-        (error, stdout, stderr) => {
-          if (error === null) {
-            resolve(ok({ exitCode: 0, stdout, stderr }));
-          } else if (typeof error.code === 'number') {
-            resolve(ok({ exitCode: error.code, stdout, stderr }));
-          } else {
-            resolve(failure(`cannot run ${command}: ${String(error.code ?? error.signal ?? 'error')}`));
-          }
-        },
-      );
-      if (options?.input !== undefined) {
-        // A program that ends before it reads the text closes the pipe: that is no error of this run.
-        child.stdin?.once('error', () => undefined);
-        child.stdin?.end(options.input, 'utf8');
-      }
-    }),
+    options?.processGroup === true && process.platform !== NATIVE_WINDOWS
+      ? runInGroup(command, args, options)
+      : runPlain(command, args, options),
   runAttached: (command, args) =>
     new Promise((resolve) => {
       const child = spawn(command, [...args], { stdio: 'inherit', windowsHide: true });

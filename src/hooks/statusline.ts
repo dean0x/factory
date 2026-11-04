@@ -8,7 +8,7 @@ import { hookNames, statuslineTextOf } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import { parsePercent, writeLastSeen } from '../workers/last-seen.js';
-import { inFactorySession, sessionHomeOf } from './hook.js';
+import { hasFactoryHome, sessionHomeOf } from './hook.js';
 
 /**
  * The status line wrapper (design 4.6): Claude Code runs `<program> hook statusline` and passes the status line input as
@@ -79,7 +79,7 @@ const percentOf = (input: StatuslineInput): CliResult<number | null> => {
 
 /** The factory folder of the session, or null outside a factory session. The error is the reason that the guards refuse the session. */
 const homeOfSession = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<string | null>> =>
-  inFactorySession(deps) ? sessionHomeOf(deps, registry) : ok(null);
+  hasFactoryHome(deps) ? sessionHomeOf(deps, registry) : ok(null);
 
 const record = async (deps: Deps, home: string, sessionId: string | undefined, percent: number): Promise<CliResult<void>> => {
   if (sessionId === undefined) return failure('the input holds no session id');
@@ -93,12 +93,16 @@ const ownerCommandOf = async (deps: Deps, home: string, registry: RecipeRegistry
   return config.ok ? ok(config.value.core.session.statusline) : config;
 };
 
-/** The stdout of the command of the owner. The command gets the input text as it came and the environment of this process. */
+/**
+ * The stdout of the command of the owner. The command gets the input text as it came and the environment of this process.
+ * It runs in its own process group, so the time limit stops every process that a pipe or a list of the command starts.
+ */
 const ownerOutputOf = async (deps: Deps, command: string, stdin: string): Promise<CliResult<string>> => {
   const ran = await deps.run(hookNames.shell, ['-c', command], {
     timeoutMs: hookNames.statuslineTimeoutMs,
     input: stdin,
     inheritEnv: true,
+    processGroup: true,
   });
   if (!ran.ok) return failure(`the status line command failed: ${ran.error.message}`);
   if (ran.value.exitCode !== 0) return failure(`the status line command exited with code ${ran.value.exitCode}`);

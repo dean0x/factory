@@ -79,6 +79,58 @@ describe('node deps: run', () => {
     });
   });
 
+  describe('a run in its own process group', () => {
+    const exists = (path: string): Promise<boolean> =>
+      stat(path).then(
+        () => true,
+        () => false,
+      );
+
+    it('gives the exit code, the output and the input like a plain run', async () => {
+      const result = await deps.run('/bin/sh', ['-c', 'cat; echo note >&2; exit 4'], { input: 'héllo', processGroup: true });
+      expect(result).toEqual({ ok: true, value: { exitCode: 4, stdout: 'héllo', stderr: 'note\n' } });
+    });
+
+    it('returns an error when the program does not exist', async () => {
+      const result = await deps.run('factory-no-such-program', [], { processGroup: true });
+      expect(result).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run factory-no-such-program: ENOENT' } });
+    });
+
+    it('stops every process of a pipe when the time limit passes, not only the shell', async () => {
+      const late = fresh('late-pipe');
+      const started = Date.now();
+      const result = await deps.run('/bin/sh', ['-c', `(sleep 1; echo late > '${late}') | cat`], {
+        timeoutMs: 200,
+        processGroup: true,
+      });
+      expect(result.ok).toBe(false);
+      expect(Date.now() - started).toBeLessThan(1_000);
+      await wait(1_500);
+      expect(await exists(late)).toBe(false);
+    });
+
+    it('ends at the time limit when a process that the shell left holds the output pipe, and stops that process', async () => {
+      const late = fresh('late-background');
+      const started = Date.now();
+      const result = await deps.run('/bin/sh', ['-c', `echo first; (sleep 1; echo late > '${late}') &`], {
+        timeoutMs: 300,
+        processGroup: true,
+      });
+      expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: 'first\n', stderr: '' } });
+      expect(Date.now() - started).toBeLessThan(1_000);
+      await wait(1_500);
+      expect(await exists(late)).toBe(false);
+    });
+
+    it('returns an error and stops the group when the output passes the byte cap', async () => {
+      const result = await deps.run('/bin/sh', ['-c', 'head -c 1100000 /dev/zero; sleep 5'], { processGroup: true });
+      expect(result).toEqual({
+        ok: false,
+        error: { kind: 'failure', message: 'cannot run /bin/sh: its output is larger than 1048576 bytes' },
+      });
+    });
+  });
+
   describe('the environment of the program', () => {
     const show = ['-e', 'process.stdout.write([process.env.LC_ALL, process.env.GIT_TERMINAL_PROMPT].join(","))'];
     const saved = { LC_ALL: process.env['LC_ALL'], GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] };

@@ -41,8 +41,11 @@ const sessionIdOfInput = async (deps: Deps, event: HookEvent): Promise<CliResult
   return ok(parsed.data[keys.sessionId]);
 };
 
-/** True when the environment names a factory folder, so the program started this session. Outside such a session a hook does nothing. */
-export const inFactorySession = (deps: Deps): boolean => {
+/**
+ * True when the environment names a factory folder, so the program started this session. Outside such a session a hook does
+ * nothing. It is not `inFactorySession` of core/factory-session.ts: that check reads the session marker.
+ */
+export const hasFactoryHome = (deps: Deps): boolean => {
   const folder = deps.env[env.home];
   return folder !== undefined && folder !== '';
 };
@@ -50,7 +53,7 @@ export const inFactorySession = (deps: Deps): boolean => {
 /**
  * The factory folder of the session that runs a hook. The folder must pass the registration check, and the session marker
  * must be the id of the node. The error is the reason that the hook must write nothing. The caller has checked
- * `inFactorySession` first.
+ * `hasFactoryHome` first.
  */
 export const sessionHomeOf = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<string>> => {
   const readNodeId = (readDeps: Deps, home: string) => readNodeIdentity(readDeps, home, registry);
@@ -70,7 +73,7 @@ export const sessionHomeOf = async (deps: Deps, registry: RecipeRegistry): Promi
  * be the id of the node. The value is nothing; an error is the reason that the hook wrote nothing.
  */
 export const runHook = async (deps: Deps, args: readonly string[], registry: RecipeRegistry): Promise<CliResult<void>> => {
-  if (!inFactorySession(deps)) return ok(undefined);
+  if (!hasFactoryHome(deps)) return ok(undefined);
 
   const [event, ...extra] = args;
   if (!isHookEvent(event) || extra.length > 0) return failure(`the command takes one event of: ${hookNames.events.join(', ')}`);

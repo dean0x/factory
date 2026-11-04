@@ -105,7 +105,7 @@ describe('factory hook statusline: the command of the owner (TP-13)', () => {
     expect((await statusline(make({ statusline: OWNER_COMMAND, run: () => exited(0, '') }))).out).toBe('');
   });
 
-  it('runs the command with /bin/sh -c, the same input text, the time limit of the wrapper and the environment of the process', async () => {
+  it('runs the command with /bin/sh -c, the same input text, the time limit of the wrapper, the environment of the process and its own process group', async () => {
     const stdin = ` ${input()}\n\n`;
     const deps = make({ statusline: OWNER_COMMAND, stdin, run: () => exited(0, OWNER_OUTPUT) });
     await statusline(deps);
@@ -116,6 +116,7 @@ describe('factory hook statusline: the command of the owner (TP-13)', () => {
       input: stdin,
       timeoutMs: hookNames.statuslineTimeoutMs,
       inheritEnv: true,
+      processGroup: true,
     });
   });
 

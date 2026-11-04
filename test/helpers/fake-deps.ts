@@ -18,6 +18,8 @@ export interface RunCall {
   readonly timeoutMs?: number;
   /** The text that the caller gave to the standard input of the program. */
   readonly input?: string;
+  /** True when the caller asked to run the program in its own process group. */
+  readonly processGroup?: boolean;
 }
 
 export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
@@ -287,6 +289,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         inheritEnv: runOptions?.inheritEnv === true,
         ...(runOptions?.timeoutMs === undefined ? {} : { timeoutMs: runOptions.timeoutMs }),
         ...(runOptions?.input === undefined ? {} : { input: runOptions.input }),
+        ...(runOptions?.processGroup === undefined ? {} : { processGroup: runOptions.processGroup }),
       };
       calls.push(call);
       return (options.run ?? (() => missingProgram(command)))(call);

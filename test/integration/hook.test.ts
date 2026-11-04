@@ -181,6 +181,18 @@ describe('factory hook statusline (built binary)', () => {
     expect(Date.now() - started).toBeLessThan(15_000);
   });
 
+  it('stops every process of a command with a pipe at the time limit, so none of them runs on (TP-14)', async () => {
+    const late = join(box.root, 'late');
+    await setOwnerCommand(`(sleep 3; echo late > '${late}') | cat`);
+    const started = Date.now();
+    const result = await statusline(STATUS_INPUT);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('context 8%');
+    expect(Date.now() - started).toBeLessThan(15_000);
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 4_500 - Date.now())));
+    expect(await exists(late)).toBe(false);
+  });
+
   it('prints the line and writes nothing outside a factory session', async () => {
     await setOwnerCommand('echo owner');
     const result = await box.run(['hook', 'statusline'], { cwd: home, input: STATUS_INPUT });
