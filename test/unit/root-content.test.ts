@@ -1070,10 +1070,10 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       });
     });
 
-    it('gives the same stop as the stop of the root checks', () => {
+    it('gives the same stop as the stop of the root checks', async () => {
       const findings = [entry('fail', 'one', 'Fix it.')];
-      const scan = { findings } as RootScan;
-      expect(requireRootClean(scan)).toEqual(requireNoFailures(findings));
+      const found = { ...(await scan(make())), findings };
+      expect(requireRootClean(found)).toEqual(requireNoFailures(findings));
     });
 
     it('gives one line for each warning, with its remedy, and none for a failure', () => {
