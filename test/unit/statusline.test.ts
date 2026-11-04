@@ -22,6 +22,8 @@ const OWNER_COMMAND = 'owner-status --short';
 /** The output of the command of the owner: colors, spaces and a final new line, which must reach the screen as they are. */
 const OWNER_OUTPUT = 'owner \u001b[32mgreen\u001b[0m  line\n';
 const ONE_STDERR_LINE = /^factory hook: [^\n]+\n$/;
+/** The failure of a group run that passes its time limit: the stop of the group is a SIGKILL. */
+const TIMED_OUT = 'cannot run /bin/sh: SIGKILL';
 
 /** The environment that Claude Code gives the status line of a session that factory started. The names are written out: they are the contract. */
 const IN_FACTORY = { XDG_STATE_HOME: '/state', FACTORY_HOME: HOME, FACTORY_SESSION: NODE_ID };
@@ -164,7 +166,7 @@ describe('factory hook statusline: the fallback line (TP-14)', () => {
   const failing: ReadonlyArray<readonly [string, MakeOptions]> = [
     ['no command of the owner in the config', { statusline: null }],
     ['a command of the owner that exits with a code other than 0', { statusline: OWNER_COMMAND, run: () => exited(3, 'half an output', 'bad') }],
-    ['a command of the owner that does not end in time', { statusline: OWNER_COMMAND, run: () => failure('cannot run /bin/sh: SIGTERM') }],
+    ['a command of the owner that does not end in time', { statusline: OWNER_COMMAND, run: () => failure(TIMED_OUT) }],
     ['a shell that cannot start', { statusline: OWNER_COMMAND, run: () => failure('cannot run /bin/sh: ENOENT') }],
   ];
 
@@ -192,9 +194,9 @@ describe('factory hook statusline: the fallback line (TP-14)', () => {
     expect(exit.err).toMatch(ONE_STDERR_LINE);
     expect(exit.err).toContain('code 3');
     expect(exit.err).not.toContain('half an output');
-    const late = await statusline(make({ statusline: OWNER_COMMAND, run: () => failure('cannot run /bin/sh: SIGTERM') }));
+    const late = await statusline(make({ statusline: OWNER_COMMAND, run: () => failure(TIMED_OUT) }));
     expect(late.err).toMatch(ONE_STDERR_LINE);
-    expect(late.err).toContain('SIGTERM');
+    expect(late.err).toContain('SIGKILL');
   });
 
   it('does not repeat the command of the owner on stderr', async () => {
@@ -510,7 +512,7 @@ describe('factory hook statusline: the stop signals', () => {
   });
 
   it('removes the handlers when the command does not end in time', async () => {
-    const deps = make({ statusline: OWNER_COMMAND, run: () => failure('cannot run /bin/sh: SIGKILL') });
+    const deps = make({ statusline: OWNER_COMMAND, run: () => failure(TIMED_OUT) });
     expect((await statusline(deps)).out).toBe('context 8%');
     expect(handlersOf(deps)).toEqual(NONE);
   });
@@ -535,7 +537,7 @@ describe('factory hook statusline: the stop signals', () => {
         expect(call.signal?.aborted).toBe(false);
         deps.signals.emit(name);
         aborted = call.signal?.aborted;
-        return failure('cannot run /bin/sh: SIGKILL');
+        return failure(TIMED_OUT);
       },
     });
     const result = await statusline(deps);
