@@ -574,9 +574,16 @@ describe('factory init: a received factory (built binary)', () => {
    * The sender makes a factory with one project. A clone of its root is the received factory. It has no setup text unless
    * `keepSetup` is set, because the yes flag can not accept a received setup text.
    */
-  const receivedFactory = async (options: { readonly keepSetup?: true } = {}): Promise<string> => {
+  const receivedFactory = async (
+    options: { readonly keepSetup?: true; readonly edit?: (shared: string) => string } = {},
+  ): Promise<string> => {
     const web = await box.makeProject('web', 'git@github.com:acme/web.git');
     expect((await box.run(initArgs(['--project', web]))).code).toBe(0);
+    if (options.edit !== undefined) {
+      const shared = join(box.node, 'factory.yaml');
+      await writeFile(shared, options.edit(await box.read(shared)));
+      expect((await box.git(box.node, ['commit', '-q', '-a', '-m', 'change the shared config'])).code).toBe(0);
+    }
     if (options.keepSetup !== true) await dropSetupText();
     const received = join(box.root, 'received');
     expect((await box.git(box.root, ['clone', '-q', box.node, received])).code).toBe(0);
@@ -596,7 +603,9 @@ describe('factory init: a received factory (built binary)', () => {
     expect((await box.run(['doctor', '--home', received], { env: second() })).code).toBe(0);
     expect((await box.run(['start', '--dry-run', '--home', received], { env: second() })).code).toBe(0);
     const entries = JSON.parse(await box.read(store('homes.json'))) as { homes: { home: string; origin: string }[] };
-    expect(entries.homes).toEqual([expect.objectContaining({ id: 'demo', origin: 'received' })]);
+    expect(entries.homes).toEqual([
+      expect.objectContaining({ id: 'demo', origin: 'received', home: await realpath(received) }),
+    ]);
   });
 
   it('exits 4 with the yes flag for a received setup text, names the command, and writes no acceptance (TP-143)', async () => {
@@ -616,6 +625,24 @@ describe('factory init: a received factory (built binary)', () => {
     const coordinator = await box.read(join(received, 'coordinator', 'CLAUDE.md'));
     expect(coordinator).toContain('40');
     expect(existsSync(store('setup-acceptances.json'))).toBe(false);
+  });
+
+  it('renders the limits of the sender into the coordinator text, and start --dry-run launches with the model of the sender (TP-103)', async () => {
+    const received = await receivedFactory({
+      edit: (shared) =>
+        shared
+          .replace(/^( {2}model: ).*$/m, '$1opus')
+          .replace(/^( {2}context_prepare_pct: ).*$/m, (_line, key: string) => `${key}33`)
+          .replace(/^( {2}context_max_pct: ).*$/m, (_line, key: string) => `${key}55`),
+    });
+    expect(await box.read(join(received, 'factory.yaml'))).toContain('model: opus');
+    expect((await box.run(['init', '--yes'], { cwd: received, env: second() })).code).toBe(0);
+    const coordinator = await box.read(join(received, 'coordinator', 'CLAUDE.md'));
+    expect(coordinator).toContain('at 33 percent');
+    expect(coordinator).toContain('past 55 percent');
+    const dry = await box.run(['start', '--dry-run', '--home', received], { env: second() });
+    expect(dry.code).toBe(0);
+    expect(dry.stdout).toContain('--model opus');
   });
 
   it('exits 4 in a factory session and writes nothing (TP-83)', async () => {
@@ -818,6 +845,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.git(join(box.node, '.factory'), ['status', '--porcelain'])).stdout).toBe('');
     expect((await box.git(box.node, ['status', '--porcelain', '-uall'])).stdout).toBe('');
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+    expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
     expect((await listed()).map((entry) => entry.origin)).toEqual(['own']);
   });
 
@@ -838,6 +866,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
     expect(await box.read(join(state, 'board.json'))).toBe(board);
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+    expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
   });
 
   it('writes a marker that was broken and not committed, and makes no commit, since git holds the same text (TP-96)', async () => {
@@ -851,6 +880,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect(await commitCount(state)).toBe(before);
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
     expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+    expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
   });
 
   it('exits 4 and changes nothing when .factory is a file (TP-119)', async () => {

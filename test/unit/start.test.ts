@@ -876,6 +876,26 @@ describe('start:the two config files', () => {
     expect(await startFactory(deps, { dryRun: true })).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 
+  it.each([false, true])(
+    'exits 4 with one remedy line for a local file that is a link, before the owner check, and changes no mode (TP-147, dry run: %s)',
+    async (dryRun) => {
+      const { deps, tmux } = make({ links: { [LOCAL]: '/outside/factory.local.yaml' }, fetch: answers });
+      deps.modes.set(LOCAL, 0o644);
+      deps.owners.set(LOCAL, 0);
+      const files = new Map(deps.files);
+      const result = await startFactory(deps, { dryRun });
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (!result.ok) {
+        expect(result.error.message).toBe('factory.local.yaml is a link, so factory does not use it');
+        expect(result.error.hint).toBe('Move factory.local.yaml away, then run "factory init" to write a new one.');
+      }
+      expect(deps.modes.get(LOCAL)).toBe(0o644);
+      expect(deps.files).toEqual(files);
+      expect(tmux.calls).toEqual([]);
+      expect(deps.fetched).toEqual([]);
+    },
+  );
+
   it('takes the proxy of the session from the local file only', async () => {
     const { deps, tmux } = make({ config: withProxy('stop'), fetch: answers });
     await succeeded(deps);

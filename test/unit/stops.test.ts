@@ -34,19 +34,24 @@ const errorOf = (result: CliResult<unknown>): CliError => {
 };
 
 /**
- * The checks of one refusal (AC-37): the exit code, one reason line and one remedy line. Every remedy line names a command
- * by name, and none says "the same command". The text that the command prints holds exactly these two lines.
+ * The checks of one error with a remedy line (AC-37): the exit code, one reason line and one remedy line. The text that
+ * the command prints holds exactly these two lines.
  */
-const expectRemedy = (error: CliError, exitCode: number): void => {
+const expectRemedyLine = (error: CliError, exitCode: number): void => {
   expect(exitCodeOf[error.kind], error.message).toBe(exitCode);
   const remedy = error.hint;
   expect(remedy, `no remedy line for: ${error.message}`).toBeDefined();
   expect(remedy).not.toBe('');
   expect(remedy).not.toContain('\n');
   expect(error.message).not.toContain('\n');
-  expect(remedy, error.message).toMatch(NAMES_A_COMMAND);
-  expect(remedy, error.message).not.toMatch(POINTS_AT_A_COMMAND);
   expect(renderError(error)).toBe(`error: ${error.message}\n${remedy}\n`);
+};
+
+/** The checks of one refusal: a remedy line, and every remedy line names a command by name. None says "the same command". */
+const expectRemedy = (error: CliError, exitCode: number): void => {
+  expectRemedyLine(error, exitCode);
+  expect(error.hint, error.message).toMatch(NAMES_A_COMMAND);
+  expect(error.hint, error.message).not.toMatch(POINTS_AT_A_COMMAND);
 };
 
 /**
@@ -443,6 +448,25 @@ describe('stops of init (exit 4)', () => {
   it('prints one remedy line that names a command for a delegated approval with --yes (exit 2)', async () => {
     const result = await runInit(initDeps(), options({ yes: true, approval: ['merge=delegated'] }));
     expectRemedy(errorOf(result), 2);
+  });
+
+  it('prints one remedy line that names a command for a project folder that exists and is not a clone of the repo (exit 1, TP-106)', async () => {
+    const deps = initDeps();
+    deps.seedDir('/w/fresh/web');
+    const result = await runInit(deps, options({ projects: ['https://example.com/acme/web.git'] }));
+    const error = errorOf(result);
+    expectRemedy(error, 1);
+    expect(error.message).toContain('/w/fresh/web');
+  });
+
+  it('prints one remedy line that names the flag for a root inside a root of the factory list (exit 1, TP-106)', async () => {
+    const deps = initDeps();
+    deps.seed('/w/factory.yaml', 'schema: 2\n');
+    registerRoot(deps, '/w', 'listed');
+    const error = errorOf(await runInit(deps, options({})));
+    expectRemedyLine(error, 1);
+    expect(error.message).toContain('/w/fresh is inside the factory folder /w');
+    expect(error.hint).toContain('--home DIR');
   });
 });
 

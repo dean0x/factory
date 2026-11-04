@@ -26,9 +26,14 @@ const make = (
     readonly sharedText?: string;
     readonly localText?: string;
     readonly cwd?: string;
+    readonly links?: Readonly<Record<string, string>>;
   } = {},
 ): FakeDeps => {
-  const deps = createFakeDeps({ cwd: options.cwd ?? '/w', env: { XDG_STATE_HOME: '/state' } });
+  const deps = createFakeDeps({
+    cwd: options.cwd ?? '/w',
+    env: { XDG_STATE_HOME: '/state' },
+    ...(options.links === undefined ? {} : { links: options.links }),
+  });
   seedConfig(deps, HOME, configOf('mgr', options.layer ?? 2, options.children));
   registerRoot(deps, HOME, 'mgr');
   if (options.sharedText !== undefined) deps.seed(CONFIG_PATH, options.sharedText);
@@ -397,6 +402,28 @@ describe('node: the local file', () => {
     }
     expect(deps.files.get(LOCAL_PATH)).toBe(before);
     expect(deps.modes.get(LOCAL_PATH)).toBe(mode);
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('refuses all three subcommands for a local file that is a link with one remedy line, before the owner check, and changes nothing (TP-147)', async () => {
+    const deps = make({
+      children: [{ id: 'web', address: 'file:///w/web-factory' }],
+      homes: { ...webHome, '/w/api-factory': configOf('api', 1) },
+      links: { [LOCAL_PATH]: '/outside/factory.local.yaml' },
+    });
+    deps.modes.set(LOCAL_PATH, 0o644);
+    deps.owners.set(LOCAL_PATH, 0);
+    const files = new Map(deps.files);
+    for (const words of [['children'], ['add-child', '/w/api-factory'], ['remove-child', 'web']]) {
+      const result = await node(deps, ...words);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (!result.ok) {
+        expect(result.error.message).toBe('factory.local.yaml is a link, so factory does not use it');
+        expect(result.error.hint).toBe('Move factory.local.yaml away, then run "factory init" to write a new one.');
+      }
+    }
+    expect(deps.files).toEqual(files);
+    expect(deps.modes.get(LOCAL_PATH)).toBe(0o644);
     expect(deps.atomicWrites).toEqual([]);
   });
 

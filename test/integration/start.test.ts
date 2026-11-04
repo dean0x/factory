@@ -445,4 +445,30 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect((await tmux(['list-sessions'])).code).not.toBe(0);
     expect(existsSync(socket)).toBe(false);
   });
+
+  it('works for a node home under a linked parent folder, and stops only for a link below the home (TP-149)', async () => {
+    const real = join(box.root, 'real-parent');
+    const linked = join(box.root, 'linked-parent');
+    await mkdir(real, { recursive: true });
+    await symlink(real, linked);
+    const home = join(linked, 'factory');
+    const init = await box.run(['init', '--home', home, '--name', 'demo', '--owner-name', 'Test Owner'], { env: tmuxEnv });
+    expect({ code: init.code, stderr: init.stderr }).toEqual({ code: 0, stderr: '' });
+
+    const byFlag = await box.run(['start', '--dry-run', '--home', home], { env: tmuxEnv });
+    expect({ code: byFlag.code, stderr: byFlag.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(byFlag.stdout).toContain('Dry run');
+    const fromInside = await box.run(['start', '--dry-run'], { cwd: join(home, 'coordinator'), env: tmuxEnv });
+    expect({ code: fromInside.code, stderr: fromInside.stderr }).toEqual({ code: 0, stderr: '' });
+
+    const claude = join(real, 'factory', 'coordinator', 'CLAUDE.md');
+    const outside = join(box.root, 'outside-claude.md');
+    await writeFile(outside, await readFile(claude, 'utf8'));
+    await rm(claude);
+    await symlink(outside, claude);
+    const stopped = await box.run(['start', '--dry-run', '--home', home], { env: tmuxEnv });
+    expect(stopped.code).toBe(4);
+    expect(stopped.stderr).toContain('coordinator/CLAUDE.md is a link');
+    expect(existsSync(socket)).toBe(false);
+  });
 });

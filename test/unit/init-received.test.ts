@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { InitOptions } from '../../src/commands/init.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { recordDelegation } from '../../src/core/owner-record.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { ok } from '../../src/core/result.js';
 import { env, trackedFiles } from '../../src/names.js';
@@ -15,9 +16,10 @@ import {
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
-import { runInit } from '../helpers/package-registry.js';
+import { runInit, runStart } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
+import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const ROOT = '/w/recv';
 const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
@@ -567,6 +569,25 @@ describe('init: the setup acceptance of a received root', () => {
       expect(deps.files.has(RECORDS)).toBe(false);
     });
 
+    it('exits 4 with no terminal window, writes no acceptance, and leaves an approval store that holds a record as it was (TP-143)', async () => {
+      const { deps } = received({ unaccepted: true });
+      deps.seedDir('/w/other');
+      // An approval record is written in a terminal window only. The run of the test has none.
+      const atTerminal = { ...deps, stdinIsTTY: true, stdoutIsTTY: true };
+      const recorded = await recordDelegation(atTerminal, { root: '/w/other', node: 'other', point: 'merge', mode: 'delegated' });
+      expect(recorded).toMatchObject({ ok: true });
+      const store = deps.files.get(RECORDS);
+      expect(store).toContain('delegated');
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(result)).toContain('factory init');
+      expect(messageOf(result)).toContain('terminal window');
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
+      expect(deps.files.get(RECORDS)).toBe(store);
+      expect(snapshot(deps)).toBe(before);
+    });
+
     it('exits 4 before any write, also with yes, for a tracked instruction file, and names the command', async () => {
       const { deps } = received({ tracked: [...TRACKED_SETUP, 'CLAUDE.md'] });
       const before = snapshot(deps);
@@ -605,6 +626,86 @@ describe('init: the setup acceptance of a received root', () => {
       expect((await runInit(deps, options())).ok).toBe(true);
       expect(asked.find((text) => text.includes('Accept these files?'))).toContain(`accepted before: ${SETUP_HASH}`);
       expect(acceptancesOf(deps).map((record) => record.node).sort()).toEqual(['demo', 'other']);
+    });
+  });
+
+  describe('listed files on a received root, on a terminal window (TP-183)', () => {
+    const LISTED = [...TRACKED_SETUP, 'CLAUDE.md', 'scripts/run.sh'];
+
+    it('asks with plain init, writes no acceptance after a no, names init in a terminal window, and then start exits 4', async () => {
+      const asked: string[] = [];
+      const { deps } = received({ tracked: LISTED, unaccepted: true }, { ...terminal, prompt: person('n', asked) });
+      const result = await runInit(deps, options());
+      expect(result.ok).toBe(true);
+      const questions = asked.filter((text) => text.includes('Accept these files?'));
+      expect(questions).toHaveLength(1);
+      for (const path of ['CLAUDE.md', 'scripts/run.sh']) expect(questions[0]).toContain(path);
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
+      expect(linesOf(result)).toContain('factory init');
+      expect(linesOf(result)).toContain('terminal window');
+
+      const askedByInit = asked.length;
+      const started = await runStart(deps, { home: ROOT, dryRun: false });
+      expect(started).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(started)).toContain('factory init');
+      expect(messageOf(started)).toContain('terminal window');
+      expect(asked).toHaveLength(askedByInit);
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
+    });
+
+    it('asks nothing with the yes flag, exits 4, names init in a terminal window, and writes nothing', async () => {
+      const asked: string[] = [];
+      const { deps } = received({ tracked: LISTED, unaccepted: true }, { ...terminal, prompt: person('y', asked) });
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(messageOf(result)).toContain('factory init');
+      expect(messageOf(result)).toContain('terminal window');
+      expect(asked).toEqual([]);
+      expect(deps.prompts).toEqual([]);
+      expect(deps.files.has(ACCEPTANCES)).toBe(false);
+      expect(snapshot(deps)).toBe(before);
+    });
+  });
+
+  describe('a received factory that a person accepts at the prompt (TP-103)', () => {
+    const SENDER_MODEL = 'opus';
+
+    it('puts the accepted setup text and the limits of the sender into the coordinator text, and start --dry-run launches with the model of the sender', async () => {
+      const base = sampleConfig();
+      const sender: FactoryConfig = {
+        ...base,
+        core: {
+          ...base.core,
+          session: { ...base.core.session, model: SENDER_MODEL },
+          limits: { ...base.core.limits, context_prepare_pct: 33, context_max_pct: 55 },
+        },
+      };
+      const { deps } = received(
+        { config: sender, unaccepted: true },
+        { ...terminal, prompt: person('y'), env: { ...ENV, PATH: '/bin' } },
+      );
+      deps.seed('/bin/tmux', '');
+      deps.seed('/bin/claude', '');
+      const result = await runInit(deps, options());
+      expect(result.ok).toBe(true);
+      expect(acceptancesOf(deps)).toEqual([expect.objectContaining({ root: ROOT, node: 'demo', hash: SETUP_HASH })]);
+      const text = coordinatorText(deps);
+      expect(text).toContain(COORDINATOR_TEXT.trim());
+      expect(text).toContain('at 33 percent');
+      expect(text).toContain('past 55 percent');
+
+      const { handler } = tmuxHandler();
+      const withTmux = {
+        ...deps,
+        run: async (command: string, args: readonly string[], runOptions?: { readonly cwd?: string }) =>
+          command === 'tmux' ? handler({ command, args, cwd: runOptions?.cwd }) : deps.run(command, args, runOptions),
+      };
+      const dry = await runStart(withTmux, { home: ROOT, dryRun: true });
+      expect(dry.ok).toBe(true);
+      const calls = dry.ok ? (dry.value.json['calls'] as string[]) : [];
+      const launch = calls.find((line) => line.includes('new-session')) ?? '';
+      expect(launch).toContain(`--model ${SENDER_MODEL}`);
     });
   });
 

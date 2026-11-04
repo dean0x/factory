@@ -93,6 +93,32 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     }
   });
 
+  it('lets doctor and start --dry-run find each of two roots of one HOME from its own folder, and never the other root (TP-31)', async () => {
+    await initWeb();
+    const second = join(box.root, 'second-home');
+    expect((await box.run(['init', '--home', second, '--name', 'second', ...owner], withState())).code).toBe(0);
+    const roots = [
+      { id: 'web-factory', home: join(realRoot, 'web-factory'), other: join(realRoot, 'second-home') },
+      { id: 'second', home: join(realRoot, 'second-home'), other: join(realRoot, 'web-factory') },
+    ];
+    for (const { id, home, other } of roots) {
+      for (const cwd of [home, join(home, 'coordinator')]) {
+        const doctor = await box.run(['doctor'], { cwd, ...withState() });
+        expect({ id, cwd, code: doctor.code }).toEqual({ id, cwd, code: 0 });
+        expect(doctor.stdout).toContain(join(home, 'factory.yaml'));
+        expect(doctor.stdout).not.toContain(join(other, 'factory.yaml'));
+        expect(doctor.stdout).toContain('2 entries in the factory list, all present');
+
+        const dry = await box.run(['start', '--dry-run', '--json'], { cwd, ...withState() });
+        expect({ id, cwd, code: dry.code, stderr: dry.stderr }).toEqual({ id, cwd, code: 0, stderr: '' });
+        const report = JSON.parse(dry.stdout) as { session: string; calls: string[] };
+        expect(report.session).toBe(id);
+        expect(report.calls.join('\n')).toContain(`FACTORY_HOME=${home}`);
+        expect(report.calls.join('\n')).not.toContain(other);
+      }
+    }
+  });
+
   it('exits 2 with the hint from a folder that is in no entry', async () => {
     await initWeb();
     const other = join(box.root, 'elsewhere');
