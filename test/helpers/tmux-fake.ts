@@ -46,6 +46,11 @@ export interface TmuxFixture {
   /** The program of each pane that `split-window` makes ends at once. The pane stays, as a dead pane. */
   readonly newPanesEndAtOnce?: boolean;
   /**
+   * The program of each pane that `split-window` makes ends before the next call, and the window does not keep ended panes, so tmux
+   * removes the pane at once. The call itself prints the pane id, as tmux does, and every later call for that pane finds no pane.
+   */
+  readonly newPanesGoneAtOnce?: boolean;
+  /**
    * How many times `split-window` can split a window before a `select-layout` is needed. Each split halves the pane that it
    * splits, and a detached window has a fixed size, so a window that is never tiled has room for a few splits only. After that
    * count, `split-window` fails with `no space for new pane`, as tmux does, until `select-layout` gives the window room again.
@@ -530,7 +535,9 @@ export const tmuxHandler = (
         });
         // Like tmux: the new pane gets the focus, unless the call has -d.
         if (!hasFlag(command, '-d')) makeActive(pane);
-        return printed(command, pane);
+        const reply = printed(command, pane);
+        if (fixture.newPanesGoneAtOnce === true) panes.splice(panes.indexOf(pane), 1);
+        return reply;
       }
       case 'list-panes': {
         const wholeSession = command.includes('-s');

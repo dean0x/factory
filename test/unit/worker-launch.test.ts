@@ -835,6 +835,26 @@ describe('the launch of a worker: a failure after the pane exists', () => {
     expect(panesOf(made)).toBe(START_PANES);
   });
 
+  it('reports a program that ended before the mark as a failed resume, with the delete of the pointer file, not as a pane that stays open', async () => {
+    const made = make({ tmux: { newPanesGoneAtOnce: true } });
+    const error = await failed(made, { resumeId: UUID });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe(`resume failed: the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
+    expect(error.message).not.toContain('stays open');
+    expect(error.hint).toContain(`delete the file ${POINTER}. Then run "factory worker resume alpha".`);
+    expect(panesOf(made)).toBe(START_PANES);
+    expect(made.deps.sleeps).toEqual([]);
+  });
+
+  it('reports a program of a new worker that ended before the mark as an ended pane, with the resume command', async () => {
+    const made = make({ tmux: { newPanesGoneAtOnce: true } });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
+    expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
+    expect(error.hint).not.toContain(POINTER);
+  });
+
   it('names the pane that stays when it can not be closed', async () => {
     const made = make({
       tmux: { failing: 'set-option' },
