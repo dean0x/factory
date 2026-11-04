@@ -95,6 +95,16 @@ export const paneReadArgs = (pane: string): Result<TmuxArgs, string> => {
   return target.ok ? ok(call('display-message', '-p', '-t', target.value, PANE_LIST_FORMAT)) : target;
 };
 
+/**
+ * True when the answer of a pane read, in a format of fields with the separator, says that tmux has no such pane. The read of a
+ * pane id that does not exist exits 0, and tmux prints the format with every field empty (the target of the read may fail), so
+ * the exit code does not tell: the first field, the pane id, is empty. Text with no field at all is not this answer.
+ */
+export const paneAbsent = (text: string): boolean => {
+  const [first = '', ...more] = text.split(FIELD_SEPARATOR);
+  return more.length > 0 && first.trim() === '';
+};
+
 /** The compare of a pane option with a text, which tmux does: `1` for a pane with that value and `0` for any other pane. */
 const optionIs = (option: string, value: string): string => `#{==:#{${option}},${value}}`;
 

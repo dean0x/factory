@@ -5,6 +5,7 @@ import { toolNames } from '../core/tools.js';
 import {
   killPaneArgs,
   paneBindArgs,
+  paneAbsent,
   paneListArgs,
   paneReadArgs,
   parsePaneBind,
@@ -65,9 +66,9 @@ export const requireBoundPane = async (deps: Deps, request: BindRequest): Promis
   const args = paneBindArgs(paneId, workerId);
   if (!args.ok) return failure(args.error);
   const read = await tmuxStep(deps, args.value);
-  if (!read.ok) {
+  if (!read.ok || paneAbsent(read.value)) {
     return failure(
-      `cannot read the pane ${paneId}: ${read.error.message}`,
+      `cannot read the pane ${paneId}: ${read.ok ? 'tmux has no such pane' : read.error.message}`,
       `The pane may have ended. Run "${commandText(again)}" again.`,
     );
   }
@@ -109,7 +110,7 @@ export const readPaneLife = async (deps: Deps, request: Omit<BindRequest, 'again
   if (!args.ok) return failure(args.error);
   const read = await tmuxCall(deps, args.value);
   if (!read.ok) return failure(`cannot read the pane ${paneId}: ${read.error.message}`);
-  if (read.value.exitCode !== 0) return ok('gone');
+  if (read.value.exitCode !== 0 || paneAbsent(read.value.stdout)) return ok('gone');
   const bind = parsePaneBind(read.value.stdout);
   if (!bind.ok) return failure(`cannot read the pane ${paneId}: ${bind.error}`);
   if (bind.value.paneId !== paneId) return failure(`cannot read the pane ${paneId}: the read gives another pane`);
@@ -127,11 +128,12 @@ export const closePane = async (deps: Deps, pane: string): Promise<CliResult<'cl
   const closed = await tmuxCall(deps, kill.value);
   if (!closed.ok) return closed;
   if (closed.value.exitCode === 0) return ok('closed');
-  // The call failed. When the pane can not be read either, it is gone, and that is the result that the caller wants.
+  // The call failed. When tmux has no such pane any more, it is gone, and that is the result that the caller wants. tmux exits 0
+  // for the read of a pane id that does not exist, so the answer must hold a pane id. Any other failure stays a failure.
   const read = paneReadArgs(pane);
   if (!read.ok) return failure(read.error);
   const still = await tmuxCall(deps, read.value);
   if (!still.ok) return still;
-  if (still.value.exitCode !== 0) return ok('gone');
+  if (still.value.exitCode !== 0 || paneAbsent(still.value.stdout)) return ok('gone');
   return failure(`${toolNames.tmux} ${kill.value[0]} failed for the pane ${pane} (exit code ${closed.value.exitCode})`);
 };

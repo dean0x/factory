@@ -4,6 +4,7 @@ import {
   joinPaneArgs,
   killPaneArgs,
   newWindowArgs,
+  paneAbsent,
   paneBindArgs,
   paneListArgs,
   paneReadArgs,
@@ -70,6 +71,24 @@ describe('the tmux call that reads one pane', () => {
 
   it.each(badPaneIds)('refuses the target %j', (target) => {
     expect(paneReadArgs(target).ok).toBe(false);
+  });
+});
+
+describe('the answer of tmux for a pane that does not exist', () => {
+  it('is the format with every field empty: the pane id is empty', () => {
+    expect(paneAbsent('|||\n')).toBe(true);
+    expect(paneAbsent('|||0|0|0|0|\n')).toBe(true);
+  });
+
+  it('is not the answer for the line of a pane, also when its worker option is empty', () => {
+    expect(paneAbsent('%3|4777|0|alpha\n')).toBe(false);
+    expect(paneAbsent('%3|4777|0|\n')).toBe(false);
+  });
+
+  it('is not the answer for text with no field, because that text is no answer of tmux at all', () => {
+    expect(paneAbsent('')).toBe(false);
+    expect(paneAbsent('\n')).toBe(false);
+    expect(paneAbsent('zzz-odd-output\n')).toBe(false);
   });
 });
 
