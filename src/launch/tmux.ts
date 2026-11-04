@@ -85,6 +85,16 @@ const PANE_LIST_FORMAT = [PANE_ID_FORMAT, '#{pane_pid}', '#{pane_dead}', `#{${tm
 export const paneListArgs = (id: string): TmuxArgs =>
   call('list-panes', '-s', '-t', windowTarget(id, ''), '-F', PANE_LIST_FORMAT);
 
+/**
+ * Prints the line of one pane, in the format of the pane list, for the pane id only. A caller that must act on one pane reads
+ * it again with this call right before the act, because the list can hold a forged line: the worker option of a pane is text
+ * that a program in the pane can set, also text with a new line. `parsePaneList` reads the output.
+ */
+export const paneReadArgs = (pane: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  return target.ok ? ok(call('display-message', '-p', '-t', target.value, PANE_LIST_FORMAT)) : target;
+};
+
 export interface PaneRow {
   readonly paneId: string;
   /** The process id of the program of the pane. For a pane that has ended, it is the id that the program had. */

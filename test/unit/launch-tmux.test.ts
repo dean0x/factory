@@ -4,6 +4,7 @@ import {
   killPaneArgs,
   newWindowArgs,
   paneListArgs,
+  paneReadArgs,
   parsePaneList,
   parsePaneListSoft,
   runShellBackgroundArgs,
@@ -43,6 +44,22 @@ describe('the tmux call that lists the panes', () => {
       '-F',
       '#{pane_id}|#{pane_pid}|#{pane_dead}|#{@worker}',
     ]);
+  });
+});
+
+describe('the tmux call that reads one pane', () => {
+  it('prints the line of the pane, in the format of the list, for the pane id only', () => {
+    expect(argvOf(paneReadArgs('%12'))).toEqual([
+      'display-message',
+      '-p',
+      '-t',
+      '%12',
+      '#{pane_id}|#{pane_pid}|#{pane_dead}|#{@worker}',
+    ]);
+  });
+
+  it.each(badPaneIds)('refuses the target %j', (target) => {
+    expect(paneReadArgs(target).ok).toBe(false);
   });
 });
 

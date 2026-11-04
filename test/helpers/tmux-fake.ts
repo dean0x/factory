@@ -272,8 +272,14 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
         return sessions.has(targetSession(command)) ? exited(0) : exited(1, '', "can't find session\n");
       case 'show-options':
         return exited(0, `${sessions.get(targetSession(command)) ?? ''}\n`);
-      case 'display-message':
+      case 'display-message': {
+        // A pane id as the target prints the format of that pane. Any other target is the coordinator pane of a session.
+        if (isPaneId(targetOf(command))) {
+          const pane = resolvePane(targetOf(command));
+          return pane === undefined ? cantFindPane(targetOf(command)) : exited(0, `${expand(command.at(-1) ?? '', pane)}\n`);
+        }
         return exited(0, `${endedCoordinators.has(targetSession(command)) ? 1 : 0}\n`);
+      }
       case 'new-session': {
         const name = after(rest, '-s');
         if (sessions.has(name)) return exited(1, '', 'duplicate session\n');

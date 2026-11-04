@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   killPaneArgs,
   paneListArgs,
+  paneReadArgs,
   parsePaneList,
   runShellBackgroundArgs,
   setPaneOptionArgs,
@@ -65,6 +66,29 @@ describe('the tmux fake: windows and panes', () => {
     });
     expect(rowsOf('demo').at(-1)).toEqual({ paneId: '%9', pid: 5001, dead: true, worker: 'alpha' });
     expect(rowsOf('demo')).toHaveLength(4);
+  });
+
+  it('reads one pane by its id: the same line as the list, and the other panes stay out', () => {
+    const { run } = fakeTmux({
+      sessions: { demo: '/w/node' },
+      panes: [{ id: '%9', session: 'demo', options: { '@worker': 'alpha' }, pid: 5001 }],
+    });
+    expect(run(must(paneReadArgs('%9'))).stdout).toBe('%9|5001|0|alpha\n');
+  });
+
+  it('prints the extra lines of a worker option that holds a new line, as tmux does', () => {
+    const { run } = fakeTmux({
+      sessions: { demo: '/w/node' },
+      panes: [{ id: '%9', session: 'demo', options: { '@worker': 'x\n%2|1234|0|alpha' }, pid: 5001 }],
+    });
+    expect(run(must(paneReadArgs('%9'))).stdout).toBe('%9|5001|0|x\n%2|1234|0|alpha\n');
+  });
+
+  it('fails the read of a pane that does not exist, and names the pane', () => {
+    const { run } = fakeTmux({ sessions: { demo: '/w/node' } });
+    const result = run(must(paneReadArgs('%99')));
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('%99');
   });
 
   it('gives a pane of the fixture the next free id after the highest id of the fixture', () => {
