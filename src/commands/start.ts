@@ -13,17 +13,8 @@ import { err, ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
-import {
-  attachArgs,
-  attachHint,
-  coordinatorEndedArgs,
-  hasSessionArgs,
-  killSessionArgs,
-  showHomeArgs,
-  startSteps,
-  switchArgs,
-  type TmuxArgs,
-} from '../launch/tmux.js';
+import { attachArgs, attachHint, killSessionArgs, startSteps, switchArgs, type TmuxArgs } from '../launch/tmux.js';
+import { coordinatorEnded, requireOwnSession, sessionExists, tmuxStep } from '../launch/tmux-run.js';
 import {
   blockNames,
   capitalize,
@@ -62,8 +53,6 @@ export interface StartOptions {
   readonly yes: boolean;
 }
 
-const TMUX_TIMEOUT_MS = 15_000;
-const MAX_DETAIL_CHARS = 200;
 const MIN_TMUX_TEXT = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
 
 /** How the command shows the session to the person: attach, switch the client of tmux, or print how to attach. */
@@ -116,39 +105,6 @@ const shellWord = (word: string): string =>
 /** A tmux call as a person could type it, for the dry run. */
 const commandLine = (args: TmuxArgs): string => [toolNames.tmux, ...args].map(shellWord).join(' ');
 
-const detailOf = (stderr: string): string => {
-  const line = stderr
-    .split('\n')
-    .find((candidate) => candidate.trim() !== '')
-    ?.trim()
-    .slice(0, MAX_DETAIL_CHARS);
-  return line === undefined ? '' : `: ${line}`;
-};
-
-const tmuxCall = (deps: Deps, args: TmuxArgs) =>
-  deps.run(toolNames.tmux, args, { inheritEnv: true, timeoutMs: TMUX_TIMEOUT_MS });
-
-/** A tmux call that must work. The result is its output. */
-const tmuxStep = async (deps: Deps, args: TmuxArgs): Promise<CliResult<string>> => {
-  const result = await tmuxCall(deps, args);
-  if (!result.ok) return result;
-  const { exitCode, stdout, stderr } = result.value;
-  if (exitCode === 0) return ok(stdout);
-  return failure(`${toolNames.tmux} ${args[0]} failed (exit code ${exitCode})${detailOf(stderr)}`);
-};
-
-/** True when a session with this exact name runs. A tmux that does not run counts as no session. */
-const sessionExists = async (deps: Deps, id: string): Promise<boolean> => {
-  const result = await tmuxCall(deps, hasSessionArgs(id));
-  return result.ok && result.value.exitCode === 0;
-};
-
-/** True when the program of the coordinator pane has ended. A pane that cannot be read counts as one that runs. */
-const coordinatorEnded = async (deps: Deps, id: string): Promise<boolean> => {
-  const result = await tmuxCall(deps, coordinatorEndedArgs(id));
-  return result.ok && result.value.exitCode === 0 && result.value.stdout.trim() === '1';
-};
-
 /** The tools that `start` needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
 const toolProblems = async (deps: Deps, readVersion: boolean): Promise<readonly string[]> => {
   const problems: string[] = [];
@@ -166,24 +122,6 @@ const toolProblems = async (deps: Deps, readVersion: boolean): Promise<readonly 
   }
   if (!(await onPath(deps, toolNames.claude))) problems.push(`${toolNames.claude} is not on PATH`);
   return problems;
-};
-
-/** The session is of this home when its option holds this home, also through a link. */
-const isSameHome = async (deps: Deps, stored: string, home: string): Promise<boolean> => {
-  if (stored === '') return false;
-  if (stored === home) return true;
-  const [a, b] = await Promise.all([deps.fs.realpath(stored), deps.fs.realpath(home)]);
-  return a.ok && b.ok && a.value === b.value;
-};
-
-const requireOwnSession = async (deps: Deps, id: string, home: string): Promise<CliResult<void>> => {
-  const shown = await tmuxStep(deps, showHomeArgs(id));
-  if (!shown.ok) return shown;
-  if (await isSameHome(deps, shown.value.trim(), home)) return ok(undefined);
-  return safetyRefusal(
-    `a tmux session ${id} belongs to another ${places.folder}`,
-    `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session. Then run "${commandText(commands.start)}" again.`,
-  );
 };
 
 /** The proxy of the session, by the rules of design 4.6: only a proxy that the config names, and only when it answers. */
