@@ -901,6 +901,66 @@ describe('node deps: sleep', () => {
   });
 });
 
+describe('node deps: end a process', () => {
+  const PID = 4321;
+  const failWith = (code: string) => () => {
+    throw Object.assign(new Error(code), { code });
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('sends TERM to the pid, and no other signal', () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    expect(deps.terminate(PID)).toEqual({ ok: true, value: 'sent' });
+    expect(kill.mock.calls).toEqual([[PID, 'SIGTERM']]);
+  });
+
+  it('says that the process is gone when there is none with that pid', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('ESRCH'));
+    expect(deps.terminate(PID)).toEqual({ ok: true, value: 'gone' });
+  });
+
+  it('fails with the code when the program may not signal the process', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('EPERM'));
+    const result = deps.terminate(PID);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.message).toContain('EPERM');
+  });
+
+  it.each([0, 1, -1, -PID, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31, process.pid])(
+    'refuses the pid %j and sends nothing',
+    (pid) => {
+      const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      expect(deps.terminate(pid).ok).toBe(false);
+      expect(deps.isRunning(pid).ok).toBe(false);
+      expect(kill).not.toHaveBeenCalled();
+    },
+  );
+
+  it('asks with the signal 0 whether a process runs', () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    expect(deps.isRunning(PID)).toEqual({ ok: true, value: true });
+    expect(kill.mock.calls).toEqual([[PID, 0]]);
+  });
+
+  it('says that no process runs when there is none with that pid', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('ESRCH'));
+    expect(deps.isRunning(PID)).toEqual({ ok: true, value: false });
+  });
+
+  it('says that a process runs when the program may not signal it', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('EPERM'));
+    expect(deps.isRunning(PID)).toEqual({ ok: true, value: true });
+  });
+
+  it('fails for any other error of the check', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('EINVAL'));
+    expect(deps.isRunning(PID).ok).toBe(false);
+  });
+});
+
 describe('node deps: atomic write', () => {
   it('replaces the text of an existing file and leaves no temporary file', async () => {
     const folder = fresh('replace');

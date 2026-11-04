@@ -169,6 +169,14 @@ export interface Deps {
   warn(message: string): void;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly signals: SignalSource;
+  /**
+   * Ask the process with this pid to end: send it the TERM signal, and no other signal. The value is `sent`, or `gone` when no
+   * process has this pid. The call refuses a pid that is not a whole number above 1, and the pid of this process: it sends
+   * nothing for them, so it never reaches a process group or every process.
+   */
+  terminate(pid: number): CliResult<'sent' | 'gone'>;
+  /** True when a process with this pid exists. A process of another user exists too. The same refusals as `terminate`. */
+  isRunning(pid: number): CliResult<boolean>;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;
   now(): Date;

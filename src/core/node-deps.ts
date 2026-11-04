@@ -437,6 +437,44 @@ const runInGroup = (command: string, args: readonly string[], options: RunOption
     feedInput(child.stdin, options.input);
   });
 
+/** The largest pid of a 32-bit pid_t. A pid of 0 or 1, or a negative pid, names a process group or every process. */
+const MAX_PID = 2_147_483_647;
+const FIRST_SIGNALLED_PID = 2;
+
+/** The pid must be a whole number that names one process other than init, and not the process of this program. */
+const checkedPid = (pid: number): CliResult<number> =>
+  Number.isSafeInteger(pid) && pid >= FIRST_SIGNALLED_PID && pid <= MAX_PID && pid !== process.pid
+    ? ok(pid)
+    : failure(`cannot signal the process ${String(pid)}: it is not the pid of one other process`);
+
+/** The signal of a call: TERM ends the process, and 0 only asks whether the process exists. */
+type ProcessSignal = 'SIGTERM' | 0;
+
+/** Send the signal to the process. The value is false when no process has the pid. EPERM means that the process exists. */
+const signalProcess = (pid: number, signal: ProcessSignal): CliResult<boolean> => {
+  try {
+    process.kill(pid, signal);
+    return ok(true);
+  } catch (cause) {
+    const code = errorCode(cause);
+    if (code === 'ESRCH') return ok(false);
+    if (code === 'EPERM' && signal === 0) return ok(true);
+    return failure(`cannot signal the process ${pid}: ${code}`);
+  }
+};
+
+const terminateProcess = (pid: number): CliResult<'sent' | 'gone'> => {
+  const checked = checkedPid(pid);
+  if (!checked.ok) return checked;
+  const sent = signalProcess(checked.value, 'SIGTERM');
+  return sent.ok ? ok(sent.value ? 'sent' : 'gone') : sent;
+};
+
+const processRuns = (pid: number): CliResult<boolean> => {
+  const checked = checkedPid(pid);
+  return checked.ok ? signalProcess(checked.value, 0) : checked;
+};
+
 export const createNodeDeps = (): Deps => ({
   fs: nodeFs,
   run: (command, args, options) =>
@@ -472,6 +510,8 @@ export const createNodeDeps = (): Deps => ({
   },
   env: process.env,
   signals: process,
+  terminate: terminateProcess,
+  isRunning: processRuns,
   fetch: async (url, timeoutMs) => {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual' });
