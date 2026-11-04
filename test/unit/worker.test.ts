@@ -6,6 +6,10 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
+import { schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { layoutOf } from '../../src/state/layout.js';
+import { writeWorkerSession } from '../../src/workers/last-seen.js';
+import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { claudeFileText } from '../helpers/blocks.js';
 import {
   createFakeDeps,
@@ -21,7 +25,7 @@ import {
 import { runWorker } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
-import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
 const CLONE = '/w/node/web';
@@ -74,6 +78,8 @@ interface Setup {
   readonly failWrite?: string;
   /** True: git says that the project folder is not the top of a work tree. */
   readonly notRepo?: boolean;
+  /** After a TERM, a process still runs for this many checks, and then it ends. Default: 0. */
+  readonly termEndsAfterChecks?: number;
 }
 
 interface Made {
@@ -165,6 +171,7 @@ const make = (setup: Setup = {}): Made => {
     },
     stdinIsTTY: tty,
     stdoutIsTTY: tty,
+    ...(setup.termEndsAfterChecks === undefined ? {} : { termEndsAfterChecks: setup.termEndsAfterChecks }),
     ...(setup.prompt === undefined
       ? {}
       : {
@@ -792,5 +799,463 @@ describe('worker new: a failure after the work copy exists', () => {
     expect(error.hint).not.toContain('factory dismiss');
     expect(made.deps.files.has(RECORD)).toBe(false);
     expect(made.events).not.toContain('tmux split-window');
+  });
+});
+
+const ALPHA_PANE = '%3';
+const ALPHA_PID = 4777;
+/** The id of a pane that a resume makes while the fixture holds the pane %3: the three panes that start with the session take %4 to %6. */
+const NEW_PANE = '%7';
+/** The coordinator pane of the session in that fixture. */
+const COORDINATOR_PANE = '%4';
+const ALPHA_SESSION = 'a3f1c2d4-1b2c-4d5e-8f90-123456789abc';
+const BETA_SESSION = 'b4a2d3e5-2c3d-4e6f-9a01-23456789abcd';
+const COORDINATOR_SESSION = '0b6c1f9e-2d3a-4b5c-8d7e-9f0a1b2c3d4e';
+const SEEN_AT = '2030-01-02T03:04:05.678Z';
+
+const alphaPane = (change: Partial<PaneFixture> = {}): PaneFixture => ({
+  id: ALPHA_PANE,
+  session: 'demo',
+  options: { '@worker': 'alpha' },
+  pid: ALPHA_PID,
+  ...change,
+});
+
+/** One last-seen line in the heartbeat folder. */
+interface SeedLine {
+  readonly session: string;
+  /** The last hook event. Null: the line holds only a context percent. Default: Stop. */
+  readonly event?: HookEvent | null;
+  /** The session marker of the line. Null: the line has none. Default: alpha. */
+  readonly marker?: string | null;
+}
+
+interface Seeded {
+  /** False: the worker alpha has no record. */
+  readonly record?: boolean;
+  /** The session that the pointer of alpha names. Null: alpha has no pointer. Default: the session of alpha. */
+  readonly pointer?: string | null;
+  /** The session that the pointer of the worker beta names. Default: beta has no pointer. */
+  readonly betaPointer?: string;
+  /** The lines of the heartbeat folder. Default: one idle line of the session of alpha, with the marker alpha. */
+  readonly lines?: readonly SeedLine[];
+}
+
+const lineText = (line: SeedLine): string => {
+  const event = line.event === undefined ? 'Stop' : line.event;
+  const marker = line.marker === undefined ? 'alpha' : line.marker;
+  return `${JSON.stringify({
+    schema: schemaIds.lastSeen,
+    session_id: line.session,
+    event,
+    event_at: event === null ? null : SEEN_AT,
+    context_pct: event === null ? 40 : null,
+    pct_at: event === null ? SEEN_AT : null,
+    ...(marker === null ? {} : { session_marker: marker }),
+  })}\n`;
+};
+
+/**
+ * The made fake, with the records of the workers alpha (unless the setup says no) and beta, the work copy of alpha with its
+ * settings file, and the pointers and lines of the setup. The files and the events of the setup do not count as changes.
+ */
+const withWorkers = async (setup: Setup = {}, change: Seeded = {}): Promise<Made> => {
+  const made = make(setup);
+  const { deps } = made;
+  const must = (result: { readonly ok: boolean; readonly error?: { readonly message: string } }): void => {
+    if (!result.ok) throw new Error(result.error?.message ?? 'the seed failed');
+  };
+  for (const id of change.record === false ? ['beta'] : ['alpha', 'beta']) {
+    must(await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `${PROJECT_COPIES}/${id}`, branch: `worker/${id}` }));
+  }
+  deps.seedDir(COPY);
+  deps.seed(SETTINGS_FILE, OWN_SETTINGS);
+  const pointer = change.pointer === undefined ? ALPHA_SESSION : change.pointer;
+  if (pointer !== null) must(await writeWorkerSession(deps, HOME, 'alpha', pointer));
+  if (change.betaPointer !== undefined) must(await writeWorkerSession(deps, HOME, 'beta', change.betaPointer));
+  for (const line of change.lines ?? [{ session: ALPHA_SESSION }]) {
+    deps.seed(`${layoutOf(HOME).heartbeatDir}/${line.session}`, lineText(line));
+  }
+  made.events.splice(0);
+  return { ...made, files: new Map(deps.files), dirs: new Set(deps.dirs) };
+};
+
+const stopOf = (made: Made) => run(made, { words: ['stop', 'alpha'] });
+const resumeOf = (made: Made) => run(made, { words: ['resume', 'alpha'] });
+
+const stopped = async (made: Made) => {
+  const result = await stopOf(made);
+  if (!result.ok) throw new Error(`${result.error.message} ${result.error.hint ?? ''}`);
+  return result.value;
+};
+
+const stopFailed = async (made: Made): Promise<CliError> => {
+  const result = await stopOf(made);
+  if (result.ok) throw new Error('the stop should have failed');
+  return result.error;
+};
+
+const resumed = async (made: Made) => {
+  const result = await resumeOf(made);
+  if (!result.ok) throw new Error(`${result.error.message} ${result.error.hint ?? ''}`);
+  return result.value;
+};
+
+const resumeFailed = async (made: Made): Promise<CliError> => {
+  const result = await resumeOf(made);
+  if (result.ok) throw new Error('the resume should have failed');
+  return result.error;
+};
+
+const killed = (made: Made): string[] => made.tmux.commands().filter((command) => command.startsWith('kill-pane'));
+
+/** The program words of the newest pane: the words after `--` in the call that made it. */
+const launchWords = (made: Made): readonly string[] => made.tmux.panes().at(-1)?.command ?? [];
+
+const SESSION_STATES: readonly (readonly [HookEvent, string])[] = [
+  ['Stop', 'idle'],
+  ['UserPromptSubmit', 'busy'],
+];
+
+describe('worker stop: the stop of one worker (TP-26)', () => {
+  for (const [event, state] of SESSION_STATES) {
+    it(`sends TERM to the process of the pane for a session that is ${state}, then closes the pane`, async () => {
+      const made = await withWorkers({ tmux: { panes: [alphaPane()] } }, { lines: [{ session: ALPHA_SESSION, event }] });
+      const output = await stopped(made);
+      expect(made.deps.terminated).toEqual([ALPHA_PID]);
+      expect(killed(made)).toEqual([`kill-pane -t ${ALPHA_PANE}`]);
+      expect(output.failed).toBe(false);
+      expect(output.json).toEqual({
+        schema: schemaIds.workerStop,
+        id: 'alpha',
+        outcome: 'stopped',
+        pane: ALPHA_PANE,
+        pid: ALPHA_PID,
+        way: 'kill -TERM',
+        state,
+      });
+    });
+  }
+
+  it('sends TERM before it closes the pane, and writes no file', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] } });
+    await stopped(made);
+    expect(new Map(made.deps.files)).toEqual(made.files);
+    expect(made.deps.terminated).toEqual([ALPHA_PID]);
+    expect(indexOf(made, 'tmux kill-pane')).toBeGreaterThan(indexOf(made, 'tmux display-message'));
+  });
+
+  it('says in a short output what it ended', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] } });
+    const text = plainText(await stopped(made));
+    expect(text).toContain('Stopped the worker alpha.');
+    expect(text).toContain(`${ALPHA_PID}`);
+    expect(text).toContain(ALPHA_PANE);
+    expectShortOutput(text);
+  });
+
+  it('says that a worker with no pane has nothing to stop, and sends and changes nothing', async () => {
+    const made = await withWorkers();
+    const output = await stopped(made);
+    expect(plainText(output)).toContain('has no pane');
+    expect(output.json).toEqual({ schema: schemaIds.workerStop, id: 'alpha', outcome: 'no-pane' });
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
+  });
+
+  it('says the same when no tmux session of the node runs', async () => {
+    const made = await withWorkers({ tmux: { sessions: {} } });
+    expect((await stopped(made)).json).toEqual({ schema: schemaIds.workerStop, id: 'alpha', outcome: 'no-pane' });
+    expect(made.deps.terminated).toEqual([]);
+  });
+
+  it('closes a pane whose program ended already, and sends no signal', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane({ dead: true })] } });
+    const output = await stopped(made);
+    expect(output.json).toEqual({ schema: schemaIds.workerStop, id: 'alpha', outcome: 'closed-dead', panes: [ALPHA_PANE] });
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([`kill-pane -t ${ALPHA_PANE}`]);
+  });
+
+  it('exits 2 for a worker that has no record, and sends nothing', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] } }, { record: false });
+    const error = await stopFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('alpha');
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
+  });
+
+  it.each([[[] as string[]], [['alpha', 'beta']]])('needs exactly one id: %j', async (args) => {
+    const made = await withWorkers();
+    const error = await failed(made, { words: ['stop', ...args] });
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('takes one argument');
+    expect(made.tmux.calls).toEqual([]);
+  });
+
+  it('refuses to end the pane that it runs in (exit 2), and sends nothing', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] }, env: { TMUX_PANE: ALPHA_PANE } });
+    const error = await stopFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('own pane');
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
+  });
+
+  it('stops a worker from another pane of the same session', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] }, env: { TMUX_PANE: COORDINATOR_PANE } });
+    await stopped(made);
+    expect(made.deps.terminated).toEqual([ALPHA_PID]);
+  });
+});
+
+describe('worker stop: a state that is not known is exit 3 (TP-28)', () => {
+  it('exits 3 and names the pane and the process when the worker has no last-seen line', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] } }, { pointer: null, lines: [] });
+    const error = await stopFailed(made);
+    expect(error.kind).toBe('not-ready');
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain(ALPHA_PANE);
+    expect(error.message).toContain(`${ALPHA_PID}`);
+    expect(error.hint).toContain(`kill -TERM ${ALPHA_PID}`);
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
+  });
+
+  it('exits 3 for a last-seen line with no event', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] } }, { lines: [{ session: ALPHA_SESSION, event: null }] });
+    expect(exitCodeOf[(await stopFailed(made)).kind]).toBe(3);
+    expect(made.deps.terminated).toEqual([]);
+  });
+
+  it('exits 3 for a pointer that names the session of the coordinator', async () => {
+    const made = await withWorkers(
+      { tmux: { panes: [alphaPane()] } },
+      { pointer: COORDINATOR_SESSION, lines: [{ session: COORDINATOR_SESSION, marker: 'demo' }] },
+    );
+    expect(exitCodeOf[(await stopFailed(made)).kind]).toBe(3);
+    expect(made.deps.terminated).toEqual([]);
+  });
+
+  it('exits 3 for a pointer that names the session of another worker', async () => {
+    const made = await withWorkers(
+      { tmux: { panes: [alphaPane()] } },
+      { pointer: BETA_SESSION, betaPointer: BETA_SESSION, lines: [{ session: BETA_SESSION, marker: 'beta' }] },
+    );
+    expect(exitCodeOf[(await stopFailed(made)).kind]).toBe(3);
+    expect(made.deps.terminated).toEqual([]);
+  });
+});
+
+describe('worker stop: a process that does not end is exit 1 (TP-29)', () => {
+  it('names the process, sends no KILL, and keeps the pane', async () => {
+    const made = await withWorkers(
+      { tmux: { panes: [alphaPane()] }, termEndsAfterChecks: stopPoll.attempts + 10 },
+    );
+    const error = await stopFailed(made);
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain(`${ALPHA_PID}`);
+    expect(error.hint).toContain('never sends KILL');
+    expect(made.deps.terminated).toEqual([ALPHA_PID]);
+    expect(made.deps.sleeps).toHaveLength(stopPoll.attempts);
+    expect(killed(made)).toEqual([]);
+  });
+
+  it('closes the pane when the process ends in the last check', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] }, termEndsAfterChecks: stopPoll.attempts - 1 });
+    await stopped(made);
+    expect(killed(made)).toEqual([`kill-pane -t ${ALPHA_PANE}`]);
+  });
+});
+
+describe('worker resume: the root checks and the session come first (TP-130)', () => {
+  it('stops with exit 4 for a failing root check, and changes nothing', async () => {
+    const made = await withWorkers({ origin: 'own', tracked: ['factory.local.yaml'] });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('factory.local.yaml');
+    expect(made.tmux.calls).toEqual([]);
+    expectNothingChanged(made);
+  });
+
+  it('checks the root before it looks for the record of the worker', async () => {
+    const made = await withWorkers({ origin: 'own', tracked: ['factory.local.yaml'] }, { record: false });
+    expect(exitCodeOf[(await resumeFailed(made)).kind]).toBe(4);
+  });
+
+  it('exits 3 and names factory start when no session of the node runs', async () => {
+    const made = await withWorkers({ tmux: { sessions: {} } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.hint).toContain('"factory start"');
+    expect(error.hint).toContain('"factory worker resume alpha"');
+    expectNothingChanged(made);
+  });
+
+  it('exits 2 for a worker that has no record, and starts nothing', async () => {
+    const made = await withWorkers({}, { record: false });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('alpha');
+    expectNothingChanged(made);
+  });
+
+  it.each([[[] as string[]], [['alpha', 'beta']]])('needs exactly one id: %j', async (args) => {
+    const made = await withWorkers();
+    const error = await failed(made, { words: ['resume', ...args] });
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('takes one argument');
+    expect(made.tmux.calls).toEqual([]);
+  });
+
+  it('exits 2 for a worker that runs in a live pane, and starts nothing', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain(`runs already in the pane ${ALPHA_PANE}`);
+    expect(error.hint).toContain('"factory worker stop alpha"');
+    expect(made.events).not.toContain('tmux split-window');
+    expect(killed(made)).toEqual([]);
+  });
+});
+
+describe('worker resume: the session of the worker (TP-30)', () => {
+  it('starts the program with --resume and the session id of the last-seen line, in a marked pane', async () => {
+    const made = await withWorkers();
+    const output = await resumed(made);
+    const words = launchWords(made);
+    expect(words).toContain('--resume');
+    expect(words[words.indexOf('--resume') + 1]).toBe(ALPHA_SESSION);
+    expect(made.tmux.panes().at(-1)).toMatchObject({ id: FIRST_NEW_PANE, window: 'workers', cwd: COPY, options: { '@worker': 'alpha' } });
+    expect(output.warnings).toEqual([]);
+    expect(output.failed).toBe(false);
+  });
+
+  it('reports the resume in a short output and a JSON document', async () => {
+    const made = await withWorkers();
+    const output = await resumed(made);
+    expect(plainText(output)).toContain('Resumed the worker alpha in the pane %3 of the window workers.');
+    expectShortOutput(plainText(output));
+    expect(output.json).toEqual({
+      schema: schemaIds.workerResume,
+      id: 'alpha',
+      pane: FIRST_NEW_PANE,
+      resumed: true,
+      sessionId: ALPHA_SESSION,
+      proxy: null,
+    });
+  });
+
+  it('makes no work copy, no record and no file', async () => {
+    const made = await withWorkers();
+    await resumed(made);
+    expect(new Map(made.deps.files)).toEqual(made.files);
+    expect(made.events).not.toContain('git worktree-add');
+  });
+
+  it('removes an old pane of the worker whose program ended, by its id, before it starts the new pane', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane({ dead: true })] } });
+    const output = await resumed(made);
+    expect(killed(made)).toEqual([`kill-pane -t ${ALPHA_PANE}`]);
+    expect(indexOf(made, 'tmux kill-pane')).toBeLessThan(indexOf(made, 'tmux split-window'));
+    expect(output.json).toMatchObject({ pane: NEW_PANE });
+    expect(made.tmux.panes().filter((pane) => pane.options['@worker'] === 'alpha').map((pane) => pane.id)).toEqual([NEW_PANE]);
+  });
+
+  it('leaves the panes of another worker alone', async () => {
+    const other = alphaPane({ id: '%9', options: { '@worker': 'beta' }, pid: 4888 });
+    const made = await withWorkers({ tmux: { panes: [alphaPane({ dead: true }), other] } });
+    await resumed(made);
+    expect(killed(made)).toEqual([`kill-pane -t ${ALPHA_PANE}`]);
+    expect(made.tmux.panes().some((pane) => pane.id === '%9')).toBe(true);
+  });
+
+  it('names the resume command and the dismiss command when the proxy does not answer', async () => {
+    const config = sampleConfig();
+    const made = await withWorkers({
+      config: {
+        ...config,
+        core: {
+          ...config.core,
+          proxies: [{ id: 'local', base_url: PROXY_URL, health: '/health', on_fail: 'stop' }],
+          session: { ...config.core.session, proxy: 'local' },
+        },
+      },
+      fetch: () => failure('no answer'),
+    });
+    const error = await resumeFailed(made);
+    expect(error.message).toContain('does not answer');
+    expect(error.hint).toContain('"factory worker resume alpha"');
+    expect(made.events).not.toContain('tmux split-window');
+  });
+});
+
+describe('worker resume: a conversation that does not belong to the worker is not resumed', () => {
+  const expectNewConversation = (made: Made, warning: readonly string[], forbidden: readonly string[] = []): void => {
+    const words = launchWords(made);
+    expect(words.length).toBeGreaterThan(0);
+    expect(words).not.toContain('--resume');
+    for (const session of forbidden) expect(words).not.toContain(session);
+    expect(warning.join('\n')).toContain('NOT resumed');
+    expect(warning.join('\n')).toContain('A new conversation starts');
+  };
+
+  it('starts with no --resume and says why, when the worker has no valid last-seen line', async () => {
+    const made = await withWorkers({}, { pointer: null, lines: [] });
+    const output = await resumed(made);
+    expectNewConversation(made, output.warnings);
+    expect(output.warnings.join('\n')).toContain('no valid last-seen line');
+    expect(output.json).toMatchObject({ resumed: false, sessionId: null });
+    expect(plainText(output)).toContain('starts a new conversation');
+  });
+
+  it('starts with no --resume when the pointer names a file that holds no valid line', async () => {
+    const made = await withWorkers({}, { lines: [] });
+    made.deps.seed(`${layoutOf(HOME).heartbeatDir}/${ALPHA_SESSION}`, 'not json\n');
+    const output = await resumed(made);
+    expectNewConversation(made, output.warnings);
+    expect(output.warnings.join('\n')).toContain('no valid last-seen line');
+  });
+
+  it('does not resume the session of the coordinator that a pointer names, and says that the line does not belong to the worker', async () => {
+    const made = await withWorkers(
+      {},
+      { pointer: COORDINATOR_SESSION, lines: [{ session: COORDINATOR_SESSION, marker: 'demo' }] },
+    );
+    const output = await resumed(made);
+    expectNewConversation(made, output.warnings, [COORDINATOR_SESSION]);
+    expect(output.warnings.join('\n')).toContain('does not belong to this worker');
+    expect(output.json).toMatchObject({ resumed: false, sessionId: null });
+  });
+
+  it('does not resume a session of the coordinator whose line has no session marker', async () => {
+    const made = await withWorkers({}, { pointer: COORDINATOR_SESSION, lines: [{ session: COORDINATOR_SESSION, marker: null }] });
+    const output = await resumed(made);
+    expectNewConversation(made, output.warnings, [COORDINATOR_SESSION]);
+    expect(output.warnings.join('\n')).toContain('does not belong to this worker');
+  });
+
+  it('does not resume the session of another worker that a pointer names', async () => {
+    const made = await withWorkers(
+      {},
+      { pointer: BETA_SESSION, betaPointer: BETA_SESSION, lines: [{ session: BETA_SESSION, marker: 'beta' }] },
+    );
+    const output = await resumed(made);
+    expectNewConversation(made, output.warnings, [BETA_SESSION]);
+    expect(output.warnings.join('\n')).toContain('does not belong to this worker');
+  });
+
+  it('does not resume a session that the pointer of another worker names too, also when the line has the mark of this worker', async () => {
+    const made = await withWorkers({}, { betaPointer: ALPHA_SESSION });
+    const output = await resumed(made);
+    expectNewConversation(made, output.warnings, [ALPHA_SESSION]);
+    expect(output.warnings.join('\n')).toContain('does not belong to this worker');
+    expect(output.warnings.join('\n')).toContain('beta');
+  });
+
+  it('says once that the earlier conversation is not resumed', async () => {
+    const made = await withWorkers({}, { pointer: null, lines: [] });
+    expect((await resumed(made)).warnings).toHaveLength(1);
   });
 });

@@ -17,6 +17,7 @@ import { warnInstructionFiles } from '../core/instruction-files.js';
 import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
+import type { PaneRow } from '../launch/tmux.js';
 import { requireOwnSession, sessionExists } from '../launch/tmux-run.js';
 import {
   commandLines,
@@ -26,6 +27,7 @@ import {
   flags,
   flagText,
   hookSessions,
+  lastSeen,
   program,
   roles,
   schemaIds,
@@ -37,7 +39,10 @@ import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { ensureCloneExclude } from '../workers/exclude.js';
 import { dismissCommand, launchWorker, resumeLine } from '../workers/launch.js';
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
-import { readWorkerRecord, writeWorkerRecord } from '../workers/registry.js';
+import { readOwnLastSeen } from '../workers/last-seen.js';
+import { closePane, readPanes } from '../workers/panes.js';
+import { readWorkerRecord, writeWorkerRecord, type WorkerRecord } from '../workers/registry.js';
+import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
 import { runWorkerList } from './worker-list.js';
@@ -109,15 +114,65 @@ const requireLaunchReady = async (deps: Deps, home: string, config: FactoryConfi
   return ok(undefined);
 };
 
-/** The tmux session of the node must run, and it must be the session of this factory folder. */
-const requireSession = async (deps: Deps, id: string, home: string): Promise<CliResult<void>> => {
+/** The tmux session of the node must run, and it must be the session of this factory folder. `again` is the command line to run again. */
+const requireSession = async (deps: Deps, id: string, home: string, again: string): Promise<CliResult<void>> => {
   if (!(await sessionExists(deps, id))) {
     return notReady(
       `the tmux session ${id} of this ${roles.node} does not run`,
-      `Run "${commandText(commands.start)}" to start it. Then run "${commandText(commandLines.workerNew)}" again.`,
+      `Run "${commandText(commands.start)}" to start it. Then run "${again}" again.`,
     );
   }
   return requireOwnSession(deps, id, home);
+};
+
+/** The factory folder of the command: the folder of the option, or the one that the current folder is in. */
+const locateNode = async (deps: Deps, options: WorkerOptions, registry: RecipeRegistry): Promise<CliResult<string>> => {
+  const located = await locateHomeFolder(
+    deps,
+    options.home,
+    (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
+    commands.worker,
+  );
+  return located.ok ? ok(located.value.home) : located;
+};
+
+/**
+ * Everything that a command that starts a pane checks before its own checks, in this order: the warning about instruction files,
+ * the config, the local mode, the root and the tools (exit 4, and nothing changes), and the tmux session of the node (exit 3).
+ * `again` is the command line that a person runs again after a fix.
+ */
+const prepareLaunch = async (
+  deps: Deps,
+  home: string,
+  registry: RecipeRegistry,
+  again: string,
+): Promise<CliResult<{ readonly config: FactoryConfig; readonly notes: readonly string[] }>> => {
+  // The warning about instruction files comes before any change or launch, and it never stops the command.
+  await warnInstructionFiles(deps, home);
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const config = loaded.value;
+  const notes = await settleLocalMode(deps, home, true);
+  if (!notes.ok) return notes;
+  const ready = await requireLaunchReady(deps, home, config);
+  if (!ready.ok) return ready;
+  const session = await requireSession(deps, config.core.node.id, home, again);
+  if (!session.ok) return session;
+  return ok({ config, notes: notes.value });
+};
+
+/** The record of the worker. A worker with no record, or with a record that is not valid, is a wrong id (exit 2). */
+const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
+  const read = await readWorkerRecord(deps, home, id);
+  if (!read.ok) return read;
+  if (read.value.state === 'valid') return ok(read.value.record);
+  const listed = `Run "${commandText(commandLines.workerList)}" to see the ${roles.worker}s. Then run "${again} ID" with the id of one of them.`;
+  return usageError(
+    read.value.state === 'invalid'
+      ? `the record of the ${roles.worker} ${id} is not valid: ${read.value.reason}`
+      : `the ${roles.worker} ${id} has no record`,
+    listed,
+  );
 };
 
 /** A folder of the work copies that exists must be a folder. A link is a stop of the link rule before this check. */
@@ -271,26 +326,12 @@ const runNew = async (
     );
   }
 
-  const located = await locateHomeFolder(
-    deps,
-    options.home,
-    (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
-    commands.worker,
-  );
+  const located = await locateNode(deps, options, registry);
   if (!located.ok) return located;
-  const home = located.value.home;
-  // The warning about instruction files comes before any change or launch, and it never stops the command.
-  await warnInstructionFiles(deps, home);
-  const loaded = await loadConfig(deps, home, registry);
-  if (!loaded.ok) return loaded;
-  const config = loaded.value;
-  const notes = await settleLocalMode(deps, home, true);
-  if (!notes.ok) return notes;
-
-  const ready = await requireLaunchReady(deps, home, config);
-  if (!ready.ok) return ready;
-  const session = await requireSession(deps, config.core.node.id, home);
-  if (!session.ok) return session;
+  const home = located.value;
+  const prepared = await prepareLaunch(deps, home, registry, commandText(commandLines.workerNew));
+  if (!prepared.ok) return prepared;
+  const { config, notes } = prepared.value;
 
   const plan = await planNew(deps, home, config, id, options.project);
   if (!plan.ok) return plan;
@@ -315,7 +356,184 @@ const runNew = async (
       pane: made.value.paneId,
       proxy: made.value.proxy,
     },
-    warnings: [...notes.value, ...made.value.warnings],
+    warnings: [...notes, ...made.value.warnings],
+    failed: false,
+  });
+};
+
+const stopOutput = (id: string, outcome: StopOutcome): CommandOutput => {
+  switch (outcome.kind) {
+    case 'no-pane':
+      return {
+        lines: [text(`The ${roles.worker} ${id} has no pane. Nothing runs, and nothing changed.`)],
+        json: { schema: schemaIds.workerStop, id, outcome: outcome.kind },
+        warnings: [],
+        failed: false,
+      };
+    case 'closed-dead':
+      return {
+        lines: [
+          text(
+            `The program of the ${roles.worker} ${id} had ended already. Closed the ${outcome.paneIds.length === 1 ? 'pane' : 'panes'} ` +
+              `${outcome.paneIds.join(', ')}. No signal was sent.`,
+          ),
+        ],
+        json: { schema: schemaIds.workerStop, id, outcome: outcome.kind, panes: outcome.paneIds },
+        warnings: [],
+        failed: false,
+      };
+    case 'stopped':
+      return {
+        lines: [
+          text(`Stopped the ${roles.worker} ${id}.`),
+          text(`The process ${outcome.pid} of the pane ${outcome.paneId} ended after ${outcome.way}. The session was ${outcome.state}.`),
+          text(outcome.pane === 'closed' ? 'The pane is closed.' : 'tmux closed the pane when the process ended.'),
+        ],
+        json: {
+          schema: schemaIds.workerStop,
+          id,
+          outcome: outcome.kind,
+          pane: outcome.paneId,
+          pid: outcome.pid,
+          way: outcome.way,
+          state: outcome.state,
+        },
+        warnings: [],
+        failed: false,
+      };
+    default: {
+      const unreachable: never = outcome;
+      return unreachable;
+    }
+  }
+};
+
+/**
+ * `worker stop ID`: ends the program of the pane of the worker and closes the pane (`stopWorker`). The id must have a record.
+ * A worker with no pane is not a fault: nothing runs, and nothing changes.
+ */
+const runStop = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const [id] = args;
+  if (args.length !== 1 || id === undefined) {
+    return needsUsage(`${workerCommands.stop} takes one argument: the id of the ${roles.worker}`);
+  }
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const record = await requireRecord(deps, home, id, commandText(commandLines.workerStop));
+  if (!record.ok) return record;
+  const stopped = await stopWorker(deps, { home, session: loaded.value.core.node.id, workerId: id });
+  return stopped.ok ? ok(stopOutput(id, stopped.value)) : stopped;
+};
+
+/** The id of the session to resume, or the warning that says why the earlier conversation is not resumed. */
+type ResumeChoice =
+  | { readonly kind: 'resume'; readonly sessionId: string }
+  | { readonly kind: 'new'; readonly warning: string };
+
+/**
+ * The session that a resume continues. A program in a worker pane can write the pointer to its own last session, so the pointer
+ * counts only when the line belongs to this worker (`readOwnLastSeen`): the session of the coordinator and the session of another
+ * worker never pass. Any other state starts a new conversation, with a warning that says that the earlier one is NOT resumed.
+ */
+const chooseSession = async (deps: Deps, home: string, id: string): Promise<CliResult<ResumeChoice>> => {
+  const seen = await readOwnLastSeen(deps, home, id);
+  if (!seen.ok) return seen;
+  if (seen.value.state === 'valid') return ok({ kind: 'resume', sessionId: seen.value.line[lastSeen.keys.sessionId] });
+  const cause =
+    seen.value.why === 'no-line'
+      ? 'no valid last-seen line'
+      : `the last-seen line does not belong to this ${roles.worker}`;
+  return ok({
+    kind: 'new',
+    warning:
+      `The earlier conversation of the ${roles.worker} ${id} is NOT resumed. Reason: ${cause} (${seen.value.reason}). ` +
+      `A new conversation starts.`,
+  });
+};
+
+/** A pane of the worker whose program runs is a stop of the resume (exit 2): the worker runs already. */
+const requireNoLivePane = (rows: readonly PaneRow[], id: string): CliResult<void> => {
+  const live = rows.filter((row) => row.worker === id && !row.dead).map((row) => row.paneId);
+  if (live.length === 0) return ok(undefined);
+  return usageError(
+    `the ${roles.worker} ${id} runs already in the ${live.length === 1 ? 'pane' : 'panes'} ${live.join(', ')}`,
+    `To end it, run "${commandText(commandLines.workerStop)} ${id}". Then run "${commandText(resumeLine(id))}" again.`,
+  );
+};
+
+/**
+ * `worker resume ID`: starts the program of a stopped worker again, in a new pane, with the earlier conversation when it is
+ * the one of this worker. In order:
+ * 1. the checks of `worker new` (the root, the tools and the tmux session): a failing root check is exit 4 and changes nothing;
+ * 2. the record must exist (exit 2), and a pane of the worker that runs is a stop (exit 2);
+ * 3. the session to resume. No valid line, or a line that does not belong to the worker, gives no `--resume` and one warning;
+ * 4. the old panes of the worker whose programs ended are closed, by their ids;
+ * 5. the launch of the same path as `worker new` (it checks the settings files of the work copy).
+ */
+const runResume = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const [id] = args;
+  if (args.length !== 1 || id === undefined) {
+    return needsUsage(`${workerCommands.resume} takes one argument: the id of the ${roles.worker}`);
+  }
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const prepared = await prepareLaunch(deps, home, registry, commandText(resumeLine(id)));
+  if (!prepared.ok) return prepared;
+  const { config, notes } = prepared.value;
+
+  const record = await requireRecord(deps, home, id, commandText(commandLines.workerResume));
+  if (!record.ok) return record;
+  const panes = await readPanes(deps, config.core.node.id, home);
+  if (!panes.ok) return panes;
+  const rows = panes.value ?? [];
+  const running = requireNoLivePane(rows, id);
+  if (!running.ok) return running;
+  const chosen = await chooseSession(deps, home, id);
+  if (!chosen.ok) return chosen;
+
+  for (const row of rows.filter((candidate) => candidate.worker === id)) {
+    const closed = await closePane(deps, row.paneId);
+    if (!closed.ok) return closed;
+  }
+  const launched = await launchWorker(deps, {
+    home,
+    config,
+    workerId: id,
+    workCopy: record.value.workCopy,
+    retry: resumeLine(id),
+    ...(chosen.value.kind === 'resume' ? { resumeId: chosen.value.sessionId } : {}),
+  });
+  if (!launched.ok) return launched;
+  const sessionId = chosen.value.kind === 'resume' ? chosen.value.sessionId : null;
+  const where = `in the pane ${launched.value.paneId} of the window ${tmuxNames.windowWorkers}`;
+  return ok({
+    lines:
+      sessionId === null
+        ? [text(`Started the ${roles.worker} ${id} again ${where}.`), text('It starts a new conversation.')]
+        : [text(`Resumed the ${roles.worker} ${id} ${where}.`), text('It continues the earlier conversation.')],
+    json: {
+      schema: schemaIds.workerResume,
+      id,
+      pane: launched.value.paneId,
+      resumed: sessionId !== null,
+      sessionId,
+      proxy: launched.value.proxy,
+    },
+    warnings: [...notes, ...(chosen.value.kind === 'new' ? [chosen.value.warning] : []), ...launched.value.warnings],
     failed: false,
   });
 };
@@ -332,6 +550,10 @@ export const runWorker = async (
       return needsUsage(`${commandText(commands.worker)} needs a subcommand: ${SUBCOMMANDS}`);
     case workerCommands.new:
       return runNew(deps, options, args, registry);
+    case workerCommands.stop:
+      return runStop(deps, options, args, registry);
+    case workerCommands.resume:
+      return runResume(deps, options, args, registry);
     case workerCommands.list:
       return args.length === 0
         ? runWorkerList(deps, { home: options.home }, registry)

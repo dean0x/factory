@@ -17,7 +17,7 @@ import {
   splitWorkerPaneArgs,
 } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
-import { commands, commandText, dirs, env, keys, roles, tmuxNames, values } from '../names.js';
+import { commandLines, commands, commandText, dirs, env, keys, roles, tmuxNames, values } from '../names.js';
 import { checkProxyHealth, type ProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
 
@@ -129,7 +129,7 @@ export interface WorkerLaunch {
 const WORK_COPY_PLACE = 'a work copy';
 
 /** The command that starts a stopped worker again, without the program name: for the retry of a launch. */
-export const resumeLine = (workerId: string): string => `${roles.worker} resume ${workerId}`;
+export const resumeLine = (workerId: string): string => `${commandLines.workerResume} ${workerId}`;
 
 /** The command that starts a stopped worker again, and the command that ends it. */
 const resumeCommand = (workerId: string): string => commandText(resumeLine(workerId));

@@ -219,6 +219,8 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     usage: [
       `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
       `${commandText(commandLines.workerList)} [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerStop)} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
