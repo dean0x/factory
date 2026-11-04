@@ -41,6 +41,8 @@ export interface Layout {
   readonly workCopiesDir: string;
   readonly stateDir: string;
   readonly nodeJson: string;
+  /** The `.gitignore` of the state repo: it keeps the run-time folders, the backups and the workers out of the repo. */
+  readonly stateGitignoreFile: string;
   readonly workerMd: string;
   readonly backupsDir: string;
   /** The folder of the workers: one folder for each worker. Git ignores it. */
@@ -72,6 +74,7 @@ export const layoutOf = (home: string): Layout => {
     workCopiesDir: join(home, dirs.workCopies),
     stateDir,
     nodeJson: join(stateDir, stateRel.nodeJson),
+    stateGitignoreFile: join(stateDir, stateRel.gitignore),
     workerMd: join(stateDir, stateRel.worker),
     backupsDir: join(stateDir, stateRel.backups),
     workersDir: join(stateDir, stateRel.workers),

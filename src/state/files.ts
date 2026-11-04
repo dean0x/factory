@@ -9,8 +9,25 @@ export const initialWaitingText = (): string => jsonText({ intro: '', groups: []
 
 export const initialDecisionLogText = (): string => jsonText({ rows: [] });
 
-/** The runtime folders and the backups are not part of the state repository. */
-export const STATE_GITIGNORE: string = [dirs.runtime, dirs.locks, dirs.backups].map((dir) => `${dir}/\n`).join('');
+/** The runtime folders, the backups and the registry of the workers are not part of the state repository. */
+export const STATE_GITIGNORE: string = [dirs.runtime, dirs.locks, dirs.backups, dirs.workers].map((dir) => `${dir}/\n`).join('');
+
+/** The line of `STATE_GITIGNORE` that a state repo from before the registry of the workers lacks. */
+export const WORKERS_GITIGNORE_LINE = `${dirs.workers}/`;
+
+const hasWorkersLine = (text: string): boolean => text.split('\n').some((line) => line.trimEnd() === WORKERS_GITIGNORE_LINE);
+
+/**
+ * The text of the state `.gitignore` with the line for the workers folder. A missing file gets the lines of a new state
+ * repo. A file that has the line stays as it is. Else the line goes to the end, after a line break when the last line has
+ * none, so the old text is the start of the new text and every old line stays as it is.
+ */
+export const withWorkersLine = (existing: string | null): string => {
+  if (existing === null) return STATE_GITIGNORE;
+  if (hasWorkersLine(existing)) return existing;
+  const lineEnd = existing === '' || existing.endsWith('\n') ? '' : '\n';
+  return `${existing}${lineEnd}${WORKERS_GITIGNORE_LINE}\n`;
+};
 
 const markerLine = (kind: string): string => `# ${marker.prefix}${kind} ${shareListLabel}`;
 

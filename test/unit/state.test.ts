@@ -135,6 +135,7 @@ describe('layout', () => {
       workCopiesDir: '/h/node/work-copies',
       stateDir: '/h/node/.factory',
       nodeJson: '/h/node/.factory/node.json',
+      stateGitignoreFile: '/h/node/.factory/.gitignore',
       workerMd: '/h/node/.factory/roles/worker.md',
       backupsDir: '/h/node/.factory/backups',
       workersDir: '/h/node/.factory/workers',

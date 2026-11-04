@@ -8,6 +8,7 @@ import { ok } from '../core/result.js';
 import { localFileAccess, requireInit } from '../config/load.js';
 import { mixConfigValue, SPLIT_SCHEMA_VERSION } from '../config/schema.js';
 import { GIT_ENTRY } from '../core/git.js';
+import { requireNoLinks } from '../core/root-paths.js';
 import { stepsBetween, type FileStep, type RootMove } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
@@ -26,8 +27,8 @@ import {
   setupBlockNames,
   setupFileOf,
 } from '../names.js';
-import { locateShareList } from '../state/files.js';
-import { rootGitignoreOf } from '../state/gitignore.js';
+import { locateShareList, WORKERS_GITIGNORE_LINE } from '../state/files.js';
+import { rootGitignoreOf, stateGitignoreOf } from '../state/gitignore.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import type { BlockSet, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
@@ -266,6 +267,36 @@ export const planRoot = async (deps: Deps, layout: Layout): Promise<CliResult<Ro
   });
 };
 
+/** What the run does to the `.gitignore` of the state repo: make the file, add the line for the workers folder, or nothing. */
+export type StateGitignoreAction = 'create' | 'add' | 'current';
+
+export interface StateGitignorePlan {
+  readonly action: StateGitignoreAction;
+  readonly filePath: string;
+  /** The text to write. It is null when the file holds the line already. */
+  readonly text: string | null;
+}
+
+const stateGitignoreActionOf = (original: string | null, text: string): StateGitignoreAction => {
+  if (original === null) return 'create';
+  return original === text ? 'current' : 'add';
+};
+
+/**
+ * The plan for the `.gitignore` of the state repo. A state repo from before the registry of the workers lacks the line for
+ * the workers folder: the plan adds it and keeps every other line as it is. A link at the path stops the plan (exit 4),
+ * and a path that is not a file stops it too (exit 1). The plan reads only.
+ */
+export const planStateGitignore = async (deps: Deps, layout: Layout): Promise<CliResult<StateGitignorePlan>> => {
+  const plain = await requireNoLinks(deps, layout.home, [layout.stateGitignoreFile]);
+  if (!plain.ok) return plain;
+  const current = await stateGitignoreOf(deps, layout, commands.upgrade);
+  if (!current.ok) return current;
+  const { original, text } = current.value;
+  const action = stateGitignoreActionOf(original, text);
+  return ok({ action, filePath: layout.stateGitignoreFile, text: action === 'current' ? null : text });
+};
+
 /**
  * The file moves and the new file texts of the steps that take the state to the current version.
  * A source that does not exist is skipped. A target that exists stops the upgrade. A file to replace that does not
@@ -411,11 +442,23 @@ const rootLines = (root: RootPlan): OutLine[] => {
   return [...gitignore[root.gitignore.action], ...repo].map((text): OutLine => ({ level: 'text', text }));
 };
 
+/** The line for the `.gitignore` of the state repo. A current file gives no line. */
+const stateGitignoreLines = (plan: StateGitignorePlan): OutLine[] => {
+  const path = join(dirs.state, files.gitignore);
+  const lines: Readonly<Record<StateGitignoreAction, readonly string[]>> = {
+    create: [`${path}: new file, with the lines of a new state repo`],
+    add: [`${path}: add the line ${WORKERS_GITIGNORE_LINE}. Your lines stay as they are.`],
+    current: [],
+  };
+  return lines[plan.action].map((text): OutLine => ({ level: 'text', text }));
+};
+
 export const planLines = (
   config: FilePlan,
   local: LocalPlan,
   state: FilePlan,
   files: FilesPlan,
+  stateGitignore: StateGitignorePlan,
   root: RootPlan,
   blocks: readonly BlockPlan[],
   upgrade: UpgradeSpec,
@@ -508,6 +551,7 @@ export const planLines = (
     fileLine(state, upgrade.state),
     ...moveLines,
     ...files.replaces.map(replaceLine),
+    ...stateGitignoreLines(stateGitignore),
     ...rootLines(root),
     ...blocks.map(blockLine),
   ];
