@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { constants, createReadStream, type Stats } from 'node:fs';
 import {
@@ -470,9 +470,31 @@ const terminateProcess = (pid: number): CliResult<'sent' | 'gone'> => {
   return sent.ok ? ok(sent.value ? 'sent' : 'gone') : sent;
 };
 
+/** The time limit for the read of the state of one process. */
+const PROCESS_STATE_TIMEOUT_MS = 2_000;
+/** The first letter of the state that `ps` prints for a process that has ended and waits for its parent to collect its exit status. */
+const ZOMBIE_STATE = 'Z';
+
+/**
+ * True only when `ps` says that the process is a zombie: it has ended, and only its entry in the process table is left until its
+ * parent collects the exit status. The signal 0 still reaches a zombie. Any other result (no `ps`, a failed call, a timeout, an
+ * answer that is empty or not a state) is false, so a process that may run is never counted as ended.
+ */
+const isZombie = (pid: number): boolean => {
+  const read = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], {
+    encoding: 'utf8',
+    timeout: PROCESS_STATE_TIMEOUT_MS,
+    stdio: ['ignore', 'pipe', 'ignore'],
+    windowsHide: true,
+  });
+  return read.status === 0 && read.stdout.trim().startsWith(ZOMBIE_STATE);
+};
+
 const processRuns = (pid: number): CliResult<boolean> => {
   const checked = checkedPid(pid);
-  return checked.ok ? signalProcess(checked.value, 0) : checked;
+  if (!checked.ok) return checked;
+  const signalled = signalProcess(checked.value, 0);
+  return signalled.ok && signalled.value ? ok(!isZombie(checked.value)) : signalled;
 };
 
 const MAX_RANDOM_BYTES = 64;

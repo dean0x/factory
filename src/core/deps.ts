@@ -175,7 +175,11 @@ export interface Deps {
    * nothing for them, so it never reaches a process group or every process.
    */
   terminate(pid: number): CliResult<'sent' | 'gone'>;
-  /** True when a process with this pid exists. A process of another user exists too. The same refusals as `terminate`. */
+  /**
+   * True when a process with this pid exists. A process of another user exists too. A process that has ended and waits only for its
+   * parent to collect its exit status (a zombie) has ended: it counts as not running, when the system says so. A process whose state
+   * can not be read counts as running. The same refusals as `terminate`.
+   */
   isRunning(pid: number): CliResult<boolean>;
   /**
    * `bytes` random bytes from the system source, as lower case hex text with two characters for each byte. The call refuses a
