@@ -97,6 +97,16 @@ describe('node deps: run', () => {
   });
 
   describe('a run in its own process group', () => {
+    /**
+     * The times of the tests with a late write. A process that the stop missed writes its file `LATE_SECONDS` after the start.
+     * A run that works ends within a few hundred milliseconds, so `STOPPED_BY_MS` is far from both ends, and a loaded machine
+     * does not fail a good run. A run with no stop ends at the late write, after `STOPPED_BY_MS`. `LATE_WAIT_MS` is the wait
+     * after the end of the run, and it covers the late write with a margin.
+     */
+    const LATE_SECONDS = 2;
+    const STOPPED_BY_MS = 1_500;
+    const LATE_WAIT_MS = 3_000;
+
     const exists = (path: string): Promise<boolean> =>
       stat(path).then(
         () => true,
@@ -116,39 +126,39 @@ describe('node deps: run', () => {
     it('stops every process of a pipe when the time limit passes, not only the shell', async () => {
       const late = fresh('late-pipe');
       const started = Date.now();
-      const result = await deps.run('/bin/sh', ['-c', `(sleep 1; echo late > '${late}') | cat`], {
+      const result = await deps.run('/bin/sh', ['-c', `(sleep ${LATE_SECONDS}; echo late > '${late}') | cat`], {
         timeoutMs: 200,
         processGroup: true,
       });
       expect(result.ok).toBe(false);
-      expect(Date.now() - started).toBeLessThan(1_000);
-      await wait(1_500);
+      expect(Date.now() - started).toBeLessThan(STOPPED_BY_MS);
+      await wait(LATE_WAIT_MS);
       expect(await exists(late)).toBe(false);
     });
 
     it('ends at the time limit when a process that the shell left holds the output pipe, and stops that process', async () => {
       const late = fresh('late-background');
       const started = Date.now();
-      const result = await deps.run('/bin/sh', ['-c', `echo first; (sleep 1; echo late > '${late}') &`], {
+      const result = await deps.run('/bin/sh', ['-c', `echo first; (sleep ${LATE_SECONDS}; echo late > '${late}') &`], {
         timeoutMs: 300,
         processGroup: true,
       });
       expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: 'first\n', stderr: '' } });
-      expect(Date.now() - started).toBeLessThan(1_000);
-      await wait(1_500);
+      expect(Date.now() - started).toBeLessThan(STOPPED_BY_MS);
+      await wait(LATE_WAIT_MS);
       expect(await exists(late)).toBe(false);
     });
 
     it('returns an error and stops the group when the output passes the byte cap', async () => {
       const late = fresh('late-cap');
-      const result = await deps.run('/bin/sh', ['-c', `head -c 1100000 /dev/zero; sleep 1; echo late > '${late}'`], {
+      const result = await deps.run('/bin/sh', ['-c', `head -c 1100000 /dev/zero; sleep ${LATE_SECONDS}; echo late > '${late}'`], {
         processGroup: true,
       });
       expect(result).toEqual({
         ok: false,
         error: { kind: 'failure', message: 'cannot run /bin/sh: its output is larger than 1048576 bytes' },
       });
-      await wait(1_500);
+      await wait(LATE_WAIT_MS);
       expect(await exists(late)).toBe(false);
     });
 
@@ -157,15 +167,15 @@ describe('node deps: run', () => {
         const late = fresh('late-abort');
         const controller = new AbortController();
         const started = Date.now();
-        const pending = deps.run('/bin/sh', ['-c', `(sleep 1; echo late > '${late}') | cat`], {
+        const pending = deps.run('/bin/sh', ['-c', `(sleep ${LATE_SECONDS}; echo late > '${late}') | cat`], {
           processGroup: true,
           signal: controller.signal,
         });
         await wait(150);
         controller.abort();
         expect(await pending).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run /bin/sh: SIGKILL' } });
-        expect(Date.now() - started).toBeLessThan(1_000);
-        await wait(1_500);
+        expect(Date.now() - started).toBeLessThan(STOPPED_BY_MS);
+        await wait(LATE_WAIT_MS);
         expect(await exists(late)).toBe(false);
       });
 

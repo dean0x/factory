@@ -18,12 +18,15 @@ const FIXTURE = JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'claud
   readonly statusline: { readonly payload: Readonly<Record<string, unknown>> };
 };
 
+/** The time that the start of a test may take: the sandbox and the run of `init` with the built binary. It is the time limit of a test. */
+const SETUP_TIMEOUT_MS = 30_000;
+
 beforeEach(async () => {
   box = await makeSandbox();
   home = join(box.root, 'web-factory');
   const made = await box.run(['init', '--yes', '--home', home, '--name', NODE_ID, '--owner-name', 'Test Owner']);
   expect(made.code).toBe(0);
-});
+}, SETUP_TIMEOUT_MS);
 
 afterEach(async () => {
   await box.remove();
@@ -45,6 +48,8 @@ const exists = (path: string): Promise<boolean> =>
 
 const WAIT_STEP_MS = 25;
 const WAIT_STEPS = 120;
+/** The wait after the end of a run for the write of a process that the stop did not reach: twice the 1 s that it needs. */
+const LATE_WRITE_WAIT_MS = 2_000;
 
 /** The first value that `probe` gives, tried every few milliseconds for at most three seconds. A test fails when none comes. */
 const waitFor = async <T>(probe: () => Promise<T | undefined>): Promise<T> => {
@@ -308,7 +313,9 @@ describe('factory hook statusline (built binary)', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toBe('context 8%');
     expect(Date.now() - started).toBeLessThan(15_000);
-    await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 4_500 - Date.now())));
+    // The wait starts at the end of the run, not before the start of the binary: the late write comes 3 s after the command
+    // starts, and the run ends 2 s after that, so a group that was not stopped writes within 1 s of this point.
+    await new Promise((resolve) => setTimeout(resolve, LATE_WRITE_WAIT_MS));
     expect(await exists(late)).toBe(false);
   });
 
