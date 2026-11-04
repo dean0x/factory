@@ -160,7 +160,7 @@ describe('worker summon: the timer and the token (TP-32)', () => {
     expect(token).toBe(made.deps.randomTexts[0]);
     const fixed = text.replace(token, 'TOKEN').replace(/%[0-9]+/g, 'PANE').replace(/^sleep [0-9]+/, 'sleep SECONDS');
     expect(fixed).toBe(
-      "sleep SECONDS; tmux if-shell -F -t PANE '#{==:#{@slot_summon},PANE:TOKEN}' 'swap-pane -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
+      "sleep SECONDS; tmux if-shell -F -t PANE '##{==:##{@slot_summon},PANE:TOKEN}' 'swap-pane -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
     );
     expect(text).toMatch(/^[A-Za-z0-9 %#{}=:,@;'_-]+$/);
   });

@@ -277,9 +277,17 @@ const MAX_SUMMON_SECONDS = summonLimits.maxMinutes * SECONDS_PER_MINUTE;
 const SUMMON_TEXT_PATTERN = /^[A-Za-z0-9 %#{}=:,@;'_-]+$/;
 
 /**
+ * A format for the text of `run-shell`. tmux expands the formats of that text when the call starts, before the shell gets it.
+ * Each hash sign becomes `##`, which that expansion turns back into one hash sign, so the format reaches the shell as it is.
+ */
+const keptForShell = (format: string): string => format.replaceAll('#', '##');
+
+/**
  * The call that swaps the summoned pane back after a time. It runs one shell text in the background of the tmux server: it waits
  * `seconds`, then runs a tmux command that swaps the pane back and unsets the summon mark, only while the summon mark of the board
  * pane is still the one of this summon. A newer summon, or `layout`, changes the mark, so an older timer does nothing.
+ * The condition is escaped for the format expansion of `run-shell`: without the escape, tmux would compare the mark at the start
+ * of the timer, in the pane of the caller, and the comparison at the end of the wait would be a fixed `0` or `1`.
  * The text holds the digits of the wait, the token, pane ids and fixed words. Every variable part is checked, and the whole text
  * is checked once more against the set of characters that these parts and words use.
  */
@@ -300,7 +308,7 @@ export const summonTimerArgs = (input: {
   const unset = unsetPaneOptionArgs(board, tmuxNames.optionSummon);
   if (!unset.ok) return unset;
   const restore = [...swap.value, NEXT_COMMAND, ...unset.value].join(' ');
-  const condition = `#{==:#{${tmuxNames.optionSummon}},${mark.value}}`;
+  const condition = keptForShell(`#{==:#{${tmuxNames.optionSummon}},${mark.value}}`);
   const text = `sleep ${seconds}; ${toolNames.tmux} if-shell -F -t ${board} '${condition}' '${restore}'`;
   return SUMMON_TEXT_PATTERN.test(text) ? runShellBackgroundArgs(text) : refuse('a shell text with a character that a summon does not use');
 };

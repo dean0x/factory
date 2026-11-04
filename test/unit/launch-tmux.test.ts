@@ -298,11 +298,18 @@ describe('the summon mark', () => {
 describe('the tmux call that swaps the pane back after a time', () => {
   const input = { seconds: 900, board: '%5', pane: '%3', token: TOKEN };
   const TEXT =
-    `sleep 900; tmux if-shell -F -t %5 '#{==:#{@slot_summon},%3:${TOKEN}}' ` +
+    `sleep 900; tmux if-shell -F -t %5 '##{==:##{@slot_summon},%3:${TOKEN}}' ` +
     `'swap-pane -s %3 -t %5 ; set-option -p -u -t %5 @slot_summon'`;
 
   it('runs one shell text in the background: the wait, then a tmux command that checks the token', () => {
     expect(argvOf(summonTimerArgs(input))).toEqual(['run-shell', '-b', TEXT]);
+  });
+
+  it('escapes every hash sign, because run-shell expands the formats of its text before the shell runs it', () => {
+    const text = argvOf(summonTimerArgs(input)).at(-1) ?? '';
+    // Every hash sign is one half of the pair `##`, which run-shell turns into one hash sign. So no format is expanded at the
+    // start of the timer, and if-shell reads the summon mark of the board pane at the end of the wait.
+    expect(text.replaceAll('##', '')).not.toContain('#');
   });
 
   it('holds only digits, the token, pane ids and the fixed words of the restore', () => {
@@ -311,7 +318,7 @@ describe('the tmux call that swaps the pane back after a time', () => {
     // Take out every variable part: the digits of the wait, the token and the pane ids. Only the fixed words stay.
     const fixed = text.replace(TOKEN, 'TOKEN').replace(/%[0-9]+/g, 'PANE').replace(/^sleep [0-9]+/, 'sleep SECONDS');
     expect(fixed).toBe(
-      "sleep SECONDS; tmux if-shell -F -t PANE '#{==:#{@slot_summon},PANE:TOKEN}' 'swap-pane -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
+      "sleep SECONDS; tmux if-shell -F -t PANE '##{==:##{@slot_summon},PANE:TOKEN}' 'swap-pane -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
     );
   });
 

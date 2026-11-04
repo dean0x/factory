@@ -211,6 +211,12 @@ describe('the tmux fake: formats and the conditional command', () => {
     expect(shown('a #{@worker} b')).toBe('a alpha b\n');
   });
 
+  it('reads the escape pairs as tmux does: ## gives #, #, gives a comma and #} gives a brace', () => {
+    expect(shown('##{@worker}')).toBe('#{@worker}\n');
+    expect(shown('a ## b #, c #}')).toBe('a # b , c }\n');
+    expect(shown('#{==:#{@worker},al#,pha}')).toBe('0\n');
+  });
+
   it('runs the command after the format when the format is true, with a chain of commands', () => {
     const result = run(['if-shell', '-F', '-t', '%9', '#{==:#{@worker},alpha}', 'set-option -p -t %9 @a 1 ; set-option -p -t %9 @b 2']);
     expect(result.exitCode).toBe(0);
@@ -255,6 +261,13 @@ describe('the tmux fake: the shell text of a summon', () => {
       `#{==:#{@slot_summon},%3:${TOKEN}}`,
       'swap-pane -s %3 -t %5 ; set-option -p -u -t %5 @slot_summon',
     ]);
+  });
+
+  it('expands the formats of the text first, as run-shell does: a format that is not escaped is gone before the wait', () => {
+    const text = `sleep 900; tmux if-shell -F -t %5 '#{==:#{@slot_summon},%3:${TOKEN}}' 'swap-pane -s %3 -t %5'`;
+    expect(tmuxCallOfShellText(text)).toEqual(['if-shell', '-F', '-t', '%5', '0', 'swap-pane -s %3 -t %5']);
+    const escaped = `sleep 900; tmux if-shell -F -t %5 '##{==:##{@slot_summon},%3:${TOKEN}}' 'swap-pane -s %3 -t %5'`;
+    expect(tmuxCallOfShellText(escaped)[4]).toBe(`#{==:#{@slot_summon},%3:${TOKEN}}`);
   });
 
   it('refuses a text that is not a wait and a tmux call', () => {

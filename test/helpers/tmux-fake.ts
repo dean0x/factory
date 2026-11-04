@@ -133,11 +133,20 @@ type PaneMore = Omit<PaneFixture, 'session' | 'window'> & {
 const programOf = (command: readonly string[]): readonly string[] =>
   command.includes('--') ? command.slice(command.indexOf('--') + 1) : [];
 
+/** The characters that tmux reads as one character when a hash sign comes before them: `##` is `#`, `#,` is `,` and `#}` is `}`. */
+const ESCAPED_AFTER_HASH = new Set(['#', ',', '}']);
+
+/** True when the text holds an escape pair (`##`, `#,` or `#}`) at the index. */
+const isEscapeAt = (text: string, index: number): boolean =>
+  text.charAt(index) === '#' && ESCAPED_AFTER_HASH.has(text.charAt(index + 1));
+
 /** The index of the brace that closes the format whose text starts at `from`, just after its `#{`. -1 when no brace closes it. */
 const closingBrace = (text: string, from: number): number => {
   let depth = 1;
   for (let index = from; index < text.length; index += 1) {
-    if (text.startsWith('#{', index)) {
+    if (isEscapeAt(text, index)) {
+      index += 1;
+    } else if (text.startsWith('#{', index)) {
       depth += 1;
       index += 1;
     } else if (text.charAt(index) === '}') {
@@ -152,7 +161,9 @@ const closingBrace = (text: string, from: number): number => {
 const splitComparison = (text: string): readonly [string, string] => {
   let depth = 0;
   for (let index = 0; index < text.length; index += 1) {
-    if (text.startsWith('#{', index)) {
+    if (isEscapeAt(text, index)) {
+      index += 1;
+    } else if (text.startsWith('#{', index)) {
       depth += 1;
       index += 1;
     } else if (text.charAt(index) === '}') {
@@ -165,10 +176,48 @@ const splitComparison = (text: string): readonly [string, string] => {
 };
 
 /**
+ * Expands the formats of a text as tmux does: an escape pair gives its one character, a comparison `#{==:a,b}` of two texts that
+ * can hold formats gives `1` or `0`, and any other format gives the value of its key.
+ */
+const expandFormat = (format: string, valueOf: (key: string) => string): string => {
+  let text = '';
+  for (let index = 0; index < format.length; index += 1) {
+    if (isEscapeAt(format, index)) {
+      text += format.charAt(index + 1);
+      index += 1;
+      continue;
+    }
+    if (!format.startsWith('#{', index)) {
+      text += format.charAt(index);
+      continue;
+    }
+    const end = closingBrace(format, index + 2);
+    if (end < 0) {
+      text += format.slice(index);
+      break;
+    }
+    const inner = format.slice(index + 2, end);
+    if (inner.startsWith('==:')) {
+      const [left, right] = splitComparison(inner.slice('==:'.length));
+      text += expandFormat(left, valueOf) === expandFormat(right, valueOf) ? '1' : '0';
+    } else {
+      text += valueOf(inner);
+    }
+    index = end;
+  }
+  return text;
+};
+
+/**
  * The tmux call inside the shell text of a summon, as an argument list, with no wait: the text is `sleep N; tmux ...`, and a word
  * in single quotes is one word. A test runs this call at once, as the shell would run it after the wait.
+ *
+ * tmux `run-shell` expands the formats of its text before the shell gets it, in the context of the pane that ran the summon. That
+ * pane has no summon mark, so the fake expands each format of a key to an empty text. A format that the text does not escape
+ * (`##{` for `#{`) is gone before the wait starts, as with real tmux.
  */
-export const tmuxCallOfShellText = (text: string): readonly string[] => {
+export const tmuxCallOfShellText = (shellText: string): readonly string[] => {
+  const text = expandFormat(shellText, () => '');
   const match = /^sleep [0-9]+; tmux (.*)$/s.exec(text);
   if (match === null) throw new Error('the text is not the shell text of a summon');
   const words: string[] = [];
@@ -313,30 +362,8 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
     }
   };
 
-  /** Expands the formats of a text: a key of a pane, and a comparison `#{==:a,b}` of two texts that can hold formats. */
-  const expand = (format: string, pane: FakePane): string => {
-    let text = '';
-    for (let index = 0; index < format.length; index += 1) {
-      if (!format.startsWith('#{', index)) {
-        text += format.charAt(index);
-        continue;
-      }
-      const end = closingBrace(format, index + 2);
-      if (end < 0) {
-        text += format.slice(index);
-        break;
-      }
-      const inner = format.slice(index + 2, end);
-      if (inner.startsWith('==:')) {
-        const [left, right] = splitComparison(inner.slice('==:'.length));
-        text += expand(left, pane) === expand(right, pane) ? '1' : '0';
-      } else {
-        text += valueOf(inner, pane);
-      }
-      index = end;
-    }
-    return text;
-  };
+  /** Expands the formats of a text for a pane: a key of the pane, an escape pair, and a comparison `#{==:a,b}`. */
+  const expand = (format: string, pane: FakePane): string => expandFormat(format, (key) => valueOf(key, pane));
 
   const printed = (command: readonly string[], pane: FakePane) =>
     command.includes('-P') ? exited(0, `${expand(after(command, '-F') || DEFAULT_LIST_FORMAT, pane)}\n`) : exited(0);
