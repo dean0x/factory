@@ -5,6 +5,7 @@ import {
   env,
   ownHookCommand,
   permissionSkipList,
+  settingsCommandType,
   trafficEnvNames,
   type PermissionSkip,
 } from '../names.js';
@@ -96,7 +97,7 @@ const envNamesIn = (text: string, parsed: unknown, wanted: readonly string[]): r
 
 /** A hook or status line handler that the program writes: a command of the form `<program> hook <event>`. */
 const isOwnHandler = (handler: unknown): boolean =>
-  isRecord(handler) && handler.type === 'command' && typeof handler.command === 'string' && ownHookCommand.test(handler.command);
+  isRecord(handler) && handler.type === settingsCommandType && typeof handler.command === 'string' && ownHookCommand.test(handler.command);
 
 /** The `hooks` value holds handlers of the program only: each event has a list of groups, and each group a list of handlers. */
 const isOwnHooks = (hooks: unknown): boolean =>

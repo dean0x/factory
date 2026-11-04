@@ -173,6 +173,12 @@ export const shareListLabel = 'share list';
 /** The settings files of Claude Code in a project: `<prefix>*<suffix>` inside the `.claude` folder. */
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
 
+/** The settings file of Claude Code that is not shared: `settings.local.json` in the `.claude` folder of a session folder. */
+export const localSettingsFile = `${claudeSettings.prefix}.local${claudeSettings.suffix}`;
+
+/** The `type` of a settings entry that runs a command: a hook handler or the status line. */
+export const settingsCommandType = 'command';
+
 /**
  * The keys of a Claude Code settings file that the checks of the root read. The settings page
  * (https://code.claude.com/docs/en/settings) and its reference (https://code.claude.com/docs/en/settings-reference) name
@@ -252,7 +258,7 @@ export const instructionFiles = [
   `${dirs.claude}/${files.claudeMd}`,
   `${dirs.claude}/rules`,
   `${dirs.claude}/${claudeSettings.prefix}${claudeSettings.suffix}`,
-  `${dirs.claude}/${claudeSettings.prefix}.local${claudeSettings.suffix}`,
+  `${dirs.claude}/${localSettingsFile}`,
   '.github/copilot-instructions.md',
   '.cursor/rules',
 ] as const;
@@ -527,6 +533,12 @@ export const hookNames = {
 /** One event of the fixed list. */
 export type HookEvent = (typeof hookNames.events)[number];
 
+/** The session folders that get the hook settings: the folder of the coordinator, and the work copy of a worker. */
+export const hookSessions = { coordinator: roles.coordinator, workCopy: 'work-copy' } as const;
+
+/** The kind of a session folder that gets the hook settings. */
+export type HookSession = (typeof hookSessions)[keyof typeof hookSessions];
+
 /** The command of a settings entry for an event, for example `factory hook Stop`. */
 export const hookCommandOf = (event: string): string => commandText(`${hookNames.command} ${event}`);
 
@@ -689,6 +701,9 @@ export const overwriteCommand = (block: string): string =>
 
 /** The path of a key inside the config, for example `limits.disk_free_min_gb`. */
 const keyPath = (...parts: readonly string[]): string => parts.join('.');
+
+/** The config key that names the status line command of the owner: `session.statusline`. */
+export const statuslineKeyPath = keyPath(keys.root.session, keys.session.statusline);
 
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');
