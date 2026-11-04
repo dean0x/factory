@@ -222,3 +222,69 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(result.stderr).toContain('"factory start"');
   });
 });
+
+/** The marks of the panes of one window, as `<worker>|<slot>|<summon>` lines. A mark that is not set is empty. */
+const marksOf = async (window: string): Promise<string[]> =>
+  (await tmux(['list-panes', '-t', `=demo:${window}`, '-F', '#{@worker}|#{@slot}|#{@slot_summon}'])).stdout
+    .split('\n')
+    .filter((line) => line !== '');
+
+const summon = (...extra: string[]): Promise<RunResult> =>
+  box.run(['worker', 'summon', '--home', box.node, ...extra], { env: tmuxEnv });
+
+const layout = (): Promise<RunResult> => box.run(['layout', '--home', box.node], { env: tmuxEnv });
+
+const startedWorker = async (): Promise<void> => {
+  await startedNode();
+  expect((await workerNew('alpha', '--project', 'web', '--yes')).code).toBe(0);
+  await waitForLaunches(2);
+};
+
+describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binary, separate tmux server)', () => {
+  it('shows the worker in the slot, and layout puts the board back (TP-31)', async () => {
+    await startedWorker();
+    expect(await marksOf('view')).toContain('|board|');
+
+    const summoned = await summon('alpha', '--for', '30m');
+    expect(summoned.code).toBe(0);
+    expect(summoned.stdout).toContain('The worker alpha shows in the slot of the window view');
+    expect(await marksOf('view')).toContain('alpha||');
+    expect((await marksOf('view')).some((line) => line.includes('|board|'))).toBe(false);
+    // The board waits in the window workers, and its summon mark holds the pane of the worker and a token of 32 hex characters.
+    expect((await marksOf('workers')).some((line) => /^\|board\|%\d+:[0-9a-f]{32}$/.test(line))).toBe(true);
+
+    const restored = await layout();
+    expect(restored.code).toBe(0);
+    expect(restored.stdout).toContain('The board is in the slot of the window view again');
+    expect(await marksOf('view')).toContain('|board|');
+    expect(await marksOf('workers')).toContain('alpha||');
+    expect((await marksOf('workers')).some((line) => line.includes('|board|'))).toBe(false);
+  });
+
+  it('exits 2 for a time outside the bounds and moves no pane (TP-32)', async () => {
+    await startedWorker();
+    const before = await marksOf('view');
+    const result = await summon('alpha', '--for', '3h');
+    expect(result.code).toBe(2);
+    expect(result.stderr).toContain('--for');
+    expect(await marksOf('view')).toEqual(before);
+  });
+
+  it('makes the window workers again on a session that has only the window view (TP-33)', async () => {
+    await startedNode();
+    expect((await tmux(['kill-window', '-t', '=demo:workers'])).code).toBe(0);
+    const result = await layout();
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('Made the window workers.');
+    const windows = (await tmux(['list-windows', '-t', '=demo', '-F', '#{window_name}'])).stdout.split('\n').filter((line) => line !== '');
+    expect(windows.sort()).toEqual(['view', 'workers']);
+  });
+
+  it('exits 3 and names factory start when no tmux server runs (TP-127)', async () => {
+    await startedWorker();
+    await stopServer();
+    const result = await summon('alpha');
+    expect(result.code).toBe(3);
+    expect(result.stderr).toContain('"factory start"');
+  });
+});
