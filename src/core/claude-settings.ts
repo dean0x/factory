@@ -22,7 +22,7 @@ import {
   roles,
   settingsCommandType,
   statuslineKeyPath,
-  type CommandName,
+  type CommandText,
   type HookSession,
 } from '../names.js';
 import { parseJsonText } from '../state/load.js';
@@ -93,7 +93,7 @@ export interface HookSettingsRequest {
   /** True for a dry run: the call checks the target and returns the change. It asks nothing and writes nothing. */
   readonly dryRun: boolean;
   /** The command that asks. The remedy of a stop names it. */
-  readonly command: CommandName;
+  readonly command: CommandText;
 }
 
 /** The part of a request that the consent depends on: a call that never writes has no dry run. */
@@ -126,7 +126,7 @@ const targetOf = (folder: string): Target => {
 
 const clipped = (text: string): string => (text.length > MAX_SHOWN_CHARS ? `${text.slice(0, MAX_SHOWN_CHARS)}...` : text);
 
-const again = (command: CommandName): string => `Then run "${commandText(command)}" again.`;
+const again = (command: CommandText): string => `Then run "${commandText(command)}" again.`;
 
 /** A settings object. */
 type Settings = Readonly<Record<string, unknown>>;
@@ -134,7 +134,7 @@ type Settings = Readonly<Record<string, unknown>>;
 const NO_SETTINGS: Settings = {};
 
 /** The link, the kind and the existence of the three parts of the path, from the session folder down. */
-const checkParts = async (deps: Deps, target: Target, command: CommandName): Promise<CliResult<{ readonly exists: boolean }>> => {
+const checkParts = async (deps: Deps, target: Target, command: CommandText): Promise<CliResult<{ readonly exists: boolean }>> => {
   const parts = [
     { path: target.folder, what: 'the session folder', kind: 'dir', name: 'folder' },
     { path: target.claudeFolder, what: `the ${dirs.claude} folder`, kind: 'dir', name: 'folder' },
@@ -160,7 +160,7 @@ const checkParts = async (deps: Deps, target: Target, command: CommandName): Pro
 };
 
 /** The real path of the file must be inside the real path of the session folder. The value is the real path of the file. */
-const requireInsideSession = async (deps: Deps, target: Target, command: CommandName): Promise<CliResult<string>> => {
+const requireInsideSession = async (deps: Deps, target: Target, command: CommandText): Promise<CliResult<string>> => {
   const [folder, file] = [await realPathOf(deps, target.folder), await realPathOf(deps, target.file)];
   if (!folder.ok) return folder;
   if (!file.ok) return file;
@@ -176,7 +176,7 @@ const requireInsideSession = async (deps: Deps, target: Target, command: Command
  * is written, so no call of the file system is made on that folder: it is never resolved, read or listed. The caller gives the
  * written path of the file before it makes any call on the target, and the real path of the file after it.
  */
-const requireOutsideUserFolder = (deps: Deps, target: Target, command: CommandName, path: string): CliResult<void> => {
+const requireOutsideUserFolder = (deps: Deps, target: Target, command: CommandText, path: string): CliResult<void> => {
   const userFolder = userClaudeFolderOf(deps);
   if (userFolder === null || !isWrittenInside(deps, userFolder, path)) return ok(undefined);
   return safetyRefusal(
@@ -192,7 +192,7 @@ interface FileContent {
 }
 
 /** The text and the settings object of the file. A file that is not a JSON object is a failure, and it stays as it is. */
-const readSettings = async (deps: Deps, file: string, command: CommandName): Promise<CliResult<FileContent>> => {
+const readSettings = async (deps: Deps, file: string, command: CommandText): Promise<CliResult<FileContent>> => {
   const text = await deps.fs.readTextLimited(file, maxFileBytes);
   if (!text.ok) return text;
   const parsed = parseJsonText(text.value);
@@ -218,7 +218,7 @@ interface HooksChange {
 }
 
 /** The hooks object with the own group added for each event that has no own command. A shape that is not known is a failure. */
-const addHooks = (current: unknown, file: string, command: CommandName): CliResult<HooksChange> => {
+const addHooks = (current: unknown, file: string, command: CommandText): CliResult<HooksChange> => {
   const hint = `Fix the file, or move it away. ${again(command)}`;
   const base = current === undefined ? NO_SETTINGS : current;
   if (!isRecord(base)) return failure(`${file} holds ${claudeSettingKeys.hooks} that is not an object`, hint);
@@ -250,7 +250,7 @@ const statusLineLines = (current: unknown): readonly string[] => {
 };
 
 /** The settings with the own entries added, and the lines that show the change. Every other key stays as it is. */
-const addOwnEntries = (existing: Settings, file: string, command: CommandName): CliResult<Change> => {
+const addOwnEntries = (existing: Settings, file: string, command: CommandText): CliResult<Change> => {
   const hooks = addHooks(existing[claudeSettingKeys.hooks], file, command);
   if (!hooks.ok) return hooks;
   const statusLine = statusLineLines(existing[claudeSettingKeys.statusLine]);
@@ -267,12 +267,21 @@ const addOwnEntries = (existing: Settings, file: string, command: CommandName): 
 const shownChange = (file: string, lines: readonly string[]): string =>
   [`This changes the settings of Claude Code in ${file}:`, ...lines.map((line) => `  ${line}`)].join('\n');
 
-/** The notice for a no to the hook settings: the effect, and the way to add them later with the command that asked. */
-export const declinedHookText = (file: string, command: CommandName): string =>
-  `The hook settings in ${file} stay as they are, so Claude Code does not call the hook. ` +
-  `${capitalize(program)} has no last-seen record of the ${roles.coordinator}, ` +
-  'and a restart or a reboot can not resume the session by its id. ' +
-  `To add the settings later, run "${commandText(command)}" again and answer yes.`;
+/**
+ * The notice for a no to the hook settings: the effect, and the way to add them later with the command that asked. The
+ * session is the kind of the session folder. A worker has its work copy already, so the way to add the settings is a new worker.
+ */
+export const declinedHookText = (file: string, command: CommandText, session: HookSession = hookSessions.coordinator): string => {
+  const worker = session === hookSessions.workCopy;
+  const later = worker
+    ? `To add the settings, end the ${roles.worker} and run "${commandText(command)}" again for a new ${roles.worker}. Answer yes.`
+    : `To add the settings later, run "${commandText(command)}" again and answer yes.`;
+  return (
+    `The hook settings in ${file} stay as they are, so Claude Code does not call the hook. ` +
+    `${capitalize(program)} has no last-seen record of the ${worker ? roles.worker : roles.coordinator}, ` +
+    `and a restart or a reboot can not resume the session by its id. ${later}`
+  );
+};
 
 /**
  * The yes flag is a consent outside a factory session. Inside one it counts only for a work copy with no settings file. The

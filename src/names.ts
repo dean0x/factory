@@ -41,6 +41,7 @@ export const commands = {
   node: 'node',
   doctor: 'doctor',
   machine: 'machine',
+  worker: 'worker',
   upgrade: 'upgrade',
   hook: 'hook',
   version: 'version',
@@ -78,6 +79,15 @@ export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as cons
 
 /** The subcommands of `node`. */
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
+
+/** The subcommands of `worker`. */
+export const workerCommands = { new: 'new' } as const;
+
+/** The commands with a subcommand that a remedy line names, without the program name. */
+export const commandLines = { workerNew: `${commands.worker} ${workerCommands.new}` } as const;
+
+/** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
+export type CommandText = CommandName | (typeof commandLines)[keyof typeof commandLines];
 
 export const flags = {
   home: 'home',
@@ -654,6 +664,31 @@ export const workerRecord = {
   /** The permission bits of a worker folder and of its record. The record is private to the user. */
   folderMode: privateFile.folderMode,
   fileMode: privateFile.fileMode,
+} as const;
+
+/**
+ * The exclude file of a project clone (design 4.6): `info/exclude` in the common git folder, which every work copy of the
+ * clone shares. It holds one entry that hides the settings file of the work copies from git, so a work copy that has only
+ * that file counts as clean. The entry anchors at the top of a work tree.
+ */
+export const cloneExclude = {
+  folder: 'info',
+  file: 'exclude',
+  entry: `/${dirs.claude}/${localSettingsFile}`,
+  /** The permission bits of a new file and of a new folder. An existing file keeps its own bits. */
+  fileMode: 0o644,
+  folderMode: 0o755,
+  /** The call reads at most this many bytes. A larger file is a failure, and nothing is written. */
+  maxBytes: 1_048_576,
+  /** The lock beside the file: two commands that add an entry at the same time do not lose one write. */
+  lock: {
+    suffix: privateFile.lockSuffix,
+    takeoverSuffix: privateFile.takeoverSuffix,
+    mode: privateFile.fileMode,
+    attempts: privateFile.lockAttempts,
+    waitMs: privateFile.lockWaitMs,
+    staleMs: privateFile.lockStaleMs,
+  },
 } as const;
 
 /** The words that a config value can take. */

@@ -990,7 +990,7 @@ describe('the agent program (TP-3)', () => {
   });
 
   it('uses the tool name of the agent program only to look for it on PATH and to name it in a message', () => {
-    expect(withText(/\btoolNames\.claude\b/)).toEqual(['commands/doctor.ts', 'commands/start.ts']);
+    expect(withText(/\btoolNames\.claude\b/)).toEqual(['commands/doctor.ts', 'commands/launch-checks.ts', 'commands/start.ts']);
   });
 
   it('builds the program of a start from the agent input in launch/argv.ts, and from no name of a tool', () => {
