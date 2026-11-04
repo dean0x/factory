@@ -56,7 +56,7 @@ interface Made {
 const make = (setup: Setup = {}): Made => {
   const { handler, log } = tmuxHandler({ sessions: { demo: HOME }, panes: setup.panes ?? [alphaPane()], ...setup.tmux });
   if (setup.summoned !== undefined) {
-    handler({ command: 'tmux', args: ['swap-pane', '-s', setup.summoned.pane, '-t', BOARD], cwd: undefined });
+    handler({ command: 'tmux', args: ['swap-pane', '-d', '-s', setup.summoned.pane, '-t', BOARD], cwd: undefined });
     handler({ command: 'tmux', args: ['set-option', '-p', '-t', BOARD, '@slot_summon', setup.summoned.mark], cwd: undefined });
   }
   const events: string[] = [];
@@ -536,6 +536,17 @@ describe('worker stop: a pane that a summon put in the slot of the view window',
     const swapAt = made.events.indexOf('tmux swap-pane');
     expect(made.events.indexOf(`terminate ${PID}`)).toBeLessThan(swapAt);
     expect(swapAt).toBeLessThan(made.events.indexOf('tmux kill-pane'));
+  });
+
+  it('keeps the focus on the coordinator pane when it brings the board back', async () => {
+    // The panes of the session come after the pane %3: the coordinator pane is %4.
+    const COORDINATOR = '%4';
+    const made = make({ summoned: SUMMONED });
+    await seed(made.deps);
+    expect(made.tmux.activePane(NODE, 'view')).toBe(COORDINATOR);
+    expect(await succeeded(made)).toMatchObject({ kind: 'stopped', pane: 'closed' });
+    expect(paneOf(made, BOARD)?.window).toBe('view');
+    expect(made.tmux.activePane(NODE, 'view')).toBe(COORDINATOR);
   });
 
   it('brings the board back before it closes a pane that ended in the slot, and sends no signal', async () => {

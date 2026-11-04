@@ -229,6 +229,18 @@ const marksOf = async (window: string): Promise<string[]> =>
     .split('\n')
     .filter((line) => line !== '');
 
+/** The pane of the coordinator: the pane of the window view that does not carry the board mark. */
+const coordinatorPane = async (): Promise<string> => {
+  const lines = (await tmux(['list-panes', '-t', '=demo:view', '-F', '#{pane_id} #{@slot}'])).stdout.split('\n');
+  return lines.find((line) => line !== '' && !line.endsWith(' board'))?.split(' ')[0] ?? '';
+};
+
+/** The id of the active pane of a window: the pane that gets the keys of the person. */
+const activePaneOf = async (window: string): Promise<string> => {
+  const lines = (await tmux(['list-panes', '-t', `=demo:${window}`, '-F', '#{pane_id} #{pane_active}'])).stdout.split('\n');
+  return lines.find((line) => line.endsWith(' 1'))?.split(' ')[0] ?? '';
+};
+
 const summon = (...extra: string[]): Promise<RunResult> =>
   box.run(['worker', 'summon', '--home', box.node, ...extra], { env: tmuxEnv });
 
@@ -259,6 +271,23 @@ describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binar
     expect(await marksOf('view')).toContain('|board|');
     expect(await marksOf('workers')).toContain('alpha||');
     expect((await marksOf('workers')).some((line) => line.includes('|board|'))).toBe(false);
+  });
+
+  it('keeps the focus on the coordinator pane after a summon, and after layout puts the board back', async () => {
+    await startedWorker();
+    const coordinator = await coordinatorPane();
+    expect(coordinator).toMatch(/^%\d+$/);
+    // The person works in the coordinator pane.
+    expect((await tmux(['select-pane', '-t', coordinator])).code).toBe(0);
+    expect(await activePaneOf('view')).toBe(coordinator);
+
+    expect((await summon('alpha', '--for', '30m')).code).toBe(0);
+    expect(await marksOf('view')).toContain('alpha||');
+    expect(await activePaneOf('view')).toBe(coordinator);
+
+    expect((await layout()).code).toBe(0);
+    expect(await marksOf('view')).toContain('|board|');
+    expect(await activePaneOf('view')).toBe(coordinator);
   });
 
   it('exits 2 for a time outside the bounds and moves no pane (TP-32)', async () => {

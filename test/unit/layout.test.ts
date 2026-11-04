@@ -148,6 +148,15 @@ describe('layout: the board returns to the slot (TP-31)', () => {
     expect(plainText(output)).toContain(`The board is in the slot of the window view again (pane ${BOARD}).`);
   });
 
+  it('keeps the focus on the coordinator pane when it swaps the board back', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    await summonAlpha(made);
+    expect(made.tmux.activePane(NODE, 'view')).toBe(COORDINATOR);
+    await laidOut(made);
+    expect(windowsOf(made)[BOARD]).toBe('view');
+    expect(made.tmux.activePane(NODE, 'view')).toBe(COORDINATOR);
+  });
+
   it('makes the timer of the summon do nothing afterwards', async () => {
     const made = await makeSlot(ALPHA_ONLY);
     const timer = await summonAlpha(made);

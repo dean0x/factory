@@ -67,8 +67,24 @@ describe('worker summon: the pane goes into the slot of the view window (TP-31)'
   it('swaps the pane of the worker with the board pane, and keeps the other panes where they are', async () => {
     const made = await makeSlot(ALPHA_ONLY);
     await summoned(made);
-    expect(swaps(made)).toEqual([`swap-pane -s ${ALPHA} -t ${BOARD}`]);
+    expect(swaps(made)).toEqual([`swap-pane -d -s ${ALPHA} -t ${BOARD}`]);
     expect(windowsOf(made)).toEqual({ [COORDINATOR]: 'view', [ALPHA]: 'view', [BOARD]: 'workers', '%2': 'workers' });
+  });
+
+  it('keeps the focus on the coordinator pane: the summon and the restore of the timer move no focus', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    expect(made.tmux.activePane(NODE, 'view')).toBe(COORDINATOR);
+    await summoned(made);
+    expect(made.tmux.activePane(NODE, 'view')).toBe(COORDINATOR);
+    fire(made, timers(made)[0]);
+    expect(made.tmux.activePane(NODE, 'view')).toBe(COORDINATOR);
+  });
+
+  it('keeps the focus on the coordinator pane for a second summon, which swaps with the pane of the first summon', async () => {
+    const made = await makeSlot(TWO_WORKERS);
+    await summoned(made);
+    await summoned(made, { words: ['summon', 'beta'] });
+    expect(made.tmux.activePane(NODE, 'view')).toBe(COORDINATOR);
   });
 
   it('stores a new random token with the pane id in the summon mark of the board pane', async () => {
@@ -160,7 +176,7 @@ describe('worker summon: the timer and the token (TP-32)', () => {
     expect(token).toBe(made.deps.randomTexts[0]);
     const fixed = text.replace(token, 'TOKEN').replace(/%[0-9]+/g, 'PANE').replace(/^sleep [0-9]+/, 'sleep SECONDS');
     expect(fixed).toBe(
-      "sleep SECONDS; tmux if-shell -F -t PANE '##{==:##{@slot_summon},PANE:TOKEN}' 'swap-pane -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
+      "sleep SECONDS; tmux if-shell -F -t PANE '##{==:##{@slot_summon},PANE:TOKEN}' 'swap-pane -d -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
     );
     expect(text).toMatch(/^[A-Za-z0-9 %#{}=:,@;'_-]+$/);
   });
@@ -199,7 +215,7 @@ describe('worker summon: the timer and the token (TP-32)', () => {
     const made = await makeSlot(TWO_WORKERS);
     await summoned(made);
     await summoned(made, { words: ['summon', 'beta'] });
-    expect(swaps(made)).toEqual([`swap-pane -s ${ALPHA} -t ${BOARD}`, `swap-pane -s ${BETA} -t ${ALPHA}`]);
+    expect(swaps(made)).toEqual([`swap-pane -d -s ${ALPHA} -t ${BOARD}`, `swap-pane -d -s ${BETA} -t ${ALPHA}`]);
     expect(windowsOf(made)).toMatchObject({ [BETA]: 'view', [ALPHA]: 'workers', [BOARD]: 'workers' });
   });
 
@@ -306,7 +322,7 @@ describe('worker summon: the worker and its pane', () => {
     const made = await makeSlot({ workers: ['alpha'], panes: [workerPane('alpha', { dead: true }), workerPane('alpha')] });
     const output = await summoned(made);
     expect(output.json).toMatchObject({ pane: BETA });
-    expect(swaps(made)).toEqual([`swap-pane -s ${BETA} -t ${BOARD}`]);
+    expect(swaps(made)).toEqual([`swap-pane -d -s ${BETA} -t ${BOARD}`]);
   });
 
   it('can run in the pane that it summons', async () => {
@@ -423,7 +439,7 @@ describe('worker summon: a call that fails', () => {
     const error = await failedWith(made);
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('set-option');
-    expect(swaps(made)).toEqual([`swap-pane -s ${ALPHA} -t ${BOARD}`, `swap-pane -s ${ALPHA} -t ${BOARD}`]);
+    expect(swaps(made)).toEqual([`swap-pane -d -s ${ALPHA} -t ${BOARD}`, `swap-pane -d -s ${ALPHA} -t ${BOARD}`]);
     expect(windowsOf(made)).toMatchObject({ [ALPHA]: 'workers', [BOARD]: 'view' });
     expect(timers(made)).toEqual([]);
   });

@@ -65,6 +65,8 @@ export interface TmuxLog {
   panes(): readonly PaneView[];
   /** The layout that `select-layout` set, by `session:window`. A window that got no layout is not in the map. */
   layouts(): Readonly<Record<string, string>>;
+  /** The id of the active pane of a window: the pane that gets the keys of the person. Undefined for a window with no pane. */
+  activePane(session: string, window: string): string | undefined;
 }
 
 /** The commands that fail for a session that does not exist, when their target names a session. */
@@ -122,6 +124,10 @@ interface FakePane {
 
 /** The word after a flag, or an empty text. */
 const after = (command: readonly string[], flag: string): string => command[command.indexOf(flag) + 1] ?? '';
+
+/** True when the command has the flag. The words after `--` are the program of a new pane, so they are not flags. */
+const hasFlag = (command: readonly string[], flag: string): boolean =>
+  (command.includes('--') ? command.slice(0, command.indexOf('--')) : command).includes(flag);
 
 /** What a new pane can have besides its place. */
 type PaneMore = Omit<PaneFixture, 'session' | 'window'> & {
@@ -251,6 +257,8 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
   const windows = new Map<string, string[]>();
   const panes: FakePane[] = [];
   const layouts = new Map<string, string>();
+  /** The id of the active pane of each window, by `session:window`. A window with no entry has its first pane active. */
+  const activeIds = new Map<string, string>();
 
   const explicitIds = (fixture.panes ?? []).flatMap((pane) => (pane.id === undefined ? [] : [pane.id]));
   for (const id of explicitIds) {
@@ -262,6 +270,16 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
 
   const panesOfWindow = (session: string, window: string): FakePane[] =>
     panes.filter((pane) => pane.session === session && pane.window === window);
+
+  /** The active pane of a window: the pane of the entry, or the first pane when the entry is gone or was never made. */
+  const activeIn = (session: string, window: string): FakePane | undefined => {
+    const inWindow = panesOfWindow(session, window);
+    return inWindow.find((pane) => pane.id === activeIds.get(`${session}:${window}`)) ?? inWindow[0];
+  };
+
+  const makeActive = (pane: FakePane): void => {
+    activeIds.set(`${pane.session}:${pane.window}`, pane.id);
+  };
 
   const addPane = (session: string, window: string, more: PaneMore = {}): FakePane => {
     const names = windows.get(session) ?? [];
@@ -349,6 +367,8 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
         return String(pane.pid);
       case 'pane_dead':
         return pane.dead ? '1' : '0';
+      case 'pane_active':
+        return activeIn(pane.session, pane.window) === pane ? '1' : '0';
       case 'pane_current_path':
         return pane.cwd ?? '';
       case 'pane_index':
@@ -416,6 +436,8 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
           command: programOf(rest),
           dead: fixture.newPanesEndAtOnce === true,
         });
+        // Like tmux: the new pane gets the focus, unless the call has -d.
+        if (!hasFlag(command, '-d')) makeActive(pane);
         return printed(command, pane);
       }
       case 'list-panes': {
@@ -479,11 +501,27 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
         const target = resolvePane(targetOf(command));
         if (source === undefined) return cantFindPane(after(rest, '-s'));
         if (target === undefined) return cantFindPane(targetOf(command));
+        const [sourceActive, targetActive] = [activeIn(source.session, source.window), activeIn(target.session, target.window)];
         const [session, window] = [source.session, source.window];
         [source.session, source.window] = [target.session, target.window];
         [target.session, target.window] = [session, window];
         const [from, to] = [panes.indexOf(source), panes.indexOf(target)];
         [panes[from], panes[to]] = [target, source];
+        // The focus, as in the source of tmux. Without -d, each window gives the focus to the pane that came into it. With -d, a
+        // window keeps the focus on its place: the pane that took the place of the active pane gets it, and no other pane gets it.
+        if (hasFlag(command, '-d')) {
+          if (sourceActive === source) makeActive(target);
+          if (targetActive === target) makeActive(source);
+        } else {
+          makeActive(target);
+          makeActive(source);
+        }
+        return exited(0);
+      }
+      case 'select-pane': {
+        const pane = resolvePane(targetOf(command));
+        if (pane === undefined) return cantFindPane(targetOf(command));
+        makeActive(pane);
         return exited(0);
       }
       case 'kill-session':
@@ -518,6 +556,7 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
       commands: () => calls.map((call) => `${call.command === 'tmux' ? '' : `${call.command} `}${call.args.join(' ')}`),
       sessions: () => sessions,
       layouts: () => Object.fromEntries(layouts),
+      activePane: (session, window) => activeIn(session, window)?.id,
       panes: () =>
         panes.map((pane) => ({
           id: pane.id,

@@ -190,12 +190,16 @@ export const unsetPaneOptionArgs = (pane: string, option: string): Result<TmuxAr
   return ok(call('set-option', '-p', '-u', '-t', target.value, option));
 };
 
-/** Swaps two panes, by their ids. A pane keeps its id and its options. */
+/**
+ * Swaps two panes, by their ids. A pane keeps its id and its options. The flag `-d` keeps the focus where it is: without it, tmux
+ * gives the focus in each window to the pane that came into it. A swap runs when a timer ends or when a command runs, at a time
+ * that the person does not choose, so it must never take the keys away from the pane that the person types in.
+ */
 export const swapPaneArgs = (source: string, target: string): Result<TmuxArgs, string> => {
   const from = paneTarget(source);
   if (!from.ok) return from;
   const to = paneTarget(target);
-  return to.ok ? ok(call('swap-pane', '-s', from.value, '-t', to.value)) : to;
+  return to.ok ? ok(call('swap-pane', '-d', '-s', from.value, '-t', to.value)) : to;
 };
 
 const TILED_LAYOUT = 'tiled';

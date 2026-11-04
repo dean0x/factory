@@ -148,8 +148,8 @@ describe('the tmux call that unsets a pane option', () => {
 });
 
 describe('the tmux call that swaps two panes', () => {
-  it('names both panes by their ids', () => {
-    expect(argvOf(swapPaneArgs('%3', '%9'))).toEqual(['swap-pane', '-s', '%3', '-t', '%9']);
+  it('names both panes by their ids, and keeps the focus where it is (-d)', () => {
+    expect(argvOf(swapPaneArgs('%3', '%9'))).toEqual(['swap-pane', '-d', '-s', '%3', '-t', '%9']);
   });
 
   it.each(badPaneIds)('refuses the source %j', (source) => {
@@ -299,7 +299,7 @@ describe('the tmux call that swaps the pane back after a time', () => {
   const input = { seconds: 900, board: '%5', pane: '%3', token: TOKEN };
   const TEXT =
     `sleep 900; tmux if-shell -F -t %5 '##{==:##{@slot_summon},%3:${TOKEN}}' ` +
-    `'swap-pane -s %3 -t %5 ; set-option -p -u -t %5 @slot_summon'`;
+    `'swap-pane -d -s %3 -t %5 ; set-option -p -u -t %5 @slot_summon'`;
 
   it('runs one shell text in the background: the wait, then a tmux command that checks the token', () => {
     expect(argvOf(summonTimerArgs(input))).toEqual(['run-shell', '-b', TEXT]);
@@ -318,7 +318,7 @@ describe('the tmux call that swaps the pane back after a time', () => {
     // Take out every variable part: the digits of the wait, the token and the pane ids. Only the fixed words stay.
     const fixed = text.replace(TOKEN, 'TOKEN').replace(/%[0-9]+/g, 'PANE').replace(/^sleep [0-9]+/, 'sleep SECONDS');
     expect(fixed).toBe(
-      "sleep SECONDS; tmux if-shell -F -t PANE '##{==:##{@slot_summon},PANE:TOKEN}' 'swap-pane -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
+      "sleep SECONDS; tmux if-shell -F -t PANE '##{==:##{@slot_summon},PANE:TOKEN}' 'swap-pane -d -s PANE -t PANE ; set-option -p -u -t PANE @slot_summon'",
     );
   });
 

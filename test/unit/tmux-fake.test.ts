@@ -200,6 +200,74 @@ describe('the tmux fake: windows and panes', () => {
   });
 });
 
+describe('the tmux fake: the active pane of a window', () => {
+  const started = () => {
+    const made = fakeTmux();
+    made.startSession('demo');
+    return made;
+  };
+  const activeFormat = (run: ReturnType<typeof fakeTmux>['run'], pane: string): string =>
+    run(['display-message', '-p', '-t', pane, '#{pane_active}']).stdout.trim();
+
+  it('gives the focus to the first pane of each window, and keeps it there when start splits the view window', () => {
+    const { log } = started();
+    expect(log.activePane('demo', 'view')).toBe('%0');
+    expect(log.activePane('demo', 'workers')).toBe('%2');
+    expect(log.activePane('demo', 'nowhere')).toBeUndefined();
+  });
+
+  it('prints the pane_active format: 1 for the active pane of its window, 0 for any other pane', () => {
+    const { run } = started();
+    expect([activeFormat(run, '%0'), activeFormat(run, '%1'), activeFormat(run, '%2')]).toEqual(['1', '0', '1']);
+  });
+
+  it('gives the focus to a new pane when split-window has no -d, and keeps it with -d', () => {
+    const { log, run } = started();
+    run(['split-window', '-d', '-t', '=demo:workers']);
+    expect(log.activePane('demo', 'workers')).toBe('%2');
+    run(['split-window', '-t', '=demo:workers']);
+    expect(log.activePane('demo', 'workers')).toBe('%4');
+  });
+
+  it('moves the focus with select-pane, and fails for a pane that does not exist', () => {
+    const { log, run } = started();
+    expect(run(['select-pane', '-t', '%1']).exitCode).toBe(0);
+    expect(log.activePane('demo', 'view')).toBe('%1');
+    expect(run(['select-pane', '-t', '%99']).exitCode).toBe(1);
+  });
+
+  it('gives each window the pane that came into it when swap-pane has no -d, as tmux does', () => {
+    const { log, run } = started();
+    run(['swap-pane', '-s', '%2', '-t', '%1']);
+    expect(log.activePane('demo', 'view')).toBe('%2');
+    expect(log.activePane('demo', 'workers')).toBe('%1');
+  });
+
+  it('keeps the focus of both windows when swap-pane has -d and neither pane has it', () => {
+    const { log, run } = started();
+    run(['split-window', '-d', '-t', '=demo:workers']);
+    run(['swap-pane', '-d', '-s', '%3', '-t', '%1']);
+    expect(log.activePane('demo', 'view')).toBe('%0');
+    expect(log.activePane('demo', 'workers')).toBe('%2');
+    expect(where(log)).toEqual(['%0@view', '%3@view', '%2@workers', '%1@workers']);
+  });
+
+  it('gives the focus to the pane that takes the place of the active pane when swap-pane has -d', () => {
+    const { log, run } = started();
+    run(['select-pane', '-t', '%1']);
+    run(['swap-pane', '-d', '-s', '%2', '-t', '%1']);
+    expect(log.activePane('demo', 'view')).toBe('%2');
+    expect(log.activePane('demo', 'workers')).toBe('%1');
+  });
+
+  it('gives the focus to the first pane of a window when its active pane is closed', () => {
+    const { log, run } = started();
+    run(['select-pane', '-t', '%1']);
+    run(['kill-pane', '-t', '%1']);
+    expect(log.activePane('demo', 'view')).toBe('%0');
+  });
+});
+
 describe('the tmux fake: formats and the conditional command', () => {
   const { run, log } = fakeTmux({ sessions: { demo: null }, panes: [{ id: '%9', session: 'demo', options: { '@worker': 'alpha' } }] });
   const shown = (format: string): string => run(['display-message', '-p', '-t', '%9', format]).stdout;
@@ -259,7 +327,7 @@ describe('the tmux fake: the shell text of a summon', () => {
       '-t',
       '%5',
       `#{==:#{@slot_summon},%3:${TOKEN}}`,
-      'swap-pane -s %3 -t %5 ; set-option -p -u -t %5 @slot_summon',
+      'swap-pane -d -s %3 -t %5 ; set-option -p -u -t %5 @slot_summon',
     ]);
   });
 
