@@ -223,6 +223,12 @@ describe('docs/glossary.md', () => {
     expect(words.filter((word) => !recipe.includes(word))).toEqual([]);
   });
 
+  it('does not call the software recipe unbuilt, and names the config key of the setup', () => {
+    const texts = new Map(glossary.map((word) => [word.term, word.text]));
+    expect(texts.get('recipe')).not.toContain('Not built yet');
+    expect(texts.get('setup')).toContain('`recipe.variant`');
+  });
+
   it('shows the old word of a new word in the mark (was: old word) after the bold term', () => {
     const marks = new Map(docEntries().map((entry) => [entry.term, entry.was]));
     expect(marks.get('worker')).toBe('cell');

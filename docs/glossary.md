@@ -14,8 +14,8 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **layer**: A layer is the level of a node, counted from the bottom. Layer 0 is the workers. Each layer has its own role.
 - **worker** (was: cell): A worker is a session in one work copy. It does all the steps for one track of one project. Not built yet.
 - **coordinator**: A coordinator is a node on layer 1. It runs the factory for its owner and gives assignments to workers.
-- **recipe**: A recipe is the kind of work that a factory does, such as software or marketing. It sets the approval points. Not built yet.
-- **setup** (was: variant): A setup is one named way to run a recipe. It holds the text and scripts that you add to the fixed rules.
+- **recipe**: A recipe is the kind of work that a factory does, such as software or marketing. It sets the approval points.
+- **setup** (was: variant): A setup is one named way to run a recipe. It adds text and scripts to the fixed rules. The config key stays `recipe.variant`.
 - **request** (was: andon): A request is an item that waits for the owner. It can be a question to answer or an action to do. Not built yet.
 - **assignment** (was: work order): An assignment is a written task for a worker or a child node. It is a file in `.factory/orders/`.
 - **session reset** (was: changeover): A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state. Not built yet.

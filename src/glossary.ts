@@ -24,9 +24,10 @@ const SENTENCES: Readonly<Record<(typeof terms)[number], string>> = {
     'It runs the {{program}} for its {{owner}} and gives assignments to {{worker}}s.',
   recipe:
     'A {{recipe}} is the kind of work that a {{program}} does, such as software or marketing. ' +
-    'It sets the approval points. Not built yet.',
+    'It sets the approval points.',
   setup:
-    'A setup is one named way to run a {{recipe}}. It holds the text and scripts that you add to the fixed rules.',
+    'A setup is one named way to run a {{recipe}}. It adds text and scripts to the fixed rules. ' +
+    'The config key stays `{{variantKey}}`.',
   request:
     'A request is an item that waits for the {{owner}}. It can be a question to answer or an action to do. ' +
     'Not built yet.',

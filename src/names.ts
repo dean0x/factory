@@ -679,6 +679,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   preparePctKey: keyPath(keys.root.limits, keys.limits.contextPreparePct),
   maxPctKey: keyPath(keys.root.limits, keys.limits.contextMaxPct),
   heavyTestKey: keys.project.heavyTest,
+  variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,
   claudeDir: dirs.claude,
