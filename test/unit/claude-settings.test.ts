@@ -308,10 +308,14 @@ describe('hook settings: consent without a terminal or with the yes flag (TP-19)
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('with the yes flag inside a factory session, for the coordinator, on a terminal: asks again', async () => {
-    const deps = makeDeps({ inSession: true, tty: true, answer: 'n' });
-    expect(outcomeOf(await ensureHookSettings(deps, request({ yes: true }))).kind).toBe('declined');
-    expect(deps.prompts).toHaveLength(1);
+  it('with the yes flag inside a factory session, for the coordinator, on a terminal: exit 2, no question, nothing written', async () => {
+    const deps = makeDeps({ inSession: true, tty: true, answer: 'y' });
+    const error = errorOf(await ensureHookSettings(deps, request({ yes: true })));
+    expect(error.kind).toBe('usage');
+    expect(error.message).toContain(FILE);
+    expect(error.hint).toContain('outside the factory session');
+    expect(error.hint).toContain('without --yes');
+    expect(deps.prompts).toEqual([]);
     expect(deps.files.size).toBe(0);
   });
 
@@ -322,11 +326,12 @@ describe('hook settings: consent without a terminal or with the yes flag (TP-19)
     expect(stored(deps)).toEqual(EXPECTED_ENTRIES);
   });
 
-  it('with the yes flag inside a factory session, for a work copy that has a file: asks again (exit 2 with no terminal)', async () => {
-    const deps = makeDeps({ inSession: true });
+  it('with the yes flag inside a factory session, for a work copy that has a file: exit 2, also on a terminal', async () => {
+    const deps = makeDeps({ inSession: true, tty: true, answer: 'y' });
     deps.seed(FILE, '{"model":"opus"}');
     const error = errorOf(await ensureHookSettings(deps, request({ yes: true, session: 'work-copy' })));
     expect(error.kind).toBe('usage');
+    expect(deps.prompts).toEqual([]);
     expect(deps.files.get(FILE)).toBe('{"model":"opus"}');
   });
 
@@ -433,6 +438,19 @@ describe('hook settings: the check before the first write of a command (TP-16)',
     const error = errorOf(await requireHookConsent(deps, asked({ yes: true })));
     expect(error.kind).toBe('usage');
     expect(error.hint).toContain('--yes');
+  });
+
+  it('with the yes flag inside a factory session, for the coordinator, on a terminal: exit 2', async () => {
+    const deps = newFolder({ env: { HOME: USER_HOME, FACTORY_SESSION: 'node-1' }, stdinIsTTY: true, stdoutIsTTY: true });
+    const error = errorOf(await requireHookConsent(deps, asked({ yes: true })));
+    expect(error.kind).toBe('usage');
+    expect(error.hint).toContain('outside the factory session');
+  });
+
+  it('with the yes flag inside a factory session, and the entries in place: goes on', async () => {
+    const deps = makeDeps({ inSession: true });
+    deps.seed(FILE, JSON.stringify(EXPECTED_ENTRIES));
+    expect(await requireHookConsent(deps, asked({ yes: true }))).toEqual(ok(undefined));
   });
 
   it('on a terminal: goes on without a question, because the question comes after the writes', async () => {

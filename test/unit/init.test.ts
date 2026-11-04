@@ -3351,7 +3351,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
 
   it('writes no acceptance in a factory session on a new root, still succeeds, and warns (TP-83)', async () => {
     const { deps } = setup({}, person({ ...terminal, env: inSession }));
-    const result = await runInit(deps, options());
+    const result = await runInit(deps, options({ yes: false }));
     expect(result.ok).toBe(true);
     expect(deps.files.has(ACCEPTANCES)).toBe(false);
     expect(warningsOf(result).join('\n')).toContain('factory session');
@@ -3574,11 +3574,14 @@ describe('init: the hook settings of the coordinator on a new root (TP-16)', () 
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('asks again on a terminal window inside a factory session, also with the yes flag', async () => {
+  it('stops with exit 2 before any write on a terminal window inside a factory session with the yes flag, and asks nothing', async () => {
     const { deps } = setup({}, { ...terminal, env: { ...ENV, [env.session]: 'demo' }, prompt: answering('y') });
-    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
-    expect(deps.prompts.filter((question) => question.startsWith(HOOK_QUESTION))).toHaveLength(1);
-    expect(settingsOf(deps)).toEqual(ownSettingsEntries);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('--yes gives no consent inside a factory session');
+    expect(deps.prompts.filter((question) => question.startsWith(HOOK_QUESTION))).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
   });
 
   it('keeps the other keys of a settings file that is there already', async () => {

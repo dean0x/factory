@@ -271,11 +271,16 @@ export const declinedHookText = (file: string, command: CommandName): string =>
 const yesCounts = (deps: Deps, request: HookConsentRequest, fileExists: boolean): boolean =>
   request.yes && (!inFactorySession(deps) || (request.session === hookSessions.workCopy && !fileExists));
 
+/** The yes flag inside a factory session, where it gives no consent: the command stops with a usage error, with or without a terminal. */
+const yesRefused = (deps: Deps, request: HookConsentRequest, fileExists: boolean): boolean =>
+  request.yes && !yesCounts(deps, request, fileExists);
+
 const noConsentRemedy = (deps: Deps, request: HookConsentRequest): string => {
-  const run = `Run "${commandText(request.command)}" in a terminal window`;
+  const run = `Run "${commandText(request.command)}"`;
   return request.yes && inFactorySession(deps)
-    ? `${flagText(flags.yes)} gives no consent inside a ${places.session}. ${run} and answer the question.`
-    : `${run}, or add ${flagText(flags.yes)}.`;
+    ? `${flagText(flags.yes)} gives no consent inside a ${places.session}. ${run} outside the ${places.session}, ` +
+        `or in a terminal window without ${flagText(flags.yes)} and answer the question.`
+    : `${run} in a terminal window, or add ${flagText(flags.yes)}.`;
 };
 
 /** True when the person agrees. The change is shown first: on the terminal in the question, or as a notice with the yes flag. */
@@ -284,7 +289,9 @@ const askConsent = async (deps: Deps, request: HookConsentRequest, shown: string
     deps.warn(shown);
     return ok(true);
   }
-  if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) return usageError(shown, noConsentRemedy(deps, request));
+  if (yesRefused(deps, request, fileExists) || !(deps.stdinIsTTY && deps.stdoutIsTTY)) {
+    return usageError(shown, noConsentRemedy(deps, request));
+  }
   const answer = await deps.prompt(printable(`${shown}\nWrite this change? [y/N] `));
   return answer.ok ? ok(ACCEPT_ANSWER.test(answer.value.trim())) : answer;
 };
@@ -349,8 +356,9 @@ export const ensureHookSettings = async (deps: Deps, request: HookSettingsReques
 /**
  * The check for a command that writes other files before the settings file, and asks its question after them. It makes the
  * checks of the target and stops before the first write of the command when the question could not be answered later: the
- * change is to be made, there is no terminal, and the yes flag gives no consent (exit 2). The session folder may not exist
- * yet: the file is new then. A terminal, the yes flag outside a factory session, or entries in place let the command go on.
+ * change is to be made and either the yes flag is given inside a factory session, where it gives no consent (exit 2, also on
+ * a terminal), or there is no terminal and no consent (exit 2). The session folder may not exist yet: the file is new then.
+ * A terminal, the yes flag outside a factory session, or entries in place let the command go on.
  * The call asks nothing and writes nothing.
  */
 export const requireHookConsent = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<void>> => {
@@ -360,6 +368,7 @@ export const requireHookConsent = async (deps: Deps, request: HookConsentRequest
   if (!planned.ok) return planned;
   const { change, exists } = planned.value;
   const terminal = deps.stdinIsTTY && deps.stdoutIsTTY;
-  if (change.lines.length === 0 || terminal || yesCounts(deps, request, exists)) return ok(undefined);
+  if (change.lines.length === 0) return ok(undefined);
+  if (!yesRefused(deps, request, exists) && (terminal || yesCounts(deps, request, exists))) return ok(undefined);
   return usageError(shownChange(planned.value.target.file, change.lines), noConsentRemedy(deps, request));
 };
