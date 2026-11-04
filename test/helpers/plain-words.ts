@@ -243,11 +243,14 @@ export const OLD_WORDS_DESIGN_SCAN = new RegExp(
 /** A scanned jargon row with the pattern that finds its word in the docs. */
 export interface JargonPattern {
   readonly term: string;
+  /** The words of the row as a regular expression, with no lookaround. */
+  readonly source: string;
   readonly pattern: RegExp;
 }
 
 const jargon = (term: string, source: string): JargonPattern => ({
   term,
+  source,
   pattern: new RegExp(`(?<![A-Za-z0-9_])${source}(?![A-Za-z0-9_])`, 'gi'),
 });
 
@@ -274,6 +277,15 @@ export const JARGON_PATTERNS: readonly JargonPattern[] = [
   jargon('permission-skip list', 'permission[ -]skip lists?'),
   jargon('token-like value', 'token-like values?'),
 ];
+
+/**
+ * The words of the scanned jargon rows as one extended regular expression, in the order of the table. `scripts/exit-check.sh`
+ * holds the same text in `jargon_words`, and a unit test keeps the two equal.
+ */
+export const JARGON_ERE: string = JARGON_PATTERNS.map(({ source }) => source.replace(/\(\?:/g, '(')).join('|');
+
+/** The words of the scanned jargon rows that a text holds, in the order of the table. */
+export const jargonIn = (text: string): string[] => JARGON_PATTERNS.flatMap(({ pattern }) => text.match(pattern) ?? []);
 
 /** The docs that the scan reads in the docs change. */
 export const SCANNED_DOCS = ['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md'] as const;

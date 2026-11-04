@@ -226,7 +226,7 @@ export const checkIndex = async (deps: Deps): Promise<CheckResult> => {
   const path = await indexPathOf(deps);
   if (!path.ok) return check(checkIds.index, 'warn', path.error.message);
   if (path.value === null) {
-    return check(checkIds.index, 'ok', `no home index is used: ${env.stateHome} and ${env.userHome} name no folder`);
+    return check(checkIds.index, 'ok', `no ${places.list} is used: ${env.stateHome} and ${env.userHome} name no folder`);
   }
   const entries = await readHomeIndex(deps, path.value);
   if (!entries.ok) return check(checkIds.index, 'warn', `${path.value} cannot be read: ${entries.error}`);
@@ -234,12 +234,12 @@ export const checkIndex = async (deps: Deps): Promise<CheckResult> => {
   const gone = await goneHomes(deps, entries.value);
   if (gone.length > 0) {
     problems.push(
-      `the home index lists ${gone.join(', ')}, with no ${files.config}. Remove the ${plural(gone.length, 'entry', 'entries')} from ${path.value}.`,
+      `the ${places.list} lists ${gone.join(', ')}, with no ${files.config}. Remove the ${plural(gone.length, 'entry', 'entries')} from ${path.value}.`,
     );
   }
   if (problems.length > 0) return check(checkIds.index, 'warn', problems.join(' '));
   const count = entries.value.length;
-  return check(checkIds.index, 'ok', `${count} ${plural(count, 'entry', 'entries')} in the home index, all present`);
+  return check(checkIds.index, 'ok', `${count} ${plural(count, 'entry', 'entries')} in the ${places.list}, all present`);
 };
 
 /** Only the local tracker works in this version of factory. */
@@ -616,7 +616,7 @@ interface CheckRun {
  * request to a proxy is a step toward a launch that the failure forbids.
  */
 const skippedProxyCheck = (): CheckResult =>
-  notChecked(checkIds.proxy, 'a root check failed, so no health request went to a proxy');
+  notChecked(checkIds.proxy, `a check of the ${places.folder} failed, so no health check went to a proxy`);
 
 const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CheckRun> => {
   const config = await inspectConfig(deps, home, registry);

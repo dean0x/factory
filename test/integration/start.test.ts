@@ -142,7 +142,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(result.stderr).toContain(above);
   });
 
-  it('starts the session with the view and bench windows and one launch of claude in auto mode', async () => {
+  it('starts the session with the view and workers windows and one launch of claude in auto mode', async () => {
     const [web, api] = await initNode();
     const result = await startFactory();
     expect(result.stderr).toBe('');
@@ -150,12 +150,12 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(result.stdout).toContain('Session demo runs. Attach with: tmux attach -t demo');
 
     expect(await waitForLaunch()).toEqual(['launched']);
-    // The launch is the start command of the first pane only. The slot pane and the bench window run the shell.
+    // The launch is the start command of the first pane only. The slot pane and the workers window run the shell.
     const starts = await tmux(['list-panes', '-s', '-t', '=demo', '-F', '#{pane_start_command}']);
     expect(starts.stdout.trim().split('\n').filter((command) => command.includes('claude'))).toHaveLength(1);
     expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     const windows = await tmux(['list-windows', '-t', '=demo', '-F', '#{window_name}']);
-    expect(windows.stdout.trim().split('\n')).toEqual(['view', 'bench']);
+    expect(windows.stdout.trim().split('\n')).toEqual(['view', 'workers']);
 
     const argv = (await readFile(join(outDir, 'argv'), 'utf8')).trim().split('\n');
     expect(argv.slice(0, 4)).toEqual(['--permission-mode', 'auto', '--effort', 'high']);
@@ -381,7 +381,7 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(JSON.parse(first.stdout)).toMatchObject({ started: true });
     expect(await waitForLaunch()).toHaveLength(1);
     const before = await paneSnapshot();
-    // The coordinator and the slot in the view window, and the bench window.
+    // The coordinator and the slot in the view window, and the workers window.
     expect(before.trim().split('\n')).toHaveLength(3);
 
     const again = await startFactory('--json');

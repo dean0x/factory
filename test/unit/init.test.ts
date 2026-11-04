@@ -1413,10 +1413,10 @@ describe('init: a workspace folder that holds several repos', () => {
       ['web', 'web'],
     ]);
     expect(result.ok && result.value.json['skipped']).toEqual([
-      { path: '/ws/web-search', reason: 'it is one more checkout of the repo web' },
+      { path: '/ws/web-search', reason: 'it is one more work tree of the repo web' },
     ]);
     const text = result.ok ? result.value.lines.map((line) => line.text).join('\n') : '';
-    expect(text).toContain('Skipped /ws/web-search: it is one more checkout of the repo web.');
+    expect(text).toContain('Skipped /ws/web-search: it is one more work tree of the repo web.');
     expect(deps.files.has('/ws/factory.yaml')).toBe(false);
   });
 
@@ -2336,7 +2336,7 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     const before = snapshot(deps);
     const result = await runInit(listFails(deps), options());
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
-    expect(messageOf(result)).toContain(`The home index ${INDEX} was not updated`);
+    expect(messageOf(result)).toContain(`The factory list ${INDEX} was not updated`);
     expect(messageOf(result)).toContain('nothing was changed');
     expect(messageOf(result)).not.toContain('Created the node');
     expect(deps.files.has(`${HOME}/.git/HEAD`)).toBe(false);

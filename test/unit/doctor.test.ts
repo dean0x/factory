@@ -610,7 +610,7 @@ describe('doctor: root checks and the settings of the session folders', () => {
     const results = await checksOf(deps);
     expect(deps.fetched).toEqual([]);
     expect(levelOf(results, 'proxy')).toBe('warn');
-    expect(textOfCheck(results, 'proxy')).toContain('root check failed');
+    expect(textOfCheck(results, 'proxy')).toContain('a check of the factory folder failed');
   });
 
   it('still sends the proxy health request when the root checks pass', async () => {
@@ -1049,18 +1049,18 @@ describe('doctor: the home index', () => {
 
   it('is ok when no variable names a folder for the index', async () => {
     const deps = makeDeps({ env: { XDG_STATE_HOME: undefined, HOME: undefined } });
-    expect(await checkIndex(deps)).toMatchObject({ id: 'index', level: 'ok', text: expect.stringContaining('no home index is used') });
+    expect(await checkIndex(deps)).toMatchObject({ id: 'index', level: 'ok', text: expect.stringContaining('no factory list is used') });
   });
 
   it('is ok when every home in the index is present', async () => {
     const deps = makeDeps({ env });
     deps.seed(INDEX, indexOf(HOME));
     deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
-    expect(await checkIndex(deps)).toMatchObject({ level: 'ok', text: '1 entry in the home index, all present' });
+    expect(await checkIndex(deps)).toMatchObject({ level: 'ok', text: '1 entry in the factory list, all present' });
   });
 
   it('is ok when there is no index file yet', async () => {
-    expect(await checkIndex(makeDeps({ env }))).toMatchObject({ level: 'ok', text: '0 entries in the home index, all present' });
+    expect(await checkIndex(makeDeps({ env }))).toMatchObject({ level: 'ok', text: '0 entries in the factory list, all present' });
   });
 
   it('warns on an entry whose home is gone, and names the home and the file', async () => {
@@ -1398,7 +1398,7 @@ describe('doctor: a pulled change in the shared file of a registered root (S-S1)
     expect(deps.fetched).toEqual([]);
     expect(checks.find((check) => check.id === 'proxy')).toMatchObject({
       level: 'warn',
-      text: 'not checked: a root check failed, so no health request went to a proxy',
+      text: 'not checked: a check of the factory folder failed, so no health check went to a proxy',
     });
     expect(checks.find((check) => check.id === 'root-repo')?.text).toContain(
       'the setup text cannot be checked against the setup acceptance, because factory.yaml is not valid',

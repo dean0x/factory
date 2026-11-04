@@ -111,7 +111,7 @@ export const listRepoChildren = async (deps: Deps, dir: string): Promise<CliResu
     if (main === undefined) continue;
     repos.push(main.path);
     for (const member of members.filter((candidate) => candidate !== main)) {
-      skipped.push({ path: member.path, reason: `it is one more checkout of the repo ${basename(main.path)}` });
+      skipped.push({ path: member.path, reason: `it is one more work tree of the repo ${basename(main.path)}` });
     }
   }
   return ok({

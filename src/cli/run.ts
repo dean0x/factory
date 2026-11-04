@@ -68,7 +68,8 @@ export const runCli = async (
 
   const command = findCommand(first === flagText(flags.version) ? commands.version : first);
   if (command === undefined) {
-    await sink.stderr(`${renderError({ kind: 'usage', message: `unknown command "${first}"` })}\n${renderHelp()}`);
+    const unknown = renderError({ kind: 'usage', message: `unknown command "${first}"` });
+    await sink.stderr(`${unknown}\n${renderHelp()}`);
     return EXIT_USAGE;
   }
 

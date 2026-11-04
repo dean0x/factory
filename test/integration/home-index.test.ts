@@ -85,7 +85,7 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
       const doctor = await box.run(['doctor'], { cwd, ...withState() });
       expect({ cwd, code: doctor.code }).toEqual({ cwd, code: 0 });
       expect(doctor.stdout).toContain(config);
-      expect(doctor.stdout).toContain('1 entry in the home index, all present');
+      expect(doctor.stdout).toContain('1 entry in the factory list, all present');
 
       const dry = await box.run(['start', '--dry-run'], { cwd, ...withState() });
       expect({ cwd, code: dry.code, stderr: dry.stderr }).toEqual({ cwd, code: 0, stderr: '' });

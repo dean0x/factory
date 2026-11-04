@@ -67,7 +67,7 @@ const foundHomeOption: FlagOption = {
   placeholder: 'DIR',
   description:
     `The ${roles.node} folder. Default: ${env.home}, else the folder of the nearest config file ` +
-    'above the current folder, else the home that lists the current folder in the home index.',
+    `above the current folder, else the ${places.folder} that the ${places.list} gives for the current folder.`,
 };
 
 /** The commands. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */

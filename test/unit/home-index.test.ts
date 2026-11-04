@@ -814,7 +814,7 @@ describe('home index: recording a node', () => {
     const deps = fresh();
     deps.seed(INDEX, 'not json');
     const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [], origin: 'own' });
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(`The home index ${INDEX} was not updated`) });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(`The factory list ${INDEX} was not updated`) });
     expect(deps.files.get(INDEX)).toBe('not json');
   });
 

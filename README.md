@@ -23,7 +23,7 @@ You need:
 | Command | What it does |
 | --- | --- |
 | `factory init` | Create a node. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`. It makes the first commit in the state repository and the first commit in the repo of the node folder. |
-| `factory start` | Start the tmux session of the node, with the windows `view` and `bench`, or attach to it. |
+| `factory start` | Start the tmux session of the node, with the windows `view` and `workers`, or attach to it. |
 | `factory doctor` | Run 25 checks on the config, the state, the node folder, the managed blocks, the text outside the managed blocks, the secrets, the files that the root repo tracks, the ignore rules of git, the project paths, the settings files of the session folders, the approval points with the mode `delegated`, the instruction files of agents, the proxy settings, the tools and the projects. |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |

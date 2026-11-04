@@ -48,7 +48,7 @@ export type SetupCheck =
 
 const FIRST_REMEDY = `Run "${commandText(commands.init)}" in a terminal window and accept the files.`;
 const CHANGE_REMEDY = `Run "${commandText(commands.start)}" or "${commandText(commands.upgrade)}" in a terminal window outside a ${places.session}.`;
-const STORE_REMEDY = `Fix the problem that the message names, then run "${commandText(commands.init)}" in a terminal window.`;
+const STORE_REMEDY = `Fix the problem that the error names, then run "${commandText(commands.init)}" in a terminal window.`;
 const DOCTOR_REMEDY = `Run "${commandText(commands.doctor)}".`;
 
 /** The reason that the record of an accept step holds. */

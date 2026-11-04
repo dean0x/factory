@@ -173,7 +173,7 @@ describe('start:a new session', () => {
       'set-option -t =demo: @factory_home /w/node',
       `split-window -d -h -t =demo:view -c ${COORDINATOR}`,
       'set-option -p -t =demo:view.{right} @slot board',
-      `new-window -d -t =demo: -n bench -c ${COORDINATOR}`,
+      `new-window -d -t =demo: -n workers -c ${COORDINATOR}`,
     ]);
   });
 
@@ -204,7 +204,7 @@ describe('start:a new session', () => {
     const output = await succeeded(deps);
     expect(tmux.sessions().has('demo')).toBe(true);
     expect(tmux.commands().some((line) => line.startsWith('kill-session'))).toBe(false);
-    expect(tmux.commands().at(-1)).toBe(`new-window -d -t =demo: -n bench -c ${COORDINATOR}`);
+    expect(tmux.commands().at(-1)).toBe(`new-window -d -t =demo: -n workers -c ${COORDINATOR}`);
     expect(output.json).toMatchObject({ started: true });
   });
 
@@ -627,7 +627,7 @@ describe('start:--dry-run', () => {
     const text = output.lines.map((line) => line.text).join('\n');
     expect(text).toContain('Dry run');
     expect(text).toContain(`tmux new-session -d -s demo -n view -c ${COORDINATOR} -- ${[...LAUNCH_BASE, ...LAUNCH_DIRS].join(' ')}`);
-    expect(text).toContain(`tmux new-window -d -t =demo: -n bench -c ${COORDINATOR}`);
+    expect(text).toContain(`tmux new-window -d -t =demo: -n workers -c ${COORDINATOR}`);
     expect(output.json).toMatchObject({ schema: 'factory.start/v1', session: 'demo', started: false, attached: false, dryRun: true });
   });
 

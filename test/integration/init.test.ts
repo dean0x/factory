@@ -419,7 +419,7 @@ describe('factory init: a workspace folder (built binary)', () => {
     expect(config).toContain('path: "api"');
     expect(config).not.toContain('web-search');
     expect(result.stdout).toContain('web-search');
-    expect(result.stdout).toContain('one more checkout of the repo web');
+    expect(result.stdout).toContain('one more work tree of the repo web');
     expect(existsSync(join(ws, 'factory.yaml'))).toBe(false);
     for (const name of ['web', 'api']) expect(existsSync(join(home, name, '.git'))).toBe(true);
     expect((await box.git(home, ['status', '--porcelain', '-uall'])).stdout).toBe('');

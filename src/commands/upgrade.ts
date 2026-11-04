@@ -110,9 +110,9 @@ const indexUpgraded = async (
 ): Promise<readonly OutLine[]> => {
   const warn = (texts: readonly string[]): readonly OutLine[] => texts.map((text) => ({ level: 'warn', text }));
   const indexPath = await indexPathOf(deps);
-  if (!indexPath.ok) return warn([`The home index was not updated: ${indexPath.error.message}`]);
+  if (!indexPath.ok) return warn([`The ${places.list} was not updated: ${indexPath.error.message}`]);
   const config = await loadConfig(deps, home, registry);
-  if (!config.ok) return warn([`The home index was not updated: ${config.error.message}`]);
+  if (!config.ok) return warn([`The ${places.list} was not updated: ${config.error.message}`]);
   const recorded = await recordNode(deps, indexPath.value, {
     home,
     id: config.value.core.node.id,

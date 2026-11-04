@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
-import { env, files, flagText, flags, homeIndex, roles } from '../names.js';
+import { env, files, flagText, flags, homeIndex, places, roles } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
 import { comparable, isSameOrInside, realPathOf } from './paths.js';
@@ -149,10 +149,10 @@ const settleOrigin =
  */
 export const recordNode = async (deps: Deps, indexPath: string | null, node: IndexedNode): Promise<Result<void, string>> => {
   if (indexPath === null) {
-    return err(`The home index was not updated: ${env.stateHome} and ${env.userHome} name no folder.`);
+    return err(`The ${places.list} was not updated: ${env.stateHome} and ${env.userHome} name no folder.`);
   }
   const realHome = await realPathOf(deps, node.home);
-  if (!realHome.ok) return err(`The home index ${indexPath} was not updated: ${realHome.error.message}`);
+  if (!realHome.ok) return err(`The ${places.list} ${indexPath} was not updated: ${realHome.error.message}`);
   const recorded = await recordHome(
     deps,
     indexPath,
@@ -163,7 +163,7 @@ export const recordNode = async (deps: Deps, indexPath: string | null, node: Ind
     },
     settleOrigin(node),
   );
-  return recorded.ok ? ok(undefined) : err(`The home index ${indexPath} was not updated: ${recorded.error}`);
+  return recorded.ok ? ok(undefined) : err(`The ${places.list} ${indexPath} was not updated: ${recorded.error}`);
 };
 
 /** The entry of the index that has this home, as it is written or by its real path, or null when no entry has it. */
@@ -269,7 +269,7 @@ export const matchFolder = (projects: readonly IndexedProject[], folder: string)
 
 const unusable = (path: string, reason: string): CliResult<never> =>
   usageError(
-    `the home index ${path} cannot be used: ${reason}`,
+    `the ${places.list} ${path} cannot be used: ${reason}`,
     `Fix or remove that file, or use ${flagText(flags.home)} DIR.`,
   );
 

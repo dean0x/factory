@@ -1894,7 +1894,7 @@ describe('upgrade: a node of schema 1', () => {
       const output = success(await upgrade(failing));
       expect(output.json).toMatchObject({ changed: true, committed: true });
       expect(output.warnings).toHaveLength(1);
-      expect(output.warnings[0]).toContain(`The home index ${INDEX} was not updated`);
+      expect(output.warnings[0]).toContain(`The factory list ${INDEX} was not updated`);
       expect(output.warnings[0]).toContain('disk full');
       expect(output.lines.some((line) => line.level === 'warn' && line.text === output.warnings[0])).toBe(true);
     });

@@ -18,7 +18,7 @@ export const ROADMAPS_README_LINES: readonly string[] = [
   '',
   '```markdown',
   '# <Track> roadmap',
-  '{{Owner}}: <{{worker}}> · Checkout: <path> · Resume file: <path> · Updated: <yyyy-mm-dd> · Status: active | paused | complete',
+  '{{Owner}}: <{{worker}}> · Work copy: <path> ·Resume file: <path> · Updated: <yyyy-mm-dd> · Status: active | paused | complete',
   '',
   '## Goal',
   '<1-3 sentences: the end state, checkable.>',

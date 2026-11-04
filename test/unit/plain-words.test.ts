@@ -68,6 +68,53 @@ describe('the plain-words table', () => {
   });
 });
 
+describe('the glossary and the plain words (TP-110)', () => {
+  /** Plain words that are no glossary entry: a phrase for one place, a command name, or the record of another owner. */
+  const WITHOUT_ENTRY = new Set([
+    'a setting that skips permission prompts',
+    'a value that looks like a password or a token',
+    'your own factory, received factory',
+    'message',
+    'doctor, `STUCK:`',
+  ]);
+  const STAYS = new Set(['stay', 'stays', 'stays in the design text only']);
+
+  const entryNames = new Set(
+    readDoc('glossary.md')
+      .split('\n')
+      .flatMap((line) => {
+        const name = /^- \*\*([^*]+)\*\*/.exec(line)?.[1];
+        return name === undefined ? [] : [name];
+      }),
+  );
+
+  /** The glossary words that a row names: its plain word, or its own term when the term stays. */
+  const wordsOf = (row: (typeof PLAIN_WORDS)[number]): string[] =>
+    row.plain.startsWith('(') ? [] : (STAYS.has(row.plain) ? row.term : row.plain).split(', ');
+
+  const entryFor = (word: string): string => (entryNames.has(word) ? word : word.replace(/ies$/, 'y'));
+
+  it('gives each scanned jargon term a plain word that differs from the term', () => {
+    const scanned = PLAIN_WORDS.filter((row) => row.scan === 'scanned');
+    expect(scanned.length).toBeGreaterThan(15);
+    for (const row of scanned) expect(row.plain.toLowerCase(), row.term).not.toBe(row.term.toLowerCase());
+  });
+
+  it('has a glossary entry for each plain word of the table, and for each term that stays', () => {
+    const missing = PLAIN_WORDS.filter((row) => !WITHOUT_ENTRY.has(row.term) && !WITHOUT_ENTRY.has(row.plain))
+      .flatMap(wordsOf)
+      .filter((word) => !entryNames.has(entryFor(word)));
+    expect(missing).toEqual([]);
+  });
+
+  it('reads the entry names from the glossary, and finds the words that have no entry', () => {
+    expect(entryNames.has('worker')).toBe(true);
+    expect(entryNames.has('factory folder')).toBe(true);
+    expect(entryFor('work copies')).toBe('work copy');
+    expect(entryNames.has(entryFor('home index'))).toBe(false);
+  });
+});
+
 describe('the docs scan: what it finds', () => {
   it('has the eight old words', () => {
     expect([...OLD_WORD_LIST]).toEqual(['lane', 'pack', 'brief', 'cell', 'andon', 'staging', 'inspect', 'ship']);

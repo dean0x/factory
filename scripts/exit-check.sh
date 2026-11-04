@@ -164,7 +164,12 @@ old_endings="s|es|ed|ing|ped|ping"
 old_alternatives="$(printf '%s' "$old_word_list" | tr ' ' '|')"
 old_words="(^|[^[:alnum:]_])(${old_alternatives})(${old_endings})?([^[:alnum:]_]|\$)"
 scan "an old word" "$old_words"
-printf 'no generated file and no help text holds a name from the deny list or an old word\n'
+# The words of the scanned rows of the plain-words table, as whole words. The list is the same as JARGON_ERE in
+# test/helpers/plain-words.ts, and a unit test keeps them equal.
+jargon_words="changeovers?|work orders?|heartbeats?|bench windows?|outbox(es)?|adapters?|home index(es)?|registered roots?|state markers?|root rules?|allow[ -]lists?|owner records?|owner channels?|core blocks?|trust steps?|permission[ -]skip lists?|token-like values?"
+jargon_pattern="(^|[^[:alnum:]_])(${jargon_words})([^[:alnum:]_]|\$)"
+scan "a jargon word" "$jargon_pattern"
+printf 'no generated file and no help text holds a name from the deny list, an old word or a jargon word\n'
 
 # The npm page shows the package.json of the package. The installed copy holds no old word.
 package_json="$npm_config_prefix/lib/node_modules/@dean0x/factory/package.json"

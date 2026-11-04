@@ -388,14 +388,14 @@ export const setupAcceptance = {
  */
 export const tmuxNames = {
   windowView: 'view',
-  windowBench: 'bench',
+  windowWorkers: 'workers',
   /** The session option that holds the node home. */
   optionHome: '@factory_home',
   /** The pane option that holds the node id, on the pane of the coordinator. */
   optionNode: '@node',
   /** The pane option that marks the slot of the view window. */
   optionSlot: '@slot',
-  /** The pane option that holds the worker id, on a bench pane. */
+  /** The pane option that holds the worker id, on a worker pane. */
   optionWorker: '@worker',
   slotBoard: 'board',
 } as const;

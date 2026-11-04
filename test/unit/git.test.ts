@@ -58,7 +58,7 @@ describe('git: the repos one level down', () => {
     const { deps } = workspace({ '/ws/web': {}, '/ws/web-search': { commonDir: '/ws/web/.git' } });
     expect(await scanned(deps)).toEqual({
       repos: ['/ws/web'],
-      skipped: [{ path: '/ws/web-search', reason: 'it is one more checkout of the repo web' }],
+      skipped: [{ path: '/ws/web-search', reason: 'it is one more work tree of the repo web' }],
       truncated: false,
     });
   });

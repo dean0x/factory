@@ -19,6 +19,7 @@ import {
   reservedRootNames,
   roles,
   schema1,
+  schema2,
   schemaIds,
   stateKeys,
   templateValues,
@@ -39,10 +40,12 @@ import { createFakeDeps } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { OLD_WORD_ENDINGS, OLD_WORD_LIST, oldWordsIn } from '../helpers/old-words.js';
 import { runInit } from '../helpers/package-registry.js';
+import { JARGON_ERE, JARGON_PATTERNS, jargonIn } from '../helpers/plain-words.js';
 import { allSourceFiles, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
+const GLOSSARY_FILE = join(SRC, 'glossary.ts');
 const EXIT_CHECK = join(__dirname, '..', '..', 'scripts', 'exit-check.sh');
 
 /** An import path is no text for a user. */
@@ -78,7 +81,7 @@ const EXACT_NAMES = new Set([
     keys.link,
     stateKeys,
     schema1.keys,
-    { windowView: tmuxNames.windowView, windowBench: tmuxNames.windowBench, slotBoard: tmuxNames.slotBoard },
+    { windowView: tmuxNames.windowView, windowWorkers: tmuxNames.windowWorkers, slotBoard: tmuxNames.slotBoard },
   ),
   ...values.approvalModes,
 ]);
@@ -294,10 +297,14 @@ describe('the word desk', () => {
   });
 });
 
+/** The old words and the scanned jargon words (D-11, D-59) that a text holds. */
+const plainWordsIn = (text: string): string[] => [...oldWordsIn(text), ...jargonIn(text)];
+
 /**
  * The scan of the old words (D-59) covers: the help text of every command, `package.json`, the templates, the glossary,
- * the files that init writes, and the string literals of `src/commands` and `src/cli`. It does not cover import paths,
- * comments, the history of the docs, or the mapping tables of design 7 and 7.1, which name the old words on purpose.
+ * the files that init writes, and the string literals of every folder of `src`. The scan of the jargon words (D-11) covers
+ * the same, apart from `package.json`. It does not cover import paths, comments, the history of the docs, or the mapping
+ * tables of design 7 and 7.1, which name the old words on purpose.
  */
 describe('words of the old names', () => {
   it('finds an old word in a text, in any case and in a plural', () => {
@@ -323,9 +330,9 @@ describe('words of the old names', () => {
     },
   );
 
-  it('keeps the old words out of the help of every command', () => {
+  it('keeps the old words and the jargon words out of the help of every command', () => {
     const texts = [renderHelp(), ...commandTable.map(renderCommandHelp)];
-    expect(texts.flatMap(oldWordsIn)).toEqual([]);
+    expect(texts.flatMap(plainWordsIn)).toEqual([]);
   });
 
   it('keeps the old words out of package.json, which the npm page shows', () => {
@@ -333,17 +340,17 @@ describe('words of the old names', () => {
     expect(oldWordsIn(text)).toEqual([]);
   });
 
-  it('keeps the old words out of every template', () => {
+  it('keeps the old words and the jargon words out of every template', () => {
     const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
-    expect(texts.flatMap(oldWordsIn)).toEqual([]);
+    expect(texts.flatMap(plainWordsIn)).toEqual([]);
   });
 
-  it('keeps the old words out of the glossary', () => {
+  it('keeps the old words and the jargon words out of the glossary', () => {
     expect(glossary.length).toBeGreaterThan(10);
-    expect(glossary.flatMap((word) => oldWordsIn(`${word.term} ${word.text}`))).toEqual([]);
+    expect(glossary.flatMap((word) => plainWordsIn(`${word.term} ${word.text}`))).toEqual([]);
   });
 
-  it('keeps the old words out of the files that init writes', async () => {
+  it('keeps the old words and the jargon words out of the files that init writes', async () => {
     const { handler } = gitHandler({ gh: 'some-login' });
     const deps = createFakeDeps({ cwd: '/w', run: handler, env: { XDG_STATE_HOME: '/state', HOME: '/users/me' } });
     const result = await runInit(deps, {
@@ -360,7 +367,7 @@ describe('words of the old names', () => {
     expect(result.ok).toBe(true);
     expect(deps.files.size).toBeGreaterThan(10);
     for (const [path, text] of deps.files) {
-      expect({ path, found: oldWordsIn(text) }).toEqual({ path, found: [] });
+      expect({ path, found: plainWordsIn(text) }).toEqual({ path, found: [] });
     }
   });
 });
@@ -389,6 +396,20 @@ describe('the old words in the exit check', () => {
     expect(exitCheck).toMatch(/^#.*test\/helpers\/old-words\.ts/m);
   });
 
+  it('holds the same jargon words as the plain-words helper, in the same order', () => {
+    expect(shellValue(exitCheck, 'jargon_words')).toBe(JARGON_ERE);
+    expect(JARGON_ERE.split('|')).toHaveLength(JARGON_PATTERNS.length);
+  });
+
+  it('names the plain-words helper in a comment, and scans the generated files and the help texts for the jargon words', () => {
+    expect(exitCheck).toMatch(/^#.*test\/helpers\/plain-words\.ts/m);
+    expect(exitCheck).toMatch(/^scan "a jargon word" /m);
+  });
+
+  it('writes the jargon words in a form that grep -E reads: no group with a question mark', () => {
+    expect(JARGON_ERE).not.toContain('(?');
+  });
+
   it('reads a value of the script, and finds none for a name that the script does not set', () => {
     expect(shellValue('a="x y"\nb="z"\n', 'a')).toBe('x y');
     expect(shellValue('a="x y"\nb="z"\n', 'c')).toBeUndefined();
@@ -396,27 +417,102 @@ describe('the old words in the exit check', () => {
   });
 });
 
-describe('the old words in the text of the commands', () => {
-  /** The old words that a string literal of the source holds, with the file. Comments and import paths are not text. */
-  const oldWordLiterals = (source: string, path: string): string[] =>
+describe('the old words and the jargon words in the text of the source (TP-60)', () => {
+  /** The folders that print text, and the top files of src. */
+  const TEXT_FOLDERS = [
+    'commands',
+    'cli',
+    'config',
+    'core',
+    'upgrade',
+    'blocks',
+    'launch',
+    'comms',
+    'migrate',
+    'templates',
+    'recipes',
+    'state',
+    'safety',
+  ];
+
+  /**
+   * The keys and folder names of the older layouts. They are names of code that only the migration reads, so they stay
+   * in `names.ts`.
+   */
+  const OLD_LAYOUT_NAMES: ReadonlySet<string> = new Set([
+    ...Object.values(schema1.keys),
+    schema1.briefsDir,
+    schema2.workersKey,
+  ]);
+
+  /**
+   * The old words and the scanned jargon words that a string literal of the source holds, with the file. Comments and
+   * import paths are not text. A name of an older layout in `names.ts` is no text either.
+   */
+  const plainWordHits = (source: string, path: string): string[] =>
     literalsOf(source)
       .filter((literal) => !IMPORT_PATH.test(literal))
-      .flatMap((literal) => oldWordsIn(literal).map((word) => `${relative(SRC, path)}: "${literal}" holds ${word}`));
+      .filter((literal) => path !== NAMES_FILE || !OLD_LAYOUT_NAMES.has(literal))
+      .flatMap((literal) => plainWordsIn(literal).map((word) => `${relative(SRC, path)}: "${literal}" holds ${word}`));
 
-  it('finds no old word in the string literals of src/commands and src/cli', () => {
-    const files = [...allSourceFiles(join(SRC, 'commands')), ...allSourceFiles(join(SRC, 'cli'))];
-    expect(files.length).toBeGreaterThan(10);
-    expect(files.flatMap((path) => oldWordLiterals(readFileSync(path, 'utf8'), path))).toEqual([]);
+  it('scans every folder that prints text, and the top files of src', () => {
+    const scanned = allSourceFiles(SRC).map((path) => relative(SRC, path));
+    for (const folder of TEXT_FOLDERS) {
+      expect(scanned.some((path) => path.startsWith(`${folder}/`)), folder).toBe(true);
+    }
+    expect(scanned).toEqual(expect.arrayContaining(['names.ts', 'glossary.ts', 'main.ts']));
   });
 
-  it('finds an old word in a literal, and leaves comments, import paths and names of code alone', () => {
+  it('finds no old word and no jargon word in the string literals of src', () => {
+    const files = allSourceFiles(SRC);
+    expect(files.length).toBeGreaterThan(60);
+    expect(files.flatMap((path) => plainWordHits(readFileSync(path, 'utf8'), path))).toEqual([]);
+  });
+
+  /**
+   * In user text, "request" means only the item that waits on the owner (the glossary entry, and the name of its term),
+   * and "message" means only the record from another owner. The tmux command `display-message` and the recipe word
+   * "pull request" are other names. A "checkout" of a project is a work copy, or a work tree of git.
+   */
+  const wordRuleHits = (source: string, path: string): string[] =>
+    literalsOf(source)
+      .filter((literal) => !IMPORT_PATH.test(literal))
+      .filter((literal) => literal !== 'display-message' && !(path === NAMES_FILE && literal === 'request'))
+      .map((literal) => literal.replace(/pull requests?/gi, ' '))
+      .filter((literal) => path !== GLOSSARY_FILE && /(?<![A-Za-z0-9_])(?:requests?|messages?|checkouts?)(?![A-Za-z0-9_])/i.test(literal))
+      .map((literal) => `${relative(SRC, path)}: "${literal}"`);
+
+  it('uses the words request and message only in their own sense, and says work copy for a checkout', () => {
+    const files = allSourceFiles(SRC);
+    expect(files.flatMap((path) => wordRuleHits(readFileSync(path, 'utf8'), path))).toEqual([]);
+  });
+
+  it('finds the words request and message in other senses, and leaves the own senses alone', () => {
     const path = join(SRC, 'commands', 'sample.ts');
-    expect(oldWordLiterals("const a = 'the staging folder';", path)).toEqual([
+    expect(wordRuleHits("const a = 'a health request went out';", path)).toHaveLength(1);
+    expect(wordRuleHits("const a = 'Accept it as a message.';", path)).toHaveLength(1);
+    expect(wordRuleHits("const a = 'in its own checkout';", path)).toHaveLength(1);
+    expect(wordRuleHits("const a = 'open a pull request';", path)).toEqual([]);
+    expect(wordRuleHits("const a = 'display-message';", path)).toEqual([]);
+    expect(wordRuleHits("const a = 'request';", NAMES_FILE)).toEqual([]);
+    expect(wordRuleHits("const a = 'request';", path)).toHaveLength(1);
+    expect(wordRuleHits("const a = 'a request waits';", GLOSSARY_FILE)).toEqual([]);
+  });
+
+  it('finds an old word or a jargon word in a literal, and leaves comments, import paths and names of code alone', () => {
+    const path = join(SRC, 'commands', 'sample.ts');
+    expect(plainWordHits("const a = 'the staging folder';", path)).toEqual([
       'commands/sample.ts: "the staging folder" holds staging',
     ]);
-    expect(oldWordLiterals('const a = `a ${x} brief`;', path)).toHaveLength(1);
-    expect(oldWordLiterals("// the staging folder\nconst staging = 'plain';", path)).toEqual([]);
-    expect(oldWordLiterals("import { a } from '../migrate/inspect.js';", path)).toEqual([]);
+    expect(plainWordHits('const a = `a ${x} brief`;', path)).toHaveLength(1);
+    expect(plainWordHits("const a = 'the owner record is stale';", path)).toEqual([
+      'commands/sample.ts: "the owner record is stale" holds owner record',
+    ]);
+    expect(plainWordHits("// the staging folder\nconst staging = 'plain';", path)).toEqual([]);
+    expect(plainWordHits("const schema1 = { keys: { lanes: 'lanes' } };", NAMES_FILE)).toEqual([]);
+    expect(plainWordHits("const a = 'lanes';", path)).toHaveLength(1);
+    expect(plainWordHits("// the heartbeat\nconst heartbeat = 'plain';", path)).toEqual([]);
+    expect(plainWordHits("import { a } from '../migrate/inspect.js';", path)).toEqual([]);
   });
 });
 
