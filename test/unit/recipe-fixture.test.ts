@@ -37,7 +37,13 @@ const options = (extra: Partial<InitOptions> = {}): InitOptions => ({
   ...extra,
 });
 
-/** A person at a terminal window who types the answers in the list, one for each question. */
+/** The question about the hook settings starts with the line that shows the change. */
+const HOOK_QUESTION = 'This changes the settings of Claude Code';
+
+/** The questions of the approval points: the question about the hook settings is no part of them. */
+const approvalQuestions = (deps: FakeDeps): string[] => deps.prompts.filter((question) => !question.startsWith(HOOK_QUESTION));
+
+/** A person at a terminal window who types the answers in the list, one for each question, and says no to the hook settings. */
 const make = (answers: readonly string[] = ['', ''], fixture: GitFixture = {}): FakeDeps => {
   const git = gitHandler({ gh: 'some-login', ...fixture });
   const tmux = tmuxHandler();
@@ -49,7 +55,10 @@ const make = (answers: readonly string[] = ['', ''], fixture: GitFixture = {}): 
     stdinIsTTY: true,
     stdoutIsTTY: true,
     nodeVersion: 'v22.5.0',
-    prompt: () => (queue.length === 0 ? failure('no answer was given') : ok(queue.shift() ?? '')),
+    prompt: (question) => {
+      if (question.startsWith(HOOK_QUESTION)) return ok('');
+      return queue.length === 0 ? failure('no answer was given') : ok(queue.shift() ?? '');
+    },
   });
   for (const tool of TOOLS) deps.seed(`/bin/${tool}`, '');
   return deps;
@@ -81,9 +90,10 @@ const wordsOfAllFiles = (deps: FakeDeps): string[] =>
 describe('the fixture recipe: init (TP-98)', () => {
   it('asks the two approval points of the recipe, in order, and the output holds no software word', async () => {
     const { deps, output } = await initialized();
-    expect(deps.prompts).toHaveLength(2);
-    expect(deps.prompts[0]).toContain('publish');
-    expect(deps.prompts[1]).toContain('send');
+    const questions = approvalQuestions(deps);
+    expect(questions).toHaveLength(2);
+    expect(questions[0]).toContain('publish');
+    expect(questions[1]).toContain('send');
     expect(deps.prompts.flatMap(softwareWordsIn)).toEqual([]);
     expect(softwareWordsIn(textOf(output))).toEqual([]);
     expect(textOf(output)).toContain('Approval points: publish owner, send owner.');

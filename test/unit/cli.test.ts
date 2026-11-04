@@ -253,8 +253,8 @@ describe('the approval flag of init in the command line (TP-37, TP-38, TP-81)', 
     expect(result.out).toContain('owner or delegated');
   });
 
-  it('exits 0 and writes the mode owner for each point when no flag is given', async () => {
-    const result = await runInit([]);
+  it('exits 0 and writes the mode owner for each point when no approval flag is given', async () => {
+    const result = await runInit(['--yes']);
     expect(result.code).toBe(0);
     expect(result.deps.files.get('/w/node/factory.local.yaml')).toMatch(/approval:\n {2}merge: owner\n {2}release: owner\n/);
   });

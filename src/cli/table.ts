@@ -109,7 +109,11 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       },
       [flags.yes]: {
         type: 'boolean',
-        description: `Use the proposed ${places.folder}. Ask no question. Every approval point is ${values.approvalModes[0]}.`,
+        description:
+          `Use the proposed ${places.folder}. Ask no question. Every approval point is ${values.approvalModes[0]}. ` +
+          `Agree to the change of the Claude Code settings of the ${roles.coordinator} (the hook and the status line). ` +
+          `With no terminal window and no ${flagText(flags.yes)}, the command stops before it writes a file. ` +
+          `Inside a ${places.session}, the flag gives no consent for these settings.`,
       },
       [flags.name]: {
         type: 'string',

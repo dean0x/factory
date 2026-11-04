@@ -75,6 +75,7 @@ import {
   type ApprovalChoice,
 } from './init-approval.js';
 import { checkHomeOutsideRoots, leftoverTempFolders, tempFolderWarning } from './init-home.js';
+import { checkHookConsent, writeHookSettings } from './init-hook.js';
 import { planReceivedProjects, runClones, undoClones } from './init-clone.js';
 
 /**
@@ -517,6 +518,9 @@ export const runReceived = async (
   if (!answered.ok) return answered;
   const decision = await decideAcceptance(asking, { home, node: id, yes: options.yes, setup: setup.value });
   if (!decision.ok) return decision;
+  // The hook settings come after the last write. The check of their target and of the consent comes before the first write.
+  const consent = await checkHookConsent(deps, home, options.yes);
+  if (!consent.ok) return consent;
 
   const planned = await planReceived(deps, {
     home,
@@ -539,9 +543,12 @@ export const runReceived = async (
   if (!cloned.ok) return cloned;
   const applied = await applyInit(deps, planned.value);
   if (!applied.ok) return undoClones(deps, cloned.value, [], applied.error);
+  // The root is registered. A failure of the hook settings leaves it, and a second run of init finishes the step.
+  const hook = await writeHookSettings(deps, home, options.yes);
+  if (!hook.ok) return hook;
 
-  const warnings = [...planned.value.warnings, ...applied.value.warnings];
-  const written = [files.localConfig, join(dirs.coordinator, files.claudeMd), `${dirs.state}/`];
+  const warnings = [...planned.value.warnings, ...applied.value.warnings, ...hook.value.warnings];
+  const written = [files.localConfig, join(dirs.coordinator, files.claudeMd), `${dirs.state}/`, ...hook.value.written];
   const kept = decision.value.kind === 'declined' ? declinedLines() : [];
   return ok({
     lines: [
