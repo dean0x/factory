@@ -9,7 +9,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
-import { env } from '../../src/names.js';
+import { env, trackedFiles } from '../../src/names.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { claudeFileText, softwareOwnerModes } from '../helpers/blocks.js';
 import {
@@ -79,6 +79,8 @@ interface Setup {
   readonly tracked?: readonly string[];
   /** The paths that git ignores in the home. Default: git ignores every path. */
   readonly ignored?: readonly string[];
+  /** True: `git check-ignore` fails with exit code 128 for every path. Default: it answers. */
+  readonly ignoreFails?: boolean;
   /** The origin of the home in the factory list. Default: none, so the home counts as received. */
   readonly origin?: 'own' | 'received';
   /** True: the home is the top folder of no git work tree, so git can not list its files. */
@@ -98,6 +100,7 @@ const gitAnswer = (setup: Setup) => (call: RunCall) => {
     if (command === 'rev-parse --is-inside-work-tree --show-prefix') return exited(0, 'true\n\n');
     if (command === 'ls-files -z') return exited(0, (setup.tracked ?? []).map((path) => `${path}\0`).join(''));
     if (call.args[2] === 'check-ignore') {
+      if (setup.ignoreFails === true) return exited(128, '', 'fatal: check-ignore failed\n');
       const asked = call.args.slice(call.args.indexOf('--') + 1);
       const rules = setup.ignored;
       return asked.every((path) => rules === undefined || rules.includes(path)) ? exited(0) : exited(1);
@@ -991,6 +994,22 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     expect(warned.deps.warned.join(' ')).toContain('coordinator/');
   });
 
+  it('stops, and names the command that fixes it, when git can not answer the ignore question for the local file', async () => {
+    const { deps, tmux } = make({ origin: 'own', ignoreFails: true });
+    const error = await stopOf(deps);
+    expect(error.hint).toContain('run "factory doctor"');
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('stops, and names the command that fixes it, when the list of tracked files is at its cap on an own root', async () => {
+    const tracked = Array.from({ length: trackedFiles.maxCount + 1 }, (_value, index) => `docs/f${index}.md`);
+    const { deps, tmux } = make({ origin: 'own', tracked });
+    const error = await stopOf(deps);
+    expect(error.hint).toContain('git rm --cached');
+    expect(error.hint).toContain('run "factory doctor"');
+    expect(tmux.calls).toEqual([]);
+  });
+
   it('goes on, with a warning that names the path, when an own root tracks an instruction file (TP-155)', async () => {
     const { deps } = make({ origin: 'own', tracked: ['AGENTS.md'] });
     const output = await succeeded(deps);
@@ -1071,6 +1090,29 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
     const error = await stopOf(deps);
     expect(error.message).toContain('coordinator/.claude/settings.json');
     expect(error.message).toContain('FACTORY_SESSION');
+  });
+
+  it('stops for a settings file that sets the proxy of the session', async () => {
+    const { deps, tmux } = make();
+    deps.seed(`${HOME}/web/.claude/settings.json`, JSON.stringify({ env: { [env.proxyBaseUrl]: 'http://127.0.0.1:1' } }));
+    const error = await stopOf(deps);
+    expect(error.message).toContain('web/.claude/settings.json');
+    expect(error.message).toContain(env.proxyBaseUrl);
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it('stops for a hook in the coordinator folder, and goes on, with a warning, for a hook in the factory folder', async () => {
+    const hooks = { Stop: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] };
+    const stopped = make();
+    stopped.deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify({ hooks }));
+    const error = await stopOf(stopped.deps);
+    expect(error.message).toContain('coordinator/.claude/settings.local.json');
+    expect(error.message).toContain('hooks');
+
+    const warned = make();
+    warned.deps.seed(`${HOME}/.claude/settings.local.json`, JSON.stringify({ hooks }));
+    expect((await succeeded(warned.deps)).json).toMatchObject({ started: true });
+    expect(warned.deps.warned.join(' ')).toContain('hooks');
   });
 
   it('goes on, with a warning, for a settings file in the coordinator folder and for a whole-tool allow rule (TP-154)', async () => {

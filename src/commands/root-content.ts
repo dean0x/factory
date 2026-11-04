@@ -100,6 +100,13 @@ const USER_FOLDER_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^\s/\\]+|\/home\/[^\
 const doctorAgain = `run "${commandText(commands.doctor)}"`;
 const NOT_VALID = `${files.config} is not valid`;
 
+/** The remedy for a security check that git could not finish: git must work in the factory folder again. */
+const GIT_REMEDY = `Check that git works in the ${places.folder}, then ${doctorAgain}.`;
+
+/** The stop for a list of tracked files over its cap on your own factory, and its remedy line. */
+const OWN_CAP_MESSAGE = `the list of files that git tracks in the ${places.folder} is too long for ${program} to check in full (the most is ${trackedFiles.maxCount} files)`;
+const OWN_CAP_REMEDY = `Remove the files that the ${places.folder} does not need from git with "git rm --cached", commit the change, then ${doctorAgain}.`;
+
 const finding = (id: string, level: FindingLevel, text: string, remedy = ''): RootFinding => ({ id, level, text, remedy });
 
 const notChecked = (id: string, reason: string): RootFinding => finding(id, 'warn', `not checked: ${reason}`);
@@ -145,13 +152,16 @@ interface SetupScan {
   readonly finding: RootFinding | null;
 }
 
-const listTracked = async (deps: Deps, home: string): Promise<TrackedList | null> => {
-  if (!(await isWorkTreeRoot(deps, home))) return null;
-  const list = await trackedFilesOf(deps, home);
-  return list.ok ? list.value : null;
+/** The tracked paths, null when the folder is not the top of a work tree, or the error when git is there and fails. */
+const listTracked = async (deps: Deps, home: string): Promise<CliResult<TrackedList | null>> => {
+  if (!(await isWorkTreeRoot(deps, home))) return ok(null);
+  return trackedFilesOf(deps, home);
 };
 
-/** The ignore rules. The local file and the state folder are a stop. The other folders give one warning. */
+/**
+ * The ignore rules. The local file and the state folder are a stop, also when git can not answer for them: a check that
+ * did not finish is no pass. The other folders give one warning, also when git can not answer for them.
+ */
 const scanIgnoreRules = async (
   deps: Deps,
   home: string,
@@ -165,7 +175,7 @@ const scanIgnoreRules = async (
     { line: `${dirs.state}/`, probe: probes.state },
   ];
   const answer = await ignoredPathsOf(deps, home, [probes.local, probes.state]);
-  if (!answer.ok) return [notChecked(id, answer.error.message)];
+  if (!answer.ok) return [finding(id, 'fail', answer.error.message, GIT_REMEDY)];
   // Git never ignores a path that it tracks. The tracked path is the problem, and it has its own finding.
   const missing = required.filter((entry) => !answer.value.has(entry.probe) && !tracked.includes(entry.probe));
 
@@ -229,24 +239,26 @@ const scanRepo = async (
 ): Promise<RepoScan> => {
   const id = checkIds.rootRepo;
   const received = origin === homeIndex.origins.received;
-  const list = await listTracked(deps, home);
+  const listed = await listTracked(deps, home);
+  const list = listed.ok ? listed.value : null;
   if (list === null) {
     const stop = notListedStop(home);
-    return {
-      findings: [
-        received
-          ? finding(id, 'fail', stop.text, stop.remedy)
-          : notChecked(id, `git cannot list the files that git tracks in ${home}`),
-      ],
-      tracked: null,
-      capped: false,
-      setup: null,
-    };
+    const unlisted = received
+      ? finding(id, 'fail', stop.text, stop.remedy)
+      : listed.ok
+        ? notChecked(id, `git cannot list the files that git tracks in ${home}`)
+        : failureFrom(id, listed.error, GIT_REMEDY);
+    return { findings: [unlisted], tracked: null, capped: false, setup: null };
   }
   const tracked = list.paths;
   const findings: RootFinding[] = [];
-  const capStop = list.reachedCap && received;
-  if (capStop) findings.push(finding(id, 'fail', TRACKED_CAP_MESSAGE, TRACKED_CAP_REMEDY));
+  // A list at its cap is not complete, so the checks of the tracked paths can not finish: a stop on every factory.
+  const capStop = list.reachedCap;
+  if (capStop) {
+    findings.push(
+      received ? finding(id, 'fail', TRACKED_CAP_MESSAGE, TRACKED_CAP_REMEDY) : finding(id, 'fail', OWN_CAP_MESSAGE, OWN_CAP_REMEDY),
+    );
+  }
 
   const set = trackedSetOf(tracked);
   let linkStop = false;
@@ -345,7 +357,10 @@ export const scanTrackedTexts = async (
       unread.push(`${shown} (cannot be read)`);
       continue;
     }
-    if (text.value.includes(NUL)) continue;
+    if (text.value.includes(NUL)) {
+      unread.push(`${shown} (binary or UTF-16)`);
+      continue;
+    }
     if (textHasToken(text.value)) withToken.push(shown);
     if (text.value.toLowerCase().includes(address.scheme) || USER_FOLDER_PATH.test(text.value)) withAddress.push(shown);
   }
@@ -479,19 +494,35 @@ const settingsOfFolder = async (
     })),
     findings:
       settings.length > MAX_SETTINGS_FILES
-        ? [notChecked(id, `${shown} holds more than ${MAX_SETTINGS_FILES} settings files, and ${program} read the first ${MAX_SETTINGS_FILES}`)]
+        ? [
+            finding(
+              id,
+              'fail',
+              `${shown} holds more than ${MAX_SETTINGS_FILES} settings files, and ${program} does not read all of them`,
+              `Move the settings files that the session does not need out of ${shown}, then ${doctorAgain}.`,
+            ),
+          ]
         : [],
   };
 };
 
-/** One settings file: its failures (a setting that skips the permission prompts, a change of the session marker) and warnings. */
+/**
+ * One settings file: its failures and warnings. A setting that skips the permission prompts, a change of the session
+ * marker and a setting of the proxy or the credential of the session are failures. A setting that runs a command is a
+ * failure where a settings file is not expected (`presence` is set), and a warning in the factory folder itself.
+ */
 const judgeSettings = (source: SettingsSource, text: string): readonly RootFinding[] => {
   const id = checkIds.permissionMode;
   const facts = analyzeSettings(text);
   const shown = shownPath(source.display);
+  const commandNames = facts.runsCommands.join(', ');
   const reasons = [
     ...(facts.skips.length === 0 ? [] : [`skips the permission checks (${facts.skips.join('; ')})`]),
     ...(facts.changesSessionMarker ? [`sets or clears ${env.session} in its env values`] : []),
+    ...(facts.movesTraffic.length === 0
+      ? []
+      : [`sets the proxy or the credential of the session in its env values (${facts.movesTraffic.join(', ')})`]),
+    ...(source.presence !== null && facts.runsCommands.length > 0 ? [`runs a command through ${commandNames}`] : []),
   ];
   const wholeTool = facts.wholeToolRules.map(shownPath);
   const narrow = facts.narrowRules.map(shownPath);
@@ -503,6 +534,16 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
     ...(source.presence === null
       ? []
       : [finding(id, 'warn', `${shown} is a settings file in ${source.presence}, and the sessions of Claude Code read it`, 'Remove the file, or keep it on purpose.')]),
+    ...(source.presence !== null || facts.runsCommands.length === 0
+      ? []
+      : [
+          finding(
+            id,
+            'warn',
+            `${shown} runs a command through ${commandNames} with no prompt`,
+            `Check the ${plural(facts.runsCommands.length, 'setting', 'settings')} in ${shown}, or keep ${plural(facts.runsCommands.length, 'it', 'them')} on purpose.`,
+          ),
+        ]),
     ...(wholeTool.length === 0
       ? []
       : [finding(id, 'warn', `${shown} allows every use of ${plural(wholeTool.length, 'a tool', 'tools')}: ${namedItems(wholeTool)}`, `Narrow the rule in ${shown}, or keep it on purpose.`)]),
@@ -566,7 +607,13 @@ const scanSettings = async (
     if (text.ok) findings.push(...judgeSettings(source, text.value));
     else unread.push(`${shownPath(source.display)} (cannot be read)`);
   }
-  return withoutRepeats([...findings, ...(unread.length === 0 ? [] : [notChecked(id, `cannot read ${namedItems(unread)}`)])]);
+  const unreadFinding = finding(
+    id,
+    'fail',
+    `the scan of the settings files did not read ${namedItems(unread)}`,
+    `Make each file a plain file that ${program} can read, or remove it, then ${doctorAgain}.`,
+  );
+  return withoutRepeats([...findings, ...(unread.length === 0 ? [] : [unreadFinding])]);
 };
 
 // ---- The approval points ----
@@ -603,19 +650,7 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
     config === null ? [] : config.recipe.projects.map((project) => project.path).filter((path) => projectPathIssue(path) === null);
   const repo = await scanRepo(deps, home, origin, projectPaths, config);
   const received = origin === homeIndex.origins.received;
-  const readTexts = repo.tracked !== null && !(repo.capped && received);
-  const texts = readTexts ? await scanTrackedTexts(deps, home, repo.tracked ?? []) : [];
-  const capNote =
-    repo.capped && !received
-      ? [
-          finding(
-            checkIds.rootFiles,
-            'warn',
-            `the git repo of the ${places.folder} tracks more than ${trackedFiles.maxCount} files, and the scan for tokens read the first ${trackedFiles.maxCount}`,
-            'Remove the files that the folder does not need from git with "git rm --cached".',
-          ),
-        ]
-      : [];
+  const texts = repo.tracked !== null && !repo.capped ? await scanTrackedTexts(deps, home, repo.tracked) : [];
   const projects = await scanProjects(deps, home, config);
   const settings = await scanSettings(deps, home, projectPaths, repo.tracked ?? []);
   const delegations = config === null ? null : await delegationReport(deps, home, config);
@@ -632,7 +667,6 @@ export const scanRoot = async (deps: Deps, home: string, config: FactoryConfig |
       ...repo.findings,
       ...(received || setup.finding === null ? [] : [setup.finding]),
       ...texts,
-      ...capNote,
       ...projects,
       ...settings,
       ...(delegations === null ? [] : delegationFindings(delegations)),
@@ -662,7 +696,7 @@ const OK_TEXT: Readonly<Record<string, string>> = {
   [checkIds.rootRepo]: `the git repo of the ${places.folder} tracks no path that must stay on this machine, and git ignores ${files.localConfig} and ${dirs.state}/`,
   [checkIds.rootFiles]: 'no tracked text file holds a token, a file URL or a user folder path',
   [checkIds.projectPaths]: `every project folder is inside the ${places.folder}`,
-  [checkIds.permissionMode]: 'no settings file skips the permission checks',
+  [checkIds.permissionMode]: 'no settings file skips the permission checks, runs a command, or sets the proxy or the credential of the session',
 };
 
 const RESULT_ORDER = [checkIds.rootRepo, checkIds.rootFiles, checkIds.projectPaths, checkIds.permissionMode, checkIds.delegations];

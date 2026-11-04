@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { failure } from '../../src/cli/errors.js';
 import { exited, missingProgram, type RunCall, type RunHandler } from './fake-deps.js';
 
 export interface FakeRepo {
@@ -30,6 +31,8 @@ export interface GitFixture {
   readonly tracked?: Readonly<Record<string, readonly string[]>>;
   /** The exit code of `git ls-files`. Default: 0. */
   readonly lsFilesExit?: number;
+  /** True when the output of `git ls-files` is larger than the program reads: the run fails and gives no path. */
+  readonly lsFilesOverflow?: boolean;
   /** What `git status --porcelain -z` prints, by folder: for example " M node.json\0". A folder with no entry is clean. */
   readonly status?: Readonly<Record<string, string>>;
   /**
@@ -39,6 +42,8 @@ export interface GitFixture {
   readonly ignored?: Readonly<Record<string, readonly string[]>>;
   /** The exit code of `git check-ignore` when it fails. Default: none, the command works. */
   readonly checkIgnoreExit?: number;
+  /** The paths for which `git check-ignore` fails with exit code 128. The other paths get the answer of the rules. */
+  readonly checkIgnoreFailsFor?: readonly string[];
   /** The folders that stay out of every work tree, also after `git init` ran in them. */
   readonly noWorkTree?: readonly string[];
 }
@@ -98,12 +103,16 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     if (rest === 'ls-files -z') {
       if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
       if ((fixture.lsFilesExit ?? 0) !== 0) return exited(fixture.lsFilesExit ?? 0, '', 'fatal: ls-files failed');
+      if (fixture.lsFilesOverflow === true) return failure('cannot run git: ERR_CHILD_PROCESS_STDIO_MAXBUFFER');
       return exited(0, (fixture.tracked?.[dir] ?? []).map((path) => `${path}\0`).join(''));
     }
     if (call.args[2] === 'check-ignore') {
       if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
       if (fixture.checkIgnoreExit !== undefined) return exited(fixture.checkIgnoreExit, '', 'fatal: check-ignore failed');
       const asked = call.args.slice(call.args.indexOf('--') + 1);
+      if (asked.some((path) => fixture.checkIgnoreFailsFor?.includes(path) === true)) {
+        return exited(128, '', 'fatal: check-ignore failed');
+      }
       const rules = fixture.ignored?.[dir];
       const found = rules === undefined ? asked : asked.filter((path) => rules.includes(path));
       return found.length === 0 ? exited(1) : exited(0);

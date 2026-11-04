@@ -52,6 +52,8 @@ describe('textHasToken (TP-45)', () => {
     ['a base64 secret with a plus sign', 'secret: wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY12'],
     ['a base64url run', 'value: Zm9vYmFyQmF6X3F1eC1URVNUMDEyMzQ1Njc4OWFiY2RlZg'],
     ['a token on the last line of many', `${'a line of text\n'.repeat(200)}${FAKE_GOOGLE_API_KEY}`],
+    ['a base64 secret with one slash and no plus sign', 'secret: wJalrXUtnFEMI/K7MDENGbPxRfiCYEXAMPLEKEY12'],
+    ['a base64 secret with two slashes and no plus sign', 'secret = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
   ])('is true for %s', (_name, text) => {
     expect(textHasToken(text)).toBe(true);
   });
@@ -59,6 +61,7 @@ describe('textHasToken (TP-45)', () => {
   it.each([
     ['a long path with upper case, lower case and digits', 'See /var/folders/fn/xhrkn4ys4d37t9fd8kfmd4rw0000gn/T/Work/payments-team-factory-2 for it.'],
     ['a long URL', 'https://github.com/Payments-Team-Org/payments-team-factory-service-2'],
+    ['a long absolute path with no hyphen', 'Folder: /Users/example/Sandbox/Project2024/docs/DesignNotes2'],
     ['plain prose', 'The quick brown fox jumps over the lazy dog and keeps running.'],
     ['a short hex string', 'commit da39a3ee'],
     ['a prefix alone', 'The key starts with sk-ant- and goes on.'],

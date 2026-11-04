@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { acceptEditsMode, claudeSettingKeys, env, permissionSkipList, type PermissionSkip } from '../../src/names.js';
+import {
+  acceptEditsMode,
+  claudeSettingKeys,
+  commandSettingKeys,
+  env,
+  permissionSkipList,
+  program,
+  trafficEnvNames,
+  type PermissionSkip,
+} from '../../src/names.js';
 import { analyzeSettings, isWholeToolRule, MAX_LISTED_RULES, MAX_RULE_CHARS } from '../../src/safety/settings.js';
 
 /** A settings text that holds one item of the permission-skip list and nothing else. */
@@ -97,6 +106,85 @@ describe('the session marker in the environment values (TP-179)', () => {
   it('is not a skip setting: it has its own result', () => {
     const facts = analyzeSettings(JSON.stringify({ env: { [env.session]: '' } }));
     expect(facts.skips).toEqual([]);
+  });
+
+  it('finds it when the file writes the env key twice and only the first one holds it', () => {
+    const first = `{"env": {"${env.session}": ""}, "env": {"OTHER": "1"}}`;
+    const last = `{"env": {"OTHER": "1"}, "env": {"${env.session}": ""}}`;
+    expect(analyzeSettings(first).changesSessionMarker).toBe(true);
+    expect(analyzeSettings(last).changesSessionMarker).toBe(true);
+  });
+
+  it('finds nothing when the file writes the env key twice and the name stands only as a value', () => {
+    const text = `{"env": {"A": "1"}, "env": {"OTHER": "${env.session}"}}`;
+    expect(analyzeSettings(text).changesSessionMarker).toBe(false);
+  });
+});
+
+describe('the env variables that set the proxy or the credential of the session', () => {
+  it.each(trafficEnvNames.map((name) => [name] as const))('finds %s in the env values', (name) => {
+    expect(analyzeSettings(JSON.stringify({ env: { [name]: 'x' } })).movesTraffic).toEqual([name]);
+  });
+
+  it('finds a name in other letter case, and every name of one file in the order of the list', () => {
+    const facts = analyzeSettings(JSON.stringify({ env: { anthropic_api_key: 'x', [env.proxyBaseUrl]: 'http://h' } }));
+    expect(facts.movesTraffic).toEqual([env.proxyBaseUrl, 'ANTHROPIC_API_KEY']);
+  });
+
+  it.each([
+    ['another variable', { env: { OTHER: '1' } }],
+    ['the name in a value', { env: { OTHER: env.proxyBaseUrl } }],
+    ['the name outside env', { hooks: { env: { [env.proxyBaseUrl]: 'x' } } }],
+    ['no env', {}],
+  ])('finds nothing for %s', (_name, value) => {
+    expect(analyzeSettings(JSON.stringify(value)).movesTraffic).toEqual([]);
+  });
+
+  it('finds a name in a file that is not valid JSON, and in a file that writes the env key twice', () => {
+    expect(analyzeSettings(`{"env": {"${env.proxyBaseUrl}": "http://h"},`).movesTraffic).toEqual([env.proxyBaseUrl]);
+    const repeated = `{"env": {"${env.proxyBaseUrl}": "http://h"}, "env": {"OTHER": "1"}}`;
+    expect(analyzeSettings(repeated).movesTraffic).toEqual([env.proxyBaseUrl]);
+  });
+});
+
+describe('the settings that run a command', () => {
+  const hookOf = (command: string): unknown => ({ SessionStart: [{ hooks: [{ type: 'command', command }] }] });
+
+  it.each(commandSettingKeys.map((key) => [key] as const))('finds %s', (key) => {
+    const value = key === claudeSettingKeys.hooks ? hookOf('echo hi') : { type: 'command', command: 'echo hi' };
+    expect(analyzeSettings(JSON.stringify({ [key]: value })).runsCommands).toEqual([key]);
+  });
+
+  it('finds a setting that holds a plain command text', () => {
+    expect(analyzeSettings(JSON.stringify({ apiKeyHelper: './get-key.sh' })).runsCommands).toEqual(['apiKeyHelper']);
+  });
+
+  it.each([
+    ['the status line of the program', { statusLine: { type: 'command', command: `${program} hook statusline` } }],
+    ['the hooks of the program', { hooks: { ...(hookOf(`${program} hook sessionstart`) as object), Stop: [{ hooks: [{ type: 'command', command: `${program} hook stop` }] }] } }],
+    ['an empty hooks object', { hooks: {} }],
+  ])('does not count %s', (_name, value) => {
+    expect(analyzeSettings(JSON.stringify(value)).runsCommands).toEqual([]);
+  });
+
+  it.each([
+    ['a hook with another command', { hooks: hookOf('echo hi') }],
+    ['one other command among the hooks of the program', { hooks: { Stop: [{ hooks: [{ type: 'command', command: `${program} hook stop` }, { type: 'command', command: 'echo hi' }] }] } }],
+    ['a command that only starts like the hook of the program', { hooks: hookOf(`${program} hook stop; echo hi`) }],
+    ['a hook of another type', { hooks: { Stop: [{ hooks: [{ type: 'prompt', command: `${program} hook stop` }] }] } }],
+    ['hooks that are not a list of groups', { hooks: { Stop: 'echo hi' } }],
+    ['a status line with another command', { statusLine: { type: 'command', command: 'echo hi' } }],
+    ['a status line that is only a text', { statusLine: `${program} hook statusline` }],
+  ])('counts %s', (_name, value) => {
+    expect(analyzeSettings(JSON.stringify(value)).runsCommands).toEqual([Object.keys(value)[0]]);
+  });
+
+  it('finds the settings of a file that is not valid JSON', () => {
+    expect(analyzeSettings('{"hooks": {"Stop": []},').runsCommands).toEqual([claudeSettingKeys.hooks]);
+  });
+
+  it('finds nothing in a file with no such setting', () => {
+    expect(analyzeSettings(JSON.stringify({ permissions: { allow: ['Bash(npm test)'] }, other: { hooks: 1 } })).runsCommands).toEqual([]);
   });
 });
 
@@ -206,6 +294,8 @@ describe('a text that is not a settings object', () => {
       valid: true,
       skips: [],
       changesSessionMarker: false,
+      movesTraffic: [],
+      runsCommands: [],
       wholeToolRules: [],
       narrowRules: [],
       acceptEdits: false,

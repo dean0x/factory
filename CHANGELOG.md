@@ -109,13 +109,15 @@ Platforms and help
 
 Security
 
-- `start` and `doctor` find a Claude settings file that skips the permission prompts, or that sets or clears `FACTORY_SESSION`, in `coordinator/`, in a project folder or at a tracked path. `doctor` fails and `start` exits with code 4.
+- `start` and `doctor` find a Claude settings file that skips the permission prompts, that sets or clears `FACTORY_SESSION`, or that sets the proxy or the credential of the session in `env`, in `coordinator/`, in a project folder or at a tracked path. `doctor` fails and `start` exits with code 4. A settings file in `coordinator/` or in a project folder that runs a command (a hook, a status line or a key helper) stops them too. The hook and the status line that `factory` writes itself do not count.
+- A check of a security boundary that can not finish stops `start` with exit code 4, and `doctor` fails: git fails, a settings folder holds more than 64 settings files, or a settings file can not be read.
+- The token scan names a tracked file that holds a NUL byte (a binary file or a file in UTF-16) as not scanned. A base64 secret that holds a slash and no plus sign is no longer taken for a path.
 - `start` and `doctor` warn about a rule that allows a whole tool and about a setting that approves project MCP servers.
 - `init` and `start` exit with code 4 when the config repo tracks `factory.local.yaml`, a path in `.factory/` or a path in `coordinator/`, or when git does not ignore the local file or the state folder. `doctor` reports it.
 - `doctor` fails, and `start` exits with code 4, when a tracked text file holds a value that looks like a password or a token. The message names the file and never prints the value.
 - A clone URL with a password, a token or a user name in an `https://` URL is refused (exit code 2) before any clone. `init` never writes such a value.
 - A project path that is outside the factory folder, or reserved, is refused (exit code 4) before any clone.
-- A received factory needs your acceptance of the setup text and of every other tracked file before `start` runs. A tracked link, or a list of tracked files over its cap, stops the command with exit code 4.
+- A received factory needs your acceptance of the setup text and of every other tracked file before `start` runs. A tracked link stops the command with exit code 4. A list of tracked files over its cap stops `start` with exit code 4 on every factory, and `init` too on a received factory.
 - Only `init` in a terminal window outside a factory session writes the record of a `delegated` approval point.
 - `init`, `upgrade` and `start` exit with code 4 for a link, or for a path that resolves outside the factory folder, in `setup/`, in `coordinator/` or in the backup of a block.
 - The factory list and the stores of the approval records and of the setup acceptances are files of mode 600 in a folder of mode 700. `factory` refuses a file that another user owns or that a group or other user can write.

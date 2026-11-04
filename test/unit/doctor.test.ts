@@ -34,7 +34,7 @@ import { ok } from '../../src/core/result.js';
 import { checkIds, instructionFiles } from '../../src/names.js';
 import { inspectState } from '../../src/state/load.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
-import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, registerRoot, withFsWatch, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { checkChildren, inspectConfig, runDoctor, runInit } from '../helpers/package-registry.js';
@@ -522,6 +522,33 @@ describe('doctor: root checks and the settings of the session folders', () => {
     const results = await checksOf(deps);
     expect(levelOf(results, 'permission-mode')).toBe('fail');
     expect(textOfCheck(results, 'permission-mode')).toContain(tracked);
+  });
+
+  it('fails for the proxy variable and for a hook in the settings of a session folder', async () => {
+    const proxy = await initialized();
+    proxy.seed(`${HOME}/coordinator/.claude/settings.local.json`, '{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:1"}}');
+    const proxyResults = await checksOf(proxy);
+    expect(levelOf(proxyResults, 'permission-mode')).toBe('fail');
+    expect(textOfCheck(proxyResults, 'permission-mode')).toContain('ANTHROPIC_BASE_URL');
+
+    const hook = await initialized();
+    hook.seed(`${HOME}/coordinator/.claude/settings.local.json`, '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo hi"}]}]}}');
+    const hookResults = await checksOf(hook);
+    expect(levelOf(hookResults, 'permission-mode')).toBe('fail');
+    expect(textOfCheck(hookResults, 'permission-mode')).toContain('hooks');
+  });
+
+  it('fails, and names the command that fixes it, when git can not answer the ignore question', async () => {
+    const deps = await initialized();
+    const broken: FakeDeps = {
+      ...deps,
+      run: async (command, args, options) =>
+        args.includes('check-ignore') ? exited(128, '', 'fatal: check-ignore failed') : deps.run(command, args, options),
+    };
+    const output = await doctor(broken);
+    expect(levelOf(output.json['checks'] as CheckResult[], 'root-repo')).toBe('fail');
+    expect(textOfCheck(output.json['checks'] as CheckResult[], 'root-repo')).toContain('run "factory doctor"');
+    expect(output.failed).toBe(true);
   });
 
   it('fails when the root repo tracks the local file (TP-20)', async () => {

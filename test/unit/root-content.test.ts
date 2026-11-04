@@ -18,7 +18,9 @@ import {
   claudeSettingKeys,
   env,
   permissionSkipList,
+  program,
   trackedFiles,
+  trafficEnvNames,
   values,
 } from '../../src/names.js';
 import type { ApprovalMode } from '../../src/recipes/index.js';
@@ -219,10 +221,28 @@ describe('root repo: the ignore rules (TP-61)', () => {
     expect(textOf(found, checkIds.rootRepo)).toContain('must stay on this machine');
   });
 
-  it('warns that it did not check when git cannot answer', async () => {
-    const found = await scan(make({ git: { checkIgnoreExit: 128 } }));
+  it.each(['own', 'received'] as const)(
+    'fails on a %s root, and names the command that fixes it, when git cannot answer for the local file or the state folder',
+    async (origin) => {
+      const found = await scan(make({ origin, git: { checkIgnoreFailsFor: ['factory.local.yaml'] } }));
+      expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
+      const stop = requireRootClean(found);
+      if (stop.ok) throw new Error('expected a stop');
+      expect(stop.error.kind).toBe('safety');
+      expect(stop.error.hint).toContain('run "factory doctor"');
+    },
+  );
+
+  it('fails when git cannot answer for the state folder, too', async () => {
+    const found = await scan(make({ git: { checkIgnoreFailsFor: ['.factory/node.json'] } }));
+    expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
+  });
+
+  it('warns that it did not check, and does not stop, when git cannot answer for the advised folders only', async () => {
+    const found = await scan(make({ git: { checkIgnoreFailsFor: ['coordinator/CLAUDE.md'] } }));
     expect(levelsOf(found, checkIds.rootRepo)).toEqual(['warn']);
     expect(textOf(found, checkIds.rootRepo)).toContain('not checked');
+    expect(requireRootClean(found).ok).toBe(true);
   });
 });
 
@@ -519,6 +539,33 @@ describe('root repo: git can not list the files (TP-61)', () => {
     const found = await scan(make({ origin: 'received', git: { lsFilesExit: 1 } }));
     expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
   });
+
+  it('fails on an own root when the command of git fails, and names the command that fixes it', async () => {
+    const found = await scan(make({ origin: 'own', git: { lsFilesExit: 1 } }));
+    expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
+    const stop = requireRootClean(found);
+    if (stop.ok) throw new Error('expected a stop');
+    expect(stop.error.hint).toContain('run "factory doctor"');
+  });
+
+  it.each([
+    ['holds more files than the cap', {}, Array.from({ length: trackedFiles.maxCount + 1 }, (_value, index) => `docs/f${index}.md`)],
+    ['gives more output than the program reads', { lsFilesOverflow: true }, []],
+  ] as const)('fails on an own root when the list of tracked files %s, and names the command that fixes it', async (_name, git, tracked) => {
+    const found = await scan(make({ origin: 'own', tracked, git }));
+    expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
+    expect(levelsOf(found, checkIds.rootFiles)).toEqual([]);
+    const stop = requireRootClean(found);
+    if (stop.ok) throw new Error('expected a stop');
+    expect(stop.error.kind).toBe('safety');
+    expect(stop.error.hint).toContain('git rm --cached');
+    expect(stop.error.hint).toContain('run "factory doctor"');
+  });
+
+  it('fails on a received root when the output of git is larger than the program reads', async () => {
+    const found = await scan(make({ origin: 'received', git: { lsFilesOverflow: true } }));
+    expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
+  });
 });
 
 describe('root files: tokens (TP-45, TP-134)', () => {
@@ -557,10 +604,19 @@ describe('root files: tokens (TP-45, TP-134)', () => {
     expect(text).not.toContain('b.md');
   });
 
-  it('does not scan a file that is not text', async () => {
+  it('does not scan a file that is not text, and names it as not scanned', async () => {
     const deps = make({ tracked: ['bin/data'] });
     deps.seed(`${HOME}/bin/data`, `\u0000${FAKE_GITHUB_TOKEN}`);
-    expect(of(await scan(deps), checkIds.rootFiles)).toEqual([]);
+    const found = await scan(deps);
+    expect(levelsOf(found, checkIds.rootFiles)).toEqual(['warn']);
+    expect(textOf(found, checkIds.rootFiles)).toContain('bin/data (binary or UTF-16)');
+    expect(textOf(found, checkIds.rootFiles)).not.toContain(FAKE_GITHUB_TOKEN);
+  });
+
+  it('names a file in UTF-16 as not scanned', async () => {
+    const deps = make({ tracked: ['docs/.env.txt'] });
+    deps.seed(`${HOME}/docs/.env.txt`, Array.from(`token: ${FAKE_GITHUB_TOKEN}`).join('\u0000'));
+    expect(textOf(await scan(deps), checkIds.rootFiles)).toContain('docs/.env.txt (binary or UTF-16)');
   });
 
   it('skips a tracked path that is not on disk', async () => {
@@ -615,12 +671,13 @@ describe('root files: the caps of the token scan (TP-93)', () => {
     expect(findings[0]?.text).toContain('and 5 more');
   });
 
-  it('says on an own root that the scan read the first files of a list at its cap', async () => {
+  it('reads no file of a list at its cap: the stop of the list is the only finding', async () => {
     const tracked = Array.from({ length: trackedFiles.maxCount + 3 }, (_value, index) => `docs/f${index}.md`);
-    const found = await scan(make({ origin: 'own', tracked }));
-    expect(levelsOf(found, checkIds.rootFiles)).toEqual(['warn']);
-    expect(textOf(found, checkIds.rootFiles)).toContain(`more than ${trackedFiles.maxCount} files`);
-    expect(hasRootFailure(found)).toBe(false);
+    const deps = make({ origin: 'own', tracked });
+    deps.seed(`${HOME}/docs/f0.md`, FAKE_GITHUB_TOKEN);
+    const found = await scan(deps);
+    expect(levelsOf(found, checkIds.rootFiles)).toEqual([]);
+    expect(levelsOf(found, checkIds.rootRepo)).toEqual(['fail']);
   });
 
   it('reads no file when the list is empty', async () => {
@@ -878,6 +935,70 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
     });
   });
 
+  describe('the proxy and the credential of the session, and the settings that run a command', () => {
+    const hooksOf = (command: string): unknown => ({ Stop: [{ hooks: [{ type: 'command', command }] }] });
+
+    describe.each(PLACES)('in %s', (_name, folder, shown) => {
+      it.each(trafficEnvNames.map((name) => [name] as const))('fails for %s in the env values, with one remedy line', async (name) => {
+        const deps = make();
+        put(deps, folder, JSON.stringify({ env: { [name]: 'x' } }));
+        const found = await scan(deps);
+        const stop = of(found, checkIds.permissionMode).find((entry) => entry.level === 'fail');
+        expect(stop?.text).toContain(shown);
+        expect(stop?.text).toContain(name);
+        expect(stop?.remedy).toContain('run "factory doctor"');
+        expect(requireRootClean(found).ok).toBe(false);
+      });
+
+      it('does not count the hook and the status line that the program writes', async () => {
+        const deps = make();
+        put(deps, folder, JSON.stringify({ hooks: hooksOf(`${program} hook stop`), statusLine: { type: 'command', command: `${program} hook statusline` } }));
+        const text = textOf(await scan(deps), checkIds.permissionMode);
+        expect(text).not.toContain('run a command');
+        expect(requireRootClean(await scan(deps)).ok).toBe(true);
+      });
+    });
+
+    it.each([
+      ['the coordinator folder', 'coordinator', 'coordinator/.claude/settings.local.json'],
+      ['a project folder', 'web', 'web/.claude/settings.local.json'],
+    ] as const)('fails in %s for a setting that runs a command, and names the setting and the file', async (_name, folder, shown) => {
+      const deps = make();
+      put(deps, folder, JSON.stringify({ hooks: hooksOf('echo hi'), apiKeyHelper: './key.sh' }));
+      const found = await scan(deps);
+      const stop = of(found, checkIds.permissionMode).find((entry) => entry.level === 'fail');
+      expect(stop?.text).toContain(shown);
+      expect(stop?.text).toContain('hooks');
+      expect(stop?.text).toContain('apiKeyHelper');
+      expect(stop?.remedy).toContain(`Remove the setting from ${shown}`);
+      expect(requireRootClean(found).ok).toBe(false);
+    });
+
+    it('warns, and does not stop, in the factory folder itself for a setting that runs a command', async () => {
+      const deps = make();
+      put(deps, '', JSON.stringify({ statusLine: { type: 'command', command: 'echo hi' } }));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
+      expect(textOf(found, checkIds.permissionMode)).toContain('.claude/settings.local.json');
+      expect(textOf(found, checkIds.permissionMode)).toContain('statusLine');
+      expect(requireRootClean(found).ok).toBe(true);
+    });
+
+    it('warns, and does not stop, for a tracked settings path of the root that runs a command', async () => {
+      const deps = make({ tracked: ['tools/.claude/settings.json'] });
+      deps.seed(`${HOME}/tools/.claude/settings.json`, JSON.stringify({ hooks: hooksOf('echo hi') }));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
+      expect(requireRootClean(found).ok).toBe(true);
+    });
+
+    it('says in the ok text of the check what it looked for', async () => {
+      const text = rootCheckResults(await scan(make())).find((entry) => entry.id === checkIds.permissionMode)?.text ?? '';
+      expect(text).toContain('runs a command');
+      expect(text).toContain('proxy or the credential');
+    });
+  });
+
   describe('the tracked settings paths of the root, at any depth (TP-168)', () => {
     const bypass = JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } });
 
@@ -919,7 +1040,7 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
   });
 
   describe('a file that can not be used', () => {
-    it('warns, and names the file, when a settings file can not be read', async () => {
+    it('fails, names the file and the command that fixes it, when a settings file can not be read', async () => {
       const deps = make();
       put(deps, '', '{}');
       deps.seed(`${HOME}/.claude/settings.json`, '{}');
@@ -928,9 +1049,42 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
           ? { ok: false, error: { kind: 'failure', message: `cannot read ${path}: EACCES` } }
           : deps.fs.readTextLimited(path, max);
       const found = await scanRoot({ ...deps, fs: { ...deps.fs, readTextLimited } }, HOME, sampleConfig());
-      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['fail']);
       expect(textOf(found, checkIds.permissionMode)).toContain('.claude/settings.local.json');
       expect(textOf(found, checkIds.permissionMode)).not.toContain('.claude/settings.json');
+      const stop = requireRootClean(found);
+      if (stop.ok) throw new Error('expected a stop');
+      expect(stop.error.hint).toContain('run "factory doctor"');
+    });
+
+    it('fails when a tracked settings path can not be read, and when it is a link', async () => {
+      const path = 'tools/.claude/settings.json';
+      const deps = make({ tracked: [path, 'x/.claude/settings.json'], links: { [`${HOME}/x/.claude/settings.json`]: '/elsewhere/s.json' } });
+      deps.seed('/elsewhere/s.json', '{}');
+      const lstat: FakeDeps['fs']['lstat'] = async (target) =>
+        target === `${HOME}/${path}` ? failure('cannot stat: EACCES') : deps.fs.lstat(target);
+      const found = await scanRoot({ ...deps, fs: { ...deps.fs, lstat } }, HOME, sampleConfig());
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['fail']);
+      expect(textOf(found, checkIds.permissionMode)).toContain(path);
+      expect(textOf(found, checkIds.permissionMode)).toContain('x/.claude/settings.json (a link)');
+    });
+
+    it('fails when a folder holds more settings files than the check reads, and names the command that fixes it', async () => {
+      const deps = make();
+      for (let index = 0; index < 65; index += 1) deps.seed(`${HOME}/coordinator/.claude/settings.${String(index).padStart(2, '0')}.json`, '{}');
+      const found = await scan(deps);
+      const stops = of(found, checkIds.permissionMode).filter((entry) => entry.level === 'fail');
+      expect(stops).toHaveLength(1);
+      expect(stops[0]?.text).toContain('coordinator/.claude');
+      expect(stops[0]?.text).toContain('more than 64 settings files');
+      expect(stops[0]?.remedy).toContain('run "factory doctor"');
+      expect(requireRootClean(found).ok).toBe(false);
+    });
+
+    it('does not fail for a folder that holds as many settings files as the check reads', async () => {
+      const deps = make();
+      for (let index = 0; index < 64; index += 1) deps.seed(`${HOME}/coordinator/.claude/settings.${String(index).padStart(2, '0')}.json`, '{}');
+      expect(levelsOf(await scan(deps), checkIds.permissionMode)).not.toContain('fail');
     });
 
     it('fails for a file that skips the checks, even when another file can not be read', async () => {
@@ -945,12 +1099,13 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       expect(levelsOf(found, checkIds.permissionMode)).toContain('fail');
     });
 
-    it('reads a file up to the cap of bytes only, and warns for a larger one', async () => {
+    it('reads a file up to the cap of bytes only, and fails for a larger one', async () => {
       const deps = make();
       put(deps, 'web', ' '.repeat(trackedFiles.maxFileBytes + 1));
       const found = await scan(deps);
-      expect(levelsOf(found, checkIds.permissionMode)).toContain('warn');
+      expect(levelsOf(found, checkIds.permissionMode)).toContain('fail');
       expect(textOf(found, checkIds.permissionMode)).toContain('web/.claude/settings.local.json');
+      expect(requireRootClean(found).ok).toBe(false);
     });
 
     it('warns that a file is not valid JSON, and still fails for a skip setting in it', async () => {

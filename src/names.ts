@@ -182,6 +182,8 @@ export const claudeSettingKeys = {
   allow: 'allow',
   defaultMode: 'defaultMode',
   env: 'env',
+  hooks: 'hooks',
+  statusLine: 'statusLine',
   approveAllMcp: 'enableAllProjectMcpServers',
   approveMcpList: 'enabledMcpjsonServers',
 } as const;
@@ -262,6 +264,34 @@ export const env = {
   stateHome: 'XDG_STATE_HOME',
   userHome: 'HOME',
 } as const;
+
+/**
+ * The settings of Claude Code that run a command with no permission prompt: the hooks, the status line and the helpers that
+ * give a credential or a header (the settings reference, https://code.claude.com/docs/en/settings-reference). A checked
+ * settings file with one of them gives a finding, except for the hook and the status line that the program writes itself.
+ */
+export const commandSettingKeys = [
+  claudeSettingKeys.hooks,
+  claudeSettingKeys.statusLine,
+  'apiKeyHelper',
+  'awsAuthRefresh',
+  'awsCredentialExport',
+  'otelHeadersHelper',
+] as const;
+
+/** The command of a hook or of the status line that the program writes: `<program> hook <event>` or `<program> hook statusline`. */
+export const ownHookCommand = new RegExp(`^${program} hook [A-Za-z][A-Za-z-]{0,31}$`);
+
+/**
+ * The `env` variables of a settings file that set the proxy or the credential of a session. The launch removes the proxy
+ * variable and sets it from the config only (design 4.6), so a checked settings file must not set any of these.
+ */
+export const trafficEnvNames = [
+  env.proxyBaseUrl,
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_CUSTOM_HEADERS',
+] as const;
 
 /** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
 export const maxFileBytes = 1_048_576;

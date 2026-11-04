@@ -1,8 +1,11 @@
 import {
   acceptEditsMode,
   claudeSettingKeys,
+  commandSettingKeys,
   env,
+  ownHookCommand,
   permissionSkipList,
+  trafficEnvNames,
   type PermissionSkip,
 } from '../names.js';
 import { parseJsonText } from '../state/load.js';
@@ -24,6 +27,10 @@ export interface SettingsFacts {
   readonly skips: readonly string[];
   /** True when the `env` values of the file set or clear the session marker variable. */
   readonly changesSessionMarker: boolean;
+  /** The `env` variables of the file that set the proxy or the credential of the session, in the order of the list. */
+  readonly movesTraffic: readonly string[];
+  /** The settings of the file that run a command, except the hook and the status line that the program writes. */
+  readonly runsCommands: readonly string[];
   /** The allow rules that cover a whole tool. At most `MAX_LISTED_RULES`, each cut at `MAX_RULE_CHARS`. */
   readonly wholeToolRules: readonly string[];
   /** The other allow rules, with the same bounds. */
@@ -71,15 +78,46 @@ const skipsOf = (text: string, parsed: unknown): readonly string[] =>
       : valueAt(parsed, item.path) === item.value || textPatternOf(item).test(text),
   ).map((item) => item.label);
 
+/** The key as the text of a file writes it: in quotes and followed by a colon. The letter case does not count. */
+const keyPatternOf = (key: string, flags = 'i'): RegExp => new RegExp(`"${escapeRegExp(key)}"\\s*:`, flags);
+
 /**
- * The `env` values of the file name the session marker variable, in any letter case. A text that does not parse is read
- * as text: a key with that name followed by a colon counts, because the file may still be read by another parser.
+ * The names of `wanted` that the `env` values of the file hold, in the order of `wanted` and in any letter case. A text that
+ * does not parse is read as text: a key with that name followed by a colon counts, because the file may still be read by
+ * another parser. The text is read also when it writes the key `env` more than once, because a parser that keeps the last
+ * `env` value hides the others.
  */
-const changesSessionMarker = (text: string, parsed: unknown): boolean => {
-  if (!isRecord(parsed)) return new RegExp(`"${escapeRegExp(env.session)}"\\s*:`, 'i').test(text);
+const envNamesIn = (text: string, parsed: unknown, wanted: readonly string[]): readonly string[] => {
   const values = valueAt(parsed, [claudeSettingKeys.env]);
-  return isRecord(values) && Object.keys(values).some((name) => name.toLowerCase() === env.session.toLowerCase());
+  const names = isRecord(values) ? Object.keys(values).map((name) => name.toLowerCase()) : [];
+  const readsText = !isRecord(parsed) || (text.match(keyPatternOf(claudeSettingKeys.env, 'gi')) ?? []).length > 1;
+  return wanted.filter((name) => names.includes(name.toLowerCase()) || (readsText && keyPatternOf(name).test(text)));
 };
+
+/** A hook or status line handler that the program writes: a command of the form `<program> hook <event>`. */
+const isOwnHandler = (handler: unknown): boolean =>
+  isRecord(handler) && handler.type === 'command' && typeof handler.command === 'string' && ownHookCommand.test(handler.command);
+
+/** The `hooks` value holds handlers of the program only: each event has a list of groups, and each group a list of handlers. */
+const isOwnHooks = (hooks: unknown): boolean =>
+  isRecord(hooks) &&
+  Object.values(hooks).every(
+    (groups) =>
+      Array.isArray(groups) &&
+      groups.every((group) => isRecord(group) && Array.isArray(group.hooks) && group.hooks.every(isOwnHandler)),
+  );
+
+/** The settings that have a form which the program writes itself. Any other setting of the list runs a command of the user. */
+const OWN_FORMS: Readonly<Record<string, (value: unknown) => boolean>> = {
+  [claudeSettingKeys.hooks]: isOwnHooks,
+  [claudeSettingKeys.statusLine]: isOwnHandler,
+};
+
+/** The settings of the list that run a command and are not in the form of the program. A text that does not parse is read as text. */
+const runsCommands = (text: string, parsed: unknown): readonly string[] =>
+  commandSettingKeys.filter((key) =>
+    isRecord(parsed) ? Object.hasOwn(parsed, key) && !(OWN_FORMS[key]?.(parsed[key]) ?? false) : keyPatternOf(key).test(text),
+  );
 
 const shown = (rule: string): string => rule.slice(0, MAX_RULE_CHARS);
 
@@ -103,7 +141,9 @@ export const analyzeSettings = (text: string): SettingsFacts => {
   return {
     valid: isRecord(parsed),
     skips: skipsOf(text, parsed),
-    changesSessionMarker: changesSessionMarker(text, parsed),
+    changesSessionMarker: envNamesIn(text, parsed, [env.session]).length > 0,
+    movesTraffic: envNamesIn(text, parsed, trafficEnvNames),
+    runsCommands: runsCommands(text, parsed),
     wholeToolRules: rules.filter(isWholeToolRule).slice(0, MAX_LISTED_RULES).map(shown),
     narrowRules: rules.filter((rule) => !isWholeToolRule(rule)).slice(0, MAX_LISTED_RULES).map(shown),
     acceptEdits: valueAt(parsed, [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode]) === acceptEditsMode,

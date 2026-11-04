@@ -29,8 +29,15 @@ const hasKnownTokenShape = (text: string): boolean =>
 export const looksLikeToken = (text: string): boolean =>
   hasKnownTokenShape(text) || (text.match(BASE64_RUN) ?? []).some(isRandomLooking);
 
-/** A run with a slash and no plus sign is a path or a URL: the base64 alphabet needs a plus sign to hold a slash. */
-const isPathLike = (run: string): boolean => run.includes('/') && !run.includes('+');
+/**
+ * A run is a path or a URL when it holds a slash and no plus sign, and it has one more sign. The first sign is a hyphen or an
+ * underscore: neither base64 alphabet holds a slash together with one of them. The second sign is a leading slash with a
+ * second slash, which is an absolute path. A base64 secret with a slash and no plus sign has neither sign, so it is no path.
+ */
+const isPathLike = (run: string): boolean => {
+  const slashes = run.split('/').length - 1;
+  return slashes > 0 && !run.includes('+') && (/[-_]/.test(run) || (run.startsWith('/') && slashes > 1));
+};
 
 /**
  * True when the text of a file holds a token: a known prefix, a hex run of 40 characters or more, or a long base64 run.
