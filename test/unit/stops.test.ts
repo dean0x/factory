@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { exitCodeOf, safetyRefusal, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { exitCodeOf, notReady, safetyRefusal, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { renderError } from '../../src/cli/output.js';
 import { MAX_PROJECTS, nameOfOrigin, parseProjectUrl } from '../../src/commands/init-clone.js';
 import { MAX_CLONE_URL_CHARS } from '../../src/core/clone-url.js';
@@ -123,6 +123,20 @@ describe('the refusal helper', () => {
     // @ts-expect-error A stop needs a remedy line.
     const refusal = safetyRefusal('a reason');
     expect(refusal.error.kind).toBe('safety');
+  });
+
+  it('makes a not-ready error of exit 3 with a reason and a remedy line', () => {
+    const notReadyError = notReady('a reason', 'Run "factory start".');
+    expect(notReadyError.ok).toBe(false);
+    expect(notReadyError.error).toEqual({ kind: 'not-ready', message: 'a reason', hint: 'Run "factory start".' });
+    expect(exitCodeOf[notReadyError.error.kind]).toBe(3);
+    expect(renderError(notReadyError.error)).toBe('error: a reason\nRun "factory start".\n');
+  });
+
+  it('does not compile a not-ready error without a remedy line', () => {
+    // @ts-expect-error A not-ready error needs a remedy line.
+    const notReadyError = notReady('a reason');
+    expect(notReadyError.error.kind).toBe('not-ready');
   });
 
   it('keeps the remedy line of an error of exit 1 or exit 2 optional', () => {

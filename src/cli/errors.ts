@@ -28,6 +28,10 @@ export const failure = (message: string, remedy?: string): Err<CliError> =>
 export const usageError = (message: string, remedy?: string): Err<CliError> =>
   err(make('usage', message, remedy));
 
+/** A command that cannot run yet (exit 3). The remedy line is required: it names the command or the step that makes it ready. */
+export const notReady = (message: string, remedy: string): Err<CliError> =>
+  err({ kind: 'not-ready', message, hint: remedy });
+
 /** A security stop (exit 4). The remedy line is required: it names the command or the step that fixes the cause. */
 export const safetyRefusal = (message: string, remedy: string): Err<CliError> =>
   err({ kind: 'safety', message, hint: remedy });
