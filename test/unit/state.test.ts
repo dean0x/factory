@@ -137,6 +137,7 @@ describe('layout', () => {
       nodeJson: '/h/node/.factory/node.json',
       workerMd: '/h/node/.factory/roles/worker.md',
       backupsDir: '/h/node/.factory/backups',
+      workersDir: '/h/node/.factory/workers',
       runtimeDir: '/h/node/.factory/state',
       heartbeatDir: '/h/node/.factory/state/heartbeat',
       locksDir: '/h/node/.factory/locks',

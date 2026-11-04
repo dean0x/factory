@@ -108,6 +108,8 @@ export const files = {
   setupCoordinator: 'coordinator.md',
   nodeState: 'node.json',
   worker: 'worker.md',
+  /** The record of one worker in the state folder: `workers/<id>/worker.json`. */
+  workerRecord: 'worker.json',
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',
@@ -133,6 +135,10 @@ export const dirs = {
   roadmaps: 'roadmaps',
   roles: 'roles',
   orders: 'orders',
+  /** The folder of the workers in the state folder: one folder for each worker, named by its id. */
+  workers: 'workers',
+  /** The folder of the messages for a worker, inside its folder. The session of the worker gets it with `--add-dir`. */
+  inbox: 'inbox',
   backups: 'backups',
   runtime: 'state',
   /** The folder of the last-seen files, inside the run-time folder: one file for each session. */
@@ -271,10 +277,30 @@ export const env = {
   factoryPrefix: 'FACTORY_',
   home: 'FACTORY_HOME',
   session: 'FACTORY_SESSION',
+  /** The inbox folder of a worker. Only the launch of a worker sets it. */
+  inbox: 'FACTORY_INBOX',
   /** The folder of the per-user state. The home index lives below it. */
   stateHome: 'XDG_STATE_HOME',
   userHome: 'HOME',
 } as const;
+
+/**
+ * The variables that a Claude Code session sets for its children. A launch removes each one with `env -u`, so the new
+ * session does not start as a child of the session that ran `factory`. Only `CLAUDE_CODE_CHILD_SESSION` is proven: a
+ * session that starts with it saves no transcript, so `--resume` fails later (docs/session-stop.md). The others come from
+ * inference: the identity of the parent session and its messaging socket and token must not pass to a worker.
+ */
+export const parentSessionEnv = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_EXECPATH',
+  'CLAUDE_CODE_MESSAGING_SOCKET',
+  'CLAUDE_CODE_MESSAGING_TOKEN',
+  'CLAUDE_CODE_SESSION_ATTENDED',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_PID',
+] as const;
 
 /**
  * The settings of Claude Code that run a command with no permission prompt: the hooks, the status line and the helpers that
@@ -606,6 +632,29 @@ export const lastSeen = {
   maxPercent: 100,
 } as const;
 
+/**
+ * The record of a worker (design 4.6): one JSON text in `workers/<id>/worker.json` of the state folder. It holds what a
+ * worker is, and no process id: a process id says nothing about a worker after a restart. The id of the worker names
+ * the folder, so the id must be a slug before it is used in a path.
+ */
+export const workerRecord = {
+  keys: {
+    schema: 'schema',
+    id: 'id',
+    project: 'project',
+    workCopy: 'work_copy',
+    branch: 'branch',
+    createdAt: 'created_at',
+  },
+  /** A reader refuses a file of more bytes than this. */
+  maxBytes: 4_096,
+  /** A list reads at most this many entries of the workers folder. More is a failure, and the list is not cut short. */
+  maxEntries: 256,
+  /** The permission bits of a worker folder and of its record. The record is private to the user. */
+  folderMode: privateFile.folderMode,
+  fileMode: privateFile.fileMode,
+} as const;
+
 /** The words that a config value can take. */
 export const values = {
   permissionMode: 'auto',
@@ -727,6 +776,7 @@ export const schemaIds = {
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
   lastSeen: `${program}.last-seen/v1`,
+  workerRecord: `${program}.worker/v1`,
 } as const;
 
 /** Placeholders of the prefix that marks input with the authority of the owner. */

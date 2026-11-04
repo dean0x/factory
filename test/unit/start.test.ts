@@ -10,7 +10,7 @@ import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
-import { env, hookNames, trackedFiles } from '../../src/names.js';
+import { env, hookNames, parentSessionEnv, trackedFiles } from '../../src/names.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { claudeFileText, softwareOwnerModes, workerFileText } from '../helpers/blocks.js';
 import {
@@ -45,6 +45,7 @@ const LAUNCH_BASE = [
   'env',
   '-u',
   'ANTHROPIC_BASE_URL',
+  ...parentSessionEnv.flatMap((name) => ['-u', name]),
   'PATH=/bin',
   'FACTORY_HOME=/w/node',
   'FACTORY_SESSION=demo',

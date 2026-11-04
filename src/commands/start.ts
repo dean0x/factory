@@ -241,6 +241,7 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
       model: core.session.model,
       proxyBaseUrl,
       path: path === undefined || path === '' ? null : path,
+      agent: core.session.agent,
       projects: projects.value.folders,
     });
     return launch.ok ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value })) : failure(launch.error);
