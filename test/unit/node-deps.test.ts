@@ -2,7 +2,22 @@ import { createHash } from 'node:crypto';
 import { getEventListeners } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+  type FileHandle,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -821,6 +836,50 @@ describe('node deps: exclusive write', () => {
     const result = await deps.fs.writeTextExclusive(join(fresh('no-folder'), 'x.lock'), 'x', 0o600);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
+  });
+
+  describe('when the write fails after the file was created', () => {
+    const full = (): Error => Object.assign(new Error('no space left'), { code: 'ENOSPC' });
+    const exists = (path: string): Promise<boolean> =>
+      stat(path).then(
+        () => true,
+        () => false,
+      );
+
+    /** The class of the open files: a write to a full disk is a failure of the write method after the create succeeded. */
+    const handleClass = async (): Promise<FileHandle> => {
+      const probe = fresh('probe');
+      await writeFile(probe, '', 'utf8');
+      const handle = await open(probe);
+      await handle.close();
+      return Object.getPrototypeOf(handle) as FileHandle;
+    };
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('returns the error and removes the file that it created', async () => {
+      const file = fresh('exclusive-full.lock');
+      vi.spyOn(await handleClass(), 'writeFile').mockRejectedValueOnce(full());
+      expect(await deps.fs.writeTextExclusive(file, 'text', 0o600)).toEqual({
+        ok: false,
+        error: { kind: 'failure', message: `cannot write ${file}: ENOSPC` },
+      });
+      expect(await exists(file)).toBe(false);
+    });
+
+    it('leaves a file that another process put at the path in the meantime', async () => {
+      const file = fresh('exclusive-replaced.lock');
+      vi.spyOn(await handleClass(), 'writeFile').mockImplementationOnce(async () => {
+        await rm(file);
+        await writeFile(file, 'other process', 'utf8');
+        throw full();
+      });
+      const result = await deps.fs.writeTextExclusive(file, 'text', 0o600);
+      expect(result.ok).toBe(false);
+      expect(await readFile(file, 'utf8')).toBe('other process');
+    });
   });
 });
 

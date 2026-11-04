@@ -6,6 +6,7 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
   readdir,
   readFile,
   realpath,
@@ -14,6 +15,7 @@ import {
   rmdir,
   stat,
   writeFile,
+  type FileHandle,
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -241,6 +243,43 @@ const writeAtomic = async (path: string, text: string, within: string, mode: num
   });
 };
 
+/**
+ * Remove the file at `path` after a failed write, but only when the path still holds the file that the write created
+ * (`created`). A file that another process put there in the meantime stays. With no knowledge of the created file, the
+ * file at the path is removed: the path was new when the write began.
+ */
+const removeCreated = async (path: string, created: Stats | undefined): Promise<void> => {
+  const now = await lstat(path).catch(() => null);
+  if (now === null) return;
+  if (created !== undefined && (now.dev !== created.dev || now.ino !== created.ino)) return;
+  await rm(path, { force: true }).catch(() => undefined);
+};
+
+/**
+ * Create the file with the flag `wx` and write the text. The value is false when the path exists already. A write that
+ * fails after the create (a full disk, an I/O error) closes the file and removes it, so the failure leaves no part of a file.
+ */
+const createExclusive = async (path: string, text: string, mode: number): Promise<boolean> => {
+  let handle: FileHandle;
+  try {
+    handle = await open(path, 'wx', mode);
+  } catch (cause) {
+    if (errorCode(cause) === 'EEXIST') return false;
+    throw cause;
+  }
+  let created: Stats | undefined;
+  try {
+    created = await handle.stat();
+    await handle.writeFile(text, 'utf8');
+    await handle.close();
+    return true;
+  } catch (cause) {
+    await handle.close().catch(() => undefined);
+    await removeCreated(path, created);
+    throw cause;
+  }
+};
+
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   readTextLimited: async (path, maxBytes) => {
@@ -250,16 +289,7 @@ const nodeFs: Fs = {
   },
   digestFile: (path, textLimit, maxBytes) => guard('read', path, () => digestBytes(path, textLimit, maxBytes)),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
-  writeTextExclusive: (path, text, mode) =>
-    guard('write', path, async () => {
-      try {
-        await writeFile(path, text, { encoding: 'utf8', flag: 'wx', mode });
-        return true;
-      } catch (cause) {
-        if (errorCode(cause) === 'EEXIST') return false;
-        throw cause;
-      }
-    }),
+  writeTextExclusive: (path, text, mode) => guard('write', path, () => createExclusive(path, text, mode)),
   writeTextAtomic: (path, text, within, mode) => writeAtomic(path, text, within, mode),
   stat: async (path) => {
     const info = await statInfo(path);

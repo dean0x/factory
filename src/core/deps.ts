@@ -40,7 +40,8 @@ export interface Fs {
   writeText(path: string, text: string): Promise<CliResult<void>>;
   /**
    * Create a file that does not exist, with `mode`, and write the text. The value is true when this call created the
-   * file, and false when the path exists already (a link counts, and it is not followed). Then nothing changes.
+   * file, and false when the path exists already (a link counts, and it is not followed). Then nothing changes. When the
+   * write fails after the create, the call removes the file that it created and returns the error.
    */
   writeTextExclusive(path: string, text: string, mode: number): Promise<CliResult<boolean>>;
   /**
