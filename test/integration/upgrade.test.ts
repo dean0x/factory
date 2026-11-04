@@ -446,7 +446,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const state = await prepareOldNode();
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
-    expect(upgraded.stdout).toContain('Changed 10 files.');
+    expect(upgraded.stdout).toContain('Changed 11 files.');
     expect(upgraded.stdout).toContain('Made the factory folder a git repo. Its first commit holds .gitignore, factory.yaml.');
     expect(existsSync(join(box.node, 'CLAUDE.md'))).toBe(false);
     expect(await box.read(join(box.node, ...COORDINATOR_FILE))).toContain('factory:begin coordinator');
@@ -475,6 +475,8 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(changes.stdout).toContain('protocol.md');
     expect(changes.stdout).toContain('roles/worker.md');
     expect(changes.stdout).toContain('roadmaps/README.md');
+    expect(await box.read(join(state, '.gitignore'))).toBe('state/\nlocks/\nbackups/\nworkers/\n');
+    expect(changes.stdout).toContain('.gitignore');
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
 
     const doctor = await box.run(['doctor', '--home', box.node]);
@@ -564,7 +566,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
 
     const upgraded = await box.run(['upgrade', '--home', box.node, '--yes']);
     expect(upgraded.code).toBe(0);
-    expect(upgraded.stdout).toContain('Changed 9 files.');
+    expect(upgraded.stdout).toContain('Changed 10 files.');
     expect(upgraded.stderr).toContain('.factory/roadmaps/README.md was edited, so factory keeps it');
     expect(upgraded.stderr).toContain('factory help words');
     expect(await box.read(path)).toBe(edited);
