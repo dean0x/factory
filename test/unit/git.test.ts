@@ -17,7 +17,7 @@ import {
   withoutUserinfo,
 } from '../../src/core/git.js';
 import { trackedFiles } from '../../src/names.js';
-import { createFakeDeps, exited, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type FakeRepo, type GitFixture } from '../helpers/git-fake.js';
 
 const WS = '/ws';
@@ -26,10 +26,21 @@ const WS = '/ws';
 const workspace = (
   repos: Readonly<Record<string, FakeRepo>>,
   plain: readonly string[] = [],
-  extra: { readonly links?: Record<string, string>; readonly fixture?: GitFixture } = {},
+  extra: {
+    readonly links?: Record<string, string>;
+    readonly fixture?: GitFixture;
+    readonly env?: Record<string, string | undefined>;
+    readonly os?: string;
+  } = {},
 ): { deps: FakeDeps; log: ReturnType<typeof gitHandler>['log'] } => {
   const { handler, log } = gitHandler({ repos, ...extra.fixture });
-  const deps = createFakeDeps({ cwd: WS, run: handler, ...(extra.links === undefined ? {} : { links: extra.links }) });
+  const deps = createFakeDeps({
+    cwd: WS,
+    run: handler,
+    ...(extra.links === undefined ? {} : { links: extra.links }),
+    ...(extra.env === undefined ? {} : { env: extra.env }),
+    ...(extra.os === undefined ? {} : { os: extra.os }),
+  });
   for (const path of Object.keys(repos)) deps.seedDir(`${path}/.git`);
   for (const path of plain) deps.seedDir(path);
   return { deps, log };
@@ -99,6 +110,43 @@ describe('git: the repos one level down', () => {
     const deps = createFakeDeps({ cwd: WS });
     const result = await listRepoChildren(deps, '/ws/none');
     expect(result.ok).toBe(false);
+  });
+
+  describe('when the folder is the user home and holds the settings folder of Claude Code', () => {
+    const USER = '/users/me';
+    const CLAUDE = `${USER}/.claude`;
+    const underClaude = (path: string): boolean => {
+      const lower = path.toLowerCase();
+      return lower === CLAUDE || lower.startsWith(`${CLAUDE}/`);
+    };
+
+    /** Scan the user home, which holds one repo and a settings folder that has a .git entry, with every file call noted. */
+    const scanUser = async (settings: string, extra: { readonly env?: Record<string, string | undefined>; readonly os?: string }) => {
+      const { deps, log } = workspace({ [`${USER}/web`]: {}, [`${USER}/${settings}`]: {} }, [], extra);
+      const seen: string[] = [];
+      const result = await listRepoChildren(withFsWatch(deps, (_method, path) => seen.push(path)), USER);
+      if (!result.ok) throw new Error(result.error.message);
+      return { repos: result.value.repos, seen, probed: new Set(log.calls.map((call) => call.args[1])) };
+    };
+
+    it('lists the other repo, and makes no file call and no git call at or under that folder', async () => {
+      const scan = await scanUser('.claude', { env: { HOME: USER } });
+      expect(scan.repos).toEqual([`${USER}/web`]);
+      expect(scan.seen.filter(underClaude)).toEqual([]);
+      expect(scan.probed).toEqual(new Set([`${USER}/web`]));
+    });
+
+    it('ignores the case of letters on macOS only', async () => {
+      const mac = await scanUser('.CLAUDE', { env: { HOME: USER }, os: 'darwin' });
+      expect(mac.repos).toEqual([`${USER}/web`]);
+      expect(mac.seen.filter(underClaude)).toEqual([]);
+      const linux = await scanUser('.CLAUDE', { env: { HOME: USER }, os: 'linux' });
+      expect(linux.repos).toEqual([`${USER}/.CLAUDE`, `${USER}/web`]);
+    });
+
+    it('lists it when the variable of the user home is not set', async () => {
+      expect((await scanUser('.claude', { env: {} })).repos).toEqual([`${USER}/.claude`, `${USER}/web`]);
+    });
   });
 });
 

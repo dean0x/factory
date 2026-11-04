@@ -3,7 +3,7 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
 import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps } from './deps.js';
-import { isWrittenInside, userClaudeFolderOf } from './paths.js';
+import { isInUserClaudeFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
 
 const GIT_TIMEOUT_MS = 15_000;
@@ -75,7 +75,8 @@ export interface RepoScan {
 
 /**
  * The folders just below `dir` that are the top folder of a git work tree. It reads at most `MAX_SCAN_ENTRIES`
- * entries and follows no symbolic link. Only a folder with a `.git` entry can be a work tree, so git runs for those.
+ * entries and follows no symbolic link. A folder that is the settings folder of Claude Code, or is inside it, is left
+ * out by its written path, before any call on it. Only a folder with a `.git` entry can be a work tree, so git runs for those.
  * Two folders that share a git folder are one repo (a linked work tree): the checkout that holds the git folder is
  * listed, and the others are skipped. With no such checkout, the first folder by name is listed.
  */
@@ -93,6 +94,7 @@ export const listRepoChildren = async (deps: Deps, dir: string): Promise<CliResu
   const groups = new Map<string, Member[]>();
   for (const name of names.value.slice(0, MAX_SCAN_ENTRIES)) {
     const path = join(dir, name);
+    if (isInUserClaudeFolder(deps, path)) continue;
     const real = join(realDir.value, name);
     const resolved = await deps.fs.realpath(path);
     if (!resolved.ok || resolved.value !== real) continue;

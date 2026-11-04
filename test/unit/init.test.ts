@@ -1499,6 +1499,19 @@ describe('init: a workspace folder that holds several repos', () => {
     expect(snapshot(deps)).toBe(before);
   });
 
+  it('lists the repos of the user home as the folder, and makes no file call at or under its settings folder', async () => {
+    const user = '/users/me';
+    const { handler } = gitHandler({ repos: { [`${user}/web`]: {} } });
+    const deps = createFakeDeps({ cwd: user, run: handler, env: ENV });
+    deps.seedDir(`${user}/web/.git`);
+    deps.seedDir(`${user}/.claude/.git`);
+    const seen: string[] = [];
+    const result = await runInit(withFsWatch(deps, (_method, path) => seen.push(path)), withHome());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    expect(messageOf(result)).toContain('this folder holds the git repos web');
+    expect(seen.filter((path) => path === `${user}/.claude` || path.startsWith(`${user}/.claude/`))).toEqual([]);
+  });
+
   it('asks on a terminal, shows the repos and the skipped folder, and goes on for y', async () => {
     const deps = inWorkspace({ ...terminal, prompt: answerHome('y') });
     const result = await runInit(deps, withHome());

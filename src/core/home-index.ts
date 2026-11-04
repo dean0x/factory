@@ -2,10 +2,10 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
-import { env, files, flagText, flags, homeIndex, places } from '../names.js';
+import { commands, env, files, flagText, flags, homeIndex, places } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
-import { comparable, isSameOrInside, realPathOf } from './paths.js';
+import { comparable, isInUserClaudeFolder, isSameOrInside, realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
 import { changePrivateFile, readPrivateText, userStatePathOf } from './private-file.js';
 import { err, ok, type Result } from './result.js';
 import { describeIssues } from './zod.js';
@@ -193,7 +193,12 @@ export const homeHoldingFolder = (entries: readonly HomeEntry[], folder: string)
 /** Whether the folder of the home holds its config file. 'unknown' is a home that cannot be checked. */
 type HomeState = 'present' | 'gone' | 'unknown';
 
+/**
+ * A home in the settings folder of Claude Code is not asked about: it is 'unknown', and the file system gets no call. A
+ * command that finds its home from the entry stops first (see `findHomeInIndex`).
+ */
 const homeStateOf = async (deps: Deps, home: string): Promise<HomeState> => {
+  if (isInUserClaudeFolder(deps, home)) return 'unknown';
   const kind = await deps.fs.stat(join(home, files.config));
   if (!kind.ok) return 'unknown';
   return kind.value === 'file' ? 'present' : 'gone';
@@ -275,7 +280,8 @@ const unusable = (path: string, reason: string): CliResult<never> =>
 
 /**
  * The node home whose project holds the current folder, or null when no entry does. A home that is gone is ignored.
- * An index that cannot be read, and a tie between two homes, are errors that name the file or the homes.
+ * An index that cannot be read, and a tie between two homes, are errors that name the file or the homes. An entry that
+ * holds the current folder and whose home is in the settings folder of Claude Code is a stop (exit 4) before any call on it.
  */
 export const findHomeInIndex = async (deps: Deps): Promise<CliResult<string | null>> => {
   const path = await indexPathOf(deps);
@@ -293,6 +299,8 @@ export const findHomeInIndex = async (deps: Deps): Promise<CliResult<string | nu
   const present: IndexedProject[] = [];
   const checked = new Map<string, boolean>();
   for (const candidate of holding) {
+    const outside = requireOutsideUserClaudeFolder(deps, candidate.home, commands.doctor);
+    if (!outside.ok) return outside;
     const known = checked.get(candidate.home);
     const exists = known ?? (await homeExists(deps, candidate.home));
     checked.set(candidate.home, exists);

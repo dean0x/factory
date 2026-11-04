@@ -36,12 +36,14 @@ interface Setup {
   readonly cwd?: string;
   readonly env?: Record<string, string | undefined>;
   readonly links?: Record<string, string>;
+  readonly os?: string;
 }
 
 /** Fake deps with an index file and the config file of each home in the list. */
 const withIndex = (homes: readonly HomeEntry[], setup: Setup = {}, existing: readonly string[] = homes.map((h) => h.home)): FakeDeps => {
   const deps = createFakeDeps({
     cwd: setup.cwd ?? '/w/web',
+    ...(setup.os === undefined ? {} : { os: setup.os }),
     env: setup.env ?? { XDG_STATE_HOME: '/state', HOME: '/home/me' },
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
@@ -1169,5 +1171,77 @@ describe('home index: finding the home of a folder', () => {
   it('refuses with exit 4 an index path under the folder of Claude Code', async () => {
     const deps = withIndex([], { cwd: '/w/web', env: { HOME: '/home/me', XDG_STATE_HOME: '/home/me/.claude/state' } });
     expect(await findHomeInIndex(deps)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+});
+
+describe('home index: an entry in the settings folder of Claude Code', () => {
+  const USER = '/users/me';
+  const CLAUDE = `${USER}/.claude`;
+  const IN_CLAUDE = `${CLAUDE}/factory`;
+  const ENV = { XDG_STATE_HOME: '/state', HOME: USER };
+  const underClaude = (path: string): boolean => {
+    const lower = path.toLowerCase();
+    return lower === CLAUDE || lower.startsWith(`${CLAUDE}/`);
+  };
+
+  /** Deps whose file calls are noted in `seen`, with a test home at `/users/me`. */
+  const watched = (deps: FakeDeps): { readonly guarded: FakeDeps; readonly seen: string[] } => {
+    const seen: string[] = [];
+    return { guarded: withFsWatch(deps, (_method, path) => seen.push(path)), seen };
+  };
+
+  describe('when a command looks for the factory folder of the current folder', () => {
+    it.each([CLAUDE, IN_CLAUDE])('stops with exit 4 for the entry %s, and makes no call at or under that folder', async (home) => {
+      const { guarded, seen } = watched(withIndex([entry(home, ['/w/web'])], { cwd: '/w/web/src', env: ENV }));
+      const result = await findHomeInIndex(guarded);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (result.ok) return;
+      expect(result.error.message).toContain('the settings folder of Claude Code /users/me/.claude');
+      expect(result.error.hint).toContain('Then run "factory doctor".');
+      expect(seen.filter(underClaude)).toEqual([]);
+    });
+
+    it('stops for an entry that differs only in the case of letters on macOS, and not on Linux', async () => {
+      const home = `${USER}/.CLAUDE/factory`;
+      const mac = watched(withIndex([entry(home, ['/w/web'])], { cwd: '/w/web', env: ENV, os: 'darwin' }));
+      expect(await findHomeInIndex(mac.guarded)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(mac.seen.filter(underClaude)).toEqual([]);
+      const linux = withIndex([entry(home, ['/w/web'])], { cwd: '/w/web', env: ENV });
+      expect(await findHomeInIndex(linux)).toEqual({ ok: true, value: home });
+    });
+
+    it('does not use an entry whose projects do not hold the current folder, and asks nothing about its home', async () => {
+      const deps = withIndex([entry(IN_CLAUDE, ['/w/api']), entry(HOME_A, ['/w/web'])], { cwd: '/w/web', env: ENV });
+      const { guarded, seen } = watched(deps);
+      expect(await findHomeInIndex(guarded)).toEqual({ ok: true, value: HOME_A });
+      expect(seen.filter(underClaude)).toEqual([]);
+    });
+  });
+
+  describe('when a command lists the homes that are gone', () => {
+    it('asks nothing about the entry, checks the other homes, and lists the entry as a home that was not found', async () => {
+      const deps = withIndex([], { env: ENV }, [HOME_A]);
+      const { guarded, seen } = watched(deps);
+      const gone = await goneHomes(guarded, [entry(HOME_A, []), entry(IN_CLAUDE, []), entry(HOME_B, [])]);
+      expect(gone).toEqual([IN_CLAUDE, HOME_B]);
+      expect(seen.filter(underClaude)).toEqual([]);
+      expect(seen).toContain(`${HOME_B}/factory.yaml`);
+    });
+  });
+
+  describe('when the index is full', () => {
+    it('keeps the entry, because it is not checked, and asks nothing about it', async () => {
+      const deps = createFakeDeps({ env: { HOME: USER } });
+      deps.seedDir('/state');
+      const others = Array.from({ length: 199 }, (_, i) => entry(`/h/h${i}`, []));
+      deps.seed(INDEX, indexText([entry(IN_CLAUDE, []), ...others]));
+      for (const other of others.slice(0, -1)) deps.seed(`${other.home}/factory.yaml`, 'schema: 2\n');
+      const { guarded, seen } = watched(deps);
+      expect((await recordHome(guarded, INDEX, entry(HOME_A, []))).ok).toBe(true);
+      const kept = (JSON.parse(deps.files.get(INDEX) ?? 'null') as { homes: { home: string }[] }).homes.map((one) => one.home);
+      expect(kept).toContain(IN_CLAUDE);
+      expect(kept).not.toContain('/h/h198');
+      expect(seen.filter(underClaude)).toEqual([]);
+    });
   });
 });
