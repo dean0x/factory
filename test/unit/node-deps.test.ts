@@ -261,13 +261,13 @@ describe('node deps: the terminal', () => {
       expect(await text).toEqual({ ok: true, value: '' });
     });
 
-    it('accepts an input of exactly the limit', async () => {
+    it('accepts an input of exactly the limit (TP-8)', async () => {
       const text = createNodeDeps().readStdin(5);
       input.end('12345');
       expect(await text).toEqual({ ok: true, value: '12345' });
     });
 
-    it('returns an error for an input of one byte more than the limit', async () => {
+    it('returns an error for an input of one byte more than the limit (TP-8)', async () => {
       const text = createNodeDeps().readStdin(5);
       input.end('123456');
       const result = await text;

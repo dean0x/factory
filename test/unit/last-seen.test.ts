@@ -134,7 +134,7 @@ describe('writeLastSeen', () => {
     expect(storedLine(deps)).toEqual(line({ context_pct: value, pct_at: T0 }));
   });
 
-  it.each([101, -1, Number.NaN, Number.POSITIVE_INFINITY])('writes nothing for the percent %j', async (value) => {
+  it.each([101, -1, Number.NaN, Number.POSITIVE_INFINITY])('writes nothing for the percent %j (TP-8)', async (value) => {
     const deps = createFakeDeps();
     expect(errorOf(await writeLastSeen(deps, HOME, ID, percent(value))).kind).toBe('failure');
     expect(deps.files.size).toBe(0);

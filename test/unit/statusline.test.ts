@@ -120,7 +120,7 @@ describe('factory hook statusline: the command of the owner (TP-13)', () => {
     });
   });
 
-  it('reads the input with the byte cap of the hook', async () => {
+  it('reads the input with the byte cap of the hook (TP-8)', async () => {
     const deps = make({ statusline: OWNER_COMMAND, run: () => exited(0, OWNER_OUTPUT) });
     const caps: number[] = [];
     const spy: Deps = {
@@ -288,7 +288,7 @@ describe('factory hook statusline: the context percent', () => {
     expect(lineOf(deps)).toEqual(stored);
   });
 
-  it.each([[101], [100.6], [-1], [1e9]])('writes nothing for the percent %s, which is outside 0-100, and prints one line on stderr', async (given) => {
+  it.each([[101], [100.6], [-1], [1e9]])('writes nothing for the percent %s, which is outside 0-100, and prints one line on stderr (TP-8)', async (given) => {
     const deps = make({ stdin: withWindow({ ...WINDOW, used_percentage: given }) });
     const before = snapshot(deps);
     const result = await statusline(deps);
@@ -471,7 +471,7 @@ describe('factory hook statusline: the input', () => {
     expect(result.out).toBe(OWNER_OUTPUT);
   });
 
-  it('prints the fallback line, runs no command and writes nothing for an input over the byte cap', async () => {
+  it('prints the fallback line, runs no command and writes nothing for an input over the byte cap (TP-8)', async () => {
     const deps = make({ statusline: OWNER_COMMAND, stdin: input({ filler: 'x'.repeat(hookNames.maxStdinBytes) }), run: () => exited(0, OWNER_OUTPUT) });
     const before = snapshot(deps);
     const result = await statusline(deps);
