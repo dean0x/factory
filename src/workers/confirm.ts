@@ -17,16 +17,20 @@ import { readPaneLife, type PaneLife } from './panes.js';
 
 const keys = lastSeen.keys;
 
-export interface LaunchConfirmRequest {
+/** What the failure of a pane of a launch needs to know. */
+export interface PaneFailureRequest {
   /** The node home, the root of the config repo: an absolute path. */
   readonly home: string;
   /** The id of the pane that the launch made. */
   readonly paneId: string;
   readonly workerId: string;
-  /** The time before the pane was made. A hook event counts only when it is after this time. */
-  readonly launchedAt: Date;
   /** True for a launch with `--resume`. The pane and the last-seen line must confirm it. False: one check of the pane only. */
   readonly resuming: boolean;
+}
+
+export interface LaunchConfirmRequest extends PaneFailureRequest {
+  /** The time before the pane was made. A hook event counts only when it is after this time. */
+  readonly launchedAt: Date;
 }
 
 /** The command that a person runs for the worker: a command line of `commandLines` and the id. */
@@ -49,8 +53,10 @@ const pointerFile = (home: string, workerId: string): string => shellWord(worker
 /**
  * The failure of a pane that is gone, ended, or not the launch of the worker. A failed resume names the usual cause, a pointer to a
  * session with no transcript, and the manual step that starts a new conversation. That step is a delete by hand: no command does it.
+ * The launch uses it too for a pane that tmux removed before the launch could mark it: a program that ends at once is the same
+ * failure at any step.
  */
-const paneFailure = (request: LaunchConfirmRequest, life: Exclude<PaneLife, 'running'>): CliResult<never> => {
+export const paneFailure = (request: PaneFailureRequest, life: Exclude<PaneLife, 'running'>): CliResult<never> => {
   const { home, paneId, workerId, resuming } = request;
   const message = `the pane ${paneId} of the ${roles.worker} ${workerId} ${ENDINGS[life]}`;
   const again = commandFor(commandLines.workerResume, workerId);

@@ -9,12 +9,13 @@ import { ok } from '../core/result.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import { toolNames } from '../core/tools.js';
 import { workerLaunchArgv } from '../launch/argv.js';
-import { isPaneId, killPaneArgs, setPaneOptionArgs, splitWorkerPaneArgs, tileWorkersArgs } from '../launch/tmux.js';
+import { isPaneId, setPaneOptionArgs, splitWorkerPaneArgs, tileWorkersArgs } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
 import { commandLines, commands, commandText, dirs, env, keys, places, roles, tmuxNames, values } from '../names.js';
 import { checkProxyHealth, type ProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
-import { confirmLaunch } from './confirm.js';
+import { confirmLaunch, paneFailure, type PaneFailureRequest } from './confirm.js';
+import { closePane } from './panes.js';
 import { workCopyOf } from './registry.js';
 
 /**
@@ -258,20 +259,23 @@ const tilePanes = async (deps: Deps, session: string): Promise<readonly string[]
 
 /**
  * Sets the worker mark on the pane. A pane that runs with no mark is a pane that no later command finds, so a failure closes
- * the pane that this launch made, by its id, and the failure names the result.
+ * the pane that this launch made, by its id, and the failure names the result. A program can end at once, and tmux then removes
+ * the pane before the mark: the close finds no pane, and the failure is the same as for a pane that ended after the start
+ * (`paneFailure`), because that is what happened. The text "stays open" is only for a pane that tmux still has.
  */
-const markPane = async (deps: Deps, pane: string, workerId: string): Promise<CliResult<void>> => {
-  const args = setPaneOptionArgs(pane, tmuxNames.optionWorker, workerId);
+const markPane = async (deps: Deps, request: PaneFailureRequest): Promise<CliResult<void>> => {
+  const { paneId, workerId } = request;
+  const args = setPaneOptionArgs(paneId, tmuxNames.optionWorker, workerId);
   if (!args.ok) return failure(args.error);
   const set = await tmuxStep(deps, args.value);
   if (set.ok) return ok(undefined);
-  const close = killPaneArgs(pane);
-  const closed = close.ok && (await tmuxStep(deps, close.value)).ok;
-  return closed
-    ? failure(`${set.error.message}, so the pane ${pane} was closed`, `Run ${tryAgain(workerId)}.`)
+  const closed = await closePane(deps, paneId);
+  if (closed.ok && closed.value === 'gone') return paneFailure(request, 'gone');
+  return closed.ok
+    ? failure(`${set.error.message}, so the pane ${paneId} was closed`, `Run ${tryAgain(workerId)}.`)
     : failure(
-        `${set.error.message}, and the pane ${pane} stays open with no ${roles.worker} mark`,
-        `Close the pane with "${toolNames.tmux} kill-pane -t ${pane}". Then run ${tryAgain(workerId)}.`,
+        `${set.error.message}, and the pane ${paneId} stays open with no ${roles.worker} mark`,
+        `Close the pane with "${toolNames.tmux} kill-pane -t ${paneId}". Then run ${tryAgain(workerId)}.`,
       );
 };
 
@@ -317,7 +321,7 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   const launchedAt = deps.now();
   const pane = await startPane(deps, session, workerId, workCopy, argv.value);
   if (!pane.ok) return pane;
-  const marked = await markPane(deps, pane.value, workerId);
+  const marked = await markPane(deps, { home, paneId: pane.value, workerId, resuming: resumeId !== undefined });
   if (!marked.ok) return marked;
   const tileWarnings = await tilePanes(deps, session);
   const confirmed = await confirmLaunch(deps, {
