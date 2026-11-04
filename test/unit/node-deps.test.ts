@@ -123,10 +123,58 @@ describe('node deps: run', () => {
     });
 
     it('returns an error and stops the group when the output passes the byte cap', async () => {
-      const result = await deps.run('/bin/sh', ['-c', 'head -c 1100000 /dev/zero; sleep 5'], { processGroup: true });
+      const late = fresh('late-cap');
+      const result = await deps.run('/bin/sh', ['-c', `head -c 1100000 /dev/zero; sleep 1; echo late > '${late}'`], {
+        processGroup: true,
+      });
       expect(result).toEqual({
         ok: false,
         error: { kind: 'failure', message: 'cannot run /bin/sh: its output is larger than 1048576 bytes' },
+      });
+      await wait(1_500);
+      expect(await exists(late)).toBe(false);
+    });
+
+    describe('when the stop does not end the first process of the group', () => {
+      const realKill = process.kill.bind(process);
+      let leaders: number[] = [];
+
+      beforeEach(() => {
+        leaders = [];
+        // The stop signal to a group has no effect, as for a process in an uninterruptible wait.
+        vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: string | number) => {
+          if (pid >= 0) return realKill(pid, signal);
+          leaders.push(-pid);
+          return true;
+        }) as typeof process.kill);
+      });
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+        for (const leader of leaders) {
+          try {
+            realKill(-leader, 'SIGKILL');
+          } catch {
+            // The group has ended already.
+          }
+        }
+      });
+
+      it('ends shortly after the time limit with the failure of the stop', async () => {
+        const started = Date.now();
+        const result = await deps.run('/bin/sh', ['-c', 'sleep 4'], { timeoutMs: 200, processGroup: true });
+        expect(result).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run /bin/sh: SIGKILL' } });
+        expect(Date.now() - started).toBeLessThan(2_000);
+      });
+
+      it('ends shortly after the byte cap with the failure of the cap', async () => {
+        const started = Date.now();
+        const result = await deps.run('/bin/sh', ['-c', 'head -c 1100000 /dev/zero; sleep 4'], { processGroup: true });
+        expect(result).toEqual({
+          ok: false,
+          error: { kind: 'failure', message: 'cannot run /bin/sh: its output is larger than 1048576 bytes' },
+        });
+        expect(Date.now() - started).toBeLessThan(2_000);
       });
     });
   });

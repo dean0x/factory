@@ -41,6 +41,8 @@ const MAX_RUN_OUTPUT_BYTES = 1_048_576;
 const NATIVE_WINDOWS = 'win32';
 /** The signal that stops a process group at the time limit. A process can not catch it. */
 const GROUP_STOP_SIGNAL = 'SIGKILL';
+/** After the stop of a group, the run waits this long for the first process to end. Then the run ends without it. */
+const GROUP_STOP_GRACE_MS = 200;
 
 const errorCode = (cause: unknown): string => {
   if (typeof cause === 'object' && cause !== null && 'code' in cause) {
@@ -325,18 +327,43 @@ const stopGroup = (pid: number | undefined): void => {
 /**
  * Run the program as the leader of a new process group (`RunOptions.processGroup`). At the time limit, or when the output
  * passes the byte cap, every process of the group is stopped and the output pipes are closed. So the run ends at the limit
- * also when a process outside the group holds a pipe. The value has the same form as the value of `runPlain`.
+ * also when a process outside the group holds a pipe. The run ends when the first process has ended and the pipes are
+ * closed. If the stop does not end the first process, the run ends `GROUP_STOP_GRACE_MS` after the stop, with the failure
+ * of the stop. The value has the same form as the value of `runPlain`.
  */
 const runInGroup = (command: string, args: readonly string[], options: RunOptions): Promise<CliResult<RunOutput>> =>
   new Promise((resolve) => {
     const child = spawn(command, [...args], { cwd: options.cwd ?? process.cwd(), env: runEnvOf(options), detached: true });
     const output = { stdout: [] as Buffer[], stderr: [] as Buffer[], bytes: 0, tooLarge: false };
+    const text = (chunks: Buffer[]): string => Buffer.concat(chunks).toString('utf8');
+    const timers: { limit?: NodeJS.Timeout; grace?: NodeJS.Timeout } = {};
+    let settled = false;
+
+    const settle = (result: CliResult<RunOutput>): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timers.limit);
+      clearTimeout(timers.grace);
+      child.stdout.off('data', onStdout);
+      child.stderr.off('data', onStderr);
+      child.off('close', onClose);
+      resolve(result);
+    };
+    const stoppedResult = (): CliResult<RunOutput> =>
+      output.tooLarge
+        ? failure(`cannot run ${command}: its output is larger than ${MAX_RUN_OUTPUT_BYTES} bytes`)
+        : failure(`cannot run ${command}: ${GROUP_STOP_SIGNAL}`);
     const stop = (): void => {
       stopGroup(child.pid);
       child.stdout.destroy();
       child.stderr.destroy();
+      // The first process may stay alive after the stop. Then the run does not wait for its end.
+      timers.grace ??= setTimeout(() => {
+        child.stdin.destroy();
+        child.unref();
+        settle(stoppedResult());
+      }, GROUP_STOP_GRACE_MS);
     };
-    const timer = setTimeout(stop, options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
     const keep =
       (chunks: Buffer[]) =>
       (chunk: Buffer): void => {
@@ -347,21 +374,20 @@ const runInGroup = (command: string, args: readonly string[], options: RunOption
           stop();
         }
       };
-    child.stdout.on('data', keep(output.stdout));
-    child.stderr.on('data', keep(output.stderr));
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      resolve(failure(`cannot run ${command}: ${errorCode(error)}`));
-    });
-    child.once('close', (code, signal) => {
-      clearTimeout(timer);
-      if (output.tooLarge) resolve(failure(`cannot run ${command}: its output is larger than ${MAX_RUN_OUTPUT_BYTES} bytes`));
-      else if (code === null) resolve(failure(`cannot run ${command}: ${String(signal ?? 'error')}`));
-      else {
-        const text = (chunks: Buffer[]): string => Buffer.concat(chunks).toString('utf8');
-        resolve(ok({ exitCode: code, stdout: text(output.stdout), stderr: text(output.stderr) }));
-      }
-    });
+    const onStdout = keep(output.stdout);
+    const onStderr = keep(output.stderr);
+    const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (output.tooLarge) settle(stoppedResult());
+      else if (code === null) settle(failure(`cannot run ${command}: ${String(signal ?? 'error')}`));
+      else settle(ok({ exitCode: code, stdout: text(output.stdout), stderr: text(output.stderr) }));
+    };
+
+    timers.limit = setTimeout(stop, options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
+    child.stdout.on('data', onStdout);
+    child.stderr.on('data', onStderr);
+    // This listener stays after the run ends: an error event with no listener would end the process.
+    child.on('error', (error) => settle(failure(`cannot run ${command}: ${errorCode(error)}`)));
+    child.on('close', onClose);
     feedInput(child.stdin, options.input);
   });
 

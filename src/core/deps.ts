@@ -98,7 +98,8 @@ export interface RunOptions {
   /**
    * True to start the program as the leader of a new process group with no terminal, and to stop every process of that
    * group when the time limit passes. A shell command with a pipe or a list starts more processes than the shell, and a
-   * stop of the shell alone leaves them running. The run also stops its wait for the output at the limit. Not on Windows.
+   * stop of the shell alone leaves them running. The run also stops its wait for the output at the limit. If the first
+   * process does not end after the stop, the run ends a short time later with the failure of the stop. Not on Windows.
    */
   readonly processGroup?: boolean;
 }
