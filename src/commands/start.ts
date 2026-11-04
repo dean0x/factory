@@ -26,7 +26,6 @@ import {
   flags,
   flagText,
   hookSessions,
-  keys,
   overwriteCommand,
   places,
   program,
@@ -36,13 +35,13 @@ import {
   tmuxNames,
   values,
 } from '../names.js';
-import { checkProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { safetyTemplateFor } from '../templates/index.js';
 import type { SetupTexts } from '../templates/types.js';
 import { planBlock } from '../upgrade/plan.js';
 import { renderSetupText, writeBlockPlans } from '../upgrade/render.js';
+import { chooseProxy, type ProxyChoice } from '../workers/launch.js';
 import { failsOnlyOnSetup, requireRootClean, rootNotices, scanRoot, withSetupAccepted } from './root-content.js';
 import { acceptReason, settleSetup } from './setup-check.js';
 
@@ -57,14 +56,6 @@ const MIN_TMUX_TEXT = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
 
 /** How the command shows the session to the person: attach, switch the client of tmux, or print how to attach. */
 type Reach = 'attach' | 'switch' | 'print';
-
-interface ProxyChoice {
-  /** The base URL for the launch, or null for no proxy. */
-  readonly baseUrl: string | null;
-  /** The id, host and port. Safe to print. Null when the session uses no proxy. */
-  readonly label: string | null;
-  readonly warning?: string;
-}
 
 interface StartPlan {
   readonly proxy: ProxyChoice;
@@ -122,30 +113,6 @@ const toolProblems = async (deps: Deps, readVersion: boolean): Promise<readonly 
   }
   if (!(await onPath(deps, toolNames.claude))) problems.push(`${toolNames.claude} is not on PATH`);
   return problems;
-};
-
-/** The proxy of the session, by the rules of design 4.6: only a proxy that the config names, and only when it answers. */
-const chooseProxy = async (deps: Deps, config: FactoryConfig): Promise<CliResult<ProxyChoice>> => {
-  const { core } = config;
-  const wanted = core.session.proxy;
-  if (wanted === values.noProxy) return ok({ baseUrl: null, label: null });
-  const proxy = core.proxies.find((candidate) => candidate.id === wanted);
-  if (proxy === undefined) {
-    return failure(`${keys.root.session}.${keys.session.proxy} names a proxy that is not defined in ${keys.root.proxies}`);
-  }
-  const health = await checkProxyHealth(deps, proxy);
-  if (health.up) return ok({ baseUrl: proxy.base_url, label: health.label });
-  if (proxy.on_fail === values.onFail[1]) {
-    return ok({
-      baseUrl: null,
-      label: null,
-      warning: `${health.label} does not answer. ${keys.proxy.onFail} is ${proxy.on_fail}: the session starts without a proxy.`,
-    });
-  }
-  return failure(
-    `${health.label} does not answer`,
-    `Start the proxy, or set ${keys.root.session}.${keys.session.proxy} to ${values.noProxy} for the session. Then run "${commandText(commands.start)}" again.`,
-  );
 };
 
 /**
