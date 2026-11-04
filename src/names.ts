@@ -134,6 +134,8 @@ export const dirs = {
   orders: 'orders',
   backups: 'backups',
   runtime: 'state',
+  /** The folder of the last-seen files, inside the run-time folder: one file for each session. */
+  heartbeat: 'heartbeat',
   locks: 'locks',
   claude: '.claude',
   /** The folder of the coordinator session, below the root. It holds the rendered `CLAUDE.md`, and git ignores it. */
@@ -502,6 +504,51 @@ export const stateKeys = {
   blocks: 'blocks',
 } as const;
 
+/**
+ * The hook of Claude Code that records the last-seen line of a session (design 4.6): the word after the program name,
+ * the fixed list of events and the bounds. The settings of a session folder call `<program> hook <event>` for each event,
+ * and `<program> hook statusline` for the status line. Claude Code names the events on its hooks page
+ * (https://code.claude.com/docs/en/hooks).
+ */
+export const hookNames = {
+  command: 'hook',
+  /** The word of the status line call. It is also the config key of the command of the owner. */
+  statusline: keys.session.statusline,
+  events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'],
+  /** The most bytes of hook input that the program reads. A larger input is refused and nothing is written. */
+  maxStdinBytes: maxFileBytes,
+  /** The status line wrapper waits this many milliseconds for the command of the owner. */
+  statuslineTimeoutMs: 2_000,
+} as const;
+
+/** One event of the fixed list. */
+export type HookEvent = (typeof hookNames.events)[number];
+
+/** The command of a settings entry for an event, for example `factory hook Stop`. */
+export const hookCommandOf = (event: string): string => commandText(`${hookNames.command} ${event}`);
+
+/**
+ * The last-seen line (design 4.6): one JSON text for each session, in the heartbeat folder of the run-time folder. It
+ * holds the session id, the last hook event with its time, and the context percent with its time. The name of the file
+ * is the session id, so the id must match the pattern before it is used in a path.
+ */
+export const lastSeen = {
+  keys: {
+    schema: 'schema',
+    sessionId: 'session_id',
+    event: 'event',
+    eventAt: 'event_at',
+    contextPct: 'context_pct',
+    pctAt: 'pct_at',
+  },
+  /** The id of a session: a UUID with lower case letters. */
+  sessionIdPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /** A reader refuses a file of more bytes than this. */
+  maxBytes: 4_096,
+  minPercent: 0,
+  maxPercent: 100,
+} as const;
+
 /** The words that a config value can take. */
 export const values = {
   permissionMode: 'auto',
@@ -614,6 +661,7 @@ export const schemaIds = {
   upgrade: `${program}.upgrade/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
+  lastSeen: `${program}.last-seen/v1`,
 } as const;
 
 /** Placeholders of the prefix that marks input with the authority of the owner. */

@@ -492,13 +492,19 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
   ]);
 
   /**
+   * The names on disk that stay although the table of plain words has a plain word for them (the file name stays): the
+   * folder of the last-seen files. Only `names.ts` holds them, and text for a user says "last seen".
+   */
+  const DISK_NAMES: ReadonlySet<string> = new Set([dirs.heartbeat]);
+
+  /**
    * The old words and the scanned jargon words that a string literal of the source holds, with the file. Comments and
-   * import paths are not text. A name of an older layout in `names.ts` is no text either.
+   * import paths are not text. A name of an older layout in `names.ts` is no text either, and neither is a name on disk.
    */
   const plainWordHits = (source: string, path: string): string[] =>
     literalsOf(source)
       .filter((literal) => !IMPORT_PATH.test(literal))
-      .filter((literal) => path !== NAMES_FILE || !OLD_LAYOUT_NAMES.has(literal))
+      .filter((literal) => path !== NAMES_FILE || !(OLD_LAYOUT_NAMES.has(literal) || DISK_NAMES.has(literal)))
       .flatMap((literal) => plainWordsIn(literal).map((word) => `${relative(SRC, path)}: "${literal}" holds ${word}`));
 
   it('scans every folder that prints text, and the top files of src', () => {
@@ -557,6 +563,8 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
     expect(plainWordHits("// the staging folder\nconst staging = 'plain';", path)).toEqual([]);
     expect(plainWordHits("const schema1 = { keys: { lanes: 'lanes' } };", NAMES_FILE)).toEqual([]);
     expect(plainWordHits("const a = 'lanes';", path)).toHaveLength(1);
+    expect(plainWordHits("const dirs = { heartbeat: 'heartbeat' };", NAMES_FILE)).toEqual([]);
+    expect(plainWordHits("const a = 'heartbeat';", path)).toHaveLength(1);
     expect(plainWordHits("// the heartbeat\nconst heartbeat = 'plain';", path)).toEqual([]);
     expect(plainWordHits("import { a } from '../migrate/inspect.js';", path)).toEqual([]);
   });
