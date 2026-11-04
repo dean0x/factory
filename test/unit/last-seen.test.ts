@@ -234,6 +234,182 @@ describe('writeLastSeen', () => {
   });
 });
 
+describe('writeLastSeen: two writers at once', () => {
+  const LOCK = `${FILE}.lock`;
+  const BOUND = hookNames.heartbeatLock;
+  const MAX_WAIT_MS = 300;
+
+  /** A copy of the deps whose `sleep` also runs `afterSleep` with the number of waits so far. */
+  const withWait = (deps: FakeDeps, afterSleep: (waits: number) => void): Deps => ({
+    ...deps,
+    sleep: async (ms) => {
+      await deps.sleep(ms);
+      afterSleep(deps.sleeps.length);
+    },
+  });
+
+  it('waits 300 ms at most, in fixed steps', () => {
+    expect((BOUND.attempts - 1) * BOUND.waitMs).toBeLessThanOrEqual(MAX_WAIT_MS);
+    expect(BOUND.attempts).toBeGreaterThan(1);
+  });
+
+  it.each([
+    ['the hook first', [event('Stop'), percent(42)]],
+    ['the status line first', [percent(42), event('Stop')]],
+  ] as const)('keeps both the event and the percent when two writes start together, %s', async (_name, changes) => {
+    const deps = createFakeDeps();
+    const results = await Promise.all(changes.map((change) => writeLastSeen(deps, HOME, ID, change)));
+    expect(results.map((result) => result.ok)).toEqual([true, true]);
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: expect.any(String), context_pct: 42, pct_at: expect.any(String) }));
+    expect([...deps.files.keys()]).toEqual([FILE]);
+  });
+
+  it('reads the line again inside the lock, so a line that another writer saved while it waited stays', async () => {
+    const deps = createFakeDeps();
+    deps.seed(LOCK, '1\n');
+    const waiting = withWait(deps, () => {
+      deps.seed(FILE, `${JSON.stringify(line({ event: 'Stop', event_at: T0 }))}\n`);
+      deps.files.delete(LOCK);
+    });
+    expect((await writeLastSeen(waiting, HOME, ID, percent(42))).ok).toBe(true);
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0, context_pct: 42, pct_at: '2030-01-02T03:04:05.728Z' }));
+  });
+
+  it('waits for a lock that another writer holds, then writes, and removes its own lock', async () => {
+    const deps = createFakeDeps();
+    deps.seed(LOCK, '1\n');
+    const waiting = withWait(deps, (waits) => {
+      if (waits === 2) deps.files.delete(LOCK);
+    });
+    expect((await writeLastSeen(waiting, HOME, ID, event('Stop'))).ok).toBe(true);
+    expect(deps.sleeps).toEqual([BOUND.waitMs, BOUND.waitMs]);
+    expect(storedLine(deps)).toMatchObject({ event: 'Stop' });
+    expect([...deps.files.keys()]).toEqual([FILE]);
+  });
+
+  it('gives up, writes nothing and leaves the lock of the other writer when the lock stays past the wait bound', async () => {
+    const deps = createFakeDeps();
+    deps.seed(LOCK, '1\n');
+    const result = await writeLastSeen(deps, HOME, ID, event('Stop'));
+    expect(errorOf(result)).toMatchObject({ kind: 'failure', message: expect.stringContaining(LOCK) });
+    expect(deps.sleeps).toEqual(Array.from({ length: BOUND.attempts - 1 }, () => BOUND.waitMs));
+    expect(deps.sleeps.reduce((sum, ms) => sum + ms, 0)).toBeLessThanOrEqual(MAX_WAIT_MS);
+    expect([...deps.files.entries()]).toEqual([[LOCK, '1\n']]);
+  });
+
+  it('takes over a lock that is older than the stale bound, with no wait', async () => {
+    const deps = createFakeDeps();
+    deps.seed(LOCK, '1\n');
+    deps.advance(BOUND.staleMs + 1);
+    expect((await writeLastSeen(deps, HOME, ID, event('Stop'))).ok).toBe(true);
+    expect(deps.sleeps).toEqual([]);
+    expect([...deps.files.keys()]).toEqual([FILE]);
+  });
+
+  it('does not take over a lock that is not older than the stale bound', async () => {
+    const deps = createFakeDeps();
+    deps.seed(LOCK, '1\n');
+    // The last try is 300 ms after the first one, so the lock is exactly as old as the bound then.
+    deps.advance(BOUND.staleMs - (BOUND.attempts - 1) * BOUND.waitMs);
+    expect(errorOf(await writeLastSeen(deps, HOME, ID, event('Stop'))).kind).toBe('failure');
+    expect([...deps.files.entries()]).toEqual([[LOCK, '1\n']]);
+  });
+
+  it('keeps the fresh lock of another writer that took the place of the stale lock while it took over', async () => {
+    const deps = createFakeDeps();
+    deps.seed(LOCK, '1\n');
+    deps.advance(BOUND.staleMs + 1);
+    const racing: Deps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        writeTextExclusive: async (path, text, mode) => {
+          const created = await deps.fs.writeTextExclusive(path, text, mode);
+          // The claim of the takeover is made. Now the other writer replaces the stale lock with its own, fresh lock.
+          if (path === `${LOCK}.takeover`) {
+            deps.files.delete(LOCK);
+            deps.seed(LOCK, '2\n');
+          }
+          return created;
+        },
+      },
+    };
+    expect(errorOf(await writeLastSeen(racing, HOME, ID, event('Stop'))).kind).toBe('failure');
+    expect([...deps.files.entries()]).toEqual([[LOCK, '2\n']]);
+  });
+
+  it('refuses a lock path that is a link, waits for nothing, and keeps the target of the link', async () => {
+    const deps = createFakeDeps({ links: { [LOCK]: '/outside/target' } });
+    deps.seed('/outside/target', 'victim');
+    const error = errorOf(await writeLastSeen(deps, HOME, ID, event('Stop')));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain(LOCK);
+    expect(deps.sleeps).toEqual([]);
+    expect(deps.files.get('/outside/target')).toBe('victim');
+    expect([...deps.files.keys()]).toEqual(['/outside/target']);
+  });
+
+  it('creates the lock in the heartbeat folder with mode 0600', async () => {
+    const deps = createFakeDeps();
+    const created: [string, number][] = [];
+    const watched: Deps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        writeTextExclusive: async (path, text, mode) => (created.push([path, mode]), deps.fs.writeTextExclusive(path, text, mode)),
+      },
+    };
+    await writeLastSeen(watched, HOME, ID, event('Stop'));
+    expect(created[0]).toEqual([LOCK, 0o600]);
+  });
+
+  it('removes its lock when the write of the line fails', async () => {
+    const deps = createFakeDeps();
+    const failing: Deps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        writeTextExclusive: async (path, text, mode) =>
+          path === LOCK ? deps.fs.writeTextExclusive(path, text, mode) : failure(`cannot write ${path}: disk full`),
+      },
+    };
+    expect(errorOf(await writeLastSeen(failing, HOME, ID, event('Stop'))).message).toContain('disk full');
+    expect(deps.files.size).toBe(0);
+  });
+
+  it('removes its lock when the stored line can not be read', async () => {
+    const deps = createFakeDeps();
+    seedLine(deps, { event: 'Stop', event_at: T0 });
+    const broken: Deps = {
+      ...deps,
+      fs: { ...deps.fs, lstat: async (path) => (path === FILE ? failure('cannot stat: EIO') : deps.fs.lstat(path)) },
+    };
+    expect(errorOf(await writeLastSeen(broken, HOME, ID, percent(5))).message).toContain('EIO');
+    expect([...deps.files.keys()]).toEqual([FILE]);
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0 }));
+  });
+
+  it('removes its lock when the line is a link and the write is refused', async () => {
+    const deps = createFakeDeps({ links: { [FILE]: '/outside/target' } });
+    deps.seedDir(FOLDER);
+    deps.seed('/outside/target', 'victim');
+    expect(errorOf(await writeLastSeen(deps, HOME, ID, event('Stop'))).kind).toBe('safety');
+    expect([...deps.files.keys()]).toEqual(['/outside/target']);
+  });
+
+  it('takes no lock, and makes no folder, for a change that is refused', async () => {
+    const deps = createFakeDeps();
+    const created: string[] = [];
+    const watched: Deps = {
+      ...deps,
+      fs: { ...deps.fs, writeTextExclusive: async (path, text, mode) => (created.push(path), deps.fs.writeTextExclusive(path, text, mode)) },
+    };
+    expect(errorOf(await writeLastSeen(watched, HOME, ID, percent(101))).kind).toBe('failure');
+    expect(created).toEqual([]);
+    expect(deps.dirs.has(FOLDER)).toBe(false);
+  });
+});
+
 describe('readLastSeen', () => {
   it('gives absent when the folder does not exist', async () => {
     expect(await readValue(createFakeDeps())).toEqual({ state: 'absent' });

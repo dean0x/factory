@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { writeInFolder } from '../core/safe-write.js';
+import { withFolderLock, writeInFolder } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
 import { hookNames, lastSeen, privateFile, schemaIds, type HookEvent } from '../names.js';
 import { layoutOf } from '../state/layout.js';
@@ -131,11 +131,23 @@ const changedLine = (stored: LastSeen | null, sessionId: string, change: LastSee
         change.percent === null ? null : at,
       );
 
+/** The line after a change, or the reason that the change is refused. */
+const nextLine = (stored: LastSeen | null, sessionId: string, change: LastSeenChange, at: Date): CliResult<LastSeen> => {
+  const checked = lastSeenSchema.safeParse(changedLine(stored, sessionId, change, at.toISOString()));
+  return checked.success ? ok(checked.data) : failure(`cannot record the last-seen line: ${describeIssues(checked.error)}`);
+};
+
 /**
  * Write the last-seen line of a session. A hook write keeps the stored percent and its time. A status line write keeps the
  * stored event and its time, and a null percent clears the stored percent. A stored file that is not valid is replaced.
  * The write is refused, and nothing changes, for a session id that is not a UUID, an event off the list and a percent
- * outside 0-100. A folder or a file that is a link is a security stop (exit 4) from the safe write. The value is the line.
+ * outside 0-100. A folder or a file that is a link is a security stop (exit 4) from the safe write.
+ *
+ * The hook and the status line wrapper write at the same moments, so a lock file beside the line (`hookNames.heartbeatLock`)
+ * lets one writer read, merge and write at a time. The writer reads the line again and takes the time inside the lock, so a
+ * write never puts back older data. A writer that does not get the lock within the wait bound writes nothing, and the value
+ * is a failure (exit 1): that update is skipped, and the next event or refresh sets it again. A lock path that is a link is a
+ * security stop (exit 4). The value is the line.
  */
 export const writeLastSeen = async (
   deps: Deps,
@@ -144,22 +156,22 @@ export const writeLastSeen = async (
   change: LastSeenChange,
 ): Promise<CliResult<LastSeen>> => {
   if (!isSessionId(sessionId)) return failure('cannot record the last-seen line: the session id is not a UUID');
-  const stored = await readLastSeen(deps, home, sessionId);
-  if (!stored.ok) return stored;
-  const before = stored.value.state === 'valid' ? stored.value.line : null;
-  const checked = lastSeenSchema.safeParse(changedLine(before, sessionId, change, deps.now().toISOString()));
-  if (!checked.success) return failure(`cannot record the last-seen line: ${describeIssues(checked.error)}`);
+  const allowed = nextLine(null, sessionId, change, deps.now());
+  if (!allowed.ok) return allowed;
   const layout = layoutOf(home);
-  const written = await writeInFolder(
-    deps,
-    {
-      parent: layout.runtimeDir,
-      folder: layout.heartbeatDir,
-      name: sessionId,
-      mode: privateFile.fileMode,
-      folderMode: privateFile.folderMode,
-    },
-    `${JSON.stringify(checked.data)}\n`,
-  );
-  return written.ok ? ok(checked.data) : written;
+  const target = {
+    parent: layout.runtimeDir,
+    folder: layout.heartbeatDir,
+    name: sessionId,
+    mode: privateFile.fileMode,
+    folderMode: privateFile.folderMode,
+  };
+  return withFolderLock(deps, target, hookNames.heartbeatLock, async () => {
+    const stored = await readLastSeen(deps, home, sessionId);
+    if (!stored.ok) return stored;
+    const next = nextLine(stored.value.state === 'valid' ? stored.value.line : null, sessionId, change, deps.now());
+    if (!next.ok) return next;
+    const written = await writeInFolder(deps, target, `${JSON.stringify(next.value)}\n`);
+    return written.ok ? next : written;
+  });
 };

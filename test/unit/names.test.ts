@@ -813,6 +813,11 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
     expect(rel(users)).toEqual(['core/private-file.ts']);
   });
 
+  it('has one copy of the take-over of a stale lock: the file lock module, which the other locks call', () => {
+    expect(rel(withText(/\bdropStaleLock\b|\bremoveSeenLock\b|\bdropStaleClaim\b/))).toEqual(['core/file-lock.ts']);
+    expect(rel(withText(/\btakeLock\b/))).toEqual(['core/file-lock.ts', 'core/private-file.ts', 'core/safe-write.ts']);
+  });
+
   it('has no module that writes the approval record apart from the owner record writer', () => {
     const callersOf = (pattern: RegExp): string[] => rel(withText(pattern).filter((path) => path !== OWNER_RECORD));
     expect(callersOf(/\brecordScope\b/)).toEqual([]);

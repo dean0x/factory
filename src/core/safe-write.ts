@@ -2,6 +2,7 @@ import { basename, join } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { commands, commandText, places } from '../names.js';
 import type { Deps } from './deps.js';
+import { takeLock, type LockPolicy } from './file-lock.js';
 import { comparable, isSameOrInside, realPathOf } from './paths.js';
 import { ok } from './result.js';
 
@@ -35,6 +36,9 @@ const LINK_REMEDY = `Replace the link with a real folder or file. ${CHECK_STEP}`
 const OUTSIDE_REMEDY = `Use a real folder in the expected place. ${CHECK_STEP}`;
 
 const isPlainName = (name: string): boolean => name !== '' && name !== '.' && name !== '..' && basename(name) === name;
+
+const notPlainName = (target: FolderTarget): CliResult<never> =>
+  failure(`cannot write ${target.folder}: ${JSON.stringify(target.name)} is not a plain name`);
 
 /** A link as the last part of a path is a security stop. The caller names what the path is. */
 const requireNoLink = async (deps: Deps, path: string, what: string): Promise<CliResult<void>> => {
@@ -76,7 +80,7 @@ const realFolderOf = async (deps: Deps, target: FolderTarget): Promise<CliResult
  * it was and removes the temporary file.
  */
 export const writeInFolder = async (deps: Deps, target: FolderTarget, text: string): Promise<CliResult<void>> => {
-  if (!isPlainName(target.name)) return failure(`cannot write ${target.folder}: ${JSON.stringify(target.name)} is not a plain name`);
+  if (!isPlainName(target.name)) return notPlainName(target);
   const folder = await realFolderOf(deps, target);
   if (!folder.ok) return folder;
   const file = join(folder.value, target.name);
@@ -95,4 +99,39 @@ export const writeInFolder = async (deps: Deps, target: FolderTarget, text: stri
     return renamed;
   }
   return failure(`cannot write ${file}: no free temporary name`);
+};
+
+/** The bounds of a lock beside a file, and the end of its name: the lock file is the name of the file and the suffix. */
+export interface FolderLock extends LockPolicy {
+  readonly suffix: string;
+}
+
+/**
+ * Run `work` while this call holds a lock file beside the file of the target. The folder is checked and made as for
+ * `writeInFolder`, and the lock file is made in that real folder. A lock path that is a link is a security stop (exit 4),
+ * and the link is not followed. The call waits within the bounds of the lock only. When the lock stays with another process
+ * for all tries, `work` does not run and the value is a failure (exit 1). The lock file is removed when `work` ends, also
+ * after a throw. A lock file that stays because of a failed removal is taken over when it is older than the stale age.
+ */
+export const withFolderLock = async <T>(
+  deps: Deps,
+  target: FolderTarget,
+  lock: FolderLock,
+  work: () => Promise<CliResult<T>>,
+): Promise<CliResult<T>> => {
+  if (!isPlainName(target.name)) return notPlainName(target);
+  const folder = await realFolderOf(deps, target);
+  if (!folder.ok) return folder;
+  const lockPath = join(folder.value, `${target.name}${lock.suffix}`);
+  const taken = await takeLock(deps, lockPath, lock);
+  if (!taken.ok) return failure(taken.error);
+  if (taken.value === 'link') return safetyRefusal(`cannot write ${lockPath}: it is a link`, LINK_REMEDY);
+  if (taken.value === 'held') {
+    return failure(`cannot write ${join(folder.value, target.name)}: another process holds the lock ${lockPath}`);
+  }
+  try {
+    return await work();
+  } finally {
+    await deps.fs.remove(lockPath);
+  }
 };

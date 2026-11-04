@@ -548,6 +548,20 @@ export const hookNames = {
   },
   /** The mark in place of the number in the fallback line, when the input gives no context percent. */
   unknownPercent: '?',
+  /**
+   * The lock file beside a last-seen line: the session id and `suffix`, in the heartbeat folder. The hook and the status
+   * line wrapper hold it while they read, merge and write the line. A writer tries `attempts` times and waits `waitMs`
+   * between two tries, so it waits 300 ms at most, then it writes nothing. A lock that is older than `staleMs` was left
+   * by a process that ended, and the next writer takes it over.
+   */
+  heartbeatLock: {
+    suffix: '.lock',
+    takeoverSuffix: privateFile.takeoverSuffix,
+    mode: privateFile.fileMode,
+    attempts: 7,
+    waitMs: 50,
+    staleMs: 2_000,
+  },
 } as const;
 
 /** One event of the fixed list. */

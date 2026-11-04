@@ -2,6 +2,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { safetyRefusal, type CliResult } from '../cli/errors.js';
 import { commands, commandText, dirs, env, places, privateFile, program } from '../names.js';
 import type { Deps, PathInfo } from './deps.js';
+import { takeLock, type LockPolicy } from './file-lock.js';
 import { isWrittenInside } from './paths.js';
 import { err, ok, type Result } from './result.js';
 
@@ -86,71 +87,27 @@ const prepareFolder = async (deps: Deps, path: string): Promise<Result<void, str
   return tightened.ok ? ok(undefined) : err(tightened.error.message);
 };
 
-/** True when a lock or a claim file is older than `privateFile.lockStaleMs`: a process that ended left it. */
-const isStale = (deps: Deps, info: PathInfo): boolean => deps.now().getTime() - info.mtimeMs > privateFile.lockStaleMs;
-
-/**
- * Remove the lock only when it is still the stale lock that the caller saw. The caller holds the claim file, so no other
- * waiter removes the lock now. A lock that a waiter took over in the meantime stays. The value is true when the lock is
- * gone.
- */
-const removeSeenLock = async (deps: Deps, lockPath: string, seen: PathInfo): Promise<Result<boolean, string>> => {
-  const current = await deps.fs.statInfo(lockPath);
-  if (!current.ok) return err(current.error.message);
-  if (current.value === null) return ok(true);
-  if (current.value.mtimeMs !== seen.mtimeMs) return ok(false);
-  const removed = await deps.fs.remove(lockPath);
-  return removed.ok ? ok(true) : err(removed.error.message);
+/** The bounds of the lock file beside a per-user file. */
+const userFileLock: LockPolicy = {
+  attempts: privateFile.lockAttempts,
+  waitMs: privateFile.lockWaitMs,
+  staleMs: privateFile.lockStaleMs,
+  takeoverSuffix: privateFile.takeoverSuffix,
+  mode: privateFile.fileMode,
 };
 
 /**
- * Another waiter holds the claim file: the caller waits. A claim that is stale is removed, because the process that made
- * it ended. The value is always false: the caller tries again after the wait.
+ * Take the lock file beside the file. The lock file is new, so only one process holds it. A stale lock is taken over. The
+ * error is the reason that the lock is not taken.
  */
-const dropStaleClaim = async (deps: Deps, claimPath: string): Promise<Result<boolean, string>> => {
-  const claim = await deps.fs.statInfo(claimPath);
-  if (!claim.ok) return err(claim.error.message);
-  if (claim.value === null || !isStale(deps, claim.value)) return ok(false);
-  const removed = await deps.fs.remove(claimPath);
-  return removed.ok ? ok(false) : err(removed.error.message);
-};
-
-/**
- * Remove a lock that is older than `privateFile.lockStaleMs`: a process that ended left it. Only the waiter that holds
- * the claim file beside the lock removes it, and only the stale lock that it saw, so a second waiter never removes the
- * new lock of the first. The value is true when the lock is gone and the caller may try to take it at once.
- */
-const dropStaleLock = async (deps: Deps, lockPath: string): Promise<Result<boolean, string>> => {
-  const seen = await deps.fs.statInfo(lockPath);
-  if (!seen.ok) return err(seen.error.message);
-  if (seen.value === null) return ok(true);
-  if (!isStale(deps, seen.value)) return ok(false);
-
-  const claimPath = `${lockPath}${privateFile.takeoverSuffix}`;
-  const claimed = await deps.fs.writeTextExclusive(claimPath, `${deps.pid}\n`, privateFile.fileMode);
-  if (!claimed.ok) return err(claimed.error.message);
-  if (!claimed.value) return dropStaleClaim(deps, claimPath);
-
-  const dropped = await removeSeenLock(deps, lockPath, seen.value);
-  const claimGone = await deps.fs.remove(claimPath);
-  if (!dropped.ok) return dropped;
-  return claimGone.ok ? dropped : err(claimGone.error.message);
-};
-
-/**
- * Take the lock file beside the file. The lock file is new, so only one process holds it. The call tries
- * `privateFile.lockAttempts` times and waits `privateFile.lockWaitMs` between two tries. A stale lock is taken over.
- */
-const takeLock = async (deps: Deps, lockPath: string): Promise<Result<void, string>> => {
-  for (let attempt = 1; attempt <= privateFile.lockAttempts; attempt += 1) {
-    const created = await deps.fs.writeTextExclusive(lockPath, `${deps.pid}\n`, privateFile.fileMode);
-    if (!created.ok) return err(created.error.message);
-    if (created.value) return ok(undefined);
-    const dropped = await dropStaleLock(deps, lockPath);
-    if (!dropped.ok) return dropped;
-    if (!dropped.value && attempt < privateFile.lockAttempts) await deps.sleep(privateFile.lockWaitMs);
+const takeUserFileLock = async (deps: Deps, lockPath: string): Promise<Result<void, string>> => {
+  const taken = await takeLock(deps, lockPath, userFileLock);
+  if (!taken.ok) return taken;
+  if (taken.value === 'link') return err(`the lock ${lockPath} is a link. Remove that file.`);
+  if (taken.value === 'held') {
+    return err(`another ${program} command holds the lock ${lockPath}. Wait until that command ends, or remove that file when no such command runs.`);
   }
-  return err(`another ${program} command holds the lock ${lockPath}. Wait until that command ends, or remove that file when no such command runs.`);
+  return ok(undefined);
 };
 
 /** What a change of a per-user file reads and gives: the current text, or null for a file that does not exist. */
@@ -172,7 +129,7 @@ export const changePrivateFile = async (
   const folder = await prepareFolder(deps, path);
   if (!folder.ok) return folder;
   const lockPath = `${path}${privateFile.lockSuffix}`;
-  const locked = await takeLock(deps, lockPath);
+  const locked = await takeUserFileLock(deps, lockPath);
   if (!locked.ok) return locked;
 
   const current = await readPrivateText(deps, path, maxBytes);
