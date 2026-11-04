@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { getEventListeners } from 'node:events';
 import { createServer, type Server } from 'node:http';
@@ -974,6 +975,45 @@ describe('node deps: end a process', () => {
   it('fails for any other error of the check', () => {
     vi.spyOn(process, 'kill').mockImplementation(failWith('EINVAL'));
     expect(deps.isRunning(PID).ok).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('node deps: a process that ended but is not collected yet', () => {
+  const children: ChildProcess[] = [];
+
+  /**
+   * Starts a program that makes a short child and then becomes `sleep`, which never collects the exit status of that child. The child
+   * ends at once and stays a zombie. The value is the pid of the child and the pid of its parent.
+   */
+  const withZombie = async (): Promise<{ readonly zombie: number; readonly parent: number }> => {
+    const parent = spawn('sh', ['-c', 'sleep 0.1 & echo $!; exec sleep 30'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    children.push(parent);
+    const first = await new Promise<string>((resolve) => parent.stdout.once('data', (chunk: Buffer) => resolve(chunk.toString())));
+    await wait(700);
+    return { zombie: Number(first.trim()), parent: parent.pid ?? 0 };
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    for (const child of children.splice(0)) child.kill('SIGKILL');
+  });
+
+  it('counts a zombie as ended, although the signal 0 still reaches it', async () => {
+    const { zombie } = await withZombie();
+    expect(() => process.kill(zombie, 0)).not.toThrow();
+    expect(deps.isRunning(zombie)).toEqual({ ok: true, value: false });
+  });
+
+  it('counts a process that runs as running', async () => {
+    const { parent } = await withZombie();
+    expect(deps.isRunning(parent)).toEqual({ ok: true, value: true });
+  });
+
+  it('counts a process as running when the state can not be read', async () => {
+    const { zombie, parent } = await withZombie();
+    vi.stubEnv('PATH', '/nonexistent-folder-of-the-test');
+    expect(deps.isRunning(parent)).toEqual({ ok: true, value: true });
+    expect(deps.isRunning(zombie)).toEqual({ ok: true, value: true });
   });
 });
 

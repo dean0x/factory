@@ -429,10 +429,20 @@ const isAlive = (pid: number): boolean => {
  */
 const STOP_CASE_MS = 120_000;
 
-/** Stops the worker alpha, and requires exit 0. The message holds the text of stderr, so a failure shows its cause. */
+/** The programs that a worker pane can hold, with their parent and state: the facts that tell a live process from a zombie. */
+const processFacts = (): string =>
+  (spawnSync('ps', ['-eo', 'pid,ppid,stat,comm'], { encoding: 'utf8' }).stdout ?? '')
+    .split('\n')
+    .filter((line, index) => index === 0 || /\b(sleep|tmux|sh|dash|env|claude)\s*$/.test(line))
+    .join('\n');
+
+/** Stops the worker alpha, and requires exit 0. The message holds the text of stderr and, for a failure, the processes and the panes. */
 const stoppedAlpha = async (): Promise<RunResult> => {
   const stopped = await stop('alpha');
-  expect(stopped.code, stopped.stderr).toBe(0);
+  if (stopped.code !== 0) {
+    const panes = (await tmux(['list-panes', '-a', '-F', '#{pane_id} #{pane_pid} #{pane_dead} #{@worker}'])).stdout;
+    expect(stopped.code, `${stopped.stderr}\npanes:\n${panes}\nprocesses:\n${processFacts()}`).toBe(0);
+  }
   return stopped;
 };
 
