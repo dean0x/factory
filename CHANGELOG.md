@@ -126,6 +126,7 @@ Platforms and help
 
 - On native Windows, every command exits with code 1 and prints the hint to use WSL. macOS and Linux are the supported systems. `factory start` needs tmux 3.0 or newer and `claude` on the PATH.
 - New command `factory help words`. It prints one plain sentence for each word that factory uses. `--json` prints the same list.
+- New command `factory machine`. It reads the free memory, the free disk space of the factory folder, the load and the count of processors, on macOS and on Linux, and judges them against `limits.memory_free_min_pct`, `limits.disk_free_min_gb` and `limits.load_max`. Each fact has a value, a limit and a verdict: `ok`, `fail` or `unknown`. A program that fails or is too slow, and an output that does not parse, give `unknown`. The exit code is 0 for every verdict. `--json` prints the facts.
 - Error messages, hints, the text of an internal error and the question of `init` show a control character as `?`, as the other text output does.
 
 Security

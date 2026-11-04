@@ -25,6 +25,7 @@ You need:
 | `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory doctor` | Run 25 checks. See "Doctor". |
+| `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. It exits with code 0 and prints nothing to stdout on every path. |
 | `factory hook statusline` | For Claude Code, not for people. It is the status line of the coordinator. It records the context percent of the session in the last-seen record, then prints the output of the command in `session.statusline` of `factory.local.yaml` as it is (the command gets the same input, and has 2 seconds; at the limit, every process that it started stops, and a SIGTERM, SIGHUP or SIGINT of the wrapper stops them too; a SIGKILL of the wrapper leaves them running). With no command, or with a command that fails or takes too long, it prints `context N%`. When the input gives no percent, or is not whole after 2 seconds, it prints `context ?%`. It exits with code 0 on every path and prints at most one line on stderr. The field names of the input come from the devflow HUD, which reads the live payload; checked against the Claude Code status line docs. |
@@ -229,6 +230,22 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 - `project-urls`: a project with no URL that you can share is a warning.
 
 `doctor` warns about each temp folder that a stopped `init` left. It removes nothing.
+
+### Machine
+
+`factory machine` reads four facts of this machine: the free memory, the free disk space of the file system of the factory folder, the load of the last minute and the count of processors. It judges the first three against `limits` in `factory.yaml`: `memory_free_min_pct`, `disk_free_min_gb` and `load_max`. With `load_max: cpu_count`, the limit is the count of processors. A value that equals its limit is `ok`.
+
+```sh
+factory machine
+```
+
+Each fact has one format: a value, a limit and a verdict, `ok`, `fail` or `unknown`. The first line of the output shows the worst verdict. `--json` prints the facts.
+
+- On macOS, it runs `memory_pressure`, `df -Pk` and `sysctl`.
+- On Linux, it reads `/proc/meminfo` and `/proc/loadavg`, and runs `df -Pk` and `nproc`. The free memory is `MemAvailable` of `MemTotal`.
+- On another system, each fact is `unknown`.
+
+Each program has 5 seconds. A program that does not run, that takes too long or that exits with an error gives `unknown`. So does an output that does not parse. The command exits with code 0 for every verdict. It exits with another code only for a usage error, or when it finds no valid factory folder.
 
 ### Upgrade a factory
 
