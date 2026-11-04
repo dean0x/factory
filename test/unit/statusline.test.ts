@@ -7,6 +7,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { hookNames, schemaIds, statuslineTextOf } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
+import { writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, exited, registerRoot, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -99,6 +100,7 @@ describe('factory hook statusline: the command of the owner (TP-13)', () => {
       event_at: null,
       context_pct: 8,
       pct_at: NOW,
+      owner: NODE_ID,
     });
     expect(heartbeatFiles(deps)).toEqual([FILE]);
   });
@@ -330,7 +332,19 @@ describe('factory hook statusline: the guards of the write', () => {
     expect((await writeWorkerRecord(deps, HOME, record)).ok).toBe(true);
     const result = await statusline(deps);
     expect(result).toEqual({ code: 0, out: 'context 8%', err: '' });
-    expect(lineOf(deps)).toMatchObject({ session_id: SESSION, context_pct: 8, pct_at: NOW });
+    expect(lineOf(deps)).toMatchObject({ session_id: SESSION, context_pct: 8, pct_at: NOW, owner: 'fix-login' });
+  });
+
+  it('does not rewrite the line of a session of the node when a worker names that session', async () => {
+    const deps = make({ env: { FACTORY_SESSION: 'fix-login' } });
+    const record = { id: 'fix-login', project: 'web', workCopy: '/h/factory/work-copies/web-fix-login', branch: 'fix/login' };
+    expect((await writeWorkerRecord(deps, HOME, record)).ok).toBe(true);
+    expect((await writeLastSeen(deps, HOME, SESSION, { kind: 'percent', percent: 3 }, NODE_ID)).ok).toBe(true);
+    const before = deps.files.get(FILE);
+    const result = await statusline(deps);
+    expect(result.code).toBe(0);
+    expect(result.err).toContain(NODE_ID);
+    expect(deps.files.get(FILE)).toBe(before);
   });
 
   it('writes nothing for the id of a worker that has no record, and still prints a line', async () => {
@@ -467,7 +481,7 @@ describe('factory hook statusline: the input', () => {
     const text = deps.files.get(FILE) ?? '';
     expect(text).not.toContain('transcript');
     expect(text).not.toContain('placeholder');
-    expect(Object.keys(lineOf(deps) as Record<string, unknown>).sort()).toEqual(['context_pct', 'event', 'event_at', 'pct_at', 'schema', 'session_id']);
+    expect(Object.keys(lineOf(deps) as Record<string, unknown>).sort()).toEqual(['context_pct', 'event', 'event_at', 'owner', 'pct_at', 'schema', 'session_id']);
   });
 
   it.each([

@@ -8,7 +8,7 @@ import { hookNames, statuslineTextOf } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import { parsePercent, writeLastSeen } from '../workers/last-seen.js';
-import { hasFactoryHome, sessionHomeOf } from './hook.js';
+import { hasFactoryHome, sessionOwnerOf, type SessionOwner } from './hook.js';
 
 /**
  * The status line wrapper (design 4.6): Claude Code runs `<program> hook statusline` and passes the status line input as
@@ -77,13 +77,13 @@ const percentOf = (input: StatuslineInput): CliResult<number | null> => {
   return parsePercent(Math.round(((fresh + created + read) / size) * 100));
 };
 
-/** The factory folder of the session, or null outside a factory session. The error is the reason that the guards refuse the session. */
-const homeOfSession = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<string | null>> =>
-  hasFactoryHome(deps) ? sessionHomeOf(deps, registry) : ok(null);
+/** The owner of the session, or null outside a factory session. The error is the reason that the guards refuse the session. */
+const ownerOfSession = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<SessionOwner | null>> =>
+  hasFactoryHome(deps) ? sessionOwnerOf(deps, registry) : ok(null);
 
-const record = async (deps: Deps, home: string, sessionId: string | undefined, percent: number): Promise<CliResult<void>> => {
+const record = async (deps: Deps, owner: SessionOwner, sessionId: string | undefined, percent: number): Promise<CliResult<void>> => {
   if (sessionId === undefined) return failure('the input holds no session id');
-  const written = await writeLastSeen(deps, home, sessionId, { kind: 'percent', percent });
+  const written = await writeLastSeen(deps, owner.home, sessionId, { kind: 'percent', percent }, owner.id);
   return written.ok ? ok(undefined) : written;
 };
 
@@ -147,13 +147,13 @@ const showStatusline = async (deps: Deps, registry: RecipeRegistry, stop: AbortS
 
   const input = keep(parseInput(stdin), null);
   const percent = keep(input === null ? ok(null) : percentOf(input), null);
-  const home = keep(await homeOfSession(deps, registry), null);
+  const owner = keep(await ownerOfSession(deps, registry), null);
 
   const recorded: CliResult<void> =
-    home === null || percent === null ? ok(undefined) : await record(deps, home, input?.[sessionKey], percent);
+    owner === null || percent === null ? ok(undefined) : await record(deps, owner, input?.[sessionKey], percent);
   keep(recorded, undefined);
 
-  const command = home === null ? null : keep(await ownerCommandOf(deps, home, registry), null);
+  const command = owner === null ? null : keep(await ownerCommandOf(deps, owner.home, registry), null);
   const output = command === null ? null : keep(await ownerOutputOf(deps, command, stdin, stop), null);
 
   return { text: output ?? statuslineTextOf(percent), note: notes[0] ?? null };

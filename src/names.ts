@@ -661,6 +661,8 @@ export const lastSeen = {
     eventAt: 'event_at',
     contextPct: 'context_pct',
     pctAt: 'pct_at',
+    /** The id that the session marker held when the line was made: the id of the node, or the id of a worker. */
+    owner: 'owner',
   },
   /** The id of a session: a UUID with lower case letters. */
   sessionIdPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,

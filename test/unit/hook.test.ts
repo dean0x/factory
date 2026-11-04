@@ -7,7 +7,7 @@ import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { hookNames, schemaIds, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
-import { readWorkerLastSeen } from '../../src/workers/last-seen.js';
+import { readWorkerLastSeen, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { runHook } from '../helpers/package-registry.js';
@@ -81,6 +81,7 @@ describe('factory hook: the last-seen line of each captured payload (TP-5)', () 
       event_at: NOW,
       context_pct: null,
       pct_at: null,
+      owner: NODE_ID,
     });
     expect([...deps.files.keys()].filter((path) => path.startsWith(`${FOLDER}/`))).toEqual([FILE]);
   });
@@ -263,6 +264,7 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
       event_at: NOW,
       context_pct: null,
       pct_at: null,
+      owner: WORKER_ID,
     });
     expect([...deps.files.keys()].filter((path) => path.startsWith(`${FOLDER}/`))).toEqual([FILE]);
   });
@@ -407,6 +409,18 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
       expect(deps.files.has(paths.lastSessionFile)).toBe(false);
     });
 
+    it.each([
+      ['the node', NODE_ID],
+      ['another worker', 'fix-search'],
+    ])('does not rewrite the line of a session of %s, and writes no pointer for it', async (_name, other) => {
+      const deps = await makeWorker();
+      await writeLastSeen(deps, HOME, SESSION, { kind: 'event', event: 'SessionStart' }, other);
+      const before = deps.files.get(FILE);
+      expect(errorOf(await runHook(deps, ['Stop']))).toContain(other);
+      expect(deps.files.get(FILE)).toBe(before);
+      expect(deps.files.has(paths.lastSessionFile)).toBe(false);
+    });
+
     it('keeps the line and names the pointer when the pointer is a link', async () => {
       const links: Record<string, string> = {};
       const deps = await makeWorker({ links });
@@ -485,7 +499,7 @@ describe('factory hook: the transcript is never opened (TP-10)', () => {
     const deps = make({ stdin: payload('UserPromptSubmit') });
     await runHook(deps, ['UserPromptSubmit']);
     expect(Object.keys(lineOf(deps) as Record<string, unknown>).sort()).toEqual(
-      ['context_pct', 'event', 'event_at', 'pct_at', 'schema', 'session_id'],
+      ['context_pct', 'event', 'event_at', 'owner', 'pct_at', 'schema', 'session_id'],
     );
   });
 });

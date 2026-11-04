@@ -61,13 +61,20 @@ const isRegisteredWorker = async (deps: Deps, home: string, session: string | un
   return read.ok ? ok(read.value.state === 'valid') : read;
 };
 
-/** The factory folder of a session, and the id of its worker (null for the session of the node). */
-interface SessionOwner {
+/** The factory folder of a session, the id that its marker holds, and the id of its worker (null for the session of the node). */
+export interface SessionOwner {
   readonly home: string;
+  /** The id of the node, or the id of the worker: the value of the session marker. A last-seen line records it as its owner. */
+  readonly id: string;
   readonly worker: string | null;
 }
 
-const ownerOf = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<SessionOwner>> => {
+/**
+ * The owner of the session that runs a hook. The folder must pass the registration check, and the session marker must be the
+ * id of the node, or the id of a worker that the registry of the node holds. The coordinator never reads the registry. The
+ * error is the reason that the hook must write nothing. The caller has checked `hasFactoryHome` first.
+ */
+export const sessionOwnerOf = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<SessionOwner>> => {
   const readNodeId = (readDeps: Deps, home: string) => readNodeIdentity(readDeps, home, registry);
   const located = await locateHomeFolder(deps, undefined, readNodeId, commands.hook);
   if (!located.ok) return located;
@@ -75,31 +82,22 @@ const ownerOf = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<
   const identity = await readNodeId(deps, home);
   if (!identity.ok) return failure(`cannot read the id of the ${roles.node}: ${identity.error}`);
   const session = deps.env[env.session];
-  if (session === identity.value.id) return ok({ home, worker: null });
+  if (session === identity.value.id) return ok({ home, id: session, worker: null });
   const registered = await isRegisteredWorker(deps, home, session);
   if (!registered.ok) return registered;
   if (session === undefined || !registered.value) {
     return failure(`${env.session} is not the id of the ${roles.node} or of a ${roles.worker} of ${home}`);
   }
-  return ok({ home, worker: session });
-};
-
-/**
- * The factory folder of the session that runs a hook. The folder must pass the registration check, and the session marker
- * must be the id of the node, or the id of a worker that the registry of the node holds. The coordinator never reads the
- * registry. The error is the reason that the hook must write nothing. The caller has checked `hasFactoryHome` first.
- */
-export const sessionHomeOf = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<string>> => {
-  const owner = await ownerOf(deps, registry);
-  return owner.ok ? ok(owner.value.home) : owner;
+  return ok({ home, id: session, worker: session });
 };
 
 /**
  * Record the event as the last-seen line of the session. Outside a factory session (no factory folder in the environment) it
  * does nothing and reads nothing. Otherwise the factory folder must pass the registration check, and the session marker must
  * be the id of the node or the id of a worker in its registry. For a worker, the hook also records the session as the newest
- * session of the worker, after the line is written, so a reader finds the line from the id of the worker. The value is
- * nothing; an error is the reason that the hook wrote nothing, or that it did not write the pointer.
+ * session of the worker, after the line is written, so a reader finds the line from the id of the worker. The line records
+ * the id of the session marker as its owner, and a session of one owner never rewrites the line of a session of another.
+ * The value is nothing; an error is the reason that the hook wrote nothing, or that it did not write the pointer.
  */
 export const runHook = async (deps: Deps, args: readonly string[], registry: RecipeRegistry): Promise<CliResult<void>> => {
   if (!hasFactoryHome(deps)) return ok(undefined);
@@ -110,11 +108,11 @@ export const runHook = async (deps: Deps, args: readonly string[], registry: Rec
   const sessionId = await sessionIdOfInput(deps, event);
   if (!sessionId.ok) return sessionId;
 
-  const owner = await ownerOf(deps, registry);
+  const owner = await sessionOwnerOf(deps, registry);
   if (!owner.ok) return owner;
   const { home, worker } = owner.value;
 
-  const written = await writeLastSeen(deps, home, sessionId.value, { kind: 'event', event });
+  const written = await writeLastSeen(deps, home, sessionId.value, { kind: 'event', event }, owner.value.id);
   if (!written.ok) return written;
   return worker === null ? ok(undefined) : writeWorkerSession(deps, home, worker, sessionId.value);
 };

@@ -7,12 +7,15 @@ import {
   parsePercent,
   promptStateOf,
   readLastSeen,
+  readOwnLastSeen,
   readWorkerLastSeen,
   writeLastSeen,
   writeWorkerSession,
   type LastSeen,
   type LastSeenRead,
+  type OwnSessionRead,
 } from '../../src/workers/last-seen.js';
+import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 
 const HOME = '/h/node';
@@ -240,6 +243,59 @@ describe('writeLastSeen', () => {
       expect(errorOf(await writeLastSeen(deps, HOME, ID, event('Stop'))).kind).toBe('safety');
       expect(deps.files.size).toBe(0);
     });
+  });
+});
+
+describe('writeLastSeen: the owner of the line', () => {
+  it('records the owner in the first line of a session', async () => {
+    const deps = createFakeDeps();
+    expect((await writeLastSeen(deps, HOME, ID, event('SessionStart'), 'alpha')).ok).toBe(true);
+    expect(storedLine(deps)).toEqual(line({ event: 'SessionStart', event_at: T0, owner: 'alpha' }));
+  });
+
+  it('keeps the owner and the other parts when the owner writes again', async () => {
+    const deps = createFakeDeps();
+    await writeLastSeen(deps, HOME, ID, event('SessionStart'), 'alpha');
+    deps.advance(MINUTE);
+    await writeLastSeen(deps, HOME, ID, percent(30), 'alpha');
+    expect(storedLine(deps)).toEqual(line({ event: 'SessionStart', event_at: T0, context_pct: 30, pct_at: T1, owner: 'alpha' }));
+  });
+
+  it('refuses a write of another owner, and keeps the stored line', async () => {
+    const deps = createFakeDeps();
+    await writeLastSeen(deps, HOME, ID, event('SessionStart'), 'alpha');
+    const before = snapshot(deps);
+    const error = errorOf(await writeLastSeen(deps, HOME, ID, event('Stop'), 'beta'));
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain('alpha');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('never gives an owner to a stored line that has none', async () => {
+    const deps = createFakeDeps();
+    seedLine(deps, { event: 'SessionStart', event_at: T0 });
+    expect((await writeLastSeen(deps, HOME, ID, event('Stop'), 'alpha')).ok).toBe(true);
+    expect(storedLine(deps)).toEqual(line({ event: 'Stop', event_at: T0 }));
+  });
+
+  it('keeps the stored owner when the call names no owner', async () => {
+    const deps = createFakeDeps();
+    await writeLastSeen(deps, HOME, ID, event('SessionStart'), 'alpha');
+    await writeLastSeen(deps, HOME, ID, percent(12));
+    expect(storedLine(deps)).toMatchObject({ owner: 'alpha', context_pct: 12 });
+  });
+
+  it('gives the owner to a line that replaces a stored text that is not valid', async () => {
+    const deps = createFakeDeps();
+    deps.seed(FILE, 'not json');
+    await writeLastSeen(deps, HOME, ID, event('Stop'), 'alpha');
+    expect(storedLine(deps)).toMatchObject({ owner: 'alpha' });
+  });
+
+  it.each(['Alpha', '../x', '', 'a b'])('writes nothing for the owner %j, which is not a slug', async (owner) => {
+    const deps = createFakeDeps();
+    expect(errorOf(await writeLastSeen(deps, HOME, ID, event('Stop'), owner)).kind).toBe('failure');
+    expect(deps.files.size).toBe(0);
   });
 });
 
@@ -757,6 +813,122 @@ describe('the session pointer of a worker', () => {
       const deps = withWorker();
       const broken: Deps = { ...deps, fs: { ...deps.fs, lstat: async () => failure('cannot stat: EIO') } };
       expect(errorOf(await readWorkerLastSeen(broken, HOME, WORKER)).message).toContain('EIO');
+    });
+  });
+
+  describe('readOwnLastSeen', () => {
+    const OTHER = 'fix-search';
+    const OTHER_POINTER = workerPathsOf(HOME, OTHER).lastSessionFile;
+    const NODE_ID = 'demo';
+
+    const addWorker = async (deps: FakeDeps, id: string): Promise<void> => {
+      const made = await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy: `/w/${id}`, branch: `worker/${id}` });
+      if (!made.ok) throw new Error(made.error.message);
+    };
+
+    const seedSession = (deps: FakeDeps, session: string, fields: Record<string, unknown> = {}): void => {
+      deps.seed(`${FOLDER}/${session}`, `${JSON.stringify(line({ session_id: session, event: 'Stop', event_at: T0, ...fields }))}\n`);
+    };
+
+    const readOwn = async (deps: Deps): Promise<OwnSessionRead> => {
+      const result = await readOwnLastSeen(deps, HOME, WORKER);
+      if (!result.ok) throw new Error(`the read failed: ${result.error.message}`);
+      return result.value;
+    };
+
+    const own = async (): Promise<FakeDeps> => {
+      const deps = withWorker();
+      await addWorker(deps, WORKER);
+      await addWorker(deps, OTHER);
+      return deps;
+    };
+
+    it('gives the line of a session that the worker owns', async () => {
+      const deps = await own();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      seedSession(deps, ID, { owner: WORKER });
+      expect(await readOwn(deps)).toEqual({ state: 'valid', line: line({ event: 'Stop', event_at: T0, owner: WORKER }) });
+    });
+
+    it('still gives the line when another worker has another session', async () => {
+      const deps = await own();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      await writeWorkerSession(deps, HOME, OTHER, NEXT);
+      seedSession(deps, ID, { owner: WORKER });
+      seedSession(deps, NEXT, { owner: OTHER });
+      expect(await readOwn(deps)).toMatchObject({ state: 'valid' });
+    });
+
+    it('ignores another worker whose pointer is absent or not valid', async () => {
+      const deps = await own();
+      await addWorker(deps, 'fix-docs');
+      deps.seed(workerPathsOf(HOME, 'fix-docs').lastSessionFile, 'abc\n');
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      seedSession(deps, ID, { owner: WORKER });
+      expect(await readOwn(deps)).toMatchObject({ state: 'valid' });
+    });
+
+    it.each([
+      ['no pointer', () => undefined],
+      ['a pointer to a session that has no line', (deps: FakeDeps) => void deps.seed(POINTER, `${ID}\n`)],
+      ['a line that is not valid', (deps: FakeDeps) => (deps.seed(POINTER, `${ID}\n`), deps.seed(FILE, 'not json'))],
+    ])('says that the line is missing for %s', async (_name, change) => {
+      const deps = await own();
+      change(deps);
+      expect(await readOwn(deps)).toMatchObject({ state: 'unknown', why: 'no-line' });
+    });
+
+    it('says that a line with no owner is not the worker line', async () => {
+      const deps = await own();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      seedSession(deps, ID);
+      const read = await readOwn(deps);
+      expect(read).toMatchObject({ state: 'unknown', why: 'not-owned' });
+    });
+
+    it('says that the session of the coordinator is not the worker line', async () => {
+      const deps = await own();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      seedSession(deps, ID, { owner: NODE_ID });
+      expect(await readOwn(deps)).toMatchObject({ state: 'unknown', why: 'not-owned' });
+    });
+
+    it('says that a session of another worker is not the worker line', async () => {
+      const deps = await own();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      await writeWorkerSession(deps, HOME, OTHER, ID);
+      seedSession(deps, ID, { owner: OTHER });
+      expect(await readOwn(deps)).toMatchObject({ state: 'unknown', why: 'not-owned' });
+    });
+
+    it('says that a session is not the worker line when another pointer holds it too, also with the worker as owner', async () => {
+      const deps = await own();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      await writeWorkerSession(deps, HOME, OTHER, ID);
+      seedSession(deps, ID, { owner: WORKER });
+      const read = await readOwn(deps);
+      expect(read).toMatchObject({ state: 'unknown', why: 'not-owned' });
+      if (read.state === 'unknown') expect(read.reason).toContain(OTHER);
+    });
+
+    it('gives the reason that the line is not valid, in words that name no key of the file', async () => {
+      const deps = await own();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      deps.seed(FILE, 'not json');
+      const read = await readOwn(deps);
+      if (read.state !== 'unknown') throw new Error('expected unknown');
+      expect(read.reason).toContain('not valid JSON');
+    });
+
+    it('fails when the pointer of another worker cannot be read', async () => {
+      const deps = await own();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      seedSession(deps, ID, { owner: WORKER });
+      const broken: Deps = {
+        ...deps,
+        fs: { ...deps.fs, lstat: async (path) => (path === OTHER_POINTER ? failure('cannot stat: EIO') : deps.fs.lstat(path)) },
+      };
+      expect(errorOf(await readOwnLastSeen(broken, HOME, WORKER)).message).toContain('EIO');
     });
   });
 });
