@@ -100,12 +100,18 @@ export const checkHomeIsNew = async (deps: Deps, home: string): Promise<CliResul
   const localAccess = await localFileAccess(deps, home);
   if (!localAccess.ok) return localAccess;
   if (localAccess.value.kind !== 'absent') {
-    return failure(`${files.localConfig} already exists in ${home}`, 'Move it away, or use another folder.');
+    return failure(
+      `${files.localConfig} already exists in ${home}`,
+      `Move it away, or use another folder. Then run "${commandText(commands.init)}" again.`,
+    );
   }
   const stateKind = await deps.fs.stat(layout.stateDir);
   if (!stateKind.ok) return stateKind;
   if (stateKind.value !== null) {
-    return failure(`${dirs.state} already exists in ${home}`, 'Remove it, or use another folder.');
+    return failure(
+      `${dirs.state} already exists in ${home}`,
+      `Remove it, or use another folder. Then run "${commandText(commands.init)}" again.`,
+    );
   }
   const homeKind = await deps.fs.stat(home);
   if (!homeKind.ok) return homeKind;

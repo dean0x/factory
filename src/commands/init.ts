@@ -296,7 +296,7 @@ const describeProjects = async (
   planned: readonly PlannedProject[],
   recipe: RecipeEntry,
 ): Promise<CliResult<DescribedProjects>> => {
-  const counted = checkProjectCount(planned.length);
+  const counted = checkProjectCount(planned.length, commands.init);
   if (!counted.ok) return counted;
   const projects: unknown[] = [];
   const sources: (readonly [string, string])[] = [];

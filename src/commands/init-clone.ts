@@ -124,8 +124,13 @@ const isPresentClone = async (
 };
 
 /** The count of the projects of one command: the repos that it found and the values of the project flag. */
-export const checkProjectCount = (count: number): CliResult<void> =>
-  count > MAX_PROJECTS ? usageError(`at most ${MAX_PROJECTS} projects are allowed`) : ok(undefined);
+export const checkProjectCount = (count: number, command: CommandName): CliResult<void> =>
+  count > MAX_PROJECTS
+    ? usageError(
+        `at most ${MAX_PROJECTS} projects are allowed`,
+        `Remove projects until ${MAX_PROJECTS} or fewer remain. ${runAgain(command)}`,
+      )
+    : ok(undefined);
 
 /** The plan of a project that a URL names. The origin of the clone is the URL. */
 const planUrlProject = async (
@@ -170,7 +175,10 @@ const planLocalProject = async (
 ): Promise<CliResult<PlannedProject>> => {
   const absolute = resolve(deps.cwd, argument);
   if (!(await isWorkTreeRoot(deps, absolute))) {
-    return usageError(`${argument} is not the top folder of a git work tree`);
+    return usageError(
+      `${argument} is not the top folder of a git work tree`,
+      `Name the top folder of a git work tree, or use a repo URL. ${runAgain(command)}`,
+    );
   }
   const real = await realPathOf(deps, absolute);
   if (!real.ok) return real;
@@ -205,7 +213,7 @@ export const planProjects = async (
   projects: readonly string[],
   command: CommandName,
 ): Promise<CliResult<readonly PlannedProject[]>> => {
-  const counted = checkProjectCount(projects.length);
+  const counted = checkProjectCount(projects.length, command);
   if (!counted.ok) return counted;
   const root = resolve(deps.cwd, home);
   const realHome = await realPathOf(deps, root);
@@ -220,7 +228,10 @@ export const planProjects = async (
         : await planUrlProject(deps, root, realHome.value, parsed.value, command);
     if (!project.ok) return project;
     if (planned.some((other) => projectFolderKey(other.name) === projectFolderKey(project.value.name))) {
-      return usageError(`two projects take the folder ${project.value.name}`);
+      return usageError(
+        `two projects take the folder ${project.value.name}`,
+        `Remove one of the two projects. ${runAgain(command)}`,
+      );
     }
     planned.push(project.value);
   }
@@ -258,7 +269,7 @@ export const planReceivedProjects = async (
   projects: readonly ListedProject[],
   command: CommandName,
 ): Promise<CliResult<ReceivedProjects>> => {
-  const counted = checkProjectCount(projects.length);
+  const counted = checkProjectCount(projects.length, command);
   if (!counted.ok) return counted;
   const root = resolve(deps.cwd, home);
   const realHome = await realPathOf(deps, root);

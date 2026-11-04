@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, safetyRefusal, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { renderError } from '../../src/cli/output.js';
-import { parseProjectUrl } from '../../src/commands/init-clone.js';
+import { MAX_PROJECTS, parseProjectUrl } from '../../src/commands/init-clone.js';
 import { MAX_CLONE_URL_CHARS } from '../../src/core/clone-url.js';
 import { commands, env, program } from '../../src/names.js';
 import { claudeFileText } from '../helpers/blocks.js';
@@ -467,6 +467,48 @@ describe('stops of init (exit 4)', () => {
     expectRemedyLine(error, 1);
     expect(error.message).toContain('/w/fresh is inside the factory folder /w');
     expect(error.hint).toContain('--home DIR');
+  });
+
+  it('prints one remedy line that names a command for a project path that is not the top folder of a work tree (exit 2, TP-106)', async () => {
+    const result = await runInit(initDeps(), options({ projects: ['/w/not-a-tree'] }));
+    const error = errorOf(result);
+    expect(error.message).toBe('/w/not-a-tree is not the top folder of a git work tree');
+    expectRemedy(error, 2);
+    expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
+  });
+
+  it('prints one remedy line that names a command for two projects that take one folder (exit 2, TP-106)', async () => {
+    const projects = ['https://example.com/acme/web.git', 'https://example.com/other/web.git'];
+    const error = errorOf(await runInit(initDeps(), options({ projects })));
+    expect(error.message).toBe('two projects take the folder web');
+    expectRemedy(error, 2);
+    expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
+  });
+
+  it('prints one remedy line that names a command for more projects than the limit (exit 2, TP-106)', async () => {
+    const projects = Array.from({ length: MAX_PROJECTS + 1 }, (_, i) => `https://example.com/acme/p${i}.git`);
+    const error = errorOf(await runInit(initDeps(), options({ projects })));
+    expect(error.message).toBe(`at most ${MAX_PROJECTS} projects are allowed`);
+    expectRemedy(error, 2);
+    expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
+  });
+
+  it('prints one remedy line that names a command for a folder that holds a local file already (exit 1, TP-106)', async () => {
+    const deps = initDeps();
+    deps.seed('/w/fresh/factory.local.yaml', 'schema: 1\n');
+    const error = errorOf(await runInit(deps, options({})));
+    expect(error.message).toBe('factory.local.yaml already exists in /w/fresh');
+    expectRemedy(error, 1);
+    expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
+  });
+
+  it('prints one remedy line that names a command for a folder that holds a state folder already (exit 1, TP-106)', async () => {
+    const deps = initDeps();
+    deps.seedDir('/w/fresh/.factory');
+    const error = errorOf(await runInit(deps, options({})));
+    expect(error.message).toBe('.factory already exists in /w/fresh');
+    expectRemedy(error, 1);
+    expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
   });
 });
 
