@@ -796,11 +796,11 @@ export const rootCheckResults = (scan: RootScan): readonly RootCheckResult[] => 
 export const hasRootFailure = (scan: RootScan): boolean => scan.findings.some((entry) => entry.level === 'fail');
 
 /**
- * The stop of `start` (exit 4): the failures, at most three of them by name, and one line with the distinct remedies.
- * A warning never stops. Nothing starts after a stop.
+ * The stop (exit 4) for a list of findings: the failures, at most three of them by name, and one line with the distinct
+ * remedies. A warning never stops. Nothing starts after a stop.
  */
-export const requireRootClean = (scan: RootScan): CliResult<void> => {
-  const failures = scan.findings.filter((entry) => entry.level === 'fail');
+export const requireNoFailures = (findings: readonly RootFinding[]): CliResult<void> => {
+  const failures = findings.filter((entry) => entry.level === 'fail');
   if (failures.length === 0) return ok(undefined);
   const shown = failures.slice(0, MAX_NAMED_FAILURES).map((entry) => entry.text);
   const rest = failures.length - shown.length;
@@ -808,9 +808,16 @@ export const requireRootClean = (scan: RootScan): CliResult<void> => {
   return safetyRefusal(`${shown.join('; ')}${rest > 0 ? ` and ${rest} more` : ''}`, remedies.join(' '));
 };
 
+/** The stop of `start` for the findings of the root checks. */
+export const requireRootClean = (scan: RootScan): CliResult<void> => requireNoFailures(scan.findings);
+
+/** One line for each warning of a list of findings, with its remedy. */
+export const warningLines = (findings: readonly RootFinding[]): readonly string[] =>
+  findings.filter((entry) => entry.level === 'warn').map(sentence);
+
 /** The lines that `start` prints before it acts: each warning with its remedy, and the approval points that are delegated. */
 export const rootNotices = (scan: RootScan): readonly string[] => [
-  ...scan.findings.filter((entry) => entry.level === 'warn').map(sentence),
+  ...warningLines(scan.findings),
   ...(scan.delegations === null || scan.delegations.active.length === 0
     ? []
     : [`Approval points with the mode ${DELEGATED}: ${scan.delegations.active.map((entry) => `${entry.point} since ${entry.at}`).join(', ')}.`]),

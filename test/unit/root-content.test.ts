@@ -3,12 +3,14 @@ import {
   checkFolderSettings,
   failsOnlyOnSetup,
   hasRootFailure,
+  requireNoFailures,
   requireRootClean,
   rootCheckResults,
   rootNotices,
   scanRoot,
   scanSettings,
   scanTrackedTexts,
+  warningLines,
   withSetupAccepted,
   type RootFinding,
   type RootScan,
@@ -1043,6 +1045,42 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       const found = await checkFolderSettings({ ...deps, fs: { ...deps.fs, readTextLimited } }, HOME, FOLDER, 'a work copy');
       expect(found.map((entry) => entry.level)).toEqual(['fail']);
       expect(found[0]?.text).toContain('did not read');
+    });
+  });
+
+  describe('the stop and the lines of a list of findings', () => {
+    const entry = (level: 'warn' | 'fail', text: string, remedy = ''): RootFinding => ({ id: 'permission-mode', level, text, remedy });
+
+    it('gives no stop for an empty list or a list of warnings', () => {
+      expect(requireNoFailures([]).ok).toBe(true);
+      expect(requireNoFailures([entry('warn', 'a warning', 'Do x.')]).ok).toBe(true);
+    });
+
+    it('stops with exit 4 on a failure, names at most three failures, and joins the distinct remedies once', () => {
+      const stop = requireNoFailures([
+        entry('fail', 'one', 'Fix it.'),
+        entry('warn', 'not named'),
+        entry('fail', 'two', 'Fix it.'),
+        entry('fail', 'three', 'Fix that.'),
+        entry('fail', 'four'),
+      ]);
+      expect(stop).toMatchObject({
+        ok: false,
+        error: { kind: 'safety', message: 'one; two; three and 1 more', hint: 'Fix it. Fix that.' },
+      });
+    });
+
+    it('gives the same stop as the stop of the root checks', () => {
+      const findings = [entry('fail', 'one', 'Fix it.')];
+      const scan = { findings } as RootScan;
+      expect(requireRootClean(scan)).toEqual(requireNoFailures(findings));
+    });
+
+    it('gives one line for each warning, with its remedy, and none for a failure', () => {
+      expect(warningLines([entry('warn', 'one', 'Do x.'), entry('fail', 'two', 'Do y.'), entry('warn', 'three')])).toEqual([
+        'one. Do x.',
+        'three.',
+      ]);
     });
   });
 
