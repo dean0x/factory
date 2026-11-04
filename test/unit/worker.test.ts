@@ -25,6 +25,7 @@ import {
 import { runWorker } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
@@ -354,6 +355,14 @@ describe('worker new: the output is short (TP-63)', () => {
     const made = make({ machine: { memory: 'System-wide memory free percentage: 5%\n', disk: null } });
     const output = await succeeded(made);
     expectShortOutput(plainText(output));
+  });
+
+  it('has the size of its output on this fixture in the token budget, row 4 (TP-64)', async () => {
+    const text = plainText(await succeeded(make()));
+    const row = budgetRow(4);
+    expect(row.command).toBe('`factory worker new`');
+    expect(row.measured).toBe(tokensOf(text));
+    expect(tokensOf(text)).toBeLessThanOrEqual(row.budget);
   });
 });
 

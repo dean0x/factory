@@ -26,6 +26,7 @@ import { runMachine } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 
 const FIXTURES = join(__dirname, '..', 'fixtures', 'machine');
 const fixture = (system: 'macos' | 'linux', name: string): string =>
@@ -553,6 +554,14 @@ describe('factory machine', () => {
     for (const deps of [macMachine(), linuxMachine(), macMachine({ disk: missingProgram('df') }, limits), none]) {
       expectShortOutput(plainText(await run(deps)));
     }
+  });
+
+  it('has the size of its output on the macOS fixtures in the token budget, row 16 (TP-64)', async () => {
+    const text = plainText(await run(macMachine()));
+    const row = budgetRow(16);
+    expect(row.command).toContain('`factory machine`');
+    expect(row.measured).toBe(tokensOf(text));
+    expect(tokensOf(text)).toBeLessThanOrEqual(row.budget);
   });
 
   it('finds the factory folder from the current folder when no folder is given', async () => {
