@@ -4,16 +4,21 @@ import {
   paneListArgs,
   paneReadArgs,
   parsePaneList,
+  parseSlotList,
   runShellBackgroundArgs,
   setPaneOptionArgs,
+  slotListArgs,
   splitWorkerPaneArgs,
   startSteps,
+  summonTimerArgs,
   swapPaneArgs,
+  tileWorkersArgs,
+  unsetPaneOptionArgs,
   type PaneRow,
   type TmuxArgs,
 } from '../../src/launch/tmux.js';
 import type { Result } from '../../src/core/result.js';
-import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
+import { tmuxCallOfShellText, tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 
 const must = (result: Result<TmuxArgs, string>): TmuxArgs => {
   if (!result.ok) throw new Error(result.error);
@@ -57,6 +62,11 @@ describe('the tmux fake: windows and panes', () => {
     const { log, rowsOf } = fakeTmux({ sessions: { demo: '/w/node' } });
     expect(where(log)).toEqual(['%0@view', '%1@view', '%2@workers']);
     expect(rowsOf('demo').map((row) => row.worker)).toEqual([null, null, null]);
+  });
+
+  it('gives a session of the fixture the pane options that start sets: the node mark and the board mark', () => {
+    const { log } = fakeTmux({ sessions: { demo: '/w/node' } });
+    expect(log.panes().map((pane) => pane.options)).toEqual([{ '@node': 'demo' }, { '@slot': 'board' }, {}]);
   });
 
   it('lists the panes with the id, the pid, the dead flag and the worker option, and the list parses', () => {
@@ -152,6 +162,104 @@ describe('the tmux fake: windows and panes', () => {
     expect(run(must(runShellBackgroundArgs('sleep 900'))).exitCode).toBe(0);
     expect(log.commands().at(-1)).toBe('run-shell -b sleep 900');
     expect(log.panes()).toHaveLength(3);
+  });
+
+  it('unsets a pane option, and leaves the other options of the pane', () => {
+    const { log, run } = fakeTmux({ sessions: { demo: null } });
+    run(must(setPaneOptionArgs('%1', '@slot_summon', '%2:abc')));
+    expect(log.panes()[1]?.options).toEqual({ '@slot': 'board', '@slot_summon': '%2:abc' });
+    expect(run(must(unsetPaneOptionArgs('%1', '@slot_summon'))).exitCode).toBe(0);
+    expect(log.panes()[1]?.options).toEqual({ '@slot': 'board' });
+  });
+
+  it('lists the slot marks: the board pane and the summon mark of the board pane', () => {
+    const { run } = fakeTmux({ sessions: { demo: null } });
+    run(must(setPaneOptionArgs('%1', '@slot_summon', `%2:${'a'.repeat(32)}`)));
+    const rows = parseSlotList(run(slotListArgs('demo')).stdout);
+    expect(rows).toEqual({
+      ok: true,
+      value: [
+        { paneId: '%0', window: 'view', board: false, summonText: '' },
+        { paneId: '%1', window: 'view', board: true, summonText: `%2:${'a'.repeat(32)}` },
+        { paneId: '%2', window: 'workers', board: false, summonText: '' },
+      ],
+    });
+  });
+
+  it('tiles a window, and keeps the layout of each window', () => {
+    const { log, run } = fakeTmux({ sessions: { demo: null } });
+    expect(run(tileWorkersArgs('demo')).exitCode).toBe(0);
+    expect(log.layouts()).toEqual({ 'demo:workers': 'tiled' });
+  });
+
+  it('fails the tiling of a window that does not exist, and of a session that does not exist', () => {
+    const { log, run } = fakeTmux({ sessions: { demo: null } });
+    expect(run(['select-layout', '-t', '=demo:nowhere', 'tiled']).exitCode).toBe(1);
+    expect(run(tileWorkersArgs('other')).exitCode).toBe(1);
+    expect(log.layouts()).toEqual({});
+  });
+});
+
+describe('the tmux fake: formats and the conditional command', () => {
+  const { run, log } = fakeTmux({ sessions: { demo: null }, panes: [{ id: '%9', session: 'demo', options: { '@worker': 'alpha' } }] });
+  const shown = (format: string): string => run(['display-message', '-p', '-t', '%9', format]).stdout;
+
+  it('expands a format that holds another format, and compares two texts', () => {
+    expect(shown('#{==:#{@worker},alpha}')).toBe('1\n');
+    expect(shown('#{==:#{@worker},beta}')).toBe('0\n');
+    expect(shown('#{==:#{@worker},#{@worker}}')).toBe('1\n');
+    expect(shown('a #{@worker} b')).toBe('a alpha b\n');
+  });
+
+  it('runs the command after the format when the format is true, with a chain of commands', () => {
+    const result = run(['if-shell', '-F', '-t', '%9', '#{==:#{@worker},alpha}', 'set-option -p -t %9 @a 1 ; set-option -p -t %9 @b 2']);
+    expect(result.exitCode).toBe(0);
+    expect(log.panes().find((pane) => pane.id === '%9')?.options).toMatchObject({ '@a': '1', '@b': '2' });
+  });
+
+  it('runs nothing when the format is false, and runs the command after it when the call has one', () => {
+    run(['if-shell', '-F', '-t', '%9', '#{==:#{@worker},beta}', 'set-option -p -t %9 @c 1']);
+    expect(log.panes().find((pane) => pane.id === '%9')?.options['@c']).toBeUndefined();
+    run(['if-shell', '-F', '-t', '%9', '#{==:#{@worker},beta}', 'set-option -p -t %9 @c 1', 'set-option -p -t %9 @d 1']);
+    expect(log.panes().find((pane) => pane.id === '%9')?.options).toMatchObject({ '@d': '1' });
+  });
+
+  it('counts an empty text and 0 as false, as tmux does', () => {
+    run(['if-shell', '-F', '-t', '%9', '', 'set-option -p -t %9 @e 1']);
+    run(['if-shell', '-F', '-t', '%9', '0', 'set-option -p -t %9 @e 1']);
+    expect(log.panes().find((pane) => pane.id === '%9')?.options['@e']).toBeUndefined();
+  });
+
+  it('gives the failure of the first command of the chain that fails, and runs no command after it', () => {
+    const result = run(['if-shell', '-F', '-t', '%9', '1', 'swap-pane -s %99 -t %9 ; set-option -p -t %9 @f 1']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('%99');
+    expect(log.panes().find((pane) => pane.id === '%9')?.options['@f']).toBeUndefined();
+  });
+
+  it('fails for a target pane that does not exist', () => {
+    expect(run(['if-shell', '-F', '-t', '%99', '1', 'set-option -p -t %9 @g 1']).exitCode).toBe(1);
+  });
+});
+
+describe('the tmux fake: the shell text of a summon', () => {
+  const TOKEN = '0123456789abcdef0123456789abcdef';
+
+  it('gives the tmux call of the shell text, with no wait, and the quoted words as one word each', () => {
+    const text = must(summonTimerArgs({ seconds: 900, board: '%5', pane: '%3', token: TOKEN })).at(-1) ?? '';
+    expect(tmuxCallOfShellText(text)).toEqual([
+      'if-shell',
+      '-F',
+      '-t',
+      '%5',
+      `#{==:#{@slot_summon},%3:${TOKEN}}`,
+      'swap-pane -s %3 -t %5 ; set-option -p -u -t %5 @slot_summon',
+    ]);
+  });
+
+  it('refuses a text that is not a wait and a tmux call', () => {
+    expect(() => tmuxCallOfShellText('echo hi')).toThrow('not the shell text of a summon');
+    expect(() => tmuxCallOfShellText('sleep 1; ls -l')).toThrow('not the shell text of a summon');
   });
 });
 

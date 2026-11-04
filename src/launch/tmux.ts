@@ -1,6 +1,6 @@
 import { err, ok, type Result } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
-import { env, tmuxNames } from '../names.js';
+import { env, summonLimits, tmuxNames } from '../names.js';
 
 export type TmuxArgs = readonly string[];
 
@@ -182,12 +182,127 @@ export const setPaneOptionArgs = (pane: string, option: string, value: string): 
   return ok(call('set-option', '-p', '-t', target.value, option, value));
 };
 
+/** Unsets a pane option on the pane, by its id. The name rule of `setPaneOptionArgs` holds. */
+export const unsetPaneOptionArgs = (pane: string, option: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  if (!target.ok) return target;
+  if (!PANE_OPTION_PATTERN.test(option)) return refuse('a pane option that is not a name with an at sign');
+  return ok(call('set-option', '-p', '-u', '-t', target.value, option));
+};
+
 /** Swaps two panes, by their ids. A pane keeps its id and its options. */
 export const swapPaneArgs = (source: string, target: string): Result<TmuxArgs, string> => {
   const from = paneTarget(source);
   if (!from.ok) return from;
   const to = paneTarget(target);
   return to.ok ? ok(call('swap-pane', '-s', from.value, '-t', to.value)) : to;
+};
+
+const TILED_LAYOUT = 'tiled';
+
+/** Puts the panes of the workers window in a grid of equal tiles. */
+export const tileWorkersArgs = (id: string): TmuxArgs =>
+  call('select-layout', '-t', windowTarget(id, tmuxNames.windowWorkers), TILED_LAYOUT);
+
+/**
+ * The format of one line of the slot list: the pane id, the slot mark, the summon mark and the name of the window. The two marks
+ * are text that a program in a pane can set, so a reader checks them. The window name is last because it is free text.
+ */
+const SLOT_LIST_FORMAT = [
+  PANE_ID_FORMAT,
+  `#{${tmuxNames.optionSlot}}`,
+  `#{${tmuxNames.optionSummon}}`,
+  '#{window_name}',
+].join(FIELD_SEPARATOR);
+
+/** Lists every pane of every window of the session with its slot mark, its summon mark and its window. `parseSlotList` reads the output. */
+export const slotListArgs = (id: string): TmuxArgs => call('list-panes', '-s', '-t', windowTarget(id, ''), '-F', SLOT_LIST_FORMAT);
+
+export interface SlotRow {
+  readonly paneId: string;
+  readonly window: string;
+  /** True when the slot mark of the pane is the board mark. */
+  readonly board: boolean;
+  /** The text of the summon mark of the pane, or an empty text. `parseSummonMark` reads it. */
+  readonly summonText: string;
+}
+
+/**
+ * Reads the output of the call from `slotListArgs`. One malformed line, and a pane that stands twice, refuse the whole list. The error
+ * names the number of the line and never its text. A slot mark that is not the board mark makes the pane a pane that is not the board.
+ */
+export const parseSlotList = (text: string): Result<readonly SlotRow[], string> => {
+  if (text === '') return ok([]);
+  const lines = (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
+  const rows: SlotRow[] = [];
+  const seen = new Set<string>();
+  for (const [index, line] of lines.entries()) {
+    const [paneId = '', slot = '', summonText = '', ...window] = line.split(FIELD_SEPARATOR);
+    if (window.length === 0 || !isPaneId(paneId) || seen.has(paneId)) return err(`line ${index + 1} of the slot list is malformed`);
+    seen.add(paneId);
+    rows.push({ paneId, window: window.join(FIELD_SEPARATOR), board: slot === tmuxNames.slotBoard, summonText });
+  }
+  return ok(rows);
+};
+
+/** The token of a summon is lower case hex text. */
+const SUMMON_TOKEN_PATTERN = new RegExp(`^[0-9a-f]{${summonLimits.tokenBytes * 2}}$`);
+const SUMMON_MARK_PATTERN = new RegExp(`^(%[0-9]+):([0-9a-f]{${summonLimits.tokenBytes * 2}})$`);
+const MARK_SEPARATOR = ':';
+
+/** What the board pane holds while a pane is in the slot: the pane that was summoned, and the token of that summon. */
+export interface SummonMark {
+  readonly pane: string;
+  readonly token: string;
+}
+
+/** The text of the summon mark: the pane id, a colon and the token. */
+export const summonMarkText = (pane: string, token: string): Result<string, string> => {
+  const target = paneTarget(pane);
+  if (!target.ok) return target;
+  return SUMMON_TOKEN_PATTERN.test(token) ? ok(`${target.value}${MARK_SEPARATOR}${token}`) : refuse('a summon token that is not lower case hex text');
+};
+
+/** Reads the text of the summon mark of the board pane: no mark (null) for an empty text, an error for a text that factory did not write. */
+export const parseSummonMark = (text: string): Result<SummonMark | null, string> => {
+  if (text === '') return ok(null);
+  const match = SUMMON_MARK_PATTERN.exec(text);
+  return match === null ? err('the summon mark is not a pane id, a colon and a token') : ok({ pane: match[1] ?? '', token: match[2] ?? '' });
+};
+
+const SECONDS_PER_MINUTE = 60;
+const MAX_SUMMON_SECONDS = summonLimits.maxMinutes * SECONDS_PER_MINUTE;
+
+/** The characters of the shell text of a summon: letters, digits, and the marks of the fixed words. No other character gets to the shell. */
+const SUMMON_TEXT_PATTERN = /^[A-Za-z0-9 %#{}=:,@;'_-]+$/;
+
+/**
+ * The call that swaps the summoned pane back after a time. It runs one shell text in the background of the tmux server: it waits
+ * `seconds`, then runs a tmux command that swaps the pane back and unsets the summon mark, only while the summon mark of the board
+ * pane is still the one of this summon. A newer summon, or `layout`, changes the mark, so an older timer does nothing.
+ * The text holds the digits of the wait, the token, pane ids and fixed words. Every variable part is checked, and the whole text
+ * is checked once more against the set of characters that these parts and words use.
+ */
+export const summonTimerArgs = (input: {
+  readonly seconds: number;
+  readonly board: string;
+  readonly pane: string;
+  readonly token: string;
+}): Result<TmuxArgs, string> => {
+  const { seconds, board, pane, token } = input;
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > MAX_SUMMON_SECONDS) {
+    return refuse('a wait that is not a whole number of seconds within the limits of a summon');
+  }
+  const mark = summonMarkText(pane, token);
+  if (!mark.ok) return mark;
+  const swap = swapPaneArgs(pane, board);
+  if (!swap.ok) return swap;
+  const unset = unsetPaneOptionArgs(board, tmuxNames.optionSummon);
+  if (!unset.ok) return unset;
+  const restore = [...swap.value, NEXT_COMMAND, ...unset.value].join(' ');
+  const condition = `#{==:#{${tmuxNames.optionSummon}},${mark.value}}`;
+  const text = `sleep ${seconds}; ${toolNames.tmux} if-shell -F -t ${board} '${condition}' '${restore}'`;
+  return SUMMON_TEXT_PATTERN.test(text) ? runShellBackgroundArgs(text) : refuse('a shell text with a character that a summon does not use');
 };
 
 /**

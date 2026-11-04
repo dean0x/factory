@@ -489,8 +489,19 @@ export const tmuxNames = {
   optionSlot: '@slot',
   /** The pane option that holds the worker id, on a worker pane. */
   optionWorker: '@worker',
+  /**
+   * The pane option of the board pane while a worker pane is in the slot: the pane id of that worker pane, a colon and the token
+   * of the summon. The option is unset while the board is in the slot.
+   */
+  optionSummon: '@slot_summon',
   slotBoard: 'board',
 } as const;
+
+/**
+ * The summon of a worker pane into the slot of the view window (design 4.11): the default time of the summon, its bounds in
+ * minutes, and the count of random bytes of its token.
+ */
+export const summonLimits = { defaultFor: '15m', minMinutes: 1, maxMinutes: 120, tokenBytes: 16 } as const;
 
 /**
  * The permission bits of the local config file (design 4.4). The file has mode 600. A group or other read bit gets

@@ -63,6 +63,8 @@ export interface TmuxLog {
   sessions(): Map<string, string | null>;
   /** The panes that exist now, in the order of their making. A swap exchanges the places of two panes in this list. */
   panes(): readonly PaneView[];
+  /** The layout that `select-layout` set, by `session:window`. A window that got no layout is not in the map. */
+  layouts(): Readonly<Record<string, string>>;
 }
 
 /** The commands that fail for a session that does not exist, when their target names a session. */
@@ -75,6 +77,7 @@ const NEEDS_SESSION = new Set([
   'kill-session',
   'display-message',
   'list-panes',
+  'select-layout',
 ]);
 
 const DEFAULT_LIST_FORMAT = '#{session_name}:#{window_name}.#{pane_index}';
@@ -130,6 +133,65 @@ type PaneMore = Omit<PaneFixture, 'session' | 'window'> & {
 const programOf = (command: readonly string[]): readonly string[] =>
   command.includes('--') ? command.slice(command.indexOf('--') + 1) : [];
 
+/** The index of the brace that closes the format whose text starts at `from`, just after its `#{`. -1 when no brace closes it. */
+const closingBrace = (text: string, from: number): number => {
+  let depth = 1;
+  for (let index = from; index < text.length; index += 1) {
+    if (text.startsWith('#{', index)) {
+      depth += 1;
+      index += 1;
+    } else if (text.charAt(index) === '}') {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+};
+
+/** The two parts of the text of a comparison, split at the first comma that is not inside a nested format. */
+const splitComparison = (text: string): readonly [string, string] => {
+  let depth = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.startsWith('#{', index)) {
+      depth += 1;
+      index += 1;
+    } else if (text.charAt(index) === '}') {
+      depth -= 1;
+    } else if (text.charAt(index) === ',' && depth === 0) {
+      return [text.slice(0, index), text.slice(index + 1)];
+    }
+  }
+  return [text, ''];
+};
+
+/**
+ * The tmux call inside the shell text of a summon, as an argument list, with no wait: the text is `sleep N; tmux ...`, and a word
+ * in single quotes is one word. A test runs this call at once, as the shell would run it after the wait.
+ */
+export const tmuxCallOfShellText = (text: string): readonly string[] => {
+  const match = /^sleep [0-9]+; tmux (.*)$/s.exec(text);
+  if (match === null) throw new Error('the text is not the shell text of a summon');
+  const words: string[] = [];
+  let word = '';
+  let started = false;
+  let quoted = false;
+  for (const char of match[1] ?? '') {
+    if (char === "'") {
+      quoted = !quoted;
+      started = true;
+    } else if (char === ' ' && !quoted) {
+      if (started) words.push(word);
+      word = '';
+      started = false;
+    } else {
+      word += char;
+      started = true;
+    }
+  }
+  if (started) words.push(word);
+  return words;
+};
+
 /** A fake of the tmux program: it knows sessions, their home option, their windows and panes, and records every call. */
 export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; log: TmuxLog } => {
   const calls: RunCall[] = [];
@@ -139,6 +201,7 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
   /** The windows of each session, in order. */
   const windows = new Map<string, string[]>();
   const panes: FakePane[] = [];
+  const layouts = new Map<string, string>();
 
   const explicitIds = (fixture.panes ?? []).flatMap((pane) => (pane.id === undefined ? [] : [pane.id]));
   for (const id of explicitIds) {
@@ -189,8 +252,9 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
 
   for (const [name, home] of Object.entries(fixture.sessions ?? {})) {
     sessions.set(name, home);
-    addPane(name, tmuxNames.windowView);
-    addPane(name, tmuxNames.windowView);
+    // The marks that `start` sets: the node on the coordinator pane, and the board on the slot pane.
+    addPane(name, tmuxNames.windowView, { options: { [tmuxNames.optionNode]: name } });
+    addPane(name, tmuxNames.windowView, { options: { [tmuxNames.optionSlot]: tmuxNames.slotBoard } });
     addPane(name, tmuxNames.windowWorkers);
     if (endedCoordinators.has(name)) markCoordinatorEnded(name);
   }
@@ -228,34 +292,58 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
     return window !== undefined && (windows.get(session) ?? []).includes(window) ? { session, window } : undefined;
   };
 
-  const expand = (format: string, pane: FakePane): string =>
-    format.replace(/#\{([^}]*)\}/g, (_match, key: string) => {
-      switch (key) {
-        case 'pane_id':
-          return pane.id;
-        case 'pane_pid':
-          return String(pane.pid);
-        case 'pane_dead':
-          return pane.dead ? '1' : '0';
-        case 'pane_current_path':
-          return pane.cwd ?? '';
-        case 'pane_index':
-          return String(panesOfWindow(pane.session, pane.window).indexOf(pane));
-        case 'session_name':
-          return pane.session;
-        case 'window_name':
-          return pane.window;
-        default:
-          return key.startsWith('@') ? (pane.options.get(key) ?? '') : '';
+  const valueOf = (key: string, pane: FakePane): string => {
+    switch (key) {
+      case 'pane_id':
+        return pane.id;
+      case 'pane_pid':
+        return String(pane.pid);
+      case 'pane_dead':
+        return pane.dead ? '1' : '0';
+      case 'pane_current_path':
+        return pane.cwd ?? '';
+      case 'pane_index':
+        return String(panesOfWindow(pane.session, pane.window).indexOf(pane));
+      case 'session_name':
+        return pane.session;
+      case 'window_name':
+        return pane.window;
+      default:
+        return key.startsWith('@') ? (pane.options.get(key) ?? '') : '';
+    }
+  };
+
+  /** Expands the formats of a text: a key of a pane, and a comparison `#{==:a,b}` of two texts that can hold formats. */
+  const expand = (format: string, pane: FakePane): string => {
+    let text = '';
+    for (let index = 0; index < format.length; index += 1) {
+      if (!format.startsWith('#{', index)) {
+        text += format.charAt(index);
+        continue;
       }
-    });
+      const end = closingBrace(format, index + 2);
+      if (end < 0) {
+        text += format.slice(index);
+        break;
+      }
+      const inner = format.slice(index + 2, end);
+      if (inner.startsWith('==:')) {
+        const [left, right] = splitComparison(inner.slice('==:'.length));
+        text += expand(left, pane) === expand(right, pane) ? '1' : '0';
+      } else {
+        text += valueOf(inner, pane);
+      }
+      index = end;
+    }
+    return text;
+  };
 
   const printed = (command: readonly string[], pane: FakePane) =>
     command.includes('-P') ? exited(0, `${expand(after(command, '-F') || DEFAULT_LIST_FORMAT, pane)}\n`) : exited(0);
 
   const cantFindPane = (target: string) => exited(1, '', `can't find pane: ${target}\n`);
 
-  const execute = (command: readonly string[]) => {
+  const execute = (command: readonly string[]): ReturnType<RunHandler> => {
     const [word, ...rest] = command;
     if (word === '-V') return exited(0, `${version}\n`);
     if (word === fixture.failing) return exited(1, '', `${word} failed\n`);
@@ -320,9 +408,37 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
         } else if (command.includes('-p')) {
           const pane = resolvePane(targetOf(command));
           if (pane === undefined && isPaneId(targetOf(command))) return cantFindPane(targetOf(command));
-          pane?.options.set(command.at(-2) ?? '', command.at(-1) ?? '');
+          if (command.includes('-u')) pane?.options.delete(command.at(-1) ?? '');
+          else pane?.options.set(command.at(-2) ?? '', command.at(-1) ?? '');
         }
         return exited(0);
+      }
+      case 'select-layout': {
+        const where = resolveWindow(targetOf(command));
+        if (where === undefined) return exited(1, '', `can't find window: ${targetOf(command)}\n`);
+        layouts.set(`${where.session}:${where.window}`, command.at(-1) ?? '');
+        return exited(0);
+      }
+      case 'if-shell': {
+        // Only the form that tmux runs without a shell: a format as the condition (`-F`), then the command, then an optional else command.
+        if (!command.includes('-F')) return exited(1, '', 'the fake runs only if-shell with -F\n');
+        const pane = resolvePane(targetOf(command));
+        if (pane === undefined) return cantFindPane(targetOf(command));
+        const texts: string[] = [];
+        for (let index = 0; index < rest.length; index += 1) {
+          const word = rest[index] ?? '';
+          if (word === '-t') index += 1;
+          else if (!word.startsWith('-')) texts.push(word);
+        }
+        const [condition = '', thenText = '', elseText] = texts;
+        const value = expand(condition, pane);
+        const branch = value !== '' && value !== '0' ? thenText : elseText;
+        let result = exited(0);
+        for (const next of chainOf((branch ?? '').split(/\s+/).filter((word) => word !== ''))) {
+          result = execute(next);
+          if (!result.ok || result.value.exitCode !== 0) return result;
+        }
+        return result;
       }
       case 'kill-pane': {
         const pane = resolvePane(targetOf(command));
@@ -374,6 +490,7 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
       calls,
       commands: () => calls.map((call) => `${call.command === 'tmux' ? '' : `${call.command} `}${call.args.join(' ')}`),
       sessions: () => sessions,
+      layouts: () => Object.fromEntries(layouts),
       panes: () =>
         panes.map((pane) => ({
           id: pane.id,
