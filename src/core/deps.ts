@@ -90,6 +90,11 @@ export interface RunOptions {
    * would pass that environment on to them.
    */
   readonly inheritEnv?: boolean;
+  /**
+   * The text for the standard input of the program. It is written as UTF-8, and then the input ends. A program that
+   * ends before it reads all of the text is no error. The time limit applies as before. By default the program gets no text.
+   */
+  readonly input?: string;
 }
 
 export interface RunOutput {
@@ -126,6 +131,12 @@ export interface Deps {
   readonly stdinIsTTY: boolean;
   /** True when a person reads the output of this process on a terminal. */
   readonly stdoutIsTTY: boolean;
+  /**
+   * Read the standard input of this process to its end, as UTF-8 text. It reads at most `maxBytes` plus one byte: an input
+   * of more than `maxBytes` bytes is an error, and the rest stays unread. When a person types at the input, the value is
+   * empty text at once, and nothing is read.
+   */
+  readStdin(maxBytes: number): Promise<CliResult<string>>;
   /** Ask one question and read one line of the answer, at most `MAX_ANSWER_CHARS` characters. The question goes to stderr. */
   prompt(question: string): Promise<CliResult<string>>;
   /**

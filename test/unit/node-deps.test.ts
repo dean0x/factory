@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Readable } from 'node:stream';
+import { setTimeout as wait } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 
@@ -47,6 +48,35 @@ describe('node deps: run', () => {
   it('runs in the folder that the caller names', async () => {
     const result = await deps.run('pwd', [], { cwd: dir });
     expect(result.ok && result.value.stdout.trim().endsWith(dir.split('/').pop() ?? '?')).toBe(true);
+  });
+
+  describe('the input of the program', () => {
+    const echo = ['-e', 'process.stdin.pipe(process.stdout)'];
+
+    it('gives the input text to the program on its standard input, with all bytes', async () => {
+      const result = await deps.run('node', echo, { input: 'héllo\nsecond line' });
+      expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: 'héllo\nsecond line', stderr: '' } });
+    });
+
+    it('gives an empty input as an input that has ended', async () => {
+      const result = await deps.run('node', echo, { input: '' });
+      expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: '', stderr: '' } });
+    });
+
+    it('is no error when the program ends before it reads a large input', async () => {
+      const result = await deps.run('node', ['-e', 'process.exit(5)'], { input: 'x'.repeat(2_000_000) });
+      expect(result.ok && result.value.exitCode).toBe(5);
+    });
+
+    it('still ends the program when the time limit passes', async () => {
+      const started = Date.now();
+      const result = await deps.run('node', ['-e', 'process.stdin.resume(); setTimeout(() => {}, 20000)'], {
+        input: 'text',
+        timeoutMs: 200,
+      });
+      expect(result.ok).toBe(false);
+      expect(Date.now() - started).toBeLessThan(10_000);
+    });
   });
 
   describe('the environment of the program', () => {
@@ -146,6 +176,106 @@ describe('node deps: the terminal', () => {
       const result = await answer;
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.message).toBe('no answer was given');
+    });
+  });
+
+  describe('readStdin', () => {
+    const realStdin = process.stdin;
+    let input = new PassThrough();
+
+    const replaceStdin = (stream: Readable): void => {
+      Object.defineProperty(process, 'stdin', { value: stream, configurable: true });
+    };
+
+    beforeEach(() => {
+      input = new PassThrough();
+      replaceStdin(input);
+    });
+
+    afterEach(() => {
+      Object.defineProperty(process, 'stdin', { value: realStdin, configurable: true });
+    });
+
+    it('returns the whole text of the input when it ends', async () => {
+      const text = createNodeDeps().readStdin(1024);
+      input.write('{"a":');
+      input.end('"b"}');
+      expect(await text).toEqual({ ok: true, value: '{"a":"b"}' });
+    });
+
+    it('returns empty text for an input with no bytes', async () => {
+      const text = createNodeDeps().readStdin(1024);
+      input.end();
+      expect(await text).toEqual({ ok: true, value: '' });
+    });
+
+    it('accepts an input of exactly the limit', async () => {
+      const text = createNodeDeps().readStdin(5);
+      input.end('12345');
+      expect(await text).toEqual({ ok: true, value: '12345' });
+    });
+
+    it('returns an error for an input of one byte more than the limit', async () => {
+      const text = createNodeDeps().readStdin(5);
+      input.end('123456');
+      const result = await text;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toBe('cannot read stdin: larger than 5 bytes');
+    });
+
+    it('counts bytes and not characters', async () => {
+      const six = 'ééé';
+      const within = createNodeDeps().readStdin(6);
+      input.end(six);
+      expect(await within).toEqual({ ok: true, value: six });
+
+      input = new PassThrough();
+      replaceStdin(input);
+      const over = createNodeDeps().readStdin(5);
+      input.end(six);
+      expect((await over).ok).toBe(false);
+    });
+
+    it('stops at the limit when the input never ends', async () => {
+      const endless = new Readable({
+        highWaterMark: 1,
+        read() {
+          this.push('a');
+        },
+      });
+      replaceStdin(endless);
+      const result = await Promise.race([createNodeDeps().readStdin(100), wait(5000).then(() => 'still reading' as const)]);
+      endless.destroy();
+      expect(result).not.toBe('still reading');
+      if (result !== 'still reading') expect(result.ok).toBe(false);
+    });
+
+    it('returns an error when the input fails', async () => {
+      const text = createNodeDeps().readStdin(1024);
+      input.destroy(Object.assign(new Error('read failed'), { code: 'EIO' }));
+      expect(await text).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot read stdin: EIO' } });
+    });
+
+    it.each([-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])('returns an error for the limit %s', async (limit) => {
+      const result = await createNodeDeps().readStdin(limit);
+      expect(result.ok).toBe(false);
+    });
+
+    it('returns empty text at once when a person types at the input (TP-124)', async () => {
+      const terminal = Object.assign(new PassThrough(), { isTTY: true });
+      replaceStdin(terminal);
+      const result = await Promise.race([createNodeDeps().readStdin(1024), wait(2000).then(() => 'blocked' as const)]);
+      expect(result).toEqual({ ok: true, value: '' });
+      terminal.destroy();
+    });
+
+    it('leaves the text on a terminal unread', async () => {
+      const terminal = Object.assign(new PassThrough(), { isTTY: true });
+      replaceStdin(terminal);
+      terminal.write('typed text');
+      await createNodeDeps().readStdin(1024);
+      expect(terminal.read()?.toString()).toBe('typed text');
+      terminal.destroy();
     });
   });
 

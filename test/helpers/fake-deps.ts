@@ -16,6 +16,8 @@ export interface RunCall {
   readonly inheritEnv?: boolean;
   /** The time limit that the caller asked for. */
   readonly timeoutMs?: number;
+  /** The text that the caller gave to the standard input of the program. */
+  readonly input?: string;
 }
 
 export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
@@ -40,6 +42,8 @@ export interface FakeOptions {
   readonly stdinIsTTY?: boolean;
   /** A person reads the output on a terminal. Default: false. */
   readonly stdoutIsTTY?: boolean;
+  /** The text on the standard input, as `readStdin` reads it. A terminal gives no text. Default: empty. */
+  readonly stdin?: string;
   /** The answer to a question. Default: no answer. */
   readonly prompt?: PromptHandler;
   /** The result of a program that uses the terminal. Default: exit code 0. */
@@ -282,6 +286,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         cwd: runOptions?.cwd,
         inheritEnv: runOptions?.inheritEnv === true,
         ...(runOptions?.timeoutMs === undefined ? {} : { timeoutMs: runOptions.timeoutMs }),
+        ...(runOptions?.input === undefined ? {} : { input: runOptions.input }),
       };
       calls.push(call);
       return (options.run ?? (() => missingProgram(command)))(call);
@@ -293,6 +298,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     },
     stdinIsTTY: options.stdinIsTTY ?? false,
     stdoutIsTTY: options.stdoutIsTTY ?? false,
+    readStdin: async (maxBytes) => {
+      // The same results as the real read: a terminal gives empty text, and an input over the limit is an error.
+      if (options.stdinIsTTY === true) return ok('');
+      const text = options.stdin ?? '';
+      return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read stdin: larger than ${maxBytes} bytes`) : ok(text);
+    },
     prompt: async (question: string) => {
       prompts.push(question);
       return (options.prompt ?? (() => failure('no answer was given')))(question);

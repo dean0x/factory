@@ -17,6 +17,7 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
@@ -75,6 +76,36 @@ const digestBytes = async (path: string, textLimit: number, maxBytes: number): P
   }
   if (size > maxBytes) return null;
   return { size, sha256: hash.digest('hex'), text: size <= textLimit ? Buffer.concat(kept).toString('utf8') : null };
+};
+
+/**
+ * The text of the input, or null when it holds more than `maxBytes`. At most `maxBytes` plus one byte is kept, and the
+ * rest of an input that is too large stays unread: the stream is closed.
+ */
+const readStreamBounded = async (input: Readable, maxBytes: number): Promise<string | null> => {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of input) {
+    const kept = (chunk as Buffer).subarray(0, maxBytes + 1 - size);
+    chunks.push(kept);
+    size += kept.length;
+    if (size > maxBytes) return null;
+  }
+  return Buffer.concat(chunks).toString('utf8');
+};
+
+/** True when a person types at the standard input of this process. */
+const stdinIsTerminal = (): boolean => process.stdin.isTTY === true;
+
+/** The standard input as text. A terminal gives empty text at once: it has no end, so a read would wait for a person. */
+const readStdin = async (maxBytes: number): Promise<CliResult<string>> => {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    return failure(`cannot read stdin: ${maxBytes} is not a number of bytes`);
+  }
+  if (stdinIsTerminal()) return ok('');
+  const text = await guard('read', 'stdin', () => readStreamBounded(process.stdin, maxBytes));
+  if (!text.ok) return text;
+  return text.value === null ? failure(`cannot read stdin: larger than ${maxBytes} bytes`) : ok(text.value);
 };
 
 const MAX_COPY_DEPTH = 64;
@@ -233,7 +264,7 @@ export const createNodeDeps = (): Deps => ({
   fs: nodeFs,
   run: (command, args, options) =>
     new Promise((resolve) => {
-      execFile(
+      const child = execFile(
         command,
         [...args],
         {
@@ -254,6 +285,11 @@ export const createNodeDeps = (): Deps => ({
           }
         },
       );
+      if (options?.input !== undefined) {
+        // A program that ends before it reads the text closes the pipe: that is no error of this run.
+        child.stdin?.once('error', () => undefined);
+        child.stdin?.end(options.input, 'utf8');
+      }
     }),
   runAttached: (command, args) =>
     new Promise((resolve) => {
@@ -263,8 +299,9 @@ export const createNodeDeps = (): Deps => ({
         resolve(code === null ? failure(`${command} was stopped by ${String(signal)}`) : ok(code)),
       );
     }),
-  stdinIsTTY: process.stdin.isTTY === true,
+  stdinIsTTY: stdinIsTerminal(),
   stdoutIsTTY: process.stdout.isTTY === true,
+  readStdin,
   prompt: (question) =>
     new Promise((resolve) => {
       const lines = createInterface({ input: process.stdin, output: process.stderr });
