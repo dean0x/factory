@@ -16,7 +16,7 @@ import {
 } from '../launch/tmux.js';
 import { requireSession, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
 import { commandLines, commands, commandText, program, roles, summonLimits, tmuxNames } from '../names.js';
-import { readPanes } from './panes.js';
+import { closePane, readPanes } from './panes.js';
 
 /**
  * The slot of the view window (design 4.11). The window `view` holds the coordinator and one slot. The slot shows the board, or
@@ -252,4 +252,24 @@ export const restoreSlot = async (deps: Deps, state: SlotState): Promise<CliResu
   const cleared = await tmuxStep(deps, unset.value);
   if (!cleared.ok) return cleared;
   return ok({ kind: 'restored', board: board.paneId, pane: held.paneId });
+};
+
+/**
+ * Shows the board in the slot again when a summon put this pane in the slot, before a command closes the pane. A pane that is
+ * closed in the slot leaves the view window with no slot, and then no command can bring the board back. A summon mark that names
+ * another pane, or no summon mark, changes nothing. Slot marks that cannot be read, or that factory did not write, change nothing
+ * too: the slot is never changed on marks that factory can not trust, and `layout` and `summon` name the fault of the marks.
+ */
+export const releaseSlot = async (deps: Deps, session: string, pane: string): Promise<CliResult<void>> => {
+  const rows = await readSlotRows(deps, session);
+  const state = rows.ok ? slotStateOf(rows.value) : rows;
+  if (!state.ok || state.value.summon?.pane !== pane) return ok(undefined);
+  const restored = await restoreSlot(deps, state.value);
+  return restored.ok ? ok(undefined) : restored;
+};
+
+/** Closes a pane of a worker by its id (`closePane`), after `releaseSlot`: a pane is never closed while a summon holds it in the slot. */
+export const closeWorkerPane = async (deps: Deps, session: string, pane: string): Promise<CliResult<'closed' | 'gone'>> => {
+  const released = await releaseSlot(deps, session, pane);
+  return released.ok ? closePane(deps, pane) : released;
 };

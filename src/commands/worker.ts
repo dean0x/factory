@@ -41,9 +41,9 @@ import { ensureCloneExclude } from '../workers/exclude.js';
 import { dismissCommand, launchWorker, resumeLine } from '../workers/launch.js';
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
-import { closePane, readPanes } from '../workers/panes.js';
+import { readPanes } from '../workers/panes.js';
 import { readWorkerRecord, writeWorkerRecord, type WorkerRecord } from '../workers/registry.js';
-import { summonWorker } from '../workers/slot.js';
+import { closeWorkerPane, summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
@@ -468,7 +468,8 @@ const requireNoLivePane = (rows: readonly PaneRow[], id: string): CliResult<void
  * 1. the checks of `worker new` (the root, the tools and the tmux session): a failing root check is exit 4 and changes nothing;
  * 2. the record must exist (exit 2), and a pane of the worker that runs is a stop (exit 2);
  * 3. the session to resume. No valid line, or a line that does not belong to the worker, gives no `--resume` and one warning;
- * 4. the old panes of the worker whose programs ended are closed, by their ids;
+ * 4. the old panes of the worker whose programs ended are closed, by their ids. A pane that a summon left in the slot goes back
+ *    first, and the board comes back into the slot;
  * 5. the launch of the same path as `worker new` (it checks the settings files of the work copy).
  */
 const runResume = async (
@@ -499,7 +500,7 @@ const runResume = async (
   if (!chosen.ok) return chosen;
 
   for (const row of rows.filter((candidate) => candidate.worker === id)) {
-    const closed = await closePane(deps, row.paneId);
+    const closed = await closeWorkerPane(deps, config.core.node.id, row.paneId);
     if (!closed.ok) return closed;
   }
   const launched = await launchWorker(deps, {

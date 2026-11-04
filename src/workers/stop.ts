@@ -16,7 +16,8 @@ import {
   type StopWay,
 } from '../names.js';
 import { promptStateOf, readOwnLastSeen, type OwnSessionRead } from './last-seen.js';
-import { closePane, readPanes } from './panes.js';
+import { readPanes } from './panes.js';
+import { closeWorkerPane } from './slot.js';
 
 /**
  * The stop of one worker (design 4.11, docs/session-stop.md): `worker stop` and, later, shutdown, restart, reboot and dismiss
@@ -89,10 +90,10 @@ const marked = (rows: readonly PaneRow[], workerId: string): { readonly live: re
   return { live: own.filter((row) => !row.dead), dead: own.filter((row) => row.dead) };
 };
 
-/** Closes panes whose program has ended, by their ids. With no pane there is nothing to close. */
-const closeEnded = async (deps: Deps, paneIds: readonly string[]): Promise<CliResult<StopOutcome>> => {
+/** Closes panes whose program has ended, by their ids (`closeWorkerPane`). With no pane there is nothing to close. */
+const closeEnded = async (deps: Deps, session: string, paneIds: readonly string[]): Promise<CliResult<StopOutcome>> => {
   for (const paneId of paneIds) {
-    const closed = await closePane(deps, paneId);
+    const closed = await closeWorkerPane(deps, session, paneId);
     if (!closed.ok) return closed;
   }
   return ok(paneIds.length === 0 ? { kind: 'no-pane' } : { kind: 'closed-dead', paneIds });
@@ -156,7 +157,8 @@ const endProcess = async (deps: Deps, row: PaneRow, way: StopWay, workerId: stri
  * 4. the pane is read again by its id: the pane id, the mark and the pid come from this read, and a read that differs from the
  *    list is a security stop (exit 4);
  * 5. the way of the table for the case ends the process, and the command waits for its end. A pane that ended already gets no signal;
- * 6. the pane is closed by its id.
+ * 6. the pane is closed by its id. When a summon put the pane in the slot of the view window, the board goes back into the slot
+ *    first (`closeWorkerPane`), so the view window keeps its slot.
  * A worker with no pane gives `no-pane` and changes nothing.
  */
 export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliResult<StopOutcome>> => {
@@ -171,7 +173,7 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
     );
   }
   const [target] = live;
-  if (target === undefined) return closeEnded(deps, dead.map((row) => row.paneId));
+  if (target === undefined) return closeEnded(deps, session, dead.map((row) => row.paneId));
   if (deps.env[env.tmuxPane] === target.paneId) {
     return usageError(
       `cannot stop the ${roles.worker} ${workerId} from its own pane ${target.paneId}`,
@@ -184,7 +186,7 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const read = await readPaneAgain(deps, target.paneId, workerId);
   if (!read.ok) return read;
   const row = read.value;
-  if (row.dead) return closeEnded(deps, [row.paneId]);
+  if (row.dead) return closeEnded(deps, session, [row.paneId]);
 
   const stopCase = stopCaseOf(seen.value);
   if (stopCase === null) {
@@ -198,7 +200,7 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const way = wayFor(stopCase);
   const ended = await endProcess(deps, row, way, workerId);
   if (!ended.ok) return ended;
-  const closed = await closePane(deps, row.paneId);
+  const closed = await closeWorkerPane(deps, session, row.paneId);
   if (!closed.ok) return closed;
   return ok({ kind: 'stopped', paneId: row.paneId, pid: row.pid, way, state: stopCase, pane: closed.value });
 };

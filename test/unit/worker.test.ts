@@ -1181,6 +1181,21 @@ describe('worker resume: the session of the worker (TP-30)', () => {
     expect(made.tmux.panes().some((pane) => pane.id === '%9')).toBe(true);
   });
 
+  it('brings the board back into the slot before it removes an old pane that a summon left there', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane({ dead: true })] } });
+    // The board pane of the fixture is %5. A summon swapped it with the pane of alpha, whose program then ended in the slot.
+    const board = '%5';
+    await made.deps.run('tmux', ['swap-pane', '-s', ALPHA_PANE, '-t', board]);
+    await made.deps.run('tmux', ['set-option', '-p', '-t', board, '@slot_summon', `${ALPHA_PANE}:${'ab'.repeat(16)}`]);
+    made.events.splice(0);
+    await resumed(made);
+    const boardPane = made.tmux.panes().find((pane) => pane.id === board);
+    expect(boardPane).toMatchObject({ window: 'view', options: { '@slot': 'board' } });
+    expect(boardPane?.options['@slot_summon']).toBeUndefined();
+    expect(killed(made)).toEqual([`kill-pane -t ${ALPHA_PANE}`]);
+    expect(indexOf(made, 'tmux swap-pane')).toBeLessThan(indexOf(made, 'tmux kill-pane'));
+  });
+
   it('names the resume command and the dismiss command when the proxy does not answer', async () => {
     const config = sampleConfig();
     const made = await withWorkers({

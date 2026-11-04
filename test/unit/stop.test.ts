@@ -8,6 +8,7 @@ import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession, type OwnSessionRead } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { confirmPane, stopCaseOf, stopWorker, wayFor, type StopOutcome } from '../../src/workers/stop.js';
+import { paneListArgs } from '../../src/launch/tmux.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
@@ -38,7 +39,12 @@ interface Setup {
   readonly paneVanishes?: boolean;
   /** True: the pane ends between the list and the read of the pane, and tmux removes it. */
   readonly paneGoneAtRead?: boolean;
+  /** A summon before the stop: the pane is swapped with the board pane, and the board pane gets the summon mark. */
+  readonly summoned?: { readonly pane: string; readonly mark: string };
 }
+
+/** The board pane of the fixture: the three panes of the session come after the pane %3, so the board pane is %5. */
+const BOARD = '%5';
 
 interface Made {
   readonly deps: FakeDeps;
@@ -49,6 +55,10 @@ interface Made {
 
 const make = (setup: Setup = {}): Made => {
   const { handler, log } = tmuxHandler({ sessions: { demo: HOME }, panes: setup.panes ?? [alphaPane()], ...setup.tmux });
+  if (setup.summoned !== undefined) {
+    handler({ command: 'tmux', args: ['swap-pane', '-s', setup.summoned.pane, '-t', BOARD], cwd: undefined });
+    handler({ command: 'tmux', args: ['set-option', '-p', '-t', BOARD, '@slot_summon', setup.summoned.mark], cwd: undefined });
+  }
   const events: string[] = [];
   const base = createFakeDeps({
     cwd: '/w',
@@ -281,8 +291,8 @@ describe('worker stop: a session at the prompt (TP-26)', () => {
     const made = make();
     await seed(made.deps);
     await succeeded(made);
-    const tmux = made.events.filter((event) => event.startsWith('tmux'));
-    expect(tmux.filter((event) => event === 'tmux list-panes')).toHaveLength(1);
+    const paneList = JSON.stringify(paneListArgs(NODE));
+    expect(made.deps.calls.filter((call) => JSON.stringify(call.args) === paneList)).toHaveLength(1);
     expect(made.events.slice(made.events.indexOf('tmux display-message'), made.events.indexOf(`terminate ${PID}`) + 1)).toEqual([
       'tmux display-message',
       `terminate ${PID}`,
@@ -507,6 +517,55 @@ describe('worker stop: never its own pane', () => {
     const made = make({ env: { TMUX_PANE: undefined } });
     await seed(made.deps);
     expect(await succeeded(made)).toMatchObject({ kind: 'stopped' });
+  });
+});
+
+describe('worker stop: a pane that a summon put in the slot of the view window', () => {
+  const TOKEN = 'ab'.repeat(16);
+  const SUMMONED = { pane: PANE, mark: `${PANE}:${TOKEN}` };
+  const paneOf = (made: Made, pane: string) => made.tmux.panes().find((candidate) => candidate.id === pane);
+
+  it('brings the board back into the slot after the process ends, and then closes the pane', async () => {
+    const made = make({ summoned: SUMMONED });
+    await seed(made.deps);
+    expect(paneOf(made, PANE)?.window).toBe('view');
+    expect(await succeeded(made)).toMatchObject({ kind: 'stopped', pid: PID, pane: 'closed' });
+    expect(paneOf(made, BOARD)).toMatchObject({ window: 'view', options: { '@slot': 'board' } });
+    expect(paneOf(made, BOARD)?.options['@slot_summon']).toBeUndefined();
+    expect(paneOf(made, PANE)).toBeUndefined();
+    const swapAt = made.events.indexOf('tmux swap-pane');
+    expect(made.events.indexOf(`terminate ${PID}`)).toBeLessThan(swapAt);
+    expect(swapAt).toBeLessThan(made.events.indexOf('tmux kill-pane'));
+  });
+
+  it('brings the board back before it closes a pane that ended in the slot, and sends no signal', async () => {
+    const made = make({ panes: [alphaPane({ dead: true })], summoned: SUMMONED });
+    await seed(made.deps);
+    expect(await succeeded(made)).toEqual({ kind: 'closed-dead', paneIds: [PANE] });
+    expect(made.deps.terminated).toEqual([]);
+    expect(paneOf(made, BOARD)?.window).toBe('view');
+    expect(paneOf(made, PANE)).toBeUndefined();
+  });
+
+  it('moves no pane when the summon is of another worker', async () => {
+    // The id %2 is below %3, so the panes of the session keep the ids %4 to %6, and the board pane stays %5.
+    const beta = alphaPane({ id: '%2', options: { '@worker': 'beta' }, pid: 4888 });
+    const made = make({ panes: [alphaPane(), beta], summoned: { pane: '%2', mark: `%2:${TOKEN}` } });
+    await seed(made.deps);
+    expect(paneOf(made, '%2')?.window).toBe('view');
+    expect(await succeeded(made)).toMatchObject({ kind: 'stopped', pane: 'closed' });
+    expect(made.events).not.toContain('tmux swap-pane');
+    expect(paneOf(made, '%2')?.window).toBe('view');
+    expect(paneOf(made, BOARD)?.options['@slot_summon']).toBe(`%2:${TOKEN}`);
+  });
+
+  it('stops and closes the pane all the same, and moves no pane, when the summon mark is not one that factory wrote', async () => {
+    const made = make({ summoned: { pane: PANE, mark: `${PANE}:not-a-token` } });
+    await seed(made.deps);
+    expect(await succeeded(made)).toMatchObject({ kind: 'stopped', pane: 'closed' });
+    expect(made.deps.terminated).toEqual([PID]);
+    expect(made.events).not.toContain('tmux swap-pane');
+    expect(killed(made)).toEqual([`kill-pane -t ${PANE}`]);
   });
 });
 
