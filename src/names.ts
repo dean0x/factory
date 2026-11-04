@@ -267,6 +267,8 @@ export const env = {
   proxyBaseUrl: 'ANTHROPIC_BASE_URL',
   /** The folders where the shell looks for a program. */
   path: 'PATH',
+  /** The start of the name of every variable that the program sets for a session. A settings file may not set one. */
+  factoryPrefix: 'FACTORY_',
   home: 'FACTORY_HOME',
   session: 'FACTORY_SESSION',
   /** The folder of the per-user state. The home index lives below it. */

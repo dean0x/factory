@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { printable } from '../cli/output.js';
 import { isRecord } from '../migrate/inspect.js';
@@ -64,6 +65,20 @@ const ownGroupOf = (event: string): HookGroup => ({ hooks: [commandEntryOf(hookC
 export const ownSettingsEntries: OwnSettings = {
   [claudeSettingKeys.hooks]: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroupOf(event)]])),
   [claudeSettingKeys.statusLine]: commandEntryOf(hookCommandOf(hookNames.statusline)),
+};
+
+/** The text with the white space outside the strings removed. A valid JSON text stays valid. */
+const compactJson = (text: string): string => text.replace(/("(?:[^"\\]|\\.)*")|\s+/g, '$1');
+
+/**
+ * True when the text of a settings file holds exactly the entries of the program (`ownSettingsEntries`) and nothing else: the
+ * parsed file equals the constant, and the text writes nothing that the parsed file hides. A repeated key and an escape in a
+ * name give a text longer or different from the parsed file, so another parser could read another file than this one. The
+ * order of the keys and the layout of the text do not count. A text that is not valid JSON is never exact.
+ */
+export const isOwnSettingsText = (text: string): boolean => {
+  const json = parseJsonText(text);
+  return json.ok && isDeepStrictEqual(json.value, ownSettingsEntries) && compactJson(text) === JSON.stringify(json.value);
 };
 
 export interface HookSettingsRequest {

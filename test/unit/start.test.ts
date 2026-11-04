@@ -1119,10 +1119,49 @@ describe('start:the root checks (TP-20, TP-61, TP-63, TP-78, TP-123, TP-133, TP-
 
   it('stops for a settings file that sets or clears the session marker (TP-179)', async () => {
     const { deps } = make();
-    deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { FACTORY_SESSION: '' } }));
+    deps.seed(`${HOME}/coordinator/.claude/settings.json`, JSON.stringify({ env: { [env.session]: '' } }));
     const error = await stopOf(deps);
     expect(error.message).toContain('coordinator/.claude/settings.json');
-    expect(error.message).toContain('FACTORY_SESSION');
+    expect(error.message).toContain(env.factoryPrefix);
+  });
+
+  it.each([env.home, 'FACTORY_ANYTHING'])(
+    'stops for a coordinator settings file whose env sets %s, with exit 4 and one remedy line, before any tmux call (AC-8, TP-23)',
+    async (name) => {
+      const { deps, tmux } = make();
+      deps.seed(`${HOME}/coordinator/.claude/settings.local.json`, JSON.stringify({ env: { [name]: 'x' } }));
+      const error = await stopOf(deps);
+      expect(error.message).toContain('coordinator/.claude/settings.local.json');
+      expect(error.message).toContain(env.factoryPrefix);
+      expect(error.hint).toContain('Remove the setting from coordinator/.claude/settings.local.json');
+      expect(tmux.calls).toEqual([]);
+    },
+  );
+
+  it('stops for a coordinator settings file that can not be read, with exit 4, and starts nothing (AC-8, TP-24)', async () => {
+    const { deps, tmux } = make();
+    const file = `${COORDINATOR}/.claude/settings.local.json`;
+    deps.seed(file, '{}');
+    const readTextLimited: FakeDeps['fs']['readTextLimited'] = async (path, max) =>
+      path === file ? failure(`cannot read ${path}: EACCES`) : deps.fs.readTextLimited(path, max);
+    const error = await stopOf({ ...deps, fs: { ...deps.fs, readTextLimited } });
+    expect(error.message).toContain('coordinator/.claude/settings.local.json');
+    expect(error.message).toContain('did not read');
+    expect(tmux.calls).toEqual([]);
+  });
+
+  it.each([
+    ['a settings file', 'settings.local.json'],
+    ['a settings folder', ''],
+  ])('stops for a coordinator %s that is a link, with exit 4, and starts nothing (AC-8, TP-24)', async (_name, file) => {
+    const target = file === '' ? `${COORDINATOR}/.claude` : `${COORDINATOR}/.claude/${file}`;
+    const { deps, tmux } = make({ links: { [target]: '/elsewhere/claude' } });
+    deps.seed('/elsewhere/claude/settings.local.json', '{}');
+    if (file !== '') deps.seed(target, '{}');
+    const error = await stopOf(deps);
+    expect(error.message).toContain('coordinator/.claude');
+    expect(error.message).toContain('link');
+    expect(tmux.calls).toEqual([]);
   });
 
   it('stops for a settings file that sets the proxy of the session', async () => {

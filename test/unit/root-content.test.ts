@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  checkFolderSettings,
   failsOnlyOnSetup,
   hasRootFailure,
   requireRootClean,
@@ -14,6 +15,7 @@ import {
 } from '../../src/commands/root-content.js';
 import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import {
   checkIds,
   claudeSettingKeys,
@@ -863,16 +865,19 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       expect(requireRootClean(found).ok).toBe(false);
     });
 
-    it('fails for a file that sets or clears the session marker, with one remedy line', async () => {
-      const deps = make();
-      put(deps, folder, JSON.stringify({ env: { [env.session]: '' } }));
-      const found = await scan(deps);
-      const stop = of(found, checkIds.permissionMode).find((finding) => finding.level === 'fail');
-      expect(stop?.text).toContain(shown);
-      expect(stop?.text).toContain(env.session);
-      expect(stop?.remedy).not.toContain('\n');
-      expect(requireRootClean(found).ok).toBe(false);
-    });
+    it.each([env.session, env.home, 'FACTORY_ANYTHING'])(
+      'fails for a file that sets or clears %s, names the prefix and gives one remedy line (TP-23)',
+      async (name) => {
+        const deps = make();
+        put(deps, folder, JSON.stringify({ env: { [name]: '' } }));
+        const found = await scan(deps);
+        const stop = of(found, checkIds.permissionMode).find((finding) => finding.level === 'fail');
+        expect(stop?.text).toContain(shown);
+        expect(stop?.text).toContain(env.factoryPrefix);
+        expect(stop?.remedy).not.toContain('\n');
+        expect(requireRootClean(found).ok).toBe(false);
+      },
+    );
 
     it('is ok for a file with safe settings', async () => {
       const deps = make();
@@ -897,6 +902,148 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
     const deps = make();
     put(deps, '', '{}');
     expect(of(await scan(deps), checkIds.permissionMode)).toEqual([]);
+  });
+
+  describe('the settings file that the program writes (AC-11, TP-133, TP-134)', () => {
+    const OWN = ownSettingsEntries;
+    const ownText = JSON.stringify(OWN, null, 2);
+    const withHooks = (hooks: unknown): string => JSON.stringify({ ...OWN, hooks });
+    const eventNames = Object.keys(OWN.hooks);
+    const firstEvent = eventNames[0] ?? '';
+    const otherEvent = eventNames[1] ?? '';
+
+    it.each(PLACES.filter(([, folder]) => folder !== ''))('gives no warning in %s for a file with only the own entries', async (_name, folder) => {
+      const deps = make();
+      put(deps, folder, ownText);
+      const found = await scan(deps);
+      expect(of(found, checkIds.permissionMode)).toEqual([]);
+      expect(requireRootClean(found).ok).toBe(true);
+    });
+
+    it('gives no warning when the file writes the same entries in another key order and layout', async () => {
+      const deps = make();
+      put(deps, 'coordinator', JSON.stringify({ statusLine: OWN.statusLine, hooks: OWN.hooks }));
+      expect(of(await scan(deps), checkIds.permissionMode)).toEqual([]);
+    });
+
+    it.each([
+      ['a setting of the model', { model: 'sonnet' }],
+      ['a permission rule', { permissions: { allow: [] } }],
+      ['an env value', { env: { OTHER: '1' } }],
+      ['an unknown key with an empty object', { note: {} }],
+    ])('warns for one extra key: %s', async (_name, extra) => {
+      const deps = make();
+      const path = put(deps, 'coordinator', JSON.stringify({ ...OWN, ...extra }));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
+      expect(textOf(found, checkIds.permissionMode)).toContain(path.replace(`${HOME}/`, ''));
+      expect(textOf(found, checkIds.permissionMode)).toContain('is a settings file in the coordinator folder');
+    });
+
+    it.each([
+      ['an event that the program does not use', { ...OWN.hooks, PostToolUse: OWN.hooks[firstEvent] ?? [] }],
+      ['a second group of an event', { ...OWN.hooks, [firstEvent]: [...(OWN.hooks[firstEvent] ?? []), ...(OWN.hooks[firstEvent] ?? [])] }],
+      ['an own event that is missing', Object.fromEntries(Object.entries(OWN.hooks).filter(([event]) => event !== firstEvent))],
+    ])('warns for the hooks with %s', async (_name, hooks) => {
+      const deps = make();
+      put(deps, 'coordinator', withHooks(hooks));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toEqual(['warn']);
+      expect(textOf(found, checkIds.permissionMode)).toContain('is a settings file in the coordinator folder');
+    });
+
+    it.each([
+      ['a status line with another own command', { ...OWN, statusLine: { type: 'command', command: `${program} hook ${firstEvent}` } }],
+      ['a status line with another program', { ...OWN, statusLine: { type: 'command', command: 'echo hi' } }],
+      ['a status line of another type', { ...OWN, statusLine: { type: 'prompt', command: OWN.statusLine.command } }],
+      ['a status line with an extra key', { ...OWN, statusLine: { ...OWN.statusLine, padding: 2 } }],
+      [
+        'a hook with the command of another event',
+        { ...OWN, hooks: { ...OWN.hooks, [firstEvent]: [{ hooks: [{ type: 'command', command: `${program} hook ${otherEvent}` }] }] } },
+      ],
+      [
+        'a hook with another program',
+        { ...OWN, hooks: { ...OWN.hooks, [firstEvent]: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] } },
+      ],
+    ])('warns for an own key with %s (TP-134)', async (_name, value) => {
+      const deps = make();
+      put(deps, 'coordinator', JSON.stringify(value));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toContain('warn');
+      expect(textOf(found, checkIds.permissionMode)).toContain('is a settings file in the coordinator folder');
+    });
+
+    it('warns for a file that is not valid JSON, also when the own entries are in it', async () => {
+      const deps = make();
+      put(deps, 'coordinator', `${ownText},`);
+      const found = await scan(deps);
+      expect(textOf(found, checkIds.permissionMode)).toContain('is a settings file in the coordinator folder');
+      expect(textOf(found, checkIds.permissionMode)).toContain('not valid JSON');
+    });
+
+    it('warns for a file that repeats a key, because a parser may keep the first value', async () => {
+      const deps = make();
+      const repeated = ownText.replace('{', '{"statusLine": {"type": "command", "command": "echo hi"},');
+      put(deps, 'coordinator', repeated);
+      const found = await scan(deps);
+      expect(textOf(found, checkIds.permissionMode)).toContain('is a settings file in the coordinator folder');
+    });
+
+    it('keeps every failure for a file with the own entries and a skip setting', async () => {
+      const deps = make();
+      put(deps, 'coordinator', JSON.stringify({ ...OWN, permissions: { defaultMode: 'bypassPermissions' } }));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).toContain('fail');
+      expect(requireRootClean(found).ok).toBe(false);
+    });
+  });
+
+  describe('the check of one session folder', () => {
+    const FOLDER = `${HOME}/work-copies/web-a`;
+    const FILE = `${FOLDER}/.claude/settings.local.json`;
+    const check = (deps: FakeDeps) => checkFolderSettings(deps, HOME, FOLDER, 'a work copy');
+
+    it('gives the failure for a skip setting, names the file below the root, and keeps the remedy', async () => {
+      const deps = make();
+      deps.seed(FILE, JSON.stringify({ permissions: { defaultMode: 'bypassPermissions' } }));
+      const found = await check(deps);
+      const stop = found.find((entry) => entry.level === 'fail');
+      expect(stop?.text).toContain('work-copies/web-a/.claude/settings.local.json');
+      expect(stop?.text).toContain('skips the permission checks');
+      expect(stop?.remedy).toContain('run "factory doctor"');
+    });
+
+    it('gives the warning for a settings file in the folder, and nothing for the entries of the program', async () => {
+      const deps = make();
+      deps.seed(FILE, JSON.stringify({ model: 'sonnet' }));
+      const warned = await check(deps);
+      expect(warned.map((entry) => entry.level)).toEqual(['warn']);
+      expect(warned[0]?.text).toContain('is a settings file in a work copy');
+      deps.seed(FILE, JSON.stringify(ownSettingsEntries, null, 2));
+      expect(await check(deps)).toEqual([]);
+    });
+
+    it('gives nothing for a folder with no settings folder, and a failure for a linked settings folder', async () => {
+      const deps = make();
+      deps.seedDir(FOLDER);
+      expect(await check(deps)).toEqual([]);
+      const linked = make({ links: { [`${FOLDER}/.claude`]: '/elsewhere/claude' } });
+      linked.seedDir(FOLDER);
+      linked.seedDir('/elsewhere/claude');
+      const found = await check(linked);
+      expect(found.map((entry) => entry.level)).toEqual(['fail']);
+      expect(found[0]?.text).toContain('is a link');
+    });
+
+    it('gives a failure for a settings file that can not be read', async () => {
+      const deps = make();
+      deps.seed(FILE, '{}');
+      const readTextLimited: FakeDeps['fs']['readTextLimited'] = async (path, max) =>
+        path === FILE ? failure(`cannot read ${path}: EACCES`) : deps.fs.readTextLimited(path, max);
+      const found = await checkFolderSettings({ ...deps, fs: { ...deps.fs, readTextLimited } }, HOME, FOLDER, 'a work copy');
+      expect(found.map((entry) => entry.level)).toEqual(['fail']);
+      expect(found[0]?.text).toContain('did not read');
+    });
   });
 
   it('checks the files settings.json and settings.local.json and ignores other files of the folder', async () => {

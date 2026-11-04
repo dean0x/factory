@@ -26,8 +26,8 @@ export interface SettingsFacts {
   readonly valid: boolean;
   /** The labels of the items of the permission-skip list that the file holds, in the order of the list. */
   readonly skips: readonly string[];
-  /** True when the `env` values of the file set or clear the session marker variable. */
-  readonly changesSessionMarker: boolean;
+  /** True when the `env` values of the file set or clear a variable with the prefix of the program, such as the session marker. */
+  readonly changesFactoryEnv: boolean;
   /** The `env` variables of the file that set the proxy or the credential of the session, in the order of the list. */
   readonly movesTraffic: readonly string[];
   /** The settings of the file that run a command, except the hook and the status line that the program writes. */
@@ -82,17 +82,35 @@ const skipsOf = (text: string, parsed: unknown): readonly string[] =>
 /** The key as the text of a file writes it: in quotes and followed by a colon. The letter case does not count. */
 const keyPatternOf = (key: string, flags = 'i'): RegExp => new RegExp(`"${escapeRegExp(key)}"\\s*:`, flags);
 
+/** A key that starts with `prefix`, as the text of a file writes it: in quotes and followed by a colon. The letter case does not count. */
+const keyPrefixPatternOf = (prefix: string): RegExp => new RegExp(`"${escapeRegExp(prefix)}(?:[^"\\\\]|\\\\.)*"\\s*:`, 'i');
+
 /**
- * The names of `wanted` that the `env` values of the file hold, in the order of `wanted` and in any letter case. A text that
- * does not parse is read as text: a key with that name followed by a colon counts, because the file may still be read by
- * another parser. The text is read also when it writes the key `env` more than once, because a parser that keeps the last
- * `env` value hides the others.
+ * The lower-case names of the `env` values of the parsed file, and whether the raw text must be read as well: it must when the
+ * text does not parse, and when it writes the key `env` more than once, because a parser that keeps the last `env` value hides
+ * the others.
+ */
+const envScanOf = (text: string, parsed: unknown): { readonly names: readonly string[]; readonly readsText: boolean } => {
+  const values = valueAt(parsed, [claudeSettingKeys.env]);
+  return {
+    names: isRecord(values) ? Object.keys(values).map((name) => name.toLowerCase()) : [],
+    readsText: !isRecord(parsed) || (text.match(keyPatternOf(claudeSettingKeys.env, 'gi')) ?? []).length > 1,
+  };
+};
+
+/**
+ * The names of `wanted` that the `env` values of the file hold, in the order of `wanted` and in any letter case. When the raw
+ * text is read, a key with that name followed by a colon counts, because the file may still be read by another parser.
  */
 const envNamesIn = (text: string, parsed: unknown, wanted: readonly string[]): readonly string[] => {
-  const values = valueAt(parsed, [claudeSettingKeys.env]);
-  const names = isRecord(values) ? Object.keys(values).map((name) => name.toLowerCase()) : [];
-  const readsText = !isRecord(parsed) || (text.match(keyPatternOf(claudeSettingKeys.env, 'gi')) ?? []).length > 1;
+  const { names, readsText } = envScanOf(text, parsed);
   return wanted.filter((name) => names.includes(name.toLowerCase()) || (readsText && keyPatternOf(name).test(text)));
+};
+
+/** True when an `env` value of the file holds a name that starts with `prefix`. The text is read in the same cases as above. */
+const envPrefixIn = (text: string, parsed: unknown, prefix: string): boolean => {
+  const { names, readsText } = envScanOf(text, parsed);
+  return names.some((name) => name.startsWith(prefix.toLowerCase())) || (readsText && keyPrefixPatternOf(prefix).test(text));
 };
 
 /** A hook or status line handler that the program writes: a command of the form `<program> hook <event>`. */
@@ -142,7 +160,7 @@ export const analyzeSettings = (text: string): SettingsFacts => {
   return {
     valid: isRecord(parsed),
     skips: skipsOf(text, parsed),
-    changesSessionMarker: envNamesIn(text, parsed, [env.session]).length > 0,
+    changesFactoryEnv: envPrefixIn(text, parsed, env.factoryPrefix),
     movesTraffic: envNamesIn(text, parsed, trafficEnvNames),
     runsCommands: runsCommands(text, parsed),
     wholeToolRules: rules.filter(isWholeToolRule).slice(0, MAX_LISTED_RULES).map(shown),
