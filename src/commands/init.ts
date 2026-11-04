@@ -267,7 +267,12 @@ const describeProject = async (
   recipe: RecipeEntry,
 ): Promise<CliResult<DescribedProject>> => {
   const id = slugify(planned.name);
-  if (id === null) return usageError(`cannot make a project id from the folder name ${planned.name}`);
+  if (id === null) {
+    return usageError(
+      `cannot make a project id from the folder name ${planned.name}`,
+      `Rename the folder to a name with a letter from A to Z or a digit. Then run "${commandText(commands.init)}" again.`,
+    );
+  }
   const holds = (key: InitProjectKey): boolean => recipe.initProjectKeys.includes(key);
   const repo = planned.origin.kind === 'shareable' ? parseGithubRepo(planned.origin.url) : null;
   const branch = holds(keys.project.defaultBranch) ? ((await defaultBranchOf(deps, planned.target)) ?? DEFAULT_BRANCH) : null;

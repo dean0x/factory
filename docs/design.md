@@ -912,7 +912,7 @@ Every node has the same mechanics: `factory.yaml` and `node.json`, the report di
 ### 5.3 Addresses
 
 - A child is named by a relative path from its parent: `acme/acme-web/web-checkout`. A path is unique because each id is unique among its siblings.
-- A transport says how to reach a node. factory has one transport: `file://<absolute home path>`, on the same machine (F-13). It has the four calls of the comms module (§4.12): `send`, `deliver`, `report` and `ping`. The config refuses any other address, for example `ssh://` or `https://`. A remote transport can come later behind the same four calls, with no redesign.
+- A transport says how to reach a node. factory has one transport: `file://<absolute path of the factory folder>`, on the same machine (F-13). It has the four calls of the comms module (§4.12): `send`, `deliver`, `report` and `ping`. The config refuses any other address, for example `ssh://` or `https://`. A remote transport can come later behind the same four calls, with no redesign.
 - A parent reaches a worker only through the parent node of that worker. It never types into a grandchild's pane.
 
 ### 5.4 What goes up

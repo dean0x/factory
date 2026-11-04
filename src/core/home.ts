@@ -292,5 +292,10 @@ export const locateHomeFolder = async (
   if (!located.ok) return located;
   const folder = await deps.fs.stat(located.value.home);
   if (!folder.ok) return folder;
-  return folder.value === 'dir' ? located : failure(`${located.value.home} is not a folder`);
+  return folder.value === 'dir'
+    ? located
+    : failure(
+        `${located.value.home} is not a folder`,
+        `Run "${commandText(command)}" again with ${flagText(flags.home)} DIR to choose a folder.`,
+      );
 };

@@ -869,6 +869,23 @@ describe('factory init: a folder that holds both config files (built binary)', (
     expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
   });
 
+  it('writes a missing marker again, keeps the other files, and start --dry-run then exits 0 (TP-96)', async () => {
+    await registered();
+    const state = join(box.node, '.factory');
+    const marker = join(state, 'node.json');
+    const board = await box.read(join(state, 'board.json'));
+    await rm(marker);
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(4);
+    const result = await box.run(['init', '--yes'], { cwd: box.node });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('.factory/node.json');
+    expect(existsSync(marker)).toBe(true);
+    expect(await box.read(join(state, 'board.json'))).toBe(board);
+    expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
+    expect((await box.run(['doctor', '--home', box.node])).code).toBe(0);
+    expect((await box.run(['start', '--dry-run', '--home', box.node])).code).toBe(0);
+  });
+
   it('writes a marker that was broken and not committed, and makes no commit, since git holds the same text (TP-96)', async () => {
     await registered();
     const state = join(box.node, '.factory');

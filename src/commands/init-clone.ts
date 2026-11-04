@@ -151,12 +151,14 @@ const planUrlProject = async (
 };
 
 /** The folder name of a repo that has a shareable or a file origin: the last part of the origin URL. */
-const nameOfOrigin = (
+export const nameOfOrigin = (
   origin: Exclude<OriginClass, { readonly kind: 'other' }>,
   command: CommandName,
 ): CliResult<string> => {
   const parsed = parseCloneUrl(origin.url);
-  if (!parsed.ok || parsed.value.kind === 'local') return failure('the origin of a repo is not a URL');
+  if (!parsed.ok || parsed.value.kind === 'local') {
+    return failure('the origin of a repo is not a URL', `Set the origin of the repo to a repo URL. ${runAgain(command)}`);
+  }
   const plain = checkPlainName(parsed.value.name, command);
   return plain.ok ? ok(parsed.value.name) : plain;
 };

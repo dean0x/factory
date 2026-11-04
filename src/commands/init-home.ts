@@ -115,7 +115,12 @@ export const checkHomeIsNew = async (deps: Deps, home: string): Promise<CliResul
   }
   const homeKind = await deps.fs.stat(home);
   if (!homeKind.ok) return homeKind;
-  if (homeKind.value !== null && homeKind.value !== 'dir') return failure(`${home} is not a folder`);
+  if (homeKind.value !== null && homeKind.value !== 'dir') {
+    return failure(
+      `${home} is not a folder`,
+      `Run "${commandText(commands.init)}" again with ${flagText(flags.home)} DIR to choose a folder.`,
+    );
+  }
   return ok(undefined);
 };
 

@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, safetyRefusal, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { renderError } from '../../src/cli/output.js';
-import { MAX_PROJECTS, parseProjectUrl } from '../../src/commands/init-clone.js';
+import { MAX_PROJECTS, nameOfOrigin, parseProjectUrl } from '../../src/commands/init-clone.js';
 import { MAX_CLONE_URL_CHARS } from '../../src/core/clone-url.js';
 import { commands, env, program } from '../../src/names.js';
 import { claudeFileText } from '../helpers/blocks.js';
@@ -569,6 +569,49 @@ describe('stops of init (exit 4)', () => {
     expect(error.message).toBe('.factory already exists in /w/fresh');
     expectRemedy(error, 1);
     expect(error.hint).toContain(`Then run "${program} ${commands.init}" again.`);
+  });
+
+  it('prints one remedy line that names a command for a home that is a file (exit 1, TP-106)', async () => {
+    const deps = initDeps();
+    deps.seed('/w/fresh', 'x');
+    const error = errorOf(await runInit(deps, options({})));
+    expect(error.message).toBe('/w/fresh is not a folder');
+    expectRemedy(error, 1);
+    expect(error.hint).toBe(`Run "${program} ${commands.init}" again with --home DIR to choose a folder.`);
+  });
+
+  it('prints one remedy line that names a command for the origin of a repo that is not a URL (exit 1, TP-106)', () => {
+    const error = errorOf(nameOfOrigin({ kind: 'shareable', url: '/w/web', credentialsRemoved: false }, commands.init));
+    expect(error.message).toBe('the origin of a repo is not a URL');
+    expectRemedy(error, 1);
+    expect(error.hint).toBe(`Set the origin of the repo to a repo URL. Then run "${program} ${commands.init}" again.`);
+  });
+
+  it('prints one remedy line that names a command for a folder name that makes no project id (exit 2, TP-106)', async () => {
+    const { handler } = gitHandler({ gh: 'some-login', repos: { '/w/_': {} } });
+    const deps = createFakeDeps({ cwd: '/w', env: { XDG_STATE_HOME: '/state', HOME: '/users/me' }, run: handler });
+    const error = errorOf(await runInit(deps, options({ projects: ['/w/_'] })));
+    expect(error.message).toContain('cannot make a project id from the folder name _');
+    expectRemedy(error, 2);
+    expect(error.hint).toBe(
+      `Rename the folder to a name with a letter from A to Z or a digit. Then run "${program} ${commands.init}" again.`,
+    );
+  });
+});
+
+describe('the home that a command locates (exit 1)', () => {
+  it.each([
+    ['doctor', commands.doctor, (deps: FakeDeps, home: string) => runDoctor(deps, { home })],
+    ['node', commands.node, (deps: FakeDeps, home: string) => runNode(deps, { home, words: ['children'] })],
+  ])('prints one remedy line that names %s for a home that is a file, and for a home that is not there (TP-106)', async (_name, command, run) => {
+    const deps = await makeNode();
+    deps.seed('/w/file', 'x');
+    for (const home of ['/w/file', '/w/none']) {
+      const error = errorOf(await run(runWith(deps), home));
+      expect(error.message).toBe(`${home} is not a folder`);
+      expectRemedy(error, 1);
+      expect(error.hint).toBe(`Run "${program} ${command}" again with --home DIR to choose a folder.`);
+    }
   });
 });
 
