@@ -413,13 +413,19 @@ const livePaneOf = async (id: string): Promise<{ readonly pane: string; readonly
 const livePanes = async (id: string): Promise<string[]> =>
   (await tmux(['list-panes', '-t', '=demo:workers', '-F', '#{pane_dead} #{@worker}'])).stdout.split('\n').filter((line) => line === `0 ${id}`);
 
+/**
+ * True while the process runs. The rule is the rule of the product (`isRunning`): `kill -0` must pass, and `ps` must not show
+ * the state Z. On the Ubuntu runner the process of a closed pane can stay as a zombie that no one collects, and `kill -0` still
+ * passes for a zombie. A `ps` that fails or prints an unclear state counts as alive, so the check never passes a live process.
+ */
 const isAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  const ps = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8', timeout: 2_000 });
+  return !(ps.status === 0 && /^Z/.test(ps.stdout.trim()));
 };
 
 /**
