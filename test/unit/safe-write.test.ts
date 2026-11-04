@@ -59,7 +59,9 @@ describe('safe write: with the fake file system', () => {
     const error = errorOf(await writeInFolder(deps, TARGET, 'text\n'));
     expect(error.kind).toBe('safety');
     expect(error.message).toContain('it is a link');
-    expect(error.hint).toBeTruthy();
+    expect(error.hint).toBe(
+      'Replace the link with a real folder or file. Then run "factory doctor" to check the factory folder.',
+    );
     expect(snapshot(deps)).toBe(before);
   });
 
@@ -84,6 +86,7 @@ describe('safe write: with the fake file system', () => {
     const error = errorOf(await writeInFolder(deps, { ...TARGET, folder: inner }, 'text\n'));
     expect(error.kind).toBe('safety');
     expect(error.message).toContain('outside');
+    expect(error.hint).toBe('Use a real folder in the expected place. Then run "factory doctor" to check the factory folder.');
     expect(snapshot(deps)).toBe(before);
   });
 

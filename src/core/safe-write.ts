@@ -1,5 +1,6 @@
 import { basename, join } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { commands, commandText, places } from '../names.js';
 import type { Deps } from './deps.js';
 import { comparable, isSameOrInside, realPathOf } from './paths.js';
 import { ok } from './result.js';
@@ -29,8 +30,9 @@ const TEMPORARY_MARK = '.tmp-';
 /** A write tries this many temporary names. Each name is new, so a name that exists was left by another writer. */
 const MAX_TEMPORARY_NAMES = 8;
 
-const LINK_REMEDY = 'Replace the link with a real folder or file. Then run the command again.';
-const OUTSIDE_REMEDY = 'Use a real folder in the expected place. Then run the command again.';
+const CHECK_STEP = `Then run "${commandText(commands.doctor)}" to check the ${places.folder}.`;
+const LINK_REMEDY = `Replace the link with a real folder or file. ${CHECK_STEP}`;
+const OUTSIDE_REMEDY = `Use a real folder in the expected place. ${CHECK_STEP}`;
 
 const isPlainName = (name: string): boolean => name !== '' && name !== '.' && name !== '..' && basename(name) === name;
 
