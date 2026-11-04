@@ -7,9 +7,11 @@ import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
+import { runWorker } from '../commands/worker.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import {
+  commandLines,
   commands,
   commandText,
   env,
@@ -210,6 +212,39 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     positionals: true,
     options: { [flags.home]: foundHomeOption },
     run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
+  },
+  {
+    name: commands.worker,
+    summary: `Make and run the ${roles.worker}s of the ${roles.node}.`,
+    usage: [
+      `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.project]: {
+        type: 'string',
+        placeholder: 'PROJECT',
+        description: `The id of the project that the ${roles.worker} works on. The ${roles.node} lists it in its config.`,
+      },
+      [flags.yes]: {
+        type: 'boolean',
+        description:
+          `Agree to the change of the Claude Code settings of the work copy (the hook and the status line), with no question. ` +
+          `Not allowed inside a ${places.session}, unless the work copy has no settings file.`,
+      },
+    },
+    run: (given, deps) =>
+      runWorker(
+        deps,
+        {
+          home: given.string(flags.home),
+          words: given.positionals(),
+          project: given.string(flags.project),
+          yes: given.bool(flags.yes),
+        },
+        registry,
+      ),
   },
   {
     name: commands.doctor,

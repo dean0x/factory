@@ -9,6 +9,7 @@ import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { err, ok } from '../core/result.js';
+import { shellWord } from '../core/shell-word.js';
 import { toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
 import { attachArgs, attachHint, killSessionArgs, startSteps, switchArgs, type TmuxArgs } from '../launch/tmux.js';
@@ -80,9 +81,6 @@ const presentProjects = async (
   }
   return ok({ folders, warnings });
 };
-
-const shellWord = (word: string): string =>
-  /^[A-Za-z0-9_@%+=:,./{}-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
 
 /** A tmux call as a person could type it, for the dry run. */
 const commandLine = (args: TmuxArgs): string => [toolNames.tmux, ...args].map(shellWord).join(' ');

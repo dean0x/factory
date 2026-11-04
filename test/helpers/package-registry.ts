@@ -6,6 +6,7 @@ import { runNode as runNodeOf } from '../../src/commands/node.js';
 import { runHook as runHookOf } from '../../src/hooks/hook.js';
 import { runStart as runStartOf } from '../../src/commands/start.js';
 import { runUpgrade as runUpgradeOf } from '../../src/commands/upgrade.js';
+import { runWorker as runWorkerOf } from '../../src/commands/worker.js';
 import {
   inspectConfig as inspectConfigOf,
   inspectSharedConfig as inspectSharedConfigOf,
@@ -34,6 +35,7 @@ export const runStart = withPackageRecipes(runStartOf);
 export const runDoctor = withPackageRecipes(runDoctorOf);
 export const runMachine = withPackageRecipes(runMachineOf);
 export const runNode = withPackageRecipes(runNodeOf);
+export const runWorker = withPackageRecipes(runWorkerOf);
 export const runHook = withPackageRecipes(runHookOf);
 export const checkChildren = withPackageRecipes(checkChildrenOf);
 export const fileTransport = withPackageRecipes(fileTransportOf);

@@ -830,6 +830,7 @@ export const schemaIds = {
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   machine: `${program}.machine/v1`,
+  workerNew: `${program}.worker-new/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
   version: `${program}.version/v1`,

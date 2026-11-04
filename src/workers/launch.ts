@@ -128,9 +128,12 @@ export interface WorkerLaunch {
 /** The place that the warning for a settings file names. */
 const WORK_COPY_PLACE = 'a work copy';
 
+/** The command that starts a stopped worker again, without the program name: for the retry of a launch. */
+export const resumeLine = (workerId: string): string => `${roles.worker} resume ${workerId}`;
+
 /** The command that starts a stopped worker again, and the command that ends it. */
-const resumeCommand = (workerId: string): string => commandText(`${roles.worker} resume ${workerId}`);
-const dismissCommand = (workerId: string): string => commandText(`dismiss ${workerId}`);
+const resumeCommand = (workerId: string): string => commandText(resumeLine(workerId));
+export const dismissCommand = (workerId: string): string => commandText(`dismiss ${workerId}`);
 
 /** The two ways out of a failed launch, for the end of a remedy line: start the worker again, or end it. */
 const tryAgainOrEnd = (workerId: string): string =>
