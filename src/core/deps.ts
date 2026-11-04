@@ -177,6 +177,11 @@ export interface Deps {
   terminate(pid: number): CliResult<'sent' | 'gone'>;
   /** True when a process with this pid exists. A process of another user exists too. The same refusals as `terminate`. */
   isRunning(pid: number): CliResult<boolean>;
+  /**
+   * `bytes` random bytes from the system source, as lower case hex text with two characters for each byte. The call refuses a
+   * count that is not a whole number from 1 to 64.
+   */
+  randomHex(bytes: number): CliResult<string>;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;
   now(): Date;

@@ -64,6 +64,9 @@ export interface FakeOptions {
   readonly terminateFails?: string;
 }
 
+/** The count of bytes that the fake `randomHex` accepts at most, as the real call does. */
+const MAX_RANDOM_BYTES = 64;
+
 export interface FakeDeps extends Deps {
   readonly files: Map<string, string>;
   readonly dirs: Set<string>;
@@ -92,6 +95,8 @@ export interface FakeDeps extends Deps {
   readonly terminated: number[];
   /** The pids that `isRunning` got, in order. */
   readonly checked: number[];
+  /** The texts that `randomHex` gave, in order. The first is 1, the next is 2, and so on, as hex text of the asked length. */
+  readonly randomTexts: string[];
   /** The signals of the process. A test sends a signal with `emit`, and counts the handlers with `listenerCount`. */
   readonly signals: EventEmitter;
   /** Move the clock on by `ms` milliseconds. `sleep` does the same. */
@@ -129,6 +134,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const sleeps: number[] = [];
   const terminated: number[] = [];
   const checked: number[] = [];
+  const randomTexts: string[] = [];
   /** A pid that got a TERM, with the number of checks that still find it running. A pid that ended is removed. */
   const checksLeft = new Map<number, number>();
   const ended = new Set<number>();
@@ -173,6 +179,13 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     sleeps,
     terminated,
     checked,
+    randomTexts,
+    randomHex: (bytes) => {
+      if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_RANDOM_BYTES) return failure(`cannot make random text for ${bytes} bytes`);
+      const text = (randomTexts.length + 1).toString(16).padStart(bytes * 2, '0').slice(-bytes * 2);
+      randomTexts.push(text);
+      return ok(text);
+    },
     signals: new EventEmitter(),
     terminate: (pid) => {
       terminated.push(pid);

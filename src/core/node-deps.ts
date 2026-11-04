@@ -475,6 +475,13 @@ const processRuns = (pid: number): CliResult<boolean> => {
   return checked.ok ? signalProcess(checked.value, 0) : checked;
 };
 
+const MAX_RANDOM_BYTES = 64;
+
+const randomHexText = (bytes: number): CliResult<string> =>
+  Number.isInteger(bytes) && bytes >= 1 && bytes <= MAX_RANDOM_BYTES
+    ? ok(randomBytes(bytes).toString('hex'))
+    : failure(`cannot make random text: ${bytes} bytes is not a whole number from 1 to ${MAX_RANDOM_BYTES}`);
+
 export const createNodeDeps = (): Deps => ({
   fs: nodeFs,
   run: (command, args, options) =>
@@ -512,6 +519,7 @@ export const createNodeDeps = (): Deps => ({
   signals: process,
   terminate: terminateProcess,
   isRunning: processRuns,
+  randomHex: randomHexText,
   fetch: async (url, timeoutMs) => {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual' });

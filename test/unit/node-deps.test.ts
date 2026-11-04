@@ -901,6 +901,22 @@ describe('node deps: sleep', () => {
   });
 });
 
+describe('node deps: random hex text', () => {
+  it('gives two characters of lower case hex text for each byte', () => {
+    const result = deps.randomHex(16);
+    expect(result.ok && result.value).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('gives a new text for each call', () => {
+    const texts = new Set(Array.from({ length: 20 }, () => deps.randomHex(16)).map((result) => result.ok && result.value));
+    expect(texts.size).toBe(20);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 65])('refuses the count %s of bytes', (bytes) => {
+    expect(deps.randomHex(bytes).ok).toBe(false);
+  });
+});
+
 describe('node deps: end a process', () => {
   const PID = 4321;
   const failWith = (code: string) => () => {
