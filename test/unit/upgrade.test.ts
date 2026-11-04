@@ -1570,6 +1570,16 @@ describe('upgrade: a node of schema 1', () => {
     expect(deps.files.has(`${BACKUP}/.factory/briefs/.gitkeep`)).toBe(true);
   });
 
+  it('keeps a board file that exists, with the old key merge, byte for byte, and adds it to no commit', async () => {
+    const { deps, gitSince } = makeOldNode();
+    const board = '{\n  "merge": [{ "id": "B-1", "title": "Ship the first release" }],\n  "items": [{ "id": "B-2", "state": "open" }]\n}\n';
+    deps.seed(OLD.board, board);
+    const output = success(await upgrade(deps));
+    expect(output.json).toMatchObject({ changed: true, state: { from: 1, to: S } });
+    expect(deps.files.get(OLD.board)).toBe(board);
+    expect(gitSince().some((command) => command.includes('board.json'))).toBe(false);
+  });
+
   describe('the root repo and the root .gitignore (TP-23, TP-117)', () => {
     /** The paths of the factory folder that are under the setup folder, files and folders. */
     const underSetup = (deps: FakeDeps): string[] =>

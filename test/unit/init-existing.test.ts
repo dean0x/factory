@@ -378,6 +378,80 @@ describe('init: a root that holds both config files in a factory session (TP-83)
   });
 });
 
+describe('init: the mode of the local file on a registered root (TP-108, TP-146, TP-147)', () => {
+  const NOTICE = 'set the mode of factory.local.yaml to 600';
+
+  it.each([
+    ['644', 0o644],
+    ['640', 0o640],
+    ['604', 0o604],
+  ])('sets a local file with the read mode %s back to 600, keeps its text, and puts one notice in the output', async (_name, mode) => {
+    const { deps } = existing();
+    deps.modes.set(LOCAL, mode);
+    const localBefore = deps.files.get(LOCAL);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.value.failed).toBe(false);
+    expect(deps.modes.get(LOCAL)).toBe(0o600);
+    expect(deps.files.get(LOCAL)).toBe(localBefore);
+    const notices = warningsOf(result).filter((warning) => warning.includes(NOTICE));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain(`It was ${mode.toString(8)}`);
+    expect(result.ok && result.value.json['warnings']).toEqual(expect.arrayContaining(notices));
+  });
+
+  it('gives no notice and changes no mode for a private local file', async () => {
+    const { deps } = existing();
+    deps.modes.set(LOCAL, 0o600);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(deps.modes.get(LOCAL)).toBe(0o600);
+    expect(warningsOf(result).some((warning) => warning.includes(NOTICE))).toBe(false);
+  });
+
+  it('keeps the notice and ends with mode 600 when the run writes the local file for a new approval mode', async () => {
+    const { deps } = existing({}, { ...terminal, prompt: person({ accept: 'n', points: ['delegated', 'owner'] }) });
+    deps.modes.set(LOCAL, 0o644);
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(deps.modes.get(LOCAL)).toBe(0o600);
+    expect(deps.files.get(LOCAL)).toContain('merge: delegated');
+    expect(warningsOf(result).filter((warning) => warning.includes(NOTICE))).toHaveLength(1);
+  });
+
+  it.each([
+    ['a group write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o660)],
+    ['an other write bit', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o602)],
+    ['a write bit with the read bits', (deps: FakeDeps) => deps.modes.set(LOCAL, 0o666)],
+    ['another owner', (deps: FakeDeps) => deps.owners.set(LOCAL, 0)],
+  ])('stops with exit 4 and the chmod line for a local file with %s, and changes nothing', async (_name, change) => {
+    const { deps } = existing({}, { ...terminal, prompt: person() });
+    change(deps);
+    const mode = deps.modes.get(LOCAL);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('chmod 600 factory.local.yaml');
+    expect(deps.modes.get(LOCAL)).toBe(mode);
+    expect(deps.prompts).toEqual([]);
+    expect(deps.atomicWrites).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('stops with exit 4 and the remedy line for a local file that is a link, before the mode fix, and changes nothing', async () => {
+    const { deps } = existing({}, { ...terminal, prompt: person(), links: { [LOCAL]: '/outside/factory.local.yaml' } });
+    deps.modes.set(LOCAL, 0o644);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('factory.local.yaml is a link, so factory does not use it');
+    expect(messageOf(result)).toContain('Move factory.local.yaml away, then run "factory init" to write a new one.');
+    expect(deps.modes.get(LOCAL)).toBe(0o644);
+    expect(deps.atomicWrites).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+});
+
 describe('init: the approval points of a registered root', () => {
   it('asks each point again after the checks, with the current mode as the default, and keeps the local file as it is', async () => {
     const asked: string[] = [];
