@@ -32,7 +32,7 @@ const TEMPORARY_MARK = '.tmp-';
 const MAX_TEMPORARY_NAMES = 8;
 
 const CHECK_STEP = `Then run "${commandText(commands.doctor)}" to check the ${places.folder}.`;
-const LINK_REMEDY = `Replace the link with a real folder or file. ${CHECK_STEP}`;
+export const LINK_REMEDY = `Replace the link with a real folder or file. ${CHECK_STEP}`;
 const OUTSIDE_REMEDY = `Use a real folder in the expected place. ${CHECK_STEP}`;
 
 const isPlainName = (name: string): boolean => name !== '' && name !== '.' && name !== '..' && basename(name) === name;
