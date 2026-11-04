@@ -46,18 +46,22 @@ const summonLine = (workerId: string): string => `${commandText(commandLines.wor
 /** The tmux call that clears a mark by hand. */
 const clearText = (pane: string, option: string): string => `${toolNames.tmux} set-option -p -u -t ${pane} ${option}`;
 
-/**
- * The slot marks of every pane of the session, from one list call. More than one pane with the board mark, and a summon mark that
- * is not a pane id with a token, are stops (exit 4): factory writes the first mark on one pane and the second only as a pair.
- */
-export const readSlotState = async (deps: Deps, session: string): Promise<CliResult<SlotState>> => {
+/** Every pane of the session with its window and its slot marks, from one list call. A list that does not parse is a failure. */
+export const readSlotRows = async (deps: Deps, session: string): Promise<CliResult<readonly SlotRow[]>> => {
   const listed = await tmuxStep(deps, slotListArgs(session));
   if (!listed.ok) return listed;
   const rows = parseSlotList(listed.value);
-  if (!rows.ok) return failure(`cannot read the slot marks: ${rows.error}`);
-  const boards = rows.value.filter((row) => row.board);
+  return rows.ok ? ok(rows.value) : failure(`cannot read the slot marks: ${rows.error}`);
+};
+
+/**
+ * What the slot marks of the panes say. More than one pane with the board mark, and a summon mark that is not a pane id with a
+ * token, are stops (exit 4): factory writes the board mark on one pane, and the summon mark only as a pair.
+ */
+export const slotStateOf = (rows: readonly SlotRow[]): CliResult<SlotState> => {
+  const boards = rows.filter((row) => row.board);
   const [board] = boards;
-  if (board === undefined) return ok({ rows: rows.value, board: null, summon: null });
+  if (board === undefined) return ok({ rows, board: null, summon: null });
   if (boards.length > 1) {
     return safetyRefusal(
       `${boards.length} panes carry the board mark: ${boards.map((row) => row.paneId).join(', ')}`,
@@ -71,7 +75,7 @@ export const readSlotState = async (deps: Deps, session: string): Promise<CliRes
       `Run "${clearText(board.paneId, tmuxNames.optionSummon)}" to clear it. Then run "${layoutLine()}" to check the marks.`,
     );
   }
-  return ok({ rows: rows.value, board, summon: summon.value });
+  return ok({ rows, board, summon: summon.value });
 };
 
 const inView = (row: SlotRow): boolean => row.window === tmuxNames.windowView;
@@ -152,7 +156,9 @@ export const summonWorker = async (deps: Deps, request: SummonRequest): Promise<
     );
   }
 
-  const state = await readSlotState(deps, session);
+  const rows = await readSlotRows(deps, session);
+  if (!rows.ok) return rows;
+  const state = slotStateOf(rows.value);
   if (!state.ok) return state;
   const { board } = state.value;
   if (board === null) {

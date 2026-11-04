@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import type { WorkerOptions } from '../../src/commands/worker.js';
 import { schemaIds } from '../../src/names.js';
 import { runWorker } from '../helpers/package-registry.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, makeSlot, workerPane, type SlotMade, type SlotSetup } from '../helpers/slot-fixture.js';
+import { captureSink } from '../helpers/sink.js';
 import { tmuxCallOfShellText } from '../helpers/tmux-fake.js';
 
 /** The panes of the session `demo` that the fixture makes: the coordinator, the board pane (the slot) and the shell of the workers window. */
@@ -368,6 +370,40 @@ describe('worker summon: the marks of the slot', () => {
     expect(error.message).toContain(ALPHA);
     expect(error.hint).toContain('"factory layout"');
     expect(windowsOf(made)[BETA]).toBe('workers');
+  });
+});
+
+describe('worker summon: the command line', () => {
+  it('reads the flag --for through runCli, and starts the timer with its time', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    const sink = captureSink();
+    expect(await runCli(['worker', 'summon', 'alpha', '--home', HOME, '--for', '45m'], made.deps, sink)).toBe(0);
+    expect(timers(made)[0]?.startsWith('sleep 2700; ')).toBe(true);
+    expect(sink.out.join('')).toContain('The worker alpha shows in the slot');
+  });
+
+  it('gives exit 2 through runCli for a bad time, and prints the flag and the bounds', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    const sink = captureSink();
+    expect(await runCli(['worker', 'summon', 'alpha', '--home', HOME, '--for', '3h'], made.deps, sink)).toBe(2);
+    expect(sink.errors.join('')).toMatch(/--for.*1m.*2h/s);
+    expect(made.tmux.calls).toEqual([]);
+  });
+
+  it('gives exit 3 through runCli when no session runs, and names factory start', async () => {
+    const made = await makeSlot({ ...ALPHA_ONLY, tmux: { sessions: {} } });
+    const sink = captureSink();
+    expect(await runCli(['worker', 'summon', 'alpha', '--home', HOME], made.deps, sink)).toBe(3);
+    expect(sink.errors.join('')).toContain('"factory start"');
+  });
+
+  it('is in the usage of the command, with the flag --for and its default', async () => {
+    const made = await makeSlot();
+    const sink = captureSink();
+    expect(await runCli(['worker', '--help'], made.deps, sink)).toBe(0);
+    const help = sink.out.join('');
+    expect(help).toContain('worker summon ID [--for TIME]');
+    expect(help).toMatch(/--for TIME\s+How long the slot shows the worker.*Default: 15m\./);
   });
 });
 

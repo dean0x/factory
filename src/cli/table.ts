@@ -2,6 +2,7 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
+import { runLayout } from '../commands/layout.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
@@ -258,6 +259,13 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         },
         registry,
       ),
+  },
+  {
+    name: commands.layout,
+    summary: `Make the windows of the tmux session of the ${roles.node} again, and show the board in the slot.`,
+    usage: `${commandText(commands.layout)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runLayout(deps, { home: given.string(flags.home) }, registry),
   },
   {
     name: commands.doctor,
