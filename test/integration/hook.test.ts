@@ -173,6 +173,75 @@ const setOwnerCommand = async (command: string): Promise<void> => {
   await writeFile(path, text.replace('statusline: null', () => `statusline: ${JSON.stringify(command)}`));
 };
 
+type Pipe = 'stdout' | 'stderr';
+
+/**
+ * Run the program with the read end of the named pipes closed before the program gets its input, so that its first write
+ * to such a pipe fails with EPIPE. The result is the exit code and the text of the pipes that stay open.
+ */
+const runWithClosedPipes = async (
+  args: readonly string[],
+  input: string,
+  closed: readonly Pipe[],
+  env: Readonly<Record<string, string>> = {},
+): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }> => {
+  const child = spawn('node', [DIST, ...args], {
+    cwd: home,
+    env: { ...box.env, FACTORY_HOME: home, FACTORY_SESSION: NODE_ID, ...env },
+  });
+  const seen = { stdout: '', stderr: '' };
+  const gone = closed.map(
+    (name) =>
+      new Promise<void>((resolve) => {
+        child[name].once('close', () => resolve());
+        child[name].destroy();
+      }),
+  );
+  for (const name of ['stdout', 'stderr'] as const) {
+    if (closed.includes(name)) continue;
+    child[name].setEncoding('utf8');
+    child[name].on('data', (chunk: string) => {
+      seen[name] += chunk;
+    });
+  }
+  const exited = new Promise<number | null>((resolve) => child.once('exit', (code) => resolve(code)));
+  try {
+    await Promise.all(gone);
+    child.stdin.end(input);
+    return { code: await exited, ...seen };
+  } finally {
+    child.kill('SIGKILL');
+  }
+};
+
+describe('factory hook (built binary): a pipe that Claude Code closed early', () => {
+  it('exits 0 and prints no stack trace when the status line text can not be written', async () => {
+    const result = await runWithClosedPipes(['hook', hookNames.statusline], STATUS_INPUT, ['stdout']);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(await readFile(lastSeenFile(), 'utf8'))).toMatchObject({ context_pct: 8 });
+  });
+
+  it('exits 0 and prints no stack trace when the line on stderr can not be written', async () => {
+    const result = await runWithClosedPipes(['hook', 'Stop'], 'not json', ['stderr']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('');
+  });
+
+  it('exits 0 when neither the text nor the note of the status line can be written', async () => {
+    const result = await runWithClosedPipes(['hook', hookNames.statusline], STATUS_INPUT, ['stdout', 'stderr'], {
+      FACTORY_SESSION: 'another',
+    });
+    expect(result.code).toBe(0);
+  });
+
+  it('still prints the status line text on an open pipe when only stderr is closed', async () => {
+    const result = await runWithClosedPipes(['hook', hookNames.statusline], STATUS_INPUT, ['stderr'], { FACTORY_SESSION: 'another' });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('context 8%');
+  });
+});
+
 describe('factory hook statusline (built binary)', () => {
   it('prints the output of the command of the owner as it is, gives it the input, and writes the percent (TP-13)', async () => {
     // The command prints the one part of its input that proves it got the input of the wrapper.

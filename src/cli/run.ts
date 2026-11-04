@@ -28,6 +28,9 @@ const EXIT_USAGE = 2;
 /** The value of `process.platform` on native Windows, where the tmux and shell steps cannot work. */
 const NATIVE_WINDOWS = 'win32';
 
+/** True when the command line is the route of the hook of Claude Code: a hook event or the status line. */
+export const isHookRoute = (argv: readonly string[]): boolean => argv[0] === commands.hook;
+
 /** The words after `hook` are the whole input of the route: it reads no flag. */
 const wordsOnly = (words: readonly string[]): Given => ({
   string: () => undefined,
@@ -68,7 +71,7 @@ export const runCli = async (
   const table = commandTableFor(registry);
   const findCommand = (name: string) => table.find((command) => command.name === name);
   const [first, ...rest] = argv;
-  if (first === commands.hook) return runHookRoute(rest, deps, sink, registry);
+  if (isHookRoute(argv)) return runHookRoute(rest, deps, sink, registry);
   if (deps.platform.os === NATIVE_WINDOWS) {
     // The remedy names the command that the person typed, when the table holds it. The name comes from the table, not from the line.
     const typed = (first === undefined ? undefined : findCommand(first)?.name) ?? commands.help;
