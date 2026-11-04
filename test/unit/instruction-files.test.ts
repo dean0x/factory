@@ -122,6 +122,34 @@ describe('instruction files: the walk (TP-32)', () => {
     await scanInstructionFiles(withFsWatch(deps, (method) => methods.add(method)), ROOT);
     expect([...methods].filter((method) => /read|digest|list|write|remove|rename|chmod|mkdir/i.test(method))).toEqual([]);
   });
+
+  describe('with a folder where the walk stops', () => {
+    it('looks at the root and at each folder up to the stop folder, and at no folder above it', async () => {
+      const deps = make({ home: '/elsewhere/u' });
+      const stop = above(ROOT, 2);
+      const inside = [0, 1, 2].map((levels) => put(deps, above(ROOT, levels), 'AGENTS.md'));
+      put(deps, above(ROOT, 3), 'CLAUDE.md');
+      expect(await scanInstructionFiles(deps, ROOT, stop)).toEqual({ ...CLEAN, found: inside });
+    });
+
+    it('stops at the root when the root is the stop folder', async () => {
+      const deps = make({ home: '/elsewhere/u' });
+      const path = put(deps, ROOT, 'GEMINI.md');
+      put(deps, above(ROOT, 1), 'AGENTS.md');
+      expect(await scanInstructionFiles(deps, ROOT, ROOT)).toEqual({ ...CLEAN, found: [path] });
+    });
+
+    it('does not say that it stopped early: a stop folder is the end of the walk', async () => {
+      const deps = make();
+      expect((await scanInstructionFiles(deps, ROOT, above(ROOT, 1))).truncated).toBe(false);
+    });
+
+    it('walks on to the top folder when the stop folder is not above the root', async () => {
+      const deps = make({ home: '/elsewhere/u' });
+      const path = put(deps, above(ROOT, 1), 'AGENTS.md');
+      expect(await scanInstructionFiles(deps, ROOT, '/not/above/the/root')).toEqual({ ...CLEAN, found: [path] });
+    });
+  });
 });
 
 describe('instruction files: the user Claude folder (TP-34)', () => {
