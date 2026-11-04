@@ -14,6 +14,8 @@ const POLL_STEPS = 100;
 const STOP_STEPS = 30;
 const EXCLUDE_ENTRY = '/.claude/settings.local.json';
 const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'];
+/** A fake value for the one setting of the user that the launch keeps among the variables that start with CLAUDE. */
+const FAKE_CONFIG_DIR = '/fake/claude-config';
 
 let box: Sandbox;
 let tmuxEnv: Record<string, string>;
@@ -33,6 +35,9 @@ const fakeClaude = (dir: string): string =>
     'printf \'%s\' "$FACTORY_HOME" > "$dir/home"',
     'printf \'%s\' "$FACTORY_SESSION" > "$dir/session"',
     'printf \'%s\' "$FACTORY_INBOX" > "$dir/inbox"',
+    'printf \'%s\' "${CLAUDE_FAKE_PARENT-unset}" > "$dir/parent-var"',
+    'printf \'%s\' "${CLAUDECODE-unset}" > "$dir/claudecode-var"',
+    'printf \'%s\' "${CLAUDE_CONFIG_DIR-unset}" > "$dir/config-dir"',
     'pwd -P > "$dir/cwd"',
     'resume=""',
     'prev=""',
@@ -98,7 +103,15 @@ beforeEach(async () => {
   await chmod(join(bin, 'claude'), 0o755);
   // A separate tmux server: the harness sets TMUX_TMPDIR to a folder of the sandbox and gives no TMUX.
   socket = tmuxSocketOf(box.root);
-  tmuxEnv = { ...box.env, SHELL: '/bin/sh', PATH: `${bin}:${box.env['PATH'] ?? ''}` };
+  // The tmux server gives its environment to a new pane, so these fake names are the ones that the launch must strip or keep.
+  tmuxEnv = {
+    ...box.env,
+    SHELL: '/bin/sh',
+    PATH: `${bin}:${box.env['PATH'] ?? ''}`,
+    CLAUDE_FAKE_PARENT: '1',
+    CLAUDECODE: '1',
+    CLAUDE_CONFIG_DIR: FAKE_CONFIG_DIR,
+  };
 });
 
 afterEach(async () => {
@@ -177,6 +190,11 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(argv.slice(0, 4)).toEqual(['--permission-mode', 'auto', '--effort', 'high']);
     expect(argv.slice(argv.indexOf('--add-dir'))).toEqual(['--add-dir', inbox]);
     expect(argv.join(' ')).not.toMatch(/dangerously|bypass/i);
+
+    // The server environment holds fake parent variables. The launch strips each CLAUDE name except the setting of the user.
+    expect(await outOf('parent-var')).toBe('unset');
+    expect(await outOf('claudecode-var')).toBe('unset');
+    expect(await outOf('config-dir')).toBe(FAKE_CONFIG_DIR);
   });
 
   it('makes a second worker of the same project with one exclude entry and its own record', async () => {

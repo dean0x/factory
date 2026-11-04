@@ -7,10 +7,12 @@ import type { StartOptions } from '../../src/commands/start.js';
 import { runStart } from '../helpers/package-registry.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { shellWord } from '../../src/core/shell-word.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
-import { env, hookNames, parentSessionEnv, trackedFiles } from '../../src/names.js';
+import { stripScript } from '../../src/launch/argv.js';
+import { env, hookNames, trackedFiles } from '../../src/names.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { claudeFileText, softwareOwnerModes, workerFileText } from '../helpers/blocks.js';
 import {
@@ -42,10 +44,13 @@ const REMOVE_PROXY_VARIABLE = 'set-environment -t =demo -r ANTHROPIC_BASE_URL';
 const SET_SESSION_MARKER = `set-environment -t =demo ${env.session} demo`;
 const KEEP_PANE = 'set-option -w -t =demo:view remain-on-exit on';
 const LAUNCH_BASE = [
+  '/bin/sh',
+  '-c',
+  stripScript,
+  'factory-launch',
   'env',
   '-u',
   'ANTHROPIC_BASE_URL',
-  ...parentSessionEnv.flatMap((name) => ['-u', name]),
   'PATH=/bin',
   'FACTORY_HOME=/w/node',
   'FACTORY_SESSION=demo',
@@ -653,7 +658,9 @@ describe('start:--dry-run', () => {
     expect(tmux.sessions().size).toBe(0);
     const text = output.lines.map((line) => line.text).join('\n');
     expect(text).toContain('Dry run');
-    expect(text).toContain(`tmux new-session -d -s demo -n view -c ${COORDINATOR} -- ${[...LAUNCH_BASE, ...LAUNCH_DIRS].join(' ')}`);
+    // The dry run shows each word as a person could type it: the strip text is one word in single quotes.
+    const typed = [...LAUNCH_BASE, ...LAUNCH_DIRS].map(shellWord).join(' ');
+    expect(text).toContain(`tmux new-session -d -s demo -n view -c ${COORDINATOR} -- ${typed}`);
     expect(text).toContain(`tmux new-window -d -t =demo: -n workers -c ${COORDINATOR}`);
     expect(output.json).toMatchObject({ schema: 'factory.start/v1', session: 'demo', started: false, attached: false, dryRun: true });
   });

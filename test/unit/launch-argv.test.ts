@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { launchArgv, workerLaunchArgv, type LaunchInput, type WorkerLaunchInput } from '../../src/launch/argv.js';
+import { launchArgv, stripScript, workerLaunchArgv, type LaunchInput, type WorkerLaunchInput } from '../../src/launch/argv.js';
 import { startSteps } from '../../src/launch/tmux.js';
-import { env, parentSessionEnv } from '../../src/names.js';
+import { env } from '../../src/names.js';
 import { chainOf } from '../helpers/tmux-fake.js';
 
-/** The variables that a parent Claude Code session sets. The names are written out here, so a test pins the list. */
+/** The variables that a parent Claude Code session sets. The names are written out here, so a test pins them. */
 const PARENT_VARIABLES = [
   'CLAUDECODE',
   'CLAUDE_CODE_CHILD_SESSION',
@@ -17,8 +17,14 @@ const PARENT_VARIABLES = [
   'CLAUDE_PID',
 ];
 
-/** The `env` words that remove the proxy variable and then each variable of a parent session. */
-const CLEARED = ['-u', 'ANTHROPIC_BASE_URL', ...PARENT_VARIABLES.flatMap((name) => ['-u', name])];
+/** The words in front of `env`: the shell, the fixed strip text and its fixed name. */
+const STRIP = ['/bin/sh', '-c', stripScript, 'factory-launch'];
+
+/** The `env` words that remove the proxy variable. The strip text removes the variables of a parent session before `env` runs. */
+const CLEARED = ['-u', 'ANTHROPIC_BASE_URL'];
+
+/** The start of every argument list: the strip words, then `env` and its words that clear the proxy variable. */
+const HEAD = [...STRIP, 'env', ...CLEARED];
 
 const SESSION_ID = '0b9f3c1e-5d2a-4e7b-9c10-a1b2c3d4e5f6';
 
@@ -63,10 +69,9 @@ const addDirsOf = (argv: readonly string[]): readonly (string | undefined)[] =>
   argv.flatMap((arg, index) => (arg === '--add-dir' ? [argv[index + 1]] : []));
 
 describe('launch argument list', () => {
-  it('clears the proxy variable, sets the two variables, and starts claude in auto mode', () => {
+  it('strips the variables of a parent session, clears the proxy variable, sets the two variables, and starts claude in auto mode', () => {
     expect(argvOf()).toEqual([
-      'env',
-      ...CLEARED,
+      ...HEAD,
       'FACTORY_HOME=/w/demo-factory',
       'FACTORY_SESSION=demo',
       'claude',
@@ -83,9 +88,8 @@ describe('launch argument list', () => {
 
   it('sets the proxy variable after it clears the variable, when the config names a proxy', () => {
     const argv = argvOf({ proxyBaseUrl: 'http://127.0.0.1:8080' });
-    expect(argv.slice(0, CLEARED.length + 3)).toEqual([
-      'env',
-      ...CLEARED,
+    expect(argv.slice(0, HEAD.length + 2)).toEqual([
+      ...HEAD,
       'ANTHROPIC_BASE_URL=http://127.0.0.1:8080',
       'FACTORY_HOME=/w/demo-factory',
     ]);
@@ -93,9 +97,8 @@ describe('launch argument list', () => {
 
   it('sets PATH after it clears the proxy variable, and before claude, when it has a PATH', () => {
     const argv = argvOf({ path: '/opt/claude/bin:/usr/bin', proxyBaseUrl: 'http://127.0.0.1:8080' });
-    expect(argv.slice(0, CLEARED.length + 6)).toEqual([
-      'env',
-      ...CLEARED,
+    expect(argv.slice(0, HEAD.length + 5)).toEqual([
+      ...HEAD,
       'ANTHROPIC_BASE_URL=http://127.0.0.1:8080',
       'PATH=/opt/claude/bin:/usr/bin',
       'FACTORY_HOME=/w/demo-factory',
@@ -183,7 +186,7 @@ describe('launch argument list', () => {
       for (const change of changes) {
         const result = launchArgv(input(change));
         if (result.ok) {
-          expect(result.value.filter((arg) => arg.startsWith('-') && !known.includes(arg) && arg !== '-u')).toEqual([]);
+          expect(result.value.filter((arg) => arg.startsWith('-') && !known.includes(arg) && arg !== '-u' && arg !== '-c')).toEqual([]);
           expect(result.value.filter((arg) => arg === '--permission-mode')).toHaveLength(1);
         }
       }
@@ -220,20 +223,23 @@ describe('launch argument list', () => {
 });
 
 describe('the variables of a parent session', () => {
-  it('keeps the list in names.ts equal to the nine names of the design', () => {
-    expect([...parentSessionEnv]).toEqual(PARENT_VARIABLES);
-  });
-
-  it('removes each one with env -u in the coordinator launch (TP-10)', () => {
+  it('strips them in the coordinator launch before env runs, with the fixed strip text (TP-10)', () => {
     const argv = argvOf();
-    expect(argv.slice(1, 1 + CLEARED.length)).toEqual(CLEARED);
-    for (const name of PARENT_VARIABLES) expect(argv[argv.indexOf(name) - 1]).toBe('-u');
+    expect(argv.slice(0, HEAD.length)).toEqual(HEAD);
+    for (const name of PARENT_VARIABLES) expect(argv).not.toContain(name);
   });
 
-  it('removes each one with env -u in the worker launch (TP-10)', () => {
+  it('strips them in the worker launch before env runs, with the fixed strip text (TP-10)', () => {
     const argv = workerArgvOf();
-    expect(argv.slice(1, 1 + CLEARED.length)).toEqual(CLEARED);
-    for (const name of PARENT_VARIABLES) expect(argv[argv.indexOf(name) - 1]).toBe('-u');
+    expect(argv.slice(0, HEAD.length)).toEqual(HEAD);
+    for (const name of PARENT_VARIABLES) expect(argv).not.toContain(name);
+  });
+
+  it('names no variable in the argument list: the strip text removes every name that starts with CLAUDE', () => {
+    for (const argv of [argvOf(), workerArgvOf()]) {
+      expect(argv.filter((word) => word !== stripScript && /CLAUDE/.test(word))).toEqual([]);
+      expect(argv.filter((arg, index) => arg === '-u' && argv[index + 1] !== 'ANTHROPIC_BASE_URL')).toEqual([]);
+    }
   });
 
   it('sets none of them again: no word of the launch starts with one of the names and an equal sign', () => {
@@ -278,10 +284,9 @@ describe('the resume id of the coordinator launch (TP-11)', () => {
 describe('the worker launch argument list (TP-10)', () => {
   const INBOX = '/w/demo-factory/.factory/workers/web-search/inbox';
 
-  it('clears the variables, sets the three variables, and starts the agent in auto mode with the inbox folder', () => {
+  it('strips the variables, clears the proxy variable, sets the three variables, and starts the agent in auto mode with the inbox folder', () => {
     expect(workerArgvOf()).toEqual([
-      'env',
-      ...CLEARED,
+      ...HEAD,
       'FACTORY_HOME=/w/demo-factory',
       'FACTORY_SESSION=web-search',
       `FACTORY_INBOX=${INBOX}`,
@@ -318,7 +323,7 @@ describe('the worker launch argument list (TP-10)', () => {
 
   it('sets the proxy variable after it clears it, and PATH after the proxy variable, when it has them', () => {
     const argv = workerArgvOf({ proxyBaseUrl: 'http://127.0.0.1:8080', path: '/opt/bin:/usr/bin' });
-    expect(argv.slice(1 + CLEARED.length, 1 + CLEARED.length + 3)).toEqual([
+    expect(argv.slice(HEAD.length, HEAD.length + 3)).toEqual([
       'ANTHROPIC_BASE_URL=http://127.0.0.1:8080',
       'PATH=/opt/bin:/usr/bin',
       'FACTORY_HOME=/w/demo-factory',

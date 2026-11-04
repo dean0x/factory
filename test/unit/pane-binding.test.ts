@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { launchArgv, workerLaunchArgv } from '../../src/launch/argv.js';
+import { launchArgv, stripScript, workerLaunchArgv } from '../../src/launch/argv.js';
 import { paneBinding } from '../../src/names.js';
 import { startsWorker, wordsOfStartCommand } from '../../src/workers/binding.js';
 import { startCommandText } from '../helpers/tmux-fake.js';
@@ -146,5 +146,34 @@ describe('startsWorker: the start command shows that the launch of this worker m
   it('does not take the words of the launch from inside one quoted word', () => {
     const words = wordsOfStartCommand(startCommandOf('alpha')) ?? [];
     expect(startsWorker(startCommandText(['env', words.join(' ')]), HOME, 'alpha')).toBe(false);
+  });
+});
+
+describe('the strip step in the start command of a launch', () => {
+  const STRIP_WORDS = 4;
+
+  it('shows the strip text as one word, with the quotes, the dollar signs and the braces of the text kept', () => {
+    expect(wordsOfStartCommand(startCommandText([stripScript]))).toEqual([stripScript]);
+    const words = wordsOfStartCommand(startCommandOf('alpha')) ?? [];
+    expect(words.slice(0, STRIP_WORDS)).toEqual(['/bin/sh', '-c', stripScript, 'factory-launch']);
+    expect(words[STRIP_WORDS]).toBe('env');
+  });
+
+  it('keeps the words of the launch after the strip words as separate words, so the marks stay whole words', () => {
+    const words = wordsOfStartCommand(startCommandOf('alpha', '/w/my node')) ?? [];
+    expect(words).toContain('FACTORY_HOME=/w/my node');
+    expect(words).toContain('FACTORY_SESSION=alpha');
+  });
+
+  it('binds on the marks only, as before: the same marks without the strip words bind, and the strip words without the marks do not', () => {
+    const words = wordsOfStartCommand(startCommandOf('alpha')) ?? [];
+    expect(startsWorker(startCommandText(words.slice(STRIP_WORDS)), HOME, 'alpha')).toBe(true);
+    expect(startsWorker(startCommandText(words.slice(0, STRIP_WORDS + 1)), HOME, 'alpha')).toBe(false);
+  });
+
+  it('does not take a mark from inside the strip text', () => {
+    const words = wordsOfStartCommand(startCommandOf('alpha')) ?? [];
+    const hidden = ['/bin/sh', '-c', words.slice(STRIP_WORDS + 1).join(' '), 'factory-launch', 'env'];
+    expect(startsWorker(startCommandText(hidden), HOME, 'alpha')).toBe(false);
   });
 });

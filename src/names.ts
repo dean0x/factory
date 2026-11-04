@@ -308,22 +308,37 @@ export const env = {
 } as const;
 
 /**
- * The variables that a Claude Code session sets for its children. A launch removes each one with `env -u`, so the new
- * session does not start as a child of the session that ran `factory`. Only `CLAUDE_CODE_CHILD_SESSION` is proven: a
- * session that starts with it saves no transcript, so `--resume` fails later (docs/session-stop.md). The others come from
- * inference: the identity of the parent session and its messaging socket and token must not pass to a worker.
+ * The strip of the variables that a Claude Code session sets for its children (CLAUDECODE, CLAUDE_CODE_CHILD_SESSION, the
+ * session id, the messaging socket and token, and others). A launch removes every variable whose name starts with `prefix`,
+ * except the names of `kept`, so the new session does not start as a child of the session that ran `factory`, and a name
+ * that a later Claude Code adds does not pass either. Only `CLAUDE_CODE_CHILD_SESSION` is proven to matter: a session that
+ * starts with it saves no transcript, so `--resume` fails later (docs/session-stop.md).
+ *
+ * `kept` holds the settings of the user. Each name is a setting that the user chose, none of them names a session, a parent,
+ * a socket, a token, an entry point or a process, and the public environment variable reference of Claude Code
+ * (https://code.claude.com/docs/en/env-vars and the pages of the providers) lists each one as a setting:
+ * - `CLAUDE_CONFIG_DIR`: the folder of the settings and of the login. Without it the session reads another folder.
+ * - `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_MANTLE`: the switches that
+ *   choose the service of the session. Without them the session calls another service than the user chose.
+ * A user who needs another name adds it here. A name that an app or a parent session sets for the session that it starts
+ * (a login token, a socket, an id) stays out.
+ *
+ * The strip runs in the pane, because a new pane gets its environment from the tmux server and not from the process that
+ * runs `factory`. `shell` starts the pane, `scriptName` is the name that the shell shows for the script, and the script is
+ * `stripScript` in launch/argv.ts.
  */
-export const parentSessionEnv = [
-  'CLAUDECODE',
-  'CLAUDE_CODE_CHILD_SESSION',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CLAUDE_CODE_EXECPATH',
-  'CLAUDE_CODE_MESSAGING_SOCKET',
-  'CLAUDE_CODE_MESSAGING_TOKEN',
-  'CLAUDE_CODE_SESSION_ATTENDED',
-  'CLAUDE_CODE_SESSION_ID',
-  'CLAUDE_PID',
-] as const;
+export const claudeEnvStrip = {
+  prefix: 'CLAUDE',
+  kept: [
+    'CLAUDE_CONFIG_DIR',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    'CLAUDE_CODE_USE_FOUNDRY',
+    'CLAUDE_CODE_USE_MANTLE',
+  ],
+  shell: '/bin/sh',
+  scriptName: 'factory-launch',
+} as const;
 
 /**
  * The settings of Claude Code that run a command with no permission prompt: the hooks, the status line and the helpers that

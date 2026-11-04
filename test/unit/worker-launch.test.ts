@@ -4,7 +4,8 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
-import { launchConfirm, parentSessionEnv } from '../../src/names.js';
+import { stripScript } from '../../src/launch/argv.js';
+import { launchConfirm } from '../../src/names.js';
 import { launchWorker, newProxyAnswers, type WorkerLaunch, type WorkerLaunchRequest } from '../../src/workers/launch.js';
 import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
@@ -147,10 +148,13 @@ describe('the launch of a worker: the pane and the argument list', () => {
     const outcome = await launched(made, { proxy: null });
     expect(outcome).toEqual({ paneId: FIRST_NEW_PANE, proxy: null, warnings: [] });
     expect(wordsOf(made.tmux)).toEqual([
+      '/bin/sh',
+      '-c',
+      stripScript,
+      'factory-launch',
       'env',
       '-u',
       'ANTHROPIC_BASE_URL',
-      ...parentSessionEnv.flatMap((name) => ['-u', name]),
       'PATH=/bin',
       'FACTORY_HOME=/h/node',
       'FACTORY_SESSION=alpha',
@@ -177,12 +181,13 @@ describe('the launch of a worker: the pane and the argument list', () => {
     });
   });
 
-  it('removes the proxy variable and each variable of a parent session before the program', async () => {
+  it('strips the variables of a parent session and removes the proxy variable before the program', async () => {
     const made = make();
     await launched(made, { proxy: null });
     const words = wordsOf(made.tmux);
     const unset = words.flatMap((word, index) => (words[index - 1] === '-u' ? [word] : []));
-    expect(unset).toEqual(['ANTHROPIC_BASE_URL', ...parentSessionEnv]);
+    expect(unset).toEqual(['ANTHROPIC_BASE_URL']);
+    expect(words.slice(0, 4)).toEqual(['/bin/sh', '-c', stripScript, 'factory-launch']);
     expect(words.indexOf('claude')).toBeGreaterThan(words.lastIndexOf('-u'));
   });
 

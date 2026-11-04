@@ -1,7 +1,7 @@
 import { isSlug } from '../config/primitives.js';
 import { isSameOrInside } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
-import { env, lastSeen, parentSessionEnv, places, roles, values } from '../names.js';
+import { claudeEnvStrip, env, lastSeen, places, roles, values } from '../names.js';
 import { workerPathsOf } from '../state/layout.js';
 
 /** What the start of a coordinator and the start of a worker share. */
@@ -79,18 +79,42 @@ const checkSession = (input: SessionInput): Result<void, string> => {
 };
 
 /**
- * The argument list of one start, with no shell. `env` clears the proxy variable that a shell left behind and each variable
- * of a parent Claude Code session, then sets the proxy variable only when the config names a proxy. Every session starts in
- * auto mode, and no input adds a flag that skips the permission checks: each flag comes from this function, and each input
- * is one value of one flag. The values are checked before they come here, because a value that starts with a dash could
- * read as a flag. The program is the agent of the input, and the start of a coordinator and the start of a worker are the
- * only callers, so no other name of a program is in an argument list.
+ * The shell text that removes the variables of a parent Claude Code session, then runs the rest of the argument list. It is
+ * one fixed text: no input of a launch is part of it, and the words of the launch reach `exec` as separate words (`"$@"`),
+ * which the shell never reads again. `awk` lists the names of the environment (`ENVIRON` gives names, never a line that holds
+ * a value), keeps each name that starts with the prefix and is only letters, digits and underscores, and leaves out the
+ * kept names. The shell runs the `unset` lines that `awk` wrote, so only a valid name can reach `unset`. A text of a value
+ * can add no name, because no value is read. The text prints nothing: no output of its own goes to a terminal, so no
+ * variable name or value shows, also on an error. When `awk` fails, the shell ends with exit code 1 and the session does not
+ * start with the variables of a parent.
+ */
+const STRIP_PROGRAM = [
+  'BEGIN {',
+  `n = split("${claudeEnvStrip.kept.join(' ')}", k, " ");`,
+  'for (i = 1; i <= n; i++) keep[k[i]] = 1;',
+  `for (v in ENVIRON) if (v ~ /^${claudeEnvStrip.prefix}[A-Za-z0-9_]*$/ && !(v in keep)) print "unset " v`,
+  '}',
+].join(' ');
+
+export const stripScript = `s=$(awk '${STRIP_PROGRAM}' 2>/dev/null) || exit 1; eval "$s" 2>/dev/null; exec "$@"`;
+
+/**
+ * The argument list of one start. The shell runs the strip text first. Then `exec` runs `env`, which clears the proxy
+ * variable that a shell left behind, then sets the proxy variable only when the config names a proxy. The shell is the first
+ * word, the strip text is the third, and every other word is one value: the shell reads none of them. Every session starts
+ * in auto mode, and no input adds a flag that skips the permission checks: each flag comes from this function, and each
+ * input is one value of one flag. The values are checked before they come here, because a value that starts with a dash
+ * could read as a flag. The program is the agent of the input, and the start of a coordinator and the start of a worker are
+ * the only callers, so no other name of a program is in an argument list.
  */
 const startArgv = (input: SessionInput, variables: readonly string[], folders: readonly string[]): readonly string[] => [
+  claudeEnvStrip.shell,
+  '-c',
+  stripScript,
+  claudeEnvStrip.scriptName,
   'env',
   '-u',
   env.proxyBaseUrl,
-  ...parentSessionEnv.flatMap((name) => ['-u', name]),
   ...(input.proxyBaseUrl === null ? [] : [`${env.proxyBaseUrl}=${input.proxyBaseUrl}`]),
   ...(input.path === null ? [] : [`${env.path}=${input.path}`]),
   ...variables,

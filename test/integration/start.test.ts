@@ -14,6 +14,8 @@ const POLL_STEP_MS = 100;
 const POLL_STEPS = 100;
 const STOP_STEPS = 30;
 const LAUNCH_PROXY_URL = 'http://127.0.0.1:9';
+/** A fake value for the one setting of the user that the launch keeps among the variables that start with CLAUDE. */
+const FAKE_CONFIG_DIR = '/fake/claude-config';
 
 let box: Sandbox;
 let tmuxEnv: Record<string, string>;
@@ -29,6 +31,9 @@ const fakeClaude = (dir: string): string =>
     'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/proxy"; else echo no > "$dir/proxy"; fi',
     'printf \'%s\' "$FACTORY_HOME" > "$dir/home"',
     'printf \'%s\' "$FACTORY_SESSION" > "$dir/session"',
+    'printf \'%s\' "${CLAUDE_FAKE_PARENT-unset}" > "$dir/parent-var"',
+    'printf \'%s\' "${CLAUDECODE-unset}" > "$dir/claudecode-var"',
+    'printf \'%s\' "${CLAUDE_CONFIG_DIR-unset}" > "$dir/config-dir"',
     'pwd -P > "$dir/cwd"',
     'echo launched >> "$dir/launches"',
     'exec sleep 300',
@@ -94,6 +99,10 @@ beforeEach(async () => {
     SHELL: '/bin/sh',
     PATH: `${bin}:${box.env['PATH'] ?? ''}`,
     ANTHROPIC_BASE_URL: LAUNCH_PROXY_URL,
+    // The tmux server gives its environment to a new pane, so these fake names are the ones that the launch must strip or keep.
+    CLAUDE_FAKE_PARENT: '1',
+    CLAUDECODE: '1',
+    CLAUDE_CONFIG_DIR: FAKE_CONFIG_DIR,
   };
 });
 
@@ -190,6 +199,10 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(argv.join(' ')).not.toMatch(/dangerously|bypass/i);
     expect(await readFile(join(outDir, 'home'), 'utf8')).toBe(box.node);
     expect(await readFile(join(outDir, 'session'), 'utf8')).toBe('demo');
+    // The server environment holds fake parent variables. The launch strips each CLAUDE name except the setting of the user.
+    expect(await readFile(join(outDir, 'parent-var'), 'utf8')).toBe('unset');
+    expect(await readFile(join(outDir, 'claudecode-var'), 'utf8')).toBe('unset');
+    expect(await readFile(join(outDir, 'config-dir'), 'utf8')).toBe(FAKE_CONFIG_DIR);
   });
 
   it('warns for a project folder that is missing and adds no --add-dir for it (TP-120)', async () => {
