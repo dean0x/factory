@@ -1,6 +1,5 @@
-import { join, resolve } from 'node:path';
-import { inspectBlock, safetyStateOf } from '../blocks/status.js';
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { resolve } from 'node:path';
+import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
@@ -10,23 +9,18 @@ import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { err, ok } from '../core/result.js';
-import { requireNoLinks } from '../core/root-paths.js';
-import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
+import { toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
 import { attachArgs, attachHint, killSessionArgs, startSteps, switchArgs, type TmuxArgs } from '../launch/tmux.js';
 import { coordinatorEnded, requireOwnSession, sessionExists, tmuxStep } from '../launch/tmux-run.js';
 import {
-  blockNames,
   capitalize,
   commands,
   commandText,
-  dirs,
   env,
-  files,
   flags,
   flagText,
   hookSessions,
-  overwriteCommand,
   places,
   program,
   roles,
@@ -37,11 +31,10 @@ import {
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { safetyTemplateFor } from '../templates/index.js';
 import type { SetupTexts } from '../templates/types.js';
-import { planBlock } from '../upgrade/plan.js';
-import { renderSetupText, writeBlockPlans } from '../upgrade/render.js';
+import { renderSetupText } from '../upgrade/render.js';
 import { chooseProxy, type ProxyChoice } from '../workers/launch.js';
+import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { failsOnlyOnSetup, requireRootClean, rootNotices, scanRoot, withSetupAccepted } from './root-content.js';
 import { acceptReason, settleSetup } from './setup-check.js';
 
@@ -51,8 +44,6 @@ export interface StartOptions {
   /** True when the person gave the yes flag. It is the consent to the change of the hook settings. */
   readonly yes: boolean;
 }
-
-const MIN_TMUX_TEXT = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
 
 /** How the command shows the session to the person: attach, switch the client of tmux, or print how to attach. */
 type Reach = 'attach' | 'switch' | 'print';
@@ -95,77 +86,6 @@ const shellWord = (word: string): string =>
 
 /** A tmux call as a person could type it, for the dry run. */
 const commandLine = (args: TmuxArgs): string => [toolNames.tmux, ...args].map(shellWord).join(' ');
-
-/** The tools that `start` needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
-const toolProblems = async (deps: Deps, readVersion: boolean): Promise<readonly string[]> => {
-  const problems: string[] = [];
-  if (!(await onPath(deps, toolNames.tmux))) {
-    problems.push(`${toolNames.tmux} is not on PATH. Install ${toolNames.tmux} ${MIN_TMUX_TEXT} or newer`);
-  } else if (readVersion) {
-    const version = await tmuxVersionOf(deps);
-    if (version === null) {
-      problems.push(`cannot read the version of ${toolNames.tmux}`);
-    } else if (!isTmuxNewEnough(version)) {
-      problems.push(
-        `${toolNames.tmux} ${version.major}.${version.minor} is too old. ${capitalize(program)} needs ${toolNames.tmux} ${MIN_TMUX_TEXT} or newer`,
-      );
-    }
-  }
-  if (!(await onPath(deps, toolNames.claude))) problems.push(`${toolNames.claude} is not on PATH`);
-  return problems;
-};
-
-/**
- * The safety block, for every launch (design 4.8). `start` never launches with a safety body that differs from the text
- * that the package renders for the config, the effective approval modes and the owner prefix:
- * - equal: no action;
- * - intact but different (the package, a mode or the prefix changed): render the block again, print a notice and go on;
- *   a dry run writes nothing and returns a note;
- * - edited, missing or not readable: exit 4, because the safety rules are a security boundary.
- * A link at the coordinator file is a stop first: nothing is read or written through it. The coordinator folder exists
- * after this check, because a missing file is a missing block. The value is the notes of a dry run.
- */
-const requireSafetyBlock = async (
-  deps: Deps,
-  home: string,
-  config: FactoryConfig,
-  dryRun: boolean,
-): Promise<CliResult<readonly string[]>> => {
-  const { claudeMd } = layoutOf(home);
-  const plain = await requireNoLinks(deps, home, [claudeMd]);
-  if (!plain.ok) return plain;
-  const name = blockNames.safety;
-  const file = join(dirs.coordinator, files.claudeMd);
-  const status = await inspectBlock(deps, home, safetyTemplateFor(config, await effectiveModes(deps, home, config)));
-  const state = safetyStateOf(status);
-  switch (state) {
-    case 'equal':
-      return ok([]);
-    case 'different': {
-      if (dryRun) return ok([`The block ${name} in ${file} is out of date. A real run renders it again.`]);
-      const written = await writeBlockPlans(deps, home, [planBlock(status, false)], commands.start);
-      if (!written.ok) return written;
-      deps.warn(`Rendered the block ${name} in ${file} again, because the package or a setting changed its text.`);
-      return ok([]);
-    }
-    case 'edited':
-      return safetyRefusal(
-        `the block ${name} in ${file} was edited`,
-        `Run "${overwriteCommand(name)}" to replace the text. It keeps the old text in a backup file.`,
-      );
-    case 'missing':
-      return safetyRefusal(`the block ${name} is missing in ${file}`, `Run "${overwriteCommand(name)}" to add it.`);
-    case 'malformed':
-      return safetyRefusal(
-        `the block ${name} in ${file} can not be read${status.kind === 'malformed' ? `: ${status.message}` : ''}`,
-        `Fix the marker lines in ${file}, then run "${commandText(commands.doctor)}".`,
-      );
-    default: {
-      const unreachable: never = state;
-      return unreachable;
-    }
-  }
-};
 
 /**
  * Render the setup blocks again after the owner accepted a change: the texts are the bytes that the acceptance hashed. A
