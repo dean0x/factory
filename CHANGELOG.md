@@ -72,6 +72,7 @@ The factory list and the registration
 
 - New command `factory start`. It starts a tmux session with the id of the node, with the windows `view` and `workers`. The coordinator runs in `coordinator/` in auto permission mode, with one `--add-dir` for `.factory/` and one for each project. There is no `--add-dir` for the top of the factory folder.
 - The coordinator does not inherit `ANTHROPIC_BASE_URL`. The shells of the slot and of the worker window get none either. The coordinator gets the `PATH` of the shell that ran `start`. `start` sets `FACTORY_SESSION` to the node id in the environment of the session.
+- The coordinator does not inherit the nine variables that a Claude Code session sets for its children (`CLAUDECODE`, `CLAUDE_PID` and seven `CLAUDE_CODE_*` names). So a `start` that runs inside a Claude Code session does not start the coordinator as a child of that session. The program of the coordinator is the config key `session.agent`.
 - The pane of the coordinator stays when its program ends at once. If a start step fails after the session is gone, `start` says so and tells you to run `claude` in the shell to read its error.
 - A second `start` starts no second coordinator. If the program of the coordinator has ended, `start` warns, names the commands that remove the session and start it again, and adds `coordinatorEnded` to the JSON output.
 - `--dry-run` prints the tmux calls and starts nothing. `start` works with a semicolon at the end of the factory folder, of a project folder or of the PATH.
