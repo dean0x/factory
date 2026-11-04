@@ -1,0 +1,80 @@
+{
+  "claude_code_version": "2.1.318",
+  "captured_on": "2026-11-04",
+  "capture": "The four hook payloads were captured from the installed program in print mode (claude -p --model haiku), with a project-level hook in .claude/settings.local.json that copied its stdin to a file. Every session id, prompt id, path and cwd is a placeholder. The real transcript_path names a file under the user Claude folder; the placeholder does not repeat that folder, and no code opens the file.",
+  "hooks": {
+    "SessionStart": {
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "transcript_path": "/placeholder/home/transcripts/00000000-0000-4000-8000-000000000001.jsonl",
+      "cwd": "/placeholder/home/coordinator",
+      "hook_event_name": "SessionStart",
+      "source": "startup"
+    },
+    "UserPromptSubmit": {
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "transcript_path": "/placeholder/home/transcripts/00000000-0000-4000-8000-000000000001.jsonl",
+      "cwd": "/placeholder/home/coordinator",
+      "prompt_id": "00000000-0000-4000-8000-000000000002",
+      "permission_mode": "default",
+      "hook_event_name": "UserPromptSubmit",
+      "prompt": "Reply with the single word ok."
+    },
+    "Stop": {
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "transcript_path": "/placeholder/home/transcripts/00000000-0000-4000-8000-000000000001.jsonl",
+      "cwd": "/placeholder/home/coordinator",
+      "prompt_id": "00000000-0000-4000-8000-000000000002",
+      "permission_mode": "default",
+      "effort": { "level": "medium" },
+      "hook_event_name": "Stop",
+      "stop_hook_active": false,
+      "last_assistant_message": "ok",
+      "background_tasks": [],
+      "session_crons": []
+    },
+    "PreCompact": {
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "transcript_path": "/placeholder/home/transcripts/00000000-0000-4000-8000-000000000001.jsonl",
+      "cwd": "/placeholder/home/coordinator",
+      "prompt_id": "00000000-0000-4000-8000-000000000002",
+      "hook_event_name": "PreCompact",
+      "trigger": "manual",
+      "custom_instructions": null
+    }
+  },
+  "hook_notes": [
+    "No hook payload holds a context percent. The percent comes only from the status line payload.",
+    "SessionStart also fires after a compact, with source \"compact\". That payload adds prompt_id and model to the fields above.",
+    "The compact command in print mode fires PreCompact and a SessionStart with source \"compact\". It fires neither UserPromptSubmit nor Stop, because it is a local command with no model turn.",
+    "The hook sees FACTORY_HOME and FACTORY_SESSION from the environment of the claude process. A hook in the .claude folder of a subfolder of a git repository and in the .claude folder of a git worktree both fired."
+  ],
+  "statusline": {
+    "captured": false,
+    "source": "field names from the devflow HUD, which reads the live payload; checked against the Claude Code status line docs (https://code.claude.com/docs/en/statusline)",
+    "notes": [
+      "Print mode draws no status line, so this payload is built from the field names. The values are made up. An interactive capture replaces it.",
+      "context_window.used_percentage can be null early in a session. context_window.current_usage is null before the first API call and again after a compact, until the next API call.",
+      "used_percentage counts input tokens only: input_tokens + cache_creation_input_tokens + cache_read_input_tokens, divided by context_window_size.",
+      "rate_limits is present only for claude.ai subscribers, and only after the first API response. Each window (five_hour, seven_day) can be absent on its own."
+    ],
+    "payload": {
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "transcript_path": "/placeholder/home/transcripts/00000000-0000-4000-8000-000000000001.jsonl",
+      "model": { "display_name": "Haiku" },
+      "cost": { "total_cost_usd": 0.01234 },
+      "context_window": {
+        "context_window_size": 200000,
+        "used_percentage": 8,
+        "current_usage": {
+          "input_tokens": 8500,
+          "cache_creation_input_tokens": 5000,
+          "cache_read_input_tokens": 2000
+        }
+      },
+      "rate_limits": {
+        "five_hour": { "used_percentage": 23.5 },
+        "seven_day": { "used_percentage": 41.2 }
+      }
+    }
+  }
+}
