@@ -3610,4 +3610,76 @@ describe('init: the hook settings of the coordinator on a new root (TP-16)', () 
     expect(await runInit(deps, options({ yes: true }))).toMatchObject({ ok: false, error: { kind: 'safety' } });
     expect(snapshot(deps)).toBe(before);
   });
+
+  describe('a failure of the hook step after the last write: the node stays made and listed', () => {
+    /** The command line of a person on a terminal window: the questions get their defaults, and the hook question gets a yes. */
+    const runOnTerminal = async (deps: FakeDeps) => {
+      const sink = captureSink();
+      const code = await runCli(['init', '--home', HOME, '--owner-name', 'Test Owner'], deps, sink);
+      return { code, shown: sink.errors.join('') };
+    };
+
+    const expectNodeKept = (deps: FakeDeps): void => {
+      expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
+      expect(deps.files.has(`${HOME}/.factory/node.json`)).toBe(true);
+      expect((JSON.parse(deps.files.get(INDEX) ?? '{}') as { homes: unknown[] }).homes).toEqual([expect.objectContaining({ home: HOME })]);
+    };
+
+    it('exits 1 and names the cause when the question gets no answer, and writes no settings file', async () => {
+      const { deps } = setup({}, { ...terminal, prompt: answering('y') });
+      const asked: string[] = [];
+      const silent: FakeDeps = {
+        ...deps,
+        prompt: async (question) => {
+          if (!question.startsWith(HOOK_QUESTION)) return deps.prompt(question);
+          asked.push(question);
+          return failure('no answer was given');
+        },
+      };
+      const { code, shown } = await runOnTerminal(silent);
+      expect(code).toBe(1);
+      expect(shown).toContain('error: no answer was given');
+      expect(asked).toHaveLength(1);
+      expectNodeKept(deps);
+      expect(deps.files.has(FILE)).toBe(false);
+    });
+
+    it('exits 1 and names the file and the cause when the write of the settings file fails, and writes no settings file', async () => {
+      const { deps } = setup({}, { ...terminal, prompt: answering('y') });
+      const full: FakeDeps = {
+        ...deps,
+        fs: {
+          ...deps.fs,
+          writeTextExclusive: async (path, text, mode) =>
+            path.includes('settings.local.json') ? failure(`cannot write ${path}: disk full`) : deps.fs.writeTextExclusive(path, text, mode),
+        },
+      };
+      const { code, shown } = await runOnTerminal(full);
+      expect(code).toBe(1);
+      expect(shown).toContain('error: cannot write');
+      expect(shown).toContain('settings.local.json');
+      expect(shown).toContain('disk full');
+      expectNodeKept(deps);
+      expect(deps.files.has(FILE)).toBe(false);
+      expect([...deps.files.keys()].filter((path) => path.includes('settings.local.json'))).toEqual([]);
+    });
+
+    it('exits 1 with the remedy line when the file changes while the question waits, and keeps the file as the other program left it', async () => {
+      const { deps } = setup({}, { ...terminal, prompt: answering('y') });
+      const saved = JSON.stringify({ model: 'opus', ...ownSettingsEntries });
+      const changing: FakeDeps = {
+        ...deps,
+        prompt: async (question) => {
+          if (question.startsWith(HOOK_QUESTION)) deps.seed(FILE, saved);
+          return deps.prompt(question);
+        },
+      };
+      const { code, shown } = await runOnTerminal(changing);
+      expect(code).toBe(1);
+      expect(shown).toContain(`error: cannot write ${FILE}: it changed while the question waited`);
+      expect(shown).toContain('Then run "factory init" again.');
+      expectNodeKept(deps);
+      expect(deps.files.get(FILE)).toBe(saved);
+    });
+  });
 });
