@@ -352,6 +352,12 @@ interface OwnerFields {
   readonly github: string | undefined;
 }
 
+/** The remedy line of a missing owner name. */
+export const OWNER_NAME_REMEDY = `Set git config user.name, or run "${commandText(commands.init)}" again with ${flagText(flags.ownerName)} NAME.`;
+
+/** The remedy line of settings that are not valid because of the values of the flags. */
+export const CHECK_FLAGS_REMEDY = `Check the flags. Then run "${commandText(commands.init)}" again.`;
+
 /**
  * The personal values: the flags win, then the answers of the owner in a terminal window, then the defaults from the git
  * identity and the GitHub login. The yes flag takes the defaults without a question.
@@ -367,7 +373,7 @@ const ownerFieldsOf = async (deps: Deps, options: InitOptions, ask: boolean): Pr
     name = answer.value ?? defaultName;
   }
   if (name === '') {
-    return usageError(`no ${roles.owner} name`, `Pass ${flagText(flags.ownerName)} NAME, or set git config user.name.`);
+    return usageError(`no ${roles.owner} name`, OWNER_NAME_REMEDY);
   }
   let github = defaultGithub;
   if (options.ownerGithub === undefined && ask) {
@@ -406,9 +412,9 @@ const requireFlagsThatApply = (options: InitOptions): CliResult<void> => {
 /** The final config: the shared file of the root and the local values of this machine. */
 const configOf = (shared: SharedConfig, owner: OwnerFields, approvals: ApprovalChoice): CliResult<FactoryConfig> => {
   const local = localConfigSchema.safeParse(localSettingsOf({ ownerName: owner.name, approvals }, owner.github, {}));
-  if (!local.success) return usageError(`invalid settings: ${describeIssues(local.error)}`, 'Check the flags.');
+  if (!local.success) return usageError(`invalid settings: ${describeIssues(local.error)}`, CHECK_FLAGS_REMEDY);
   const merged = mergeConfig(shared, local.data);
-  return merged.success ? ok(merged.data) : usageError(`invalid settings: ${describeIssues(merged.error)}`, 'Check the flags.');
+  return merged.success ? ok(merged.data) : usageError(`invalid settings: ${describeIssues(merged.error)}`, CHECK_FLAGS_REMEDY);
 };
 
 /** The lines that the owner reads before the first clone: the repos with their URLs, the node id and the shared values. */

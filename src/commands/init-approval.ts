@@ -127,7 +127,7 @@ const askMode = async (deps: Deps, point: ApprovalPoint, fallback: ApprovalMode)
   }
   return usageError(
     `no valid answer for the approval point ${point.id}`,
-    `Type ${values.approvalModes.join(' or ')}, or pass ${flagText(flags.approval)} ${point.id}=MODE.`,
+    `Run "${commandText(commands.init)}" again and type ${values.approvalModes.join(' or ')}, or pass ${flagText(flags.approval)} ${point.id}=MODE.`,
   );
 };
 

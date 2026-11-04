@@ -202,7 +202,7 @@ const chooseProxy = async (deps: Deps, config: FactoryConfig): Promise<CliResult
   }
   return failure(
     `${health.label} does not answer`,
-    `Start the proxy, or set ${keys.root.session}.${keys.session.proxy} to ${values.noProxy} for the session.`,
+    `Start the proxy, or set ${keys.root.session}.${keys.session.proxy} to ${values.noProxy} for the session. Then run "${commandText(commands.start)}" again.`,
   );
 };
 
@@ -430,7 +430,12 @@ export const runStart = async (
 ): Promise<CliResult<CommandOutput>> => {
   // The registration check of the lookup keeps a config file of a cloned repo out: its proxy would get the requests of
   // the session. A config that does not pass it is a stop here, before any proxy check or launch.
-  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry));
+  const located = await locateHomeFolder(
+    deps,
+    options.home,
+    (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
+    commands.start,
+  );
   if (!located.ok) return located;
   const home = located.value.home;
   // The warning about instruction files comes before any change or launch, and it never stops the command.

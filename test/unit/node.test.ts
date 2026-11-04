@@ -165,7 +165,10 @@ describe('node add-child', () => {
     const before = deps.files.get(LOCAL_PATH);
     const result = await node(deps, 'add-child', '/w/web-factory');
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
-    if (!result.ok) expect(result.error.message).toContain('its children are workers');
+    if (!result.ok) {
+      expect(result.error.message).toContain('its children are workers');
+      expect(result.error.hint).toContain('Run "factory node children" to see the children.');
+    }
     expect(deps.files.get(LOCAL_PATH)).toBe(before);
   });
 
@@ -211,7 +214,7 @@ describe('node add-child', () => {
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) {
       expect(result.error.message).toBe('cannot add the child: no factory.yaml found there');
-      expect(result.error.hint).toBe('Start the child, then add it again.');
+      expect(result.error.hint).toBe('Start the child. Then run "factory node add-child" again.');
     }
   });
 
@@ -265,7 +268,7 @@ describe('node add-child', () => {
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     if (!result.ok) {
       expect(result.error.message).toContain(message);
-      expect(result.error.hint).toContain('then add the child again');
+      expect(result.error.hint).toContain('Then run "factory node add-child" again.');
     }
   });
 

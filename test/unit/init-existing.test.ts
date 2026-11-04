@@ -9,7 +9,7 @@ import { locateHome } from '../../src/core/home.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { env, stateKeys, values } from '../../src/names.js';
+import { commands, env, stateKeys, values } from '../../src/names.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
 import { inspectState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
@@ -800,7 +800,7 @@ describe('init: a moved root, with no entry in the factory list (TP-82)', () => 
     expect(rootFiles(deps)).toBe(before);
     expect(indexOf(deps).map((entry) => entry.home).sort()).toEqual(['/w/node', '/w/old']);
     expect(entryOf(deps)).toMatchObject({ id: 'demo', origin: 'received' });
-    expect(await locateHome(deps, ROOT, readNodeIdentity)).toMatchObject({ ok: true });
+    expect(await locateHome(deps, ROOT, readNodeIdentity, commands.init)).toMatchObject({ ok: true });
     expect(result.ok && result.value.json['existing']).toBe('moved');
   });
 
@@ -1035,7 +1035,7 @@ describe('init: a root with no state folder (TP-85)', () => {
       expect(deps.files.has(`${STATE}/${name}`), name).toBe(true);
     }
     expect((await inspectState(deps, ROOT)).kind).toBe('valid');
-    expect(await locateHome(deps, ROOT, readNodeIdentity)).toMatchObject({ ok: true });
+    expect(await locateHome(deps, ROOT, readNodeIdentity, commands.init)).toMatchObject({ ok: true });
     // The files of the root apart from the state folder stay as they were.
     expect(outsideState(deps)).toBe(before);
     expect(entryOf(deps)).toMatchObject({ id: 'demo', origin: 'own' });
@@ -1104,7 +1104,7 @@ describe('init: a root whose state folder has a missing or broken marker (TP-96,
     expect(deps.atomicWrites.filter((path) => path.startsWith(`${STATE}/`))).toEqual([MARKER]);
     expect(stateGit(log)).not.toContain('init -q');
     expect(entryOf(deps)).toMatchObject({ id: 'demo', origin: 'own' });
-    expect(await locateHome(deps, ROOT, readNodeIdentity)).toMatchObject({ ok: true });
+    expect(await locateHome(deps, ROOT, readNodeIdentity, commands.init)).toMatchObject({ ok: true });
     expect(result.ok && result.value.json['existing']).toBe('marker');
     expect(linesOf(result)).toContain('.factory/node.json');
   });

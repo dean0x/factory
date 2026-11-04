@@ -206,7 +206,7 @@ export const runUpgrade = async (
     );
   }
   const readIdentity: NodeIdReader = (readDeps, folder) => readNodeIdentity(readDeps, folder, registry);
-  const located = await locateHomeFolder(deps, options.home, readIdentity, { allowUnregisteredSchema1: true });
+  const located = await locateHomeFolder(deps, options.home, readIdentity, commands.upgrade, { allowUnregisteredSchema1: true });
   if (!located.ok) return located;
   const home = located.value.home;
   if (located.value.unregistered) {

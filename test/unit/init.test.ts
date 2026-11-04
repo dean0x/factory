@@ -302,7 +302,7 @@ describe('init: a new root inside a root that the factory list holds', () => {
     const result = await runInit(deps, options());
     expect(refused(result)).toBe('failure');
     expect(messageOf(result)).toContain(`the factory folder ${HOME} is inside the factory folder /w`);
-    expect(messageOf(result)).toContain('Choose another folder with --home DIR.');
+    expect(messageOf(result)).toContain('Run "factory init" again with --home DIR to choose another folder.');
     expect(snapshot(deps)).toBe(before);
   });
 

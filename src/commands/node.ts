@@ -35,6 +35,9 @@ type Change = { readonly action: 'add' | 'remove'; readonly id: string };
 
 const SUBCOMMANDS = Object.values(nodeCommands).join(', ');
 
+/** The last sentence of a remedy line of the add-child subcommand. It names the command to run again. */
+const ADD_AGAIN = `Then run "${commandText(commands.node)} ${nodeCommands.addChild}" again.`;
+
 const needsUsage = (what: string): CliResult<never> =>
   usageError(what, `Run "${commandText(commands.node)} ${flagText(flags.help)}".`);
 
@@ -43,7 +46,12 @@ const openNode = async (
   homeFlag: string | undefined,
   registry: RecipeRegistry,
 ): Promise<CliResult<OpenNode>> => {
-  const located = await locateHomeFolder(deps, homeFlag, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry));
+  const located = await locateHomeFolder(
+    deps,
+    homeFlag,
+    (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
+    commands.node,
+  );
   if (!located.ok) return located;
   const home = located.value.home;
   // The loader checks the owner and the mode of the local file, and a missing local file is a usage error.
@@ -127,13 +135,13 @@ const requireApart = async (deps: Deps, home: string, child: string): Promise<Cl
   if (isSameOrInside(realHome.value, realChild.value)) {
     return failure(
       `the child folder ${child} is this ${places.folder}, or inside it`,
-      `Name a folder outside this ${places.folder}, then add the child again.`,
+      `Name a folder outside this ${places.folder}. ${ADD_AGAIN}`,
     );
   }
   if (isSameOrInside(realChild.value, realHome.value)) {
     return failure(
       `the child folder ${child} holds this ${places.folder}`,
-      `Name a folder that does not hold this ${places.folder}, then add the child again.`,
+      `Name a folder that does not hold this ${places.folder}. ${ADD_AGAIN}`,
     );
   }
   return ok(undefined);
@@ -162,7 +170,7 @@ const runAddChild = async (
   if (layer === COORDINATOR_LAYER) {
     return usageError(
       `this ${roles.node} is on layer ${COORDINATOR_LAYER}: its children are ${roles.worker}s`,
-      `A ${roles.worker} is not a ${places.folder}. ${program} adds ${roles.worker}s with a later version.`,
+      `A ${roles.worker} is not a ${places.folder}. ${program} adds ${roles.worker}s with a later version. Run "${commandText(commands.node)} ${nodeCommands.children}" to see the children.`,
     );
   }
 
@@ -173,18 +181,18 @@ const runAddChild = async (
 
   const answer = await fileTransport(deps, registry).ping(target.value.address);
   if (answer.kind === 'unknown') {
-    return failure(`cannot add the child: ${answer.reason}`, 'Start the child, then add it again.');
+    return failure(`cannot add the child: ${answer.reason}`, `Start the child. ${ADD_AGAIN}`);
   }
   if (answer.layer !== layer - 1) {
     return failure(
       `the child is on layer ${answer.layer}, but a ${roles.node} on layer ${layer} takes children on layer ${layer - 1}`,
-      `Add a ${roles.node} on layer ${layer - 1}, or change the layer of the child.`,
+      `Add a ${roles.node} on layer ${layer - 1}, or change the layer of the child. ${ADD_AGAIN}`,
     );
   }
   if (answer.id === config.core.node.id) {
     return failure(
       `the child has the id ${answer.id}, which is the id of this ${roles.node}`,
-      `Change the id in the ${files.config} of the child, then add it again.`,
+      `Change the id in the ${files.config} of the child. ${ADD_AGAIN}`,
     );
   }
   const known = config.core.children.find((child) => child.id === answer.id);

@@ -136,7 +136,7 @@ const repairOf = async (deps: Deps, layout: Layout): Promise<CliResult<Repair>> 
   // The marker is written in the state repo, so the repo must be a work tree of its own, and its index must be clean.
   const top = await requireWorkTreeTop(deps, layout.stateDir, dirs.state);
   if (!top.ok) return top;
-  const ready = await requireStateRepoReady(deps, layout.stateDir, [], commandText(commands.init), `Then run "${commandText(commands.init)}" again.`);
+  const ready = await requireStateRepoReady(deps, layout.stateDir, [], commandText(commands.init), commands.init);
   if (!ready.ok) return ready;
   if (marker.value === null) return ok({ kind: 'marker', previous: null });
   const previous = await deps.fs.readTextLimited(layout.nodeJson, maxFileBytes);
@@ -229,7 +229,10 @@ const askRegistration = async (asking: Deps, options: InitOptions, home: string)
   if (!answer.ok) return answer;
   return ACCEPT_ANSWER.test(answer.value.trim())
     ? ok(undefined)
-    : usageError(`the ${places.folder} ${home} was not registered`, 'Nothing was changed.');
+    : usageError(
+        `the ${places.folder} ${home} was not registered`,
+        `Nothing was changed. Run "${commandText(commands.init)}" again to register it.`,
+      );
 };
 
 /**

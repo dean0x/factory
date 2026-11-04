@@ -99,7 +99,7 @@ import {
   tempFolderWarning,
 } from './init-home.js';
 import { runExisting } from './init-existing.js';
-import { acceptanceLines, runReceived } from './init-received.js';
+import { acceptanceLines, CHECK_FLAGS_REMEDY, OWNER_NAME_REMEDY, runReceived } from './init-received.js';
 import { makeStateFolder } from './init-state.js';
 import { oldFolderWarning, originCredentialsWarning, unsharedWarning } from './project-url.js';
 
@@ -573,7 +573,7 @@ const parseSettings = (
   const parsed = parseConfig(input.shared, input.local, registry);
   return parsed.success
     ? ok(parsed.data)
-    : usageError(`invalid settings: ${parsed.file}: ${describeIssues(parsed.error)}`, 'Check the flags.');
+    : usageError(`invalid settings: ${parsed.file}: ${describeIssues(parsed.error)}`, CHECK_FLAGS_REMEDY);
 };
 
 /**
@@ -603,15 +603,13 @@ const checkOptions = async (
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
   if (!outside.ok) return outside;
   const ownerName = (options.ownerName ?? (await configValue(deps, deps.cwd, 'user.name')) ?? '').trim();
-  if (ownerName === '') {
-    return usageError(
-      `no ${roles.owner} name`,
-      `Pass ${flagText(flags.ownerName)} NAME, or set git config user.name.`,
-    );
-  }
+  if (ownerName === '') return usageError(`no ${roles.owner} name`, OWNER_NAME_REMEDY);
   const id = options.name ?? slugify(basename(home));
   if (id === null) {
-    return usageError(`cannot make a ${roles.node} id from the folder name`, `Pass ${flagText(flags.name)} ID.`);
+    return usageError(
+      `cannot make a ${roles.node} id from the folder name`,
+      `Run "${commandText(commands.init)}" again with ${flagText(flags.name)} ID.`,
+    );
   }
   const base = { layer: layer.value, recipe: recipe.value, ownerName, id, approvals: approvals.value };
   // The text of the blocks follows the modes of a root that has no record yet, so it names the owner for each point.

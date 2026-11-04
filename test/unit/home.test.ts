@@ -8,6 +8,7 @@ import {
   type NodeIdReader,
 } from '../../src/core/home.js';
 import { err, ok } from '../../src/core/result.js';
+import { commands } from '../../src/names.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 
 const HOME = '/w/node';
@@ -29,13 +30,13 @@ const nodeAt = (cwd: string, env: Record<string, string | undefined> = {}, regis
 };
 
 const located = async (deps: FakeDeps, homeFlag?: string, read: NodeIdReader = reader) => {
-  const result = await locateHome(deps, homeFlag, read);
+  const result = await locateHome(deps, homeFlag, read, commands.node);
   if (!result.ok) throw new Error(result.error.message);
   return result.value;
 };
 
 const stopped = async (deps: FakeDeps, homeFlag?: string, read: NodeIdReader = reader) => {
-  const result = await locateHome(deps, homeFlag, read);
+  const result = await locateHome(deps, homeFlag, read, commands.node);
   if (result.ok) throw new Error(`expected a stop, got ${result.value.home}`);
   return result.error;
 };
@@ -71,7 +72,7 @@ describe('home: the order', () => {
   });
 
   it('fails with a hint when no source names a home', async () => {
-    const result = await locateHome(createFakeDeps({ cwd: '/empty' }), undefined, reader);
+    const result = await locateHome(createFakeDeps({ cwd: '/empty' }), undefined, reader, commands.node);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.kind).toBe('usage');
@@ -82,7 +83,7 @@ describe('home: the order', () => {
 
   it('does not walk more than 64 levels', async () => {
     const deep = `${HOME}${'/d'.repeat(70)}`;
-    const result = await locateHome(nodeAt(deep), undefined, reader);
+    const result = await locateHome(nodeAt(deep), undefined, reader, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
   });
 });
@@ -117,7 +118,7 @@ describe('home: a folder in the settings folder of Claude Code', () => {
     os = 'linux',
   ): Promise<void> => {
     const { deps, seen } = factoryIn(folder, cwd, env, os);
-    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), homeFlag, reader);
+    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), homeFlag, reader, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (result.ok) return;
     expect(result.error.message).toContain('the settings folder of Claude Code /users/me/.claude');
@@ -146,7 +147,7 @@ describe('home: a folder in the settings folder of Claude Code', () => {
   it('stops for a home that the factory list gives, when it is in that folder, and makes no call at or under it', async () => {
     const { deps, seen } = factoryIn(`${CLAUDE}/factory`, '/w/web/src');
     registerRoot(deps, `${CLAUDE}/factory`, 'demo', ['/w/web']);
-    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), undefined, reader);
+    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), undefined, reader, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     expect(seen.filter(underClaude)).toEqual([]);
   });
@@ -166,7 +167,7 @@ describe('home: a folder in the settings folder of Claude Code', () => {
 
   it('does not stop for a home flag outside that folder when the current folder is in it, and asks nothing about it', async () => {
     const { deps, seen } = factoryIn('/w/node', `${CLAUDE}/work`);
-    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), '/w/node', reader);
+    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), '/w/node', reader, commands.node);
     expect(result).toMatchObject({ ok: true, value: { home: '/w/node', source: 'flag' } });
     expect(seen.filter(underClaude)).toEqual([]);
   });
@@ -197,7 +198,7 @@ describe('home: the index', () => {
   });
 
   it('fails with exit 2 and the hint when the index has no entry for the folder', async () => {
-    const result = await locateHome(indexed('/w/other'), undefined, reader);
+    const result = await locateHome(indexed('/w/other'), undefined, reader, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (result.ok) return;
     expect(result.error.hint).toContain('Run "factory init" here, or use --home DIR');
@@ -206,7 +207,7 @@ describe('home: the index', () => {
   it('fails with exit 2 when the index cannot be read, and names the file', async () => {
     const deps = indexed('/w/web');
     deps.seed(INDEX, 'broken');
-    const result = await locateHome(deps, undefined, reader);
+    const result = await locateHome(deps, undefined, reader, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (!result.ok) expect(result.error.message).toContain(INDEX);
   });
@@ -366,7 +367,7 @@ describe('home: the registration check', () => {
 describe('home: the exception of upgrade', () => {
   const unregisteredNode = (): FakeDeps => nodeAt(HOME, {}, false);
   const withException = (deps: FakeDeps, flag: string | undefined, read: NodeIdReader) =>
-    locateHome(deps, flag, read, { allowUnregisteredSchema1: true });
+    locateHome(deps, flag, read, commands.upgrade, { allowUnregisteredSchema1: true });
 
   it('counts an unregistered folder with schema 1 that the home flag names, and marks it', async () => {
     const result = await withException(unregisteredNode(), HOME, idOf('demo', 1));
@@ -384,7 +385,7 @@ describe('home: the exception of upgrade', () => {
   });
 
   it('exits 4 without the flag exception for a schema 1 folder that the home flag names', async () => {
-    const result = await locateHome(unregisteredNode(), HOME, idOf('demo', 1));
+    const result = await locateHome(unregisteredNode(), HOME, idOf('demo', 1), commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 
@@ -473,24 +474,30 @@ describe('home: the parts of the registration check', () => {
 
 describe('home: a folder', () => {
   it('gives the located home when it is a folder', async () => {
-    const result = await locateHomeFolder(nodeAt(HOME), undefined, reader);
+    const result = await locateHomeFolder(nodeAt(HOME), undefined, reader, commands.node);
     expect(result).toEqual({ ok: true, value: { home: HOME, source: 'cwd', unregistered: false } });
   });
 
   it('fails for a home that is a file or does not exist', async () => {
     const deps = nodeAt(HOME);
     deps.seed('/w/file', 'x');
-    expect(await locateHomeFolder(deps, '/w/file', reader)).toMatchObject({ ok: false, error: { message: '/w/file is not a folder' } });
-    expect(await locateHomeFolder(deps, '/w/none', reader)).toMatchObject({ ok: false, error: { message: '/w/none is not a folder' } });
+    expect(await locateHomeFolder(deps, '/w/file', reader, commands.node)).toMatchObject({
+      ok: false,
+      error: { message: '/w/file is not a folder' },
+    });
+    expect(await locateHomeFolder(deps, '/w/none', reader, commands.node)).toMatchObject({
+      ok: false,
+      error: { message: '/w/none is not a folder' },
+    });
   });
 
   it('passes on the failure of locateHome', async () => {
-    const result = await locateHomeFolder(createFakeDeps({ cwd: '/empty' }), undefined, reader);
+    const result = await locateHomeFolder(createFakeDeps({ cwd: '/empty' }), undefined, reader, commands.node);
     expect(result.ok).toBe(false);
   });
 
   it('exits 4 for a folder that is not registered', async () => {
-    const result = await locateHomeFolder(nodeAt(HOME, {}, false), undefined, reader);
+    const result = await locateHomeFolder(nodeAt(HOME, {}, false), undefined, reader, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 });

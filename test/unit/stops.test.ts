@@ -208,17 +208,32 @@ describe('the remedy line of every stop in the source', () => {
     });
   };
 
+  /** The stops (exit 4): each has a remedy line. */
+  const STOP_CALLS: readonly string[] = ['safetyRefusal'];
+
+  /** The other errors: a remedy line is optional, and the text of an error without one stays as it is. */
+  const ERROR_CALLS: readonly string[] = ['failure', 'usageError'];
+
   interface Sweep {
-    /** The number of calls of `safetyRefusal`. */
+    /** The number of calls. */
     readonly calls: number;
+    /** The number of calls with a remedy line: the calls that the sweep checks. */
+    readonly checked: number;
     /** The calls whose remedy line names no command, or that do not have two arguments. */
     readonly missing: readonly string[];
     /** The calls whose remedy line comes from a variable or a property that holds no command in the same file. */
     readonly forwarded: readonly string[];
   }
 
-  /** Check the remedy line of every call of `safetyRefusal` in the given sources (path to text). */
-  const sweepOf = (sources: ReadonlyMap<string, string>): Sweep => {
+  /**
+   * Check the remedy line of every call of the given names in the given sources (path to text). A call with a message
+   * only is checked when the remedy line is required, and left alone when it is optional.
+   */
+  const sweepOf = (
+    sources: ReadonlyMap<string, string>,
+    names: readonly string[] = STOP_CALLS,
+    remedyIsOptional = false,
+  ): Sweep => {
     const exported = new Map<string, string>();
     for (const source of sources.values()) {
       for (const [name, text] of textsOf(source, (constant) => constant.exported)) {
@@ -228,10 +243,13 @@ describe('the remedy line of every stop in the source', () => {
     const missing: string[] = [];
     const forwarded: string[] = [];
     let calls = 0;
+    let checked = 0;
     for (const [path, source] of sources) {
       const known = new Map([...exported, ...textsOf(source, () => true)]);
-      for (const args of callsOf(source, 'safetyRefusal')) {
+      for (const args of names.flatMap((name) => callsOf(source, name))) {
         calls += 1;
+        if (remedyIsOptional && args.length === 1) continue;
+        checked += 1;
         const remedy = args[1] ?? '';
         const place = `${path}: ${remedy}`;
         if (args.length !== 2) missing.push(`${path}: ${args.length} arguments`);
@@ -240,10 +258,15 @@ describe('the remedy line of every stop in the source', () => {
         else missing.push(place);
       }
     }
-    return { calls, missing, forwarded };
+    return { calls, checked, missing, forwarded };
   };
 
   const sweepOfOne = (source: string): Sweep => sweepOf(new Map([['sample.ts', source]]));
+
+  const errorSweepOfOne = (source: string): Sweep => sweepOf(new Map([['sample.ts', source]]), ERROR_CALLS, true);
+
+  const sourcesOfSrc = (): ReadonlyMap<string, string> =>
+    new Map(allSourceFiles(SRC).map((path) => [relative(SRC, path), readFileSync(path, 'utf8')]));
 
   /**
    * The remedy lines that a stop takes from a variable or a property, and that the file of the call does not build. A
@@ -258,15 +281,21 @@ describe('the remedy line of every stop in the source', () => {
   ];
 
   it('names a command in the remedy line of each of the stops of src (TP-106)', () => {
-    const sources = new Map(allSourceFiles(SRC).map((path) => [relative(SRC, path), readFileSync(path, 'utf8')]));
-    const sweep = sweepOf(sources);
+    const sweep = sweepOf(sourcesOfSrc());
     expect(sweep.calls).toBeGreaterThanOrEqual(45);
     expect(sweep.missing).toEqual([]);
   });
 
   it('takes a remedy line from a variable or a property only in the places that this list names', () => {
-    const sources = new Map(allSourceFiles(SRC).map((path) => [relative(SRC, path), readFileSync(path, 'utf8')]));
-    expect([...sweepOf(sources).forwarded].sort()).toEqual(FORWARDED);
+    expect([...sweepOf(sourcesOfSrc()).forwarded].sort()).toEqual(FORWARDED);
+  });
+
+  it('names a command in each remedy line of the other errors of src, and leaves an error with a message only alone', () => {
+    const sweep = sweepOf(sourcesOfSrc(), ERROR_CALLS, true);
+    expect(sweep.calls).toBeGreaterThanOrEqual(180);
+    expect(sweep.checked).toBeGreaterThanOrEqual(60);
+    expect(sweep.missing).toEqual([]);
+    expect([...sweep.forwarded].sort()).toEqual([]);
   });
 
   it('finds a remedy line with no command, and a call with a message only', () => {
@@ -297,6 +326,37 @@ describe('the remedy line of every stop in the source', () => {
 
   it('does not count a call that only a comment holds', () => {
     expect(sweepOfOne("// safetyRefusal('a', 'b');\n/* safetyRefusal('a', 'b') */\nconst a = 1;").calls).toBe(0);
+  });
+
+  it('finds a remedy line with no command in a failure and in a usage error', () => {
+    expect(errorSweepOfOne("failure('a reason', 'Check the flags.');").missing).toHaveLength(1);
+    expect(errorSweepOfOne('usageError(`a ${f(1, 2)} reason`, `Pass ${flagText(flags.name)} ID.`);').missing).toHaveLength(1);
+    expect(errorSweepOfOne("failure('a reason', 'Fix it.', 'extra');").missing).toEqual(['sample.ts: 3 arguments']);
+  });
+
+  it('finds a remedy line of an error that comes from a variable or a property, or that a constant holds with no command', () => {
+    expect(errorSweepOfOne('usageError(`a`, problem.remedy);').forwarded).toEqual(['sample.ts: problem.remedy']);
+    expect(errorSweepOfOne("const REMEDY = 'Fix it.';\nfailure(`a`, REMEDY);").forwarded).toEqual(['sample.ts: REMEDY']);
+  });
+
+  it('counts an error with a message only, and does not check it', () => {
+    const sweep = errorSweepOfOne("failure('a reason');\nusageError(`a ${x} reason`);");
+    expect(sweep).toMatchObject({ calls: 2, checked: 0, missing: [], forwarded: [] });
+  });
+
+  it('accepts a command, and the helpers and constants that build one, in an error with a remedy line', () => {
+    const accepted = [
+      'failure(`a reason`, `Then run "${commandText(commands.init)}" again.`);',
+      'const runAgain = (command: CommandName): string => `Then run "${commandText(command)}" again.`;\nusageError(`a`, `Pass it. ${runAgain(command)}`);',
+      'const again = `Run "${commandText(commands.upgrade)}".`;\nusageError(`a`, again);',
+    ];
+    for (const source of accepted) expect(errorSweepOfOne(source), source).toMatchObject({ checked: 1, missing: [], forwarded: [] });
+  });
+
+  it('counts the calls of failure and of usageError only in the rule of the other errors, and not a call that a comment holds', () => {
+    const source = "failure('a', 'b');\nusageError('a', 'b');\nsafetyRefusal('a', 'b');\n// failure('a', 'b');";
+    expect(errorSweepOfOne(source).calls).toBe(2);
+    expect(sweepOfOne(source).calls).toBe(1);
   });
 });
 

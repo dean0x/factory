@@ -1,6 +1,6 @@
 import { dirname, join, resolve } from 'node:path';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
-import { commands, commandText, env, files, flags, flagText, places, program, roles } from '../names.js';
+import { commands, commandText, env, files, flags, flagText, places, program, roles, type CommandName } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import type { Deps } from './deps.js';
@@ -222,6 +222,7 @@ const rootProblemOf = async (deps: Deps, home: string, readNodeId: NodeIdReader)
 const chosenHome = async (
   deps: Deps,
   homeFlag: string | undefined,
+  command: CommandName,
 ): Promise<CliResult<{ readonly home: string; readonly source: HomeSource }>> => {
   if (homeFlag !== undefined) return ok({ home: resolve(deps.cwd, homeFlag), source: 'flag' });
   const fromEnv = deps.env[env.home];
@@ -239,7 +240,7 @@ const chosenHome = async (
     return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'ancestor' });
   }
 
-  const indexed = await findHomeInIndex(deps);
+  const indexed = await findHomeInIndex(deps, command);
   if (!indexed.ok) return indexed;
   if (indexed.value !== null) return ok({ home: indexed.value, source: 'index' });
   return usageError(
@@ -252,15 +253,17 @@ const chosenHome = async (
  * The node home and how it was found: the home flag, else the home variable of the environment, else the folder of
  * the nearest config file above the current folder, else the home index, which matches the current folder to a
  * project path. The registration check applies to the home from every source. A config that does not pass it is a
- * security stop (exit 4) that names the file, the reason and the remedy.
+ * security stop (exit 4) that names the file, the reason and the remedy. `command` is the command that runs: the remedy
+ * line of an error of the home index names it.
  */
 export const locateHome = async (
   deps: Deps,
   homeFlag: string | undefined,
   readNodeId: NodeIdReader,
+  command: CommandName,
   options: LocateOptions = {},
 ): Promise<CliResult<LocatedHome>> => {
-  const chosen = await chosenHome(deps, homeFlag);
+  const chosen = await chosenHome(deps, homeFlag, command);
   if (!chosen.ok) return chosen;
   const { home, source } = chosen.value;
   // The check comes before any call on the folder, whatever gave it: a factory folder never sits in the folder of Claude Code.
@@ -282,9 +285,10 @@ export const locateHomeFolder = async (
   deps: Deps,
   homeFlag: string | undefined,
   readNodeId: NodeIdReader,
+  command: CommandName,
   options: LocateOptions = {},
 ): Promise<CliResult<LocatedHome>> => {
-  const located = await locateHome(deps, homeFlag, readNodeId, options);
+  const located = await locateHome(deps, homeFlag, readNodeId, command, options);
   if (!located.ok) return located;
   const folder = await deps.fs.stat(located.value.home);
   if (!folder.ok) return folder;

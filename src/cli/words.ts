@@ -2,7 +2,7 @@ import { inspectSharedConfig, readNodeIdentity } from '../config/load.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { glossary, recipeGlossary, type Word } from '../glossary.js';
-import { commandText, helpTopics, roles, schemaIds } from '../names.js';
+import { commands, commandText, helpTopics, roles, schemaIds } from '../names.js';
 import type { RecipeEntry, RecipeRegistry } from '../recipes/index.js';
 import type { CommandOutput, OutLine } from './output.js';
 
@@ -11,7 +11,12 @@ import type { CommandOutput, OutLine } from './output.js';
  * no factory, a config that is not valid and a recipe that the registry does not hold all give null.
  */
 const foundRecipe = async (deps: Deps, registry: RecipeRegistry): Promise<RecipeEntry | null> => {
-  const located = await locateHomeFolder(deps, undefined, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry));
+  const located = await locateHomeFolder(
+    deps,
+    undefined,
+    (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
+    commands.help,
+  );
   if (!located.ok) return null;
   const shared = await inspectSharedConfig(deps, located.value.home, registry);
   return shared.kind === 'valid' ? shared.value.entry : null;

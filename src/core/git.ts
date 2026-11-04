@@ -387,15 +387,16 @@ const shownPaths = (paths: readonly string[]): string => {
 /**
  * Refuse when a commit in the state repo could take a change of the owner. The index of the state repo must hold no
  * staged change. A path of `touched` must have no change of the owner, staged or not: `changing` names the command that
- * changes these paths ("the upgrade"), and `again` is the sentence that names the command to run again.
+ * changes these paths ("the upgrade"), and `command` is the command that the person runs again.
  */
 export const requireStateRepoReady = async (
   deps: Deps,
   stateDir: string,
   touched: readonly string[],
   changing: string,
-  again: string,
+  command: CommandName,
 ): Promise<CliResult<void>> => {
+  const again = `Then run "${commandText(command)}" again.`;
   const status = await statusOf(deps, stateDir);
   if (!status.ok) return status;
   const staged = status.value.filter((entry) => ![' ', '?', '!'].includes(entry.index));
@@ -438,7 +439,7 @@ export const requireStateRepoCommit = async (
       `Set both with "git config --global", then run "${commandText(command)}" again.`,
     );
   }
-  return requireStateRepoReady(deps, stateDir, touched, changing, `Then run "${commandText(command)}" again.`);
+  return requireStateRepoReady(deps, stateDir, touched, changing, command);
 };
 
 /** The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. */

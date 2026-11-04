@@ -22,6 +22,7 @@ import {
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { changePrivateFile } from '../../src/core/private-file.js';
 import { ok } from '../../src/core/result.js';
+import { commands } from '../../src/names.js';
 import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 
 const INDEX = '/state/factory/homes.json';
@@ -336,9 +337,10 @@ describe('home index: reading the file', () => {
     it('makes findHomeInIndex stop with a usage error that names the file', async () => {
       const deps = withIndex([entry(HOME_A, ['/w/web'])], { cwd: '/w/web' });
       deps.modes.set(FOLDER, 0o777);
-      const result = await findHomeInIndex(deps);
+      const result = await findHomeInIndex(deps, commands.node);
       expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
       if (!result.ok) expect(result.error.message).toContain(INDEX);
+      if (!result.ok) expect(result.error.hint).toContain('Then run "factory node" again.');
     });
   });
 });
@@ -1109,51 +1111,51 @@ describe('home index: homes that are gone', () => {
 describe('home index: finding the home of a folder', () => {
   it('gives the home of the project that holds the current folder', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web'])], { cwd: '/w/web/src' });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: HOME_A });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: HOME_A });
   });
 
   it('compares real paths: a current folder behind a link is found by its real path', async () => {
     const deps = withIndex([entry(HOME_A, ['/real/web'])], { cwd: '/link/web/src', links: { '/link': '/real' } });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: HOME_A });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: HOME_A });
   });
 
   it('stops with a usage error that names both factory folders when two entries hold the folder', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web'], 'a'), entry(HOME_B, ['/w/web'], 'b')], { cwd: '/w/web/src' });
-    const result = await findHomeInIndex(deps);
+    const result = await findHomeInIndex(deps, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (result.ok) return;
     expect(result.error.message).toContain(`is in a project of more than one factory folder: ${HOME_B}, ${HOME_A}`);
-    expect(result.error.hint).toContain('--home DIR');
+    expect(result.error.hint).toBe('Run "factory node" again with --home DIR to choose one.');
   });
 
   it('gives null when no entry holds the folder', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/api'])], { cwd: '/w/web' });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: null });
   });
 
   it('gives null when the index file does not exist', async () => {
     const deps = createFakeDeps({ cwd: '/w/web', env: { XDG_STATE_HOME: '/state' } });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: null });
   });
 
   it('gives null when no variable names a place for the index', async () => {
     const deps = createFakeDeps({ cwd: '/w/web', env: {} });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: null });
   });
 
   it('ignores an entry whose home is gone', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web'])], { cwd: '/w/web' }, []);
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: null });
   });
 
   it('lets a home that is gone lose to the home that is there, with no tie', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web']), entry(HOME_B, ['/w/web'])], { cwd: '/w/web' }, [HOME_B]);
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: HOME_B });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: HOME_B });
   });
 
   it('exits 2 and names both homes when two homes list the same project', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web']), entry(HOME_B, ['/w/web'])], { cwd: '/w/web/src' });
-    const result = await findHomeInIndex(deps);
+    const result = await findHomeInIndex(deps, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (result.ok) return;
     expect(result.error.message).toContain(HOME_A);
@@ -1163,14 +1165,14 @@ describe('home index: finding the home of a folder', () => {
   it('exits 2 and names the file when the index cannot be read', async () => {
     const deps = withIndex([], { cwd: '/w/web' });
     deps.seed(INDEX, '{ broken');
-    const result = await findHomeInIndex(deps);
+    const result = await findHomeInIndex(deps, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (!result.ok) expect(result.error.message).toContain(INDEX);
   });
 
   it('refuses with exit 4 an index path under the folder of Claude Code', async () => {
     const deps = withIndex([], { cwd: '/w/web', env: { HOME: '/home/me', XDG_STATE_HOME: '/home/me/.claude/state' } });
-    expect(await findHomeInIndex(deps)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(await findHomeInIndex(deps, commands.node)).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 });
 
@@ -1193,7 +1195,7 @@ describe('home index: an entry in the settings folder of Claude Code', () => {
   describe('when a command looks for the factory folder of the current folder', () => {
     it.each([CLAUDE, IN_CLAUDE])('stops with exit 4 for the entry %s, and makes no call at or under that folder', async (home) => {
       const { guarded, seen } = watched(withIndex([entry(home, ['/w/web'])], { cwd: '/w/web/src', env: ENV }));
-      const result = await findHomeInIndex(guarded);
+      const result = await findHomeInIndex(guarded, commands.node);
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
       if (result.ok) return;
       expect(result.error.message).toContain('the settings folder of Claude Code /users/me/.claude');
@@ -1204,16 +1206,16 @@ describe('home index: an entry in the settings folder of Claude Code', () => {
     it('stops for an entry that differs only in the case of letters on macOS, and not on Linux', async () => {
       const home = `${USER}/.CLAUDE/factory`;
       const mac = watched(withIndex([entry(home, ['/w/web'])], { cwd: '/w/web', env: ENV, os: 'darwin' }));
-      expect(await findHomeInIndex(mac.guarded)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(await findHomeInIndex(mac.guarded, commands.node)).toMatchObject({ ok: false, error: { kind: 'safety' } });
       expect(mac.seen.filter(underClaude)).toEqual([]);
       const linux = withIndex([entry(home, ['/w/web'])], { cwd: '/w/web', env: ENV });
-      expect(await findHomeInIndex(linux)).toEqual({ ok: true, value: home });
+      expect(await findHomeInIndex(linux, commands.node)).toEqual({ ok: true, value: home });
     });
 
     it('does not use an entry whose projects do not hold the current folder, and asks nothing about its home', async () => {
       const deps = withIndex([entry(IN_CLAUDE, ['/w/api']), entry(HOME_A, ['/w/web'])], { cwd: '/w/web', env: ENV });
       const { guarded, seen } = watched(deps);
-      expect(await findHomeInIndex(guarded)).toEqual({ ok: true, value: HOME_A });
+      expect(await findHomeInIndex(guarded, commands.node)).toEqual({ ok: true, value: HOME_A });
       expect(seen.filter(underClaude)).toEqual([]);
     });
   });

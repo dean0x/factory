@@ -687,7 +687,12 @@ export const runDoctor = async (
   options: DoctorOptions,
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
-  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry));
+  const located = await locateHomeFolder(
+    deps,
+    options.home,
+    (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
+    commands.doctor,
+  );
   if (!located.ok) return located;
   const home = located.value.home;
 

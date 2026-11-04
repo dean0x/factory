@@ -281,7 +281,7 @@ describe('factory init (built binary)', () => {
     const child = await box.run(['init', '--home', inner, '--name', 'inner', '--owner-name', 'Test Owner']);
     expect(child.code).toBe(1);
     expect(child.stderr).toContain('is inside the factory folder');
-    expect(child.stderr).toContain('Choose another folder with --home DIR.');
+    expect(child.stderr).toContain('Run "factory init" again with --home DIR to choose another folder.');
     expect(existsSync(inner)).toBe(false);
   });
 

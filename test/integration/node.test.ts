@@ -113,7 +113,7 @@ describe('factory node (built binary)', () => {
     const result = await node('add-child', join(box.root, 'nowhere'));
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('no factory.yaml found there');
-    expect(result.stderr).toContain('Start the child, then add it again.');
+    expect(result.stderr).toContain('Start the child. Then run "factory node add-child" again.');
   });
 
   it('exits 1 with a remedy for this home as a child, and for a folder above it', async () => {

@@ -73,7 +73,7 @@ const confirmProposal = async (
   if (ACCEPT_ANSWER.test(answer.value.trim())) return ok(choice);
   return usageError(
     `the ${places.folder} ${choice.home} was not accepted`,
-    `Pass ${flagText(flags.home)} DIR to choose a folder.`,
+    `Run "${commandText(commands.init)}" again with ${flagText(flags.home)} DIR to choose a folder.`,
   );
 };
 
@@ -136,7 +136,7 @@ export const checkHomeOutsideRoots = async (deps: Deps, indexPath: string, home:
   if (around.value === null) return ok(undefined);
   return failure(
     `the ${places.folder} ${home} is inside the ${places.folder} ${around.value}`,
-    `A ${places.folder} must be outside every other ${places.folder}. Choose another folder with ${flagText(flags.home)} DIR.`,
+    `A ${places.folder} must be outside every other ${places.folder}. Run "${commandText(commands.init)}" again with ${flagText(flags.home)} DIR to choose another folder.`,
   );
 };
 
@@ -162,7 +162,10 @@ export const chooseHome = async (
     return kind.ok ? ok({ home: named, ...NOT_PROPOSED, kind: kind.value }) : kind;
   }
   const refuse = (folder: string): CliResult<never> =>
-    usageError(`cannot make a name for the ${places.folder} from the folder ${folder}`, `Pass ${flagText(flags.home)} DIR.`);
+    usageError(
+      `cannot make a name for the ${places.folder} from the folder ${folder}`,
+      `Run "${commandText(commands.init)}" again with ${flagText(flags.home)} DIR.`,
+    );
 
   const top = await workTreeTop(deps, deps.cwd);
   if (top !== null) {

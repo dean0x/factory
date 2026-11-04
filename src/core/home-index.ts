@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
-import { commands, env, files, flagText, flags, homeIndex, places } from '../names.js';
+import { commands, commandText, env, files, flagText, flags, homeIndex, places, type CommandName } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
 import { comparable, isInUserClaudeFolder, isSameOrInside, realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
@@ -272,23 +272,24 @@ export const matchFolder = (projects: readonly IndexedProject[], folder: string)
   return others.length === 0 ? { kind: 'one', home: first } : { kind: 'tie', homes };
 };
 
-const unusable = (path: string, reason: string): CliResult<never> =>
+const unusable = (path: string, reason: string, command: CommandName): CliResult<never> =>
   usageError(
     `the ${places.list} ${path} cannot be used: ${reason}`,
-    `Fix or remove that file, or use ${flagText(flags.home)} DIR.`,
+    `Fix or remove that file, or use ${flagText(flags.home)} DIR. Then run "${commandText(command)}" again.`,
   );
 
 /**
  * The node home whose project holds the current folder, or null when no entry does. A home that is gone is ignored.
  * An index that cannot be read, and a tie between two homes, are errors that name the file or the homes. An entry that
  * holds the current folder and whose home is in the settings folder of Claude Code is a stop (exit 4) before any call on it.
+ * `command` is the command that runs: the remedy line of an error names it.
  */
-export const findHomeInIndex = async (deps: Deps): Promise<CliResult<string | null>> => {
+export const findHomeInIndex = async (deps: Deps, command: CommandName): Promise<CliResult<string | null>> => {
   const path = await indexPathOf(deps);
   if (!path.ok) return path;
   if (path.value === null) return ok(null);
   const entries = await readHomeIndex(deps, path.value);
-  if (!entries.ok) return unusable(path.value, entries.error);
+  if (!entries.ok) return unusable(path.value, entries.error, command);
 
   const folder = await deps.fs.realpath(deps.cwd);
   if (!folder.ok) return folder;
@@ -316,7 +317,7 @@ export const findHomeInIndex = async (deps: Deps): Promise<CliResult<string | nu
     case 'tie':
       return usageError(
         `the folder ${folder.value} is in a project of more than one ${places.folder}: ${match.homes.join(', ')}`,
-        `Use ${flagText(flags.home)} DIR to choose one.`,
+        `Run "${commandText(command)}" again with ${flagText(flags.home)} DIR to choose one.`,
       );
     default: {
       const unreachable: never = match;
