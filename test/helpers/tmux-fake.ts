@@ -494,9 +494,11 @@ export const tmuxHandler = (
         return exited(0, `${sessions.get(targetSession(command)) ?? ''}\n`);
       case 'display-message': {
         // A pane id as the target prints the format of that pane. Any other target is the coordinator pane of a session.
+        // tmux finds the target of this command with the flag that lets a find fail: for a pane id that does not exist it
+        // exits 0 and prints the format with every field empty. Real tmux 3.6 does this, and the kill of a pane does not.
         if (isPaneId(targetOf(command))) {
           const pane = resolvePane(targetOf(command));
-          return pane === undefined ? cantFindPane(targetOf(command)) : exited(0, `${expand(command.at(-1) ?? '', pane)}\n`);
+          return exited(0, `${pane === undefined ? expandFormat(command.at(-1) ?? '', () => '') : expand(command.at(-1) ?? '', pane)}\n`);
         }
         return exited(0, `${endedCoordinators.has(targetSession(command)) ? 1 : 0}\n`);
       }

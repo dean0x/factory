@@ -94,9 +94,16 @@ describe('the tmux fake: windows and panes', () => {
     expect(run(must(paneReadArgs('%9'))).stdout).toBe('%9|5001|0|x\n%2|1234|0|alpha\n');
   });
 
-  it('fails the read of a pane that does not exist, and names the pane', () => {
+  it('answers the read of a pane that does not exist with exit 0 and empty fields, as tmux does', () => {
     const { run } = fakeTmux({ sessions: { demo: '/w/node' } });
     const result = run(must(paneReadArgs('%99')));
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('|||\n');
+  });
+
+  it('fails the kill of a pane that does not exist, and names the pane', () => {
+    const { run } = fakeTmux({ sessions: { demo: '/w/node' } });
+    const result = run(must(killPaneArgs('%99')));
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('%99');
   });
