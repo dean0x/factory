@@ -512,8 +512,8 @@ node:
   id: acme                   # unique among siblings; also the tmux session name
   layer: 1                   # set by factory; the role comes from the layer (§5)
 session:
-  # agent: claude            # FAC-M4: the agent command of this node; only `claude` is built (§4.6)
   permission_mode: auto      # the only value accepted (§6)
+  agent: claude              # the agent program of every session; only `claude` is accepted (§4.6)
   effort: high
   model: default
 limits:
@@ -522,7 +522,7 @@ limits:
   load_max: cpu_count        # adapts to each machine
   context_prepare_pct: 30
   context_max_pct: 40
-  # idle_after: 2h           # FAC-M4: a worker with no activity for this time may be idle (§4.11)
+  idle_after: 2h             # <n>m or <n>h, 1m to 24h; a worker with no activity for this time may be idle (§4.11)
 tracker:                     # the default board of the node; a project can override it (§4.10)
   kind: github               # github | jira | linear | local
   items: acme/web            # where work items live (a repo, or a project or team scope)

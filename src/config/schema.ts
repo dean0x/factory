@@ -4,6 +4,7 @@ import { isRecord, type SchemaParser } from '../migrate/inspect.js';
 import {
   commands,
   commandText,
+  durationBounds,
   files,
   keys,
   layers,
@@ -53,8 +54,6 @@ const MAX_STATUSLINE_CHARS = 1000;
 const MAX_SOURCES = 200;
 const MAX_SOURCE_KEY_CHARS = 200;
 const MAX_INTERVAL_DIGITS = 6;
-const MAX_INTERVAL_MINUTES = 24 * 60;
-const MAX_INTERVAL_HOURS = 24;
 
 export const nodeSchema = z.strictObject({
   [keys.node.id]: slug,
@@ -79,6 +78,9 @@ const sharedSessionSchema = z.strictObject({
   [keys.session.permissionMode]: z.literal(values.permissionMode, {
     error: `must be ${values.permissionMode}: every session runs in ${values.permissionMode} mode`,
   }),
+  [keys.session.agent]: z
+    .literal(values.agent, { error: `must be ${values.agent}: it is the only agent that a session starts` })
+    .default(values.agent),
   [keys.session.effort]: z.enum(values.efforts, { error: `must be one of: ${values.efforts.join(', ')}` }),
   [keys.session.model]: z.string().min(1).max(80),
 });
@@ -109,6 +111,19 @@ const proxySchema = z.strictObject({
     .default(values.onFail[0]),
 });
 
+/** `<n>m` or `<n>h`, with no leading zero. The bounds are `durationBounds`: from 1m to 24h. */
+const WATCH_INTERVAL_PATTERN = new RegExp(`^(0|[1-9][0-9]{0,${MAX_INTERVAL_DIGITS - 1}})([mh])$`);
+
+const isWatchInterval = (text: string): boolean => {
+  const match = WATCH_INTERVAL_PATTERN.exec(text);
+  if (match === null) return false;
+  const amount = Number(match[1]);
+  const maxAmount = match[2] === 'h' ? durationBounds.maxHours : durationBounds.maxMinutes;
+  return amount >= durationBounds.minAmount && amount <= maxAmount;
+};
+
+const watchIntervalText = z.string().refine(isWatchInterval, { error: 'must be <n>m or <n>h, from 1m to 24h' });
+
 const limitsSchema = z
   .strictObject({
     [keys.limits.memoryFreeMinPct]: z.number().min(0).max(90),
@@ -118,6 +133,7 @@ const limitsSchema = z
     }),
     [keys.limits.contextPreparePct]: z.number().int().min(1).max(100),
     [keys.limits.contextMaxPct]: z.number().int().min(1).max(100),
+    [keys.limits.idleAfter]: watchIntervalText.default(values.defaultIdleAfter),
   })
   .refine((limits) => limits.context_prepare_pct < limits.context_max_pct, {
     error: `${keys.limits.contextPreparePct} must be less than ${keys.limits.contextMaxPct}`,
@@ -148,16 +164,6 @@ const sourcesSchema = z
   .refine((sources) => Object.keys(sources).length <= MAX_SOURCES, { error: 'has too many entries' })
   .default({});
 
-/** `<n>m` or `<n>h`, from 1m to 24h. */
-const WATCH_INTERVAL_PATTERN = new RegExp(`^([1-9][0-9]{0,${MAX_INTERVAL_DIGITS - 1}})([mh])$`);
-
-const isWatchInterval = (text: string): boolean => {
-  const match = WATCH_INTERVAL_PATTERN.exec(text);
-  if (match === null) return false;
-  const amount = Number(match[1]);
-  return match[2] === 'h' ? amount <= MAX_INTERVAL_HOURS : amount <= MAX_INTERVAL_MINUTES;
-};
-
 const trackerText = z.string().min(1).max(MAX_TRACKER_TEXT);
 
 /** The local tracker keeps its items in the state folder, so it takes no other key. */
@@ -167,10 +173,7 @@ const hostedTrackerSchema = z.strictObject({
   [keys.tracker.kind]: z.enum(values.trackerHosted),
   [keys.tracker.items]: trackerText,
   [keys.tracker.decisions]: trackerText,
-  [keys.tracker.watchInterval]: z
-    .string()
-    .refine(isWatchInterval, { error: 'must be <n>m or <n>h, from 1m to 24h' })
-    .default(values.defaultWatchInterval),
+  [keys.tracker.watchInterval]: watchIntervalText.default(values.defaultWatchInterval),
 });
 
 const trackerSchema = z.discriminatedUnion(keys.tracker.kind, [localTrackerSchema, hostedTrackerSchema], {
@@ -478,6 +481,7 @@ export const sharedOf = (config: FactoryConfig): SharedConfig => {
       tracker,
       session: {
         [keys.session.permissionMode]: session.permission_mode,
+        [keys.session.agent]: session.agent,
         [keys.session.effort]: session.effort,
         [keys.session.model]: session.model,
       },

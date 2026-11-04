@@ -474,6 +474,7 @@ export const keys = {
   owner: { display: 'display', github: 'github', prefix: 'prefix' },
   session: {
     permissionMode: 'permission_mode',
+    agent: 'agent',
     effort: 'effort',
     model: 'model',
     proxy: 'proxy',
@@ -488,6 +489,7 @@ export const keys = {
     loadMax: 'load_max',
     contextPreparePct: 'context_prepare_pct',
     contextMaxPct: 'context_max_pct',
+    idleAfter: 'idle_after',
   },
   project: {
     id: 'id',
@@ -607,6 +609,8 @@ export const lastSeen = {
 /** The words that a config value can take. */
 export const values = {
   permissionMode: 'auto',
+  /** The only agent program that a session starts. */
+  agent: 'claude',
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   noProxy: 'none',
   onFail: ['stop', 'direct'],
@@ -618,7 +622,12 @@ export const values = {
   trackerLocal: 'local',
   trackerHosted: ['github', 'jira', 'linear'],
   defaultWatchInterval: '5m',
+  /** A worker with no activity for this time, and no open work, is idle. */
+  defaultIdleAfter: '2h',
 } as const;
+
+/** The bounds of a duration setting `<n>m` or `<n>h`: the watch interval of a tracker and the idle limit of a worker. */
+export const durationBounds = { minAmount: 1, maxMinutes: 24 * 60, maxHours: 24 } as const;
 
 /** The question of `init` about one approval point: it asks this many times, then it stops with a usage error. */
 export const approvalQuestion = { maxAttempts: 3 } as const;

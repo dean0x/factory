@@ -20,6 +20,8 @@ Config files
 
 - The factory folder holds two config files. `factory.yaml` is shared: git tracks it, and it goes to every machine. `factory.local.yaml` is private: git ignores it, and it has mode 600.
 - The shared file holds the node, the board, the session settings, the limits and the recipe with its projects. The private file holds the owner, the proxies, the settings of a worker, the mode of each approval point, the links to other nodes and the local source of a project.
+- New shared key `session.agent`. Its only value is `claude`, and `claude` is the default. A `factory.yaml` with no `agent` key loads with no upgrade.
+- New shared key `limits.idle_after`, `<n>m` or `<n>h` from 1m to 24h, default `2h`. A `factory.yaml` with no such key loads with no upgrade.
 - The shared file refuses a key of the private file. The error names the key and the private file. A proxy entry in `factory.yaml` fails the load.
 - `init` writes the private file with mode 600. `start`, `init`, `node` and `upgrade` set a mode with group or other read bits back to 600 and print a notice. They stop with exit code 4 when the file has a group or other write bit, has another owner, or is a link. `doctor` and a dry run only warn about read bits.
 - With `factory.yaml` and no `factory.local.yaml`, `start`, `doctor` and `node` exit with code 2 and name `init`.

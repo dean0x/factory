@@ -2062,7 +2062,8 @@ describe('upgrade: a node of schema 1', () => {
     const sharedValue = shared.ok ? (shared.value as Record<string, Record<string, unknown>>) : {};
     expect(Object.keys(sharedValue)).toEqual(['schema', 'node', 'session', 'limits', 'tracker', 'recipe']);
     expect(Object.keys(sharedValue['node'] ?? {})).toEqual(['id', 'layer']);
-    expect(Object.keys(sharedValue['session'] ?? {})).toEqual(['permission_mode', 'effort', 'model']);
+    expect(Object.keys(sharedValue['session'] ?? {})).toEqual(['permission_mode', 'agent', 'effort', 'model']);
+    expect(Object.keys(sharedValue['limits'] ?? {})).toContain('idle_after');
     expect(sharedValue['recipe']).toMatchObject({ projects: [] });
 
     const local = parseYamlText(text(deps, LOCAL));
@@ -2091,7 +2092,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(sharedText).not.toContain(`  ${key}`);
     }
     const localText = text(deps, LOCAL);
-    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'effort', 'model']) {
+    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'agent', 'effort', 'model', 'idle_after']) {
       expect(localText).not.toMatch(new RegExp(`^\\s*${key}:`, 'm'));
     }
   });

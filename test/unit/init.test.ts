@@ -127,7 +127,7 @@ describe('init: the files', () => {
     expect(local).toContain('github: "some-login"');
     expect(local).toContain('proxy: none');
     expect(local).toContain('children: []');
-    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'effort', 'model']) {
+    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'agent', 'effort', 'model', 'idle_after']) {
       expect(local).not.toMatch(new RegExp(`^\\s*${key}:`, 'm'));
     }
     expect(shared).toContain('schema: 2');
