@@ -6,7 +6,7 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { withFolderLock, writeInFolder } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { files, hookNames, lastSeen, privateFile, roles, schemaIds, type HookEvent } from '../names.js';
+import { eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, type HookEvent } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
 import { readWorkerFile } from './registry.js';
@@ -224,4 +224,13 @@ export const readWorkerLastSeen = async (deps: Deps, home: string, workerId: str
   const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;
   if (!isSessionId(sessionId)) return invalid('the pointer does not hold a session id');
   return readLastSeen(deps, home, sessionId);
+};
+
+/**
+ * What the last event of a line says: the session waits at the prompt (`prompt`) or it works (`busy`). A line with no event,
+ * which holds only a percent, says nothing (null). The rule is the table `eventState` of names.ts.
+ */
+export const promptStateOf = (line: LastSeen): 'prompt' | 'busy' | null => {
+  const event = line[keys.event];
+  return event === null ? null : eventState[event];
 };

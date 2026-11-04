@@ -81,10 +81,13 @@ export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as cons
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
 /** The subcommands of `worker`. */
-export const workerCommands = { new: 'new' } as const;
+export const workerCommands = { new: 'new', list: 'list' } as const;
 
 /** The commands with a subcommand that a remedy line names, without the program name. */
-export const commandLines = { workerNew: `${commands.worker} ${workerCommands.new}` } as const;
+export const commandLines = {
+  workerNew: `${commands.worker} ${workerCommands.new}`,
+  workerList: `${commands.worker} ${workerCommands.list}`,
+} as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
 export type CommandText = CommandName | (typeof commandLines)[keyof typeof commandLines];
@@ -608,6 +611,28 @@ export const hookNames = {
 /** One event of the fixed list. */
 export type HookEvent = (typeof hookNames.events)[number];
 
+/**
+ * What the last hook event says about a session: it waits at the prompt (a session that started, or a turn that ended), or
+ * it works (a turn that began, or a compact that is about to run). Every event has an entry.
+ */
+export const eventState = {
+  SessionStart: 'prompt',
+  Stop: 'prompt',
+  UserPromptSubmit: 'busy',
+  PreCompact: 'busy',
+} as const satisfies Readonly<Record<HookEvent, 'prompt' | 'busy'>>;
+
+/** The words of `worker list`: the titles of the columns, the pane column, the state of a worker and the mark of its context. */
+export const workerListWords = {
+  columns: { id: 'ID', project: 'PROJECT', pane: 'PANE', state: 'STATE', context: 'CONTEXT', mark: 'MARK' },
+  /** The pane column for a worker with no pane, and for a worker whose pane has ended. */
+  pane: { none: 'none', dead: 'dead' },
+  /** The state column: the session waits at the prompt, it works, or the last-seen line does not say. */
+  states: { prompt: 'at prompt', busy: 'busy', unknown: 'unknown' },
+  /** The mark of the context column: the percent is at the prepare limit or above, or above the max limit. */
+  marks: { prepare: 'PREPARE', max: 'MAX' },
+} as const;
+
 /** The session folders that get the hook settings: the folder of the coordinator, and the work copy of a worker. */
 export const hookSessions = { coordinator: roles.coordinator, workCopy: 'work-copy' } as const;
 
@@ -835,6 +860,7 @@ export const schemaIds = {
   doctor: `${program}.doctor/v1`,
   machine: `${program}.machine/v1`,
   workerNew: `${program}.worker-new/v1`,
+  workerList: `${program}.worker-list/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
   version: `${program}.version/v1`,

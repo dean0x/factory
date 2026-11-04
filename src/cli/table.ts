@@ -218,6 +218,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     summary: `Make and run the ${roles.worker}s of the ${roles.node}.`,
     usage: [
       `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+      `${commandText(commandLines.workerList)} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {

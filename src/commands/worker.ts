@@ -40,6 +40,7 @@ import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readWorkerRecord, writeWorkerRecord } from '../workers/registry.js';
 import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
+import { runWorkerList } from './worker-list.js';
 
 export interface WorkerOptions {
   /** The words after the command: the subcommand, then its arguments. */
@@ -331,6 +332,10 @@ export const runWorker = async (
       return needsUsage(`${commandText(commands.worker)} needs a subcommand: ${SUBCOMMANDS}`);
     case workerCommands.new:
       return runNew(deps, options, args, registry);
+    case workerCommands.list:
+      return args.length === 0
+        ? runWorkerList(deps, { home: options.home }, registry)
+        : needsUsage(`${workerCommands.list} takes no argument`);
     default:
       return needsUsage(`unknown subcommand ${JSON.stringify(subcommand)}. The subcommands are: ${SUBCOMMANDS}`);
   }

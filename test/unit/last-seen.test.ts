@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
-import { hookNames, lastSeen, schemaIds, type HookEvent } from '../../src/names.js';
+import { eventState, hookNames, lastSeen, schemaIds, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import {
   parsePercent,
+  promptStateOf,
   readLastSeen,
   readWorkerLastSeen,
   writeLastSeen,
   writeWorkerSession,
+  type LastSeen,
   type LastSeenRead,
 } from '../../src/workers/last-seen.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
@@ -547,6 +549,34 @@ describe('readLastSeen', () => {
     };
     await readValue(watched);
     expect(reads).toEqual([FILE]);
+  });
+});
+
+describe('promptStateOf', () => {
+  const typedLine = (name: HookEvent | null): LastSeen => ({
+    schema: schemaIds.lastSeen,
+    session_id: ID,
+    event: name,
+    event_at: name === null ? null : T0,
+    context_pct: null,
+    pct_at: null,
+  });
+
+  it.each([
+    ['SessionStart', 'prompt'],
+    ['Stop', 'prompt'],
+    ['UserPromptSubmit', 'busy'],
+    ['PreCompact', 'busy'],
+  ] as const)('reads %s as %s', (name, state) => {
+    expect(promptStateOf(typedLine(name))).toBe(state);
+  });
+
+  it('says nothing for a line that holds a percent and no event', () => {
+    expect(promptStateOf({ ...typedLine(null), context_pct: 40, pct_at: T0 })).toBeNull();
+  });
+
+  it('has a state for every event of the hook', () => {
+    expect(Object.keys(eventState).sort()).toEqual([...hookNames.events].sort());
   });
 });
 
