@@ -47,18 +47,22 @@ const exists = (path: string): Promise<boolean> =>
   );
 
 const WAIT_STEP_MS = 25;
-const WAIT_STEPS = 120;
+/** The wait for one event of a signal test. On a loaded machine, the built binary and its shell can need more than 3 s to start. */
+const SIGNAL_WAIT_MS = 15_000;
+/** The time limit of a signal test: the two waits of the test, plus 15 s for the start of the binary and the end of the run. */
+const SIGNAL_TEST_TIMEOUT_MS = 2 * SIGNAL_WAIT_MS + 15_000;
 /** The wait after the end of a run for the write of a process that the stop did not reach: twice the 1 s that it needs. */
 const LATE_WRITE_WAIT_MS = 2_000;
 
-/** The first value that `probe` gives, tried every few milliseconds for at most three seconds. A test fails when none comes. */
-const waitFor = async <T>(probe: () => Promise<T | undefined>): Promise<T> => {
-  for (let step = 0; step < WAIT_STEPS; step += 1) {
+/** The first value that `probe` gives, tried every few milliseconds for at most `maxMs`. A test fails when none comes. */
+const waitFor = async <T>(probe: () => Promise<T | undefined>, maxMs: number): Promise<T> => {
+  const steps = Math.ceil(maxMs / WAIT_STEP_MS);
+  for (let step = 0; step < steps; step += 1) {
     const found = await probe();
     if (found !== undefined) return found;
     await new Promise((resolve) => setTimeout(resolve, WAIT_STEP_MS));
   }
-  throw new Error(`no value after ${WAIT_STEPS * WAIT_STEP_MS} ms`);
+  throw new Error(`no value after ${maxMs} ms`);
 };
 
 /** True while any process is left in the process group. A group with no process gives ESRCH. */
@@ -337,16 +341,16 @@ describe('factory hook statusline (built binary)', () => {
       group = await waitFor(async () => {
         const text = await readFile(marker, 'utf8').catch(() => '');
         return Number(text.trim()) || undefined;
-      });
+      }, SIGNAL_WAIT_MS);
       child.kill(name);
       expect(await exited).toBe(0);
-      await waitFor(async () => (groupExists(group) ? undefined : true));
+      await waitFor(async () => (groupExists(group) ? undefined : true), SIGNAL_WAIT_MS);
     } finally {
       if (groupExists(group)) process.kill(-group, 'SIGKILL');
       child.kill('SIGKILL');
     }
     expect(groupExists(group)).toBe(false);
-  });
+  }, SIGNAL_TEST_TIMEOUT_MS);
 
   it('prints the line and writes nothing outside a factory session', async () => {
     await setOwnerCommand('echo owner');
