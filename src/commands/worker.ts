@@ -1,5 +1,5 @@
 import { join, relative, resolve } from 'node:path';
-import { failure, notReady, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import { isSlug } from '../config/primitives.js';
@@ -18,7 +18,7 @@ import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
 import type { PaneRow } from '../launch/tmux.js';
-import { requireOwnSession, sessionExists } from '../launch/tmux-run.js';
+import { requireSession } from '../launch/tmux-run.js';
 import {
   commandLines,
   commands,
@@ -112,17 +112,6 @@ const requireLaunchReady = async (deps: Deps, home: string, config: FactoryConfi
     );
   }
   return ok(undefined);
-};
-
-/** The tmux session of the node must run, and it must be the session of this factory folder. `again` is the command line to run again. */
-const requireSession = async (deps: Deps, id: string, home: string, again: string): Promise<CliResult<void>> => {
-  if (!(await sessionExists(deps, id))) {
-    return notReady(
-      `the tmux session ${id} of this ${roles.node} does not run`,
-      `Run "${commandText(commands.start)}" to start it. Then run "${again}" again.`,
-    );
-  }
-  return requireOwnSession(deps, id, home);
 };
 
 /** The factory folder of the command: the folder of the option, or the one that the current folder is in. */

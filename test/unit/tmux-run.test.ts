@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { hasSessionArgs, killSessionArgs } from '../../src/launch/tmux.js';
-import { coordinatorEnded, isSameHome, requireOwnSession, sessionExists, tmuxCall, tmuxStep } from '../../src/launch/tmux-run.js';
+import {
+  coordinatorEnded,
+  isSameHome,
+  requireOwnSession,
+  requireSession,
+  sessionExists,
+  tmuxCall,
+  tmuxStep,
+} from '../../src/launch/tmux-run.js';
 import { createFakeDeps, exited } from '../helpers/fake-deps.js';
 import { tmuxHandler, type TmuxFixture } from '../helpers/tmux-fake.js';
 
@@ -106,5 +114,33 @@ describe('the home of a session', () => {
   it('refuses a session that has no home option', async () => {
     const { deps } = make({ sessions: { demo: null } });
     expect((await requireOwnSession(deps, 'demo', HOME)).ok).toBe(false);
+  });
+});
+
+describe('the session that a command needs', () => {
+  it('lets a session of this home pass', async () => {
+    const { deps } = make({ sessions: { demo: HOME } });
+    expect(await requireSession(deps, 'demo', HOME, 'factory layout')).toEqual({ ok: true, value: undefined });
+  });
+
+  it('gives exit 3 for no session, names factory start, and names the command to run again', async () => {
+    const { deps } = make();
+    const result = await requireSession(deps, 'demo', HOME, 'factory layout');
+    expect(!result.ok && result.error.kind).toBe('not-ready');
+    expect(!result.ok && result.error.message).toContain('demo');
+    expect(!result.ok && result.error.hint).toContain('"factory start"');
+    expect(!result.ok && result.error.hint).toContain('"factory layout"');
+  });
+
+  it('gives exit 3 when tmux does not run at all', async () => {
+    const { deps } = make({ version: null });
+    const result = await requireSession(deps, 'demo', HOME, 'factory layout');
+    expect(!result.ok && result.error.kind).toBe('not-ready');
+  });
+
+  it('gives a safety stop for a session of another home', async () => {
+    const { deps } = make({ sessions: { demo: '/w/other' } });
+    const result = await requireSession(deps, 'demo', HOME, 'factory layout');
+    expect(!result.ok && result.error.kind).toBe('safety');
   });
 });

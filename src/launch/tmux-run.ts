@@ -1,4 +1,4 @@
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { failure, notReady, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
@@ -57,4 +57,18 @@ export const requireOwnSession = async (deps: Deps, id: string, home: string): P
     `a tmux session ${id} belongs to another ${places.folder}`,
     `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session. Then run "${commandText(commands.start)}" again.`,
   );
+};
+
+/**
+ * The tmux session of the node must run (exit 3, and the remedy names `start`), and it must be the session of this factory folder
+ * (exit 4). `again` is the command line to run again after `start`.
+ */
+export const requireSession = async (deps: Deps, id: string, home: string, again: string): Promise<CliResult<void>> => {
+  if (!(await sessionExists(deps, id))) {
+    return notReady(
+      `the tmux session ${id} of this ${roles.node} does not run`,
+      `Run "${commandText(commands.start)}" to start it. Then run "${again}" again.`,
+    );
+  }
+  return requireOwnSession(deps, id, home);
 };
