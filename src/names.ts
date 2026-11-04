@@ -121,6 +121,8 @@ export const files = {
   worker: 'worker.md',
   /** The record of one worker in the state folder: `workers/<id>/worker.json`. */
   workerRecord: 'worker.json',
+  /** The pointer of one worker to its newest session: `workers/<id>/last-session` holds a session id. */
+  workerLastSession: 'last-session',
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',
@@ -639,6 +641,8 @@ export const lastSeen = {
   sessionIdPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /** A reader refuses a file of more bytes than this. */
   maxBytes: 4_096,
+  /** A reader refuses a worker pointer of more bytes than this. A session id and a new line are 37 bytes. */
+  pointerMaxBytes: 64,
   minPercent: 0,
   maxPercent: 100,
 } as const;

@@ -89,6 +89,8 @@ export interface WorkerPaths {
   /** The folder of the worker. */
   readonly dir: string;
   readonly recordFile: string;
+  /** The pointer to the newest session of the worker: the file that names its last-seen line. */
+  readonly lastSessionFile: string;
   /** The folder of the messages for the worker. */
   readonly inboxDir: string;
 }
@@ -96,7 +98,12 @@ export interface WorkerPaths {
 /** The paths of a worker. The id names a folder, so the caller checks that it is a slug before it uses a path. */
 export const workerPathsOf = (home: string, id: string): WorkerPaths => {
   const dir = join(layoutOf(home).workersDir, id);
-  return { dir, recordFile: join(dir, files.workerRecord), inboxDir: join(dir, dirs.inbox) };
+  return {
+    dir,
+    recordFile: join(dir, files.workerRecord),
+    lastSessionFile: join(dir, files.workerLastSession),
+    inboxDir: join(dir, dirs.inbox),
+  };
 };
 
 const STAGING_PREFIX = `${dirs.state}.tmp-`;

@@ -2,8 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
 import { hookNames, lastSeen, schemaIds, type HookEvent } from '../../src/names.js';
-import { layoutOf } from '../../src/state/layout.js';
-import { parsePercent, readLastSeen, writeLastSeen, type LastSeenRead } from '../../src/workers/last-seen.js';
+import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
+import {
+  parsePercent,
+  readLastSeen,
+  readWorkerLastSeen,
+  writeLastSeen,
+  writeWorkerSession,
+  type LastSeenRead,
+} from '../../src/workers/last-seen.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 
 const HOME = '/h/node';
@@ -540,5 +547,186 @@ describe('readLastSeen', () => {
     };
     await readValue(watched);
     expect(reads).toEqual([FILE]);
+  });
+});
+
+describe('the session pointer of a worker', () => {
+  const WORKER = 'fix-login';
+  const PATHS = workerPathsOf(HOME, WORKER);
+  const POINTER = PATHS.lastSessionFile;
+  const NEXT = '0b9c7d5e-2f31-4a68-9c4d-5e6f708192a3';
+
+  const withWorker = (links: Record<string, string> = {}): FakeDeps => {
+    const deps = createFakeDeps({ links });
+    deps.seedDir(PATHS.dir);
+    return deps;
+  };
+
+  const readWorker = async (deps: Deps, worker = WORKER): Promise<LastSeenRead> => {
+    const result = await readWorkerLastSeen(deps, HOME, worker);
+    if (!result.ok) throw new Error(`the read failed: ${result.error.message}`);
+    return result.value;
+  };
+
+  const invalidReason = async (deps: Deps, worker = WORKER): Promise<string> => {
+    const read = await readWorker(deps, worker);
+    if (read.state !== 'invalid') throw new Error(`expected an invalid read, got ${read.state}`);
+    return read.reason;
+  };
+
+  it('puts the pointer in the folder of the worker', () => {
+    expect(POINTER).toBe('/h/node/.factory/workers/fix-login/last-session');
+  });
+
+  describe('writeWorkerSession', () => {
+    it('writes the session id and a new line into the file of the worker', async () => {
+      const deps = withWorker();
+      expect(await writeWorkerSession(deps, HOME, WORKER, ID)).toEqual({ ok: true, value: undefined });
+      expect(deps.files.get(POINTER)).toBe(`${ID}\n`);
+      expect([...deps.files.keys()]).toEqual([POINTER]);
+    });
+
+    it('replaces the session id with the id of a newer session', async () => {
+      const deps = withWorker();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      await writeWorkerSession(deps, HOME, WORKER, NEXT);
+      expect(deps.files.get(POINTER)).toBe(`${NEXT}\n`);
+    });
+
+    it.each([
+      ['a worker id that is not a slug', 'Fix_Login', ID],
+      ['a worker id that climbs out of the folder', '../../escape', ID],
+      ['an empty worker id', '', ID],
+      ['a session id that is not a UUID', WORKER, 'abc'],
+      ['a session id with upper case letters', WORKER, ID.toUpperCase()],
+      ['a session id with a path in it', WORKER, `${ID}/../x`],
+    ])('writes nothing for %s', async (_name, worker, session) => {
+      const deps = withWorker();
+      const before = snapshot(deps);
+      expect(errorOf(await writeWorkerSession(deps, HOME, worker, session)).kind).toBe('failure');
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it('refuses a pointer that is a link, and keeps its target', async () => {
+      const deps = withWorker({ [POINTER]: '/outside/target' });
+      deps.seed('/outside/target', 'victim');
+      const before = snapshot(deps);
+      expect(errorOf(await writeWorkerSession(deps, HOME, WORKER, ID)).kind).toBe('safety');
+      expect(snapshot(deps)).toBe(before);
+      expect(deps.files.get('/outside/target')).toBe('victim');
+    });
+
+    it('refuses a folder of the worker that is a link', async () => {
+      const deps = withWorker({ [PATHS.dir]: '/outside' });
+      deps.seedDir('/outside');
+      expect(errorOf(await writeWorkerSession(deps, HOME, WORKER, ID)).kind).toBe('safety');
+      expect(deps.files.size).toBe(0);
+    });
+  });
+
+  describe('readWorkerLastSeen', () => {
+    const seedSession = (deps: FakeDeps, session: string, fields: Record<string, unknown> = {}): void => {
+      deps.seed(`${FOLDER}/${session}`, `${JSON.stringify(line({ session_id: session, ...fields }))}\n`);
+    };
+
+    it('gives absent when the worker has no folder', async () => {
+      expect(await readWorker(createFakeDeps())).toEqual({ state: 'absent' });
+    });
+
+    it('gives absent when the worker has no pointer yet', async () => {
+      expect(await readWorker(withWorker())).toEqual({ state: 'absent' });
+    });
+
+    it('gives the line of the session that the pointer names', async () => {
+      const deps = withWorker();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      seedSession(deps, ID, { event: 'Stop', event_at: T0, context_pct: 33, pct_at: T1 });
+      expect(await readWorker(deps)).toEqual({
+        state: 'valid',
+        line: line({ event: 'Stop', event_at: T0, context_pct: 33, pct_at: T1 }),
+      });
+    });
+
+    it('follows the pointer to the newest session and ignores the line of an older one', async () => {
+      const deps = withWorker();
+      seedSession(deps, ID, { event: 'Stop', event_at: T0 });
+      seedSession(deps, NEXT, { event: 'UserPromptSubmit', event_at: T1 });
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      await writeWorkerSession(deps, HOME, WORKER, NEXT);
+      expect(await readWorker(deps)).toMatchObject({ state: 'valid', line: { session_id: NEXT, event: 'UserPromptSubmit' } });
+    });
+
+    it('gives absent when the pointer names a session that has no line', async () => {
+      const deps = withWorker();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      expect(await readWorker(deps)).toEqual({ state: 'absent' });
+    });
+
+    it('gives invalid when the line of the session is not valid', async () => {
+      const deps = withWorker();
+      await writeWorkerSession(deps, HOME, WORKER, ID);
+      deps.seed(FILE, 'not json');
+      expect(await invalidReason(deps)).toContain('not valid JSON');
+    });
+
+    it.each([
+      ['text that is not a session id', 'abc\n'],
+      ['a session id with upper case letters', `${ID.toUpperCase()}\n`],
+      ['a session id with a path behind it', `${ID}/../../x\n`],
+      ['a second line', `${ID}\nx\n`],
+      ['an empty file', ''],
+    ])('gives invalid for a pointer that holds %s, and reads no line', async (_name, text) => {
+      const deps = withWorker();
+      deps.seed(POINTER, text);
+      seedSession(deps, ID, { event: 'Stop', event_at: T0 });
+      const reads: string[] = [];
+      const watched: Deps = { ...deps, fs: { ...deps.fs, readTextLimited: async (path, max) => (reads.push(path), deps.fs.readTextLimited(path, max)) } };
+      expect(await invalidReason(watched)).toContain('session id');
+      expect(reads).toEqual([POINTER]);
+    });
+
+    it('gives invalid for a pointer over the cap', async () => {
+      const deps = withWorker();
+      deps.seed(POINTER, `${ID}${' '.repeat(lastSeen.pointerMaxBytes)}`);
+      expect(await invalidReason(deps)).toContain(`larger than ${lastSeen.pointerMaxBytes} bytes`);
+    });
+
+    it('gives invalid for a pointer that is a link, and does not read the target', async () => {
+      const deps = withWorker({ [POINTER]: '/outside/target' });
+      deps.seed('/outside/target', `${ID}\n`);
+      seedSession(deps, ID, { event: 'Stop', event_at: T0 });
+      expect(await invalidReason(deps)).toContain('the pointer is a link');
+    });
+
+    it('gives invalid for a pointer that is a folder', async () => {
+      const deps = withWorker();
+      deps.seedDir(POINTER);
+      expect(await invalidReason(deps)).toContain('the pointer is not a file');
+    });
+
+    it('gives invalid for a folder of the worker that is a link', async () => {
+      const deps = withWorker({ [PATHS.dir]: '/outside' });
+      deps.seed('/outside/last-session', `${ID}\n`);
+      expect(await invalidReason(deps)).toContain('is a link');
+    });
+
+    it('gives invalid for a workers folder that is a link', async () => {
+      const deps = withWorker({ [layoutOf(HOME).workersDir]: '/outside' });
+      expect(await invalidReason(deps)).toContain('is a link');
+    });
+
+    it('gives invalid for a worker id that is not a slug, and touches no path', async () => {
+      const deps = withWorker();
+      const seen: string[] = [];
+      const watched: Deps = { ...deps, fs: { ...deps.fs, lstat: async (path) => (seen.push(path), deps.fs.lstat(path)) } };
+      expect(await invalidReason(watched, '../escape')).toContain('not a slug');
+      expect(seen).toEqual([]);
+    });
+
+    it('fails when the file system fails', async () => {
+      const deps = withWorker();
+      const broken: Deps = { ...deps, fs: { ...deps.fs, lstat: async () => failure('cannot stat: EIO') } };
+      expect(errorOf(await readWorkerLastSeen(broken, HOME, WORKER)).message).toContain('EIO');
+    });
   });
 });

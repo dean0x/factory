@@ -87,32 +87,52 @@ const readOfText = (text: string, id: string): CliResult<WorkerRead> => {
   return ok({ state: 'valid', record: recordOf(parsed.data) });
 };
 
+/** What a read of one file in the folder of a worker finds: the text, a file that can not be read and the reason, or no file. */
+export type WorkerFileRead =
+  | { readonly state: 'text'; readonly text: string }
+  | { readonly state: 'invalid'; readonly reason: string }
+  | { readonly state: 'absent' };
+
 /**
- * Read the record of a worker. The read checks the workers folder, the folder of the worker and the file, refuses each one
- * that is a link or of the wrong kind, never follows a link, and caps the bytes. An id that is not a slug is invalid, and no
- * path is touched. The reason never holds a part of the file. The failure is a fault of the file system only.
+ * Read one file in the folder of a worker, for the record and for the pointer to the session. The read checks the workers
+ * folder, the folder of the worker and the file, refuses each one that is a link or of the wrong kind, never follows a link,
+ * and caps the bytes. An id that is not a slug is invalid, and no path is touched. The reason never holds a part of the file.
+ * The failure is a fault of the file system only.
  */
-export const readWorkerRecord = async (deps: Deps, home: string, id: string): Promise<CliResult<WorkerRead>> => {
-  if (!isSlug(id)) return invalid(`the ${roles.worker} id is not a slug`);
+export const readWorkerFile = async (
+  deps: Deps,
+  home: string,
+  id: string,
+  file: { readonly of: 'recordFile' | 'lastSessionFile'; readonly what: string; readonly maxBytes: number },
+): Promise<CliResult<WorkerFileRead>> => {
+  if (!isSlug(id)) return ok({ state: 'invalid', reason: `the ${roles.worker} id is not a slug` });
   const paths = workerPathsOf(home, id);
+  const path = paths[file.of];
   const checked = [
     { path: layoutOf(home).workersDir, kind: 'dir', what: `the ${roles.worker}s folder` },
     { path: paths.dir, kind: 'dir', what: `the folder of the ${roles.worker}` },
-    { path: paths.recordFile, kind: 'file', what: 'the record' },
+    { path, kind: 'file', what: file.what },
   ] as const;
-  for (const { path, kind, what } of checked) {
-    const found = await deps.fs.lstat(path);
+  for (const { path: checkedPath, kind, what } of checked) {
+    const found = await deps.fs.lstat(checkedPath);
     if (!found.ok) return found;
     if (found.value === null) return ok({ state: 'absent' });
-    if (found.value === 'link') return invalid(`${what} is a link`);
-    if (found.value !== kind) return invalid(`${what} is not a ${kind === 'dir' ? 'folder' : 'file'}`);
+    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link` });
+    if (found.value !== kind) return ok({ state: 'invalid', reason: `${what} is not a ${kind === 'dir' ? 'folder' : 'file'}` });
   }
-  const info = await deps.fs.statInfo(paths.recordFile);
+  const info = await deps.fs.statInfo(path);
   if (!info.ok) return info;
   if (info.value === null) return ok({ state: 'absent' });
-  if (info.value.size > workerRecord.maxBytes) return invalid(`larger than ${workerRecord.maxBytes} bytes`);
-  const text = await deps.fs.readTextLimited(paths.recordFile, workerRecord.maxBytes);
-  return text.ok ? readOfText(text.value, id) : text;
+  if (info.value.size > file.maxBytes) return ok({ state: 'invalid', reason: `larger than ${file.maxBytes} bytes` });
+  const text = await deps.fs.readTextLimited(path, file.maxBytes);
+  return text.ok ? ok({ state: 'text', text: text.value }) : text;
+};
+
+/** Read the record of a worker. The checks of the read are those of `readWorkerFile`. */
+export const readWorkerRecord = async (deps: Deps, home: string, id: string): Promise<CliResult<WorkerRead>> => {
+  const found = await readWorkerFile(deps, home, id, { of: 'recordFile', what: 'the record', maxBytes: workerRecord.maxBytes });
+  if (!found.ok) return found;
+  return found.value.state === 'text' ? readOfText(found.value.text, id) : ok(found.value);
 };
 
 /** Whether the folder exists. A link is a security stop (exit 4) and is never followed. A path of another kind is a failure. */

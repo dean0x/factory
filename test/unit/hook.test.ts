@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest';
 import type { CliResult } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import type { Deps } from '../../src/core/deps.js';
+import { ok } from '../../src/core/result.js';
 import { hookNames, schemaIds, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
+import { readWorkerLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { runHook } from '../helpers/package-registry.js';
@@ -360,6 +362,66 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
     const deps = await makeWorker();
     expect(await runLine(['hook', 'Stop'], deps)).toEqual({ code: 0, out: '', err: '' });
     expect(lineOf(deps)).toMatchObject({ event: 'Stop', session_id: SESSION });
+  });
+
+  describe('the session pointer of the worker', () => {
+    const NEXT_SESSION = '00000000-0000-4000-8000-000000000002';
+
+    it('records the session of the event in the folder of the worker, so a reader finds the line from the worker id', async () => {
+      const deps = await makeWorker();
+      expect((await runHook(deps, ['Stop'])).ok).toBe(true);
+      expect(deps.files.get(paths.lastSessionFile)).toBe(`${SESSION}\n`);
+      const read = await readWorkerLastSeen(deps, HOME, WORKER_ID);
+      expect(read).toMatchObject({ ok: true, value: { state: 'valid', line: { session_id: SESSION, event: 'Stop' } } });
+    });
+
+    it.each(hookNames.events)('records the pointer for %s', async (event) => {
+      const deps = await makeWorker({ stdin: JSON.stringify(FIXTURE.hooks[event]) });
+      expect((await runHook(deps, [event])).ok).toBe(true);
+      expect(deps.files.get(paths.lastSessionFile)).toBe(`${SESSION}\n`);
+    });
+
+    it('moves the pointer to the new session when the worker gets a new session id', async () => {
+      const deps = await makeWorker();
+      await runHook(deps, ['Stop']);
+      const restarted: FakeDeps = { ...deps, readStdin: async () => ok(payload('SessionStart', { session_id: NEXT_SESSION })) };
+      expect((await runHook(restarted, ['SessionStart'])).ok).toBe(true);
+      expect(deps.files.get(paths.lastSessionFile)).toBe(`${NEXT_SESSION}\n`);
+      expect(await readWorkerLastSeen(deps, HOME, WORKER_ID)).toMatchObject({
+        ok: true,
+        value: { state: 'valid', line: { session_id: NEXT_SESSION, event: 'SessionStart' } },
+      });
+    });
+
+    it('writes no pointer for the session of the node', async () => {
+      const deps = await makeWorker({ env: { FACTORY_SESSION: NODE_ID } });
+      expect((await runHook(deps, ['Stop'])).ok).toBe(true);
+      expect(deps.files.has(paths.lastSessionFile)).toBe(false);
+      expect([...deps.files.keys()].filter((path) => path.startsWith(layoutOf(HOME).workersDir))).toEqual([paths.recordFile]);
+    });
+
+    it('writes no pointer when the line is not written', async () => {
+      const deps = await makeWorker();
+      deps.seedDir(FILE);
+      expect(errorOf(await runHook(deps, ['Stop']))).toContain('not a file');
+      expect(deps.files.has(paths.lastSessionFile)).toBe(false);
+    });
+
+    it('keeps the line and names the pointer when the pointer is a link', async () => {
+      const links: Record<string, string> = {};
+      const deps = await makeWorker({ links });
+      links[paths.lastSessionFile] = OTHER;
+      deps.seed(OTHER, 'victim');
+      expect(errorOf(await runHook(deps, ['Stop']))).toContain('last-session');
+      expect(lineOf(deps)).toMatchObject({ event: 'Stop' });
+      expect(deps.files.get(OTHER)).toBe('victim');
+    });
+
+    it('exits 0 and records the pointer through runCli', async () => {
+      const deps = await makeWorker();
+      expect(await runLine(['hook', 'Stop'], deps)).toEqual({ code: 0, out: '', err: '' });
+      expect(deps.files.get(paths.lastSessionFile)).toBe(`${SESSION}\n`);
+    });
   });
 
   it('exits 0 with an empty stdout and one line on stderr for an id with no record, through runCli', async () => {

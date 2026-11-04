@@ -1,19 +1,22 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { failure, type CliResult } from '../cli/errors.js';
+import { isSlug } from '../config/primitives.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { withFolderLock, writeInFolder } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { hookNames, lastSeen, privateFile, schemaIds, type HookEvent } from '../names.js';
-import { layoutOf } from '../state/layout.js';
+import { files, hookNames, lastSeen, privateFile, roles, schemaIds, type HookEvent } from '../names.js';
+import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
+import { readWorkerFile } from './registry.js';
 
 /**
  * The last-seen line of a session (design 4.6). The hook of Claude Code writes the last event and its time. The status
  * line writes the context percent and its time. Each write keeps the part that it does not set, so one file holds both.
- * The file is one JSON text in the heartbeat folder of the run-time folder, named by the session id. This module is the
- * only writer and the only reader of that file.
+ * The file is one JSON text in the heartbeat folder of the run-time folder, named by the session id. A worker has one more
+ * file, a pointer in its own folder that holds the id of its newest session, so the line of a worker is found from the id
+ * of the worker. This module is the only writer and the only reader of both files.
  */
 
 const keys = lastSeen.keys;
@@ -174,4 +177,51 @@ export const writeLastSeen = async (
     const written = await writeInFolder(deps, target, `${JSON.stringify(next.value)}\n`);
     return written.ok ? next : written;
   });
+};
+
+/**
+ * Record the newest session of a worker: the pointer in the folder of the worker holds the session id and a new line. The
+ * file is replaced as a whole, so a reader sees the old id or the new id. The write is refused, and nothing changes, for a
+ * worker id that is not a slug and a session id that is not a UUID. A folder or a file that is a link is a security stop
+ * (exit 4) from the safe write. The caller has checked that the worker has a record.
+ */
+export const writeWorkerSession = async (
+  deps: Deps,
+  home: string,
+  workerId: string,
+  sessionId: string,
+): Promise<CliResult<void>> => {
+  if (!isSlug(workerId)) return failure(`cannot record the session of the ${roles.worker}: the id is not a slug`);
+  if (!isSessionId(sessionId)) return failure(`cannot record the session of the ${roles.worker}: the session id is not a UUID`);
+  return writeInFolder(
+    deps,
+    {
+      parent: layoutOf(home).workersDir,
+      folder: workerPathsOf(home, workerId).dir,
+      name: files.workerLastSession,
+      mode: privateFile.fileMode,
+      folderMode: privateFile.folderMode,
+    },
+    `${sessionId}\n`,
+  );
+};
+
+/**
+ * Read the last-seen line of a worker: the pointer of the worker names its newest session, and the line of that session is
+ * the value. The pointer and the line are each checked as `readLastSeen` checks a line, and the session id in the line must
+ * be the id in the pointer. A pointer that is not valid, or a line that is not valid, gives invalid with the reason. No
+ * pointer, or a pointer to a session with no line, gives absent. A line is a hint and never proof of which session wrote it:
+ * a caller treats absent and invalid as unknown. The failure is a fault of the file system only.
+ */
+export const readWorkerLastSeen = async (deps: Deps, home: string, workerId: string): Promise<CliResult<LastSeenRead>> => {
+  const pointer = await readWorkerFile(deps, home, workerId, {
+    of: 'lastSessionFile',
+    what: 'the pointer',
+    maxBytes: lastSeen.pointerMaxBytes,
+  });
+  if (!pointer.ok) return pointer;
+  if (pointer.value.state !== 'text') return ok(pointer.value);
+  const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;
+  if (!isSessionId(sessionId)) return invalid('the pointer does not hold a session id');
+  return readLastSeen(deps, home, sessionId);
 };
