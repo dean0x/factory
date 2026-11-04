@@ -123,6 +123,12 @@ describe('scripts/check-session-stop.sh', () => {
       expect(result.out).toContain('kill -HUP');
     });
 
+    it('reads only the first table, so a later table with other rows does not fail the doc', async () => {
+      await change((text) => `${text}\n## The probes\n\n| Run | What it did | Result |\n|---|---|---|\n| 1 | a probe | a result |\n`);
+      const result = check();
+      expect({ code: result.code, failed: failedChecks(result.out) }).toEqual({ code: 0, failed: [] });
+    });
+
     it('exits 1 for a doc with no table', async () => {
       await change((text) => text.split('\n').filter((line) => !line.startsWith('|')).join('\n'));
       const result = check();

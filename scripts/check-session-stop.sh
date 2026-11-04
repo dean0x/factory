@@ -6,7 +6,8 @@
 # DOCS_DIR is the docs folder with session-stop.md. The default is the docs folder of this repo.
 #
 # The doc has a heading "The rule for safe" with the four numbered facts (lines that start with 1. to 4.), and then a
-# table. The table rows have this form, in this order of cells:
+# table. The table is the first block of lines that start with a bar; a later table is not read. The table rows have this
+# form, in this order of cells:
 #   | Way | Case | fact 1 | fact 2 | fact 3 | fact 4 | Verdict | ... |
 # The six ways are /exit, /quit, /restart, kill -TERM, kill -INT and agent view delete. The two cases are idle and busy.
 # Backticks around a cell are ignored. A fact starts with yes, no, open or n/a, and a reason may follow. The verdict is
@@ -80,6 +81,8 @@ if findings=$(awk '
     split("safe|not safe|not available|open", listed, "[|]")
     for (i = 1; i <= 4; i++) verdict_word[listed[i]] = 1
   }
+  # The table is the first block of lines that start with a bar. A later table in the doc is not read.
+  !/^\|/ && tableline { tabledone = 1 }
   /^```/ { fenced = !fenced; next }
   fenced { next }
   /^#+[ \t]/ {
@@ -92,6 +95,7 @@ if findings=$(awk '
   }
   inrule && /^[1-4]\. / { has_fact[substr($0, 1, 1)] = 1 }
   /^\|/ {
+    if (tabledone) next
     if (!tableline) tableline = NR
     cells = split($0, cell, "|")
     name = plain(cell[2])
