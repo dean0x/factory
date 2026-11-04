@@ -102,6 +102,11 @@ export interface RunOptions {
    * process does not end after the stop, the run ends a short time later with the failure of the stop. Not on Windows.
    */
   readonly processGroup?: boolean;
+  /**
+   * With `processGroup`: when this signal aborts, the run stops every process of the group at once and ends as it does at
+   * the time limit. A signal that has aborted already starts no program. A run with no `processGroup` ignores the signal.
+   */
+  readonly signal?: AbortSignal;
 }
 
 export interface RunOutput {
@@ -124,6 +129,15 @@ export const MAX_ANSWER_CHARS = 200;
 
 /** The answers that mean yes to a question of a command. Any other answer, and an empty one, means no. */
 export const ACCEPT_ANSWER = /^y(?:es)?$/i;
+
+/**
+ * The signals that this process gets. A signal that has a handler no longer ends the process: the code that installs a
+ * handler must remove it when it has no more need of it.
+ */
+export interface SignalSource {
+  on(signal: NodeJS.Signals, handler: () => void): unknown;
+  off(signal: NodeJS.Signals, handler: () => void): unknown;
+}
 
 export interface Deps {
   readonly fs: Fs;
@@ -152,6 +166,7 @@ export interface Deps {
    */
   warn(message: string): void;
   readonly env: Readonly<Record<string, string | undefined>>;
+  readonly signals: SignalSource;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;
   now(): Date;

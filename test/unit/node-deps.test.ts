@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { getEventListeners } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
@@ -133,6 +134,44 @@ describe('node deps: run', () => {
       });
       await wait(1_500);
       expect(await exists(late)).toBe(false);
+    });
+
+    describe('with an abort signal', () => {
+      it('stops every process of the group and ends the run when the signal aborts', async () => {
+        const late = fresh('late-abort');
+        const controller = new AbortController();
+        const started = Date.now();
+        const pending = deps.run('/bin/sh', ['-c', `(sleep 1; echo late > '${late}') | cat`], {
+          processGroup: true,
+          signal: controller.signal,
+        });
+        await wait(150);
+        controller.abort();
+        expect(await pending).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run /bin/sh: SIGKILL' } });
+        expect(Date.now() - started).toBeLessThan(1_000);
+        await wait(1_500);
+        expect(await exists(late)).toBe(false);
+      });
+
+      it('starts no program when the signal has aborted already', async () => {
+        const marker = fresh('never-started');
+        const controller = new AbortController();
+        controller.abort();
+        const result = await deps.run('/bin/sh', ['-c', `echo started > '${marker}'`], {
+          processGroup: true,
+          signal: controller.signal,
+        });
+        expect(result).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot run /bin/sh: ABORT_ERR' } });
+        await wait(300);
+        expect(await exists(marker)).toBe(false);
+      });
+
+      it('keeps no listener on the signal after the run ends', async () => {
+        const controller = new AbortController();
+        const result = await deps.run('/bin/sh', ['-c', 'echo done'], { processGroup: true, signal: controller.signal });
+        expect(result).toEqual({ ok: true, value: { exitCode: 0, stdout: 'done\n', stderr: '' } });
+        expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+      });
     });
 
     describe('when the stop does not end the first process of the group', () => {

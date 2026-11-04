@@ -43,6 +43,8 @@ const NATIVE_WINDOWS = 'win32';
 const GROUP_STOP_SIGNAL = 'SIGKILL';
 /** After the stop of a group, the run waits this long for the first process to end. Then the run ends without it. */
 const GROUP_STOP_GRACE_MS = 200;
+/** The code that Node gives to the error of an abort. A run that is aborted before it starts fails with this code. */
+const ABORT_CODE = 'ABORT_ERR';
 
 const errorCode = (cause: unknown): string => {
   if (typeof cause === 'object' && cause !== null && 'code' in cause) {
@@ -329,10 +331,15 @@ const stopGroup = (pid: number | undefined): void => {
  * passes the byte cap, every process of the group is stopped and the output pipes are closed. So the run ends at the limit
  * also when a process outside the group holds a pipe. The run ends when the first process has ended and the pipes are
  * closed. If the stop does not end the first process, the run ends `GROUP_STOP_GRACE_MS` after the stop, with the failure
- * of the stop. The value has the same form as the value of `runPlain`.
+ * of the stop. The abort of `RunOptions.signal` stops the group in the same way. The value has the same form as the value
+ * of `runPlain`.
  */
 const runInGroup = (command: string, args: readonly string[], options: RunOptions): Promise<CliResult<RunOutput>> =>
   new Promise((resolve) => {
+    if (options.signal?.aborted === true) {
+      resolve(failure(`cannot run ${command}: ${ABORT_CODE}`));
+      return;
+    }
     const child = spawn(command, [...args], { cwd: options.cwd ?? process.cwd(), env: runEnvOf(options), detached: true });
     const output = { stdout: [] as Buffer[], stderr: [] as Buffer[], bytes: 0, tooLarge: false };
     const text = (chunks: Buffer[]): string => Buffer.concat(chunks).toString('utf8');
@@ -344,6 +351,7 @@ const runInGroup = (command: string, args: readonly string[], options: RunOption
       settled = true;
       clearTimeout(timers.limit);
       clearTimeout(timers.grace);
+      options.signal?.removeEventListener('abort', stop);
       child.stdout.off('data', onStdout);
       child.stderr.off('data', onStderr);
       child.off('close', onClose);
@@ -383,6 +391,7 @@ const runInGroup = (command: string, args: readonly string[], options: RunOption
     };
 
     timers.limit = setTimeout(stop, options.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS);
+    options.signal?.addEventListener('abort', stop, { once: true });
     child.stdout.on('data', onStdout);
     child.stderr.on('data', onStderr);
     // This listener stays after the run ends: an error event with no listener would end the process.
@@ -425,6 +434,7 @@ export const createNodeDeps = (): Deps => ({
     process.stderr.write(renderWarnings([message]));
   },
   env: process.env,
+  signals: process,
   fetch: async (url, timeoutMs) => {
     try {
       const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual' });

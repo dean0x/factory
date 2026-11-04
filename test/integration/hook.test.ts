@@ -1,9 +1,10 @@
+import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames, type HookEvent } from '../../src/names.js';
-import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 let home: string;
@@ -41,6 +42,30 @@ const exists = (path: string): Promise<boolean> =>
     () => true,
     () => false,
   );
+
+const WAIT_STEP_MS = 25;
+const WAIT_STEPS = 120;
+
+/** The first value that `probe` gives, tried every few milliseconds for at most three seconds. A test fails when none comes. */
+const waitFor = async <T>(probe: () => Promise<T | undefined>): Promise<T> => {
+  for (let step = 0; step < WAIT_STEPS; step += 1) {
+    const found = await probe();
+    if (found !== undefined) return found;
+    await new Promise((resolve) => setTimeout(resolve, WAIT_STEP_MS));
+  }
+  throw new Error(`no value after ${WAIT_STEPS * WAIT_STEP_MS} ms`);
+};
+
+/** True while any process is left in the process group. A group with no process gives ESRCH. */
+const groupExists = (group: number): boolean => {
+  if (group <= 0) return false;
+  try {
+    process.kill(-group, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 describe('factory hook (built binary)', () => {
   it('writes the last-seen line for one event from the input of a hook (TP-6)', async () => {
@@ -134,7 +159,8 @@ const setOwnerCommand = async (command: string): Promise<void> => {
   const path = join(home, 'factory.local.yaml');
   const text = await readFile(path, 'utf8');
   expect(text).toContain('statusline: null');
-  await writeFile(path, text.replace('statusline: null', `statusline: ${JSON.stringify(command)}`));
+  // A function gives the text as it is: a string would read `$$` and `$&` in the command as patterns.
+  await writeFile(path, text.replace('statusline: null', () => `statusline: ${JSON.stringify(command)}`));
 };
 
 describe('factory hook statusline (built binary)', () => {
@@ -191,6 +217,35 @@ describe('factory hook statusline (built binary)', () => {
     expect(Date.now() - started).toBeLessThan(15_000);
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, started + 4_500 - Date.now())));
     expect(await exists(late)).toBe(false);
+  });
+
+  it.each(hookNames.stopSignals)('stops the command group of the owner and exits 0 when it gets %s', async (name) => {
+    const marker = join(box.root, 'owner-group');
+    // `$$` is the id of the shell, which leads the group of the command. A later command of the list joins the group.
+    await setOwnerCommand(`echo $$ > '${marker}'; sleep 30`);
+    const child = spawn('node', [DIST, 'hook', hookNames.statusline], {
+      cwd: home,
+      env: { ...box.env, FACTORY_HOME: home, FACTORY_SESSION: NODE_ID },
+    });
+    child.stdin.end(STATUS_INPUT);
+    // The pipes are read, so that the program can end.
+    child.stdout.resume();
+    child.stderr.resume();
+    const exited = new Promise<number | null>((resolve) => child.once('exit', (code) => resolve(code)));
+    let group = 0;
+    try {
+      group = await waitFor(async () => {
+        const text = await readFile(marker, 'utf8').catch(() => '');
+        return Number(text.trim()) || undefined;
+      });
+      child.kill(name);
+      expect(await exited).toBe(0);
+      await waitFor(async () => (groupExists(group) ? undefined : true));
+    } finally {
+      if (groupExists(group)) process.kill(-group, 'SIGKILL');
+      child.kill('SIGKILL');
+    }
+    expect(groupExists(group)).toBe(false);
   });
 
   it('prints the line and writes nothing outside a factory session', async () => {

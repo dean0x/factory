@@ -484,6 +484,82 @@ describe('factory hook statusline: the input', () => {
   });
 });
 
+describe('factory hook statusline: the stop signals', () => {
+  /** The number of handlers on each stop signal. */
+  const handlersOf = (deps: FakeDeps): number[] => hookNames.stopSignals.map((name) => deps.signals.listenerCount(name));
+  const NONE = hookNames.stopSignals.map(() => 0);
+  const ONE_EACH = hookNames.stopSignals.map(() => 1);
+
+  it('stops on the signals SIGTERM, SIGHUP and SIGINT', () => {
+    expect([...hookNames.stopSignals]).toEqual(['SIGTERM', 'SIGHUP', 'SIGINT']);
+  });
+
+  it('has a handler for each stop signal while the command of the owner runs, and none before or after', async () => {
+    let during: number[] = [];
+    const deps = make({
+      statusline: OWNER_COMMAND,
+      run: () => {
+        during = handlersOf(deps);
+        return exited(0, OWNER_OUTPUT);
+      },
+    });
+    expect(handlersOf(deps)).toEqual(NONE);
+    expect(await statusline(deps)).toEqual({ code: 0, out: OWNER_OUTPUT, err: '' });
+    expect(during).toEqual(ONE_EACH);
+    expect(handlersOf(deps)).toEqual(NONE);
+  });
+
+  it('removes the handlers when the command does not end in time', async () => {
+    const deps = make({ statusline: OWNER_COMMAND, run: () => failure('cannot run /bin/sh: SIGKILL') });
+    expect((await statusline(deps)).out).toBe('context 8%');
+    expect(handlersOf(deps)).toEqual(NONE);
+  });
+
+  it('removes the handlers when the route throws', async () => {
+    const deps = make();
+    const throwing: Deps = {
+      ...deps,
+      readStdin: async () => {
+        throw new Error('boom');
+      },
+    };
+    expect((await statusline(throwing)).err).toMatch(/internal error: boom/);
+    expect(handlersOf(deps)).toEqual(NONE);
+  });
+
+  it.each(hookNames.stopSignals)('aborts the signal of the command of the owner on %s, and still exits 0', async (name) => {
+    let aborted: boolean | undefined;
+    const deps = make({
+      statusline: OWNER_COMMAND,
+      run: (call) => {
+        expect(call.signal?.aborted).toBe(false);
+        deps.signals.emit(name);
+        aborted = call.signal?.aborted;
+        return failure('cannot run /bin/sh: SIGKILL');
+      },
+    });
+    const result = await statusline(deps);
+    expect(aborted).toBe(true);
+    expect(result.code).toBe(0);
+    expect(result.out).toBe('context 8%');
+    expect(handlersOf(deps)).toEqual(NONE);
+  });
+
+  it('installs no handler for an event of the hook', async () => {
+    const deps = make();
+    let during: number[] = [];
+    const spy: Deps = {
+      ...deps,
+      readStdin: (maxBytes) => {
+        during = handlersOf(deps);
+        return deps.readStdin(maxBytes);
+      },
+    };
+    await runLine(['hook', hookNames.events[0]], spy);
+    expect(during).toEqual(NONE);
+  });
+});
+
 describe('factory hook statusline through runCli', () => {
   it('runs before the check of the platform, so it prints on Windows too', async () => {
     const result = await statusline(make({ os: 'win32' }));

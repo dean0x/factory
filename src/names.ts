@@ -532,6 +532,8 @@ export const hookNames = {
   statuslineTimeoutMs: 2_000,
   /** The program that runs the command of the owner, as `<shell> -c <command>`. */
   shell: '/bin/sh',
+  /** The signals that stop the status line wrapper. The wrapper stops the command group of the owner, then exits 0. */
+  stopSignals: ['SIGTERM', 'SIGHUP', 'SIGINT'],
   /** The only keys that the status line wrapper reads from the input of Claude Code, besides the session id. Every other key is dropped unread. */
   statuslineKeys: {
     contextWindow: 'context_window',

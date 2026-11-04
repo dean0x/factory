@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { posix } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
@@ -20,6 +21,8 @@ export interface RunCall {
   readonly input?: string;
   /** True when the caller asked to run the program in its own process group. */
   readonly processGroup?: boolean;
+  /** The signal that stops the program when it aborts. */
+  readonly signal?: AbortSignal;
 }
 
 export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
@@ -78,6 +81,8 @@ export interface FakeDeps extends Deps {
   readonly mtimes: Map<string, number>;
   /** The waits of `sleep`, in order. */
   readonly sleeps: number[];
+  /** The signals of the process. A test sends a signal with `emit`, and counts the handlers with `listenerCount`. */
+  readonly signals: EventEmitter;
   /** Move the clock on by `ms` milliseconds. `sleep` does the same. */
   advance(ms: number): void;
   seed(path: string, text: string): void;
@@ -150,6 +155,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     owners,
     mtimes,
     sleeps,
+    signals: new EventEmitter(),
     advance: (ms) => {
       clock += ms;
     },
@@ -290,6 +296,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         ...(runOptions?.timeoutMs === undefined ? {} : { timeoutMs: runOptions.timeoutMs }),
         ...(runOptions?.input === undefined ? {} : { input: runOptions.input }),
         ...(runOptions?.processGroup === undefined ? {} : { processGroup: runOptions.processGroup }),
+        ...(runOptions?.signal === undefined ? {} : { signal: runOptions.signal }),
       };
       calls.push(call);
       return (options.run ?? (() => missingProgram(command)))(call);

@@ -96,13 +96,15 @@ const ownerCommandOf = async (deps: Deps, home: string, registry: RecipeRegistry
 /**
  * The stdout of the command of the owner. The command gets the input text as it came and the environment of this process.
  * It runs in its own process group, so the time limit stops every process that a pipe or a list of the command starts.
+ * The stop signal stops the group in the same way.
  */
-const ownerOutputOf = async (deps: Deps, command: string, stdin: string): Promise<CliResult<string>> => {
+const ownerOutputOf = async (deps: Deps, command: string, stdin: string, stop: AbortSignal): Promise<CliResult<string>> => {
   const ran = await deps.run(hookNames.shell, ['-c', command], {
     timeoutMs: hookNames.statuslineTimeoutMs,
     input: stdin,
     inheritEnv: true,
     processGroup: true,
+    signal: stop,
   });
   if (!ran.ok) return failure(`the status line command failed: ${ran.error.message}`);
   if (ran.value.exitCode !== 0) return failure(`the status line command exited with code ${ran.value.exitCode}`);
@@ -115,8 +117,23 @@ const ownerOutputOf = async (deps: Deps, command: string, stdin: string): Promis
  * node, and a session id in the input that is a UUID. Only such a session reads the config and runs the command of the
  * owner. A failed write, a failed command and an input with no percent never change the exit code: the text is the output
  * of the command, else `context N%`, else `context ?%` when no percent is known.
+ *
+ * While it runs, the signals of `hookNames.stopSignals` stop the command group of the owner, so that no command stays
+ * behind when Claude Code ends the wrapper. The wrapper then ends as usual, with the fallback line. Its handlers are
+ * removed when it ends, also after a throw. A SIGKILL can not be caught, so it leaves the group running.
  */
 export const runStatusline = async (deps: Deps, registry: RecipeRegistry): Promise<StatuslineShown> => {
+  const stop = new AbortController();
+  const onSignal = (): void => stop.abort();
+  for (const name of hookNames.stopSignals) deps.signals.on(name, onSignal);
+  try {
+    return await showStatusline(deps, registry, stop.signal);
+  } finally {
+    for (const name of hookNames.stopSignals) deps.signals.off(name, onSignal);
+  }
+};
+
+const showStatusline = async (deps: Deps, registry: RecipeRegistry, stop: AbortSignal): Promise<StatuslineShown> => {
   const read = await deps.readStdin(hookNames.maxStdinBytes);
   if (!read.ok) return { text: statuslineTextOf(null), note: read.error.message };
   const stdin = read.value;
@@ -137,7 +154,7 @@ export const runStatusline = async (deps: Deps, registry: RecipeRegistry): Promi
   keep(recorded, undefined);
 
   const command = home === null ? null : keep(await ownerCommandOf(deps, home, registry), null);
-  const output = command === null ? null : keep(await ownerOutputOf(deps, command, stdin), null);
+  const output = command === null ? null : keep(await ownerOutputOf(deps, command, stdin, stop), null);
 
   return { text: output ?? statuslineTextOf(percent), note: notes[0] ?? null };
 };
