@@ -772,7 +772,7 @@ export const values = {
 } as const;
 
 /** The bounds of a duration setting `<n>m` or `<n>h`: the watch interval of a tracker and the idle limit of a worker. */
-export const durationBounds = { minAmount: 1, maxMinutes: 24 * 60, maxHours: 24 } as const;
+export const durationBounds = { minMinutes: 1, maxMinutes: 24 * 60 } as const;
 
 /**
  * The facts of the machine check (design 4.2): the names of the facts, the two systems that it knows, the programs and the

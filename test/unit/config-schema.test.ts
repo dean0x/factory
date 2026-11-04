@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSlug, slugify } from '../../src/config/primitives.js';
+import { durationMinutes, isSlug, slugify } from '../../src/config/primitives.js';
 import { localConfigSchema, mergeConfig, splitConfigValue } from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
 import { files, values } from '../../src/names.js';
@@ -911,6 +911,30 @@ describe('the shared file and the local file (design 4.4)', () => {
       const sources = Object.fromEntries(projects.map((project) => [project.path, `/srv/${project.id}`]));
       expect(messageWith(sources, (raw) => (raw['recipe'].projects = projects))).toBe('');
     });
+  });
+});
+
+describe('the minutes of a duration', () => {
+  it.each([
+    ['1m', 1],
+    ['90m', 90],
+    ['1h', 60],
+    ['2h', 120],
+    ['24h', 1440],
+  ])('reads %s as %d minutes', (text, minutes) => {
+    expect(durationMinutes(text, 1, 1440)).toBe(minutes);
+  });
+
+  it('refuses a value outside the bounds, and the bounds themselves are in', () => {
+    expect(durationMinutes('0m', 1, 120)).toBeNull();
+    expect(durationMinutes('1m', 1, 120)).toBe(1);
+    expect(durationMinutes('120m', 1, 120)).toBe(120);
+    expect(durationMinutes('121m', 1, 120)).toBeNull();
+    expect(durationMinutes('3h', 1, 120)).toBeNull();
+  });
+
+  it.each(['', '5', '5s', 'm', 'h', '-1m', '1.5h', '05m', ' 5m', '5m ', '5 m', '1e1m', '1234567m', '+5m'])('refuses the text %j', (text) => {
+    expect(durationMinutes(text, 0, 1_000_000)).toBeNull();
   });
 });
 

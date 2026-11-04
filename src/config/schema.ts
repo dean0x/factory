@@ -24,7 +24,7 @@ import {
   type RecipeRegistry,
 } from '../recipes/index.js';
 import { parseProxyUrl } from '../safety/proxy.js';
-import { folderKey, githubLogin, slug, uniqueIds } from './primitives.js';
+import { durationMinutes, folderKey, githubLogin, slug, uniqueIds } from './primitives.js';
 
 /** The version of the shared file, `factory.yaml`. */
 export const CONFIG_SCHEMA_VERSION = 2;
@@ -53,7 +53,6 @@ const MAX_TRACKER_TEXT = 200;
 const MAX_STATUSLINE_CHARS = 1000;
 const MAX_SOURCES = 200;
 const MAX_SOURCE_KEY_CHARS = 200;
-const MAX_INTERVAL_DIGITS = 6;
 
 export const nodeSchema = z.strictObject({
   [keys.node.id]: slug,
@@ -112,15 +111,8 @@ const proxySchema = z.strictObject({
 });
 
 /** `<n>m` or `<n>h`, with no leading zero. The bounds are `durationBounds`: from 1m to 24h. */
-const WATCH_INTERVAL_PATTERN = new RegExp(`^(0|[1-9][0-9]{0,${MAX_INTERVAL_DIGITS - 1}})([mh])$`);
-
-const isWatchInterval = (text: string): boolean => {
-  const match = WATCH_INTERVAL_PATTERN.exec(text);
-  if (match === null) return false;
-  const amount = Number(match[1]);
-  const maxAmount = match[2] === 'h' ? durationBounds.maxHours : durationBounds.maxMinutes;
-  return amount >= durationBounds.minAmount && amount <= maxAmount;
-};
+const isWatchInterval = (text: string): boolean =>
+  durationMinutes(text, durationBounds.minMinutes, durationBounds.maxMinutes) !== null;
 
 const watchIntervalText = z.string().refine(isWatchInterval, { error: 'must be <n>m or <n>h, from 1m to 24h' });
 
