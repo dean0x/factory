@@ -15,6 +15,7 @@ import {
   parsePaneListSoft,
   setPaneOptionArgs,
   splitWorkerPaneArgs,
+  tileWorkersArgs,
 } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
 import { commandLines, commands, commandText, dirs, env, keys, roles, tmuxNames, values } from '../names.js';
@@ -186,19 +187,47 @@ const instructionWarnings = async (
   ];
 };
 
+/**
+ * The remedy for a split that failed. The usual cause is a window with no room: every split halves one pane, and a window that is
+ * tiled less often than it is split runs out of room. `layout` makes the window if it is missing and tiles it, and then the
+ * worker starts again with `worker resume`.
+ */
+const splitRemedy = (workerId: string): string =>
+  `Run "${commandText(commands.layout)}" to make the window ${tmuxNames.windowWorkers} and tile its panes. ` +
+  `Then run "${resumeCommand(workerId)}".`;
+
 /** Makes the pane in the workers window and returns its id. */
 const startPane = async (
   deps: Deps,
   session: string,
+  workerId: string,
   workCopy: string,
   command: readonly string[],
 ): Promise<CliResult<string>> => {
   const args = splitWorkerPaneArgs({ id: session, cwd: workCopy, command });
   if (!args.ok) return failure(args.error);
   const made = await tmuxStep(deps, args.value);
-  if (!made.ok) return made;
+  if (!made.ok) {
+    // A call that ran and exited with a code is the failure that `layout` can fix. Any other error keeps its own kind and remedy.
+    const ranAndFailed = made.error.kind === 'failure' && made.error.hint === undefined;
+    return ranAndFailed ? failure(made.error.message, splitRemedy(workerId)) : made;
+  }
   const paneId = made.value.trim();
   return isPaneId(paneId) ? ok(paneId) : failure(`${toolNames.tmux} ${args.value[0]} did not print a pane id`);
+};
+
+/**
+ * Tiles the panes of the workers window, so that the next split finds room: each split halves one pane, and a window that is never
+ * tiled holds only a few panes. A tile that fails is a warning, not a failure: the worker runs, and `layout` tiles the window later.
+ */
+const tilePanes = async (deps: Deps, session: string): Promise<readonly string[]> => {
+  const tiled = await tmuxStep(deps, tileWorkersArgs(session));
+  return tiled.ok
+    ? []
+    : [
+        `The panes of the window ${tmuxNames.windowWorkers} are not tiled: ${tiled.error.message}. ` +
+          `Run "${commandText(commands.layout)}" to tile them.`,
+      ];
 };
 
 /**
@@ -242,7 +271,8 @@ const requireRunningPane = async (deps: Deps, session: string, pane: string, wor
  * 3. the proxy of the worker, with its health check;
  * 4. the argument list, with auto mode and the resume id when there is one;
  * 5. the pane, and the worker mark on the pane id;
- * 6. for a launch with a resume id: one read of the pane list, because a resume of a session that does not exist ends at once.
+ * 6. the tile of the workers window, so that the next launch finds room (a failed tile is a warning);
+ * 7. for a launch with a resume id: one read of the pane list, because a resume of a session that does not exist ends at once.
  * The caller makes the work copy and the record, and it checks that the tmux session is its own.
  */
 export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Promise<CliResult<WorkerLaunch>> => {
@@ -270,10 +300,11 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   if (!argv.ok) return failure(argv.error);
 
   const session = config.core.node.id;
-  const pane = await startPane(deps, session, workCopy, argv.value);
+  const pane = await startPane(deps, session, workerId, workCopy, argv.value);
   if (!pane.ok) return pane;
   const marked = await markPane(deps, pane.value, workerId);
   if (!marked.ok) return marked;
+  const tileWarnings = await tilePanes(deps, session);
   if (resumeId !== undefined) {
     const running = await requireRunningPane(deps, session, pane.value, workerId);
     if (!running.ok) return running;
@@ -281,6 +312,6 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   return ok({
     paneId: pane.value,
     proxy: proxy.value.label,
-    warnings: proxy.value.warning === undefined ? [] : [proxy.value.warning],
+    warnings: [...(proxy.value.warning === undefined ? [] : [proxy.value.warning]), ...tileWarnings],
   });
 };

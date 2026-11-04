@@ -162,6 +162,7 @@ describe('the launch of a worker: the pane and the argument list', () => {
     expect(made.tmux.commands()).toEqual([
       `split-window -d -P -F #{pane_id} -t =demo:workers -c ${COPY} -- ${wordsOf(made.tmux).join(' ')}`,
       `set-option -p -t ${FIRST_NEW_PANE} @worker alpha`,
+      'select-layout -t =demo:workers tiled',
     ]);
     expect(made.tmux.panes().at(-1)).toMatchObject({
       id: FIRST_NEW_PANE,
@@ -255,13 +256,71 @@ describe('the launch of a worker: the pane and the argument list', () => {
   });
 });
 
+describe('the launch of a worker: the window workers stays tiled', () => {
+  const IDS = ['w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7', 'w8'];
+  const copyOf = (id: string): string => `/h/node/work-copies/web/${id}`;
+
+  it('tiles the window after the pane and its mark, so that eight launches in a row find room', async () => {
+    // Three splits fit in a window that is never tiled. Each launch tiles the window again.
+    const made = make({ tmux: { splitsBeforeTile: 3 }, work: IDS.map(copyOf) });
+    for (const id of IDS) {
+      const result = await launchWorker(made.deps, request({ workerId: id, workCopy: copyOf(id) }));
+      expect(result.ok, `${id}: ${result.ok ? '' : result.error.message}`).toBe(true);
+    }
+    expect(made.tmux.panes().filter((pane) => pane.window === 'workers')).toHaveLength(1 + IDS.length);
+    expect(made.tmux.layouts()).toEqual({ 'demo:workers': 'tiled' });
+  });
+
+  it('runs the tile call after the mark of each launch and before the next split', async () => {
+    const made = make({ work: [COPY, COPY_BETA] });
+    await launched(made, { proxy: null });
+    await launched(made, { proxy: null }, { workerId: 'beta', workCopy: COPY_BETA });
+    expect(made.events).toEqual([
+      'tmux split-window',
+      'tmux set-option',
+      'tmux select-layout',
+      'tmux split-window',
+      'tmux set-option',
+      'tmux select-layout',
+    ]);
+  });
+
+  it('makes a failed tile a warning, not a failure: the pane stays with its mark, and the warning names layout', async () => {
+    const made = make({ tmux: { failing: 'select-layout' } });
+    const outcome = await launched(made, { proxy: null });
+    expect(outcome.paneId).toBe(FIRST_NEW_PANE);
+    expect(outcome.warnings).toHaveLength(1);
+    expect(outcome.warnings[0]).toContain('select-layout');
+    expect(outcome.warnings[0]).toContain('"factory layout"');
+    expect(made.tmux.panes().at(-1)).toMatchObject({ id: FIRST_NEW_PANE, options: { '@worker': 'alpha' } });
+  });
+
+  it('keeps the warning of the proxy beside the warning of the tile', async () => {
+    const made = make({ tmux: { failing: 'select-layout' }, fetch: silent });
+    const outcome = await launched(made, { proxy: null }, { config: configWith({ session: 'local', onFail: 'direct' }) });
+    expect(outcome.warnings).toHaveLength(2);
+  });
+
+  it('names layout and then worker resume when the split fails, because the window has no room', async () => {
+    const made = make({ tmux: { splitsBeforeTile: 0 } });
+    const error = await failed(made);
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain('no space for new pane');
+    const hint = error.hint ?? '';
+    expect(hint).toContain('"factory layout"');
+    expect(hint).toContain('"factory worker resume alpha"');
+    expect(hint.indexOf('"factory layout"')).toBeLessThan(hint.indexOf('"factory worker resume alpha"'));
+    expect(panesOf(made)).toBe(START_PANES);
+  });
+});
+
 describe('the launch of a worker: the proxy (TP-61)', () => {
   it('uses no proxy when the config names none, whatever the environment says', async () => {
     const made = make();
     const outcome = await launched(made, { proxy: null });
     expect(outcome.proxy).toBeNull();
     expect(made.deps.fetched).toEqual([]);
-    expect(made.events).toEqual(['tmux split-window', 'tmux set-option']);
+    expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux select-layout']);
   });
 
   it('checks the proxy of the session once before the pane, and passes its URL', async () => {
@@ -269,7 +328,7 @@ describe('the launch of a worker: the proxy (TP-61)', () => {
     const outcome = await launched(made, { proxy: LOCAL_URL }, { config: configWith({ session: 'local' }) });
     expect(outcome.proxy).toBe('local (127.0.0.1:8080)');
     expect(made.deps.fetched).toEqual([`${LOCAL_URL}/health`]);
-    expect(made.events).toEqual(['fetch', 'tmux split-window', 'tmux set-option']);
+    expect(made.events).toEqual(['fetch', 'tmux split-window', 'tmux set-option', 'tmux select-layout']);
   });
 
   it('prefers the proxy of the worker over the proxy of the session', async () => {
@@ -449,7 +508,7 @@ describe('the launch of a worker: the settings of the work copy (TP-15, TP-16)',
     await launched(made, { proxy: null });
     expect(made.deps.warned).toHaveLength(1);
     expect(made.deps.warned[0]).toContain('is a settings file in a work copy');
-    expect(made.events).toEqual(['warn', 'tmux split-window', 'tmux set-option']);
+    expect(made.events).toEqual(['warn', 'tmux split-window', 'tmux set-option', 'tmux select-layout']);
   });
 
   it('gives no warning for the settings file that the program writes itself', async () => {
@@ -474,7 +533,7 @@ describe('the launch of a worker: the instruction files above the work copy (TP-
     expect(made.deps.warned).toHaveLength(1);
     expect(made.deps.warned[0]).toContain(path);
     expect(made.deps.warned[0]).toContain('Move each file out of those folders, or keep it on purpose');
-    expect(made.events).toEqual(['warn', 'tmux split-window', 'tmux set-option']);
+    expect(made.events).toEqual(['warn', 'tmux split-window', 'tmux set-option', 'tmux select-layout']);
   });
 
   it('names every file that it finds in one line', async () => {
@@ -519,7 +578,7 @@ describe('the launch of a worker: the instruction files above the work copy (TP-
     const made = make();
     made.deps.seed('/h/node/work-copies/CLAUDE.md', '');
     await launched(made, { proxy: LOCAL_URL }, { config: configWith({ session: 'local' }) });
-    expect(made.events).toEqual(['warn', 'fetch', 'tmux split-window', 'tmux set-option']);
+    expect(made.events).toEqual(['warn', 'fetch', 'tmux split-window', 'tmux set-option', 'tmux select-layout']);
   });
 });
 
@@ -535,14 +594,14 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     expect(words.filter((word) => word === '--resume')).toHaveLength(1);
     expect(words[words.indexOf('--resume') + 1]).toBe(UUID);
     expect(words.indexOf('--resume')).toBeLessThan(words.indexOf('--add-dir'));
-    expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux list-panes']);
+    expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux list-panes']);
     expect(listCalls(made)).toEqual([['list-panes', '-s', '-t', '=demo:', '-F', '#{pane_id}|#{pane_pid}|#{pane_dead}|#{@worker}']]);
   });
 
   it('checks the proxy before the pane for a resume, too', async () => {
     const made = make();
     await launched(made, { proxy: LOCAL_URL }, { resumeId: UUID, config: configWith({ session: 'local' }) });
-    expect(made.events).toEqual(['fetch', 'tmux split-window', 'tmux set-option', 'tmux list-panes']);
+    expect(made.events).toEqual(['fetch', 'tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux list-panes']);
   });
 
   it.each([['not-a-uuid'], [UUID.toUpperCase()], [`${UUID} --dangerously-skip-permissions`], ['--resume']])(

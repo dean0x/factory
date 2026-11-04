@@ -222,7 +222,7 @@ Then it does these steps in order:
 3. It adds the line `/.claude/settings.local.json` to `info/exclude` in the git folder of the clone, once. Git then shows the work copy as clean when it holds only the hook settings.
 4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
-6. It starts the worker in a new pane of the window `workers`. The worker gets one `--add-dir`, its inbox folder.
+6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its inbox folder.
 
 If a step after the first fails, the work copy and the record stay, and nothing is undone. The message names `factory dismiss ID` as the command that ends the worker. That command comes in a later version. Until then, remove the work copy with `git worktree remove`.
 

@@ -40,6 +40,13 @@ export interface TmuxFixture {
   readonly programEndsAtOnce?: boolean;
   /** The program of each pane that `split-window` makes ends at once. The pane stays, as a dead pane. */
   readonly newPanesEndAtOnce?: boolean;
+  /**
+   * How many times `split-window` can split a window before a `select-layout` is needed. Each split halves the pane that it
+   * splits, and a detached window has a fixed size, so a window that is never tiled has room for a few splits only. After that
+   * count, `split-window` fails with `no space for new pane`, as tmux does, until `select-layout` gives the window room again.
+   * Default: no limit.
+   */
+  readonly splitsBeforeTile?: number;
 }
 
 /** The state of one pane, as the log shows it. */
@@ -289,6 +296,8 @@ export const tmuxHandler = (
   /** The mode screens: the pane id and the text of the screen. */
   const modeScreens = new Map<string, string>();
   const runs: ShellRun[] = [];
+  /** The splits of each window since its last `select-layout`, by `session:window`. */
+  const splitsSinceTile = new Map<string, number>();
 
   const explicitIds = (fixture.panes ?? []).flatMap((pane) => (pane.id === undefined ? [] : [pane.id]));
   for (const id of explicitIds) {
@@ -463,6 +472,11 @@ export const tmuxHandler = (
       case 'split-window': {
         const where = resolveWindow(targetOf(command));
         if (where === undefined) return exited(1, '', `can't find window: ${targetOf(command)}\n`);
+        const splits = splitsSinceTile.get(`${where.session}:${where.window}`) ?? 0;
+        if (fixture.splitsBeforeTile !== undefined && splits >= fixture.splitsBeforeTile) {
+          return exited(1, '', 'no space for new pane\n');
+        }
+        splitsSinceTile.set(`${where.session}:${where.window}`, splits + 1);
         const pane = addPane(where.session, where.window, {
           cwd: after(rest, '-c'),
           command: programOf(rest),
@@ -498,6 +512,7 @@ export const tmuxHandler = (
         const where = resolveWindow(targetOf(command));
         if (where === undefined) return exited(1, '', `can't find window: ${targetOf(command)}\n`);
         layouts.set(`${where.session}:${where.window}`, command.at(-1) ?? '');
+        splitsSinceTile.delete(`${where.session}:${where.window}`);
         return exited(0);
       }
       case 'if-shell': {

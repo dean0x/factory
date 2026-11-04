@@ -192,6 +192,23 @@ describe('the tmux fake: windows and panes', () => {
     expect(log.layouts()).toEqual({ 'demo:workers': 'tiled' });
   });
 
+  it('fails a split with "no space for new pane" after the splits of the fixture, until the window is tiled', () => {
+    const { log, run } = fakeTmux({ sessions: { demo: null }, splitsBeforeTile: 2 });
+    const split = () => run(['split-window', '-d', '-t', '=demo:workers']);
+    expect([split().exitCode, split().exitCode, split().exitCode]).toEqual([0, 0, 1]);
+    expect(split().stderr).toContain('no space for new pane');
+    expect(log.panes()).toHaveLength(5);
+    expect(run(tileWorkersArgs('demo')).exitCode).toBe(0);
+    expect(split().exitCode).toBe(0);
+  });
+
+  it('counts the splits of each window apart', () => {
+    const { run } = fakeTmux({ sessions: { demo: null }, splitsBeforeTile: 1 });
+    expect(run(['split-window', '-d', '-t', '=demo:workers']).exitCode).toBe(0);
+    expect(run(['split-window', '-d', '-t', '=demo:view']).exitCode).toBe(0);
+    expect(run(['split-window', '-d', '-t', '=demo:workers']).exitCode).toBe(1);
+  });
+
   it('fails the tiling of a window that does not exist, and of a session that does not exist', () => {
     const { log, run } = fakeTmux({ sessions: { demo: null } });
     expect(run(['select-layout', '-t', '=demo:nowhere', 'tiled']).exitCode).toBe(1);

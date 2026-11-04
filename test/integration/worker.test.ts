@@ -177,6 +177,20 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect((await workerPanes()).map((line) => line.split(' ')[1]).sort()).toEqual(['', 'alpha', 'beta']);
   });
 
+  it('makes eight workers in one window, because each launch tiles the window workers', async () => {
+    await startedNode();
+    // A fixed window size: an untiled window holds only a few panes, and how many depends on its size. At 200x50, the sixth split fails.
+    expect((await tmux(['resize-window', '-t', '=demo:workers', '-x', '200', '-y', '50'])).code).toBe(0);
+    const ids = ['w1', 'w2', 'w3', 'w4', 'w5', 'w6', 'w7', 'w8'];
+    for (const [index, id] of ids.entries()) {
+      const made = await workerNew(id, '--project', 'web', '--yes');
+      expect(made.code, `worker ${id}: ${made.stderr}`).toBe(0);
+      await waitForLaunches(index + 2);
+    }
+    const marks = (await workerPanes()).map((line) => line.split(' ')[1]);
+    expect(marks.sort()).toEqual(['', ...ids]);
+  }, 120_000);
+
   it('exits 2 for a taken id and starts no second pane (TP-7)', async () => {
     await startedNode();
     expect((await workerNew('alpha', '--project', 'web', '--yes')).code).toBe(0);
