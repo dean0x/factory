@@ -143,10 +143,12 @@ describe('home: a folder in the settings folder of Claude Code', () => {
     await expectStop(CLAUDE, undefined, CLAUDE);
   });
 
-  it('stops for a home that the factory list gives, when it is in that folder', async () => {
-    const { deps } = factoryIn(`${CLAUDE}/factory`, '/w/web/src');
+  it('stops for a home that the factory list gives, when it is in that folder, and makes no call at or under it', async () => {
+    const { deps, seen } = factoryIn(`${CLAUDE}/factory`, '/w/web/src');
     registerRoot(deps, `${CLAUDE}/factory`, 'demo', ['/w/web']);
-    expect(await locateHome(deps, undefined, reader)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), undefined, reader);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(seen.filter(underClaude)).toEqual([]);
   });
 
   it('stops for a folder that differs only in the case of letters on macOS', async () => {
