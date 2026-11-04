@@ -29,6 +29,24 @@ const hasKnownTokenShape = (text: string): boolean =>
 export const looksLikeToken = (text: string): boolean =>
   hasKnownTokenShape(text) || (text.match(BASE64_RUN) ?? []).some(isRandomLooking);
 
+/**
+ * A run is a path or a URL when it holds a slash and no plus sign, and it has one more sign. The first sign is a hyphen or an
+ * underscore: neither base64 alphabet holds a slash together with one of them. The second sign is a leading slash with a
+ * second slash, which is an absolute path. A base64 secret with a slash and no plus sign has neither sign, so it is no path.
+ */
+const isPathLike = (run: string): boolean => {
+  const slashes = run.split('/').length - 1;
+  return slashes > 0 && !run.includes('+') && (/[-_]/.test(run) || (run.startsWith('/') && slashes > 1));
+};
+
+/**
+ * True when the text of a file holds a token: a known prefix, a hex run of 40 characters or more, or a long base64 run.
+ * A text holds paths and URLs, and a long path with mixed letters and digits looks like random data, so a run that is a
+ * path (see `isPathLike`) is not a token. The check is for the tracked text files of the root.
+ */
+export const textHasToken = (text: string): boolean =>
+  hasKnownTokenShape(text) || (text.match(BASE64_RUN) ?? []).some((run) => !isPathLike(run) && isRandomLooking(run));
+
 const ITEM_INDEX = /^\d+$/;
 
 /** The key path of the address of a node link: `parent.address` or `children.<n>.address`. */
@@ -38,12 +56,31 @@ const isLinkAddressPath = (path: readonly string[]): boolean => {
   return first === keys.root.children && rest.length === 2 && ITEM_INDEX.test(rest[0] ?? '') && rest[1] === keys.link.address;
 };
 
+/** The key path of the local source of a project: `sources.<project path>`. */
+const isSourcePath = (path: readonly string[]): boolean => path.length === 2 && path[0] === keys.root.sources;
+
+/** The key path of the clone URL of a project: `recipe.projects.<n>.url`. */
+const isCloneUrlPath = (path: readonly string[]): boolean => {
+  const [first, second, index, last, ...rest] = path;
+  return (
+    first === keys.root.recipe &&
+    second === keys.recipe.projects &&
+    ITEM_INDEX.test(index ?? '') &&
+    last === keys.project.url &&
+    rest.length === 0
+  );
+};
+
 /**
- * A file address of a node link is a long path, and a path holds `/` like base64 does. So it gets the tests of
- * the known prefix and of the hex run only. Any other value gets all the tests.
+ * A file address of a node link, the local source of a project and the clone URL of a project are long paths, and a
+ * path holds `/` like base64 does. The schema checks the user and the secret part of the last two. So these values get
+ * the tests of the known prefix and of the hex run only. Any other value gets all the tests.
  */
-const looksLikeTokenAt = (path: readonly string[], text: string): boolean =>
-  isLinkAddressPath(path) && text.startsWith(address.scheme) ? hasKnownTokenShape(text) : looksLikeToken(text);
+const looksLikeTokenAt = (path: readonly string[], text: string): boolean => {
+  const isPathValue =
+    (isLinkAddressPath(path) && text.startsWith(address.scheme)) || isSourcePath(path) || isCloneUrlPath(path);
+  return isPathValue ? hasKnownTokenShape(text) : looksLikeToken(text);
+};
 
 /** A key that looks like a token is replaced, so a path or an error text never repeats it. */
 export const hideTokenKey = (segment: PropertyKey): string => {

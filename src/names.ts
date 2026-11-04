@@ -7,7 +7,7 @@
  *
  * A change of a config key, of a state key, of a file name or of a folder name
  * needs a migration (src/migrate), so that existing nodes keep working.
- * Text templates use placeholders such as {{cell}}. The placeholders are filled
+ * Text templates use placeholders such as {{worker}}. The placeholders are filled
  * from `templateValues` below.
  */
 
@@ -16,7 +16,6 @@ export const program = 'factory';
 /** The role words of help and template text. */
 export const roles = {
   node: 'node',
-  cell: 'cell',
   coordinator: 'coordinator',
   manager: 'manager',
   worker: 'worker',
@@ -25,9 +24,20 @@ export const roles = {
   variant: 'variant',
 } as const;
 
+/**
+ * The plain words for the places that the root rule names (design 4.3): the folder of a node, the per-user list
+ * of those folders, the marker inside a folder, and a session of the tool.
+ */
+export const places = {
+  folder: `${program} folder`,
+  list: `${program} list`,
+  marker: `${program} marker`,
+  session: `${program} session`,
+} as const;
+
 export const commands = {
   init: 'init',
-  up: 'up',
+  start: 'start',
   node: 'node',
   doctor: 'doctor',
   upgrade: 'upgrade',
@@ -35,28 +45,34 @@ export const commands = {
   help: 'help',
 } as const;
 
+/** The name of a command, as `commands` holds it. */
+export type CommandName = (typeof commands)[keyof typeof commands];
+
 /** The topics of `help`. */
 export const helpTopics = { words: 'words' } as const;
 
 /**
- * The factory words that have a plain description in `src/glossary.ts` and in `docs/glossary.md`:
- * the concepts of the design and the shop-floor words that factory uses. A test fails for a term with no entry.
+ * The words that have a plain description in `src/glossary.ts` and in `docs/glossary.md`.
+ * A test fails for a term with no entry, and for a term that has another text in the two places.
  */
 export const terms = [
   'node',
   'owner',
   'project',
   'layer',
-  'cell',
+  'worker',
+  'coordinator',
   'recipe',
-  'variant',
-  'andon',
-  'work order',
-  'changeover',
-  'staging',
-  'inspect',
-  'ship',
+  'setup',
+  'request',
+  'assignment',
+  'session reset',
+  'queue',
+  'check',
 ] as const;
+
+/** The layers of a node, from the bottom: the workers, the coordinator, the manager, and the highest layer. */
+export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as const;
 
 /** The subcommands of `node`. */
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
@@ -69,6 +85,7 @@ export const flags = {
   project: 'project',
   recipe: 'recipe',
   layer: 'layer',
+  approval: 'approval',
   yes: 'yes',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
@@ -83,7 +100,11 @@ export const flagShorts = { help: 'h' } as const;
 
 export const files = {
   config: 'factory.yaml',
+  /** The config of one person on one machine: git ignores it, and it has mode 600. */
+  localConfig: 'factory.local.yaml',
   claudeMd: 'CLAUDE.md',
+  /** The text of the owner for the coordinator. It is in the `setup` folder, so it travels with the config repo. */
+  setupCoordinator: 'coordinator.md',
   nodeState: 'node.json',
   worker: 'worker.md',
   board: 'board.json',
@@ -97,6 +118,10 @@ export const files = {
   openQuestions: 'open-questions.md',
   roadmapsReadme: 'README.md',
   homeIndex: 'homes.json',
+  /** The approval records of the user. The per-user state folder holds the file, beside the factory list. */
+  ownerRecords: 'owner-records.json',
+  /** The setup acceptances of the user. The per-user state folder holds the file, beside the factory list. */
+  setupAcceptances: 'setup-acceptances.json',
 } as const;
 
 export const dirs = {
@@ -111,10 +136,123 @@ export const dirs = {
   runtime: 'state',
   locks: 'locks',
   claude: '.claude',
+  /** The folder of the coordinator session, below the root. It holds the rendered `CLAUDE.md`, and git ignores it. */
+  coordinator: 'coordinator',
+  /** The fixed folder of the work copies, below the root. Git ignores it. */
+  workCopies: 'work-copies',
+  /** The folder of the setup text that a person shares. The root repo tracks it. */
+  setup: 'setup',
 } as const;
+
+/** The instruction file names of agents that sit directly in a folder, apart from `CLAUDE.md`. */
+const agentFiles = { claudeLocal: 'CLAUDE.local.md', agents: 'AGENTS.md', gemini: 'GEMINI.md' } as const;
+
+/**
+ * The names that a project path can not take, because the root keeps them for itself (design 4.3): the folders and the
+ * config files of the root, and the instruction files that an agent loads. A project path is compared with this list in
+ * any letter case.
+ */
+export const reservedRootNames = [
+  dirs.coordinator,
+  dirs.workCopies,
+  dirs.setup,
+  files.config,
+  files.localConfig,
+  files.claudeMd,
+  agentFiles.claudeLocal,
+  agentFiles.agents,
+  agentFiles.gemini,
+] as const;
+
+/** The label of the two marker lines around the part of the root `.gitignore` that the tool writes. */
+export const shareListLabel = 'share list';
 
 /** The settings files of Claude Code in a project: `<prefix>*<suffix>` inside the `.claude` folder. */
 export const claudeSettings = { prefix: 'settings', suffix: '.json' } as const;
+
+/**
+ * The keys of a Claude Code settings file that the checks of the root read. The settings page
+ * (https://code.claude.com/docs/en/settings) and its reference (https://code.claude.com/docs/en/settings-reference) name
+ * `permissions` (with `allow` and `defaultMode`) and `env`. The MCP page (https://code.claude.com/docs/en/mcp) names the
+ * two settings that approve the servers of a project: `enableAllProjectMcpServers` (all of them) and
+ * `enabledMcpjsonServers` (a list).
+ */
+export const claudeSettingKeys = {
+  permissions: 'permissions',
+  allow: 'allow',
+  defaultMode: 'defaultMode',
+  env: 'env',
+  hooks: 'hooks',
+  statusLine: 'statusLine',
+  approveAllMcp: 'enableAllProjectMcpServers',
+  approveMcpList: 'enabledMcpjsonServers',
+} as const;
+
+/** The permission mode that accepts file edits with no prompt. A settings file with it gives a warning, not a stop. */
+export const acceptEditsMode = 'acceptEdits';
+
+/** One item of the permission-skip list: a setting at a path with a value, or a text that stands anywhere in the file. */
+export type PermissionSkip =
+  | {
+      readonly kind: 'setting';
+      readonly label: string;
+      readonly path: readonly string[];
+      readonly value: string | boolean;
+    }
+  | { readonly kind: 'text'; readonly label: string; readonly text: string };
+
+/**
+ * The permission-skip list (design 4.4, AC-21): the settings of Claude Code that skip permission prompts. A checked
+ * settings file with one of them makes `doctor` fail and `start` exit 4, on every root and also after a setup acceptance.
+ * Only a setting that skips permission prompts is on the list: an allow rule is not (D-15 B), and `skipAutoPermissionPrompt`
+ * is not, because it hides a notice and skips no prompt.
+ *
+ * Sources: the permissions page (https://code.claude.com/docs/en/permissions) says that the mode `bypassPermissions` skips
+ * the permission prompts and that the flag `--dangerously-skip-permissions` starts it. The settings reference
+ * (https://code.claude.com/docs/en/settings-reference) names `permissions.defaultMode` (the default mode) and
+ * `skipDangerousModePermissionPrompt` (it skips the dialog before that mode). The setting `dangerouslySkipPermissions` is
+ * not in the public settings reference; an earlier check of factory read it, so it stays on the list.
+ */
+export const permissionSkipList: readonly PermissionSkip[] = [
+  {
+    kind: 'setting',
+    label: 'permissions.defaultMode set to bypassPermissions',
+    path: [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode],
+    value: 'bypassPermissions',
+  },
+  { kind: 'text', label: 'the text dangerously-skip-permissions', text: 'dangerously-skip-permissions' },
+  {
+    kind: 'setting',
+    label: 'skipDangerousModePermissionPrompt set to true',
+    path: ['skipDangerousModePermissionPrompt'],
+    value: true,
+  },
+  { kind: 'setting', label: 'dangerouslySkipPermissions set to true', path: ['dangerouslySkipPermissions'], value: true },
+];
+
+/**
+ * The paths of the instruction files of agents, from the folder that holds them (design 4.3, the instruction-file
+ * rule). `doctor`, `start` and `init` look for them in the root and in every folder above it.
+ *
+ * Claude Code loads `CLAUDE.md` and `CLAUDE.local.md` from the working folder and from every folder above it, and it
+ * loads `.claude/CLAUDE.md` and the files in `.claude/rules/` from a project folder (the memory page,
+ * https://code.claude.com/docs/en/memory). It reads the settings of a project from `.claude/settings.json` and
+ * `.claude/settings.local.json` (the settings page, https://code.claude.com/docs/en/settings). The other names are the
+ * files of other common agents, as the design lists them: a person may start another agent in the same folder.
+ * A name with a slash is a path below the folder. A name without a slash must be in `reservedRootNames`.
+ */
+export const instructionFiles = [
+  files.claudeMd,
+  agentFiles.claudeLocal,
+  agentFiles.agents,
+  agentFiles.gemini,
+  `${dirs.claude}/${files.claudeMd}`,
+  `${dirs.claude}/rules`,
+  `${dirs.claude}/${claudeSettings.prefix}${claudeSettings.suffix}`,
+  `${dirs.claude}/${claudeSettings.prefix}.local${claudeSettings.suffix}`,
+  '.github/copilot-instructions.md',
+  '.cursor/rules',
+] as const;
 
 export const env = {
   proxyBaseUrl: 'ANTHROPIC_BASE_URL',
@@ -127,22 +265,53 @@ export const env = {
   userHome: 'HOME',
 } as const;
 
+/**
+ * The settings of Claude Code that run a command with no permission prompt: the hooks, the status line and the helpers that
+ * give a credential or a header (the settings reference, https://code.claude.com/docs/en/settings-reference). A checked
+ * settings file with one of them gives a finding, except for the hook and the status line that the program writes itself.
+ */
+export const commandSettingKeys = [
+  claudeSettingKeys.hooks,
+  claudeSettingKeys.statusLine,
+  'apiKeyHelper',
+  'awsAuthRefresh',
+  'awsCredentialExport',
+  'otelHeadersHelper',
+] as const;
+
+/** The command of a hook or of the status line that the program writes: `<program> hook <event>` or `<program> hook statusline`. */
+export const ownHookCommand = new RegExp(`^${program} hook [A-Za-z][A-Za-z-]{0,31}$`);
+
+/**
+ * The `env` variables of a settings file that set the proxy or the credential of a session. The launch removes the proxy
+ * variable and sets it from the config only (design 4.6), so a checked settings file must not set any of these.
+ */
+export const trafficEnvNames = [
+  env.proxyBaseUrl,
+  'ANTHROPIC_AUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_CUSTOM_HEADERS',
+] as const;
+
 /** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
 export const maxFileBytes = 1_048_576;
 
 /**
- * The per-user index of node homes (design 4.3): the number of its schema, its keys, its default place
- * below the user home, and its bounds. A command finds a home from a project folder through it.
+ * The per-user files (design 4.3): the factory list, the approval records and the setup acceptances. Each one is in the
+ * state folder of the user, outside every factory folder. The folder has mode 0700 and a file has mode 0600. A reader
+ * refuses a folder or a file that another user owns or that a group or other users can write.
  */
-export const homeIndex = {
-  schema: 1,
-  keys: { schema: 'schema', homes: 'homes', home: 'home', id: 'id', projects: 'projects' },
+export const privateFile = {
+  /** The default place of the state folder, below the user home, when no variable names a state folder. */
   defaultStateHome: ['.local', 'state'],
-  maxHomes: 200,
-  maxProjects: 200,
-  maxBytes: maxFileBytes,
-  /** The lock file beside the index: the name of the index and this suffix. */
+  folderMode: 0o700,
+  fileMode: 0o600,
+  /** The permission bits that let a group or another user write. */
+  groupOtherWrite: 0o022,
+  /** The lock file beside a file: the name of the file and this suffix. */
   lockSuffix: '.lock',
+  /** The claim file beside the lock file. Only the process that holds it removes a stale lock. */
+  takeoverSuffix: '.takeover',
   /** A writer tries to take the lock this many times, and waits this long between two tries. */
   lockAttempts: 20,
   lockWaitMs: 50,
@@ -151,24 +320,128 @@ export const homeIndex = {
 } as const;
 
 /**
+ * The per-user index of node homes (design 4.3): the number of its schema, its keys and its bounds. A command finds a
+ * home from a project folder through it.
+ */
+export const homeIndex = {
+  schema: 1,
+  keys: { schema: 'schema', homes: 'homes', home: 'home', id: 'id', projects: 'projects', origin: 'origin' },
+  /** The origin of a root (design 4.3): the root is the owner's own, or it came from another machine or person. */
+  origins: { own: 'own', received: 'received' },
+  maxHomes: 200,
+  maxProjects: 200,
+  maxBytes: maxFileBytes,
+} as const;
+
+/**
+ * The bounds of the files that a received root tracks. `init` lists at most this many tracked files, and it reads at most
+ * this many bytes of one of them. A list over the first bound and a file over the second bound are a stop: the setup
+ * acceptance never covers part of a list or part of a file.
+ */
+export const trackedFiles = { maxCount: 2_000, maxFileBytes } as const;
+
+/** The first commit of the root repo, which `init` and `upgrade` make: the branch, the message and the notice of a missing identity. */
+export const rootRepo = {
+  branch: 'main',
+  commitMessage: 'chore: initialize the config repo',
+  noIdentity: 'No git identity: the first commit of the config repo was not made. Set user.name and user.email, then commit there.',
+} as const;
+
+/**
+ * The store of the approval records (design 6): the number of its schema, its keys, the two kinds of record and its
+ * bounds. A `delegation` record holds the mode of one approval point. A `scope` record is a record of its own kind with
+ * its own key, so it never replaces a delegation record.
+ */
+export const ownerRecords = {
+  schema: 1,
+  keys: {
+    schema: 'schema',
+    records: 'records',
+    kind: 'kind',
+    node: 'node',
+    root: 'root',
+    point: 'point',
+    mode: 'mode',
+    project: 'project',
+    version: 'version',
+    items: 'items',
+    at: 'at',
+  },
+  kinds: { delegation: 'delegation', scope: 'scope' },
+  /** The store holds at most this many records, and a reader refuses a file over this many bytes. */
+  maxRecords: 200,
+  maxBytes: maxFileBytes,
+  /** The most items in one scope record, and the most characters in one item, one project id or one version. */
+  maxItems: 100,
+  maxTextChars: 200,
+} as const;
+
+/**
+ * The store of the setup acceptances (design 4.3): the number of its schema, the format version of a manifest, its keys
+ * and its bounds. A record holds the manifest of the accepted files and the combined hash. The display bounds are for the
+ * accept prompt: a file over `maxDisplayBytes` is never shown in part, and the files past `maxDisplayTotalBytes` in all
+ * are not shown either.
+ */
+export const setupAcceptance = {
+  schema: 1,
+  formatVersion: 1,
+  keys: {
+    schema: 'schema',
+    acceptances: 'acceptances',
+    root: 'root',
+    node: 'node',
+    file: 'file',
+    version: 'version',
+    manifest: 'manifest',
+    hash: 'hash',
+    reason: 'reason',
+    at: 'at',
+    path: 'path',
+    type: 'type',
+    size: 'size',
+    sha256: 'sha256',
+    blob: 'blob',
+  },
+  fileTypes: ['file', 'link'],
+  maxRecords: 200,
+  maxBytes: 4 * maxFileBytes,
+  /** The most files in one manifest: the most files that a received root can track. */
+  maxManifestFiles: trackedFiles.maxCount,
+  /**
+   * The files of the setup text, as paths below the factory folder. `init` accepts these files alone, and no other file,
+   * without an answer of the owner, and only the text that it wrote itself.
+   */
+  setupTextFiles: [`${dirs.setup}/${files.setupCoordinator}`, `${dirs.setup}/${dirs.roles}/${files.worker}`],
+  maxReasonChars: 200,
+  maxDisplayBytes: 16_384,
+  maxDisplayTotalBytes: 262_144,
+} as const;
+
+/**
  * The names that factory gives to the tmux session of a node: two windows, and options that tell
  * a session of this node home from any other tmux session.
  */
 export const tmuxNames = {
   windowView: 'view',
-  windowBench: 'bench',
+  windowWorkers: 'workers',
   /** The session option that holds the node home. */
   optionHome: '@factory_home',
   /** The pane option that holds the node id, on the pane of the coordinator. */
   optionNode: '@node',
   /** The pane option that marks the slot of the view window. */
   optionSlot: '@slot',
-  /** The pane option that holds the cell id, on a bench pane. */
-  optionCell: '@cell',
+  /** The pane option that holds the worker id, on a worker pane. */
+  optionWorker: '@worker',
   slotBoard: 'board',
 } as const;
 
-/** The keys of the config file. */
+/**
+ * The permission bits of the local config file (design 4.4). The file has mode 600. A group or other read bit gets
+ * fixed with a notice. A group or other write bit, or another owner, stops the command.
+ */
+export const localFileModes = { private: 0o600, groupOtherRead: 0o044, groupOtherWrite: 0o022 } as const;
+
+/** The keys of the config files: the shared file and the local file. */
 export const keys = {
   root: {
     schema: 'schema',
@@ -176,19 +449,28 @@ export const keys = {
     owner: 'owner',
     session: 'session',
     proxies: 'proxies',
-    cells: 'cells',
+    workers: 'workers',
     limits: 'limits',
     approval: 'approval',
     tracker: 'tracker',
     recipe: 'recipe',
     parent: 'parent',
     children: 'children',
+    sources: 'sources',
+    state: 'state',
   },
   node: { id: 'id', layer: 'layer' },
   owner: { display: 'display', github: 'github', prefix: 'prefix' },
-  session: { permissionMode: 'permission_mode', effort: 'effort', model: 'model', proxy: 'proxy' },
+  session: {
+    permissionMode: 'permission_mode',
+    effort: 'effort',
+    model: 'model',
+    proxy: 'proxy',
+    statusline: 'statusline',
+  },
+  state: { remote: 'remote' },
   proxy: { id: 'id', baseUrl: 'base_url', health: 'health', onFail: 'on_fail' },
-  cell: { proxy: 'proxy' },
+  worker: { proxy: 'proxy' },
   limits: {
     memoryFreeMinPct: 'memory_free_min_pct',
     diskFreeMinGb: 'disk_free_min_gb',
@@ -198,16 +480,15 @@ export const keys = {
   },
   project: {
     id: 'id',
+    url: 'url',
     repo: 'repo',
     path: 'path',
     defaultBranch: 'default_branch',
-    mergeMethod: 'merge_method',
     variant: 'variant',
     gate: 'gate',
     heavyTest: 'heavy_test',
   },
   gate: { checks: 'checks' },
-  approval: { land: 'land' },
   tracker: { kind: 'kind', items: 'items', decisions: 'decisions', watchInterval: 'watch_interval' },
   recipe: { id: 'id', variant: 'variant', projects: 'projects' },
   /** A link to another node: the parent or one child. */
@@ -228,14 +509,20 @@ export const values = {
   noProxy: 'none',
   onFail: ['stop', 'direct'],
   loadCpuCount: 'cpu_count',
-  mergeMethods: ['squash', 'merge', 'rebase'],
   variants: ['plain'],
   recipes: ['software'],
-  landModes: ['each', 'approved-work'],
+  /** The mode of an approval point of any recipe. The first one is the default: the point waits for the owner. */
+  approvalModes: [roles.owner, 'delegated'],
   trackerLocal: 'local',
   trackerHosted: ['github', 'jira', 'linear'],
   defaultWatchInterval: '5m',
 } as const;
+
+/** The question of `init` about one approval point: it asks this many times, then it stops with a usage error. */
+export const approvalQuestion = { maxAttempts: 3 } as const;
+
+/** The question of `init` about a personal value of a received factory: it asks this many times, then it stops with a usage error. */
+export const ownerQuestion = { maxAttempts: 3, maxNameChars: 80 } as const;
 
 /** The scheme of the only address that a node link accepts. */
 export const address = { scheme: 'file://' } as const;
@@ -244,20 +531,33 @@ export const address = { scheme: 'file://' } as const;
 export const checkIds = {
   config: 'config',
   configVersion: 'config-version',
+  localFile: 'local-file',
   state: 'state',
-  home: 'home',
+  root: 'root',
+  tempFolder: 'temp-folder',
   index: 'index',
   blocks: 'blocks',
+  setupText: 'setup-text',
   roles: 'roles',
   tracker: 'tracker',
   children: 'children',
   secrets: 'secrets',
   permissionMode: 'permission-mode',
+  /** What the root repo tracks and what git ignores. */
+  rootRepo: 'root-repo',
+  /** The tracked text files of the root: tokens, `file` URLs and user folder paths. */
+  rootFiles: 'root-files',
+  /** The folder of each project: it resolves inside the root and not into a folder that the root keeps. */
+  projectPaths: 'project-paths',
+  /** The mode of each approval point and the active delegations. */
+  delegations: 'delegations',
+  instructionFiles: 'instruction-files',
   proxyEnv: 'proxy-env',
   proxy: 'proxy',
   tools: 'tools',
   stateRepo: 'state-repo',
   projects: 'projects',
+  projectUrls: 'project-urls',
 } as const;
 
 export const blockNames = {
@@ -265,13 +565,29 @@ export const blockNames = {
   manager: 'manager',
   safety: 'safety',
   worker: 'worker',
+  /** The text of `setup/coordinator.md`, in the coordinator `CLAUDE.md`. */
+  setup: 'setup',
+  /** The text of `setup/roles/worker.md`, in the worker file. */
+  setupWorker: 'setup-worker',
 } as const;
+
+/** The blocks whose text a person writes in the setup folder. A missing one is added by `upgrade`. */
+export const setupBlockNames: readonly string[] = [blockNames.setup, blockNames.setupWorker];
+
+/** The setup file that the text of a setup block comes from, written from the node home. */
+export const setupFileOf = (block: string): string =>
+  block === blockNames.setupWorker
+    ? `${dirs.setup}/${dirs.roles}/${files.worker}`
+    : `${dirs.setup}/${files.setupCoordinator}`;
+
+/** The most bytes of a setup text that `init` and `upgrade` render into a session instruction file. A larger file is refused. */
+export const maxSetupTextBytes = 65_536;
 
 /**
  * The names of a FAC-M1 node (schema 1) that schema 2 does not use. Only the migrations from schema 1 read them.
  */
 export const schema1 = {
-  keys: { role: 'role', lanes: 'lanes', projects: 'projects', pack: 'pack' },
+  keys: { role: 'role', lanes: 'lanes', projects: 'projects' },
   protocolFile: 'protocol.md',
   briefsDir: 'briefs',
   protocolBlock: 'protocol',
@@ -279,13 +595,19 @@ export const schema1 = {
   roadmapsReadmeSha256: '2f9168abccda69f6ed71c8c1339ee899ad39e20c606838c750bae4d5346fad2c',
 } as const;
 
+/**
+ * The names of a FAC-M2 config that the current layout does not use. Only the refusal of that layout reads them: a
+ * `factory.yaml` with one of them was made before the split into a shared file and a local file.
+ */
+export const schema2 = { workersKey: 'cells', approvalKey: 'land' } as const;
+
 /** Markers of managed blocks: `<!-- factory:begin <name> v<n> sha256=<hex> -->` and `<!-- factory:end <name> -->`. */
 export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash: 'sha256' } as const;
 
 /** The ids of the JSON documents that commands print. */
 export const schemaIds = {
   init: `${program}.init/v1`,
-  up: `${program}.up/v1`,
+  start: `${program}.start/v1`,
   nodeChildren: `${program}.node-children/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
@@ -309,25 +631,20 @@ export const flagText = (name: string): string => `--${name}`;
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
 
+/** The command that replaces or adds one managed block, for example `factory upgrade --overwrite coordinator`. */
+export const overwriteCommand = (block: string): string =>
+  `${commandText(commands.upgrade)} ${flagText(flags.overwrite)} ${block}`;
+
 /** The path of a key inside the config, for example `limits.disk_free_min_gb`. */
 const keyPath = (...parts: readonly string[]): string => parts.join('.');
 
 /** A path inside the state folder, written from the node home. */
 const inState = (...parts: readonly string[]): string => [dirs.state, ...parts].join('/');
 
-/** The values for the placeholders of the templates, for example {{cell}} and {{Cell}}. */
-export const templateValues: Readonly<Record<string, string>> = {
-  program,
-  node: roles.node,
-  cell: roles.cell,
-  coordinator: roles.coordinator,
-  manager: roles.manager,
-  worker: roles.worker,
-  owner: roles.owner,
-  recipe: roles.recipe,
-  variant: roles.variant,
-  childrenKey: keys.root.children,
+/** The paths in the texts, written from the factory folder. */
+const pathValues: Readonly<Record<string, string>> = {
   configFile: files.config,
+  localConfigFile: files.localConfig,
   stateDir: dirs.state,
   nodeFile: inState(files.nodeState),
   workerFile: inState(dirs.roles, files.worker),
@@ -337,6 +654,20 @@ export const templateValues: Readonly<Record<string, string>> = {
   profileDir: `${inState(dirs.profile)}/`,
   roadmapsDir: `${inState(dirs.roadmaps)}/`,
   ordersDir: `${inState(dirs.orders)}/`,
+};
+
+/** The values for the placeholders of the templates, for example {{worker}} and {{Worker}}. */
+export const templateValues: Readonly<Record<string, string>> = {
+  program,
+  node: roles.node,
+  coordinator: roles.coordinator,
+  manager: roles.manager,
+  worker: roles.worker,
+  owner: roles.owner,
+  recipe: roles.recipe,
+  variant: roles.variant,
+  childrenKey: keys.root.children,
+  ...pathValues,
   profileIndex: files.profileIndex,
   profileReadme: files.profileReadme,
   profileLog: files.profileLog,
@@ -348,7 +679,19 @@ export const templateValues: Readonly<Record<string, string>> = {
   preparePctKey: keyPath(keys.root.limits, keys.limits.contextPreparePct),
   maxPctKey: keyPath(keys.root.limits, keys.limits.contextMaxPct),
   heavyTestKey: keys.project.heavyTest,
+  variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,
   claudeDir: dirs.claude,
+};
+
+/**
+ * The values for the texts in the coordinator `CLAUDE.md`: the role block, the safety block and the setup block. The
+ * coordinator session runs in the coordinator folder, which is one level below the factory folder, so each path is
+ * written from that folder: `../factory.yaml`, `../factory.local.yaml` and `../.factory/...`. The texts in the state
+ * folder keep the values of `templateValues`.
+ */
+export const coordinatorTemplateValues: Readonly<Record<string, string>> = {
+  ...templateValues,
+  ...Object.fromEntries(Object.entries(pathValues).map(([name, path]) => [name, `../${path}`])),
 };

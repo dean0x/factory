@@ -1,7 +1,8 @@
-import { inspectConfig } from '../config/load.js';
+import { inspectSharedConfig } from '../config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { commands, commandText, files, keys, program, roles } from '../names.js';
+import { commands, commandText, files, keys, places, program } from '../names.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import { checkFileAddress } from './address.js';
 
 /** What a ping learns about a node. */
@@ -25,13 +26,16 @@ export interface Transport {
 const unknown = (reason: string, schema?: number): PingResult =>
   schema === undefined ? { kind: 'unknown', reason } : { kind: 'unknown', reason, schema };
 
-/** The transport for a `file://` address: a node home on this machine. The ping reads its config with the normal loader. */
-export const fileTransport = (deps: Deps): Transport => ({
+/**
+ * The transport for a `file://` address: a node home on this machine. The ping reads the shared config of that node
+ * with the normal loader. It needs only the id and the layer, so it reads no local file of the other node.
+ */
+export const fileTransport = (deps: Deps, registry: RecipeRegistry): Transport => ({
   ping: async (address) => {
     const checked = checkFileAddress(address);
     if (!checked.ok) return unknown(checked.error);
 
-    const state = await inspectConfig(deps, checked.value);
+    const state = await inspectSharedConfig(deps, checked.value, registry);
     switch (state.kind) {
       case 'valid':
         return { kind: 'known', id: state.value.core.node.id, layer: state.value.core.node.layer, schema: state.version };
@@ -41,9 +45,11 @@ export const fileTransport = (deps: Deps): Transport => ({
         return unknown(`${files.config} does not parse: ${state.message}`);
       case 'invalid':
         return unknown(`${files.config} is invalid: ${state.message}`);
+      case 'unsafe':
+        return unknown(state.message);
       case 'older':
         return unknown(
-          `${files.config} has ${keys.root.schema} ${state.version}: run "${commandText(commands.upgrade)}" in that ${roles.node} home`,
+          `${files.config} has ${keys.root.schema} ${state.version}: run "${commandText(commands.upgrade)}" in that ${places.folder}`,
           state.version,
         );
       case 'newer':

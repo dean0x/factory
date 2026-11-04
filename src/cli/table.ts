@@ -2,7 +2,7 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
 import { runInit } from '../commands/init.js';
 import { runNode } from '../commands/node.js';
-import { runUp } from '../commands/up.js';
+import { runStart } from '../commands/start.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import type { Deps } from '../core/deps.js';
@@ -11,15 +11,18 @@ import {
   commands,
   commandText,
   env,
+  files,
   flags,
   flagShorts,
   flagText,
   helpTopics,
   nodeCommands,
+  places,
   program,
   roles,
   values,
 } from '../names.js';
+import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
 import type { CommandOutput } from './output.js';
@@ -63,29 +66,31 @@ const foundHomeOption: FlagOption = {
   type: 'string',
   placeholder: 'DIR',
   description:
-    `The ${roles.node} folder. Default: ${env.home}, else the folder of the nearest config file ` +
-    'above the current folder, else the home that lists the current folder in the home index.',
+    `The ${places.folder}. Default: ${env.home}, else the folder of the nearest config file ` +
+    `above the current folder, else the ${places.folder} that the ${places.list} gives for the current folder.`,
 };
 
-export const commandTable: readonly Command[] = [
+/** The commands. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */
+export const commandTableFor = (registry: RecipeRegistry): readonly Command[] => [
   {
     name: commands.init,
     summary: `Create a ${roles.node} in a folder.`,
     usage:
       `${commandText(commands.init)} [${flagText(flags.home)} DIR] [${flagText(flags.yes)}] ` +
       `[${flagText(flags.name)} ID] [${flagText(flags.ownerName)} NAME] [${flagText(flags.ownerGithub)} LOGIN] ` +
-      `[${flagText(flags.project)} PATH|URL]... [${flagText(flags.layer)} N] [${flagText(flags.recipe)} ID]`,
+      `[${flagText(flags.project)} PATH|URL]... [${flagText(flags.layer)} N] [${flagText(flags.recipe)} ID] ` +
+      `[${flagText(flags.approval)} POINT=${values.approvalModes.join('|')}]...`,
     options: {
       [flags.home]: {
         type: 'string',
         placeholder: 'DIR',
         description:
-          `The ${roles.node} folder. Default: in a git work tree, a folder beside it; in a folder that holds git repos, ` +
+          `The ${places.folder}. Default: in a git work tree, a folder beside it; in a folder that holds git repos, ` +
           'a folder inside it; in both cases after you confirm. Else the current folder.',
       },
       [flags.yes]: {
         type: 'boolean',
-        description: `Use the proposed ${roles.node} folder. Ask no question.`,
+        description: `Use the proposed ${places.folder}. Ask no question. Every approval point is ${values.approvalModes[0]}.`,
       },
       [flags.name]: {
         type: 'string',
@@ -107,36 +112,52 @@ export const commandTable: readonly Command[] = [
         multiple: true,
         placeholder: 'PATH|URL',
         description:
-          'A git work tree to manage, or the URL of a repo to clone next to the home folder ' +
+          `A git work tree to clone into the ${places.folder}, or the URL of a repo to clone into it ` +
           '(https://, ssh:// or user@host:path). Repeat the flag for more projects.',
       },
       [flags.layer]: {
         type: 'string',
         placeholder: 'N',
-        description: `The layer of the ${roles.node}, from 1 to 16. Layer 1 manages ${roles.cell}s. Default: 1.`,
+        description: `The layer of the ${roles.node}, from 1 to 16. Layer 1 manages ${roles.worker}s. Default: 1.`,
       },
       [flags.recipe]: {
         type: 'string',
         placeholder: 'ID',
-        description: `The ${roles.recipe} for the kind of work. One of: ${values.recipes.join(', ')}. Default: ${values.recipes[0]}.`,
+        description:
+          `The ${roles.recipe} for the kind of work. One of: ${recipeIds(registry).join(', ')}. ` +
+          `Default: ${registry[0].id}.`,
+      },
+      [flags.approval]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'POINT=MODE',
+        description:
+          `The mode of one approval point of the ${roles.recipe}: ${values.approvalModes.join(' or ')}. ` +
+          `Default: ${values.approvalModes[0]}. In a terminal window, ${commands.init} asks for each point that no flag names. ` +
+          `Repeat the flag for more points. ${values.approvalModes[1]} needs a terminal window outside a ${places.session}, and no ${flagText(flags.yes)}.`,
       },
     },
     run: (given, deps) =>
-      runInit(deps, {
-        home: given.string(flags.home),
-        name: given.string(flags.name),
-        ownerName: given.string(flags.ownerName),
-        ownerGithub: given.string(flags.ownerGithub),
-        projects: given.strings(flags.project),
-        yes: given.bool(flags.yes),
-        recipe: given.string(flags.recipe),
-        layer: given.string(flags.layer),
-      }),
+      runInit(
+        deps,
+        {
+          home: given.string(flags.home),
+          name: given.string(flags.name),
+          ownerName: given.string(flags.ownerName),
+          ownerGithub: given.string(flags.ownerGithub),
+          projects: given.strings(flags.project),
+          yes: given.bool(flags.yes),
+          recipe: given.string(flags.recipe),
+          layer: given.string(flags.layer),
+          approval: given.strings(flags.approval),
+        },
+        registry,
+      ),
   },
   {
-    name: commands.up,
+    name: commands.start,
     summary: `Start the session of the ${roles.node} in tmux, or attach to it.`,
-    usage: `${commandText(commands.up)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}]`,
+    usage: `${commandText(commands.start)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}]`,
     options: {
       [flags.home]: foundHomeOption,
       [flags.dryRun]: {
@@ -144,7 +165,7 @@ export const commandTable: readonly Command[] = [
         description: 'Show the tmux calls and the launch. Start no session and change no file.',
       },
     },
-    run: (given, deps) => runUp(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }),
+    run: (given, deps) => runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun) }, registry),
   },
   {
     name: commands.node,
@@ -156,21 +177,21 @@ export const commandTable: readonly Command[] = [
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: { [flags.home]: foundHomeOption },
-    run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }),
+    run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
   },
   {
     name: commands.doctor,
     summary: `Check the ${roles.node}, its config and its state.`,
     usage: `${commandText(commands.doctor)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
-    run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }),
+    run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }, registry),
   },
   {
     name: commands.upgrade,
     summary: `Migrate the config and the state, and refresh the managed blocks.`,
     usage:
       `${commandText(commands.upgrade)} [${flagText(flags.home)} DIR] [${flagText(flags.dryRun)}] ` +
-      `[${flagText(flags.overwrite)} NAME]...`,
+      `[${flagText(flags.overwrite)} NAME]... [${flagText(flags.yes)}]`,
     options: {
       [flags.home]: foundHomeOption,
       [flags.dryRun]: { type: 'boolean', description: 'Show what would change. Change no file.' },
@@ -180,13 +201,24 @@ export const commandTable: readonly Command[] = [
         placeholder: 'NAME',
         description: 'Replace the managed block NAME, also when it was edited or is missing. Repeat the flag for more blocks.',
       },
+      [flags.yes]: {
+        type: 'boolean',
+        description:
+          `Register a ${places.folder} that the ${places.list} does not list, with no question. ` +
+          `Needs ${flagText(flags.home)} DIR and a ${files.config} with schema 1. Not allowed inside a ${places.session}.`,
+      },
     },
     run: (given, deps) =>
-      runUpgrade(deps, {
-        home: given.string(flags.home),
-        dryRun: given.bool(flags.dryRun),
-        overwrite: given.strings(flags.overwrite),
-      }),
+      runUpgrade(
+        deps,
+        {
+          home: given.string(flags.home),
+          dryRun: given.bool(flags.dryRun),
+          overwrite: given.strings(flags.overwrite),
+          yes: given.bool(flags.yes),
+        },
+        registry,
+      ),
   },
   {
     name: commands.version,
@@ -196,6 +228,9 @@ export const commandTable: readonly Command[] = [
     run: async () => ok(runVersion(FACTORY_VERSION)),
   },
 ];
+
+/** The commands of the package: the table for the package registry. */
+export const commandTable: readonly Command[] = commandTableFor(recipes);
 
 type ParsedValue = string | boolean | readonly (string | boolean)[] | undefined;
 

@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { failure } from '../../src/cli/errors.js';
 import { exited, missingProgram, type RunCall, type RunHandler } from './fake-deps.js';
 
 export interface FakeRepo {
@@ -26,6 +27,25 @@ export interface GitFixture {
   readonly cloneExit?: number;
   /** What a failed `git clone` prints on stderr. Default: a line with no URL. */
   readonly cloneStderr?: string;
+  /** The paths that a work tree tracks, by folder: `git ls-files -z` prints them. A folder with no entry tracks nothing. */
+  readonly tracked?: Readonly<Record<string, readonly string[]>>;
+  /** The exit code of `git ls-files`. Default: 0. */
+  readonly lsFilesExit?: number;
+  /** True when the output of `git ls-files` is larger than the program reads: the run fails and gives no path. */
+  readonly lsFilesOverflow?: boolean;
+  /** What `git status --porcelain -z` prints, by folder: for example " M node.json\0". A folder with no entry is clean. */
+  readonly status?: Readonly<Record<string, string>>;
+  /**
+   * The paths that git ignores, by folder, as the rules of `.gitignore` make them. A folder with no entry ignores every
+   * path, as the share list of a factory does.
+   */
+  readonly ignored?: Readonly<Record<string, readonly string[]>>;
+  /** The exit code of `git check-ignore` when it fails. Default: none, the command works. */
+  readonly checkIgnoreExit?: number;
+  /** The paths for which `git check-ignore` fails with exit code 128. The other paths get the answer of the rules. */
+  readonly checkIgnoreFailsFor?: readonly string[];
+  /** The folders that stay out of every work tree, also after `git init` ran in them. */
+  readonly noWorkTree?: readonly string[];
 }
 
 export interface GitLog {
@@ -40,9 +60,9 @@ export interface GitLog {
  * The top folder of the work tree that holds `dir`: the nearest folder above `dir`, or `dir` itself, that is a work tree.
  * A fixture repo with `topLevel: false` is a folder inside a work tree, so its top is its parent folder.
  */
-const workTreeTopOf = (fixture: GitFixture, dir: string): string | null => {
+const workTreeTopOf = (repoAt: (dir: string) => FakeRepo | undefined, dir: string): string | null => {
   for (let current = dir; ; current = posix.dirname(current)) {
-    const repo = fixture.repos?.[current];
+    const repo = repoAt(current);
     if (repo !== undefined) return repo.topLevel === false ? posix.dirname(current) : current;
     if (current === '/' || current === '.') return null;
   }
@@ -51,6 +71,9 @@ const workTreeTopOf = (fixture: GitFixture, dir: string): string | null => {
 export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log: GitLog } => {
   const calls: RunCall[] = [];
   const identity = fixture.identity ?? true;
+  /** The work trees that a clone made. A fixture repo at the same folder wins. */
+  const cloned = new Map<string, FakeRepo>();
+  const repoAt = (dir: string): FakeRepo | undefined => fixture.repos?.[dir] ?? cloned.get(dir);
   const handler: RunHandler = (call) => {
     calls.push(call);
     if (call.command === 'gh') {
@@ -59,15 +82,44 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     }
     if (call.command === 'git' && call.args[0] === 'clone') {
       const code = fixture.cloneExit ?? 0;
-      return code === 0
-        ? exited(0)
-        : exited(code, '', fixture.cloneStderr ?? 'fatal: could not read from the remote repository\n');
+      if (code !== 0) {
+        return exited(code, '', fixture.cloneStderr ?? 'fatal: could not read from the remote repository\n');
+      }
+      // As real git does: the clone is a work tree, its origin is the place it came from, and it has the default branch of that place.
+      const [from, target] = [call.args[2] ?? '', call.args[3] ?? ''];
+      const source = repoAt(from);
+      cloned.set(target, { origin: from, ...(source?.originHead === undefined ? {} : { originHead: source.originHead }) });
+      return exited(0);
     }
     if (call.command !== 'git' || call.args[0] !== '-C') return missingProgram(call.command);
     const dir = call.args[1] ?? '';
     const rest = call.args.slice(2).join(' ');
-    const repo = fixture.repos?.[dir];
+    const repo = repoAt(dir);
+    // As real git does: `git init` makes the folder the top of a work tree.
+    if (call.args[2] === 'init') {
+      if (fixture.noWorkTree?.includes(dir) !== true) cloned.set(dir, {});
+      return exited(0);
+    }
+    if (rest === 'ls-files -z') {
+      if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
+      if ((fixture.lsFilesExit ?? 0) !== 0) return exited(fixture.lsFilesExit ?? 0, '', 'fatal: ls-files failed');
+      if (fixture.lsFilesOverflow === true) return failure('cannot run git: ERR_CHILD_PROCESS_STDIO_MAXBUFFER');
+      return exited(0, (fixture.tracked?.[dir] ?? []).map((path) => `${path}\0`).join(''));
+    }
+    if (call.args[2] === 'check-ignore') {
+      if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
+      if (fixture.checkIgnoreExit !== undefined) return exited(fixture.checkIgnoreExit, '', 'fatal: check-ignore failed');
+      const asked = call.args.slice(call.args.indexOf('--') + 1);
+      if (asked.some((path) => fixture.checkIgnoreFailsFor?.includes(path) === true)) {
+        return exited(128, '', 'fatal: check-ignore failed');
+      }
+      const rules = fixture.ignored?.[dir];
+      const found = rules === undefined ? asked : asked.filter((path) => rules.includes(path));
+      return found.length === 0 ? exited(1) : exited(0);
+    }
     switch (rest) {
+      case 'status --porcelain -z --untracked-files=all':
+        return exited(0, fixture.status?.[dir] ?? '');
       case 'rev-parse --git-common-dir':
         return repo === undefined ? exited(128) : exited(0, `${repo.commonDir ?? '.git'}\n`);
       case 'config remote.origin.url':
@@ -75,7 +127,7 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       case 'rev-parse --is-inside-work-tree --show-prefix':
         return repo === undefined ? exited(128) : exited(0, repo.topLevel === false ? 'true\nsub/\n' : 'true\n\n');
       case 'rev-parse --show-toplevel': {
-        const top = workTreeTopOf(fixture, dir);
+        const top = workTreeTopOf(repoAt, dir);
         return top === null ? exited(128) : exited(0, `${top}\n`);
       }
       case 'config user.name':

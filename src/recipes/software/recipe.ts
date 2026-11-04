@@ -1,10 +1,13 @@
-import { CELL_LAYER, COORDINATOR_LAYER, MANAGER_LAYER } from '../../config/schema.js';
-import { blockNames } from '../../names.js';
-import { fillTemplate } from '../../templates/fill.js';
-import type { BlockTemplate } from '../../templates/types.js';
-import { COORDINATOR_LINES } from './roles/coordinator.js';
+import { blockNames, layers } from '../../names.js';
+import { coordinatorValuesFor, fillTemplate } from '../../templates/fill.js';
+import type { BlockInput, BlockTemplate } from '../../templates/types.js';
+import { approvalLines, type RecipeRoles } from '../entry.js';
+import { softwareApprovalPoints } from './approval.js';
+import { coordinatorLines } from './roles/coordinator.js';
 import { MANAGER_LINES } from './roles/manager.js';
 import { WORKER_LINES } from './roles/worker.js';
+
+type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeof blockNames.manager;
 
 const worker: BlockTemplate = {
   name: blockNames.worker,
@@ -13,30 +16,57 @@ const worker: BlockTemplate = {
   body: fillTemplate(WORKER_LINES),
 };
 
-const coordinator: BlockTemplate = {
-  name: blockNames.coordinator,
-  version: 2,
-  target: 'claudeFile',
-  body: fillTemplate(COORDINATOR_LINES),
-};
-
-const manager: BlockTemplate = {
+/** The manager block lives in the coordinator folder, so its paths are written from that folder. */
+const managerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.manager,
   version: 1,
   target: 'claudeFile',
-  body: fillTemplate(MANAGER_LINES),
-};
+  body: fillTemplate(MANAGER_LINES, coordinatorValuesFor(input)),
+});
 
 /**
- * The role template of a layer: the worker for a cell (layer 0), the coordinator for layer 1, and the manager
- * for layer 2. A layer above 2 has no template, because each layer has its own role and the manager text does
- * not fit another layer. This is the only lookup of a role. The caller passes a layer that the config checked.
+ * The coordinator block has a section for the approval points, so its text follows the modes. It also states the context
+ * limits of the shared file, and its paths are written from the coordinator folder.
  */
-export const roleForLayer = (layer: number): BlockTemplate | null => {
-  if (layer <= CELL_LAYER) return worker;
-  if (layer === COORDINATOR_LAYER) return coordinator;
-  return layer === MANAGER_LAYER ? manager : null;
+const coordinatorFor = (input: BlockInput): BlockTemplate => ({
+  name: blockNames.coordinator,
+  version: 2,
+  target: 'claudeFile',
+  body: fillTemplate(coordinatorLines(approvalLines(softwareApprovalPoints, input.modes)), coordinatorValuesFor(input)),
+});
+
+/**
+ * The name of the role block of a layer: the worker for layer 0, the coordinator for layer 1, and the manager
+ * for layer 2. A layer above 2 has no role, because each layer has its own role and the manager text does not fit another layer.
+ */
+const roleNameForLayer = (layer: number): RoleName | null => {
+  if (layer <= layers.worker) return blockNames.worker;
+  if (layer === layers.coordinator) return blockNames.coordinator;
+  return layer === layers.manager ? blockNames.manager : null;
 };
 
-/** The role blocks that a node home can hold in its CLAUDE.md. */
-export const homeRoleBlockNames: readonly string[] = [coordinator.name, manager.name];
+/** The role template of the layer of `input`, with the approval point text for its modes. */
+const roleForLayer = (input: BlockInput): BlockTemplate | null => {
+  const name = roleNameForLayer(input.layer);
+  switch (name) {
+    case null:
+      return null;
+    case blockNames.worker:
+      return worker;
+    case blockNames.coordinator:
+      return coordinatorFor(input);
+    case blockNames.manager:
+      return managerFor(input);
+    default: {
+      const unreachable: never = name;
+      return unreachable;
+    }
+  }
+};
+
+/** The roles of the software recipe. */
+export const softwareRoles: RecipeRoles = {
+  nameForLayer: roleNameForLayer,
+  templateFor: roleForLayer,
+  homeBlockNames: [blockNames.coordinator, blockNames.manager],
+};

@@ -1,7 +1,17 @@
 import { address, capitalize, files, keys, program, roles, values } from '../names.js';
-import type { RecipeConfig } from '../recipes/index.js';
-import type { ProjectConfig } from '../recipes/software/config.js';
-import type { FactoryConfig, LinkConfig, ProxyConfig, TrackerConfig } from './schema.js';
+import type { RecipeConfig, RecipeEntry, RecipeProject } from '../recipes/index.js';
+import {
+  CONFIG_SCHEMA_VERSION,
+  LOCAL_SCHEMA_VERSION,
+  localOf,
+  sharedOf,
+  type FactoryConfig,
+  type LinkConfig,
+  type LocalConfig,
+  type ProxyConfig,
+  type SharedConfig,
+  type TrackerConfig,
+} from './schema.js';
 
 /** The words that a YAML reader takes for a boolean or a null. */
 const YAML_WORDS = /^(?:true|false|null|yes|no|on|off|y|n)$/;
@@ -35,15 +45,23 @@ const gateLines = (depth: number, checks: readonly string[]): string[] =>
         ...checks.map((check) => `${pad(depth + 2)}- ${quoted(check)}`),
       ];
 
-/** The lines of one project. `depth` is the depth of the list item. */
-const projectLines = (project: ProjectConfig, depth: number): string[] => [
+/** The keys of the recipe, as the entry names them. A key with no text value is left out. */
+const recipeKeyLines = (recipeEntry: RecipeEntry, project: RecipeProject, depth: number): string[] =>
+  recipeEntry.projectKeys.flatMap((key) => {
+    const value = project[key];
+    return typeof value === 'string' ? [entry(depth, key, scalar(value))] : [];
+  });
+
+/** The lines of one project. `depth` is the depth of the list item. The recipe sets its own keys. */
+const projectLines = (recipeEntry: RecipeEntry, project: RecipeProject, depth: number): string[] => [
   itemEntry(depth, keys.project.id, scalar(project.id)),
+  ...(project.url === undefined ? [] : [entry(depth + 1, keys.project.url, quoted(project.url))]),
   ...(project.repo === undefined ? [] : [entry(depth + 1, keys.project.repo, quoted(project.repo))]),
   entry(depth + 1, keys.project.path, quoted(project.path)),
-  entry(depth + 1, keys.project.defaultBranch, quoted(project.default_branch)),
-  entry(depth + 1, keys.project.mergeMethod, project.merge_method),
+  ...(project.default_branch === undefined ? [] : [entry(depth + 1, keys.project.defaultBranch, quoted(project.default_branch))]),
+  ...recipeKeyLines(recipeEntry, project, depth + 1),
   ...(project.variant === undefined ? [] : [entry(depth + 1, keys.project.variant, project.variant)]),
-  ...gateLines(depth + 1, project.gate.checks),
+  ...(project.gate === undefined ? [] : gateLines(depth + 1, project.gate.checks)),
   ...(project.heavy_test === undefined ? [] : [entry(depth + 1, keys.project.heavyTest, quoted(project.heavy_test))]),
 ];
 
@@ -60,13 +78,13 @@ const trackerLines = (tracker: TrackerConfig): string[] =>
         entry(1, keys.tracker.watchInterval, tracker.watch_interval),
       ];
 
-/** The `recipe` block. A recipe renders its own keys. */
-const recipeLines = (recipe: RecipeConfig): string[] => [
+/** The `recipe` block. The entry of the recipe names the keys that a project holds besides the keys of the core. */
+const recipeLines = (recipeEntry: RecipeEntry, recipe: RecipeConfig): string[] => [
   `${keys.root.recipe}:`,
   entry(1, keys.recipe.id, recipe.id),
   entry(1, keys.recipe.variant, recipe.variant, `the default ${roles.variant} for every project`),
   `${pad(1)}# Each project path is relative to this folder.`,
-  ...section(1, keys.recipe.projects, recipe.projects.map((project) => projectLines(project, 2))),
+  ...section(1, keys.recipe.projects, recipe.projects.map((project) => projectLines(recipeEntry, project, 2))),
 ];
 
 const childLines = (link: LinkConfig): string[] => [
@@ -83,48 +101,29 @@ const parentLines = (link: LinkConfig | null): string[] =>
         entry(1, keys.link.address, quoted(link.address)),
       ];
 
-/** The text of the config file, with comments, for a typed config. */
-export const renderConfig = (config: FactoryConfig): string => {
-  const { core, recipe } = config;
-  const cells = Object.entries(core.cells);
+const sourceLines = (sources: Readonly<Record<string, string>>): string[] => {
+  const rows = Object.entries(sources);
+  return rows.length === 0
+    ? [`${keys.root.sources}: {}`]
+    : [`${keys.root.sources}:`, ...rows.map(([path, source]) => `${pad(1)}${quoted(path)}: ${quoted(source)}`)];
+};
+
+/** The text of the shared file, with comments. Git tracks the file, and it travels to every machine. */
+export const renderSharedConfig = (shared: SharedConfig): string => {
+  const { core, recipe, entry: recipeEntry } = shared;
   const lines: string[] = [
-    `# ${files.config}: the configuration of this ${roles.node}.`,
-    '# People edit this file. Do not put keys, tokens or passwords here.',
-    entry(0, keys.root.schema, core.schema),
+    `# ${files.config}: the shared configuration of this ${roles.node}. Git tracks it, and it goes to every machine.`,
+    `# Do not put keys, tokens or passwords here. What is personal or true for one machine only is in ${files.localConfig}.`,
+    entry(0, keys.root.schema, CONFIG_SCHEMA_VERSION),
     '',
     `${keys.root.node}:`,
     entry(1, keys.node.id, scalar(core.node.id), 'also the name of the tmux session'),
-    entry(1, keys.node.layer, core.node.layer, `the layer sets the role: layer 1 is the ${roles.coordinator} of the ${roles.cell}s`),
-    '',
-    `${keys.root.owner}:`,
-    entry(1, keys.owner.display, quoted(core.owner.display)),
-    ...(core.owner.github === undefined ? [] : [entry(1, keys.owner.github, quoted(core.owner.github))]),
-    `${pad(1)}# Input that starts with this prefix carries the authority of the ${roles.owner}.`,
-    entry(1, keys.owner.prefix, quoted(core.owner.prefix)),
+    entry(1, keys.node.layer, core.node.layer, `the layer sets the role: layer 1 is the ${roles.coordinator} of the ${roles.worker}s`),
     '',
     `${keys.root.session}:`,
     entry(1, keys.session.permissionMode, core.session.permission_mode, 'the only accepted value'),
     entry(1, keys.session.effort, core.session.effort),
     entry(1, keys.session.model, scalar(core.session.model)),
-    entry(
-      1,
-      keys.session.proxy,
-      scalar(core.session.proxy),
-      `${values.noProxy}, or the id of an entry in ${keys.root.proxies}`,
-    ),
-    '',
-    `# A session uses a proxy only when the config names it. ${capitalize(program)} checks the proxy before each launch.`,
-    ...section(0, keys.root.proxies, core.proxies.map(proxyLines)),
-    '',
-    `# Overrides for single ${roles.cell}s: <${roles.cell} id>: { ${keys.cell.proxy}: ${values.noProxy} }`,
-    ...(cells.length === 0
-      ? [`${keys.root.cells}: {}`]
-      : [
-          `${keys.root.cells}:`,
-          ...cells.map(
-            ([cell, override]) => `${pad(1)}${scalar(cell)}: { ${keys.cell.proxy}: ${scalar(override.proxy)} }`,
-          ),
-        ]),
     '',
     `${keys.root.limits}:`,
     entry(1, keys.limits.memoryFreeMinPct, core.limits.memory_free_min_pct),
@@ -137,23 +136,75 @@ export const renderConfig = (config: FactoryConfig): string => {
     entry(1, keys.limits.contextPreparePct, core.limits.context_prepare_pct),
     entry(1, keys.limits.contextMaxPct, core.limits.context_max_pct),
     '',
-    `${keys.root.approval}:`,
-    entry(
-      1,
-      keys.approval.land,
-      core.approval.land,
-      `${values.landModes.join(' or ')}: with ${values.landModes[0]}, every merge waits for the ${roles.owner}`,
-    ),
-    '',
     `${keys.root.tracker}:`,
     ...trackerLines(core.tracker),
     '',
-    ...recipeLines(recipe),
-    '',
-    `# The ${roles.node} above this one, or null. The address is a ${address.scheme} address on this machine.`,
-    ...parentLines(core.parent),
-    '',
-    ...section(0, keys.root.children, core.children.map(childLines)),
+    ...recipeLines(recipeEntry, recipe),
   ];
   return `${lines.join('\n')}\n`;
 };
+
+/** The text of the local file, with comments. Git ignores the file, and it has mode 600. */
+export const renderLocalConfig = (local: LocalConfig): string => {
+  const workers = Object.entries(local.workers);
+  const approval = Object.entries(local.approval);
+  const lines: string[] = [
+    `# ${files.localConfig}: the configuration of one person on this machine. Git ignores it.`,
+    '# People edit this file. Do not put keys, tokens or passwords here.',
+    entry(0, keys.root.schema, LOCAL_SCHEMA_VERSION),
+    '',
+    `${keys.root.owner}:`,
+    entry(1, keys.owner.display, quoted(local.owner.display)),
+    ...(local.owner.github === undefined ? [] : [entry(1, keys.owner.github, quoted(local.owner.github))]),
+    `${pad(1)}# Input that starts with this prefix carries the authority of the ${roles.owner}.`,
+    entry(1, keys.owner.prefix, quoted(local.owner.prefix)),
+    '',
+    `${keys.root.session}:`,
+    entry(
+      1,
+      keys.session.proxy,
+      scalar(local.session.proxy),
+      `${values.noProxy}, or the id of an entry in ${keys.root.proxies}`,
+    ),
+    entry(
+      1,
+      keys.session.statusline,
+      local.session.statusline === null ? 'null' : quoted(local.session.statusline),
+      `the command of your own status line, or null`,
+    ),
+    '',
+    `# A session uses a proxy only when the config names it. ${capitalize(program)} checks the proxy before each launch.`,
+    ...section(0, keys.root.proxies, local.proxies.map(proxyLines)),
+    '',
+    `# Overrides for single ${roles.worker}s: <${roles.worker} id>: { ${keys.worker.proxy}: ${values.noProxy} }`,
+    ...(workers.length === 0
+      ? [`${keys.root.workers}: {}`]
+      : [
+          `${keys.root.workers}:`,
+          ...workers.map(
+            ([worker, override]) => `${pad(1)}${scalar(worker)}: { ${keys.worker.proxy}: ${scalar(override.proxy)} }`,
+          ),
+        ]),
+    '',
+    `# The mode of each approval point of the ${roles.recipe}: ${values.approvalModes.join(' or ')}.`,
+    `# A point that is not named waits for the ${roles.owner}.`,
+    ...(approval.length === 0
+      ? [`${keys.root.approval}: {}`]
+      : [`${keys.root.approval}:`, ...approval.map(([point, mode]) => entry(1, scalar(point), mode))]),
+    '',
+    `# The local folder of a project that has no URL to share, by project path.`,
+    ...sourceLines(local.sources),
+    '',
+    `# The ${roles.node} above this one, or null. The address is a ${address.scheme} address on this machine.`,
+    ...parentLines(local.parent),
+    '',
+    ...section(0, keys.root.children, local.children.map(childLines)),
+  ];
+  return `${lines.join('\n')}\n`;
+};
+
+/** The texts of the two config files for a typed config. */
+export const renderConfig = (config: FactoryConfig): { readonly shared: string; readonly local: string } => ({
+  shared: renderSharedConfig(sharedOf(config)),
+  local: renderLocalConfig(localOf(config)),
+});

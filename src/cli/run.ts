@@ -1,9 +1,10 @@
 import type { Deps } from '../core/deps.js';
 import { commands, commandText, flags, flagShorts, flagText, helpTopics, program, schemaIds } from '../names.js';
-import { exitCodeOf, safetyRefusal } from './errors.js';
+import { exitCodeOf, failure } from './errors.js';
 import { detectStyle, renderError, renderJson, renderText, renderWarnings } from './output.js';
+import { recipes, type RecipeRegistry } from '../recipes/index.js';
 import {
-  commandTable,
+  commandTableFor,
   globalOptions,
   parseFlags,
   renderCommandHelp,
@@ -24,16 +25,23 @@ const EXIT_USAGE = 2;
 /** The value of `process.platform` on native Windows, where the tmux and shell steps cannot work. */
 const NATIVE_WINDOWS = 'win32';
 
-const findCommand = (name: string) => commandTable.find((command) => command.name === name);
-
-export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): Promise<number> => {
-  if (deps.platform.os === NATIVE_WINDOWS) {
-    const refusal = safetyRefusal(`${program} runs on macOS and Linux`, `Use WSL; ${program} runs there as on Linux.`);
-    await sink.stderr(renderError(refusal.error));
-    return exitCodeOf[refusal.error.kind];
-  }
-
+/** Run one command line. The registry sets the recipes that the commands accept. The package registry is the default. */
+export const runCli = async (
+  argv: readonly string[],
+  deps: Deps,
+  sink: Sink,
+  registry: RecipeRegistry = recipes,
+): Promise<number> => {
+  const table = commandTableFor(registry);
+  const findCommand = (name: string) => table.find((command) => command.name === name);
   const [first, ...rest] = argv;
+  if (deps.platform.os === NATIVE_WINDOWS) {
+    // The remedy names the command that the person typed, when the table holds it. The name comes from the table, not from the line.
+    const typed = (first === undefined ? undefined : findCommand(first)?.name) ?? commands.help;
+    const unsupported = failure(`${program} runs on macOS and Linux`, `Use WSL, then run "${commandText(typed)}" there.`);
+    await sink.stderr(renderError(unsupported.error));
+    return exitCodeOf[unsupported.error.kind];
+  }
 
   if (first === commands.help && rest[0] === helpTopics.words) {
     const parsed = parseFlags(rest.slice(1), globalOptions);
@@ -43,7 +51,7 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
       );
       return exitCodeOf[parsed.error.kind];
     }
-    const output = wordsOutput();
+    const output = await wordsOutput(deps, registry);
     if (parsed.value.bool(flags.json)) {
       await sink.stdout(renderJson(output.json));
     } else {
@@ -61,7 +69,8 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
 
   const command = findCommand(first === flagText(flags.version) ? commands.version : first);
   if (command === undefined) {
-    await sink.stderr(`${renderError({ kind: 'usage', message: `unknown command "${first}"` })}\n${renderHelp()}`);
+    const unknown = renderError({ kind: 'usage', message: `unknown command "${first}"` });
+    await sink.stderr(`${unknown}\n${renderHelp()}`);
     return EXIT_USAGE;
   }
 
@@ -97,5 +106,5 @@ export const runCli = async (argv: readonly string[], deps: Deps, sink: Sink): P
     await sink.stdout(renderText(result.value, style, given.bool(flags.quiet)));
     await sink.stderr(renderWarnings(result.value.warnings));
   }
-  return result.value.failed ? EXIT_FAILURE : EXIT_OK;
+  return result.value.failed ? (result.value.exitCode ?? EXIT_FAILURE) : EXIT_OK;
 };

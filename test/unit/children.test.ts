@@ -40,7 +40,7 @@ describe('probe the children', () => {
     const { transport } = transportOf({ 'file:///c': { kind: 'known', id: 'other', layer: 1, schema: 2 } });
     const [row] = await probeChildren(transport, [{ id: 'c', address: 'file:///c' }]);
     expect(row).toMatchObject({ status: 'unknown', layer: null });
-    expect(row?.reason).toBe('that home holds the id other, not c');
+    expect(row?.reason).toBe('that factory folder holds the id other, not c');
   });
 
   it('keeps the order of the config and pings each child once', async () => {

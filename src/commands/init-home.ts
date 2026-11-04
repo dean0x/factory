@@ -1,15 +1,14 @@
 import { basename, dirname, join, resolve } from 'node:path';
-import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { printable } from '../cli/output.js';
-import type { Deps } from '../core/deps.js';
-import { listRepoChildren, workTreeTop, type SkippedFolder } from '../core/git.js';
-import { findNearestConfig } from '../core/home.js';
-import { isSameOrInside, nearestExisting, realPathOf } from '../core/paths.js';
+import { localFileAccess } from '../config/load.js';
+import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
+import { listRepoChildren, MAX_SCAN_ENTRIES, workTreeTop, type SkippedFolder } from '../core/git.js';
+import { listedRootAbove, readHomeIndex } from '../core/home-index.js';
+import { requireOutsideUserClaudeFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, dirs, files, flags, flagText, program, roles } from '../names.js';
+import { commands, commandText, dirs, files, flags, flagText, places, program, roles } from '../names.js';
 import { isStagingDirName, layoutOf } from '../state/layout.js';
-
-const ACCEPT_ANSWER = /^y(?:es)?$/i;
 
 export interface HomeChoice {
   readonly home: string;
@@ -22,9 +21,29 @@ export interface HomeChoice {
   readonly skipped: readonly SkippedFolder[];
   /** True when a workspace folder holds more entries than the scan reads. */
   readonly truncated: boolean;
+  /** What the home is for `init`. */
+  readonly kind: FolderKind;
 }
 
 const NOT_PROPOSED = { found: [], skipped: [], truncated: false } as const;
+
+/**
+ * What a folder is for `init`. `received`: it holds `factory.yaml` and no local file, so a factory arrived in it. `both`:
+ * it holds both config files, so a factory is there already. `other`: it holds no `factory.yaml`; `checkHomeIsNew` decides
+ * what happens then.
+ */
+export type FolderKind = 'received' | 'both' | 'other';
+
+/** The kind of a folder. A local file counts as present when its path is any kind of entry, a dangling link included. */
+export const folderKindOf = async (deps: Deps, folder: string): Promise<CliResult<FolderKind>> => {
+  const layout = layoutOf(folder);
+  const config = await deps.fs.stat(layout.configFile);
+  if (!config.ok) return config;
+  if (config.value !== 'file') return ok('other');
+  const local = await deps.fs.lstat(layout.localConfigFile);
+  if (!local.ok) return local;
+  return ok(local.value === null ? 'received' : 'both');
+};
 
 const describeSkipped = (skipped: readonly SkippedFolder[]): string =>
   skipped.length === 0
@@ -42,19 +61,19 @@ const confirmProposal = async (
   reason: string,
 ): Promise<CliResult<HomeChoice>> => {
   if (yes) return ok(choice);
-  const about = `${reason}.${describeSkipped(choice.skipped)} The proposed ${roles.node} home is ${choice.home}`;
+  const about = `${reason}.${describeSkipped(choice.skipped)} The proposed ${places.folder} is ${choice.home}`;
   if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
     return usageError(
       about,
-      `Run the command again with ${flagText(flags.yes)} to use it, or with ${flagText(flags.home)} DIR to choose another folder.`,
+      `Run "${commandText(commands.init)}" again with ${flagText(flags.yes)} to use it, or with ${flagText(flags.home)} DIR to choose another folder.`,
     );
   }
-  const answer = await deps.prompt(printable(`${about}\nCreate the ${roles.node} home here? [y/N] `));
+  const answer = await deps.prompt(printable(`${about}\nCreate the ${places.folder} here? [y/N] `));
   if (!answer.ok) return answer;
   if (ACCEPT_ANSWER.test(answer.value.trim())) return ok(choice);
   return usageError(
-    `the ${roles.node} home ${choice.home} was not accepted`,
-    `Pass ${flagText(flags.home)} DIR to choose a folder.`,
+    `the ${places.folder} ${choice.home} was not accepted`,
+    `Run "${commandText(commands.init)}" again with ${flagText(flags.home)} DIR to choose a folder.`,
   );
 };
 
@@ -64,7 +83,7 @@ const proposedName = (folder: string): string | null => {
   return name === '' ? null : `${name}-${program}`;
 };
 
-const nodeExists = (home: string): CliResult<never> =>
+export const nodeExists = (home: string): CliResult<never> =>
   failure(
     `${files.config} already exists in ${home}`,
     `That folder is already a ${roles.node}. Run "${commandText(commands.doctor)}".`,
@@ -76,44 +95,61 @@ export const checkHomeIsNew = async (deps: Deps, home: string): Promise<CliResul
   const configKind = await deps.fs.stat(layout.configFile);
   if (!configKind.ok) return configKind;
   if (configKind.value !== null) return nodeExists(home);
+  // A local file with no shared file next to it is not ours to replace: it can hold values of a person.
+  // The command stops with exit 4 when another account owns it or others can write it, as every command does.
+  const localAccess = await localFileAccess(deps, home);
+  if (!localAccess.ok) return localAccess;
+  if (localAccess.value.kind !== 'absent') {
+    return failure(
+      `${files.localConfig} already exists in ${home}`,
+      `Move it away, or use another folder. Then run "${commandText(commands.init)}" again.`,
+    );
+  }
   const stateKind = await deps.fs.stat(layout.stateDir);
   if (!stateKind.ok) return stateKind;
   if (stateKind.value !== null) {
-    return failure(`${dirs.state} already exists in ${home}`, 'Remove it, or use another folder.');
+    return failure(
+      `${dirs.state} already exists in ${home}`,
+      `Remove it, or use another folder. Then run "${commandText(commands.init)}" again.`,
+    );
   }
   const homeKind = await deps.fs.stat(home);
   if (!homeKind.ok) return homeKind;
-  if (homeKind.value !== null && homeKind.value !== 'dir') return failure(`${home} is not a folder`);
-  return ok(undefined);
-};
-
-/** No folder above the home holds a node config. The home is then outside every other node home. */
-const checkInsideNoNodeHome = async (deps: Deps, home: string): Promise<CliResult<void>> => {
-  const parentConfig = await findNearestConfig(deps, dirname(home));
-  if (!parentConfig.ok) return parentConfig;
-  if (parentConfig.value !== null) {
-    return safetyRefusal(
-      `the ${roles.node} home ${home} is inside another ${roles.node} home: ${parentConfig.value} exists`,
-      `A ${roles.node} home must be outside every other ${roles.node} home. Choose another folder with ${flagText(flags.home)} DIR.`,
+  if (homeKind.value !== null && homeKind.value !== 'dir') {
+    return failure(
+      `${home} is not a folder`,
+      `Run "${commandText(commands.init)}" again with ${flagText(flags.home)} DIR to choose a folder.`,
     );
   }
   return ok(undefined);
 };
 
 /**
- * The folder is no node home, and no folder above it is one. A folder that is one gets the error of a home that exists
- * (exit 1). A folder inside one gets the safety refusal (exit 4).
+ * The new root is not inside a root that the factory list holds (exit 1). A root can sit beside another root, and a
+ * root that is listed already can be made again. An unreadable list stops the command before it writes anything.
  */
-const checkNoNodeAround = async (deps: Deps, folder: string): Promise<CliResult<void>> => {
-  const own = await checkHomeIsNew(deps, folder);
-  if (!own.ok) return own;
-  return checkInsideNoNodeHome(deps, folder);
+export const checkHomeOutsideRoots = async (deps: Deps, indexPath: string, home: string): Promise<CliResult<void>> => {
+  const entries = await readHomeIndex(deps, indexPath);
+  if (!entries.ok) {
+    return failure(
+      `the ${places.list} ${indexPath} cannot be read: ${entries.error}`,
+      `Fix or remove that file, then run "${commandText(commands.init)}" again.`,
+    );
+  }
+  const around = await listedRootAbove(deps, entries.value, home);
+  if (!around.ok) return around;
+  if (around.value === null) return ok(undefined);
+  return failure(
+    `the ${places.folder} ${home} is inside the ${places.folder} ${around.value}`,
+    `A ${places.folder} must be outside every other ${places.folder}. Run "${commandText(commands.init)}" again with ${flagText(flags.home)} DIR to choose another folder.`,
+  );
 };
 
 /**
- * Choose the node home. The home flag wins. Else, in a git work tree, the proposal is a folder beside the work tree.
- * Else, in a folder that is a node home, the command stops: that node exists. Else, in a folder inside a node home, the
- * command stops with the safety refusal. Else, in a folder that holds git repos one level down, the proposal is a
+ * Choose the node home. The home flag wins. Else, in a git work tree, the proposal is a folder beside the work tree;
+ * a work tree whose top holds `factory.yaml` is a factory that is there already, and the top is the home. The kind says
+ * which: `received` with no local file, `both` with a local file. Else, in a folder that holds `factory.yaml`, that
+ * folder is the home, with the same two kinds. Else, in a folder that holds git repos one level down, the proposal is a
  * folder inside it, and each repo is a project.
  * A person confirms the proposal on a terminal, or the yes flag confirms it. Else the home is the current folder.
  */
@@ -121,96 +157,70 @@ export const chooseHome = async (
   deps: Deps,
   options: { readonly home: string | undefined; readonly yes: boolean },
 ): Promise<CliResult<HomeChoice>> => {
-  if (options.home !== undefined) return ok({ home: resolve(deps.cwd, options.home), ...NOT_PROPOSED });
+  // The check comes before any call on a folder. With no home flag, the command asks about the current folder and the
+  // folders around it, so the current folder is the one to check.
+  const named = options.home === undefined ? undefined : resolve(deps.cwd, options.home);
+  const outside = requireOutsideUserClaudeFolder(deps, named ?? resolve(deps.cwd), commands.init);
+  if (!outside.ok) return outside;
+  if (named !== undefined) {
+    const kind = await folderKindOf(deps, named);
+    return kind.ok ? ok({ home: named, ...NOT_PROPOSED, kind: kind.value }) : kind;
+  }
   const refuse = (folder: string): CliResult<never> =>
-    usageError(`cannot make a ${roles.node} home name from the folder ${folder}`, `Pass ${flagText(flags.home)} DIR.`);
+    usageError(
+      `cannot make a name for the ${places.folder} from the folder ${folder}`,
+      `Run "${commandText(commands.init)}" again with ${flagText(flags.home)} DIR.`,
+    );
 
   const top = await workTreeTop(deps, deps.cwd);
   if (top !== null) {
+    const kind = await folderKindOf(deps, top);
+    if (!kind.ok) return kind;
+    if (kind.value !== 'other') return ok({ home: top, ...NOT_PROPOSED, kind: kind.value });
+    const known = await checkHomeIsNew(deps, top);
+    if (!known.ok) return known;
     const name = proposedName(top);
     if (name === null) return refuse(top);
-    const choice = { home: join(dirname(top), name), found: [top], skipped: [], truncated: false };
+    const choice = { home: join(dirname(top), name), found: [top], skipped: [], truncated: false, kind: 'other' as const };
     return confirmProposal(deps, options.yes, choice, `this folder is in the git work tree ${top}`);
   }
 
   const folder = resolve(deps.cwd);
-  const around = await checkNoNodeAround(deps, folder);
-  if (!around.ok) return around;
+  const folderKind = await folderKindOf(deps, folder);
+  if (!folderKind.ok) return folderKind;
+  if (folderKind.value !== 'other') return ok({ home: folder, ...NOT_PROPOSED, kind: folderKind.value });
+  const own = await checkHomeIsNew(deps, folder);
+  if (!own.ok) return own;
   const scan = await listRepoChildren(deps, folder);
   if (!scan.ok) return scan;
-  if (scan.value.repos.length === 0) return ok({ home: folder, ...NOT_PROPOSED });
+  if (scan.value.repos.length === 0) return ok({ home: folder, ...NOT_PROPOSED, kind: 'other' });
   const name = proposedName(folder);
   if (name === null) return refuse(folder);
   const { repos, skipped, truncated } = scan.value;
-  const choice = { home: join(folder, name), found: repos, skipped, truncated };
+  const choice = { home: join(folder, name), found: repos, skipped, truncated, kind: 'other' as const };
   const names = repos.map((repo) => basename(repo)).join(', ');
   return confirmProposal(deps, options.yes, choice, `this folder holds the git repos ${names}`);
 };
 
 /**
- * The home holds no git repo one level down. The state folder of a node is a repo, so it does not count.
- * This covers a home that is a workspace folder, also when no project is declared.
+ * The temp folders in the home that a stopped `init` left: the staging folders of the state repo. The list is empty when
+ * the home does not exist. It names all staging folders of the home, up to `MAX_SCAN_ENTRIES` of them. Nothing is removed.
  */
-export const checkHomeHoldsNoRepo = async (deps: Deps, home: string): Promise<CliResult<void>> => {
+export const leftoverTempFolders = async (deps: Deps, home: string): Promise<CliResult<readonly string[]>> => {
   const kind = await deps.fs.stat(home);
   if (!kind.ok) return kind;
-  if (kind.value !== 'dir') return ok(undefined);
-  const scan = await listRepoChildren(deps, home);
-  if (!scan.ok) return scan;
-  const found = [...scan.value.repos, ...scan.value.skipped.map((folder) => folder.path)].filter(
-    (path) => basename(path) !== dirs.state,
-  );
-  const repo = found.find((path) => !isStagingDirName(basename(path)));
-  if (repo === undefined) {
-    const staging = found[0];
-    if (staging === undefined) return ok(undefined);
-    return safetyRefusal(
-      `the ${roles.node} home ${home} holds the staging folder ${staging}, left by a stopped ${commands.init}. ` +
-        'You can remove it by hand.',
-    );
-  }
-  return safetyRefusal(
-    `the ${roles.node} home ${home} holds the git repo ${basename(repo)} one level down`,
-    `A ${roles.node} home must hold no git repo. Choose another folder with ${flagText(flags.home)} DIR.`,
+  if (kind.value !== 'dir') return ok([]);
+  const names = await deps.fs.list(home);
+  if (!names.ok) return names;
+  return ok(
+    names.value
+      .filter(isStagingDirName)
+      .slice(0, MAX_SCAN_ENTRIES)
+      .map((name) => join(home, name)),
   );
 };
 
-/**
- * The home is outside every git work tree, and outside every other node home.
- * The check starts at the nearest folder of the home that exists.
- */
-export const checkHomeLocation = async (deps: Deps, home: string): Promise<CliResult<void>> => {
-  const nearest = await nearestExisting(deps, home);
-  if (!nearest.ok) return nearest;
-  const top = await workTreeTop(deps, nearest.value.dir);
-  if (top !== null) {
-    return safetyRefusal(
-      `the ${roles.node} home ${home} is inside the git work tree ${top}`,
-      `A ${roles.node} home must be outside every git work tree. Choose another folder with ${flagText(flags.home)} DIR.`,
-    );
-  }
-
-  return checkInsideNoNodeHome(deps, home);
-};
-
-/** The home is not a project folder, and no project is inside it. The paths are compared after their links are resolved. */
-export const checkHomeApart = async (
-  deps: Deps,
-  home: string,
-  projects: readonly string[],
-): Promise<CliResult<void>> => {
-  const realHome = await realPathOf(deps, home);
-  if (!realHome.ok) return realHome;
-  for (const project of projects) {
-    const realProject = await realPathOf(deps, project);
-    if (!realProject.ok) return realProject;
-    if (isSameOrInside(realHome.value, realProject.value)) {
-      return safetyRefusal(
-        `the ${roles.node} home ${home} is the project folder ${project}, or holds it`,
-        `A ${roles.node} home must be apart from its projects: no project is the home, and no project is inside it. ` +
-          `Choose another folder with ${flagText(flags.home)} DIR.`,
-      );
-    }
-  }
-  return ok(undefined);
-};
+/** The warning for a temp folder that a stopped `init` left. The remedy is to remove it by hand. */
+export const tempFolderWarning = (folder: string): string =>
+  `The ${places.folder} holds the temp folder ${folder}, left by a stopped ${commands.init}. ` +
+  `Remove ${folder} by hand when no ${commands.init} runs.`;

@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { chmod, lstat, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
@@ -147,6 +148,22 @@ describe('node deps: the terminal', () => {
       if (!result.ok) expect(result.error.message).toBe('no answer was given');
     });
   });
+
+  describe('warn', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('writes one warning line to stderr at once, with a control character in the text made visible', () => {
+      let written = '';
+      vi.spyOn(process.stderr, 'write').mockImplementation((chunk: string | Uint8Array) => {
+        written += String(chunk);
+        return true;
+      });
+      createNodeDeps().warn('a file named\u001b[31m in /x');
+      expect(written).toBe('warning: a file named?[31m in /x\n');
+    });
+  });
 });
 
 describe('node deps: realpath', () => {
@@ -208,6 +225,68 @@ describe('node deps: fs', () => {
 
     it('returns an error with the code for a missing file', async () => {
       const result = await deps.fs.readTextLimited(fresh('limit-missing.txt'), 5);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOENT');
+    });
+  });
+
+  describe('a digest of the bytes of a file (TP-171)', () => {
+    const sha256Of = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
+    const BOUND = 1_000_000;
+
+    it('gives the size and the SHA-256 of the bytes, and the text of a file within the text limit', async () => {
+      const file = fresh('digest-small.txt');
+      await writeFile(file, 'abc\n', 'utf8');
+      expect(await deps.fs.digestFile(file, 100, BOUND)).toEqual({ ok: true, value: { size: 4, sha256: sha256Of('abc\n'), text: 'abc\n' } });
+    });
+
+    it('gives the text of a file that is exactly as large as the limit, and none for one byte more', async () => {
+      const file = fresh('digest-edge.txt');
+      await writeFile(file, 'abcde', 'utf8');
+      expect(await deps.fs.digestFile(file, 5, BOUND)).toMatchObject({ ok: true, value: { size: 5, text: 'abcde' } });
+      expect(await deps.fs.digestFile(file, 4, BOUND)).toEqual({ ok: true, value: { size: 5, sha256: sha256Of('abcde'), text: null } });
+    });
+
+    it('hashes all bytes of a file over the text limit, also over many chunks', async () => {
+      const file = fresh('digest-big.bin');
+      const bytes = Buffer.alloc(300_000, 7);
+      await writeFile(file, bytes);
+      expect(await deps.fs.digestFile(file, 10, BOUND)).toEqual({ ok: true, value: { size: 300_000, sha256: sha256Of(bytes), text: null } });
+    });
+
+    it('hashes the bytes and not the text: bytes that are not valid text still give their own hash', async () => {
+      const file = fresh('digest-binary.bin');
+      const bytes = Buffer.from([0xff, 0xfe, 0x00, 0x80]);
+      await writeFile(file, bytes);
+      expect(await deps.fs.digestFile(file, 100, BOUND)).toMatchObject({ ok: true, value: { size: 4, sha256: sha256Of(bytes) } });
+    });
+
+    it('hashes a file with no byte', async () => {
+      const file = fresh('digest-empty.txt');
+      await writeFile(file, '');
+      expect(await deps.fs.digestFile(file, 5, BOUND)).toEqual({ ok: true, value: { size: 0, sha256: sha256Of(''), text: '' } });
+    });
+
+    it('hashes a file that is exactly as large as the byte bound', async () => {
+      const file = fresh('digest-bound-exact.txt');
+      await writeFile(file, 'abcde', 'utf8');
+      expect(await deps.fs.digestFile(file, 100, 5)).toEqual({ ok: true, value: { size: 5, sha256: sha256Of('abcde'), text: 'abcde' } });
+    });
+
+    it('gives no digest for a file that is one byte over the byte bound', async () => {
+      const file = fresh('digest-bound-over.txt');
+      await writeFile(file, 'abcdef', 'utf8');
+      expect(await deps.fs.digestFile(file, 100, 5)).toEqual({ ok: true, value: null });
+    });
+
+    it('gives no digest for a file over the byte bound that has many chunks', async () => {
+      const file = fresh('digest-bound-big.bin');
+      await writeFile(file, Buffer.alloc(300_000, 7));
+      expect(await deps.fs.digestFile(file, 10, 100)).toEqual({ ok: true, value: null });
+    });
+
+    it('returns an error with the code for a missing file', async () => {
+      const result = await deps.fs.digestFile(fresh('digest-missing.txt'), 5, BOUND);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.message).toContain('ENOENT');
     });
@@ -310,6 +389,45 @@ describe('node deps: fs', () => {
   });
 });
 
+describe('node deps: lstat', () => {
+  it('tells the kind of a file, of a folder and of a path that does not exist', async () => {
+    const file = fresh('lstat-file.txt');
+    await writeFile(file, 'x', 'utf8');
+    expect(await deps.fs.lstat(file)).toEqual({ ok: true, value: 'file' });
+    expect(await deps.fs.lstat(dir)).toEqual({ ok: true, value: 'dir' });
+    expect(await deps.fs.lstat(fresh('lstat-none'))).toEqual({ ok: true, value: null });
+  });
+
+  it('tells a link to a file, a link to a folder and a link with no target as link, and follows none of them', async () => {
+    const target = fresh('lstat-target.txt');
+    await writeFile(target, 'x', 'utf8');
+    const toFile = fresh('lstat-to-file');
+    const toFolder = fresh('lstat-to-folder');
+    const dangling = fresh('lstat-dangling');
+    await symlink(target, toFile);
+    await symlink(dir, toFolder);
+    await symlink(join(dir, 'lstat-no-target'), dangling);
+    for (const link of [toFile, toFolder, dangling]) {
+      expect(await deps.fs.lstat(link)).toEqual({ ok: true, value: 'link' });
+    }
+  });
+
+  it('follows a link in a folder above the path', async () => {
+    const real = fresh('lstat-real');
+    await mkdir(real);
+    await writeFile(join(real, 'inner.txt'), 'x', 'utf8');
+    const via = fresh('lstat-via');
+    await symlink(real, via);
+    expect(await deps.fs.lstat(join(via, 'inner.txt'))).toEqual({ ok: true, value: 'file' });
+  });
+
+  it('gives null when a file stands where a folder should be', async () => {
+    const file = fresh('lstat-not-a-folder.txt');
+    await writeFile(file, 'x', 'utf8');
+    expect(await deps.fs.lstat(join(file, 'below'))).toEqual({ ok: true, value: null });
+  });
+});
+
 describe('node deps: owner and mode', () => {
   it('tells the kind, the owner and the permission bits of a file and of a folder', async () => {
     const file = fresh('info.txt');
@@ -318,10 +436,16 @@ describe('node deps: owner and mode', () => {
     const uid = process.getuid?.() ?? null;
     expect(await deps.fs.statInfo(file)).toEqual({
       ok: true,
-      value: { kind: 'file', uid, mode: 0o640, mtimeMs: (await stat(file)).mtimeMs },
+      value: { kind: 'file', uid, mode: 0o640, mtimeMs: (await stat(file)).mtimeMs, size: 1 },
     });
     await chmod(dir, 0o700);
     expect(await deps.fs.statInfo(dir)).toMatchObject({ ok: true, value: { kind: 'dir', uid, mode: 0o700 } });
+  });
+
+  it('tells the size of a file in bytes', async () => {
+    const file = fresh('size.txt');
+    await writeFile(file, 'abcé', 'utf8');
+    expect(await deps.fs.statInfo(file)).toMatchObject({ ok: true, value: { size: 5 } });
   });
 
   it('tells the time of the last change of a file', async () => {
@@ -405,7 +529,7 @@ describe('node deps: atomic write', () => {
     await deps.fs.mkdir(folder);
     const file = join(folder, 'CLAUDE.md');
     await writeFile(file, 'old text', 'utf8');
-    expect((await deps.fs.writeTextAtomic(file, 'new text')).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(file, 'new text', folder)).ok).toBe(true);
     expect(await readFile(file, 'utf8')).toBe('new text');
     expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['CLAUDE.md'] });
   });
@@ -414,7 +538,7 @@ describe('node deps: atomic write', () => {
     const folder = fresh('create');
     await deps.fs.mkdir(folder);
     const file = join(folder, 'factory.yaml');
-    expect((await deps.fs.writeTextAtomic(file, 'schema: 1\n')).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(file, 'schema: 1\n', folder)).ok).toBe(true);
     expect(await readFile(file, 'utf8')).toBe('schema: 1\n');
   });
 
@@ -424,7 +548,7 @@ describe('node deps: atomic write', () => {
     const file = join(folder, 'CLAUDE.md');
     await writeFile(file, 'old text', 'utf8');
     await chmod(file, 0o600);
-    expect((await deps.fs.writeTextAtomic(file, 'new text')).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(file, 'new text', folder)).ok).toBe(true);
     expect((await stat(file)).mode & 0o777).toBe(0o600);
   });
 
@@ -432,13 +556,13 @@ describe('node deps: atomic write', () => {
     const folder = fresh('given-mode');
     await deps.fs.mkdir(folder);
     const created = join(folder, 'new.json');
-    expect((await deps.fs.writeTextAtomic(created, '{}', 0o600)).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(created, '{}', folder, 0o600)).ok).toBe(true);
     expect((await stat(created)).mode & 0o777).toBe(0o600);
 
     const old = join(folder, 'old.json');
     await writeFile(old, '{}', 'utf8');
     await chmod(old, 0o644);
-    expect((await deps.fs.writeTextAtomic(old, '{"a":1}', 0o600)).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(old, '{"a":1}', folder, 0o600)).ok).toBe(true);
     expect((await stat(old)).mode & 0o777).toBe(0o600);
   });
 
@@ -448,22 +572,73 @@ describe('node deps: atomic write', () => {
     expect((await stat(folder)).mode & 0o777).toBe(0o700);
   });
 
-  it('writes through a link and keeps the link', async () => {
+  it('refuses a link at the target, also a link to a file in the folder, and changes nothing', async () => {
     const folder = fresh('link');
     await deps.fs.mkdir(folder);
     const target = join(folder, 'real.md');
     const link = join(folder, 'CLAUDE.md');
     await writeFile(target, 'old text', 'utf8');
     await symlink(target, link);
-    expect((await deps.fs.writeTextAtomic(link, 'new text')).ok).toBe(true);
-    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    const result = await deps.fs.writeTextAtomic(link, 'new text', folder);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('is a link');
     expect(await readlink(link)).toBe(target);
-    expect(await readFile(target, 'utf8')).toBe('new text');
+    expect(await readFile(target, 'utf8')).toBe('old text');
+    expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['CLAUDE.md', 'real.md'] });
+  });
+
+  it('refuses a link at the target when the target of the link does not exist, and makes no file there', async () => {
+    const folder = fresh('dangling');
+    const outside = fresh('dangling-outside');
+    await deps.fs.mkdir(folder);
+    await deps.fs.mkdir(outside);
+    const missing = join(outside, 'made-by-the-write.md');
+    const link = join(folder, 'CLAUDE.md');
+    await symlink(missing, link);
+    const result = await deps.fs.writeTextAtomic(link, 'new text', folder);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('is a link');
+    expect(await deps.fs.list(outside)).toEqual({ ok: true, value: [] });
+    expect(await readlink(link)).toBe(missing);
+  });
+
+  it('refuses a path that resolves outside the folder because a part of the path is a link', async () => {
+    const folder = fresh('through-link');
+    const outside = fresh('through-link-outside');
+    await deps.fs.mkdir(folder);
+    await deps.fs.mkdir(outside);
+    await symlink(outside, join(folder, 'inner'));
+    const result = await deps.fs.writeTextAtomic(join(folder, 'inner', 'x.md'), 'new text', folder);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('is outside');
+    expect(await deps.fs.list(outside)).toEqual({ ok: true, value: [] });
+  });
+
+  it('refuses a path that leaves the folder by a parent part, and a folder next to it with a longer name', async () => {
+    const folder = fresh('leaves');
+    const sibling = `${folder}-more`;
+    await deps.fs.mkdir(join(folder, 'inner'));
+    await deps.fs.mkdir(sibling);
+    const up = await deps.fs.writeTextAtomic(`${folder}/inner/../../${basename(sibling)}/x.md`, 'new text', folder);
+    expect(up.ok).toBe(false);
+    const next = await deps.fs.writeTextAtomic(join(sibling, 'x.md'), 'new text', folder);
+    expect(next.ok).toBe(false);
+    expect(await deps.fs.list(sibling)).toEqual({ ok: true, value: [] });
+  });
+
+  it('writes in a folder below the folder that the caller names, also when the caller names a link to the folder', async () => {
+    const real = fresh('real-folder');
+    const named = fresh('named-link');
+    await deps.fs.mkdir(join(real, 'inner'));
+    await symlink(real, named);
+    const file = join(named, 'inner', 'x.md');
+    expect((await deps.fs.writeTextAtomic(file, 'new text', named)).ok).toBe(true);
+    expect(await readFile(join(real, 'inner', 'x.md'), 'utf8')).toBe('new text');
   });
 
   it('fails and leaves no temporary file when the folder does not exist', async () => {
     const folder = fresh('missing');
-    const result = await deps.fs.writeTextAtomic(join(folder, 'CLAUDE.md'), 'text');
+    const result = await deps.fs.writeTextAtomic(join(folder, 'CLAUDE.md'), 'text', folder);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('ENOENT');
     expect(await deps.fs.stat(folder)).toEqual({ ok: true, value: null });
@@ -476,7 +651,7 @@ describe('node deps: atomic write', () => {
     const target = join(folder, 'homes.json');
     await writeFile(victim, 'victim text', 'utf8');
     await symlink(victim, `${target}.tmp-${process.pid}`);
-    expect((await deps.fs.writeTextAtomic(target, 'new text', 0o600)).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(target, 'new text', folder, 0o600)).ok).toBe(true);
     expect(await readFile(victim, 'utf8')).toBe('victim text');
     expect(await readFile(target, 'utf8')).toBe('new text');
     expect(await readlink(`${target}.tmp-${process.pid}`)).toBe(victim);
@@ -488,7 +663,7 @@ describe('node deps: atomic write', () => {
     const target = join(folder, 'homes.json');
     const planted = `${target}.tmp-${process.pid}`;
     await writeFile(planted, 'planted text', 'utf8');
-    expect((await deps.fs.writeTextAtomic(target, 'new text', 0o600)).ok).toBe(true);
+    expect((await deps.fs.writeTextAtomic(target, 'new text', folder, 0o600)).ok).toBe(true);
     expect(await readFile(planted, 'utf8')).toBe('planted text');
     expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['homes.json', `homes.json.tmp-${process.pid}`] });
   });
@@ -497,7 +672,7 @@ describe('node deps: atomic write', () => {
     const folder = fresh('blocked');
     const target = join(folder, 'CLAUDE.md');
     await deps.fs.mkdir(target);
-    const result = await deps.fs.writeTextAtomic(target, 'text');
+    const result = await deps.fs.writeTextAtomic(target, 'text', folder);
     expect(result.ok).toBe(false);
     expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['CLAUDE.md'] });
   });

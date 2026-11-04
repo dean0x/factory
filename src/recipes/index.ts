@@ -1,16 +1,10 @@
-import type { z } from 'zod';
-import { values } from '../names.js';
-import { softwareRecipeSchema, type SoftwareRecipe } from './software/config.js';
+import type { RecipeRegistry } from './entry.js';
+import { softwareRecipe } from './software/entry.js';
 
-export type RecipeId = (typeof values.recipes)[number];
-
-/** The parsed `recipe` block. It becomes a union of the recipe types when the package holds more than one recipe. */
-export type RecipeConfig = SoftwareRecipe;
+export * from './entry.js';
 
 /**
- * Every recipe of the package, by id. The core reads only the id of the `recipe` block,
- * checks it against this registry, and gives the whole block to the parser of that recipe.
+ * Every recipe of the package. The core reads only the id of the `recipe` block, checks it against the registry
+ * that a command gets as a parameter, and gives the whole block to the parser of that recipe.
  */
-export const recipeSchemas: Readonly<Record<RecipeId, z.ZodType<RecipeConfig>>> = {
-  [values.recipes[0]]: softwareRecipeSchema,
-};
+export const recipes: RecipeRegistry = [softwareRecipe];

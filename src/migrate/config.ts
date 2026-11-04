@@ -1,10 +1,9 @@
 import { Document, isMap, isScalar, isSeq, Scalar, type Pair, type YAMLMap, type YAMLSeq } from 'yaml';
 import { failure, type CliResult } from '../cli/errors.js';
 import { checkFileAddress } from '../comms/address.js';
-import { configDocumentText, parseConfigDocument } from '../config/edit.js';
 import { isSlug } from '../config/primitives.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, keys, nodeCommands, roles, schema1, values } from '../names.js';
+import { commands, commandText, flags, flagText, keys, nodeCommands, roles, schema1, values } from '../names.js';
 import type { Migration } from './runner.js';
 
 const FROM = 1;
@@ -15,7 +14,7 @@ const COORDINATOR_LAYER = 1;
 
 /** The keys that schema 2 adds. A document of schema 1 does not hold them. */
 const ADDED_KEYS: readonly string[] = [
-  keys.root.cells,
+  keys.root.workers,
   keys.root.tracker,
   keys.root.approval,
   keys.root.recipe,
@@ -65,29 +64,28 @@ const migrateNode = (root: YAMLMap): CliResult<void> => {
   return ok(undefined);
 };
 
-/** A project keeps a variant of its own only when its pack differs from the variant of the recipe. */
-const migrateProject = (project: unknown): void => {
-  if (!isMap(project)) return;
-  const pack = pairOf(project, schema1.keys.pack);
-  if (pack === undefined) return;
-  if (isScalar(pack.value) && pack.value.value === values.variants[0]) {
-    project.delete(schema1.keys.pack);
-  } else {
-    rename(pack, keys.project.variant);
-  }
-};
+/**
+ * Decision D-3 B: a project of the older layout sits outside the new folder and has no clone URL. So a node that lists
+ * one is not upgraded. The message never repeats a path or an id of a project.
+ */
+const refuseProjects = (): CliResult<never> =>
+  failure(
+    `${schema1.keys.projects}: this ${roles.node} lists a project. A project of the older layout sits outside the new ` +
+      'folder and has no clone URL, so the upgrade stops and changes no file. ' +
+      `To go on, make the ${roles.node} again with "${commandText(commands.init)}", ` +
+      `and give each repo with ${flagText(flags.project)}.`,
+  );
 
-/** The projects of the recipe, or undefined when the document has none. */
-const migrateProjects = (root: YAMLMap): CliResult<YAMLSeq | undefined> => {
+/** The list of projects, or undefined when the document has none. A node that lists a project is refused. */
+const checkProjects = (root: YAMLMap): CliResult<YAMLSeq | undefined> => {
   const projects = root.get(schema1.keys.projects, true);
   if (projects === undefined) return ok(undefined);
   if (!isSeq(projects)) return failure(`${schema1.keys.projects} must be a list`);
-  projects.items.forEach(migrateProject);
-  return ok(projects);
+  return projects.items.length === 0 ? ok(projects) : refuseProjects();
 };
 
 /**
- * The children of a node on layer 1 are cells, and a cell is not a node link. So the list must be empty.
+ * The children of a node on layer 1 are workers, and a worker is not a node link. So the list must be empty.
  * F-13: the address of a child must be a file address. The error names the child and never repeats the address.
  */
 const checkChildren = (root: YAMLMap): CliResult<void> => {
@@ -107,8 +105,8 @@ const checkChildren = (root: YAMLMap): CliResult<void> => {
   }
   if (children.items.length === 0) return ok(undefined);
   return failure(
-    `${keys.root.children}: a ${roles.node} on layer ${COORDINATOR_LAYER} has ${roles.cell}s as its children, ` +
-      `so this list must be empty. Remove the entries and run the command again. ` +
+    `${keys.root.children}: a ${roles.node} on layer ${COORDINATOR_LAYER} has ${roles.worker}s as its children, ` +
+      `so this list must be empty. Remove the entries and run "${commandText(commands.upgrade)}" again. ` +
       `To manage other ${roles.node}s, set ${keys.root.node}.${keys.node.layer} to 2 after the upgrade, ` +
       `and add them with "${commandText(commands.node)} ${nodeCommands.addChild}".`,
   );
@@ -124,21 +122,20 @@ const migrateDocument = (doc: Document): CliResult<void> => {
   if (!node.ok) return node;
   const children = checkChildren(root);
   if (!children.ok) return children;
-  const projects = migrateProjects(root);
+  const projects = checkProjects(root);
   if (!projects.ok) return projects;
 
   root.set(keys.root.schema, TO);
   const lanes = pairOf(root, schema1.keys.lanes);
-  if (lanes !== undefined) rename(lanes, keys.root.cells);
+  if (lanes !== undefined) rename(lanes, keys.root.workers);
   addSection(doc, root, keys.root.tracker, { [keys.tracker.kind]: values.trackerLocal });
-  addSection(doc, root, keys.root.approval, { [keys.approval.land]: values.landModes[0] });
 
-  // The projects stay where they are: their key becomes `recipe`, and they move under it.
+  // The empty list of projects stays where it is: its key becomes `recipe`, and the list moves under it.
   const projectsPair = pairOf(root, schema1.keys.projects);
   const recipe = doc.createNode({
     [keys.recipe.id]: values.recipes[0],
     [keys.recipe.variant]: values.variants[0],
-    ...(projectsPair === undefined ? {} : { [keys.recipe.projects]: projectsPair.value }),
+    [keys.recipe.projects]: projectsPair === undefined ? [] : projectsPair.value,
   });
   if (projectsPair === undefined) {
     addSection(doc, root, keys.root.recipe, recipe);
@@ -150,6 +147,10 @@ const migrateDocument = (doc: Document): CliResult<void> => {
   return ok(undefined);
 };
 
+/**
+ * A pure step on one value. The value holds the keys of both files: the upgrade splits it into the shared file and the
+ * local file, so this step does not edit the text of the owner.
+ */
 const configSchema1To2: Migration = {
   from: FROM,
   to: TO,
@@ -157,12 +158,6 @@ const configSchema1To2: Migration = {
     const doc = new Document(raw);
     const migrated = migrateDocument(doc);
     return migrated.ok ? ok(doc.toJS()) : migrated;
-  },
-  applyText: (text) => {
-    const parsed = parseConfigDocument(text);
-    if (!parsed.ok) return failure(parsed.error);
-    const migrated = migrateDocument(parsed.value);
-    return migrated.ok ? ok(configDocumentText(parsed.value)) : migrated;
   },
 };
 

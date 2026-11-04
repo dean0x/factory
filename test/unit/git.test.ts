@@ -5,13 +5,19 @@ import {
   commitPaths,
   gitClone,
   headOf,
+  ignoredPathsOf,
+  initRootRepo,
   listRepoChildren,
+  MAX_IGNORE_PATHS,
   MAX_SCAN_ENTRIES,
+  requireWorkTreeTop,
   statusOf,
+  trackedFilesOf,
   unstagePaths,
   withoutUserinfo,
 } from '../../src/core/git.js';
-import { createFakeDeps, exited, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import { trackedFiles } from '../../src/names.js';
+import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type FakeRepo, type GitFixture } from '../helpers/git-fake.js';
 
 const WS = '/ws';
@@ -20,10 +26,21 @@ const WS = '/ws';
 const workspace = (
   repos: Readonly<Record<string, FakeRepo>>,
   plain: readonly string[] = [],
-  extra: { readonly links?: Record<string, string>; readonly fixture?: GitFixture } = {},
+  extra: {
+    readonly links?: Record<string, string>;
+    readonly fixture?: GitFixture;
+    readonly env?: Record<string, string | undefined>;
+    readonly os?: string;
+  } = {},
 ): { deps: FakeDeps; log: ReturnType<typeof gitHandler>['log'] } => {
   const { handler, log } = gitHandler({ repos, ...extra.fixture });
-  const deps = createFakeDeps({ cwd: WS, run: handler, ...(extra.links === undefined ? {} : { links: extra.links }) });
+  const deps = createFakeDeps({
+    cwd: WS,
+    run: handler,
+    ...(extra.links === undefined ? {} : { links: extra.links }),
+    ...(extra.env === undefined ? {} : { env: extra.env }),
+    ...(extra.os === undefined ? {} : { os: extra.os }),
+  });
   for (const path of Object.keys(repos)) deps.seedDir(`${path}/.git`);
   for (const path of plain) deps.seedDir(path);
   return { deps, log };
@@ -52,7 +69,7 @@ describe('git: the repos one level down', () => {
     const { deps } = workspace({ '/ws/web': {}, '/ws/web-search': { commonDir: '/ws/web/.git' } });
     expect(await scanned(deps)).toEqual({
       repos: ['/ws/web'],
-      skipped: [{ path: '/ws/web-search', reason: 'it is one more checkout of the repo web' }],
+      skipped: [{ path: '/ws/web-search', reason: 'it is one more work tree of the repo web' }],
       truncated: false,
     });
   });
@@ -94,6 +111,43 @@ describe('git: the repos one level down', () => {
     const result = await listRepoChildren(deps, '/ws/none');
     expect(result.ok).toBe(false);
   });
+
+  describe('when the folder is the user home and holds the settings folder of Claude Code', () => {
+    const USER = '/users/me';
+    const CLAUDE = `${USER}/.claude`;
+    const underClaude = (path: string): boolean => {
+      const lower = path.toLowerCase();
+      return lower === CLAUDE || lower.startsWith(`${CLAUDE}/`);
+    };
+
+    /** Scan the user home, which holds one repo and a settings folder that has a .git entry, with every file call noted. */
+    const scanUser = async (settings: string, extra: { readonly env?: Record<string, string | undefined>; readonly os?: string }) => {
+      const { deps, log } = workspace({ [`${USER}/web`]: {}, [`${USER}/${settings}`]: {} }, [], extra);
+      const seen: string[] = [];
+      const result = await listRepoChildren(withFsWatch(deps, (_method, path) => seen.push(path)), USER);
+      if (!result.ok) throw new Error(result.error.message);
+      return { repos: result.value.repos, seen, probed: new Set(log.calls.map((call) => call.args[1])) };
+    };
+
+    it('lists the other repo, and makes no file call and no git call at or under that folder', async () => {
+      const scan = await scanUser('.claude', { env: { HOME: USER } });
+      expect(scan.repos).toEqual([`${USER}/web`]);
+      expect(scan.seen.filter(underClaude)).toEqual([]);
+      expect(scan.probed).toEqual(new Set([`${USER}/web`]));
+    });
+
+    it('ignores the case of letters on macOS only', async () => {
+      const mac = await scanUser('.CLAUDE', { env: { HOME: USER }, os: 'darwin' });
+      expect(mac.repos).toEqual([`${USER}/web`]);
+      expect(mac.seen.filter(underClaude)).toEqual([]);
+      const linux = await scanUser('.CLAUDE', { env: { HOME: USER }, os: 'linux' });
+      expect(linux.repos).toEqual([`${USER}/.CLAUDE`, `${USER}/web`]);
+    });
+
+    it('lists it when the variable of the user home is not set', async () => {
+      expect((await scanUser('.claude', { env: {} })).repos).toEqual([`${USER}/.claude`, `${USER}/web`]);
+    });
+  });
 });
 
 describe('git: clone', () => {
@@ -109,6 +163,20 @@ describe('git: clone', () => {
     expect(result.ok).toBe(true);
     expect(log.clones()).toEqual([['clone', '--', 'https://host/acme/api.git', '/w/api']]);
     expect(deps.calls[0]?.timeoutMs).toBe(300_000);
+  });
+
+  it('passes no option of git before the double hyphen, and never a submodule option', async () => {
+    const { log } = await clone();
+    const [args] = log.clones();
+    expect(args?.slice(0, 2)).toEqual(['clone', '--']);
+    expect(args?.filter((argument) => /submodule|recurse|recursive/i.test(argument))).toEqual([]);
+    expect(args).toHaveLength(4);
+  });
+
+  it('runs git with no shell: the program is git and the URL is one argument', async () => {
+    const { deps } = await clone();
+    expect(deps.calls.map((call) => call.command)).toEqual(['git']);
+    expect(deps.calls[0]?.args).toContain('https://host/acme/api.git');
   });
 
   it('fails with the exit code and the last line of the git message', async () => {
@@ -145,6 +213,7 @@ describe('git: clone', () => {
       expect(result.error.message).toContain('took longer than 300 seconds');
       expect(result.error.hint).toContain('ssh agent');
       expect(result.error.hint).toContain('gh auth login');
+      expect(result.error.hint).toContain('then run "factory init" again.');
       expect(JSON.stringify(result.error)).not.toContain('SIGTERM');
       expect(JSON.stringify(result.error)).not.toContain('tok3n');
     }
@@ -167,6 +236,68 @@ describe('git: the commit of a new state repo', () => {
       'add -A',
       '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: first',
     ]);
+  });
+});
+
+describe('git: the repo of the root', () => {
+  const ROOT = '/w/node';
+  const input = { paths: ['.gitignore', 'factory.yaml', 'setup'], message: 'chore: first', branch: 'main' };
+
+  it('makes the repo on the named branch, stages the named paths after a separator, and commits with the hooks off', async () => {
+    const { handler, log } = gitHandler();
+    const result = await initRootRepo(createFakeDeps({ cwd: WS, run: handler }), ROOT, input);
+    expect(result).toEqual({ ok: true, value: { committed: true } });
+    expect(log.commands()).toEqual([
+      'init -q -b main',
+      'config user.name',
+      'config user.email',
+      'add -- .gitignore factory.yaml setup',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: first',
+    ]);
+  });
+
+  it('never stages with -A or a dot, so a path outside the list can not enter the commit', async () => {
+    const { handler, log } = gitHandler();
+    await initRootRepo(createFakeDeps({ cwd: WS, run: handler }), ROOT, input);
+    const staging = log.commands().filter((command) => command.startsWith('add'));
+    expect(staging).toEqual(['add -- .gitignore factory.yaml setup']);
+    expect(staging[0]?.split(' ')).not.toContain('-A');
+    expect(staging[0]?.split(' ')).not.toContain('.');
+  });
+
+  it('makes the repo and no commit when git has no identity', async () => {
+    const { handler, log } = gitHandler({ identity: false });
+    const result = await initRootRepo(createFakeDeps({ cwd: WS, run: handler }), ROOT, input);
+    expect(result).toEqual({ ok: true, value: { committed: false } });
+    expect(log.commands().filter((command) => command.startsWith('init'))).toEqual(['init -q -b main']);
+    expect(log.commands().some((command) => command.startsWith('add') || command.includes('commit'))).toBe(false);
+  });
+
+  it('refuses a root that holds a git folder already, and runs no git command', async () => {
+    const { handler, log } = gitHandler();
+    const deps = createFakeDeps({ cwd: WS, run: handler });
+    deps.seedDir(`${ROOT}/.git`);
+    const result = await initRootRepo(deps, ROOT, input);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('holds a git repository already') } });
+    expect(log.commands()).toEqual([]);
+  });
+
+  it('refuses a root that holds a git file, as a linked work tree does', async () => {
+    const { handler, log } = gitHandler();
+    const deps = createFakeDeps({ cwd: WS, run: handler });
+    deps.seed(`${ROOT}/.git`, 'gitdir: /elsewhere\n');
+    expect((await initRootRepo(deps, ROOT, input)).ok).toBe(false);
+    expect(log.commands()).toEqual([]);
+  });
+
+  it.each([
+    ['the repo can not be made', 'init', 'cannot create the config repository: git exited with 128'],
+    ['the paths can not be staged', 'add', 'cannot stage the config files: git exited with 128'],
+    ['the commit fails', 'commit', 'cannot commit the config files: git exited with 128'],
+  ])('names the step in the error when %s', async (_name, word, message) => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: WS, run: (call) => (call.args.includes(word) ? exited(128) : handler(call)) });
+    expect(await initRootRepo(deps, ROOT, input)).toMatchObject({ ok: false, error: { message } });
   });
 });
 
@@ -266,6 +397,166 @@ describe('git: the status of a repo', () => {
       error: { message: 'cannot read the changes of the state repository: git exited with 128' },
     });
     expect(await status(() => failure('cannot run git: SIGTERM'))).toMatchObject({ ok: false });
+  });
+});
+
+describe('git: the tracked files of a repo (TP-167)', () => {
+  const ROOT = '/r';
+  const listed = async (fixture: GitFixture, max?: number, run?: RunHandler) => {
+    const { handler, log } = gitHandler({ repos: { [ROOT]: {} }, ...fixture });
+    const deps = createFakeDeps({ run: run ?? handler });
+    return { result: await trackedFilesOf(deps, ROOT, ...(max === undefined ? [] : [max])), log };
+  };
+  const names = (count: number): string[] => Array.from({ length: count }, (_, i) => `f${String(i).padStart(5, '0')}`);
+
+  it('runs git ls-files with NUL separators and gives the paths exactly as git prints them', async () => {
+    const odd = ['a b.md', 'dir/line\nbreak.txt', 'é.md'];
+    const { result, log } = await listed({ tracked: { [ROOT]: odd } });
+    expect(result).toEqual({ ok: true, value: { paths: odd, reachedCap: false } });
+    expect(log.commands()).toEqual(['ls-files -z']);
+  });
+
+  it('gives an empty list for a repo that tracks nothing', async () => {
+    expect((await listed({})).result).toEqual({ ok: true, value: { paths: [], reachedCap: false } });
+  });
+
+  it('says that the list is complete at the cap, and keeps every path (the cap)', async () => {
+    const { result } = await listed({ tracked: { [ROOT]: names(trackedFiles.maxCount) } });
+    expect(result).toMatchObject({ ok: true, value: { reachedCap: false } });
+    expect(result.ok && result.value.paths).toHaveLength(trackedFiles.maxCount);
+  });
+
+  it('says that the list reached its cap at the cap plus one, and keeps the first paths only (the cap plus one)', async () => {
+    const { result } = await listed({ tracked: { [ROOT]: names(trackedFiles.maxCount + 1) } });
+    expect(result).toMatchObject({ ok: true, value: { reachedCap: true } });
+    expect(result.ok && result.value.paths).toEqual(names(trackedFiles.maxCount));
+  });
+
+  it('takes the cap as an argument', async () => {
+    expect((await listed({ tracked: { [ROOT]: names(3) } }, 3)).result).toMatchObject({ ok: true, value: { reachedCap: false } });
+    expect((await listed({ tracked: { [ROOT]: names(4) } }, 3)).result).toMatchObject({ ok: true, value: { reachedCap: true } });
+  });
+
+  describe('the user settings folder of Claude Code', () => {
+    const tracked = ['a.md', '.claude/x.json', '.claude/rules/y.md', '.claudex/z.md', '.CLAUDE/w.md'];
+    const listedFor = (env: Record<string, string>, os: string, max?: number) => {
+      const { handler } = gitHandler({ repos: { [ROOT]: {} }, tracked: { [ROOT]: tracked } });
+      return trackedFilesOf(createFakeDeps({ run: handler, env, os }), ROOT, ...(max === undefined ? [] : [max]));
+    };
+
+    it('leaves out a path in it, by the written path, when the folder is the user home folder', async () => {
+      expect(await listedFor({ HOME: ROOT }, 'linux')).toEqual({
+        ok: true,
+        value: { paths: ['a.md', '.claudex/z.md', '.CLAUDE/w.md'], reachedCap: false },
+      });
+    });
+
+    it('ignores the case of letters on macOS only', async () => {
+      expect(await listedFor({ HOME: ROOT }, 'darwin')).toEqual({
+        ok: true,
+        value: { paths: ['a.md', '.claudex/z.md'], reachedCap: false },
+      });
+    });
+
+    it('leaves out the path when the folder is above the user home folder', async () => {
+      const { handler } = gitHandler({ repos: { '/': {} }, tracked: { '/': ['r/.claude/x.json', 'r/b.md'] } });
+      const result = await trackedFilesOf(createFakeDeps({ run: handler, env: { HOME: ROOT }, os: 'linux' }), '/');
+      expect(result).toEqual({ ok: true, value: { paths: ['r/b.md'], reachedCap: false } });
+    });
+
+    it('keeps every path when HOME is not set, and counts the cap without the left-out paths', async () => {
+      expect(await listedFor({}, 'linux')).toMatchObject({ ok: true, value: { paths: tracked } });
+      expect(await listedFor({ HOME: ROOT }, 'linux', 3)).toEqual({
+        ok: true,
+        value: { paths: ['a.md', '.claudex/z.md', '.CLAUDE/w.md'], reachedCap: false },
+      });
+    });
+  });
+
+  it('says that the list reached its cap when the output of git is larger than the program reads', async () => {
+    const { result } = await listed({}, undefined, () => failure('cannot run git: ERR_CHILD_PROCESS_STDIO_MAXBUFFER'));
+    expect(result).toEqual({ ok: true, value: { paths: [], reachedCap: true } });
+  });
+
+  it('is an error when git fails, when the folder is no repo, and when git is absent', async () => {
+    expect((await listed({ lsFilesExit: 128 })).result).toMatchObject({ ok: false });
+    expect((await listed({ repos: {} })).result).toMatchObject({ ok: false });
+    expect((await listed({}, undefined, () => failure('cannot run git: ENOENT'))).result).toMatchObject({ ok: false });
+  });
+});
+
+describe('git: the ignore check', () => {
+  const ROOT = '/r';
+  const ask = async (paths: readonly string[], fixture: GitFixture = {}) => {
+    const { handler, log } = gitHandler({ repos: { [ROOT]: {} }, ...fixture });
+    const deps = createFakeDeps({ run: handler });
+    return { result: await ignoredPathsOf(deps, ROOT, paths), log };
+  };
+
+  it('gives the paths that git ignores, and asks git for one path at a time by its exit code', async () => {
+    const { result, log } = await ask(['factory.local.yaml', '.factory/', 'coordinator/'], {
+      ignored: { [ROOT]: ['factory.local.yaml', '.factory/'] },
+    });
+    expect(result).toEqual({ ok: true, value: new Set(['factory.local.yaml', '.factory/']) });
+    expect(log.commands()).toEqual([
+      'check-ignore -q -- factory.local.yaml',
+      'check-ignore -q -- .factory/',
+      'check-ignore -q -- coordinator/',
+    ]);
+  });
+
+  it('gives a true answer for a path with a line break, a quote or a non-ASCII letter in its name', async () => {
+    const odd = ['a\nb', 'say "hi"', 'café'];
+    expect((await ask(odd, { ignored: { [ROOT]: odd } })).result).toEqual({ ok: true, value: new Set(odd) });
+  });
+
+  it('gives an empty set when git ignores none of them (exit 1)', async () => {
+    expect((await ask(['a'], { ignored: { [ROOT]: [] } })).result).toEqual({ ok: true, value: new Set() });
+  });
+
+  it('runs no command for an empty list', async () => {
+    const { result, log } = await ask([]);
+    expect(result).toEqual({ ok: true, value: new Set() });
+    expect(log.commands()).toEqual([]);
+  });
+
+  it('is an error when git fails, so a failure is never read as "not ignored"', async () => {
+    expect((await ask(['a'], { checkIgnoreExit: 128 })).result).toMatchObject({ ok: false });
+    expect((await ask(['a'], { repos: {} })).result).toMatchObject({ ok: false });
+  });
+
+  it('accepts the most paths that one call takes, and refuses one path more', async () => {
+    const paths = (count: number): string[] => Array.from({ length: count }, (_, i) => `p${i}`);
+    expect((await ask(paths(MAX_IGNORE_PATHS))).result).toMatchObject({ ok: true });
+    const over = await ask(paths(MAX_IGNORE_PATHS + 1));
+    expect(over.result).toMatchObject({ ok: false });
+    expect(over.log.commands()).toEqual([]);
+  });
+
+  it('puts the paths after a double hyphen, so a path that starts with a hyphen is never an option', async () => {
+    const { log } = await ask(['-x']);
+    expect(log.commands()).toEqual(['check-ignore -q -- -x']);
+  });
+});
+
+describe('git: a folder is the top of its own work tree', () => {
+  const check = async (repos: Readonly<Record<string, FakeRepo>>) => {
+    const { handler } = gitHandler({ repos });
+    return requireWorkTreeTop(createFakeDeps({ run: handler }), '/r/.factory', 'the state folder');
+  };
+
+  it('passes for the top folder of a work tree', async () => {
+    expect(await check({ '/r/.factory': {} })).toEqual({ ok: true, value: undefined });
+  });
+
+  it('stops with exit 4 for a folder that is inside the work tree of another repo', async () => {
+    const result = await check({ '/r/.factory': { topLevel: false } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(!result.ok && result.error.message).toContain('the state folder');
+  });
+
+  it('stops with exit 4 for a folder that no work tree holds', async () => {
+    expect(await check({})).toMatchObject({ ok: false, error: { kind: 'safety' } });
   });
 });
 

@@ -1,17 +1,36 @@
 import { join } from 'node:path';
-import { sha256Hex } from '../blocks/managed.js';
-import { renamedFromOf, type BlockStatus, type PendingFiles } from '../blocks/status.js';
+import { parseBlocks, sha256Hex } from '../blocks/managed.js';
+import { renamedFromOf, type BlockStatus } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { stepsBetween, type FileStep } from '../migrate/files.js';
+import { localFileAccess, requireInit } from '../config/load.js';
+import { mixConfigValue, SPLIT_SCHEMA_VERSION } from '../config/schema.js';
+import { GIT_ENTRY } from '../core/git.js';
+import { stepsBetween, type FileStep, type RootMove } from '../migrate/files.js';
 import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
-import { commands, commandText, dirs, flags, flagText, helpTopics, program } from '../names.js';
+import {
+  blockNames,
+  commands,
+  commandText,
+  dirs,
+  files,
+  flags,
+  flagText,
+  helpTopics,
+  overwriteCommand,
+  places,
+  program,
+  setupBlockNames,
+  setupFileOf,
+} from '../names.js';
+import { locateShareList } from '../state/files.js';
+import { rootGitignoreOf } from '../state/gitignore.js';
 import type { Layout } from '../state/layout.js';
-import type { BlockTemplate } from '../templates/types.js';
-import type { BlockSet, UpgradeFile, UpgradeSpec } from './spec.js';
+import type { BlockTemplate, SetupTexts } from '../templates/types.js';
+import type { BlockSet, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
 
 const MAX_DIFF_LINES = 3;
 const MAX_DIFF_WIDTH = 100;
@@ -26,7 +45,23 @@ export type FilePlan =
       readonly raw: unknown;
     };
 
-export type BlockAction = 'current' | 'update' | 'replace' | 'add' | 'skip-missing' | 'refuse-edited' | 'refuse-other';
+/**
+ * What the upgrade does with a block. An edited block of the fixed rules (the safety block) stops the command
+ * (`refuse-edited`): an edited one can remove a rule. An edited setup block is put back (`replace`), because the setup
+ * file holds its text. Any other edited block is kept, with a warning (`skip-edited`), until a person names it. A block
+ * that `replace` writes over has its old text in a backup file. An intact block of the current version whose text differs
+ * from the text that the package and the settings render is rendered again (`render`).
+ */
+export type BlockAction =
+  | 'current'
+  | 'update'
+  | 'render'
+  | 'replace'
+  | 'add'
+  | 'skip-missing'
+  | 'skip-edited'
+  | 'refuse-edited'
+  | 'refuse-other';
 
 export interface BlockPlan {
   readonly template: BlockTemplate;
@@ -38,7 +73,7 @@ export interface BlockPlan {
   readonly reason?: string;
 }
 
-const CHANGING: readonly BlockAction[] = ['update', 'replace', 'add'];
+const CHANGING: readonly BlockAction[] = ['update', 'render', 'replace', 'add'];
 
 export const isChange = (plan: BlockPlan): boolean => CHANGING.includes(plan.action);
 
@@ -56,6 +91,7 @@ export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Pro
     case 'unparsable':
     case 'invalid':
     case 'newer':
+    case 'unsafe':
       return refuse(state, file.spec.file);
     default: {
       const unreachable: never = state;
@@ -64,26 +100,63 @@ export const planFile = async (deps: Deps, path: string, file: UpgradeFile): Pro
   }
 };
 
+/**
+ * What the upgrade does with the local file. A root from before the split has no local file: the upgrade makes one
+ * from the local keys of its config. A root from after the split must have one, and the upgrade never makes it.
+ */
+export type LocalPlan = FilePlan | { readonly kind: 'create' };
+
+/**
+ * Plan the local file. A local file that another account owns, or that others can write, stops the upgrade (exit 4).
+ * A missing local file next to a current shared file stops it too (exit 2), and nothing is written.
+ */
+export const planLocal = async (
+  deps: Deps,
+  layout: Layout,
+  config: FilePlan,
+  upgrade: UpgradeSpec,
+): Promise<CliResult<LocalPlan>> => {
+  const access = await localFileAccess(deps, layout.home);
+  if (!access.ok) return access;
+  if (config.kind === 'migrate' && config.from < SPLIT_SCHEMA_VERSION) {
+    return access.value.kind === 'absent'
+      ? ok({ kind: 'create' })
+      : failure(
+          `${upgrade.local.spec.file} exists already, but ${upgrade.config.spec.file} has ${upgrade.config.spec.key} ${config.from}`,
+          `Move ${upgrade.local.spec.file} away, then run "${commandText(commands.upgrade)}" again.`,
+        );
+  }
+  return access.value.kind === 'absent' ? requireInit() : planFile(deps, layout.localConfigFile, upgrade.local);
+};
+
 /** The config as it is after the migrations. A failing migration stops the upgrade here. */
-const migratedConfig = (config: FilePlan, upgrade: UpgradeSpec): CliResult<unknown> => {
-  const migrated = config.kind === 'migrate' ? runMigrations(config.raw, config.steps) : ok(config.raw);
-  return migrated.ok ? migrated : failure(`${upgrade.config.spec.file}: ${migrated.error.message}`);
+const migratedFile = (plan: FilePlan, file: UpgradeFile): CliResult<unknown> => {
+  const migrated = plan.kind === 'migrate' ? runMigrations(plan.raw, plan.steps) : ok(plan.raw);
+  return migrated.ok ? migrated : failure(`${file.spec.file}: ${migrated.error.message}`);
 };
 
-/** The managed blocks of the node, as its config is after the migrations. */
-export const planBlockSet = (config: FilePlan, upgrade: UpgradeSpec): CliResult<BlockSet> => {
-  const migrated = migratedConfig(config, upgrade);
+/** The keys of both files in one value, as they are after the migrations. */
+const migratedConfig = (config: FilePlan, local: LocalPlan, upgrade: UpgradeSpec): CliResult<unknown> => {
+  const shared = migratedFile(config, upgrade.config);
+  if (!shared.ok) return shared;
+  // A root of schema 1 migrates as one value that holds the keys of both files.
+  if (local.kind === 'create') return shared;
+  const localValue = migratedFile(local, upgrade.local);
+  return localValue.ok ? ok(mixConfigValue(shared.value, localValue.value)) : localValue;
+};
+
+/** The managed blocks of the node, as its config is after the migrations, with the setup texts of the root. */
+export const planBlockSet = async (
+  config: FilePlan,
+  local: LocalPlan,
+  upgrade: UpgradeSpec,
+  setup: SetupTexts,
+  modesOf: ModesOf,
+): Promise<CliResult<BlockSet>> => {
+  const migrated = migratedConfig(config, local, upgrade);
   if (!migrated.ok) return migrated;
-  const set = upgrade.blocksOf(migrated.value);
+  const set = await upgrade.blocksOf(migrated.value, setup, modesOf);
   return set.ok ? set : failure(`${upgrade.config.spec.file}: ${set.error.message}`);
-};
-
-/** The paths of the projects, as the config holds them after the migrations. */
-export const planProjectPaths = (config: FilePlan, upgrade: UpgradeSpec): CliResult<readonly string[]> => {
-  const migrated = migratedConfig(config, upgrade);
-  if (!migrated.ok) return migrated;
-  const paths = upgrade.projectPathsOf(migrated.value);
-  return paths.ok ? paths : failure(`${upgrade.config.spec.file}: ${paths.error.message}`);
 };
 
 /** A file or a folder that moves. `from` and `to` are paths inside the node home, for the output. */
@@ -105,15 +178,96 @@ export interface ReplacePlan {
   readonly text: string;
 }
 
-export interface FilesPlan extends PendingFiles {
+export interface FilesPlan {
   readonly moves: readonly MovePlan[];
   readonly replaces: readonly ReplacePlan[];
 }
 
-export const NO_FILES_PLAN: FilesPlan = { moves: [], renames: [], replaces: [] };
+export const NO_FILES_PLAN: FilesPlan = { moves: [], replaces: [] };
 
 /**
- * The file moves, the new file texts and the block renames of the steps that take the state to the current version.
+ * The moves outside the state folder. A source that is not a file, or that holds no managed block, is skipped: a file
+ * of the owner stays where it is. A target that exists stops the upgrade, and nothing changes.
+ */
+export const planRootMoves = async (
+  deps: Deps,
+  layout: Layout,
+  moves: readonly RootMove[],
+): Promise<CliResult<readonly MovePlan[]>> => {
+  const planned: MovePlan[] = [];
+  for (const move of moves) {
+    const fromPath = join(layout.home, move.from);
+    const toPath = join(layout.home, move.to);
+    // A link is not ours to move: the move would put the link into the coordinator folder.
+    const own = await deps.fs.lstat(fromPath);
+    if (!own.ok) return own;
+    if (own.value === 'link') continue;
+    const source = await deps.fs.stat(fromPath);
+    if (!source.ok) return source;
+    if (source.value !== 'file') continue;
+    const text = await deps.fs.readText(fromPath);
+    if (!text.ok) return text;
+    const blocks = parseBlocks(text.value);
+    if (blocks.ok && blocks.value.length === 0) continue;
+    const target = await deps.fs.stat(toPath);
+    if (!target.ok) return target;
+    if (target.value !== null) {
+      return failure(
+        `cannot move ${move.from} to ${move.to}: the target exists`,
+        `Move or remove one of the two files, then run "${commandText(commands.upgrade)}" again.`,
+      );
+    }
+    planned.push({ from: move.from, to: move.to, fromPath, toPath });
+  }
+  return ok(planned);
+};
+
+/**
+ * What the run does to the root `.gitignore`: make the file, add the share list at its top, render the part between the
+ * marker lines again, or nothing because the part is current.
+ */
+export type GitignoreAction = 'create' | 'add' | 'render' | 'current';
+
+export interface GitignorePlan {
+  readonly action: GitignoreAction;
+  readonly filePath: string;
+  /** The text to write. It is null when the file holds the current share list. */
+  readonly text: string | null;
+}
+
+/** The root files that are not part of the state: the `.gitignore` and the git repo of the root. */
+export interface RootPlan {
+  readonly gitignore: GitignorePlan;
+  /** True when the root holds no git entry of any kind: the run makes the root repo. */
+  readonly repo: boolean;
+}
+
+const gitignoreActionOf = (original: string | null, text: string): GitignoreAction => {
+  if (original === null) return 'create';
+  if (original === text) return 'current';
+  return locateShareList(original).kind === 'found' ? 'render' : 'add';
+};
+
+/**
+ * The plan for the root `.gitignore` and the root repo. The `.gitignore` keeps every line outside the share list as it is.
+ * A marker line with no pair stops the plan, and nothing changes. A root that holds a git entry keeps it: the run makes a
+ * repo only where there is none, and it never touches the repo that is there. The plan reads only.
+ */
+export const planRoot = async (deps: Deps, layout: Layout): Promise<CliResult<RootPlan>> => {
+  const current = await rootGitignoreOf(deps, layout, commands.upgrade);
+  if (!current.ok) return current;
+  const { original, text } = current.value;
+  const action = gitignoreActionOf(original, text);
+  const entry = await deps.fs.lstat(join(layout.home, GIT_ENTRY));
+  if (!entry.ok) return entry;
+  return ok({
+    gitignore: { action, filePath: layout.gitignoreFile, text: action === 'current' ? null : text },
+    repo: entry.value === null,
+  });
+};
+
+/**
+ * The file moves and the new file texts of the steps that take the state to the current version.
  * A source that does not exist is skipped. A target that exists stops the upgrade. A file to replace that does not
  * exist is skipped, and one that a person edited is kept.
  */
@@ -137,7 +291,10 @@ export const planFiles = async (
     const target = await deps.fs.stat(toPath);
     if (!target.ok) return target;
     if (target.value !== null) {
-      return failure(`cannot move ${from} to ${to}: the target exists`, `Move or remove ${to}, then run the command again.`);
+      return failure(
+        `cannot move ${from} to ${to}: the target exists`,
+        `Move or remove ${to}, then run "${commandText(commands.upgrade)}" again.`,
+      );
     }
     moves.push({ from, to, fromPath, toPath });
   }
@@ -152,7 +309,7 @@ export const planFiles = async (
     const action = sha256Hex(current.value) === replace.oldSha256 ? 'replace' : 'keep';
     replaces.push({ path: join(dirs.state, replace.path), filePath, action, text: replace.text });
   }
-  return ok({ moves, renames: chosen.flatMap((step) => step.renames), replaces });
+  return ok({ moves, replaces });
 };
 
 export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan => {
@@ -160,8 +317,11 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
   switch (status.kind) {
     case 'malformed':
       return { template, status, action: 'refuse-other', from: null, reason: `${status.file}: ${status.message}` };
-    case 'missing':
-      return { template, status, action: overwrite ? 'add' : 'skip-missing', from: null };
+    case 'missing': {
+      // The setup text is written to be rendered, so a block of it that is not there yet is added to a file that is there.
+      const add = overwrite || (setupBlockNames.includes(template.name) && !status.fileAbsent);
+      return { template, status, action: add ? 'add' : 'skip-missing', from: null };
+    }
     case 'intact':
     case 'edited': {
       const from = status.block.version;
@@ -176,8 +336,17 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
           reason: `block ${template.name} has version ${from}, but this ${program} has version ${template.version}. Upgrade ${program}.`,
         };
       }
-      if (status.kind === 'edited') return { template, status, action: overwrite ? 'replace' : 'refuse-edited', from };
-      return { template, status, action: from < template.version || renamed ? 'update' : 'current', from };
+      if (status.kind === 'edited') {
+        // The text of a setup block comes from its setup file, so the setup file is where a person edits it. An edit in
+        // the rendered file is put back, and the old text goes to a backup file.
+        if (setupBlockNames.includes(template.name)) return { template, status, action: 'replace', from };
+        const kept = template.name === blockNames.safety ? 'refuse-edited' : 'skip-edited';
+        return { template, status, action: overwrite ? 'replace' : kept, from };
+      }
+      if (from < template.version || renamed) return { template, status, action: 'update', from };
+      // The text depends on the package, on the settings and on the setup text. An intact block of this version that
+      // differs from the rendered text is out of date, whatever its marker says.
+      return { template, status, action: status.block.body === template.body ? 'current' : 'render', from };
     }
     default: {
       const unreachable: never = status;
@@ -185,6 +354,17 @@ export const planBlock = (status: BlockStatus, overwrite: boolean): BlockPlan =>
     }
   }
 };
+
+/**
+ * A setup block goes into a file that is there, or into a file that this run makes. A setup block of a file that is not
+ * there stays missing, unless another block is added to that file in the same run.
+ */
+export const settleSetupBlocks = (plans: readonly BlockPlan[]): readonly BlockPlan[] =>
+  plans.map((plan) => {
+    const waiting = plan.action === 'skip-missing' && setupBlockNames.includes(plan.template.name);
+    const fileComes = plans.some((other) => other.action === 'add' && other.template.target === plan.template.target);
+    return waiting && fileComes ? { ...plan, action: 'add' } : plan;
+  });
 
 const clip = (line: string): string =>
   line.length > MAX_DIFF_WIDTH ? `${line.slice(0, MAX_DIFF_WIDTH)}...` : line;
@@ -213,25 +393,53 @@ export const refusalOf = (blocks: readonly BlockPlan[]): CliResult<void> => {
   ]);
   return safetyRefusal(
     lines.join('\n'),
-    `Use ${flagText(flags.overwrite)} ${edited.map(labelOf).join(' ')} to replace the text with the template. ` +
+    `Run "${commandText(commands.upgrade)} ${flagText(flags.overwrite)} ${blockNames.safety}" to replace the text with the template. ` +
       `Make a copy of your edits first.`,
   );
 };
 
+/** The lines for the root files. A current `.gitignore` and a root that holds a repo already give no line. */
+const rootLines = (root: RootPlan): OutLine[] => {
+  const ignore = files.gitignore;
+  const gitignore: Readonly<Record<GitignoreAction, readonly string[]>> = {
+    create: [`${ignore}: new file, with the share list`],
+    add: [`${ignore}: add the share list at the top. Your lines stay below it.`],
+    render: [`${ignore}: render the share list again. Your lines stay as they are.`],
+    current: [],
+  };
+  const repo = root.repo ? [`make the ${places.folder} a git repo, with a first commit of the shared files`] : [];
+  return [...gitignore[root.gitignore.action], ...repo].map((text): OutLine => ({ level: 'text', text }));
+};
+
 export const planLines = (
   config: FilePlan,
+  local: LocalPlan,
   state: FilePlan,
   files: FilesPlan,
+  root: RootPlan,
   blocks: readonly BlockPlan[],
   upgrade: UpgradeSpec,
 ): OutLine[] => {
-  const fileLine = (plan: FilePlan, file: UpgradeFile): OutLine =>
-    plan.kind === 'current'
-      ? { level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${plan.version} is current` }
-      : {
+  const fileLine = (plan: LocalPlan, file: UpgradeFile): OutLine => {
+    switch (plan.kind) {
+      case 'current':
+        return { level: 'ok', text: `${file.spec.file}: ${file.spec.key} ${plan.version} is current` };
+      case 'create':
+        return {
+          level: 'text',
+          text: `${file.spec.file}: new file, with mode 600, from the local keys of ${upgrade.config.spec.file}`,
+        };
+      case 'migrate':
+        return {
           level: 'text',
           text: `${file.spec.file}: ${file.spec.key} ${plan.from} to ${plan.to} (${plan.steps.length} ${plan.steps.length === 1 ? 'step' : 'steps'})`,
         };
+      default: {
+        const unreachable: never = plan;
+        return unreachable;
+      }
+    }
+  };
   const blockLine = (plan: BlockPlan): OutLine => {
     const { name, version } = plan.template;
     const old = renamedFromOf(plan.status);
@@ -246,7 +454,15 @@ export const planLines = (
               ? `block ${name}: version ${plan.from} to ${version}`
               : `block ${old}: becomes block ${name}, version ${version}`,
         };
+      case 'render':
+        return { level: 'text', text: `block ${name}: render the text again, because the package or a setting changed it` };
       case 'replace':
+        if (setupBlockNames.includes(name)) {
+          return {
+            level: 'text',
+            text: `block ${name}: put back the text of ${setupFileOf(name)}. The edited text goes to a backup file.`,
+          };
+        }
         return {
           level: 'text',
           text:
@@ -259,7 +475,12 @@ export const planLines = (
       case 'skip-missing':
         return {
           level: 'warn',
-          text: `block ${name} is missing. Use ${flagText(flags.overwrite)} ${name} to add it.`,
+          text: `block ${name} is missing. Run "${overwriteCommand(name)}" to add it.`,
+        };
+      case 'skip-edited':
+        return {
+          level: 'warn',
+          text: `block ${old ?? name} was edited, so ${program} keeps it. Run "${overwriteCommand(old ?? name)}" to replace it.`,
         };
       case 'refuse-edited':
         return { level: 'fail', text: `block ${old ?? name} was edited` };
@@ -283,9 +504,11 @@ export const planLines = (
         };
   return [
     fileLine(config, upgrade.config),
+    fileLine(local, upgrade.local),
     fileLine(state, upgrade.state),
     ...moveLines,
     ...files.replaces.map(replaceLine),
+    ...rootLines(root),
     ...blocks.map(blockLine),
   ];
 };

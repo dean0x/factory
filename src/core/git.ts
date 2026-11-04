@@ -1,13 +1,15 @@
 import { basename, join, resolve } from 'node:path';
-import { failure, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
+import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps } from './deps.js';
+import { isInUserClaudeFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
 
 const GIT_TIMEOUT_MS = 15_000;
 const CLONE_TIMEOUT_MS = 300_000;
 /** The entry that every work tree has in its top folder: a folder, or a file for a linked work tree. */
-const GIT_ENTRY = '.git';
+export const GIT_ENTRY = '.git';
 const MAX_STDERR_CHARS = 200;
 
 const GITHUB_URL =
@@ -24,7 +26,7 @@ const URL_USERINFO = /([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/]*@/g;
 export const withoutUserinfo = (text: string): string => text.replace(URL_USERINFO, '$1');
 
 /** `owner/name` of a GitHub remote URL, or null. Only the owner and the name are kept. */
-const parseGithubRepo = (url: string): string | null => {
+export const parseGithubRepo = (url: string): string | null => {
   const match = GITHUB_URL.exec(url.trim());
   return match === null ? null : `${match[1]}/${match[2]}`;
 };
@@ -73,7 +75,8 @@ export interface RepoScan {
 
 /**
  * The folders just below `dir` that are the top folder of a git work tree. It reads at most `MAX_SCAN_ENTRIES`
- * entries and follows no symbolic link. Only a folder with a `.git` entry can be a work tree, so git runs for those.
+ * entries and follows no symbolic link. A folder that is the settings folder of Claude Code, or is inside it, is left
+ * out by its written path, before any call on it. Only a folder with a `.git` entry can be a work tree, so git runs for those.
  * Two folders that share a git folder are one repo (a linked work tree): the checkout that holds the git folder is
  * listed, and the others are skipped. With no such checkout, the first folder by name is listed.
  */
@@ -91,6 +94,7 @@ export const listRepoChildren = async (deps: Deps, dir: string): Promise<CliResu
   const groups = new Map<string, Member[]>();
   for (const name of names.value.slice(0, MAX_SCAN_ENTRIES)) {
     const path = join(dir, name);
+    if (isInUserClaudeFolder(deps, path)) continue;
     const real = join(realDir.value, name);
     const resolved = await deps.fs.realpath(path);
     if (!resolved.ok || resolved.value !== real) continue;
@@ -110,7 +114,7 @@ export const listRepoChildren = async (deps: Deps, dir: string): Promise<CliResu
     if (main === undefined) continue;
     repos.push(main.path);
     for (const member of members.filter((candidate) => candidate !== main)) {
-      skipped.push({ path: member.path, reason: `it is one more checkout of the repo ${basename(main.path)}` });
+      skipped.push({ path: member.path, reason: `it is one more work tree of the repo ${basename(main.path)}` });
     }
   }
   return ok({
@@ -138,11 +142,6 @@ export const hasIdentity = async (deps: Deps, dir: string): Promise<boolean> => 
 export const hasCommit = async (deps: Deps, dir: string): Promise<boolean> =>
   (await gitOutput(deps, dir, ['rev-parse', '--verify', 'HEAD'])) !== null;
 
-export const githubRepoOf = async (deps: Deps, dir: string): Promise<string | null> => {
-  const url = await gitOutput(deps, dir, ['remote', 'get-url', 'origin']);
-  return url === null ? null : parseGithubRepo(url);
-};
-
 /** The default branch: origin/HEAD, else the current branch, else null. */
 export const defaultBranchOf = async (deps: Deps, dir: string): Promise<string | null> => {
   const remote = await gitOutput(deps, dir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
@@ -168,7 +167,7 @@ export const gitClone = async (deps: Deps, url: string, target: string): Promise
   if (!result.ok && result.error.message.endsWith(`: ${TIME_LIMIT_SIGNAL}`)) {
     return failure(
       `cannot clone ${shown}: the clone took longer than ${CLONE_TIMEOUT_MS / 1000} seconds`,
-      'An ssh clone can wait for a prompt that nobody sees. Load the key into an ssh agent, or sign in with "gh auth login", then run the command again.',
+      `An ssh clone can wait for a prompt that nobody sees. Load the key into an ssh agent, or sign in with "gh auth login", then run "${commandText(commands.init)}" again.`,
     );
   }
   if (!result.ok) return failure(`cannot clone ${shown}: ${withoutUserinfo(result.error.message)}`);
@@ -186,13 +185,45 @@ export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>
  */
 const NO_HOOKS = 'core.hooksPath=/dev/null';
 
-const commitStaged = (deps: Deps, dir: string, message: string): Promise<CliResult<void>> =>
-  gitStep(deps, dir, ['-c', 'commit.gpgsign=false', '-c', NO_HOOKS, 'commit', '-q', '-m', message], 'commit the state files');
+const commitStaged = (deps: Deps, dir: string, message: string, what: string): Promise<CliResult<void>> =>
+  gitStep(deps, dir, ['-c', 'commit.gpgsign=false', '-c', NO_HOOKS, 'commit', '-q', '-m', message], what);
+
+const COMMIT_STATE = 'commit the state files';
 
 /** Stage everything and commit, for a new repo. The caller checks the identity first. */
 export const commitAll = async (deps: Deps, dir: string, message: string): Promise<CliResult<void>> => {
   const staged = await gitStep(deps, dir, ['add', '-A'], 'stage the state files');
-  return staged.ok ? commitStaged(deps, dir, message) : staged;
+  return staged.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : staged;
+};
+
+export interface RootRepoInput {
+  /** The paths, relative to the root, that the first commit holds. No other path is staged. */
+  readonly paths: readonly string[];
+  readonly message: string;
+  /** The name of the first branch. */
+  readonly branch: string;
+}
+
+export interface RootRepo {
+  /** False when git has no identity: the repo exists, and it holds no commit. */
+  readonly committed: boolean;
+}
+
+/**
+ * Make the root a git repo and commit the allowed paths. The root must hold no git folder yet. The paths are staged by
+ * name, so a path that the share list ignores can not enter the commit. The hooks of git do not run for the commit.
+ */
+export const initRootRepo = async (deps: Deps, root: string, input: RootRepoInput): Promise<CliResult<RootRepo>> => {
+  const entry = await deps.fs.stat(join(root, GIT_ENTRY));
+  if (!entry.ok) return entry;
+  if (entry.value !== null) return failure(`cannot create the config repository: ${root} holds a git repository already`);
+  const made = await gitStep(deps, root, ['init', '-q', '-b', input.branch], 'create the config repository');
+  if (!made.ok) return made;
+  if (!(await hasIdentity(deps, root))) return ok({ committed: false });
+  const staged = await gitStep(deps, root, ['add', '--', ...input.paths], 'stage the config files');
+  if (!staged.ok) return staged;
+  const committed = await commitStaged(deps, root, input.message, 'commit the config files');
+  return committed.ok ? ok({ committed: true }) : committed;
 };
 
 /** Paths in a repo, relative to its top folder. */
@@ -224,12 +255,94 @@ export const commitPaths = async (
     if (!removed.ok) return removed;
   }
   const added = await gitStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
-  return added.ok ? commitStaged(deps, dir, message) : added;
+  return added.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : added;
 };
 
 /** Remove the staged changes of `paths` from the index. The files keep their text, and other staged changes stay. */
 export const unstagePaths = (deps: Deps, dir: string, paths: RepoPaths): Promise<CliResult<void>> =>
   gitStep(deps, dir, ['reset', '-q', '--', ...paths.present, ...paths.gone], 'clear the staged files');
+
+/** The paths that a repo tracks, in the order of git, and whether git named more paths than the list can hold. */
+export interface TrackedList {
+  /**
+   * At most `maxCount` paths, relative to the top folder of the repo, exactly as git prints them. A path in the user
+   * settings folder of Claude Code is not in the list, so that no reader of the list asks about that folder.
+   */
+  readonly paths: readonly string[];
+  /** True when the repo tracks more paths than the list holds. A list that reached its cap is never complete. */
+  readonly reachedCap: boolean;
+}
+
+/** The message of the error of `run` when the output of the program is larger than the program reads. */
+const OUTPUT_TOO_LARGE = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+
+/**
+ * The paths that the repo at `dir` tracks (`git ls-files -z`). The NUL separator keeps a path with a space or a line break
+ * whole. The list holds at most `maxCount` paths. A repo that tracks more gives a list that reached its cap, and output
+ * that is larger than the program reads counts the same way. The caller never uses a list that reached its cap. A path that
+ * is, or is inside, the user settings folder of Claude Code is left out before the count, by its written path: no reader
+ * of tracked files may ask the file system about that folder.
+ */
+export const trackedFilesOf = async (
+  deps: Deps,
+  dir: string,
+  maxCount: number = trackedFiles.maxCount,
+): Promise<CliResult<TrackedList>> => {
+  const result = await deps.run('git', ['-C', dir, 'ls-files', '-z'], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) {
+    return result.error.message.endsWith(OUTPUT_TOO_LARGE)
+      ? ok({ paths: [], reachedCap: true })
+      : failure(`cannot list the tracked files of ${dir}: ${result.error.message}`);
+  }
+  if (result.value.exitCode !== 0) {
+    return failure(`cannot list the tracked files of ${dir}: git exited with ${result.value.exitCode}`);
+  }
+  const userFolder = userClaudeFolderOf(deps);
+  const paths = result.value.stdout
+    .split('\0')
+    .filter((path) => path !== '' && (userFolder === null || !isWrittenInside(deps, userFolder, join(dir, path))));
+  return ok({ paths: paths.slice(0, maxCount), reachedCap: paths.length > maxCount });
+};
+
+/** The most paths that one ignore check takes. */
+export const MAX_IGNORE_PATHS = 256;
+
+/**
+ * The paths of `paths` that the ignore rules of the repo at `dir` match (`git check-ignore`). A path that the repo tracks
+ * is never ignored in the view of git. Git is asked for one path at a time, and only its exit code counts: 0 means ignored,
+ * 1 means not ignored. The answer of git is never parsed, so a path with an odd name gets a true answer. Any other exit
+ * code is an error, so a failure is never read as "not ignored". At most `MAX_IGNORE_PATHS` paths are asked.
+ */
+export const ignoredPathsOf = async (
+  deps: Deps,
+  dir: string,
+  paths: readonly string[],
+): Promise<CliResult<ReadonlySet<string>>> => {
+  if (paths.length > MAX_IGNORE_PATHS) {
+    return failure(`cannot check ${paths.length} paths against the ignore rules: the most is ${MAX_IGNORE_PATHS}`);
+  }
+  const what = `cannot check the ignore rules of ${dir}`;
+  const ignored = new Set<string>();
+  for (const path of paths) {
+    const result = await deps.run('git', ['-C', dir, 'check-ignore', '-q', '--', path], { timeoutMs: GIT_TIMEOUT_MS });
+    if (!result.ok) return failure(`${what}: ${result.error.message}`);
+    if (result.value.exitCode === 0) ignored.add(path);
+    else if (result.value.exitCode !== 1) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  }
+  return ok(ignored);
+};
+
+/**
+ * `dir` is the top folder of a work tree of its own. A git write in a folder that is inside the work tree of another repo
+ * would change that repo, so the write waits for this check. `what` names the folder for the message.
+ */
+export const requireWorkTreeTop = async (deps: Deps, dir: string, what: string): Promise<CliResult<void>> =>
+  (await isWorkTreeRoot(deps, dir))
+    ? ok(undefined)
+    : safetyRefusal(
+        `${what} ${dir} is not the top folder of a git work tree of its own, so ${program} makes no git change there`,
+        `Move ${dir} away, then run "${commandText(commands.init)}" again.`,
+      );
 
 /** The id of the commit that HEAD names, or null when the repo has no commit. It is an error when git cannot run. */
 export const headOf = async (deps: Deps, dir: string): Promise<CliResult<string | null>> => {
@@ -262,6 +375,71 @@ const parseStatus = (stdout: string): readonly StatusEntry[] => {
     if (WITH_OLD_PATH.includes(entry.index) || WITH_OLD_PATH.includes(entry.tree)) at += 1;
   }
   return entries;
+};
+
+const MAX_SHOWN_PATHS = 5;
+
+const shownPaths = (paths: readonly string[]): string => {
+  const shown = paths.slice(0, MAX_SHOWN_PATHS).join(', ');
+  return paths.length > MAX_SHOWN_PATHS ? `${shown} and ${paths.length - MAX_SHOWN_PATHS} more` : shown;
+};
+
+/**
+ * Refuse when a commit in the state repo could take a change of the owner. The index of the state repo must hold no
+ * staged change. A path of `touched` must have no change of the owner, staged or not: `changing` names the command that
+ * changes these paths ("the upgrade"), and `command` is the command that the person runs again.
+ */
+export const requireStateRepoReady = async (
+  deps: Deps,
+  stateDir: string,
+  touched: readonly string[],
+  changing: string,
+  command: CommandName,
+): Promise<CliResult<void>> => {
+  const again = `Then run "${commandText(command)}" again.`;
+  const status = await statusOf(deps, stateDir);
+  if (!status.ok) return status;
+  const staged = status.value.filter((entry) => ![' ', '?', '!'].includes(entry.index));
+  if (staged.length > 0) {
+    return failure(
+      `${dirs.state} has staged changes: ${shownPaths(staged.map((entry) => entry.path))}`,
+      `Commit them, or clear them with "git reset" in ${dirs.state}. ${again}`,
+    );
+  }
+  const changed = status.value.filter((entry) =>
+    touched.some((path) => entry.path === path || entry.path.startsWith(`${path}/`)),
+  );
+  if (changed.length > 0) {
+    return failure(
+      `${dirs.state} has changes in files that ${changing} changes: ${shownPaths(changed.map((entry) => entry.path))}`,
+      `Commit them, or put the files back with git in ${dirs.state}. ${again}`,
+    );
+  }
+  return ok(undefined);
+};
+
+/**
+ * Refuse before a command writes files of the state repo and commits them: the state folder must be a git repo, git must
+ * have an identity, and the commit must not take a change of the owner (`requireStateRepoReady`). `changing` names the
+ * change ("the upgrade"), and `command` is the command that the person runs again.
+ */
+export const requireStateRepoCommit = async (
+  deps: Deps,
+  stateDir: string,
+  touched: readonly string[],
+  changing: string,
+  command: CommandName,
+): Promise<CliResult<void>> => {
+  const repo = await deps.fs.stat(join(stateDir, GIT_ENTRY));
+  if (!repo.ok) return repo;
+  if (repo.value === null) return failure(`${dirs.state} is not a git repository`, `Run "${commandText(commands.doctor)}".`);
+  if (!(await hasIdentity(deps, stateDir))) {
+    return failure(
+      'git has no user.name and user.email',
+      `Set both with "git config --global", then run "${commandText(command)}" again.`,
+    );
+  }
+  return requireStateRepoReady(deps, stateDir, touched, changing, command);
 };
 
 /** The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. */

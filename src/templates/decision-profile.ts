@@ -104,7 +104,7 @@ export const PROFILE_README_LINES: readonly string[] = [
   '- If a firm or likely principle covers the case, decide. Name the principle id in your report of decisions.',
   '- If only a tentative principle covers the case and the case is outside its scope, ask the {{owner}}.',
   '- If two principles conflict, or the case is in `{{openQuestions}}`, ask the {{owner}}.',
-  '- Decisions that need the authority of the {{owner}} wait for the {{owner}}, even when the profile covers them. These are merges, releases and priorities.',
+  '- Decisions that need the authority of the {{owner}} wait for the {{owner}}, even when the profile covers them. These are the approval points of the {{recipe}} that the {{owner}} did not delegate, and priorities.',
   '- Never invent a decision or a quote. Record only what the {{owner}} said or what a principle covers.',
 ];
 

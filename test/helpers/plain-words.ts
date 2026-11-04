@@ -227,8 +227,8 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
 ];
 
 /**
- * The eight words that D-59 replaced. `test/helpers/old-words.ts` has the list for the scan of `src`: it holds only three
- * of these words until Step 8 of the code change adds the other five.
+ * The eight words that D-59 replaced. `test/helpers/old-words.ts` holds the same list for the scan of `src`, and a unit
+ * test keeps the two lists equal.
  */
 export const OLD_WORD_LIST = ['lane', 'pack', 'brief', 'cell', 'andon', 'staging', 'inspect', 'ship'] as const;
 
@@ -243,11 +243,14 @@ export const OLD_WORDS_DESIGN_SCAN = new RegExp(
 /** A scanned jargon row with the pattern that finds its word in the docs. */
 export interface JargonPattern {
   readonly term: string;
+  /** The words of the row as a regular expression, with no lookaround. */
+  readonly source: string;
   readonly pattern: RegExp;
 }
 
 const jargon = (term: string, source: string): JargonPattern => ({
   term,
+  source,
   pattern: new RegExp(`(?<![A-Za-z0-9_])${source}(?![A-Za-z0-9_])`, 'gi'),
 });
 
@@ -275,8 +278,36 @@ export const JARGON_PATTERNS: readonly JargonPattern[] = [
   jargon('token-like value', 'token-like values?'),
 ];
 
+/**
+ * The words of the scanned jargon rows as one extended regular expression, in the order of the table. `scripts/exit-check.sh`
+ * holds the same text in `jargon_words`, and a unit test keeps the two equal.
+ */
+export const JARGON_ERE: string = JARGON_PATTERNS.map(({ source }) => source.replace(/\(\?:/g, '(')).join('|');
+
+/** The words of the scanned jargon rows that a text holds, in the order of the table. */
+export const jargonIn = (text: string): string[] => JARGON_PATTERNS.flatMap(({ pattern }) => text.match(pattern) ?? []);
+
 /** The docs that the scan reads in the docs change. */
 export const SCANNED_DOCS = ['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md'] as const;
+
+/** The files above the docs folder that the scan reads. The CHANGELOG is read for the part of one version only. */
+export const SCANNED_TOP_FILES = ['README.md', 'CHANGELOG.md'] as const;
+
+/** The version whose part of the CHANGELOG the scan reads. A released part keeps the words of its own time. */
+export const SCANNED_CHANGELOG_VERSION = '0.2.0';
+
+/**
+ * The part of a CHANGELOG that belongs to one version: the heading `## <version> ...` and the lines up to the next `## `
+ * heading. Every other line is blank, so a hit of the scan keeps its line number in the whole file.
+ */
+export const changelogPartOf = (text: string, version: string): string => {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => line === `## ${version}` || line.startsWith(`## ${version} `));
+  if (start < 0) return '';
+  const next = lines.findIndex((line, index) => index > start && line.startsWith('## '));
+  const end = next < 0 ? lines.length : next;
+  return lines.map((line, index) => (index >= start && index < end ? line : '')).join('\n');
+};
 
 /**
  * A row of the trace that keeps an old word on purpose, in its quote cell (the second column). The docs review reads this

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { fileTransport, type Transport } from '../../src/comms/transport.js';
+import type { Transport } from '../../src/comms/transport.js';
+import { fileTransport } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
@@ -14,7 +15,7 @@ const withConfig = (text: string | null): { deps: FakeDeps; transport: Transport
 };
 
 const childConfig = (change: (config: ReturnType<typeof sampleConfig>) => unknown = (config) => config): string =>
-  renderConfig(change(sampleConfig()) as ReturnType<typeof sampleConfig>);
+  renderConfig(change(sampleConfig()) as ReturnType<typeof sampleConfig>).shared;
 
 describe('file transport: ping', () => {
   it('gives the id, the layer and the schema of a child that has a valid config', async () => {
@@ -22,6 +23,12 @@ describe('file transport: ping', () => {
       childConfig((config) => ({ ...config, core: { ...config.core, node: { id: 'web', layer: 1 } } })),
     );
     expect(await transport.ping(`file://${CHILD}`)).toEqual({ kind: 'known', id: 'web', layer: 1, schema: 2 });
+  });
+
+  it('needs no local file of the child: a ping reads only the shared file', async () => {
+    const { deps, transport } = withConfig(childConfig());
+    expect(deps.files.has(`${CHILD}/factory.local.yaml`)).toBe(false);
+    expect((await transport.ping(`file://${CHILD}`)).kind).toBe('known');
   });
 
   it('accepts an address with a trailing slash', async () => {
@@ -77,7 +84,7 @@ describe('file transport: ping', () => {
     expect(result).toMatchObject({ kind: 'unknown', schema: 1 });
     if (result.kind === 'unknown') {
       expect(result.reason).toContain('schema 1');
-      expect(result.reason).toContain('run "factory upgrade" in that node home');
+      expect(result.reason).toContain('run "factory upgrade" in that factory folder');
     }
   });
 

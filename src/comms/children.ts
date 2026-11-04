@@ -1,4 +1,5 @@
 import type { LinkConfig } from '../config/schema.js';
+import { places } from '../names.js';
 import type { Transport } from './transport.js';
 
 /** One child as the commands show it: the entry of the config, and what a ping learns. */
@@ -34,7 +35,7 @@ export const probeChildren = async (
     if (answer.kind === 'unknown') {
       rows.push(unknownRow(link, answer.reason));
     } else if (answer.id !== link.id) {
-      rows.push(unknownRow(link, `that home holds the id ${answer.id}, not ${link.id}`));
+      rows.push(unknownRow(link, `that ${places.folder} holds the id ${answer.id}, not ${link.id}`));
     } else {
       rows.push({ id: link.id, address: link.address, layer: answer.layer, status: 'ok', reason: null });
     }

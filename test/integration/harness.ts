@@ -19,6 +19,10 @@ export interface Sandbox {
   readonly env: Readonly<Record<string, string>>;
   run(args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<RunResult>;
   git(cwd: string, args: readonly string[]): Promise<RunResult>;
+  /**
+   * Make a git work tree at `<root>/<name>`. With an origin, the work tree gets that remote, and a clone of the origin
+   * (with or without the user part of the URL) works offline: it reads a bare repo of the sandbox.
+   */
   makeProject(name: string, origin?: string): Promise<string>;
   read(path: string): Promise<string>;
   remove(): Promise<void>;
@@ -37,6 +41,13 @@ const exec = (
       resolve({ code, stdout, stderr });
     });
   });
+
+/** A step of the setup. The sandbox fails closed: a step that does not exit with 0 stops the setup of the test. */
+const must = async (step: Promise<RunResult>, what: string): Promise<RunResult> => {
+  const result = await step;
+  if (result.code !== 0) throw new Error(`sandbox: ${what} failed (${result.code}): ${result.stderr}`);
+  return result;
+};
 
 /** The variable that tells a program it runs inside tmux. A command of the sandbox never gets it. */
 const TMUX_VARIABLE = 'TMUX';
@@ -83,6 +94,33 @@ export const makeSandbox = async (): Promise<Sandbox> => {
   }
 };
 
+/** The URL of a repo without the user part: `https://user:token@host/path` is `https://host/path`. */
+const withoutUser = (url: string): string => url.replace(/^([a-z+]+:\/\/)[^@/]*@/, '$1');
+
+/**
+ * Serve the origin of a project from the disk. A bare repo with one commit takes the place of the host, and git
+ * reads it for the URL of the origin and for the same URL without its user part. No test needs a network.
+ */
+const serveOrigin = async (
+  root: string,
+  env: Readonly<Record<string, string>>,
+  name: string,
+  origin: string,
+): Promise<void> => {
+  const flat = name.replace(/[^A-Za-z0-9_.-]/g, '-');
+  const bare = join(root, 'origins', `${flat}.git`);
+  const seed = join(root, 'origin-seeds', flat);
+  await mkdir(bare, { recursive: true });
+  await mkdir(seed, { recursive: true });
+  await must(exec('git', ['init', '-q', '--bare', '-b', 'main'], bare, env), 'git init --bare');
+  await must(exec('git', ['init', '-q', '-b', 'main'], seed, env), 'git init (origin seed)');
+  await must(exec('git', ['commit', '--allow-empty', '-q', '-m', 'first'], seed, env), 'git commit (origin seed)');
+  await must(exec('git', ['push', '-q', bare, 'main'], seed, env), 'git push (origin seed)');
+  for (const url of new Set([origin, withoutUser(origin)])) {
+    await must(exec('git', ['config', '--global', '--add', `url.${bare}.insteadOf`, url], root, env), 'git config insteadOf');
+  }
+};
+
 const buildSandbox = async (root: string): Promise<Sandbox> => {
   const home = join(root, 'home');
   await mkdir(home, { recursive: true });
@@ -102,6 +140,11 @@ const buildSandbox = async (root: string): Promise<Sandbox> => {
     NO_COLOR: '1',
     npm_config_cache: join(home, 'npm-cache'),
     TMUX_TMPDIR: tmuxDirOf(root),
+    // Git reads a local path only. A served origin is a local path after its insteadOf rewrite, which runs before this check.
+    GIT_ALLOW_PROTOCOL: 'file',
+    // Even when the protocol check is off, git starts no ssh, because ssh reads the keys of the real home folder.
+    GIT_SSH_COMMAND: 'false',
+    GIT_TERMINAL_PROMPT: '0',
   };
   return {
     root,
@@ -113,8 +156,11 @@ const buildSandbox = async (root: string): Promise<Sandbox> => {
     makeProject: async (name, origin) => {
       const path = join(root, name);
       await mkdir(path, { recursive: true });
-      await exec('git', ['init', '-q', '-b', 'main'], path, env);
-      if (origin !== undefined) await exec('git', ['remote', 'add', 'origin', origin], path, env);
+      await must(exec('git', ['init', '-q', '-b', 'main'], path, env), 'git init');
+      if (origin !== undefined) {
+        await must(exec('git', ['remote', 'add', 'origin', origin], path, env), 'git remote add');
+        await serveOrigin(root, env, name, origin);
+      }
       return path;
     },
     read: (path) => readFile(path, 'utf8'),

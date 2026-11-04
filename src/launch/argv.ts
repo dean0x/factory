@@ -1,10 +1,15 @@
+import { isSameOrInside } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
-import { env, roles, values } from '../names.js';
+import { env, places, roles, values } from '../names.js';
 
 export interface LaunchInput {
-  /** The node home: an absolute path. */
+  /** The node home, the root of the config repo: an absolute path. It is `FACTORY_HOME`, and no `--add-dir` names it. */
   readonly home: string;
+  /** The working folder of the session: the coordinator folder, an absolute path inside the home. */
+  readonly coordinatorDir: string;
+  /** The state folder: an absolute path inside the home. The session gets it with `--add-dir`. */
+  readonly stateDir: string;
   /** The id of the session: the node id for the coordinator. */
   readonly sessionId: string;
   readonly effort: string;
@@ -37,8 +42,18 @@ const refuse = (what: string): Result<never, string> => err(`the launch refuses 
  * The values are checked here, because a value that starts with a dash could read as a flag.
  */
 export const launchArgv = (input: LaunchInput): Result<readonly string[], string> => {
-  if (!isAbsolute(input.home)) return refuse(`a ${roles.node} home that is not an absolute path`);
+  if (!isAbsolute(input.home)) return refuse(`a ${places.folder} that is not an absolute path`);
+  if (!isAbsolute(input.coordinatorDir) || input.coordinatorDir === input.home || !isSameOrInside(input.home, input.coordinatorDir)) {
+    return refuse(`a ${roles.coordinator} folder that is not a folder inside the ${places.folder}`);
+  }
+  if (!isAbsolute(input.stateDir) || input.stateDir === input.home || !isSameOrInside(input.home, input.stateDir)) {
+    return refuse(`a state folder that is not a folder inside the ${places.folder}`);
+  }
   if (!input.projects.every(isAbsolute)) return refuse('a project path that is not an absolute path');
+  // The home holds the config. A session that gets it, or a folder above it, reads and writes the config.
+  if (input.projects.some((project) => isSameOrInside(project, input.home))) {
+    return refuse(`a project folder that is the ${places.folder} or holds it`);
+  }
   if (input.path === '') return refuse('an empty PATH');
   if (!values.efforts.some((effort) => effort === input.effort)) {
     return refuse(`an effort that is not one of: ${values.efforts.join(', ')}`);
@@ -60,6 +75,6 @@ export const launchArgv = (input: LaunchInput): Result<readonly string[], string
     '--effort',
     input.effort,
     ...(hasModel ? ['--model', input.model] : []),
-    ...input.projects.flatMap((project) => ['--add-dir', project]),
+    ...[input.stateDir, ...input.projects].flatMap((folder) => ['--add-dir', folder]),
   ]);
 };

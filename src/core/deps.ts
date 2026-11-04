@@ -2,6 +2,9 @@ import type { CliResult } from '../cli/errors.js';
 
 export type PathKind = 'file' | 'dir' | 'other';
 
+/** The kind of a path itself: a link is a `link`, and `lstat` does not follow it. */
+export type LinkKind = PathKind | 'link';
+
 /** What a path is and who may use it. A link is followed. */
 export interface PathInfo {
   readonly kind: PathKind;
@@ -11,10 +14,27 @@ export interface PathInfo {
   readonly mode: number;
   /** The time of the last change of the content, in milliseconds since the epoch. */
   readonly mtimeMs: number;
+  /** The size of a file in bytes. A link is followed, so the size is the size of the target. */
+  readonly size: number;
+}
+
+/** What a read of the whole file gives: its size, the SHA-256 of its bytes as hex, and its text when the file is small. */
+export interface FileDigest {
+  readonly size: number;
+  readonly sha256: string;
+  /** The text of the bytes that the hash covers, or null when the file has more than the limit of the call. */
+  readonly text: string | null;
 }
 
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
+  /**
+   * Read the file as a stream, and hash all of its bytes. A link is followed. The text comes from the same bytes as the
+   * hash, so the text that a person sees is the text that the hash covers. A file with more than `textLimit` bytes gives
+   * no text; the size and the hash still cover the whole file. The read stops at `maxBytes` plus one byte: the value is
+   * null for a file with more than `maxBytes` bytes, and the rest stays unread.
+   */
+  digestFile(path: string, textLimit: number, maxBytes: number): Promise<CliResult<FileDigest | null>>;
   /** Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. */
   readTextLimited(path: string, maxBytes: number): Promise<CliResult<string>>;
   writeText(path: string, text: string): Promise<CliResult<void>>;
@@ -27,10 +47,18 @@ export interface Fs {
    * Write the text to a temporary file in the same folder, then rename it over the target.
    * A reader sees the old text or the new text, never a part. A failure leaves the target as it was.
    * The file gets `mode` when it is given. Else it keeps the mode of the file it replaces.
+   * `within` is the folder that the caller means. The write is refused, and nothing changes, when the last part of the
+   * path is a link (also a link whose target does not exist), or when the real path of the file is not inside the real
+   * path of `within`. A link in `within` itself, or above it, is no reason to refuse.
    */
-  writeTextAtomic(path: string, text: string, mode?: number): Promise<CliResult<void>>;
+  writeTextAtomic(path: string, text: string, within: string, mode?: number): Promise<CliResult<void>>;
   /** The kind of the path, or null when it does not exist. */
   stat(path: string): Promise<CliResult<PathKind | null>>;
+  /**
+   * The kind of the path itself, or null when it does not exist. A link as the last part of the path is a `link`, also when
+   * its target is missing. A link in a folder above the path is followed.
+   */
+  lstat(path: string): Promise<CliResult<LinkKind | null>>;
   /** The kind, the owner and the permission bits of the path, or null when it does not exist. */
   statInfo(path: string): Promise<CliResult<PathInfo | null>>;
   /** Set the permission bits of a file or a folder that exists. */
@@ -82,6 +110,9 @@ export interface FetchStatus {
 /** The longest answer that `prompt` returns. A longer line is cut. */
 export const MAX_ANSWER_CHARS = 200;
 
+/** The answers that mean yes to a question of a command. Any other answer, and an empty one, means no. */
+export const ACCEPT_ANSWER = /^y(?:es)?$/i;
+
 export interface Deps {
   readonly fs: Fs;
   /** Run a program. It never uses a shell. A non-zero exit code is not an error. */
@@ -97,6 +128,11 @@ export interface Deps {
   readonly stdoutIsTTY: boolean;
   /** Ask one question and read one line of the answer, at most `MAX_ANSWER_CHARS` characters. The question goes to stderr. */
   prompt(question: string): Promise<CliResult<string>>;
+  /**
+   * Print one warning line to stderr at once. A command uses it for a warning that must show before the command acts,
+   * for example before a session starts. A warning that can wait goes into the output of the command.
+   */
+  warn(message: string): void;
   readonly env: Readonly<Record<string, string | undefined>>;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;

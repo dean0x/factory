@@ -6,11 +6,15 @@ import {
   JARGON_PATTERNS,
   OLD_WORD_LIST,
   PLAIN_WORDS,
+  SCANNED_CHANGELOG_VERSION,
   SCANNED_DOCS,
+  SCANNED_TOP_FILES,
   TABLE_HEADER,
+  changelogPartOf,
   scanDoc,
   type DocHit,
 } from '../helpers/plain-words.js';
+import { OLD_WORD_LIST as SRC_OLD_WORD_LIST } from '../helpers/old-words.js';
 
 const DOCS = join(__dirname, '..', '..', 'docs');
 const readDoc = (name: string): string => readFileSync(join(DOCS, name), 'utf8');
@@ -67,9 +71,60 @@ describe('the plain-words table', () => {
   });
 });
 
+describe('the glossary and the plain words (TP-110)', () => {
+  /** Plain words that are no glossary entry: a phrase for one place, a command name, or the record of another owner. */
+  const WITHOUT_ENTRY = new Set([
+    'a setting that skips permission prompts',
+    'a value that looks like a password or a token',
+    'your own factory, received factory',
+    'message',
+    'doctor, `STUCK:`',
+  ]);
+  const STAYS = new Set(['stay', 'stays', 'stays in the design text only']);
+
+  const entryNames = new Set(
+    readDoc('glossary.md')
+      .split('\n')
+      .flatMap((line) => {
+        const name = /^- \*\*([^*]+)\*\*/.exec(line)?.[1];
+        return name === undefined ? [] : [name];
+      }),
+  );
+
+  /** The glossary words that a row names: its plain word, or its own term when the term stays. */
+  const wordsOf = (row: (typeof PLAIN_WORDS)[number]): string[] =>
+    row.plain.startsWith('(') ? [] : (STAYS.has(row.plain) ? row.term : row.plain).split(', ');
+
+  const entryFor = (word: string): string => (entryNames.has(word) ? word : word.replace(/ies$/, 'y'));
+
+  it('gives each scanned jargon term a plain word that differs from the term', () => {
+    const scanned = PLAIN_WORDS.filter((row) => row.scan === 'scanned');
+    expect(scanned.length).toBeGreaterThan(15);
+    for (const row of scanned) expect(row.plain.toLowerCase(), row.term).not.toBe(row.term.toLowerCase());
+  });
+
+  it('has a glossary entry for each plain word of the table, and for each term that stays', () => {
+    const missing = PLAIN_WORDS.filter((row) => !WITHOUT_ENTRY.has(row.term) && !WITHOUT_ENTRY.has(row.plain))
+      .flatMap(wordsOf)
+      .filter((word) => !entryNames.has(entryFor(word)));
+    expect(missing).toEqual([]);
+  });
+
+  it('reads the entry names from the glossary, and finds the words that have no entry', () => {
+    expect(entryNames.has('worker')).toBe(true);
+    expect(entryNames.has('factory folder')).toBe(true);
+    expect(entryFor('work copies')).toBe('work copy');
+    expect(entryNames.has(entryFor('home index'))).toBe(false);
+  });
+});
+
 describe('the docs scan: what it finds', () => {
   it('has the eight old words', () => {
     expect([...OLD_WORD_LIST]).toEqual(['lane', 'pack', 'brief', 'cell', 'andon', 'staging', 'inspect', 'ship']);
+  });
+
+  it('has the same eight old words as the scan of the source, which the exit check also holds', () => {
+    expect([...OLD_WORD_LIST]).toEqual([...SRC_OLD_WORD_LIST]);
   });
 
   it.each(OLD_WORD_LIST)('finds the old word "%s", also in a capital letter, a plural and a past form', (word) => {
@@ -317,5 +372,54 @@ describe('the docs that the docs change reads', () => {
 
   it.each(SCANNED_DOCS)('%s holds no old word and no scanned jargon word outside code spans and the mapping tables', (name) => {
     expect(describeHits(scanDoc(name, readDoc(name)))).toEqual([]);
+  });
+});
+
+describe('the CHANGELOG part of one version', () => {
+  const text = ['# Changelog', '', '## 0.3.0 (not released)', 'New cell.', '', '## 0.2.0 (not released)', 'A lane.', '', '## 0.1.0', 'A brief.'].join(
+    '\n',
+  );
+
+  it('keeps the lines of the version and blanks every other line, so a hit keeps its line number', () => {
+    const part = changelogPartOf(text, '0.2.0').split('\n');
+    expect(part).toHaveLength(text.split('\n').length);
+    expect(part.filter((line) => line !== '')).toEqual(['## 0.2.0 (not released)', 'A lane.']);
+    expect(part[6]).toBe('A lane.');
+  });
+
+  it('reads the last part to the end of the file, and finds nothing for a version that the file does not hold', () => {
+    expect(changelogPartOf(text, '0.1.0').split('\n').filter((line) => line !== '')).toEqual(['## 0.1.0', 'A brief.']);
+    expect(changelogPartOf(text, '0.9.0')).toBe('');
+    expect(changelogPartOf(text, '0.2')).toBe('');
+  });
+
+  it('finds an old word in the part of the version and not in the other parts', () => {
+    const hits = scanDoc('CHANGELOG.md', changelogPartOf(text, '0.2.0'));
+    expect(hits.map((hit) => [hit.line, hit.word])).toEqual([[7, 'lane']]);
+    expect(scanDoc('CHANGELOG.md', changelogPartOf(text, '0.1.0')).map((hit) => hit.word)).toEqual(['brief']);
+  });
+});
+
+describe('the README and the CHANGELOG part (TP-139)', () => {
+  const readTop = (name: (typeof SCANNED_TOP_FILES)[number]): string => readFileSync(join(__dirname, '..', '..', name), 'utf8');
+
+  it('reads the README and the CHANGELOG', () => {
+    expect([...SCANNED_TOP_FILES]).toEqual(['README.md', 'CHANGELOG.md']);
+    expect(SCANNED_CHANGELOG_VERSION).toBe('0.2.0');
+  });
+
+  it('finds the part of the version in the CHANGELOG', () => {
+    const part = changelogPartOf(readTop('CHANGELOG.md'), SCANNED_CHANGELOG_VERSION);
+    expect(part).toContain(`## ${SCANNED_CHANGELOG_VERSION} (not released)`);
+    expect(part.split('\n').filter((line) => line !== '').length).toBeGreaterThan(10);
+  });
+
+  it('holds no old word and no scanned jargon word in the README, outside code spans and fenced code', () => {
+    expect(describeHits(scanDoc('README.md', readTop('README.md')))).toEqual([]);
+  });
+
+  it('holds no old word and no scanned jargon word in the part of the CHANGELOG that is not released, outside code spans', () => {
+    const part = changelogPartOf(readTop('CHANGELOG.md'), SCANNED_CHANGELOG_VERSION);
+    expect(describeHits(scanDoc('CHANGELOG.md', part))).toEqual([]);
   });
 });

@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { checkProxyHealth, healthUrl, parseProxyUrl, proxyLabel } from '../../src/safety/proxy.js';
-import { findTokenPaths, looksLikeToken } from '../../src/safety/secrets.js';
+import { findTokenPaths, looksLikeToken, textHasToken } from '../../src/safety/secrets.js';
 import { FAKE_GITHUB_OAUTH_TOKEN, FAKE_GITHUB_TOKEN, FAKE_GOOGLE_API_KEY } from '../helpers/fake-secret.js';
 
 describe('looksLikeToken', () => {
@@ -44,6 +44,33 @@ describe('looksLikeToken', () => {
   });
 });
 
+describe('textHasToken (TP-45)', () => {
+  it.each([
+    ['a GitHub token in a line', `token: ${FAKE_GITHUB_TOKEN}\n`],
+    ['an Anthropic key in a sentence', 'Use sk-ant-api03-abcdefghijklmnop for the proxy.'],
+    ['a 40 character hex run', 'key = da39a3ee5e6b4b0d3255bfef95601890afd80709'],
+    ['a base64 secret with a plus sign', 'secret: wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY12'],
+    ['a base64url run', 'value: Zm9vYmFyQmF6X3F1eC1URVNUMDEyMzQ1Njc4OWFiY2RlZg'],
+    ['a token on the last line of many', `${'a line of text\n'.repeat(200)}${FAKE_GOOGLE_API_KEY}`],
+    ['a base64 secret with one slash and no plus sign', 'secret: wJalrXUtnFEMI/K7MDENGbPxRfiCYEXAMPLEKEY12'],
+    ['a base64 secret with two slashes and no plus sign', 'secret = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
+  ])('is true for %s', (_name, text) => {
+    expect(textHasToken(text)).toBe(true);
+  });
+
+  it.each([
+    ['a long path with upper case, lower case and digits', 'See /var/folders/fn/xhrkn4ys4d37t9fd8kfmd4rw0000gn/T/Work/payments-team-factory-2 for it.'],
+    ['a long URL', 'https://github.com/Payments-Team-Org/payments-team-factory-service-2'],
+    ['a long absolute path with no hyphen', 'Folder: /Users/example/Sandbox/Project2024/docs/DesignNotes2'],
+    ['plain prose', 'The quick brown fox jumps over the lazy dog and keeps running.'],
+    ['a short hex string', 'commit da39a3ee'],
+    ['a prefix alone', 'The key starts with sk-ant- and goes on.'],
+    ['an empty text', ''],
+  ])('is false for %s', (_name, text) => {
+    expect(textHasToken(text)).toBe(false);
+  });
+});
+
 describe('findTokenPaths', () => {
   it('returns the key paths and never a value', () => {
     const secret = FAKE_GITHUB_TOKEN;
@@ -59,7 +86,43 @@ describe('findTokenPaths', () => {
 
   it('hides a key that looks like a token', () => {
     const key = FAKE_GITHUB_TOKEN;
-    expect(findTokenPaths({ cells: { [key]: 'sk-ant-api03-abcdefgh' } })).toEqual(['cells.<key>']);
+    expect(findTokenPaths({ workers: { [key]: 'sk-ant-api03-abcdefgh' } })).toEqual(['workers.<key>']);
+  });
+
+  describe('the local source and the clone URL of a project', () => {
+    const LONG_FOLDER = '/var/folders/fn/xhrkn4ys4d37t9fd8kfmd4rw0000gn/T/Work/payments-team-factory-2';
+    const LONG_URL = 'https://github.com/Payments-Team-Org/payments-team-factory-service-2';
+
+    it('is not a token when it is a long path with upper case, lower case and digits', () => {
+      expect(looksLikeToken(LONG_FOLDER)).toBe(true);
+      expect(looksLikeToken(LONG_URL)).toBe(true);
+      expect(
+        findTokenPaths({
+          sources: { '../web': LONG_FOLDER, '../api': `file://${LONG_FOLDER}` },
+          recipe: { projects: [{ id: 'web', url: LONG_URL, path: '../web' }] },
+        }),
+      ).toEqual([]);
+    });
+
+    it('is a token when it holds a known prefix or a hex run', () => {
+      const hex = 'da39a3ee5e6b4b0d3255bfef95601890afd80709';
+      expect(
+        findTokenPaths({
+          sources: { '../web': `/Users/example/${FAKE_GITHUB_TOKEN}`, '../api': `/Users/example/${hex}` },
+          recipe: { projects: [{ id: 'web', url: `https://github.com/acme/${FAKE_GITHUB_TOKEN}` }] },
+        }),
+      ).toEqual(['sources.../web', 'sources.../api', 'recipe.projects.0.url']);
+    });
+
+    it('keeps the base64 test for the same text in any other place', () => {
+      expect(
+        findTokenPaths({
+          sources: { '../web': { nested: LONG_FOLDER } },
+          recipe: { projects: [{ id: 'web', path: LONG_FOLDER, repo: LONG_URL }], url: LONG_URL },
+          url: LONG_URL,
+        }),
+      ).toEqual(['sources.../web.nested', 'recipe.projects.0.path', 'recipe.projects.0.repo', 'recipe.url', 'url']);
+    });
   });
 
   describe('the address of a node link', () => {

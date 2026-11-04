@@ -1,4 +1,5 @@
-import { blockNames, dirs, schema1 } from '../names.js';
+import { join } from 'node:path';
+import { blockNames, dirs, files, schema1 } from '../names.js';
 import { stateRel } from '../state/layout.js';
 import { fileTemplates } from '../templates/index.js';
 
@@ -7,6 +8,18 @@ export interface FileMove {
   readonly from: string;
   readonly to: string;
 }
+
+/**
+ * A file with managed blocks that moves outside the state folder. Both paths are relative to the root. The file moves
+ * only when it holds a managed block, because a file of the owner at that place is not a file of this tool.
+ */
+export interface RootMove {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** The moves outside the state folder. `CLAUDE.md` leaves the root, which holds no instruction file. */
+export const rootMoves: readonly RootMove[] = [{ from: files.claudeMd, to: join(dirs.coordinator, files.claudeMd) }];
 
 /** A managed block that gets a new name. */
 export interface BlockRename {
@@ -51,6 +64,12 @@ export const fileSteps: readonly FileStep[] = [
     ],
   },
 ];
+
+/**
+ * The old names of the managed blocks that any step renamed. A file can hold a block under its old name after a step,
+ * for example a block that a person edited, which the step kept. So the names count at every state version.
+ */
+export const blockRenamesOf = (steps: readonly FileStep[]): readonly BlockRename[] => steps.flatMap((step) => step.renames);
 
 /** The steps that take the state from version `from` to version `to`, in order. */
 export const stepsBetween = (steps: readonly FileStep[], from: number, to: number): readonly FileStep[] =>

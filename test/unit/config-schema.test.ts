@@ -1,24 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import { isSlug, slugify } from '../../src/config/primitives.js';
-import { configSchema } from '../../src/config/schema.js';
+import { localConfigSchema, mergeConfig, splitConfigValue } from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
-import { values } from '../../src/names.js';
-import { recipeSchemas } from '../../src/recipes/index.js';
+import { files, values } from '../../src/names.js';
+import { recipes } from '../../src/recipes/index.js';
 import { parseProxyUrl } from '../../src/safety/proxy.js';
-import { sampleObject } from '../helpers/sample-config.js';
+import { parseConfig, sharedConfigSchema } from '../helpers/package-registry.js';
+import { parseMixed, sampleConfig, sampleFiles, sampleObject } from '../helpers/sample-config.js';
 
 type Raw = Record<string, any>;
 type Mutate = (raw: Raw) => void;
 
+/** The id of an approval point of the sample recipe. */
+const POINT = Object.keys(sampleConfig().core.approval)[0] ?? '';
+
 const check = (mutate: Mutate) => {
   const raw = sampleObject();
   mutate(raw);
-  const parsed = configSchema.safeParse(raw);
+  const parsed = parseMixed(raw);
   return parsed.success ? null : describeIssues(parsed.error);
 };
 
 const parsedOf = (raw: Raw) => {
-  const parsed = configSchema.safeParse(raw);
+  const parsed = parseMixed(raw);
   if (!parsed.success) throw new Error(describeIssues(parsed.error));
   return parsed.data;
 };
@@ -29,7 +33,7 @@ const hosted = (raw: Raw, extra: Raw = {}): void => {
 
 describe('config schema 2', () => {
   it('accepts the sample config and returns the core and the recipe apart', () => {
-    const parsed = configSchema.safeParse(sampleObject());
+    const parsed = parseMixed(sampleObject());
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.core.node).toEqual({ id: 'demo', layer: 1 });
@@ -41,27 +45,57 @@ describe('config schema 2', () => {
 
   it('fills the defaults of the optional keys', () => {
     const raw = sampleObject();
-    for (const key of ['proxies', 'cells', 'children', 'parent', 'approval']) delete raw[key];
-    const parsed = configSchema.safeParse(raw);
+    for (const key of ['proxies', 'workers', 'children', 'parent', 'approval', 'sources', 'session']) delete raw[key];
+    raw['session'] = { permission_mode: 'auto', effort: 'high', model: 'default' };
+    const parsed = parseMixed(raw);
     expect(parsed.success).toBe(true);
     if (!parsed.success) return;
     expect(parsed.data.core.proxies).toEqual([]);
-    expect(parsed.data.core.cells).toEqual({});
+    expect(parsed.data.core.workers).toEqual({});
     expect(parsed.data.core.children).toEqual([]);
     expect(parsed.data.core.parent).toBeNull();
-    expect(parsed.data.core.approval).toEqual({ land: 'each' });
+    expect(parsed.data.core.sources).toEqual({});
+    expect(parsed.data.core.session).toMatchObject({ proxy: 'none', statusline: null });
   });
 
-  it('accepts a full config with proxies, cells, links, a hosted tracker and a numeric load', () => {
+  it('fills owner for each approval point that the local file does not name, and keeps a named point', () => {
+    const raw = sampleObject();
+    raw['approval'] = { [POINT]: 'delegated' };
+    const modes = parsedOf(raw).core.approval;
+    expect(modes[POINT]).toBe('delegated');
+    const others = Object.entries(modes).filter(([id]) => id !== POINT);
+    expect(others.length).toBeGreaterThan(0);
+    expect(others.every(([, mode]) => mode === 'owner')).toBe(true);
+    expect(Object.keys(modes).sort()).toEqual(recipes[0].approvalPoints.map((point) => point.id).sort());
+  });
+
+  it('refuses an approval point that the recipe does not list, names the key, and puts the issue in the local file', () => {
+    const raw = sampleObject();
+    raw['approval'] = { 'not-a-point': 'owner' };
+    const parsed = parseMixed(raw);
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.file).toBe(files.localConfig);
+    expect(describeIssues(parsed.error)).toContain('approval.not-a-point');
+    expect(describeIssues(parsed.error)).toContain(POINT);
+  });
+
+  it('refuses a mode that is not owner or delegated', () => {
+    expect(check((raw) => (raw['approval'][POINT] = 'never'))).toContain(`approval.${POINT}:`);
+  });
+
+  it('accepts a full config with proxies, workers, links, a hosted tracker and a numeric load', () => {
     const message = check((raw) => {
       raw['proxies'] = [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health' }];
       raw['session'].proxy = 'local';
-      raw['cells'] = { 'web-cell': { proxy: 'none' } };
+      raw['workers'] = { 'web-search': { proxy: 'none' } };
       raw['limits'].load_max = 6;
       raw['parent'] = { id: 'acme', address: 'file:///srv/nodes/acme-factory' };
       raw['children'] = [{ id: 'web', address: 'file:///srv/nodes/web-factory' }];
       raw['owner'].github = 'some-login';
-      raw['approval'] = { land: 'approved-work' };
+      raw['approval'] = { [POINT]: 'delegated' };
+      raw['sources'] = { web: '/srv/code/web' };
+      raw['session'].statusline = 'my-status --short';
       hosted(raw, { watch_interval: '2h' });
       raw['recipe'].projects[0].repo = 'acme/web';
       raw['recipe'].projects[0].heavy_test = 'npm test';
@@ -84,7 +118,6 @@ describe('config schema 2', () => {
       ['owner', (raw: Raw) => (raw['owner'].extra = 1), 'owner.extra: unknown key'],
       ['session', (raw: Raw) => (raw['session'].extra = 1), 'session.extra: unknown key'],
       ['limits', (raw: Raw) => (raw['limits'].extra = 1), 'limits.extra: unknown key'],
-      ['approval', (raw: Raw) => (raw['approval'].extra = 1), 'approval.extra: unknown key'],
       ['local tracker', (raw: Raw) => (raw['tracker'].extra = 1), 'tracker.extra: unknown key'],
       ['hosted tracker', (raw: Raw) => (hosted(raw), (raw['tracker'].extra = 1)), 'tracker.extra: unknown key'],
       ['recipe', (raw: Raw) => (raw['recipe'].extra = 1), 'recipe.extra: unknown key'],
@@ -94,7 +127,7 @@ describe('config schema 2', () => {
       expect(check(mutate)).toContain(expected);
     });
 
-    it('rejects an unknown key in a proxy, a cell, a child and the parent', () => {
+    it('rejects an unknown key in a proxy, a worker, a child and the parent', () => {
       expect(
         check((raw) => {
           raw['proxies'] = [{ id: 'p', base_url: 'http://127.0.0.1:1', health: '/h', key: 'x' }];
@@ -102,9 +135,9 @@ describe('config schema 2', () => {
       ).toContain('proxies.0.key: unknown key');
       expect(
         check((raw) => {
-          raw['cells'] = { l: { proxy: 'none', extra: true } };
+          raw['workers'] = { l: { proxy: 'none', extra: true } };
         }),
-      ).toContain('cells.l.extra: unknown key');
+      ).toContain('workers.l.extra: unknown key');
       expect(
         check((raw) => {
           raw['children'] = [{ id: 'c', address: 'file:///a', extra: 1 }];
@@ -147,7 +180,6 @@ describe('config schema 2', () => {
       ['prepare pct 0', (raw: Raw) => (raw['limits'].context_prepare_pct = 0), 'limits.context_prepare_pct:'],
       ['max pct 101', (raw: Raw) => (raw['limits'].context_max_pct = 101), 'limits.context_max_pct:'],
       ['prepare >= max', (raw: Raw) => (raw['limits'].context_prepare_pct = 40), 'limits.context_prepare_pct:'],
-      ['approval.land', (raw: Raw) => (raw['approval'].land = 'never'), 'approval.land:'],
       ['missing key', (raw: Raw) => delete raw['limits'], 'limits:'],
       ['missing tracker', (raw: Raw) => delete raw['tracker'], 'tracker:'],
       ['missing recipe', (raw: Raw) => delete raw['recipe'], 'recipe:'],
@@ -236,8 +268,12 @@ describe('config schema 2', () => {
       expect(message).not.toContain('recipe.projects');
     });
 
-    it('has one parser in the registry for each recipe id that the core accepts', () => {
-      expect(Object.keys(recipeSchemas)).toEqual([...values.recipes]);
+    it('has one entry in the registry for each recipe id that the core accepts, with a parser and a list of approval points', () => {
+      expect(recipes.map((entry) => entry.id)).toEqual([...values.recipes]);
+      for (const entry of recipes) {
+        expect(typeof entry.schema.safeParse).toBe('function');
+        expect(entry.approvalPoints.length).toBeGreaterThan(0);
+      }
     });
 
     it('accepts an empty list of projects', () => {
@@ -272,11 +308,178 @@ describe('config schema 2', () => {
       expect(check(mutate)).toContain(expected);
     });
 
-    it('accepts a project path with one .. and rejects two', () => {
-      expect(check((raw) => (raw['recipe'].projects[0].path = '../web'))).toBeNull();
-      expect(check((raw) => (raw['recipe'].projects[0].path = 'sub/web'))).toBeNull();
-      expect(check((raw) => (raw['recipe'].projects[0].path = 'a/../../web'))).toBeNull();
-      expect(check((raw) => (raw['recipe'].projects[0].path = 'a/../../../web'))).toContain('recipe.projects.0.path');
+  });
+
+  describe('project path (AC-12, TP-28)', () => {
+    const withPath = (path: unknown): Mutate => (raw) => {
+      raw['recipe'].projects[0].path = path;
+    };
+
+    it.each(['web', 'web-app', 'web_app', 'web.app', 'Web2', 'a', 'node'])('accepts the folder name %s', (path) => {
+      expect(check(withPath(path))).toBeNull();
+    });
+
+    it.each([
+      ['a relative path with a slash', 'sub/web'],
+      ['a path above the root', '../web'],
+      ['a path above the root, twice', '../../web'],
+      ['a path with a .. inside', 'a/../web'],
+      ['an absolute path', '/abs/web'],
+      ['a tilde path', '~/web'],
+      ['a name with a trailing slash', 'web/'],
+      ['a name with a leading ./', './web'],
+      ['a Windows path', 'sub\\web'],
+      ['a Windows path above the root', '..\\web'],
+      ['the empty name', ''],
+      ['a name with a control character', 'we\u001bb'],
+      ['a name with a line break', 'we\nb'],
+    ])('refuses %s as a path that is not one folder name', (_name, path) => {
+      const message = check(withPath(path));
+      expect(message).toContain('recipe.projects.0.path:');
+      if (path !== '') expect(message).toMatch(/one folder name|must not start with a dot|at least 1/);
+    });
+
+    it.each(['.', '..', '.git', '.factory', '.gitignore', '.claude', '.factory.tmp-4242', '.web'])(
+      'refuses the name %s, which starts with a dot',
+      (path) => {
+        expect(check(withPath(path))).toContain('recipe.projects.0.path: must not start with a dot');
+      },
+    );
+
+    it.each([
+      'coordinator',
+      'work-copies',
+      'setup',
+      'factory.yaml',
+      'factory.local.yaml',
+      'CLAUDE.md',
+      'CLAUDE.local.md',
+      'AGENTS.md',
+    ])('refuses the reserved name %s', (path) => {
+      expect(check(withPath(path))).toContain('recipe.projects.0.path: is a name that the factory folder keeps for itself');
+    });
+
+    it.each(['Coordinator', 'COORDINATOR', 'Work-Copies', 'SETUP', 'Factory.YAML', 'claude.md', 'Agents.MD', 'CLAUDE.LOCAL.MD'])(
+      'refuses the reserved name %s in another letter case',
+      (path) => {
+        expect(check(withPath(path))).toContain('keeps for itself');
+      },
+    );
+
+    it('refuses a reserved name that only a compatible form of a letter separates from the reserved name', () => {
+      // A long s (U+017F) folds to s, so this name is "setup" on a file system that folds compatible forms.
+      expect(check(withPath('ſetup'))).toContain('keeps for itself');
+      // A full-width letter folds to the plain letter.
+      expect(check(withPath('ｃoordinator'))).toContain('keeps for itself');
+    });
+
+    it('accepts names that only look like a reserved name', () => {
+      for (const path of ['coordinator2', 'my-setup', 'setup.d', 'work-copies-old', 'CLAUDE', 'AGENTS', 'factory']) {
+        expect(check(withPath(path))).toBeNull();
+      }
+    });
+
+    it('refuses a path that is not a string', () => {
+      expect(check(withPath(7))).toContain('recipe.projects.0.path:');
+      expect(check(withPath(null))).toContain('recipe.projects.0.path:');
+    });
+
+    it('refuses a name longer than a folder name can be', () => {
+      expect(check(withPath('a'.repeat(255)))).toBeNull();
+      expect(check(withPath('a'.repeat(256)))).toContain('recipe.projects.0.path:');
+    });
+
+  });
+
+  describe('clone URLs (AC-11)', () => {
+    const SECRET = 'ghp_S3cretT0kenValue';
+    const withUrl = (url: unknown): Mutate => (raw) => {
+      raw['recipe'].projects[0].url = url;
+    };
+    /** The sample project, and a second project with its own id, path and URL. */
+    const twoProjects = (first: string, second: string, paths: [string, string] = ['web', 'api']): Mutate => (raw) => {
+      const [web] = raw['recipe'].projects;
+      raw['recipe'].projects = [
+        { ...web, url: first, path: paths[0] },
+        { ...web, id: 'api', url: second, path: paths[1] },
+      ];
+    };
+
+    it('takes the url as an optional key, and keeps it in the parsed project', () => {
+      expect(check((raw) => delete raw['recipe'].projects[0].url)).toBeNull();
+      const parsed = parsedOf((() => {
+        const raw = sampleObject();
+        raw['recipe'].projects[0].url = 'git@host:acme/web.git';
+        return raw;
+      })());
+      expect(parsed.recipe.projects[0]?.url).toBe('git@host:acme/web.git');
+    });
+
+    it.each([
+      'https://github.com/acme/web.git',
+      'https://host:8443/acme/web',
+      'git@github.com:acme/web.git',
+      'ssh://git@github.com/acme/web.git',
+      'ssh://github.com/acme/web',
+      'file:///srv/acme/web.git',
+      '/srv/acme/web',
+    ])('accepts the url %s', (url) => {
+      expect(check(withUrl(url))).toBeNull();
+    });
+
+    it.each([
+      ['an https URL with a user name', `https://${SECRET}@github.com/acme/web.git`],
+      ['an https URL with a user and a password', `https://user:${SECRET}@github.com/acme/web.git`],
+      ['an ssh URL with a password', `ssh://git:${SECRET}@github.com/acme/web.git`],
+      ['the scp form with a password', `git:${SECRET}@github.com:acme/web.git`],
+      ['a scheme that is not https, ssh or file', `http://github.com/acme/${SECRET}`],
+      ['a git transport helper', `ext::sh -c ${SECRET}`],
+      ['a leading hyphen', `-oProxyCommand=${SECRET}`],
+      ['a relative path', `../${SECRET}`],
+      ['a value that is not a string', 5],
+      ['a value over the length bound', `https://host/${'a'.repeat(2100)}`],
+    ])('refuses %s, names the key and does not repeat the value', (_name, url) => {
+      const message = check(withUrl(url));
+      expect(message).toContain('recipe.projects.0.url:');
+      expect(message).not.toContain(SECRET);
+      expect(message).not.toContain('aaaaaaaaaa');
+    });
+
+    it('tells the person how to fix a URL with credentials or a scheme that is not allowed', () => {
+      expect(check(withUrl(`https://${SECRET}@github.com/acme/web.git`))).toContain('https URL with no user name, or an ssh URL');
+      expect(check(withUrl('http://github.com/acme/web.git'))).toContain('https URL with no user name, or an ssh URL');
+    });
+
+    it('accepts two projects with two repos', () => {
+      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git'))).toBeNull();
+      expect(check(twoProjects('https://host/acme/web.git', 'https://host:8443/acme/web.git'))).toBeNull();
+    });
+
+    it.each([
+      ['the scp form and the https form of one repo', 'git@github.com:acme/web.git', 'https://github.com/acme/web'],
+      ['a different case of the host', 'https://GitHub.com/acme/web.git', 'https://github.com/acme/web/'],
+      ['ssh with a user and ssh with none', 'ssh://git@github.com/acme/web', 'ssh://github.com/acme/web.git'],
+    ])('refuses two entries with one clone URL in normal form: %s', (_name, first, second) => {
+      const message = check(twoProjects(first, second));
+      expect(message).toContain('recipe.projects.1.url:');
+      expect(message).toContain('web');
+      expect(message).not.toContain('github.com');
+    });
+
+    it('refuses two entries with one path, also when the letter case differs', () => {
+      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git', ['web', 'web']))).toContain(
+        'recipe.projects.1.path: names the same folder as the project web',
+      );
+      expect(check(twoProjects('git@host:acme/web.git', 'git@host:acme/api.git', ['web', 'WEB']))).toContain(
+        'recipe.projects.1.path: names the same folder as the project web',
+      );
+    });
+
+    it('lets two entries with no url stand, because a project with no url is no refusal', () => {
+      const raw = sampleObject();
+      const { url: _url, ...web } = raw['recipe'].projects[0];
+      raw['recipe'].projects = [web, { ...web, id: 'api', path: 'api' }];
+      expect(parseMixed(raw).success).toBe(true);
     });
   });
 
@@ -345,8 +548,8 @@ describe('config schema 2', () => {
       expect(check((raw) => (raw['session'].proxy = 'ghost'))).toContain('session.proxy: names a proxy');
     });
 
-    it('rejects a cell proxy that is not defined', () => {
-      expect(check((raw) => (raw['cells'] = { l: { proxy: 'ghost' } }))).toContain('cells.l.proxy: names a proxy');
+    it('rejects a worker proxy that is not defined', () => {
+      expect(check((raw) => (raw['workers'] = { l: { proxy: 'ghost' } }))).toContain('workers.l.proxy: names a proxy');
     });
 
     it('reserves the id none', () => {
@@ -400,7 +603,7 @@ describe('config schema 2', () => {
         raw['session'].permission_mode = secret;
         raw['node'].id = secret;
         raw['limits'].load_max = secret;
-        raw['approval'].land = secret;
+        raw['approval'][POINT] = secret;
         raw['owner'].github = secret;
       });
       expect(message).not.toBeNull();
@@ -418,6 +621,231 @@ describe('config schema 2', () => {
       expect(recipe).not.toBeNull();
       expect(recipe).not.toContain('SECRET');
       expect(check((raw) => (raw['recipe'].id = secret))).not.toContain('SECRET');
+    });
+  });
+});
+
+describe('the shared file and the local file (design 4.4)', () => {
+  const sharedOf = (change: Mutate = () => undefined) => {
+    const raw = sampleFiles().shared;
+    change(raw);
+    return sharedConfigSchema.safeParse(raw);
+  };
+  const localOf = (change: Mutate = () => undefined) => {
+    const raw = sampleFiles().local;
+    change(raw);
+    return localConfigSchema.safeParse(raw);
+  };
+  const messageOf = (parsed: { success: boolean; error?: Parameters<typeof describeIssues>[0] }): string =>
+    parsed.success || parsed.error === undefined ? '' : describeIssues(parsed.error);
+
+  it('accepts the shared part of the sample and the local part of the sample', () => {
+    expect(sharedOf().success).toBe(true);
+    expect(localOf().success).toBe(true);
+  });
+
+  it('keeps the tracker, the project list, the session way of working and the limits in the shared file', () => {
+    const raw = sampleFiles().shared;
+    expect(Object.keys(raw).sort()).toEqual(['limits', 'node', 'recipe', 'schema', 'session', 'tracker']);
+    expect(Object.keys(raw['session']).sort()).toEqual(['effort', 'model', 'permission_mode']);
+    expect(
+      sharedOf((shared) => {
+        shared['tracker'] = { kind: 'github', items: 'acme/web', decisions: 'acme/decisions' };
+        shared['session'] = { permission_mode: 'auto', effort: 'max', model: 'opus' };
+      }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    ['owner', 'owner', (raw: Raw) => (raw['owner'] = { display: 'x', prefix: '{owner}' })],
+    ['session.proxy', 'session.proxy', (raw: Raw) => (raw['session'].proxy = 'none')],
+    ['session.statusline', 'session.statusline', (raw: Raw) => (raw['session'].statusline = null)],
+    ['state.remote', 'state.remote', (raw: Raw) => (raw['state'] = { remote: null })],
+    ['proxies', 'proxies', (raw: Raw) => (raw['proxies'] = [])],
+    ['workers', 'workers', (raw: Raw) => (raw['workers'] = {})],
+    ['approval', 'approval', (raw: Raw) => (raw['approval'] = {})],
+    ['parent', 'parent', (raw: Raw) => (raw['parent'] = null)],
+    ['children', 'children', (raw: Raw) => (raw['children'] = [])],
+    ['sources', 'sources', (raw: Raw) => (raw['sources'] = {})],
+  ])('refuses %s in the shared file, and names the key and the local file', (_name, path, change) => {
+    const message = messageOf(sharedOf(change));
+    expect(message).toContain(`${path}: is a local key`);
+    expect(message).toContain(files.localConfig);
+    expect(message).toContain(files.config);
+  });
+
+  it('names every local key that it finds, not only the first', () => {
+    const message = messageOf(
+      sharedOf((raw) => {
+        raw['proxies'] = [];
+        raw['owner'] = {};
+      }),
+    );
+    expect(message).toContain('proxies: is a local key');
+    expect(message).toContain('owner: is a local key');
+  });
+
+  it('refuses a pulled proxy entry in the shared file before it reads the entry', () => {
+    const message = messageOf(
+      sharedOf((raw) => {
+        raw['proxies'] = [{ id: 'pulled', base_url: 'http://203.0.113.9:8080', health: '/health' }];
+      }),
+    );
+    expect(message).toContain('proxies: is a local key');
+    expect(message).not.toContain('203.0.113.9');
+  });
+
+  it('refuses a permission mode that is not auto, and accepts the model, the effort and the limits', () => {
+    expect(messageOf(sharedOf((raw) => (raw['session'].permission_mode = 'default')))).toContain('session.permission_mode:');
+    expect(messageOf(sharedOf((raw) => (raw['session'].effort = 'wild')))).toContain('session.effort:');
+    expect(sharedOf((raw) => (raw['limits'].load_max = 4)).success).toBe(true);
+  });
+
+  it('takes only the proxy and the status line in the session block of the local file', () => {
+    expect(localOf((raw) => (raw['session'] = { proxy: 'none', statusline: 'my-status' })).success).toBe(true);
+    for (const key of ['model', 'effort', 'permission_mode']) {
+      expect(messageOf(localOf((raw) => (raw['session'][key] = 'auto')))).toContain(`session.${key}: unknown key`);
+    }
+  });
+
+  it('refuses a shared key in the local file', () => {
+    for (const key of ['node', 'tracker', 'limits', 'recipe']) {
+      expect(messageOf(localOf((raw) => (raw[key] = sampleFiles().shared[key])))).toContain(`${key}: unknown key`);
+    }
+  });
+
+  it('gives each file its own schema key and version', () => {
+    expect(messageOf(sharedOf((raw) => (raw['schema'] = 1)))).toContain('schema:');
+    expect(messageOf(localOf((raw) => (raw['schema'] = 2)))).toContain('schema:');
+    expect(sampleFiles().local['schema']).toBe(1);
+    expect(sampleFiles().shared['schema']).toBe(2);
+  });
+
+  it('refuses a status line over one line, and a source with a line break', () => {
+    expect(messageOf(localOf((raw) => (raw['session'].statusline = 'a\nb')))).toContain('session.statusline:');
+    expect(messageOf(localOf((raw) => (raw['sources'] = { api: '/a\n/b' })))).toContain('sources.api:');
+  });
+
+  it('refuses the keys of the older layout with the remake message, and names init', () => {
+    const cells = messageOf(sharedOf((raw) => (raw['cells'] = {})));
+    expect(cells).toContain('cells: is from an older layout');
+    expect(cells).toContain('factory init');
+    const land = messageOf(sharedOf((raw) => (raw['approval'] = { land: 'each' })));
+    expect(land).toContain('approval.land: is from an older layout');
+    expect(land).not.toContain('is a local key');
+  });
+
+  it('merges the two files into the config that the commands use', () => {
+    const { shared, local } = splitConfigValue(sampleObject());
+    const parsed = parseConfig(shared, local);
+    expect(parsed.success && parsed.data).toEqual(sampleConfig());
+  });
+
+  it('names the file that holds the first problem', () => {
+    const { shared, local } = sampleFiles();
+    const badShared = parseConfig({ ...shared, tracker: { kind: 'nope' } }, local);
+    expect(!badShared.success && badShared.file).toBe(files.config);
+    const badLocal = parseConfig(shared, { ...local, parent: { id: 'Bad', address: 'file:///a' } });
+    expect(!badLocal.success && badLocal.file).toBe(files.localConfig);
+  });
+
+  it('merges nothing when the local file names a point that the recipe does not list', () => {
+    const shared = sharedConfigSchema.safeParse(sampleFiles().shared);
+    const local = localConfigSchema.safeParse({ ...sampleFiles().local, approval: { nope: 'owner' } });
+    if (!shared.success || !local.success) throw new Error('the sample must parse');
+    expect(mergeConfig(shared.data, local.data).success).toBe(false);
+  });
+
+  describe('sources: the local source of a project with no URL (AC-11)', () => {
+    const TOKEN = 'ghp_S3cretT0kenValue';
+    /** The sample project sits at `web`, so a key of `sources` can name it. */
+    const parsedWith = (sources: unknown, change: Mutate = () => undefined) => {
+      const raw = sampleObject();
+      raw['recipe'].projects[0].path = 'web';
+      change(raw);
+      raw['sources'] = sources;
+      return parseMixed(raw);
+    };
+    const messageWith = (sources: unknown, change?: Mutate): string => {
+      const parsed = parsedWith(sources, change);
+      return parsed.success ? '' : describeIssues(parsed.error);
+    };
+
+    it.each([
+      ['an absolute path', '/srv/code/web'],
+      ['a path with a space', '/srv/my code/web'],
+      ['a file URL', 'file:///srv/code/web.git'],
+    ])('accepts %s for a listed project', (_name, source) => {
+      const parsed = parsedWith({ web: source });
+      expect(parsed.success && parsed.data.core.sources).toEqual({ web: source });
+    });
+
+    it('accepts a key that writes the project path another way', () => {
+      expect(parsedWith({ './web/': '/srv/code/web' }).success).toBe(true);
+    });
+
+    it.each([
+      ['a leading hyphen', '-oProxyCommand=x'],
+      ['user information in an https URL', `https://user:${TOKEN}@host/acme/web`],
+      ['a user name in an https URL', `https://${TOKEN}@host/acme/web`],
+      ['a password in an ssh URL', `ssh://git:${TOKEN}@host/acme/web`],
+      ['a relative path', 'code/web'],
+      ['a path that starts with a tilde', '~/code/web'],
+      ['a .. segment', '/srv/code/../web'],
+      ['a URL of a host', 'https://host/acme/web'],
+      ['the scp form', 'git@host:acme/web'],
+      ['a scheme that is not allowed', 'http://host/acme/web'],
+      ['a value over the length bound', `/${'a'.repeat(4100)}`],
+    ])('refuses %s, names the key and does not repeat the value', (_name, source) => {
+      const message = messageWith({ web: source });
+      expect(message).toContain('sources.web:');
+      expect(message).not.toContain(TOKEN);
+      expect(message).not.toContain('aaaaaaaaaa');
+    });
+
+    it('puts the problem of a value in the local file', () => {
+      const raw = sampleObject();
+      raw['recipe'].projects[0].path = 'web';
+      raw['sources'] = { web: 'code/web' };
+      const parsed = parseMixed(raw);
+      expect(!parsed.success && parsed.file).toBe(files.localConfig);
+    });
+
+    it('refuses a key that names no listed project, and names the key and the local file', () => {
+      const raw = sampleObject();
+      raw['recipe'].projects[0].path = 'web';
+      raw['sources'] = { api: '/srv/code/api' };
+      const parsed = parseMixed(raw);
+      expect(parsed.success).toBe(false);
+      if (parsed.success) return;
+      expect(parsed.file).toBe(files.localConfig);
+      expect(describeIssues(parsed.error)).toContain('sources.api:');
+    });
+
+    it('refuses a map with more entries than the project list has', () => {
+      const message = messageWith({ web: '/srv/code/web', './web': '/srv/other/web' });
+      expect(message).toContain('sources:');
+      expect(message).toContain('more entries than');
+    });
+
+    it('refuses a source when the project list is empty', () => {
+      expect(messageWith({ web: '/srv/code/web' }, (raw) => (raw['recipe'].projects = []))).toContain('sources.web:');
+    });
+
+    it('bounds the map by itself when it holds more than 200 entries', () => {
+      const sources = Object.fromEntries(Array.from({ length: 201 }, (_, index) => [`p${index}`, `/srv/p${index}`]));
+      expect(messageOf(localOf((raw) => (raw['sources'] = sources)))).toContain('sources:');
+    });
+
+    it('accepts one source for each of 100 projects', () => {
+      const projects = Array.from({ length: 100 }, (_, index) => ({
+        ...sampleObject()['recipe'].projects[0],
+        id: `p${index}`,
+        url: `https://github.com/acme/p${index}`,
+        path: `p${index}`,
+      }));
+      const sources = Object.fromEntries(projects.map((project) => [project.path, `/srv/${project.id}`]));
+      expect(messageWith(sources, (raw) => (raw['recipe'].projects = projects))).toBe('');
     });
   });
 });

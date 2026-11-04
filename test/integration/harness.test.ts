@@ -44,6 +44,48 @@ describe('the sandbox of the integration tests', () => {
   });
 });
 
+describe('the offline origins of the sandbox', () => {
+  it('serves the origin of a project from the disk, with and without the user part of the URL', async () => {
+    const box = await makeSandbox();
+    await box.makeProject('web', 'git@github.com:acme/web.git');
+    await box.makeProject('api', 'https://deploy@github.com/acme/api.git');
+
+    const scp = await box.git(box.root, ['clone', '-q', 'git@github.com:acme/web.git', join(box.root, 'clone-web')]);
+    const withUser = await box.git(box.root, ['clone', '-q', 'https://deploy@github.com/acme/api.git', join(box.root, 'clone-api')]);
+    const withoutUser = await box.git(box.root, ['clone', '-q', 'https://github.com/acme/api.git', join(box.root, 'clone-api-bare')]);
+
+    expect({ scp: scp.code, withUser: withUser.code, withoutUser: withoutUser.code }).toEqual({ scp: 0, withUser: 0, withoutUser: 0 });
+    await box.remove();
+  });
+
+  it('refuses a clone of an https URL that the sandbox does not serve, with no network', async () => {
+    const box = await makeSandbox();
+    const result = await box.git(box.root, ['clone', '-q', 'https://host.invalid/acme/other.git', join(box.root, 'clone-other')]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("transport 'https' not allowed");
+    expect(existsSync(join(box.root, 'clone-other'))).toBe(false);
+    await box.remove();
+  });
+
+  it('refuses a clone of an ssh URL that the sandbox does not serve, so no key of the real home is used', async () => {
+    const box = await makeSandbox();
+    const result = await box.git(box.root, ['clone', '-q', 'git@host.invalid:acme/other.git', join(box.root, 'clone-other')]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("transport 'ssh' not allowed");
+    await box.remove();
+  });
+
+  it('stops the setup when a git step fails', async () => {
+    const box = await makeSandbox();
+    const locked = join(box.root, 'locked');
+    await mkdir(locked, { recursive: true });
+    await chmod(locked, 0o500);
+    await expect(box.makeProject('locked')).rejects.toThrow(/sandbox: git init failed/);
+    await chmod(locked, 0o700);
+    await box.remove();
+  });
+});
+
 describe('the tmux isolation of the sandbox', () => {
   it('gives every command a tmux folder inside the sandbox that exists, and no TMUX variable', async () => {
     const box = await makeSandbox();
@@ -70,7 +112,7 @@ describe('the tmux isolation of the sandbox', () => {
     await chmod(join(bin, 'tmux'), 0o755);
     expect((await box.run(['init', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner'])).code).toBe(0);
 
-    const dry = await box.run(['up', '--home', box.node, '--dry-run'], {
+    const dry = await box.run(['start', '--home', box.node, '--dry-run'], {
       env: { PATH: `${bin}:${box.env['PATH'] ?? ''}`, TMUX: '/somewhere/else,1,0' },
     });
     expect(dry.code).toBe(0);

@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
-import { glossary } from '../../src/glossary.js';
+import { glossary, recipeGlossary } from '../../src/glossary.js';
 import { schemaIds, templateValues, terms } from '../../src/names.js';
+import { softwareGlossary } from '../../src/recipes/software/words.js';
+import { softwareRecipe } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { captureSink } from '../helpers/sink.js';
@@ -66,9 +68,22 @@ describe('the glossary of the program', () => {
     expect(count).toBeLessThanOrEqual(MAX_WORDS);
   });
 
-  it('names the orders folder in the entry for a work order', () => {
-    const text = glossary.find((word) => word.term === 'work order')?.text ?? '';
+  it('names the orders folder in the entry for an assignment', () => {
+    const text = glossary.find((word) => word.term === 'assignment')?.text ?? '';
     expect(text).toContain(templateValues.ordersDir);
+  });
+
+  it('uses the word worker once in the sentence for a worker', () => {
+    const text = glossary.find((word) => word.term === 'worker')?.text ?? '';
+    expect(text.match(/\bworker\b/gi) ?? []).toHaveLength(1);
+  });
+
+  it('names no software word in the sentences for a queue and a check', () => {
+    for (const term of ['queue', 'check']) {
+      const text = glossary.find((word) => word.term === term)?.text ?? '';
+      expect(text.length, term).toBeGreaterThan(0);
+      expect(text, term).not.toMatch(/\b(?:merge|merged|pull request|release|git|CI)\b/i);
+    }
   });
 
   it('has no placeholder left in any text', () => {
@@ -76,10 +91,32 @@ describe('the glossary of the program', () => {
   });
 });
 
-// TODO(code PR): the code PR renames the terms in `terms` (src/names.ts) and the texts in src/glossary.ts to the
-// words of docs/glossary.md. It then restores the test that the program text equals the docs text for each term, and
-// the test that the terms of the program are the entries of the docs, in the same order. It then removes the
-// `(was: old word)` lookup of the tests below.
+describe('the glossary of the software recipe', () => {
+  const recipeWords = recipeGlossary(softwareRecipe);
+
+  it('has one entry for each word of the recipe, in the order of the second part of docs/glossary.md', () => {
+    expect(recipeWords.map((word) => word.term)).toEqual(partEntries(RECIPE_HEADING).map((entry) => entry.term));
+    expect(recipeWords.map((word) => word.term)).toEqual(softwareGlossary.map((entry) => entry.term));
+  });
+
+  it('holds the same text in the recipe and in the second part of docs/glossary.md for each word', () => {
+    expect(recipeWords.map((word) => word.text)).toEqual(partEntries(RECIPE_HEADING).map((entry) => entry.text));
+  });
+
+  it('has at most 25 words in each text, and no placeholder left', () => {
+    for (const word of recipeWords) {
+      expect(wordCount(word.text), word.term).toBeGreaterThan(0);
+      expect(wordCount(word.text), word.term).toBeLessThanOrEqual(MAX_WORDS);
+      expect(word.text, word.term).not.toMatch(/\{\{|\}\}/);
+    }
+  });
+
+  it('has no word of the recipe in the list of terms of every factory', () => {
+    const recipeTerms = recipeWords.map((word) => word.term);
+    expect(terms.filter((term) => recipeTerms.includes(term))).toEqual([]);
+  });
+});
+
 describe('docs/glossary.md', () => {
   it('has the part of every factory, the part of the software recipe and the plain-words table, in this order', () => {
     const lines = glossaryLines();
@@ -97,17 +134,33 @@ describe('docs/glossary.md', () => {
     expect(names.filter((name, index) => names.indexOf(name) !== index)).toEqual([]);
   });
 
-  it.each([...terms])('has exactly one entry for the term "%s" of the program, by the term or by its (was: term) mark', (term) => {
-    const matches = docEntries().filter((entry) => entry.term === term || entry.was === term);
-    expect(matches.map((entry) => entry.term)).toHaveLength(1);
+  it.each([...terms])('has exactly one entry for the term "%s" of the program', (term) => {
+    expect(docEntries().filter((entry) => entry.term === term)).toHaveLength(1);
   });
 
-  it('does not define an old term of the program as the word of an entry', () => {
-    const kept = ['node', 'owner', 'project', 'layer', 'recipe'];
-    const old = terms.filter((term) => !kept.includes(term));
+  it.each([...terms])('holds the same text in the program and in docs/glossary.md for "%s"', (term) => {
+    const word = glossary.find((candidate) => candidate.term === term);
+    const entry = docEntries().find((candidate) => candidate.term === term);
+    expect(word?.text).toBeDefined();
+    expect(word?.text).toBe(entry?.text);
+  });
+
+  it('has the entry of a term in the first part, in the order of the term list', () => {
+    const core = partEntries(CORE_HEADING).map((entry) => entry.term);
+    expect(core.filter((term) => (terms as readonly string[]).includes(term))).toEqual([...terms]);
+  });
+
+  it('has no entry of the second part in the first part', () => {
+    const core = partEntries(CORE_HEADING).map((entry) => entry.term);
+    const recipe = partEntries(RECIPE_HEADING).map((entry) => entry.term);
+    expect(recipe.filter((term) => core.includes(term))).toEqual([]);
+  });
+
+  it('does not define an old word as the word of an entry, and the program has none as a term', () => {
+    const old = docEntries().flatMap((entry) => (entry.was === undefined ? [] : [entry.was]));
     expect(old.length).toBeGreaterThan(0);
-    const defined = docEntries().filter((entry) => old.some((term) => term === entry.term));
-    expect(defined.map((entry) => entry.term)).toEqual([]);
+    expect(docEntries().filter((entry) => old.includes(entry.term)).map((entry) => entry.term)).toEqual([]);
+    expect(terms.filter((term) => old.includes(term))).toEqual([]);
   });
 
   it('has at most 25 words in each entry', () => {
@@ -170,6 +223,12 @@ describe('docs/glossary.md', () => {
     expect(words.filter((word) => !recipe.includes(word))).toEqual([]);
   });
 
+  it('does not call the software recipe unbuilt, and names the config key of the setup', () => {
+    const texts = new Map(glossary.map((word) => [word.term, word.text]));
+    expect(texts.get('recipe')).not.toContain('Not built yet');
+    expect(texts.get('setup')).toContain('`recipe.variant`');
+  });
+
   it('shows the old word of a new word in the mark (was: old word) after the bold term', () => {
     const marks = new Map(docEntries().map((entry) => [entry.term, entry.was]));
     expect(marks.get('worker')).toBe('cell');
@@ -184,13 +243,20 @@ describe('docs/glossary.md', () => {
 });
 
 describe('factory help words', () => {
-  it('prints the heading and one line for each term, and exits 0', async () => {
+  const lineOf = (word: { readonly term: string; readonly text: string }): string => `${word.term}: ${word.text}`;
+
+  it('prints the heading, one line for each term, then the part of the recipe, and exits 0', async () => {
     const result = await run(['help', 'words']);
     expect(result.code).toBe(0);
     const lines = result.out.trimEnd().split('\n');
     expect(lines[0]).toBe('factory words');
-    expect(lines.slice(1)).toEqual(glossary.map((word) => `${word.term}: ${word.text}`));
-    expect(lines).toHaveLength(terms.length + 1);
+    expect(lines.slice(1, terms.length + 1)).toEqual(glossary.map(lineOf));
+    expect(lines.slice(terms.length + 1)).toEqual(['software recipe', ...recipeGlossary(softwareRecipe).map(lineOf)]);
+  });
+
+  it('prints no software word in the part of every factory', async () => {
+    const lines = (await run(['help', 'words'])).out.trimEnd().split('\n');
+    expect(lines.slice(0, terms.length + 1).filter((line) => /\b(?:merge|release|pull request)/i.test(line))).toEqual([]);
   });
 
   it('prints no word of the deny list', async () => {
@@ -200,7 +266,11 @@ describe('factory help words', () => {
   it('prints one JSON document with the term and the text of each word for --json', async () => {
     const result = await run(['help', 'words', '--json']);
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.out)).toEqual({ schema: schemaIds.words, words: glossary });
+    expect(JSON.parse(result.out)).toEqual({
+      schema: schemaIds.words,
+      words: glossary,
+      recipes: [{ recipe: 'software', words: recipeGlossary(softwareRecipe) }],
+    });
   });
 
   it('exits 2 and names the flag for a flag that does not exist', async () => {

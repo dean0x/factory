@@ -1,5 +1,6 @@
-import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { failure, type CliResult } from '../cli/errors.js';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { commandText, dirs, env, flags, flagText, type CommandName } from '../names.js';
 import type { Deps } from './deps.js';
 import { ok } from './result.js';
 
@@ -59,6 +60,42 @@ const MACOS = 'darwin';
 
 /** The path in the form that is compared: macOS has a file system that ignores the case of letters. */
 export const comparable = (deps: Deps, path: string): string => (deps.platform.os === MACOS ? path.toLowerCase() : path);
+
+/**
+ * True when `path` is `folder` or inside it, by the two paths as they are written, with the case rule of the platform.
+ * No call of the file system is made, so a link is not followed.
+ */
+export const isWrittenInside = (deps: Deps, folder: string, path: string): boolean =>
+  isSameOrInside(comparable(deps, resolve(folder)), comparable(deps, resolve(path)));
+
+/** The user settings folder of Claude Code, as it is written, or null when the variable of the user home is not set. */
+export const userClaudeFolderOf = (deps: Deps): string | null => {
+  const userHome = deps.env[env.userHome];
+  return userHome === undefined || userHome === '' ? null : join(resolve(userHome), dirs.claude);
+};
+
+/**
+ * True when `path` is the user settings folder of Claude Code or is inside it, by the two paths as they are written. No
+ * call of the file system is made. With no user home variable, the folder is not known and the answer is false.
+ */
+export const isInUserClaudeFolder = (deps: Deps, path: string): boolean => {
+  const userFolder = userClaudeFolderOf(deps);
+  return userFolder !== null && isWrittenInside(deps, userFolder, path);
+};
+
+/**
+ * A stop (exit 4) when `folder` is the user settings folder of Claude Code or is inside it. The two paths are compared as
+ * they are written, so no call of the file system is made and nothing asks about that folder. With no user home variable,
+ * the folder is not known and nothing stops. The remedy names the command to run once the person has chosen another folder.
+ */
+export const requireOutsideUserClaudeFolder = (deps: Deps, folder: string, command: CommandName): CliResult<void> => {
+  const userFolder = userClaudeFolderOf(deps);
+  if (userFolder === null || !isInUserClaudeFolder(deps, folder)) return ok(undefined);
+  return safetyRefusal(
+    `${resolve(folder)} is, or is inside, the settings folder of Claude Code ${userFolder}`,
+    `Claude Code owns that folder. Go to another folder, or name one with ${flagText(flags.home)} DIR. Then run "${commandText(command)}".`,
+  );
+};
 
 /**
  * True when `path` is `folder` or inside it. The two paths are compared as they are written, and again with their

@@ -416,6 +416,51 @@ describe('scripts/check-intent-docs.sh, check 8: every level and every dot file'
   });
 });
 
+describe('scripts/check-intent-docs.sh, check 7: every level and every dot file of docs/research', () => {
+  /** The folders below docs/research, one inside the other, and the file in the last one. */
+  const nestedInResearch = (folders: number, name = 'extra.md'): string =>
+    join(copy, 'research', ...Array.from({ length: folders }, (_, index) => `level${index + 1}`), name);
+
+  it.each([6, 8])('finds the word lane in a file %d folders below docs/research', async (folders) => {
+    await putAt(nestedInResearch(folders), 'First line.\nA lane of work.\n');
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['7']);
+    expect(result.out).toContain('extra.md:2 holds the word lane');
+  });
+
+  it('finds the word lane in a dot file of docs/research', async () => {
+    await putAt(join(copy, 'research', '.notes.md'), 'Two lanes of work.\n');
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['7']);
+    expect(result.out).toContain('.notes.md:1 holds the word lane');
+  });
+
+  it('finds the word lane in a file of a dot folder of docs/research', async () => {
+    await putAt(join(copy, 'research', '.hidden', 'extra.md'), 'A lane of work.\n');
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['7']);
+    expect(result.out).toContain('extra.md:1 holds the word lane');
+  });
+
+  it('exits 1 and names a folder of docs/research that is deeper than 10 levels, because it does not read it', async () => {
+    await putAt(nestedInResearch(11), 'A lane of work.\n');
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toContain('7');
+    expect(result.out).toContain('deeper than 10 levels');
+    expect(result.out).not.toContain('extra.md:1 holds the word lane');
+  });
+
+  it('passes for a deep tree and a dot file that hold no word lane', async () => {
+    await putAt(nestedInResearch(8), 'The plane has a laneway.\n');
+    await putAt(join(copy, 'research', '.notes.md'), 'No such word here.\n');
+    expect(check().code).toBe(0);
+  });
+});
+
 describe('scripts/check-intent-docs.sh, check 9: the design has the headings for core and setup and for extension points', () => {
   const HEADINGS = ['Core and setup', 'Extension points'] as const;
 
@@ -810,7 +855,7 @@ describe('scripts/check-intent-docs.sh, check 2: the label "Design v3 PR"', () =
     ['docs', 'Docs PR'],
     ['code', 'Code PR'],
   ])('exits 1 when the heading has no checkbox for the %s PR', async (kind, title) => {
-    await change('roadmap-v2.md', (text) => text.replace(`- [ ] ${title}`, '- [ ] Something else'));
+    await change('roadmap-v2.md', (text) => text.replace(new RegExp(`- \\[[ xX]\\] ${title}`), '- [ ] Something else'));
     const result = check();
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['2']);
@@ -830,9 +875,9 @@ describe('scripts/check-intent-docs.sh, check 2: the label "Design v3 PR"', () =
     expect(check().code).toBe(0);
   });
 
-  it('accepts ticked checkboxes', async () => {
-    await change('roadmap-v2.md', (text) => text.replace('- [ ] Docs PR', '- [x] Docs PR'));
-    await change('roadmap-v2.md', (text) => text.replace('- [ ] Code PR', '- [X] Code PR'));
+  it('accepts ticked checkboxes, also with a capital X', async () => {
+    await change('roadmap-v2.md', (text) => text.replace(/- \[[ xX]\] Docs PR/, '- [X] Docs PR'));
+    await change('roadmap-v2.md', (text) => text.replace(/- \[[ xX]\] Code PR/, '- [X] Code PR'));
     expect(check().code).toBe(0);
   });
 
@@ -881,7 +926,7 @@ describe('scripts/check-intent-docs.sh, a comment or a heading in fenced code do
     ['docs', 'Docs PR'],
     ['code', 'Code PR'],
   ])('check 2 does not count the checkbox for the %s PR when it is only in fenced code', async (kind, title) => {
-    await change('roadmap-v2.md', (text) => text.replace(new RegExp(`^(- \\[ \\] ${title} .*\\n)`, 'm'), '```\n$1```\n'));
+    await change('roadmap-v2.md', (text) => text.replace(new RegExp(`^(- \\[[ xX]\\] ${title} .*\\n)`, 'm'), '```\n$1```\n'));
     const result = check();
     expect(result.code).toBe(1);
     expect(failedChecks(result.out)).toEqual(['2']);

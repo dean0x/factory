@@ -31,10 +31,13 @@ const END_PATTERN = new RegExp(`^${escapeRegex(MARKER_PREFIX)}${marker.end} ([a-
 
 export const sha256Hex = (text: string): string => createHash('sha256').update(text).digest('hex');
 
+/** True when the text holds the start of a managed-block marker. A body with one would break the parse of its block. */
+export const holdsBlockMarker = (text: string): boolean => text.includes(MARKER_PREFIX);
+
 export const renderBlock = ({ name, version, body }: BlockSpec): CliResult<string> => {
   if (!BLOCK_NAME_PATTERN.test(name)) return failure(`"${name}" is not a block name`);
   if (!Number.isInteger(version) || version < 1) return failure(`block ${name} needs a version of 1 or more`);
-  if (body.includes(MARKER_PREFIX)) return failure(`the body of block ${name} holds a managed-block marker`);
+  if (holdsBlockMarker(body)) return failure(`the body of block ${name} holds a managed-block marker`);
   return ok(
     `${MARKER_PREFIX}${marker.begin} ${name} v${version} ${marker.hash}=${sha256Hex(body)} -->\n${body}\n${MARKER_PREFIX}${marker.end} ${name} -->`,
   );
@@ -99,6 +102,20 @@ export const verifyBlock = (block: ParsedBlock): BlockIntegrity =>
 
 export const replaceBlock = (text: string, block: ParsedBlock, rendered: string): string =>
   `${text.slice(0, block.start)}${rendered}${text.slice(block.end)}`;
+
+/**
+ * The lines of the text that no block holds: the text of the person. Each line is trimmed, and a blank line is left out.
+ * `blocks` are the blocks that `parseBlocks` found in the same text.
+ */
+export const linesOutsideBlocks = (text: string, blocks: readonly ParsedBlock[]): readonly string[] => {
+  const outside = [...blocks]
+    .sort((left, right) => right.start - left.start)
+    .reduce((current, block) => `${current.slice(0, block.start)}\n${current.slice(block.end)}`, text);
+  return outside
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+};
 
 /** Add rendered blocks at the end of the text. The text before them stays as it is. */
 export const appendBlocks = (text: string, rendered: readonly string[]): string => {

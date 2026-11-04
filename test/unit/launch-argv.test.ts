@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { launchArgv, type LaunchInput } from '../../src/launch/argv.js';
 import { startSteps } from '../../src/launch/tmux.js';
+import { env } from '../../src/names.js';
 import { chainOf } from '../helpers/tmux-fake.js';
 
 const input = (change: Partial<LaunchInput> = {}): LaunchInput => ({
   home: '/w/demo-factory',
+  coordinatorDir: '/w/demo-factory/coordinator',
+  stateDir: '/w/demo-factory/.factory',
   sessionId: 'demo',
   effort: 'high',
   model: 'default',
@@ -33,6 +36,8 @@ describe('launch argument list', () => {
       'auto',
       '--effort',
       'high',
+      '--add-dir',
+      '/w/demo-factory/.factory',
       '--add-dir',
       '/w/web',
     ]);
@@ -73,14 +78,24 @@ describe('launch argument list', () => {
     expect(launchArgv(input({ path: '' })).ok).toBe(false);
   });
 
-  it('adds one --add-dir for each project, in the order of the config', () => {
+  it('adds one --add-dir for the state folder, and one for each project in the order of the config', () => {
     const argv = argvOf({ projects: ['/w/web', '/w/api', '/srv/docs'] });
     const dirs = argv.flatMap((arg, index) => (arg === '--add-dir' ? [argv[index + 1]] : []));
-    expect(dirs).toEqual(['/w/web', '/w/api', '/srv/docs']);
+    expect(dirs).toEqual(['/w/demo-factory/.factory', '/w/web', '/w/api', '/srv/docs']);
   });
 
-  it('adds no --add-dir for a node without projects', () => {
-    expect(argvOf({ projects: [] })).not.toContain('--add-dir');
+  it('adds only the state folder for a node without projects', () => {
+    const argv = argvOf({ projects: [] });
+    expect(argv.filter((arg) => arg === '--add-dir')).toHaveLength(1);
+    expect(argv).toContain('/w/demo-factory/.factory');
+  });
+
+  it('adds no --add-dir for the root, and no one for the coordinator folder', () => {
+    const argv = argvOf({ projects: ['/w/demo-factory/web', '/w/api'] });
+    const dirs = argv.flatMap((arg, index) => (arg === '--add-dir' ? [argv[index + 1]] : []));
+    expect(dirs).not.toContain('/w/demo-factory');
+    expect(dirs).not.toContain('/w/demo-factory/coordinator');
+    expect(dirs).toEqual(['/w/demo-factory/.factory', '/w/demo-factory/web', '/w/api']);
   });
 
   it('adds --model only when the model is not the default', () => {
@@ -92,8 +107,14 @@ describe('launch argument list', () => {
   });
 
   it('keeps a path with spaces or shell characters as one argument', () => {
-    const argv = argvOf({ home: '/w/my factory;$(x)', projects: ['/w/a b'] });
+    const argv = argvOf({
+      home: '/w/my factory;$(x)',
+      coordinatorDir: '/w/my factory;$(x)/coordinator',
+      stateDir: '/w/my factory;$(x)/.factory',
+      projects: ['/w/a b'],
+    });
     expect(argv).toContain('FACTORY_HOME=/w/my factory;$(x)');
+    expect(argv).toContain('/w/my factory;$(x)/.factory');
     expect(argv).toContain('/w/a b');
   });
 
@@ -101,6 +122,15 @@ describe('launch argument list', () => {
     ['a relative home', { home: 'demo-factory' }],
     ['a relative project path', { projects: ['../web'] }],
     ['a project path that starts with a dash', { projects: ['-x'] }],
+    ['a project folder that is the home', { projects: ['/w/demo-factory'] }],
+    ['a project folder that holds the home', { projects: ['/w'] }],
+    ['a relative coordinator folder', { coordinatorDir: 'coordinator' }],
+    ['a coordinator folder that is the home', { coordinatorDir: '/w/demo-factory' }],
+    ['a coordinator folder outside the home', { coordinatorDir: '/w/other/coordinator' }],
+    ['a coordinator folder beside the home with the same start', { coordinatorDir: '/w/demo-factory-x/coordinator' }],
+    ['a relative state folder', { stateDir: '.factory' }],
+    ['a state folder that is the home', { stateDir: '/w/demo-factory' }],
+    ['a state folder outside the home', { stateDir: '/w/other/.factory' }],
     ['an effort that is not one of the words', { effort: '--dangerously-skip-permissions' }],
     ['a model that starts with a dash', { model: '--dangerously-skip-permissions' }],
     ['a model with a space', { model: 'opus --dangerously-skip-permissions' }],
@@ -139,12 +169,35 @@ describe('launch argument list', () => {
 describe('the tmux calls that start a session', () => {
   const launch = ['env', 'PATH=/bin:/x;', 'FACTORY_HOME=/w/node;', 'claude', '--add-dir', '/w/web;'];
 
+  it('starts every window in the coordinator folder, and keeps the home in the session option (TP-46)', () => {
+    const steps = startSteps({ id: 'demo', home: '/w/node', coordinatorDir: '/w/node/coordinator', launch: ['claude'] });
+    const commands = steps.flatMap(chainOf);
+    const folders = commands.flatMap((command) => (command.includes('-c') ? [command[command.indexOf('-c') + 1]] : []));
+    expect(folders).toEqual(['/w/node/coordinator', '/w/node/coordinator', '/w/node/coordinator']);
+    expect(commands[5]).toEqual(['set-option', '-t', '=demo:', '@factory_home', '/w/node']);
+    expect(commands[0]).toEqual(['new-session', '-d', '-s', 'demo', '-n', 'view', '-c', '/w/node/coordinator', '--', 'claude']);
+  });
+
+  it('puts the session marker in the environment of the session before the second pane and every other window (TP-80)', () => {
+    const steps = startSteps({ id: 'demo', home: '/w/node', coordinatorDir: '/w/node/coordinator', launch: ['claude'] });
+    const commands = steps.flatMap(chainOf);
+    const marker = commands.findIndex((command) => command[0] === 'set-environment' && command.includes(env.session));
+    expect(commands[marker]).toEqual(['set-environment', '-t', '=demo', env.session, 'demo']);
+    const firstPane = commands.findIndex((command) => command[0] === 'new-session');
+    const secondPane = commands.findIndex((command) => command[0] === 'split-window');
+    const otherWindow = commands.findIndex((command) => command[0] === 'new-window');
+    expect(marker).toBeGreaterThan(firstPane);
+    expect(marker).toBeLessThan(secondPane);
+    expect(marker).toBeLessThan(otherWindow);
+  });
+
   it('reads a path that ends in a semicolon as one value, and not as the end of a command', () => {
-    const steps = startSteps({ id: 'demo', home: '/w/node;', launch });
+    const steps = startSteps({ id: 'demo', home: '/w/node;', coordinatorDir: '/w/node;/coordinator;', launch });
     const commands = steps.flatMap(chainOf);
     expect(commands.map((command) => command[0])).toEqual([
       'new-session',
       'set-option',
+      'set-environment',
       'set-environment',
       'set-option',
       'set-option',
@@ -152,20 +205,25 @@ describe('the tmux calls that start a session', () => {
       'set-option',
       'new-window',
     ]);
-    expect(commands[0]).toEqual(['new-session', '-d', '-s', 'demo', '-n', 'view', '-c', '/w/node;', '--', ...launch]);
-    expect(commands[4]).toEqual(['set-option', '-t', '=demo:', '@factory_home', '/w/node;']);
+    expect(commands[0]).toEqual(['new-session', '-d', '-s', 'demo', '-n', 'view', '-c', '/w/node;/coordinator;', '--', ...launch]);
+    expect(commands[5]).toEqual(['set-option', '-t', '=demo:', '@factory_home', '/w/node;']);
     const folders = commands.flatMap((command) => (command.includes('-c') ? [command[command.indexOf('-c') + 1]] : []));
-    expect(folders).toEqual(['/w/node;', '/w/node;', '/w/node;']);
+    expect(folders).toEqual(['/w/node;/coordinator;', '/w/node;/coordinator;', '/w/node;/coordinator;']);
   });
 
   it('keeps a backslash before the last semicolon of a value', () => {
-    const steps = startSteps({ id: 'demo', home: '/w/node\;', launch: ['claude'] });
-    expect(steps.flatMap(chainOf)[0]).toContain('/w/node\;');
-    expect(steps.flatMap(chainOf)).toHaveLength(8);
+    const steps = startSteps({ id: 'demo', home: '/w/node\;', coordinatorDir: '/w/node\;/coordinator\;', launch: ['claude'] });
+    expect(steps.flatMap(chainOf)[0]).toContain('/w/node\;/coordinator\;');
+    expect(steps.flatMap(chainOf)).toHaveLength(9);
   });
 
   it('leaves a word without a final semicolon as it is, with the one separator of the first call', () => {
-    const steps = startSteps({ id: 'demo', home: '/w/node', launch: ['claude', '--add-dir', '/w/a;b'] });
+    const steps = startSteps({
+      id: 'demo',
+      home: '/w/node',
+      coordinatorDir: '/w/node/coordinator',
+      launch: ['claude', '--add-dir', '/w/a;b'],
+    });
     expect(steps[0]?.filter((word) => word === ';')).toEqual([';']);
     expect(steps[0]).toContain('/w/a;b');
     expect(steps.slice(1).flat().filter((word) => word.includes(';'))).toEqual([]);

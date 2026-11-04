@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { sha256Hex } from '../../src/blocks/managed.js';
-import { parseYamlText } from '../../src/config/load.js';
-import { configSchema } from '../../src/config/schema.js';
+import { localConfigSchema, splitConfigValue } from '../../src/config/schema.js';
+import { sharedConfigSchema } from '../helpers/package-registry.js';
 import { configMigrations } from '../../src/migrate/config.js';
 import { fileSteps, stepsBetween } from '../../src/migrate/files.js';
 import { planMigrations, runMigrations } from '../../src/migrate/runner.js';
 import { stateMigrations } from '../../src/migrate/state.js';
 import { nodeStateSchema } from '../../src/state/schema.js';
 import { fileTemplates } from '../../src/templates/index.js';
-import { sampleConfig } from '../helpers/sample-config.js';
-import { OLD_ROADMAPS_README, schema1Doc } from '../helpers/schema1.js';
+import { parseMixed, sampleConfig } from '../helpers/sample-config.js';
+import { OLD_ROADMAPS_README, schema1Doc, schema1DocWithProject, schema1Project } from '../helpers/schema1.js';
 
 const migrateConfig = (raw: unknown) => {
   const steps = planMigrations(1, 2, configMigrations);
@@ -38,45 +38,87 @@ describe('config migration, schema 1 to 2', () => {
     expect(configMigrations.map((step) => [step.from, step.to])).toEqual([[1, 2]]);
   });
 
-  it('gives a document that the schema 2 parser reads as the sample config', () => {
+  it('gives a document that the schema 2 parser reads as the sample config with no project', () => {
     const migrated = valueOf(migrateConfig(schema1Doc()));
-    const parsed = configSchema.safeParse(migrated);
-    expect(parsed.success && parsed.data).toEqual(sampleConfig());
+    const parsed = parseMixed(migrated);
+    const sample = sampleConfig();
+    expect(parsed.success && parsed.data).toEqual({ ...sample, recipe: { ...sample.recipe, projects: [] } });
   });
 
-  it('turns the role into layer 1 and renames lanes to cells', () => {
+  it('turns the role into layer 1 and renames lanes to workers', () => {
     const doc = schema1Doc();
-    doc.lanes = { 'cell-a': { proxy: 'none' } };
+    doc.lanes = { 'worker-a': { proxy: 'none' } };
     const migrated = valueOf(migrateConfig(doc));
     expect(migrated.node).toEqual({ id: 'demo', layer: 1 });
-    expect(migrated.cells).toEqual({ 'cell-a': { proxy: 'none' } });
+    expect(migrated.workers).toEqual({ 'worker-a': { proxy: 'none' } });
     expect(migrated).not.toHaveProperty('lanes');
   });
 
-  it('moves the projects into the software recipe and drops the pack of each project', () => {
+  it('moves the empty project list into the software recipe', () => {
     const migrated = valueOf(migrateConfig(schema1Doc()));
-    expect(migrated.recipe).toMatchObject({ id: 'software', variant: 'plain' });
-    expect(migrated.recipe.projects).toHaveLength(1);
-    expect(migrated.recipe.projects[0]).not.toHaveProperty('pack');
-    expect(migrated.recipe.projects[0]).not.toHaveProperty('variant');
+    expect(migrated.recipe).toEqual({ id: 'software', variant: 'plain', projects: [] });
     expect(migrated).not.toHaveProperty('projects');
   });
 
-  it('keeps a project variant only when the pack differs from the recipe variant', () => {
+  it('upgrades a node that has no projects key at all', () => {
     const doc = schema1Doc();
-    doc.projects[0].pack = 'other';
+    delete doc.projects;
     const migrated = valueOf(migrateConfig(doc));
-    expect(migrated.recipe.projects[0].variant).toBe('other');
-    const parsed = configSchema.safeParse(migrated);
-    expect(parsed.success).toBe(false);
+    expect(migrated.recipe).toEqual({ id: 'software', variant: 'plain', projects: [] });
+    expect(parseMixed(migrated).success).toBe(true);
   });
 
-  it('adds a local tracker, the approval of each merge, and no parent', () => {
+  describe('a node that lists a project (decision D-3 B, TP-62)', () => {
+    it('stops with a failure, says to make the node again with init, and gives no value', () => {
+      const result = migrateConfig(schema1DocWithProject());
+      expect(result.ok).toBe(false);
+      const message = messageOf(result);
+      expect(message).toContain('lists a project');
+      expect(message).toContain('has no clone URL');
+      expect(message).toContain('make the node again');
+      expect(message).toContain('factory init');
+    });
+
+    it('stops for any number of projects, and does not repeat a path or an id', () => {
+      const doc = schema1Doc();
+      doc.projects = [
+        { ...schema1Project(), id: 'secret-id', path: '../secret-path' },
+        { ...schema1Project(), id: 'other', path: '../other' },
+      ];
+      const message = messageOf(migrateConfig(doc));
+      expect(message).toContain('lists a project');
+      expect(message).not.toContain('secret-id');
+      expect(message).not.toContain('secret-path');
+    });
+
+    it('stops before the other checks of the projects, so a project that is not a mapping stops it too', () => {
+      const doc = schema1Doc();
+      doc.projects = ['web'];
+      expect(messageOf(migrateConfig(doc))).toContain('lists a project');
+    });
+
+    it('does not change its input', () => {
+      const doc = schema1DocWithProject();
+      const before = JSON.parse(JSON.stringify(doc)) as unknown;
+      migrateConfig(doc);
+      expect(doc).toEqual(before);
+    });
+  });
+
+  it('adds a local tracker and no parent, and no approval: the local file names the modes', () => {
     const migrated = valueOf(migrateConfig(schema1Doc()));
     expect(migrated.tracker).toEqual({ kind: 'local' });
-    expect(migrated.approval).toEqual({ land: 'each' });
+    expect(migrated).not.toHaveProperty('approval');
     expect(migrated.parent).toBeNull();
     expect(migrated.schema).toBe(2);
+  });
+
+  it('gives a value that splits into a valid shared file and a valid local file', () => {
+    const migrated = valueOf(migrateConfig(schema1Doc()));
+    const { shared, local } = splitConfigValue(migrated);
+    expect(sharedConfigSchema.safeParse(shared).success).toBe(true);
+    expect(localConfigSchema.safeParse(local).success).toBe(true);
+    expect(parseMixed(migrated).success).toBe(true);
   });
 
   it('stops when a node on layer 1 lists a child, also with a file address, and gives the remedy', () => {
@@ -84,7 +126,7 @@ describe('config migration, schema 1 to 2', () => {
     doc.children = [{ id: 'team-a', address: 'file:///work/team-a' }];
     const message = messageOf(migrateConfig(doc));
     expect(message).toContain('children');
-    expect(message).toContain('cells');
+    expect(message).toContain('workers');
     expect(message).toContain('node.layer');
     expect(message).toContain('factory node add-child');
     expect(message).not.toContain('team-a');
@@ -114,7 +156,7 @@ describe('config migration, schema 1 to 2', () => {
 
   it('does not change its input', () => {
     const doc = schema1Doc();
-    doc.lanes = { 'cell-a': { proxy: 'none' } };
+    doc.lanes = { 'worker-a': { proxy: 'none' } };
     const before = JSON.parse(JSON.stringify(doc)) as unknown;
     migrateConfig(doc);
     expect(doc).toEqual(before);
@@ -126,7 +168,7 @@ describe('config migration, schema 1 to 2', () => {
     expect(messageOf(migrateConfig(doc))).toContain('node.role');
   });
 
-  it.each(['cells', 'tracker', 'approval', 'recipe', 'parent'])('refuses a schema 1 document that holds %s', (key) => {
+  it.each(['workers', 'tracker', 'approval', 'recipe', 'parent'])('refuses a schema 1 document that holds %s', (key) => {
     const doc = schema1Doc();
     doc[key] = {};
     expect(messageOf(migrateConfig(doc))).toContain(key);
@@ -152,106 +194,14 @@ describe('config migration, schema 1 to 2', () => {
     const doc = schema1Doc();
     doc.extra = 1;
     const migrated = valueOf(migrateConfig(doc));
-    const parsed = configSchema.safeParse(migrated);
+    const parsed = parseMixed(migrated);
     expect(parsed.success).toBe(false);
   });
 });
 
-describe('config migration on the text, schema 1 to 2', () => {
-  const [step] = configMigrations;
-
-  const migrateText = (text: string) => {
-    const applied = step?.applyText?.(text);
-    if (applied === undefined) throw new Error('the step has no text form');
-    return applied;
-  };
-
-  const textOf = (text: string): string => {
-    const migrated = migrateText(text);
-    if (!migrated.ok) throw new Error(`expected success, got: ${migrated.error.message}`);
-    return migrated.value;
-  };
-
-  const SOURCE = `# Top note.
-schema: 1    # Version note.
-
-# Between note.
-node:
-  id: demo
-  role: "coordinator"    # Role note.
-
-# Lanes note.
-lanes:
-  cell-a: { proxy: none }
-
-# Projects note.
-projects:
-  - id: web
-    path: "../web"
-    default_branch: "main"
-    merge_method: squash
-    pack: other
-    gate: { checks: [] }
-  - id: api
-    path: "../api"
-    default_branch: "main"
-    merge_method: squash
-    pack: plain
-    gate: { checks: [] }
-`;
-
-  it('gives the same value as the step on the value', () => {
-    const raw = parseYamlText(SOURCE);
-    if (!raw.ok) throw new Error(raw.error);
-    const written = parseYamlText(textOf(SOURCE));
-    expect(written.ok && written.value).toEqual(valueOf(migrateConfig(raw.value)));
-  });
-
-  it('keeps every comment, and puts the renamed keys where the old keys were', () => {
-    const migrated = textOf(SOURCE);
-    for (const note of ['# Top note.', '# Version note.', '# Between note.', '# Role note.', '# Lanes note.', '# Projects note.']) {
-      expect(migrated).toContain(note);
-    }
-    const written = parseYamlText(migrated);
-    expect(written.ok && Object.keys(written.value as object)).toEqual([
-      'schema',
-      'node',
-      'cells',
-      'recipe',
-      'tracker',
-      'approval',
-      'parent',
-    ]);
-    expect(migrated.indexOf('# Lanes note.')).toBeLessThan(migrated.indexOf('cells:'));
-    expect(migrated.indexOf('# Projects note.')).toBeLessThan(migrated.indexOf('recipe:'));
-  });
-
-  it('turns the pack of a project into a variant only when it differs, in the place of the pack', () => {
-    const written = parseYamlText(textOf(SOURCE));
-    const recipe = (written.ok ? (written.value as Record<string, any>)['recipe'] : {}) as Record<string, any>;
-    expect(Object.keys(recipe['projects'][0])).toEqual(['id', 'path', 'default_branch', 'merge_method', 'variant', 'gate']);
-    expect(recipe['projects'][0]['variant']).toBe('other');
-    expect(recipe['projects'][1]).not.toHaveProperty('variant');
-    expect(recipe['projects'][1]).not.toHaveProperty('pack');
-  });
-
-  it('makes the role a number, also when the role was quoted', () => {
-    const written = parseYamlText(textOf(SOURCE));
-    expect(written.ok && (written.value as Record<string, any>)['node']).toEqual({ id: 'demo', layer: 1 });
-    expect(written.ok && (written.value as Record<string, any>)['schema']).toBe(2);
-  });
-
-  it('refuses text that does not parse, and a role other than coordinator, without the text in the message', () => {
-    const broken = migrateText('schema: 1\nnode: [SECRET-TOKEN\n');
-    expect(!broken.ok && broken.error.message).not.toContain('SECRET-TOKEN');
-    expect(broken.ok).toBe(false);
-    const worker = migrateText(SOURCE.replace('"coordinator"', 'worker'));
-    expect(!worker.ok && worker.error.message).toContain('node.role');
-  });
-
-  it('refuses a document that holds a key of schema 2', () => {
-    const migrated = migrateText(`${SOURCE}tracker: { kind: local }\n`);
-    expect(!migrated.ok && migrated.error.message).toContain('tracker');
+describe('config migration, the form of the step', () => {
+  it('is a pure step on one value, with no step on the text: the upgrade splits the value into two files', () => {
+    expect(configMigrations.every((step) => step.applyText === undefined)).toBe(true);
   });
 });
 

@@ -1,11 +1,15 @@
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
+import { inspectBlock, safetyStateOf } from '../blocks/status.js';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
-import { loadConfig } from '../config/load.js';
+import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
+import { warnInstructionFiles } from '../core/instruction-files.js';
+import { effectiveModes } from '../core/owner-record.js';
 import { err, ok } from '../core/result.js';
+import { requireNoLinks } from '../core/root-paths.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
 import {
@@ -20,23 +24,36 @@ import {
   type TmuxArgs,
 } from '../launch/tmux.js';
 import {
+  blockNames,
   capitalize,
   commands,
   commandText,
+  dirs,
   env,
+  files,
   flags,
   flagText,
   keys,
+  overwriteCommand,
+  places,
   program,
   roles,
   schemaIds,
+  setupFileOf,
   tmuxNames,
   values,
 } from '../names.js';
 import { checkProxyHealth } from '../safety/proxy.js';
-import { checkHomeLocation } from './init-home.js';
+import { layoutOf } from '../state/layout.js';
+import type { RecipeRegistry } from '../recipes/index.js';
+import { safetyTemplateFor } from '../templates/index.js';
+import type { SetupTexts } from '../templates/types.js';
+import { planBlock } from '../upgrade/plan.js';
+import { renderSetupText, writeBlockPlans } from '../upgrade/render.js';
+import { failsOnlyOnSetup, requireRootClean, rootNotices, scanRoot, withSetupAccepted } from './root-content.js';
+import { acceptReason, settleSetup } from './setup-check.js';
 
-export interface UpOptions {
+export interface StartOptions {
   readonly home: string | undefined;
   readonly dryRun: boolean;
 }
@@ -61,7 +78,33 @@ interface StartPlan {
   readonly steps: readonly TmuxArgs[];
   /** The same steps, with the label of the proxy where the URL is. They are safe to print. */
   readonly shown: readonly TmuxArgs[];
+  /** A project folder that is missing: the session does not get it. */
+  readonly warnings: readonly string[];
 }
+
+const missingProjectWarning = (path: string): string =>
+  `The project folder ${path} is missing, so the session does not get it. Clone the repo of the project into that folder.`;
+
+/**
+ * The project folders that exist, and a warning for each one that does not. A received factory lists projects whose
+ * folders can be missing, and a folder that is not there must not go into the session as a folder that it can read.
+ */
+const presentProjects = async (
+  deps: Deps,
+  home: string,
+  projects: readonly { readonly path: string }[],
+): Promise<CliResult<{ readonly folders: readonly string[]; readonly warnings: readonly string[] }>> => {
+  const folders: string[] = [];
+  const warnings: string[] = [];
+  for (const project of projects) {
+    const folder = resolve(home, project.path);
+    const kind = await deps.fs.stat(folder);
+    if (!kind.ok) return kind;
+    if (kind.value === 'dir') folders.push(folder);
+    else warnings.push(missingProjectWarning(folder));
+  }
+  return ok({ folders, warnings });
+};
 
 const shellWord = (word: string): string =>
   /^[A-Za-z0-9_@%+=:,./{}-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
@@ -102,7 +145,7 @@ const coordinatorEnded = async (deps: Deps, id: string): Promise<boolean> => {
   return result.ok && result.value.exitCode === 0 && result.value.stdout.trim() === '1';
 };
 
-/** The tools that `up` needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
+/** The tools that `start` needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
 const toolProblems = async (deps: Deps, readVersion: boolean): Promise<readonly string[]> => {
   const problems: string[] = [];
   if (!(await onPath(deps, toolNames.tmux))) {
@@ -134,8 +177,8 @@ const requireOwnSession = async (deps: Deps, id: string, home: string): Promise<
   if (!shown.ok) return shown;
   if (await isSameHome(deps, shown.value.trim(), home)) return ok(undefined);
   return safetyRefusal(
-    `a tmux session ${id} belongs to another ${roles.node} home`,
-    `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session.`,
+    `a tmux session ${id} belongs to another ${places.folder}`,
+    `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session. Then run "${commandText(commands.start)}" again.`,
   );
 };
 
@@ -159,33 +202,112 @@ const chooseProxy = async (deps: Deps, config: FactoryConfig): Promise<CliResult
   }
   return failure(
     `${health.label} does not answer`,
-    `Start the proxy, or set ${keys.root.session}.${keys.session.proxy} to ${values.noProxy} for the session.`,
+    `Start the proxy, or set ${keys.root.session}.${keys.session.proxy} to ${values.noProxy} for the session. Then run "${commandText(commands.start)}" again.`,
   );
+};
+
+/**
+ * The safety block, for every launch (design 4.8). `start` never launches with a safety body that differs from the text
+ * that the package renders for the config, the effective approval modes and the owner prefix:
+ * - equal: no action;
+ * - intact but different (the package, a mode or the prefix changed): render the block again, print a notice and go on;
+ *   a dry run writes nothing and returns a note;
+ * - edited, missing or not readable: exit 4, because the safety rules are a security boundary.
+ * A link at the coordinator file is a stop first: nothing is read or written through it. The coordinator folder exists
+ * after this check, because a missing file is a missing block. The value is the notes of a dry run.
+ */
+const requireSafetyBlock = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  dryRun: boolean,
+): Promise<CliResult<readonly string[]>> => {
+  const { claudeMd } = layoutOf(home);
+  const plain = await requireNoLinks(deps, home, [claudeMd]);
+  if (!plain.ok) return plain;
+  const name = blockNames.safety;
+  const file = join(dirs.coordinator, files.claudeMd);
+  const status = await inspectBlock(deps, home, safetyTemplateFor(config, await effectiveModes(deps, home, config)));
+  const state = safetyStateOf(status);
+  switch (state) {
+    case 'equal':
+      return ok([]);
+    case 'different': {
+      if (dryRun) return ok([`The block ${name} in ${file} is out of date. A real run renders it again.`]);
+      const written = await writeBlockPlans(deps, home, [planBlock(status, false)], commands.start);
+      if (!written.ok) return written;
+      deps.warn(`Rendered the block ${name} in ${file} again, because the package or a setting changed its text.`);
+      return ok([]);
+    }
+    case 'edited':
+      return safetyRefusal(
+        `the block ${name} in ${file} was edited`,
+        `Run "${overwriteCommand(name)}" to replace the text. It keeps the old text in a backup file.`,
+      );
+    case 'missing':
+      return safetyRefusal(`the block ${name} is missing in ${file}`, `Run "${overwriteCommand(name)}" to add it.`);
+    case 'malformed':
+      return safetyRefusal(
+        `the block ${name} in ${file} can not be read${status.kind === 'malformed' ? `: ${status.message}` : ''}`,
+        `Fix the marker lines in ${file}, then run "${commandText(commands.doctor)}".`,
+      );
+    default: {
+      const unreachable: never = state;
+      return unreachable;
+    }
+  }
+};
+
+/**
+ * Render the setup blocks again after the owner accepted a change: the texts are the bytes that the acceptance hashed. A
+ * setup block that a person edited stays, and a notice names the command that puts the text back.
+ */
+const renderAcceptedSetup = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  texts: SetupTexts,
+): Promise<CliResult<void>> => {
+  const rendered = await renderSetupText(deps, home, config, await effectiveModes(deps, home, config), texts, commands.start);
+  if (!rendered.ok) return rendered;
+  if (rendered.value.wrote) deps.warn('Rendered the setup text again from the files that you accepted.');
+  for (const name of rendered.value.kept) {
+    deps.warn(
+      `The block ${name} differs from ${setupFileOf(name)}, and ${program} kept it. ` +
+        `Run "${commandText(commands.upgrade)}" to put the accepted text back. It keeps the old text in a backup file.`,
+    );
+  }
+  return ok(undefined);
 };
 
 /** The tmux calls that start the session, once with the real proxy URL and once with the label of the proxy. */
 const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<StartPlan>> => {
+  const { coordinatorDir, stateDir } = layoutOf(home);
   const proxy = await chooseProxy(deps, config);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
+  const projects = await presentProjects(deps, home, recipe.projects);
+  if (!projects.ok) return projects;
   const path = deps.env[env.path];
   const stepsFor = (proxyBaseUrl: string | null): CliResult<readonly TmuxArgs[]> => {
     const launch = launchArgv({
       home,
+      coordinatorDir,
+      stateDir,
       sessionId: core.node.id,
       effort: core.session.effort,
       model: core.session.model,
       proxyBaseUrl,
       path: path === undefined || path === '' ? null : path,
-      projects: recipe.projects.map((project) => resolve(home, project.path)),
+      projects: projects.value.folders,
     });
-    return launch.ok ? ok(startSteps({ id: core.node.id, home, launch: launch.value })) : failure(launch.error);
+    return launch.ok ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value })) : failure(launch.error);
   };
   const steps = stepsFor(proxy.value.baseUrl);
   if (!steps.ok) return steps;
   const shown = stepsFor(proxy.value.label === null ? null : `<${proxy.value.label}>`);
   if (!shown.ok) return shown;
-  return ok({ proxy: proxy.value, steps: steps.value, shown: shown.value });
+  return ok({ proxy: proxy.value, steps: steps.value, shown: shown.value, warnings: projects.value.warnings });
 };
 
 const reachOf = (deps: Deps): Reach => {
@@ -255,7 +377,7 @@ const coordinatorEndedLines = (id: string, home: string): readonly OutLine[] => 
   { level: 'warn', text: `The ${roles.coordinator} of the session ${id} has ended.` },
   text(
     `The window ${tmuxNames.windowView} shows why. Remove the session with "${commandLine(killSessionArgs(id))}". ` +
-      `Then run "${commandText(commands.up)} ${flagText(flags.home)} ${shellWord(home)}" again.`,
+      `Then run "${commandText(commands.start)} ${flagText(flags.home)} ${shellWord(home)}" again.`,
   ),
 ];
 
@@ -273,19 +395,21 @@ const dryRunOutput = (input: {
   readonly how: Reach;
   readonly problems: readonly string[];
   readonly plan: StartPlan | null;
+  /** Notes about the files of the config, for example a local file that others can read. */
+  readonly notes: readonly string[];
 }): CommandOutput => {
-  const { home, id, exists, how, problems, plan } = input;
+  const { home, id, exists, how, problems, plan, notes } = input;
   const last = reachArgs(how, id);
   const shown = [...(plan?.shown ?? []), ...(last === null ? [] : [last])].map(commandLine);
   const proxy = plan?.proxy.label ?? null;
   return {
     lines: [
       text('Dry run: no session starts and no file changes.'),
-      text(`${capitalize(roles.node)} home: ${home}`),
+      text(`${capitalize(places.folder)}: ${home}`),
       ...problems.map((problem): OutLine => ({ level: 'warn', text: `${problem}. A real run stops here.` })),
       text(
         exists
-          ? `The session ${id} runs already. A real run checks that it belongs to this ${roles.node} home.`
+          ? `The session ${id} runs already. A real run checks that it belongs to this ${places.folder}.`
           : `The session ${id} does not run. A real run starts it.`,
       ),
       ...(plan === null ? [] : [text(`Proxy: ${proxy ?? values.noProxy}`)]),
@@ -293,24 +417,57 @@ const dryRunOutput = (input: {
         ? [text(`Session ${id} runs. Attach with: ${attachHint(id)}`)]
         : [text('Calls:'), ...shown.map((line) => text(`  ${line}`))]),
     ],
-    json: { schema: schemaIds.up, session: id, started: false, attached: false, proxy, dryRun: true, calls: shown },
-    warnings: plan?.proxy.warning === undefined ? [] : [plan.proxy.warning],
+    json: { schema: schemaIds.start, session: id, started: false, attached: false, proxy, dryRun: true, calls: shown },
+    warnings: [...notes, ...(plan?.warnings ?? []), ...(plan?.proxy.warning === undefined ? [] : [plan.proxy.warning])],
     failed: false,
   };
 };
 
-export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<CommandOutput>> => {
-  const located = await locateHomeFolder(deps, options.home);
+export const runStart = async (
+  deps: Deps,
+  options: StartOptions,
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  // The registration check of the lookup keeps a config file of a cloned repo out: its proxy would get the requests of
+  // the session. A config that does not pass it is a stop here, before any proxy check or launch.
+  const located = await locateHomeFolder(
+    deps,
+    options.home,
+    (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
+    commands.start,
+  );
   if (!located.ok) return located;
   const home = located.value.home;
-  // A node home is never inside a git work tree or another node home (the rules of init). A config file there can
-  // come from a cloned repo, and its proxy would get the requests of the session. So the config is not used.
-  const location = await checkHomeLocation(deps, home);
-  if (!location.ok) return location;
-  const loaded = await loadConfig(deps, home);
+  // The warning about instruction files comes before any change or launch, and it never stops the command.
+  await warnInstructionFiles(deps, home);
+  const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return loaded;
   const id = loaded.value.core.node.id;
   const { dryRun } = options;
+  // A real run sets a wide mode of the local file back to 600 before it uses the file. A dry run only names the command.
+  const notes = await settleLocalMode(deps, home, !dryRun);
+  if (!notes.ok) return notes;
+
+  // The root checks come before the tool check, the proxy health request and any launch, also in a dry run. A warning is
+  // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.
+  const scan = await scanRoot(deps, home, loaded.value);
+  for (const notice of rootNotices(scan)) deps.warn(notice);
+  // A change of the setup text is the one stop that a question can end: when it is the only failure, the owner on a terminal
+  // window accepts it here. Every other case stops with the line that names the accept command.
+  const settled = scan.setup.kind === 'changed' && failsOnlyOnSetup(scan)
+    ? await settleSetup(deps, { home, node: id, check: scan.setup, dryRun, reason: acceptReason(commands.start) })
+    : null;
+  if (settled !== null && !settled.ok) return settled;
+  const clean = requireRootClean(settled === null ? scan : withSetupAccepted(scan));
+  if (!clean.ok) return clean;
+  // The safety block comes after the root checks and before any tool check, proxy request or launch, also in a dry run.
+  const safety = await requireSafetyBlock(deps, home, loaded.value, dryRun);
+  if (!safety.ok) return safety;
+  // The setup blocks come after the link rule of the coordinator file, from the bytes that the acceptance hashed.
+  if (settled !== null) {
+    const rendered = await renderAcceptedSetup(deps, home, loaded.value, settled.value.texts);
+    if (!rendered.ok) return rendered;
+  }
 
   const problems = await toolProblems(deps, !dryRun);
   if (!dryRun && problems.length > 0) {
@@ -331,7 +488,7 @@ export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<C
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
 
-  if (dryRun) return ok(dryRunOutput({ home, id, exists, how, problems, plan: planned }));
+  if (dryRun) return ok(dryRunOutput({ home, id, exists, how, problems, plan: planned, notes: [...notes.value, ...safety.value] }));
 
   if (planned !== null) {
     const started = await startSession(deps, id, planned.steps);
@@ -351,14 +508,14 @@ export const runUp = async (deps: Deps, options: UpOptions): Promise<CliResult<C
       text(arrivalText(how, attached.value, id)),
     ],
     json: {
-      schema: schemaIds.up,
+      schema: schemaIds.start,
       session: id,
       started: planned !== null,
       attached: attached.value,
       proxy: planned?.proxy.label ?? null,
       ...(ended ? { coordinatorEnded: true } : {}),
     },
-    warnings: planned?.proxy.warning === undefined ? [] : [planned.proxy.warning],
+    warnings: [...notes.value, ...(planned?.warnings ?? []), ...(planned?.proxy.warning === undefined ? [] : [planned.proxy.warning])],
     failed: false,
   });
 };

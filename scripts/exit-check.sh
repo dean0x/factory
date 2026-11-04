@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Exit check: pack the CLI, install the tarball in a throw-away HOME, make a node for a git repo, and check it.
-# The flow: init --yes inside the repo "web" makes "web-factory"; up --dry-run and doctor must exit 0;
-# the generated files and the --help text of every command must hold no name from the deny list and no old word.
+# Exit check: pack the CLI, install the tarball in a throw-away HOME, make a factory folder for a git repo, and check it.
+# The flow: init --yes inside the repo "web" makes the factory folder "web-factory" with the clone "web". The origin of
+# the repo is an https URL that a local bare repo serves, so the check needs no network. start --dry-run and doctor must
+# exit 0 from the factory folder, from the coordinator folder and from the clone. The generated files and the --help text
+# of every command must hold no name from the deny list, no old word and no jargon word.
 # The real HOME, the real XDG state folder, the real tmux server, the real npm prefix and the real npm cache are never written.
 # It needs a build first: npm run build
 set -euo pipefail
@@ -90,25 +92,56 @@ installed="$(factory version)"
 [ "$installed" = "$version" ] || fail "factory version prints $installed, expected $version"
 printf 'installed factory %s\n' "$installed"
 
+step "origin"
+origin_url="https://example.com/acme/web.git"
+bare="$tmp/origins/web.git"
+seed="$tmp/origin-seeds/web"
+# A command that runs in "logged" ignores set -e, so the steps are joined with && and the first failure ends the function.
+make_origin() {
+  mkdir -p "$bare" "$seed" &&
+    git init -q --bare "$bare" &&
+    git -C "$seed" init -q &&
+    git -C "$seed" commit -q --allow-empty -m "first" &&
+    git -C "$seed" push -q "$bare" HEAD:refs/heads/main &&
+    git config --file "$GIT_CONFIG_GLOBAL" --add "url.$bare.insteadOf" "$origin_url"
+}
+logged origin make_origin
+
 step "init"
 web="$tmp/web"
 home="$tmp/web-factory"
+clone="$home/web"
 mkdir -p "$web"
 git -C "$web" init -q
+git -C "$web" remote add origin "$origin_url"
 init_in_web() { (cd "$web" && factory init --yes --owner-name "Test Owner"); }
 logged init init_in_web
 head -n 1 "$tmp/init.log"
 [ -f "$home/factory.yaml" ] || fail "init made no factory.yaml in $home"
-grep -Fq 'path: "../web"' "$home/factory.yaml" || fail "the repo web is not a project of the node"
-[ -n "$(find "$XDG_STATE_HOME" -type f -print | head -n 1)" ] || fail "init wrote no home index in the state folder"
+[ -f "$home/factory.local.yaml" ] || fail "init made no factory.local.yaml in $home"
+[ -f "$home/coordinator/CLAUDE.md" ] || fail "init made no coordinator/CLAUDE.md in $home"
+[ -d "$clone/.git" ] || fail "init made no clone of the repo web in $home"
+grep -Fq 'path: "web"' "$home/factory.yaml" || fail "the repo web is not a project of the factory"
+grep -Fq "url: \"$origin_url\"" "$home/factory.yaml" || fail "the project web has no url in factory.yaml"
+[ -n "$(find "$XDG_STATE_HOME" -type f -print | head -n 1)" ] || fail "init wrote no factory list in the state folder"
 
-step "up --dry-run"
-logged up factory up --dry-run --home "$home"
-head -n 1 "$tmp/up.log"
+# No --home: each command finds the factory folder from where it runs.
+run_in() {
+  local folder="$1"
+  shift
+  (cd "$folder" && "$@")
+}
+for place in "$home" "$home/coordinator" "$clone"; do
+  label="$(basename "$place")"
 
-step "doctor"
-logged doctor factory doctor --home "$home"
-tail -n 1 "$tmp/doctor.log"
+  step "start --dry-run in $label"
+  logged "start-$label" run_in "$place" factory start --dry-run
+  head -n 1 "$tmp/start-$label.log"
+
+  step "doctor in $label"
+  logged "doctor-$label" run_in "$place" factory doctor
+  tail -n 1 "$tmp/doctor-$label.log"
+done
 
 # The help texts: the top-level help, the help of each command that it lists, and the help words.
 step "help texts"
@@ -157,10 +190,19 @@ scan "a session id" '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 scan "a date" '20[0-9]{2}-[0-9]{2}-[0-9]{2}'
 # The triage words of one workflow tool. Their case counts: the lower-case words stay allowed.
 scan "a workflow triage word" '(^|[^[:alnum:]_])(FIX_NOW|ESCALATED|CHANGES REQUESTED)([^[:alnum:]_]|$)' exact
-# The words that v2 replaced, as in OLD_WORDS of test/unit/names.test.ts: whole words, also in the plural or in the past tense.
-old_words='(^|[^[:alnum:]_])(lane|pack|brief)(s|ed)?([^[:alnum:]_]|$)'
-scan "an old word (lane, pack or brief)" "$old_words"
-printf 'no generated file and no help text holds a name from the deny list or an old word\n'
+# The eight words that were replaced, as whole words, also in the plural, the past tense or an -ing form.
+# The list and the endings are the same as in test/helpers/old-words.ts, and a unit test keeps them equal.
+old_word_list="lane pack brief cell andon staging inspect ship"
+old_endings="s|es|ed|ing|ped|ping"
+old_alternatives="$(printf '%s' "$old_word_list" | tr ' ' '|')"
+old_words="(^|[^[:alnum:]_])(${old_alternatives})(${old_endings})?([^[:alnum:]_]|\$)"
+scan "an old word" "$old_words"
+# The words of the scanned rows of the plain-words table, as whole words. The list is the same as JARGON_ERE in
+# test/helpers/plain-words.ts, and a unit test keeps them equal.
+jargon_words="changeovers?|work orders?|heartbeats?|bench windows?|outbox(es)?|adapters?|home index(es)?|registered roots?|state markers?|root rules?|allow[ -]lists?|owner records?|owner channels?|core blocks?|trust steps?|permission[ -]skip lists?|token-like values?"
+jargon_pattern="(^|[^[:alnum:]_])(${jargon_words})([^[:alnum:]_]|\$)"
+scan "a jargon word" "$jargon_pattern"
+printf 'no generated file and no help text holds a name from the deny list, an old word or a jargon word\n'
 
 # The npm page shows the package.json of the package. The installed copy holds no old word.
 package_json="$npm_config_prefix/lib/node_modules/@dean0x/factory/package.json"
@@ -168,7 +210,7 @@ package_json="$npm_config_prefix/lib/node_modules/@dean0x/factory/package.json"
 code=0
 grep -Eiq -e "$old_words" "$package_json" || code=$?
 if [ "$code" -eq 0 ]; then
-  fail "the package.json of the package holds an old word (lane, pack or brief)"
+  fail "the package.json of the package holds an old word"
 elif [ "$code" -ne 1 ]; then
   fail "the search of the package.json of the package failed"
 fi

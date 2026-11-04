@@ -5,16 +5,25 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
 import {
+  entryOfHome,
   findHomeInIndex,
   goneHomes,
+  homeHoldingFolder,
   indexPathOf,
+  listedRootAbove,
   matchFolder,
+  originOf,
+  originOfHome,
   readHomeIndex,
   recordHome,
+  recordNode,
   type HomeEntry,
 } from '../../src/core/home-index.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { changePrivateFile } from '../../src/core/private-file.js';
+import { ok } from '../../src/core/result.js';
+import { commands } from '../../src/names.js';
+import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 
 const INDEX = '/state/factory/homes.json';
 const HOME_A = '/w/web-factory';
@@ -28,12 +37,14 @@ interface Setup {
   readonly cwd?: string;
   readonly env?: Record<string, string | undefined>;
   readonly links?: Record<string, string>;
+  readonly os?: string;
 }
 
 /** Fake deps with an index file and the config file of each home in the list. */
 const withIndex = (homes: readonly HomeEntry[], setup: Setup = {}, existing: readonly string[] = homes.map((h) => h.home)): FakeDeps => {
   const deps = createFakeDeps({
     cwd: setup.cwd ?? '/w/web',
+    ...(setup.os === undefined ? {} : { os: setup.os }),
     env: setup.env ?? { XDG_STATE_HOME: '/state', HOME: '/home/me' },
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
@@ -78,6 +89,9 @@ describe('home index: the path', () => {
     for (const state of ['/home/me/.claude', '/home/me/.claude/state', '/home/me/.claude/a/../b']) {
       const result = await pathFor({ HOME: '/home/me', XDG_STATE_HOME: state });
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(!result.ok && result.error.hint).toBe(
+        'Claude Code owns that folder. Set XDG_STATE_HOME to another absolute folder, then run "factory doctor".',
+      );
     }
   });
 
@@ -92,31 +106,33 @@ describe('home index: the path', () => {
     }
   });
 
-  describe('the folder of Claude Code is compared by real path', () => {
+  describe('the folder of Claude Code is compared by written path', () => {
     const environment = { HOME: '/home/me', XDG_STATE_HOME: '/state' };
+    const underClaude = (seen: readonly string[]): readonly string[] =>
+      seen.filter((path) => path === '/home/me/.claude' || path.startsWith('/home/me/.claude/'));
 
-    it('refuses a state folder that is a link into the folder of Claude Code', async () => {
-      const result = await pathFor(environment, {
+    it('makes no call of the file system at or under the folder of Claude Code', async () => {
+      for (const state of ['/state', '/home/me/.claude/state', '/home/me/.claude', '/home/me/.claude-state']) {
+        const deps = createFakeDeps({ env: { HOME: '/home/me', XDG_STATE_HOME: state }, links: { '/state': '/home/me/.claude/state' } });
+        deps.seedDir('/state');
+        deps.seedDir('/home/me/.claude');
+        const seen: string[] = [];
+        await indexPathOf(withFsWatch(deps, (_method, path) => seen.push(path)));
+        expect(underClaude(seen)).toEqual([]);
+      }
+    });
+
+    it('does not follow a link: a state folder linked into the folder of Claude Code is not detected', async () => {
+      const linkedIn = await pathFor(environment, {
         links: { '/state': '/home/me/.claude/state' },
         folders: ['/state', '/home/me/.claude'],
       });
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    });
-
-    it('refuses a state folder that does not exist yet, below a link into the folder of Claude Code', async () => {
-      const result = await pathFor(
-        { HOME: '/home/me', XDG_STATE_HOME: '/state/deep/er' },
-        { links: { '/state': '/home/me/.claude' }, folders: ['/state', '/home/me/.claude'] },
-      );
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    });
-
-    it('refuses a folder of Claude Code that is a link to the state folder', async () => {
-      const result = await pathFor(environment, {
+      expect(linkedIn).toEqual({ ok: true, value: INDEX });
+      const claudeLinkedOut = await pathFor(environment, {
         links: { '/home/me/.claude': '/state' },
         folders: ['/state', '/home/me/.claude'],
       });
-      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(claudeLinkedOut).toEqual({ ok: true, value: INDEX });
     });
 
     it('refuses a different letter case on macOS', async () => {
@@ -137,12 +153,6 @@ describe('home index: the path', () => {
       const result = await pathFor(environment, { links: { '/state': '/data/state' }, folders: ['/state', '/home/me/.claude'] });
       expect(result).toEqual({ ok: true, value: INDEX });
     });
-
-    it('stops with the error when it cannot resolve the links of the path', async () => {
-      const deps = createFakeDeps({ env: environment });
-      const result = await indexPathOf({ ...deps, fs: { ...deps.fs, realpath: async () => failure('cannot resolve /: EACCES') } });
-      expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('EACCES') } });
-    });
   });
 
   describe('with a real file system', () => {
@@ -162,9 +172,10 @@ describe('home index: the path', () => {
       env: { HOME: join(folder, 'home'), XDG_STATE_HOME: state },
     });
 
-    it('refuses a state folder that is a link into the fake folder of Claude Code', async () => {
-      expect(await indexPathOf(realDeps(join(folder, 'via-link')))).toMatchObject({ ok: false, error: { kind: 'safety' } });
-      expect(await indexPathOf(realDeps(join(folder, 'via-link', 'state')))).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    it('does not follow a link into the fake folder of Claude Code, and refuses a written path inside it', async () => {
+      const linked = join(folder, 'via-link');
+      expect(await indexPathOf(realDeps(linked))).toEqual({ ok: true, value: join(linked, 'factory', 'homes.json') });
+      expect(await indexPathOf(realDeps(join(folder, 'home', '.claude', 'state')))).toMatchObject({ ok: false, error: { kind: 'safety' } });
     });
 
     it('accepts a state folder that holds no link into it', async () => {
@@ -326,9 +337,10 @@ describe('home index: reading the file', () => {
     it('makes findHomeInIndex stop with a usage error that names the file', async () => {
       const deps = withIndex([entry(HOME_A, ['/w/web'])], { cwd: '/w/web' });
       deps.modes.set(FOLDER, 0o777);
-      const result = await findHomeInIndex(deps);
+      const result = await findHomeInIndex(deps, commands.node);
       expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
       if (!result.ok) expect(result.error.message).toContain(INDEX);
+      if (!result.ok) expect(result.error.hint).toContain('Then run "factory node" again.');
     });
   });
 });
@@ -504,6 +516,16 @@ describe('home index: recording a home', () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('disk full') });
     expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_B, [], 'api')] });
   });
+
+  it('refuses a link at the index path, and leaves the file and the lock as they were', async () => {
+    const deps = createFakeDeps({ env: {}, links: { [INDEX]: '/elsewhere/homes.json' } });
+    deps.seedDir('/elsewhere');
+    deps.seed(INDEX, indexText([entry(HOME_B, [], 'api')]));
+    const result = await recordHome(deps, INDEX, entry(HOME_A, []));
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('is a link') });
+    expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_B, [], 'api')] });
+    expect(deps.files.has(`${INDEX}.lock`)).toBe(false);
+  });
 });
 
 describe('home index: two writers at once', () => {
@@ -634,6 +656,108 @@ describe('home index: two writers at once', () => {
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('EACCES') });
     expect(deps.sleeps).toEqual([]);
   });
+
+  describe('the lock that stays after the change', () => {
+    const refusesToRemoveLock = (deps: FakeDeps): Deps => ({
+      ...deps,
+      fs: { ...deps.fs, remove: async (path) => (path === LOCK ? failure(`cannot remove ${path}: EACCES`) : deps.fs.remove(path)) },
+    });
+
+    it('stops with an error that names the lock file and the reason, and the change is saved', async () => {
+      const deps = fresh();
+      const result = await recordHome(refusesToRemoveLock(deps), INDEX, entry(HOME_A, []));
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK) });
+      expect(result).toMatchObject({ error: expect.stringContaining('EACCES') });
+      expect(result).toMatchObject({ error: expect.stringContaining('saved') });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_A, [])] });
+    });
+
+    it('gives the error of the failed write first, when the lock stays too', async () => {
+      const deps = fresh();
+      const both = refusesToRemoveLock(deps);
+      const failingWrite: Deps = { ...both, fs: { ...both.fs, writeTextAtomic: async () => failure('cannot write: disk full') } };
+      const result = await recordHome(failingWrite, INDEX, entry(HOME_A, []));
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('disk full') });
+      expect(deps.files.has(INDEX)).toBe(false);
+    });
+  });
+
+  describe('a stale lock that two waiters see', () => {
+    const OTHER = 111;
+    const WAITER = 222;
+
+    it('stays with the waiter that took it over first, and the second waiter does not change the file', async () => {
+      const deps = fresh();
+      deps.seed(LOCK, '1\n');
+      deps.advance(5_001);
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered: () => void = () => undefined;
+      const inside = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const insideChange: string[] = [];
+      const started: Promise<unknown>[] = [];
+
+      // The second waiter has looked at the stale lock. Before it acts, the first waiter takes the lock over and holds it.
+      const second: Deps = {
+        ...deps,
+        pid: WAITER,
+        fs: {
+          ...deps.fs,
+          statInfo: async (path) => {
+            const seen = await deps.fs.statInfo(path);
+            if (path === LOCK && started.length === 0) {
+              started.push(
+                changePrivateFile({ ...deps, pid: OTHER }, INDEX, 1_000, async () => {
+                  insideChange.push('first');
+                  entered();
+                  await gate;
+                  return ok('first\n');
+                }),
+              );
+              await inside;
+            }
+            return seen;
+          },
+        },
+      };
+
+      try {
+        const result = await changePrivateFile(second, INDEX, 1_000, async () => {
+          insideChange.push('second');
+          return ok('second\n');
+        });
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK) });
+        expect(insideChange).toEqual(['first']);
+        expect(deps.files.get(LOCK)).toBe(`${OTHER}\n`);
+      } finally {
+        release();
+      }
+      expect(await started[0]).toEqual({ ok: true, value: undefined });
+      expect(deps.files.get(INDEX)).toBe('first\n');
+      expect(deps.files.has(LOCK)).toBe(false);
+    });
+
+    it('leaves no file of the takeover behind', async () => {
+      const deps = fresh();
+      deps.seed(LOCK, '1\n');
+      deps.advance(5_001);
+      expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+      expect([...deps.files.keys()].sort()).toEqual([INDEX]);
+    });
+
+    it('takes over the claim of a process that ended, and goes on', async () => {
+      const deps = fresh();
+      deps.seed(LOCK, '1\n');
+      deps.seed(`${LOCK}.takeover`, '2\n');
+      deps.advance(5_001);
+      expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+      expect([...deps.files.keys()].sort()).toEqual([INDEX]);
+    });
+  });
 });
 
 describe('home index: recording a home, with a real file system', () => {
@@ -687,6 +811,296 @@ describe('home index: recording a home, with a real file system', () => {
   });
 });
 
+describe('home index: the entry of a folder', () => {
+  const entries = [entry(HOME_A, ['/w/web'], 'web'), entry(HOME_B, ['/w/api'], 'other')];
+
+  it('gives the entry that has the folder as its home', async () => {
+    const deps = createFakeDeps();
+    expect(await entryOfHome(deps, entries, HOME_B)).toEqual(entries[1]);
+  });
+
+  it('gives null for a folder that no entry has as its home, also a folder inside a home and a project folder', async () => {
+    const deps = createFakeDeps();
+    expect(await entryOfHome(deps, entries, '/w/elsewhere')).toBeNull();
+    expect(await entryOfHome(deps, entries, `${HOME_A}/sub`)).toBeNull();
+    expect(await entryOfHome(deps, entries, '/w/web')).toBeNull();
+    expect(await entryOfHome(deps, [], HOME_A)).toBeNull();
+  });
+
+  it('compares real paths: a folder behind a link finds the entry of its real folder', async () => {
+    const deps = createFakeDeps({ links: { '/link': '/w' } });
+    deps.seedDir('/link/web-factory');
+    expect(await entryOfHome(deps, entries, '/link/web-factory')).toEqual(entries[0]);
+  });
+
+  it('finds an entry that was written as the home is given, also when the home does not exist', async () => {
+    const deps = createFakeDeps();
+    expect(await entryOfHome(deps, [entry('/gone/home', [])], '/gone/home')).toEqual(entry('/gone/home', []));
+  });
+
+  it('ignores the case of letters on macOS and keeps it on Linux', async () => {
+    expect(await entryOfHome(createFakeDeps({ os: 'darwin' }), entries, '/W/Web-Factory')).toEqual(entries[0]);
+    expect(await entryOfHome(createFakeDeps({ os: 'linux' }), entries, '/W/Web-Factory')).toBeNull();
+  });
+});
+
+describe('home index: the home that holds a folder as a project', () => {
+  const entries = [entry(HOME_A, ['/w/web'], 'web'), entry(HOME_B, ['/w/api'], 'other')];
+
+  it('gives the home of the entry with a project that is or holds the folder', () => {
+    expect(homeHoldingFolder(entries, '/w/web')).toBe(HOME_A);
+    expect(homeHoldingFolder(entries, '/w/api/src/deep')).toBe(HOME_B);
+  });
+
+  it('gives null for a folder in no project, also for a folder that only starts with the same letters', () => {
+    expect(homeHoldingFolder(entries, '/w')).toBeNull();
+    expect(homeHoldingFolder(entries, '/w/web-search')).toBeNull();
+    expect(homeHoldingFolder([], '/w/web')).toBeNull();
+  });
+});
+
+describe('home index: the listed root above a folder', () => {
+  const entries = [entry(HOME_A, ['/w/web-factory/web']), entry(HOME_B, [])];
+
+  it('gives the listed root that holds the folder, also when the folder does not exist yet', async () => {
+    const deps = withIndex(entries);
+    expect(await listedRootAbove(deps, entries, `${HOME_A}/coordinator`)).toEqual({ ok: true, value: HOME_A });
+    expect(await listedRootAbove(deps, entries, `${HOME_A}/a/b/c`)).toEqual({ ok: true, value: HOME_A });
+  });
+
+  it('gives null for a listed root itself, so a root can be made again', async () => {
+    expect(await listedRootAbove(withIndex(entries), entries, HOME_A)).toEqual({ ok: true, value: null });
+  });
+
+  it('gives null for a folder beside a root and for a folder that only starts with the same letters', async () => {
+    const deps = withIndex(entries);
+    expect(await listedRootAbove(deps, entries, '/w/web-factory-2')).toEqual({ ok: true, value: null });
+    expect(await listedRootAbove(deps, entries, '/w/third-factory')).toEqual({ ok: true, value: null });
+  });
+
+  it('ignores a listed root that no longer holds its config file', async () => {
+    const deps = withIndex(entries, {}, [HOME_B]);
+    expect(await listedRootAbove(deps, entries, `${HOME_A}/inner`)).toEqual({ ok: true, value: null });
+  });
+
+  it('compares real paths: a folder behind a link into a root is inside the root', async () => {
+    const deps = withIndex(entries, { links: { '/via': HOME_A } });
+    deps.seedDir('/via');
+    expect(await listedRootAbove(deps, entries, '/via/inner')).toEqual({ ok: true, value: HOME_A });
+  });
+
+  it('gives null for an empty list', async () => {
+    expect(await listedRootAbove(withIndex([]), [], `${HOME_A}/inner`)).toEqual({ ok: true, value: null });
+  });
+});
+
+describe('home index: recording a node', () => {
+  const fresh = (): FakeDeps => {
+    const deps = createFakeDeps({ env: {} });
+    deps.seedDir('/state');
+    deps.seedDir(HOME_A);
+    return deps;
+  };
+  const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
+  const own = (home: string, projects: readonly string[], id = 'web'): HomeEntry => ({ ...entry(home, projects, id), origin: 'own' });
+
+  it('writes the real path of the root and the folder of each project, and gives ok', async () => {
+    const deps = fresh();
+    const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: ['web', 'api'], origin: 'own' });
+    expect(result).toEqual({ ok: true, value: undefined });
+    expect(stored(deps)).toEqual({ schema: 1, homes: [own(HOME_A, [`${HOME_A}/web`, `${HOME_A}/api`])] });
+  });
+
+  it('gives an error that says the index was not updated when no variable names a folder', async () => {
+    const deps = fresh();
+    const result = await recordNode(deps, null, { home: HOME_A, id: 'web', projects: [], origin: 'own' });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('was not updated') });
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it('gives an error with the path of the index and the reason when the write fails', async () => {
+    const deps = fresh();
+    deps.seed(INDEX, 'not json');
+    const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [], origin: 'own' });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(`The factory list ${INDEX} was not updated`) });
+    expect(deps.files.get(INDEX)).toBe('not json');
+  });
+
+  it('throws nothing when the write is refused', async () => {
+    const deps = fresh();
+    deps.seedDir('/state/factory');
+    deps.modes.set('/state/factory', 0o775);
+    await expect(recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: [], origin: 'own' })).resolves.toMatchObject({
+      ok: false,
+    });
+  });
+});
+
+describe('home index: the origin of a root (TP-159)', () => {
+  const stored = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(INDEX) ?? 'null');
+  const withEntries = (homes: readonly object[]): FakeDeps => {
+    const deps = createFakeDeps({ env: {} });
+    deps.seedDir(HOME_A);
+    deps.seed(INDEX, JSON.stringify({ schema: 1, homes }));
+    return deps;
+  };
+  const before = (origin?: unknown, id = 'web'): object => ({
+    home: HOME_A,
+    id,
+    projects: [],
+    ...(origin === undefined ? {} : { origin }),
+  });
+  const after = (origin: string, id = 'web'): object => ({ home: HOME_A, id, projects: [], origin });
+  const record = (deps: FakeDeps, node: Partial<Parameters<typeof recordNode>[2]> & { origin: 'own' | 'received' }, id = 'web') =>
+    recordNode(deps, INDEX, { home: HOME_A, id, projects: [], ...node });
+
+  describe('the one reader', () => {
+    it.each([
+      ['the exact value own', { ...entry(HOME_A, []), origin: 'own' }, 'own'],
+      ['the value received', { ...entry(HOME_A, []), origin: 'received' }, 'received'],
+      ['no value', entry(HOME_A, []), 'received'],
+      ['another letter case', { ...entry(HOME_A, []), origin: 'Own' }, 'received'],
+      ['a value with a blank', { ...entry(HOME_A, []), origin: 'own ' }, 'received'],
+      ['a number', { ...entry(HOME_A, []), origin: 1 }, 'received'],
+      ['a value that is true', { ...entry(HOME_A, []), origin: true }, 'received'],
+      ['an object', { ...entry(HOME_A, []), origin: { own: true } }, 'received'],
+      ['null', { ...entry(HOME_A, []), origin: null }, 'received'],
+      ['no entry at all', null, 'received'],
+    ])('counts %s as %s', (_name, value, expected) => {
+      expect(originOf(value as HomeEntry | null)).toBe(expected);
+    });
+
+    it('reads an index whose entry holds an origin value that it does not know, and counts that entry as received', async () => {
+      const deps = withEntries([before(['a', 'list'])]);
+      const entries = await readHomeIndex(deps, INDEX);
+      expect(entries.ok && entries.value.map((candidate) => originOf(candidate))).toEqual(['received']);
+    });
+
+    it('reads the origin from the entry of the index and from nothing else', async () => {
+      const deps = withEntries([before('own')]);
+      // A file in the root can claim anything. The reader never looks at it.
+      deps.seed(`${HOME_A}/factory.yaml`, 'origin: own\n');
+      deps.seed(`${HOME_A}/factory.local.yaml`, 'origin: own\n');
+      deps.seed(`${HOME_A}/.factory/node.json`, '{"origin":"own"}\n');
+      const entries = await readHomeIndex(deps, INDEX);
+      const found = entries.ok ? await entryOfHome(deps, entries.value, HOME_A) : null;
+      expect(originOf(found)).toBe('own');
+      const other = withEntries([before()]);
+      other.seed(`${HOME_A}/factory.yaml`, 'origin: own\n');
+      const otherEntries = await readHomeIndex(other, INDEX);
+      expect(originOf(otherEntries.ok ? await entryOfHome(other, otherEntries.value, HOME_A) : null)).toBe('received');
+    });
+
+    describe('the origin of a folder (TP-155)', () => {
+      const listed = (homes: readonly object[]): FakeDeps => {
+        const deps = createFakeDeps({ env: { XDG_STATE_HOME: '/state' } });
+        deps.seedDir(HOME_A);
+        deps.seed(INDEX, JSON.stringify({ schema: 1, homes }));
+        return deps;
+      };
+
+      it('is own for an entry of the index that says own', async () => {
+        expect(await originOfHome(listed([before('own')]), HOME_A)).toBe('own');
+      });
+
+      it('is received for an entry that says received, for an entry with no origin and for a folder with no entry', async () => {
+        expect(await originOfHome(listed([before('received')]), HOME_A)).toBe('received');
+        expect(await originOfHome(listed([before()]), HOME_A)).toBe('received');
+        expect(await originOfHome(listed([before('own')]), HOME_B)).toBe('received');
+      });
+
+      it('is received when no variable names a folder for the index, when the file is broken and when it is not safe', async () => {
+        const noPlace = createFakeDeps({ env: {} });
+        noPlace.seedDir(HOME_A);
+        expect(await originOfHome(noPlace, HOME_A)).toBe('received');
+        const broken = listed([before('own')]);
+        broken.seed(INDEX, 'not json');
+        expect(await originOfHome(broken, HOME_A)).toBe('received');
+        const open = listed([before('own')]);
+        open.modes.set(INDEX, 0o666);
+        expect(await originOfHome(open, HOME_A)).toBe('received');
+      });
+    });
+  });
+
+  describe('a root that init makes (the new-root rule)', () => {
+    it('writes own for a new root with no entry', async () => {
+      const deps = withEntries([]);
+      expect((await record(deps, { origin: 'own', newRoot: true })).ok).toBe(true);
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('own')] });
+    });
+
+    it('writes own over an old entry of the same folder that is received, or that has another id', async () => {
+      const received = withEntries([before('received', 'old')]);
+      await record(received, { origin: 'own', newRoot: true });
+      expect(stored(received)).toEqual({ schema: 1, homes: [after('own')] });
+      const bare = withEntries([before(undefined, 'old')]);
+      await record(bare, { origin: 'own', newRoot: true });
+      expect(stored(bare)).toEqual({ schema: 1, homes: [after('own')] });
+    });
+  });
+
+  describe('a registration again (a root that was there before the run)', () => {
+    it('writes own for a folder that has no entry', async () => {
+      const deps = withEntries([]);
+      await record(deps, { origin: 'own' });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('own')] });
+    });
+
+    it('keeps own for an own entry with the same node id', async () => {
+      const deps = withEntries([before('own')]);
+      await record(deps, { origin: 'own' });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('own')] });
+    });
+
+    it('writes received for an own entry with another node id, and a later registration never writes own again (TP-169)', async () => {
+      const deps = withEntries([before('own', 'old')]);
+      await record(deps, { origin: 'own' }, 'web');
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+      await record(deps, { origin: 'own' }, 'web');
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+      await record(deps, { origin: 'own' }, 'old');
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received', 'old')] });
+    });
+
+    it.each([
+      ['a received entry', 'received'],
+      ['an entry with no origin', undefined],
+      ['an entry with an unknown origin', 'mine'],
+    ])('never goes back to own over %s', async (_name, origin) => {
+      const deps = withEntries([before(origin)]);
+      await record(deps, { origin: 'own' });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+    });
+  });
+
+  describe('a received root', () => {
+    it.each([
+      ['no entry', []],
+      ['an own entry of the same node id', [before('own')]],
+      ['an own entry of another node id', [before('own', 'old')]],
+    ])('writes received over %s', async (_name, homes) => {
+      const deps = withEntries(homes);
+      await record(deps, { origin: 'received' });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+    });
+
+    it('writes received also when the run asks for a new root', async () => {
+      const deps = withEntries([before('own')]);
+      await record(deps, { origin: 'received', newRoot: true });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [after('received')] });
+    });
+  });
+
+  it('changes the entry of the folder only, and keeps the origin of every other entry as it is', async () => {
+    const other = { home: HOME_B, id: 'api', projects: [], origin: 'own' };
+    const odd = { home: '/w/odd', id: 'odd', projects: [], origin: 'mine' };
+    const deps = withEntries([other, before('own'), odd]);
+    await record(deps, { origin: 'received' });
+    expect(stored(deps)).toEqual({ schema: 1, homes: [other, after('received'), odd] });
+  });
+});
+
 describe('home index: homes that are gone', () => {
   it('lists the homes whose config file is missing', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web']), entry(HOME_B, ['/w/api'])], {}, [HOME_A]);
@@ -697,42 +1111,51 @@ describe('home index: homes that are gone', () => {
 describe('home index: finding the home of a folder', () => {
   it('gives the home of the project that holds the current folder', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web'])], { cwd: '/w/web/src' });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: HOME_A });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: HOME_A });
   });
 
   it('compares real paths: a current folder behind a link is found by its real path', async () => {
     const deps = withIndex([entry(HOME_A, ['/real/web'])], { cwd: '/link/web/src', links: { '/link': '/real' } });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: HOME_A });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: HOME_A });
+  });
+
+  it('stops with a usage error that names both factory folders when two entries hold the folder', async () => {
+    const deps = withIndex([entry(HOME_A, ['/w/web'], 'a'), entry(HOME_B, ['/w/web'], 'b')], { cwd: '/w/web/src' });
+    const result = await findHomeInIndex(deps, commands.node);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    if (result.ok) return;
+    expect(result.error.message).toContain(`is in a project of more than one factory folder: ${HOME_B}, ${HOME_A}`);
+    expect(result.error.hint).toBe('Run "factory node" again with --home DIR to choose one.');
   });
 
   it('gives null when no entry holds the folder', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/api'])], { cwd: '/w/web' });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: null });
   });
 
   it('gives null when the index file does not exist', async () => {
     const deps = createFakeDeps({ cwd: '/w/web', env: { XDG_STATE_HOME: '/state' } });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: null });
   });
 
   it('gives null when no variable names a place for the index', async () => {
     const deps = createFakeDeps({ cwd: '/w/web', env: {} });
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: null });
   });
 
   it('ignores an entry whose home is gone', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web'])], { cwd: '/w/web' }, []);
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: null });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: null });
   });
 
   it('lets a home that is gone lose to the home that is there, with no tie', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web']), entry(HOME_B, ['/w/web'])], { cwd: '/w/web' }, [HOME_B]);
-    expect(await findHomeInIndex(deps)).toEqual({ ok: true, value: HOME_B });
+    expect(await findHomeInIndex(deps, commands.node)).toEqual({ ok: true, value: HOME_B });
   });
 
   it('exits 2 and names both homes when two homes list the same project', async () => {
     const deps = withIndex([entry(HOME_A, ['/w/web']), entry(HOME_B, ['/w/web'])], { cwd: '/w/web/src' });
-    const result = await findHomeInIndex(deps);
+    const result = await findHomeInIndex(deps, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (result.ok) return;
     expect(result.error.message).toContain(HOME_A);
@@ -742,13 +1165,85 @@ describe('home index: finding the home of a folder', () => {
   it('exits 2 and names the file when the index cannot be read', async () => {
     const deps = withIndex([], { cwd: '/w/web' });
     deps.seed(INDEX, '{ broken');
-    const result = await findHomeInIndex(deps);
+    const result = await findHomeInIndex(deps, commands.node);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
     if (!result.ok) expect(result.error.message).toContain(INDEX);
   });
 
   it('refuses with exit 4 an index path under the folder of Claude Code', async () => {
     const deps = withIndex([], { cwd: '/w/web', env: { HOME: '/home/me', XDG_STATE_HOME: '/home/me/.claude/state' } });
-    expect(await findHomeInIndex(deps)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(await findHomeInIndex(deps, commands.node)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+});
+
+describe('home index: an entry in the settings folder of Claude Code', () => {
+  const USER = '/users/me';
+  const CLAUDE = `${USER}/.claude`;
+  const IN_CLAUDE = `${CLAUDE}/factory`;
+  const ENV = { XDG_STATE_HOME: '/state', HOME: USER };
+  const underClaude = (path: string): boolean => {
+    const lower = path.toLowerCase();
+    return lower === CLAUDE || lower.startsWith(`${CLAUDE}/`);
+  };
+
+  /** Deps whose file calls are noted in `seen`, with a test home at `/users/me`. */
+  const watched = (deps: FakeDeps): { readonly guarded: FakeDeps; readonly seen: string[] } => {
+    const seen: string[] = [];
+    return { guarded: withFsWatch(deps, (_method, path) => seen.push(path)), seen };
+  };
+
+  describe('when a command looks for the factory folder of the current folder', () => {
+    it.each([CLAUDE, IN_CLAUDE])('stops with exit 4 for the entry %s, and makes no call at or under that folder', async (home) => {
+      const { guarded, seen } = watched(withIndex([entry(home, ['/w/web'])], { cwd: '/w/web/src', env: ENV }));
+      const result = await findHomeInIndex(guarded, commands.node);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      if (result.ok) return;
+      expect(result.error.message).toContain('the settings folder of Claude Code /users/me/.claude');
+      expect(result.error.hint).toContain('Then run "factory doctor".');
+      expect(seen.filter(underClaude)).toEqual([]);
+    });
+
+    it('stops for an entry that differs only in the case of letters on macOS, and not on Linux', async () => {
+      const home = `${USER}/.CLAUDE/factory`;
+      const mac = watched(withIndex([entry(home, ['/w/web'])], { cwd: '/w/web', env: ENV, os: 'darwin' }));
+      expect(await findHomeInIndex(mac.guarded, commands.node)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(mac.seen.filter(underClaude)).toEqual([]);
+      const linux = withIndex([entry(home, ['/w/web'])], { cwd: '/w/web', env: ENV });
+      expect(await findHomeInIndex(linux, commands.node)).toEqual({ ok: true, value: home });
+    });
+
+    it('does not use an entry whose projects do not hold the current folder, and asks nothing about its home', async () => {
+      const deps = withIndex([entry(IN_CLAUDE, ['/w/api']), entry(HOME_A, ['/w/web'])], { cwd: '/w/web', env: ENV });
+      const { guarded, seen } = watched(deps);
+      expect(await findHomeInIndex(guarded, commands.node)).toEqual({ ok: true, value: HOME_A });
+      expect(seen.filter(underClaude)).toEqual([]);
+    });
+  });
+
+  describe('when a command lists the homes that are gone', () => {
+    it('asks nothing about the entry, checks the other homes, and lists the entry as a home that was not found', async () => {
+      const deps = withIndex([], { env: ENV }, [HOME_A]);
+      const { guarded, seen } = watched(deps);
+      const gone = await goneHomes(guarded, [entry(HOME_A, []), entry(IN_CLAUDE, []), entry(HOME_B, [])]);
+      expect(gone).toEqual([IN_CLAUDE, HOME_B]);
+      expect(seen.filter(underClaude)).toEqual([]);
+      expect(seen).toContain(`${HOME_B}/factory.yaml`);
+    });
+  });
+
+  describe('when the index is full', () => {
+    it('keeps the entry, because it is not checked, and asks nothing about it', async () => {
+      const deps = createFakeDeps({ env: { HOME: USER } });
+      deps.seedDir('/state');
+      const others = Array.from({ length: 199 }, (_, i) => entry(`/h/h${i}`, []));
+      deps.seed(INDEX, indexText([entry(IN_CLAUDE, []), ...others]));
+      for (const other of others.slice(0, -1)) deps.seed(`${other.home}/factory.yaml`, 'schema: 2\n');
+      const { guarded, seen } = watched(deps);
+      expect((await recordHome(guarded, INDEX, entry(HOME_A, []))).ok).toBe(true);
+      const kept = (JSON.parse(deps.files.get(INDEX) ?? 'null') as { homes: { home: string }[] }).homes.map((one) => one.home);
+      expect(kept).toContain(IN_CLAUDE);
+      expect(kept).not.toContain('/h/h198');
+      expect(seen.filter(underClaude)).toEqual([]);
+    });
   });
 });

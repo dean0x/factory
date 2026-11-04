@@ -2,9 +2,9 @@
 
 This file gives one plain sentence for each word that factory uses. The first part has the words of every factory. The second part has the words of the software recipe only.
 
-The words below are the new words of the design (decision D-59). The code change renames the words of the program to these words. Until then, `factory help words` prints the old words, and its text is not equal to this file.
+The words below are the new words of the design (decision D-59). `factory help words` prints the words of the program with the same text as this file.
 
-The list `terms` in `src/names.ts` names the words of the program. Each line below has the form `- **word**: sentence`. After the bold word, the mark `(was: old word)` shows the old word that the new word replaces, for example `- **worker** (was: cell): sentence`. An old word appears nowhere else in an entry. An entry that says "Not built yet" names something that this version does not have. A test checks that each entry has at most 25 words and that each word of the program has one entry here.
+The list `terms` in `src/names.ts` names the words of the program. Each line below has the form `- **word**: sentence`. After the bold word, the mark `(was: old word)` shows the old word that the new word replaces, for example `- **worker** (was: cell): sentence`. An old word appears nowhere else in an entry. An entry that says "Not built yet" names something that this version does not have. A test checks that each entry has at most 25 words, that each word of the program has one entry here, and that the program holds the same text as that entry.
 
 ## Words of every factory
 
@@ -14,8 +14,8 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **layer**: A layer is the level of a node, counted from the bottom. Layer 0 is the workers. Each layer has its own role.
 - **worker** (was: cell): A worker is a session in one work copy. It does all the steps for one track of one project. Not built yet.
 - **coordinator**: A coordinator is a node on layer 1. It runs the factory for its owner and gives assignments to workers.
-- **recipe**: A recipe is the kind of work that a factory does, such as software or marketing. It sets the approval points. Not built yet.
-- **setup** (was: variant): A setup is one named way to run a recipe. It holds the text and scripts that you add to the fixed rules.
+- **recipe**: A recipe is the kind of work that a factory does, such as software or marketing. It sets the approval points.
+- **setup** (was: variant): A setup is one named way to run a recipe. It adds text and scripts to the fixed rules. The config key stays `recipe.variant`.
 - **request** (was: andon): A request is an item that waits for the owner. It can be a question to answer or an action to do. Not built yet.
 - **assignment** (was: work order): An assignment is a written task for a worker or a child node. It is a file in `.factory/orders/`.
 - **session reset** (was: changeover): A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state. Not built yet.

@@ -230,28 +230,60 @@ first=$(awk '
 ' "$budget") || first=$awk_failed
 report 6 "token-budget.md has one row for each of the 17 jobs" "$first"
 
-# 7. No file under docs/research holds the whole word lane or lanes. The search goes down five levels.
+# Checks 7 and 8 read a folder tree with the same walk. `scan_folder DIR DEPTH CHECK` runs the function CHECK on each file
+# of the folder DIR, then on each file of each folder in it. DEPTH is the depth of DIR: the folder where the walk starts is
+# at depth 0. The files and the folders with a name that starts with a dot count. CHECK gets the path of one file, and it
+# sets $first to the reason and returns 1 when the file fails. A link to a folder is followed, and the depth limit ends a
+# loop of links.
+max_depth=10
+
+scan_folder() {
+  if [ ! -r "$1" ] || [ ! -x "$1" ]; then
+    first="the folder $1 cannot be read"
+    return 1
+  fi
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    if [ -f "$entry" ]; then
+      "$3" "$entry" || return 1
+    fi
+  done
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    if [ -d "$entry" ]; then
+      if [ "$2" -ge "$max_depth" ]; then
+        first="the folder $entry is deeper than $max_depth levels"
+        return 1
+      fi
+      scan_folder "$entry" $(($2 + 1)) "$3" || return 1
+    fi
+  done
+  return 0
+}
+
+# 7. No file under docs/research (all levels, dot files too) holds the whole word lane or lanes. A file or a folder that
+# cannot be read, and a folder deeper than the depth limit, are a failure.
+
+# Sets $first to the reason that the file $1 was not read or holds the word lane, and returns 1.
+scan_lane_file() {
+  if [ ! -r "$1" ]; then
+    first="the file $1 cannot be read"
+    return 1
+  fi
+  hit=$(grep -n -i -E '(^|[^[:alnum:]_])lanes?($|[^[:alnum:]_])' "$1" | awk 'NR == 1 { print; exit }') || {
+    first=$awk_failed
+    return 1
+  }
+  if [ -n "$hit" ]; then
+    first="${1}:${hit%%:*} holds the word lane"
+    return 1
+  fi
+  return 0
+}
+
 first=""
 if [ ! -d "$research" ]; then
   first="the folder $research is missing"
-elif [ ! -r "$research" ] || [ ! -x "$research" ]; then
-  first="the folder $research cannot be read"
 else
-  for file in "$research"/* "$research"/*/* "$research"/*/*/* "$research"/*/*/*/* "$research"/*/*/*/*/*; do
-    [ -f "$file" ] || continue
-    if [ ! -r "$file" ]; then
-      first="the file $file cannot be read"
-      break
-    fi
-    hit=$(grep -n -i -E '(^|[^[:alnum:]_])lanes?($|[^[:alnum:]_])' "$file" | awk 'NR == 1 { print; exit }') || {
-      first=$awk_failed
-      break
-    }
-    if [ -n "$hit" ]; then
-      first="${file}:${hit%%:*} holds the word lane"
-      break
-    fi
-  done
+  scan_folder "$research" 0 scan_lane_file
 fi
 report 7 "no file under docs/research holds the word lane" "$first"
 
@@ -263,7 +295,6 @@ report 7 "no file under docs/research holds the word lane" "$first"
 # letter, a digit or one of _ . ~ - is part of a longer relative path (docs/private/), so it is not a local path; the
 # drive letter of a WSL path is the only exception. The output names the file, the line and the kind of path, never the
 # path. A file or a folder that cannot be read, and a folder deeper than the depth limit, are a failure.
-max_depth=10
 
 # Sets $first to the first local path of the file $1, and returns 1, or to the reason that the file was not read.
 scan_file() {
@@ -326,32 +357,8 @@ scan_file() {
   return 0
 }
 
-# Reads the files of the folder $1, then each folder in it. $2 is the depth of $1: the docs folder is at depth 0. A link
-# to a folder is followed, and the depth limit ends a loop of links.
-scan_folder() {
-  if [ ! -r "$1" ] || [ ! -x "$1" ]; then
-    first="the folder $1 cannot be read"
-    return 1
-  fi
-  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
-    if [ -f "$entry" ]; then
-      scan_file "$entry" || return 1
-    fi
-  done
-  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
-    if [ -d "$entry" ]; then
-      if [ "$2" -ge "$max_depth" ]; then
-        first="the folder $entry is deeper than $max_depth levels"
-        return 1
-      fi
-      scan_folder "$entry" $(($2 + 1)) || return 1
-    fi
-  done
-  return 0
-}
-
 first=""
-scan_folder "$docs" 0
+scan_folder "$docs" 0 scan_file
 for file in "$docs/../README.md" "$docs/../CHANGELOG.md"; do
   if [ -z "$first" ] && [ -f "$file" ]; then
     scan_file "$file"
@@ -373,10 +380,12 @@ first=$(awk '
 ' "$design") || first=$awk_failed
 report 9 "design.md has the headings for core and setup and for extension points" "$first"
 
-# 10. The core parts of the design and of the glossary hold no word of the software recipe list: merge, pull request,
-# release (also release check and release scope), CI log, PR, CI, git and tmux. A word also counts as a plural, a past
-# form or an -ing form, in any letter case; git and tmux count only as the word itself. PR and CI count only in capital
-# letters. A word inside a longer word (.gitignore) does not count, and a code span counts. The core parts are:
+# 10. The core parts of the design and of the glossary hold no word of the software recipe list, and no word of git or
+# tmux. The software recipe list is a copy of softwareWordList in src/recipes/software/words.ts. A unit test keeps the two
+# equal, in the same order. A word also counts as a plural, a past form or an -ing form, in any letter case; git and tmux
+# count only as the word itself. An all-capital word (PR, CI) counts only in capital letters. A word that starts with
+# another word of the list (release check) is found by that word. A word inside a longer word (.gitignore) does not
+# count, and a code span counts. The core parts are:
 #   a. design.md, the section "Summary for Dean (one page)", down to the next heading of level 1 or 2;
 #   b. design.md, the section "4.1 Concepts", down to the next heading of level 1 to 3;
 #   c. design.md 4.2, the fenced lines under "**Core commands**", down to "**Software recipe commands**";
@@ -387,16 +396,17 @@ report 9 "design.md has the headings for core and setup and for extension points
 # "> ") is not checked. The parts c and d have no such line. A line in fenced code is not a heading and ends no part; a
 # fence starts only at column 0. Each part needs at least one line to check. The output names the first hit, or the part
 # that is missing.
-first=$(awk '
+software_words="merge|pull request|release|release check|release scope|CI log|PR|CI"
+first=$(awk -v software_words="$software_words" '
   function recipe_word(line,   low, word) {
     low = tolower(line)
-    if (match(low, /(^|[^a-z0-9_])(merg(e[sd]?|ing)|pull requests?|releas(e[sd]?|ing)|ci logs?|git|tmux)($|[^a-z0-9_])/)) {
+    if (match(low, lower_re)) {
       word = substr(low, RSTART, RLENGTH)
       sub(/^[^a-z]+/, "", word)
       sub(/[^a-z]+$/, "", word)
       return word
     }
-    if (match(line, /(^|[^A-Za-z0-9_])(PRs?|CIs?)($|[^A-Za-z0-9_])/)) {
+    if (match(line, abbr_re)) {
       word = substr(line, RSTART, RLENGTH)
       sub(/^[^A-Z]+/, "", word)
       sub(/[^A-Za-z]+$/, "", word)
@@ -407,8 +417,32 @@ first=$(awk '
   function exempt(line) {
     return line ~ /^(- |> )?(Software recipe|Engineering note):/
   }
+  # The expressions of the words come from software_words. A word of all capital letters is an abbreviation and counts in
+  # capital letters only. The last word of a phrase also counts as a plural, a past form and an -ing form.
   BEGIN {
     split("Summary for Dean|4.1 Concepts|4.2 Core commands|6 Rules for every factory|Words of every factory", name, "[|]")
+    count = split(software_words, listed, "[|]")
+    for (i = 1; i <= count; i++) {
+      if (listed[i] ~ /^[A-Z]+$/) {
+        abbr_re = abbr_re (abbr_re == "" ? "" : "|") listed[i] "s?"
+        continue
+      }
+      lowered = tolower(listed[i])
+      covered = 0
+      for (j = 1; j <= count; j++) {
+        if (j != i && listed[j] !~ /^[A-Z]+$/ && index(lowered, tolower(listed[j]) " ") == 1) covered = 1
+      }
+      if (covered) continue
+      pieces = split(lowered, piece, " ")
+      last = piece[pieces]
+      if (last ~ /e$/) piece[pieces] = substr(last, 1, length(last) - 1) "(e[sd]?|ing)"
+      else piece[pieces] = last "(s|ed|ing)?"
+      form = piece[1]
+      for (k = 2; k <= pieces; k++) form = form " +" piece[k]
+      lower_re = lower_re (lower_re == "" ? "" : "|") form
+    }
+    lower_re = "(^|[^a-z0-9_])(" lower_re "|git|tmux)($|[^a-z0-9_])"
+    abbr_re = "(^|[^A-Za-z0-9_])(" abbr_re ")($|[^A-Za-z0-9_])"
   }
   # The files are design.md, then glossary.md. cur is the number of the part that is open (0: none).
   FNR == 1 {

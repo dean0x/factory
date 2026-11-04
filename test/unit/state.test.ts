@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { describeIssues } from '../../src/core/zod.js';
 import {
@@ -5,6 +6,12 @@ import {
   initialDecisionLogText,
   initialWaitingText,
   jsonText,
+  locateShareList,
+  SHARE_LIST_BEGIN,
+  SHARE_LIST_END,
+  SHARE_LIST_PART,
+  sharedRootPaths,
+  withShareList,
 } from '../../src/state/files.js';
 import { layoutOf, stagingDirOf } from '../../src/state/layout.js';
 import { inspectState, loadState, parseJsonText } from '../../src/state/load.js';
@@ -104,7 +111,7 @@ describe('parseJsonText and initial files', () => {
   });
 
   it('writes the initial files with the shapes of the plan', () => {
-    expect(JSON.parse(initialBoardText())).toEqual({ merge: [], items: [] });
+    expect(JSON.parse(initialBoardText())).toEqual({ queue: [], items: [] });
     expect(JSON.parse(initialWaitingText())).toEqual({ intro: '', groups: [], items: [] });
     expect(JSON.parse(initialDecisionLogText())).toEqual({ rows: [] });
     expect(initialBoardText().endsWith('\n')).toBe(true);
@@ -117,7 +124,15 @@ describe('layout', () => {
     expect(layout).toEqual({
       home: '/h/node',
       configFile: '/h/node/factory.yaml',
-      claudeMd: '/h/node/CLAUDE.md',
+      localConfigFile: '/h/node/factory.local.yaml',
+      gitignoreFile: '/h/node/.gitignore',
+      coordinatorDir: '/h/node/coordinator',
+      claudeMd: '/h/node/coordinator/CLAUDE.md',
+      setupDir: '/h/node/setup',
+      setupCoordinatorFile: '/h/node/setup/coordinator.md',
+      setupRolesDir: '/h/node/setup/roles',
+      setupWorkerFile: '/h/node/setup/roles/worker.md',
+      workCopiesDir: '/h/node/work-copies',
       stateDir: '/h/node/.factory',
       nodeJson: '/h/node/.factory/node.json',
       workerMd: '/h/node/.factory/roles/worker.md',
@@ -129,5 +144,75 @@ describe('layout', () => {
 
   it('puts the staging folder next to the state folder, named by the pid', () => {
     expect(stagingDirOf('/h/node', 77)).toBe('/h/node/.factory.tmp-77');
+  });
+
+  it('holds no instruction file at the top of the root: CLAUDE.md is in the coordinator folder', () => {
+    const layout = layoutOf('/h/node');
+    expect(dirname(layout.claudeMd)).toBe(layout.coordinatorDir);
+    expect(Object.values(layout).filter((path) => path === '/h/node/CLAUDE.md')).toEqual([]);
+  });
+});
+
+describe('the share list in the root .gitignore (TP-69)', () => {
+  const lines = (text: string): string[] => text.split('\n');
+
+  it('ignores everything, and allows .gitignore, factory.yaml and the setup folder', () => {
+    expect(lines(SHARE_LIST_PART)).toEqual([
+      '# factory:begin share list',
+      '/*',
+      '!/.gitignore',
+      '!/factory.yaml',
+      '!/setup/',
+      '# factory:end share list',
+      '',
+    ]);
+    expect(sharedRootPaths).toEqual(['.gitignore', 'factory.yaml', 'setup']);
+  });
+
+  it('allows no path that is private or one machine only', () => {
+    const allowed = lines(SHARE_LIST_PART).filter((line) => line.startsWith('!'));
+    for (const name of ['factory.local.yaml', '.factory', 'coordinator', 'work-copies']) {
+      expect(allowed.filter((line) => line.includes(name))).toEqual([]);
+    }
+  });
+
+  it('is the whole file when the root has no .gitignore, or an empty one', () => {
+    expect(withShareList(null)).toEqual({ ok: true, value: SHARE_LIST_PART });
+    expect(withShareList(' \n')).toEqual({ ok: true, value: SHARE_LIST_PART });
+  });
+
+  it('goes first, so the lines of a person after it can allow more paths', () => {
+    const result = withShareList('!/notes.md\n');
+    expect(result).toEqual({ ok: true, value: `${SHARE_LIST_PART}\n!/notes.md\n` });
+    expect(result.ok && result.value.indexOf(SHARE_LIST_BEGIN)).toBe(0);
+  });
+
+  it('replaces a changed part in its place, and keeps the lines before and after it', () => {
+    const old = `# mine\n${SHARE_LIST_BEGIN}\n/old\n${SHARE_LIST_END}\n# after\n!/notes.md\n`;
+    expect(withShareList(old)).toEqual({ ok: true, value: `# mine\n${SHARE_LIST_PART.trimEnd()}\n# after\n!/notes.md\n` });
+  });
+
+  it('gives the same text when it runs again', () => {
+    const once = withShareList('!/notes.md\n');
+    expect(once.ok && withShareList(once.value)).toEqual(once);
+  });
+
+  it.each([
+    ['a first marker line with no pair', `${SHARE_LIST_BEGIN}\n/*\n`],
+    ['a second marker line with no pair', `/*\n${SHARE_LIST_END}\n`],
+    ['two parts', `${SHARE_LIST_PART}${SHARE_LIST_PART}`],
+    ['the second marker line before the first', `${SHARE_LIST_END}\n${SHARE_LIST_BEGIN}\n`],
+  ])('refuses %s, because the end of the part is not known', (_name, text) => {
+    expect(withShareList(text)).toEqual({
+      ok: false,
+      error: '.gitignore holds a marker line of the share list that has no pair',
+    });
+    expect(locateShareList(text).kind).toBe('broken');
+  });
+
+  it('tells a part that is the current one from a part that was changed', () => {
+    expect(locateShareList(SHARE_LIST_PART)).toMatchObject({ kind: 'found', current: true });
+    expect(locateShareList(`${SHARE_LIST_BEGIN}\n${SHARE_LIST_END}\n`)).toMatchObject({ kind: 'found', current: false });
+    expect(locateShareList('!/notes.md\n')).toEqual({ kind: 'absent' });
   });
 });

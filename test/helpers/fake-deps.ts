@@ -1,8 +1,12 @@
+import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
+import { isSameOrInside } from '../../src/core/paths.js';
 import { ok } from '../../src/core/result.js';
+import { dirs, env, files as fileNames, homeIndex, privateFile, program, stateKeys } from '../../src/names.js';
+import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 
 export interface RunCall {
   readonly command: string;
@@ -40,7 +44,7 @@ export interface FakeOptions {
   readonly prompt?: PromptHandler;
   /** The result of a program that uses the terminal. Default: exit code 0. */
   readonly runAttached?: AttachedHandler;
-  /** Links: a path under a key resolves to the same path under the value. */
+  /** Links: a path under a key resolves to the same path under the value. `lstat` gives `link` for a key itself. */
   readonly links?: Readonly<Record<string, string>>;
 }
 
@@ -52,6 +56,8 @@ export interface FakeDeps extends Deps {
   readonly attached: RunCall[];
   /** The questions that were asked, in order. */
   readonly prompts: string[];
+  /** The warnings that were printed at once, before the command returned, in order. */
+  readonly warned: string[];
   readonly fetched: string[];
   /** The paths of the atomic writes, in order. */
   readonly atomicWrites: string[];
@@ -92,6 +98,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const calls: RunCall[] = [];
   const attached: RunCall[] = [];
   const prompts: string[] = [];
+  const warned: string[] = [];
   const fetched: string[] = [];
   const atomicWrites: string[] = [];
   const modes = new Map<string, number>();
@@ -115,6 +122,10 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   };
   const under = (root: string, path: string): boolean => path === root || path.startsWith(`${root}/`);
   const kindOf = (path: string): PathKind | null => (files.has(path) ? 'file' : dirs.has(path) ? 'dir' : null);
+  const realOf = (path: string): string => {
+    const link = Object.entries(options.links ?? {}).find(([from]) => under(from, path));
+    return link === undefined ? path : link[1] + path.slice(link[0].length);
+  };
   const treeKeys = (root: string): { files: string[]; dirs: string[] } => ({
     files: [...files.keys()].filter((key) => under(root, key)),
     dirs: [...dirs].filter((key) => under(root, key)),
@@ -126,6 +137,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     calls,
     attached,
     prompts,
+    warned,
     fetched,
     atomicWrites,
     modes,
@@ -151,6 +163,13 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         if (text === undefined) return enoent('read', path);
         return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text);
       },
+      digestFile: async (path, textLimit, maxBytes) => {
+        const text = files.get(path);
+        if (text === undefined) return enoent('read', path);
+        const size = Buffer.byteLength(text, 'utf8');
+        if (size > maxBytes) return ok(null);
+        return ok({ size, sha256: createHash('sha256').update(text, 'utf8').digest('hex'), text: size <= textLimit ? text : null });
+      },
       writeText: async (path, text) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
         files.set(path, text);
@@ -159,14 +178,21 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       },
       writeTextExclusive: async (path, text, mode) => {
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
-        if (kindOf(path) !== null) return ok(false);
+        // A file, a folder and a link at the path all count as existing, and a link is not followed.
+        if (kindOf(path) !== null || Object.hasOwn(options.links ?? {}, path)) return ok(false);
         files.set(path, text);
         modes.set(path, mode);
         touch(path);
         return ok(true);
       },
-      writeTextAtomic: async (path, text, mode) => {
+      writeTextAtomic: async (path, text, within, mode) => {
+        // The same refusals as the real write: a link at the target, and a real path outside the folder.
+        if (Object.hasOwn(options.links ?? {}, path)) return failure(`cannot write ${path}: it is a link`);
         if (!dirs.has(posix.dirname(path))) return enoent('write', path);
+        if (!dirs.has(within)) return enoent('resolve', within);
+        if (!isSameOrInside(realOf(within), posix.join(realOf(posix.dirname(path)), posix.basename(path)))) {
+          return failure(`cannot write ${path}: it is outside ${within}`);
+        }
         atomicWrites.push(path);
         files.set(path, text);
         touch(path);
@@ -174,6 +200,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         return ok(undefined);
       },
       stat: async (path) => ok(kindOf(path)),
+      lstat: async (path) => ok(Object.hasOwn(options.links ?? {}, path) ? 'link' : kindOf(path)),
       statInfo: async (path) => {
         const kind = kindOf(path);
         if (kind === null) return ok(null);
@@ -182,6 +209,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
           uid: owners.get(path) ?? uid ?? DEFAULT_UID,
           mode: modes.get(path) ?? (kind === 'dir' ? PRIVATE_DIR_MODE : PRIVATE_FILE_MODE),
           mtimeMs: mtimes.get(path) ?? clock,
+          size: Buffer.byteLength(files.get(path) ?? '', 'utf8'),
         });
       },
       chmod: async (path, mode) => {
@@ -191,8 +219,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       },
       realpath: async (path) => {
         if (kindOf(path) === null) return enoent('resolve', path);
-        const link = Object.entries(options.links ?? {}).find(([from]) => under(from, path));
-        return ok(link === undefined ? path : link[1] + path.slice(link[0].length));
+        return ok(realOf(path));
       },
       mkdir: async (path, mode) => {
         if (mode !== undefined && !dirs.has(path)) modes.set(path, mode);
@@ -270,6 +297,9 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       prompts.push(question);
       return (options.prompt ?? (() => failure('no answer was given')))(question);
     },
+    warn: (message: string) => {
+      warned.push(message);
+    },
     env: options.env ?? {},
     fetch: async (url) => {
       fetched.push(url);
@@ -291,6 +321,62 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   return fake;
 };
 
+/** The file of the factory list for the environment of `deps`: below the state home, else below `.local/state` of HOME. */
+const factoryListOf = (deps: FakeDeps): string => {
+  const stateHome = deps.env[env.stateHome];
+  if (stateHome !== undefined && posix.isAbsolute(stateHome)) return posix.join(stateHome, program, fileNames.homeIndex);
+  const userHome = deps.env[env.userHome];
+  if (userHome !== undefined && posix.isAbsolute(userHome)) {
+    return posix.join(userHome, ...privateFile.defaultStateHome, program, fileNames.homeIndex);
+  }
+  throw new Error(`the deps name no state folder: set ${env.stateHome} or ${env.userHome} in the environment`);
+};
+
+/**
+ * Register a root the way `init` does: an entry in the factory list (a root that is listed already gets its entry
+ * replaced) and the factory marker, unless the marker is there. The environment of the deps must name a state folder.
+ */
+export const registerRoot = (
+  deps: FakeDeps,
+  root: string,
+  id: string,
+  projects: readonly string[] = [],
+  origin?: string,
+): void => {
+  const path = factoryListOf(deps);
+  const found = deps.files.get(path);
+  const known = found === undefined ? [] : (JSON.parse(found) as { homes: { home: string }[] }).homes;
+  const entry = {
+    [homeIndex.keys.home]: root,
+    [homeIndex.keys.id]: id,
+    [homeIndex.keys.projects]: projects,
+    ...(origin === undefined ? {} : { [homeIndex.keys.origin]: origin }),
+  };
+  const homes = [...known.filter((candidate) => candidate.home !== root), entry];
+  deps.seed(path, `${JSON.stringify({ [homeIndex.keys.schema]: homeIndex.schema, [homeIndex.keys.homes]: homes }, null, 2)}\n`);
+  const marker = posix.join(root, dirs.state, fileNames.nodeState);
+  if (!deps.files.has(marker)) {
+    deps.seed(marker, `${JSON.stringify({ [stateKeys.schemaVersion]: STATE_SCHEMA_VERSION, [stateKeys.createdWith]: 'test', [stateKeys.blocks]: {} })}\n`);
+  }
+};
+
+/**
+ * A copy of the deps whose file calls report to `seen` first: the name of the call and its first path. The calls run
+ * as before. A test uses it to see which paths a command touches, and when.
+ */
+export const withFsWatch = <T extends Deps>(deps: T, seen: (method: string, path: string) => void): T => {
+  const watched = Object.fromEntries(
+    Object.entries(deps.fs).map(([method, call]) => [
+      method,
+      (path: string, ...rest: readonly unknown[]): unknown => {
+        seen(method, path);
+        return (call as (...args: readonly unknown[]) => unknown)(path, ...rest);
+      },
+    ]),
+  ) as unknown as Fs;
+  return { ...deps, fs: watched };
+};
+
 /**
  * A copy of the deps whose writes fail. `fails` gets the path and the number of the write to that path, from 1.
  * The plain write and the atomic write fail in the same way.
@@ -303,10 +389,10 @@ export const withFailingWrites = <T extends Deps>(
   const attempts = new Map<string, number>();
   const guarded =
     (write: Fs['writeTextAtomic']): Fs['writeTextAtomic'] =>
-    async (path, text, mode) => {
+    async (path, text, within, mode) => {
       const attempt = (attempts.get(path) ?? 0) + 1;
       attempts.set(path, attempt);
-      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text, mode);
+      return fails(path, attempt) ? failure(`cannot write ${path}: ${message}`) : write(path, text, within, mode);
     };
   return {
     ...deps,

@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { constants, createReadStream, type Stats } from 'node:fs';
 import {
   chmod,
@@ -15,12 +15,14 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
+import { renderWarnings } from '../cli/output.js';
+import { isSameOrInside } from './paths.js';
 import { ok } from './result.js';
-import { MAX_ANSWER_CHARS, type Deps, type Fs, type PathInfo, type PathKind } from './deps.js';
+import { MAX_ANSWER_CHARS, type Deps, type FileDigest, type Fs, type LinkKind, type PathInfo, type PathKind } from './deps.js';
 
 const DEFAULT_RUN_TIMEOUT_MS = 30_000;
 const MAX_RUN_OUTPUT_BYTES = 1_048_576;
@@ -44,28 +46,6 @@ const guard = async <T>(action: string, path: string, work: () => Promise<T>): P
 const DEFAULT_FILE_MODE = 0o666;
 const TEMPORARY_SUFFIX_BYTES = 8;
 
-/**
- * Write beside the target, then rename. A link is followed, so the link stays and its target changes.
- * The temporary file is new, has a name that others cannot guess, and has its final mode from the start.
- */
-const writeAtomic = async (path: string, text: string, mode: number | undefined): Promise<void> => {
-  const target = await realpath(path).catch((cause: unknown) => {
-    if (errorCode(cause) === 'ENOENT') return path;
-    throw cause;
-  });
-  const temporary = `${target}.tmp-${process.pid}-${randomBytes(TEMPORARY_SUFFIX_BYTES).toString('hex')}`;
-  try {
-    const info = await stat(target).catch(() => null);
-    const finalMode = mode ?? (info?.isFile() === true ? info.mode & 0o777 : undefined);
-    await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx', mode: finalMode ?? DEFAULT_FILE_MODE });
-    if (finalMode !== undefined) await chmod(temporary, finalMode);
-    await rename(temporary, target);
-  } catch (cause) {
-    await rm(temporary, { force: true }).catch(() => undefined);
-    throw cause;
-  }
-};
-
 /** The text of the file, or null when the file holds more than `maxBytes`. At most `maxBytes` plus one byte is read. */
 const readBounded = async (path: string, maxBytes: number): Promise<string | null> => {
   const chunks: Buffer[] = [];
@@ -76,6 +56,25 @@ const readBounded = async (path: string, maxBytes: number): Promise<string | nul
     size += bytes.length;
   }
   return size > maxBytes ? null : Buffer.concat(chunks).toString('utf8');
+};
+
+/**
+ * Hash every byte of the file as a stream, or give null when the file holds more than `maxBytes`. At most `maxBytes` plus
+ * one byte is read. The bytes stay in memory only while the file is within `textLimit`.
+ */
+const digestBytes = async (path: string, textLimit: number, maxBytes: number): Promise<FileDigest | null> => {
+  const hash = createHash('sha256');
+  const kept: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of createReadStream(path, { start: 0, end: maxBytes })) {
+    const bytes = chunk as Buffer;
+    hash.update(bytes);
+    size += bytes.length;
+    if (size <= textLimit) kept.push(bytes);
+    else kept.length = 0;
+  }
+  if (size > maxBytes) return null;
+  return { size, sha256: hash.digest('hex'), text: size <= textLimit ? Buffer.concat(kept).toString('utf8') : null };
 };
 
 const MAX_COPY_DEPTH = 64;
@@ -115,10 +114,75 @@ const pathKindOf = (info: { isFile(): boolean; isDirectory(): boolean }): PathKi
 const statInfo = async (path: string): Promise<CliResult<PathInfo | null>> => {
   try {
     const info = await stat(path);
-    return ok({ kind: pathKindOf(info), uid: info.uid, mode: info.mode & PERMISSION_BITS, mtimeMs: info.mtimeMs });
+    return ok({
+      kind: pathKindOf(info),
+      uid: info.uid,
+      mode: info.mode & PERMISSION_BITS,
+      mtimeMs: info.mtimeMs,
+      size: info.size,
+    });
   } catch (cause) {
     return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
   }
+};
+
+/** A path that does not exist, or that has a file where a folder should be, has no kind. */
+const MISSING_CODES: readonly string[] = ['ENOENT', 'ENOTDIR'];
+
+const linkKind = async (path: string): Promise<CliResult<LinkKind | null>> => {
+  try {
+    const info = await lstat(path);
+    return ok(info.isSymbolicLink() ? 'link' : pathKindOf(info));
+  } catch (cause) {
+    return MISSING_CODES.includes(errorCode(cause)) ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
+  }
+};
+
+/** The path with its links resolved. */
+const resolved = (path: string): Promise<CliResult<string>> => guard('resolve', path, () => realpath(path));
+
+/** The path in the form that is compared: macOS has a file system that ignores the case of letters. */
+const comparablePath = (path: string): string => (process.platform === 'darwin' ? path.toLowerCase() : path);
+
+/**
+ * The path that an atomic write changes: the real folder of the path with the last name. The write is refused when the
+ * last part of the path is a link, also a link whose target does not exist, or when that path is not inside the real
+ * path of `within`. The write uses the path that this check returns.
+ */
+const checkedTarget = async (path: string, within: string): Promise<CliResult<string>> => {
+  const kind = await linkKind(path);
+  if (!kind.ok) return kind;
+  if (kind.value === 'link') return failure(`cannot write ${path}: it is a link`);
+  const [folder, parent] = [await resolved(within), await resolved(dirname(path))];
+  if (!folder.ok) return folder;
+  if (!parent.ok) return parent;
+  const target = join(parent.value, basename(path));
+  if (!isSameOrInside(comparablePath(folder.value), comparablePath(target))) {
+    return failure(`cannot write ${path}: it is outside ${within}`);
+  }
+  return ok(target);
+};
+
+/**
+ * Write beside the target, then rename. The target is never a link, and it is inside the folder that the caller names.
+ * The temporary file is new, has a name that others cannot guess, and has its final mode from the start.
+ */
+const writeAtomic = async (path: string, text: string, within: string, mode: number | undefined): Promise<CliResult<void>> => {
+  const target = await checkedTarget(path, within);
+  if (!target.ok) return target;
+  return guard('write', path, async () => {
+    const temporary = `${target.value}.tmp-${process.pid}-${randomBytes(TEMPORARY_SUFFIX_BYTES).toString('hex')}`;
+    try {
+      const info = await stat(target.value).catch(() => null);
+      const finalMode = mode ?? (info?.isFile() === true ? info.mode & 0o777 : undefined);
+      await writeFile(temporary, text, { encoding: 'utf8', flag: 'wx', mode: finalMode ?? DEFAULT_FILE_MODE });
+      if (finalMode !== undefined) await chmod(temporary, finalMode);
+      await rename(temporary, target.value);
+    } catch (cause) {
+      await rm(temporary, { force: true }).catch(() => undefined);
+      throw cause;
+    }
+  });
 };
 
 const nodeFs: Fs = {
@@ -128,6 +192,7 @@ const nodeFs: Fs = {
     if (!text.ok) return text;
     return text.value === null ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text.value);
   },
+  digestFile: (path, textLimit, maxBytes) => guard('read', path, () => digestBytes(path, textLimit, maxBytes)),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
   writeTextExclusive: (path, text, mode) =>
     guard('write', path, async () => {
@@ -139,14 +204,15 @@ const nodeFs: Fs = {
         throw cause;
       }
     }),
-  writeTextAtomic: (path, text, mode) => guard('write', path, () => writeAtomic(path, text, mode)),
+  writeTextAtomic: (path, text, within, mode) => writeAtomic(path, text, within, mode),
   stat: async (path) => {
     const info = await statInfo(path);
     return info.ok ? ok(info.value?.kind ?? null) : info;
   },
   statInfo,
+  lstat: linkKind,
   chmod: (path, mode) => guard('change the mode of', path, () => chmod(path, mode)),
-  realpath: (path) => guard('resolve', path, () => realpath(path)),
+  realpath: resolved,
   mkdir: (path, mode) =>
     guard('create', path, async () => void (await mkdir(path, mode === undefined ? { recursive: true } : { recursive: true, mode }))),
   list: (path) => guard('list', path, async () => (await readdir(path)).sort()),
@@ -212,6 +278,9 @@ export const createNodeDeps = (): Deps => ({
         resolve(ok(answer.slice(0, MAX_ANSWER_CHARS)));
       });
     }),
+  warn: (message) => {
+    process.stderr.write(renderWarnings([message]));
+  },
   env: process.env,
   fetch: async (url, timeoutMs) => {
     try {

@@ -2,11 +2,13 @@ import { err, type Err, type Result } from '../core/result.js';
 
 export type CliErrorKind = 'usage' | 'failure' | 'not-ready' | 'safety';
 
-export interface CliError {
-  readonly kind: CliErrorKind;
-  readonly message: string;
-  readonly hint?: string;
-}
+/**
+ * An error of a command. The text after the reason is the remedy line: one line that names the fix. A security stop
+ * has one always, so a stop with no remedy does not compile.
+ */
+export type CliError =
+  | { readonly kind: 'safety'; readonly message: string; readonly hint: string }
+  | { readonly kind: Exclude<CliErrorKind, 'safety'>; readonly message: string; readonly hint?: string };
 
 export type CliResult<T> = Result<T, CliError>;
 
@@ -17,14 +19,15 @@ export const exitCodeOf: Readonly<Record<CliErrorKind, number>> = {
   safety: 4,
 };
 
-const make = (kind: CliErrorKind, message: string, hint: string | undefined): CliError =>
+const make = (kind: Exclude<CliErrorKind, 'safety'>, message: string, hint: string | undefined): CliError =>
   hint === undefined ? { kind, message } : { kind, message, hint };
 
-export const failure = (message: string, hint?: string): Err<CliError> =>
-  err(make('failure', message, hint));
+export const failure = (message: string, remedy?: string): Err<CliError> =>
+  err(make('failure', message, remedy));
 
-export const usageError = (message: string, hint?: string): Err<CliError> =>
-  err(make('usage', message, hint));
+export const usageError = (message: string, remedy?: string): Err<CliError> =>
+  err(make('usage', message, remedy));
 
-export const safetyRefusal = (message: string, hint?: string): Err<CliError> =>
-  err(make('safety', message, hint));
+/** A security stop (exit 4). The remedy line is required: it names the command or the step that fixes the cause. */
+export const safetyRefusal = (message: string, remedy: string): Err<CliError> =>
+  err({ kind: 'safety', message, hint: remedy });

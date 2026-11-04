@@ -11,7 +11,8 @@ import {
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags } from '../../src/cli/table.js';
 import { FACTORY_VERSION } from '../../src/version.js';
-import { createFakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
+import { gitHandler } from '../helpers/git-fake.js';
 import { captureSink } from '../helpers/sink.js';
 
 const run = async (argv: string[]) => {
@@ -98,14 +99,13 @@ describe('the refusal on Windows', () => {
   ];
 
   it.each(argvOfEachCommand.map((argv) => [argv.join(' ') || '(no arguments)', argv] as const))(
-    'exits 4 with the hint for "%s" on win32, and prints nothing else',
+    'exits 1 with the remedy line for "%s" on win32, and prints nothing else',
     async (_name, argv) => {
       const result = await runOn('win32', argv);
-      expect(result.code).toBe(4);
+      expect(result.code).toBe(1);
       expect(result.out).toBe('');
-      expect(result.err).toBe(
-        'error: factory runs on macOS and Linux\nUse WSL; factory runs there as on Linux.\n',
-      );
+      const typed = commandTable.some((command) => command.name === argv[0]) ? argv[0] : 'help';
+      expect(result.err).toBe(`error: factory runs on macOS and Linux\nUse WSL, then run "factory ${typed}" there.\n`);
     },
   );
 
@@ -167,16 +167,114 @@ describe('the node command in the command line', () => {
     expect(result.out).toContain('       factory node remove-child ID [--home DIR]');
   });
 
-  it('lists the command and the up command in the help', async () => {
+  it('lists the command and the start command in the help', async () => {
     const result = await run(['help']);
-    expect(result.out).toMatch(/\n {2}up {8}Start the session/);
+    expect(result.out).toMatch(/\n {2}start {5}Start the session/);
     expect(result.out).toMatch(/\n {2}node {6}Show or change the children/);
+  });
+
+  it('exits 2 for the command up, which has no alias for start', async () => {
+    const result = await run(['up', '--dry-run']);
+    expect(result.code).toBe(2);
+    expect(result.out).toBe('');
+    expect(result.err).toContain('unknown command "up"');
+    expect(result.err).not.toMatch(/^ {2}up /m);
+  });
+
+  it('shows the usage of start with the home and dry-run flags', async () => {
+    const result = await run(['start', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Usage: factory start [--home DIR] [--dry-run]');
   });
 
   it('exits 2 for a node command without a subcommand', async () => {
     const result = await run(['node']);
     expect(result.code).toBe(2);
     expect(result.err).toContain('needs a subcommand');
+  });
+});
+
+describe('the folder of a factory in the help text (TP-138)', () => {
+  const NAMES_WITH_FOLDER = commandTable.map((command) => [command.name]);
+
+  it.each(NAMES_WITH_FOLDER)('says factory folder, and not node folder, in the help of %s', async (name) => {
+    const result = await run([name, '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).not.toMatch(/node folder/i);
+    expect(result.out).not.toMatch(/\bhome\b(?! DIR)/i);
+  });
+
+  it('names the folder of the --home flag with the plain word', async () => {
+    for (const name of ['init', 'start', 'doctor', 'upgrade', 'node']) {
+      const result = await run([name, '--help']);
+      expect(result.out, name).toMatch(/--home DIR +The factory folder\./);
+    }
+  });
+
+  it('names the proposed folder of --yes with the plain word', async () => {
+    const result = await run(['init', '--help']);
+    expect(result.out).toContain('Use the proposed factory folder.');
+  });
+});
+
+describe('the approval flag of init in the command line (TP-37, TP-38, TP-81)', () => {
+  const init = commandTable.find((command) => command.name === 'init');
+  const STATE_ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
+
+  /** The command runs in a fake folder with a place for the factory list and a fake git. */
+  const runInit = async (argv: readonly string[], extra: FakeOptions = {}) => {
+    const { handler } = gitHandler();
+    const deps = createFakeDeps({ cwd: '/w', run: handler, env: STATE_ENV, ...extra });
+    const sink = captureSink();
+    const code = await runCli(['init', '--home', '/w/node', '--owner-name', 'Test Owner', ...argv], deps, sink);
+    return { code, deps, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  it('is a flag of init that can repeat, and no other command takes it', () => {
+    expect(init?.options['approval']).toMatchObject({ type: 'string', multiple: true, placeholder: 'POINT=MODE' });
+    for (const command of commandTable.filter((other) => other !== init)) {
+      expect(Object.keys(command.options)).not.toContain('approval');
+    }
+  });
+
+  it('reads the repeated flag as a list of POINT=MODE texts', () => {
+    const parsed = parseFlags(['--approval', 'merge=delegated', '--approval', 'release=owner'], init?.options ?? {});
+    expect(parsed.ok && parsed.value.strings('approval')).toEqual(['merge=delegated', 'release=owner']);
+  });
+
+  it('shows the flag in the usage line and in the help of init', async () => {
+    const result = await run(['init', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('[--approval POINT=owner|delegated]...');
+    expect(result.out).toContain('--approval POINT=MODE');
+    expect(result.out).toContain('owner or delegated');
+  });
+
+  it('exits 0 and writes the mode owner for each point when no flag is given', async () => {
+    const result = await runInit([]);
+    expect(result.code).toBe(0);
+    expect(result.deps.files.get('/w/node/factory.local.yaml')).toMatch(/approval:\n {2}merge: owner\n {2}release: owner\n/);
+  });
+
+  it('exits 2 for --yes with a flag that asks for delegated, and writes no file', async () => {
+    const result = await runInit(['--yes', '--approval', 'merge=delegated']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('factory init --approval <point>=delegated');
+    expect(result.deps.files.size).toBe(0);
+  });
+
+  it('exits 4 for a delegated choice with no terminal window, and writes no file', async () => {
+    const result = await runInit(['--approval', 'merge=delegated']);
+    expect(result.code).toBe(4);
+    expect(result.err).toContain('terminal window outside a factory session');
+    expect(result.deps.files.size).toBe(0);
+  });
+
+  it('exits 2 for a point that the recipe does not list, and names the points', async () => {
+    const result = await runInit(['--approval', 'deploy=owner']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('merge, release');
+    expect(result.deps.files.size).toBe(0);
   });
 });
 
