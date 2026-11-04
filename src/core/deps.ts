@@ -154,8 +154,9 @@ export interface Deps {
   readonly stdoutIsTTY: boolean;
   /**
    * Read the standard input of this process to its end, as UTF-8 text. It reads at most `maxBytes` plus one byte: an input
-   * of more than `maxBytes` bytes is an error, and the rest stays unread. When a person types at the input, the value is
-   * empty text at once, and nothing is read.
+   * of more than `maxBytes` bytes is an error, and the rest stays unread. An input that is not whole after a fixed time
+   * limit is an error too: a pipe that stays open and sends nothing does not hold the program. When a person types at
+   * the input, the value is empty text at once, and nothing is read.
    */
   readStdin(maxBytes: number): Promise<CliResult<string>>;
   /** Ask one question and read one line of the answer, at most `MAX_ANSWER_CHARS` characters. The question goes to stderr. */

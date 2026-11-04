@@ -21,6 +21,7 @@ import type { Readable, Writable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
+import { hookNames } from '../names.js';
 import { isSameOrInside } from './paths.js';
 import { ok } from './result.js';
 import {
@@ -98,16 +99,22 @@ const digestBytes = async (path: string, textLimit: number, maxBytes: number): P
 
 /**
  * The text of the input, or null when it holds more than `maxBytes`. At most `maxBytes` plus one byte is kept, and the
- * rest of an input that is too large stays unread: the stream is closed.
+ * rest of an input that is too large stays unread: the stream is closed. When the input is not whole after `timeoutMs`
+ * milliseconds, the stream is closed and the read fails with the code ETIMEDOUT. The timer ends with the read.
  */
-const readStreamBounded = async (input: Readable, maxBytes: number): Promise<string | null> => {
+const readStreamBounded = async (input: Readable, maxBytes: number, timeoutMs: number): Promise<string | null> => {
   const chunks: Buffer[] = [];
   let size = 0;
-  for await (const chunk of input) {
-    const kept = (chunk as Buffer).subarray(0, maxBytes + 1 - size);
-    chunks.push(kept);
-    size += kept.length;
-    if (size > maxBytes) return null;
+  const timer = setTimeout(() => input.destroy(Object.assign(new Error('the input is not whole in time'), { code: 'ETIMEDOUT' })), timeoutMs);
+  try {
+    for await (const chunk of input) {
+      const kept = (chunk as Buffer).subarray(0, maxBytes + 1 - size);
+      chunks.push(kept);
+      size += kept.length;
+      if (size > maxBytes) return null;
+    }
+  } finally {
+    clearTimeout(timer);
   }
   return Buffer.concat(chunks).toString('utf8');
 };
@@ -121,7 +128,7 @@ const readStdin = async (maxBytes: number): Promise<CliResult<string>> => {
     return failure(`cannot read stdin: ${maxBytes} is not a number of bytes`);
   }
   if (stdinIsTerminal()) return ok('');
-  const text = await guard('read', 'stdin', () => readStreamBounded(process.stdin, maxBytes));
+  const text = await guard('read', 'stdin', () => readStreamBounded(process.stdin, maxBytes, hookNames.stdinTimeoutMs));
   if (!text.ok) return text;
   return text.value === null ? failure(`cannot read stdin: larger than ${maxBytes} bytes`) : ok(text.value);
 };

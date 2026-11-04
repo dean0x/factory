@@ -9,6 +9,7 @@ import { PassThrough, Readable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps } from '../../src/core/node-deps.js';
+import { hookNames } from '../../src/names.js';
 
 const deps = createNodeDeps();
 let dir = '';
@@ -387,6 +388,45 @@ describe('node deps: the terminal', () => {
       endless.destroy();
       expect(result).not.toBe('still reading');
       if (result !== 'still reading') expect(result.ok).toBe(false);
+    });
+
+    describe('the time limit', () => {
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('returns an error when the input stays open and sends nothing', async () => {
+        const text = createNodeDeps().readStdin(1024);
+        await vi.advanceTimersByTimeAsync(hookNames.stdinTimeoutMs);
+        expect(await text).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot read stdin: ETIMEDOUT' } });
+        expect(input.destroyed).toBe(true);
+      });
+
+      it('returns an error when some bytes came and the input stays open', async () => {
+        const text = createNodeDeps().readStdin(1024);
+        input.write('{"a":');
+        await vi.advanceTimersByTimeAsync(hookNames.stdinTimeoutMs);
+        expect(await text).toEqual({ ok: false, error: { kind: 'failure', message: 'cannot read stdin: ETIMEDOUT' } });
+      });
+
+      it('returns the text when the input ends before the limit, and leaves no timer', async () => {
+        const text = createNodeDeps().readStdin(1024);
+        input.end('abc');
+        await vi.advanceTimersByTimeAsync(hookNames.stdinTimeoutMs - 1);
+        expect(await text).toEqual({ ok: true, value: 'abc' });
+        expect(vi.getTimerCount()).toBe(0);
+      });
+
+      it('leaves no timer when the input is larger than the byte cap', async () => {
+        const text = createNodeDeps().readStdin(2);
+        input.end('abc');
+        expect((await text).ok).toBe(false);
+        expect(vi.getTimerCount()).toBe(0);
+      });
     });
 
     it('returns an error when the input fails', async () => {

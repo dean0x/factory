@@ -138,6 +138,16 @@ describe('factory hook (built binary)', () => {
     expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
   });
 
+  it('exits 0 with an empty stdout and one line on stderr, and writes nothing, when the input stays open and sends nothing', async () => {
+    const started = Date.now();
+    const result = await box.run(['hook', 'Stop'], { cwd: home, env: { FACTORY_HOME: home, FACTORY_SESSION: NODE_ID } });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toMatch(/^factory hook: [^\n]+\n$/);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
+  });
+
   it('exits 0 with an empty stdout for a flag and for no event (TP-12)', async () => {
     for (const args of [['hook'], ['hook', '--help'], ['hook', '--json', 'Stop'], ['hook', '--bogus']]) {
       const result = await box.run(args, { cwd: home, env: { FACTORY_HOME: home, FACTORY_SESSION: NODE_ID }, input: '{}' });
@@ -183,6 +193,20 @@ describe('factory hook statusline (built binary)', () => {
     await hook('Stop', JSON.stringify(FIXTURE.hooks.Stop));
     await statusline(STATUS_INPUT);
     expect(JSON.parse(await readFile(lastSeenFile(), 'utf8'))).toMatchObject({ event: 'Stop', context_pct: 8 });
+  });
+
+  it('prints context ?% and exits 0 when the input stays open and sends nothing', async () => {
+    await setOwnerCommand('echo owner');
+    const started = Date.now();
+    const result = await box.run(['hook', hookNames.statusline], {
+      cwd: home,
+      env: { FACTORY_HOME: home, FACTORY_SESSION: NODE_ID },
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('context ?%');
+    expect(result.stderr).toMatch(/^factory hook: [^\n]+\n$/);
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(await exists(lastSeenFile())).toBe(false);
   });
 
   it('prints context N% and exits 0 when the config names no command (TP-14)', async () => {

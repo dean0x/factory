@@ -528,6 +528,8 @@ export const hookNames = {
   inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name' },
   /** The most bytes of hook input that the program reads. A larger input is refused and nothing is written. */
   maxStdinBytes: maxFileBytes,
+  /** The hook reads its input for at most this many milliseconds. An input that is not whole by then is an error. */
+  stdinTimeoutMs: 2_000,
   /** The status line wrapper waits this many milliseconds for the command of the owner. */
   statuslineTimeoutMs: 2_000,
   /** The program that runs the command of the owner, as `<shell> -c <command>`. */
