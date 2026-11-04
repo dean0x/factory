@@ -231,8 +231,41 @@ describe('setup acceptance: the manifest and its hash (TP-171)', () => {
     expect(await collectManifest(deps, ROOT, paths.slice(1))).toMatchObject({ ok: true });
   });
 
+  it.each([
+    ['a line break', 'one\ntwo.md'],
+    ['a tab', 'one\ttwo.md'],
+    ['an escape character', `one${ESC}two.md`],
+    ['a delete character', `one${at(0x7f)}two.md`],
+  ])('refuses a path with %s, and shows the path on one line', async (_name, path) => {
+    const result = await collectManifest(person(), ROOT, [path]);
+    expect(result).toMatchObject({ ok: false });
+    const message = !result.ok ? result.error.message : '';
+    expect(message).toContain('is not a path below');
+    expect(message).not.toMatch(/[\n\t\u001b\u007f]/);
+  });
+
   describe('the byte cap of one file (TP-167)', () => {
     const cap = trackedFiles.maxFileBytes;
+
+    it('gives the cap to the read of each file, so that the read itself is bounded', async () => {
+      const deps = person();
+      const caps: number[] = [];
+      const watched = {
+        ...deps,
+        fs: { ...deps.fs, digestFile: async (path: string, limit: number, max: number) => (caps.push(max), deps.fs.digestFile(path, limit, max)) },
+      };
+      expect(await collectManifest(watched, ROOT, [SETUP])).toMatchObject({ ok: true });
+      expect(caps).toEqual([cap]);
+    });
+
+    it('stops with exit 4 for a file that the read finds over the cap, and names the file', async () => {
+      const deps = person();
+      deps.seed(`${ROOT}/grows.md`, 'x');
+      const over = { ...deps, fs: { ...deps.fs, digestFile: async () => ({ ok: true as const, value: null }) } };
+      const result = await collectManifest(over, ROOT, ['grows.md']);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(!result.ok && result.error.message).toContain('grows.md');
+    });
 
     it('hashes a file at the cap in full', async () => {
       const deps = person();
@@ -246,7 +279,10 @@ describe('setup acceptance: the manifest and its hash (TP-171)', () => {
       const deps = person();
       deps.seed(`${ROOT}/big.md`, 'x'.repeat(cap + 1));
       const read: string[] = [];
-      const watched = { ...deps, fs: { ...deps.fs, digestFile: async (path: string, limit: number) => (read.push(path), deps.fs.digestFile(path, limit)) } };
+      const watched = {
+        ...deps,
+        fs: { ...deps.fs, digestFile: async (path: string, limit: number, max: number) => (read.push(path), deps.fs.digestFile(path, limit, max)) },
+      };
       const result = await collectManifest(watched, ROOT, ['big.md']);
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: expect.stringContaining('git rm --cached') } });
       expect(!result.ok && result.error.message).toContain('big.md');
@@ -303,6 +339,18 @@ describe('setup acceptance: the visible text', () => {
     expect(visibleText(text)).toBe('a\\u{202e}b\\u{200b}c\\u{feff}d\\u{2028}e');
   });
 
+  it.each([0x115f, 0x1160, 0x180b, 0x180d, 0x180f, 0x3164, 0xfe00, 0xfe0f, 0xffa0, 0xe0100, 0xe01ef])(
+    'shows the variation selector or filler with the code %i as an escape, because it shows as nothing',
+    (code) => {
+      expect(visibleText(`a${at(code)}b`)).toBe(`a\\u{${code.toString(16)}}b`);
+    },
+  );
+
+  it('leaves the characters next to those ranges as they are', () => {
+    const text = `a${at(0x3163)}b${at(0xfe10)}c${at(0xffa1)}d${at(0xe01f0)}e`;
+    expect(visibleText(text)).toBe(text);
+  });
+
   it('leaves other text as it is', () => {
     const text = `${E_ACUTE}crire des tests. ${EMOJI}`;
     expect(visibleText(text)).toBe(text);
@@ -354,6 +402,26 @@ describe('setup acceptance: the accept prompt (TP-161, TP-162)', () => {
     expect(text).toContain('before\\x1b[31mred\\x07\\u{202e}after');
     expect(text).toContain('odd\\x1b.md');
     for (const raw of [ESC, at(7), RIGHT_TO_LEFT_OVERRIDE]) expect(text).not.toContain(raw);
+  });
+
+  it('shows a path with a line break or a tab on one line, so that a path can not write lines of its own', () => {
+    const name = 'a\nHash of the files that you accepted before: 0\t.md';
+    const shown = 'a\\nHash of the files that you accepted before: 0\\t.md';
+    const current = collectedOf({ [name]: 'line one\nline two' });
+    const text = acceptPromptText({ root: '/w/odd\nroot', node: NODE, current, accepted: null });
+    expect(text).toContain(`Added files:\n  ${shown}\n`);
+    expect(text).toContain(`---- ${shown} (added) ----`);
+    expect(text).toContain(`---- end of ${shown} ----`);
+    expect(text).toContain('/w/odd\\nroot');
+    expect(text.split('\n')).not.toContain('Hash of the files that you accepted before: 0\t.md');
+    expect(text).not.toContain('\t.md');
+    expect(text).toContain('line one\nline two');
+  });
+
+  it('shows the path in the command that reads a file past the display bound on one line', () => {
+    const current = collectedOf({ 'a\nb.md': null }, { 'a\nb.md': setupAcceptance.maxDisplayBytes + 1 });
+    const text = acceptPromptText({ root: ROOT, node: NODE, current, accepted: null });
+    expect(text).toContain(`Read it with: cat -v -- '${ROOT}/a\\nb.md'`);
   });
 
   it('asks with no as the default', () => {
@@ -716,6 +784,13 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
     const result = await recordSetupAcceptance(deps, inputOf(await collect(deps)));
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     expect(deps.files.has(`${ROOT}/state/factory/setup-acceptances.json`)).toBe(false);
+  });
+
+  it('refuses a set with a path that holds a line break, and writes nothing', async () => {
+    const deps = person();
+    const result = await recordSetupAcceptance(deps, inputOf(await collect(deps), { entries: [entryOf('one\ntwo.md', 'x')] }));
+    expect(result).toMatchObject({ ok: false });
+    expect(deps.files.has(STORE)).toBe(false);
   });
 
   it('refuses a reason with a control character', async () => {

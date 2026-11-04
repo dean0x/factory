@@ -58,18 +58,22 @@ const readBounded = async (path: string, maxBytes: number): Promise<string | nul
   return size > maxBytes ? null : Buffer.concat(chunks).toString('utf8');
 };
 
-/** Hash every byte of the file as a stream. The bytes stay in memory only while the file is within `textLimit`. */
-const digestBytes = async (path: string, textLimit: number): Promise<FileDigest> => {
+/**
+ * Hash every byte of the file as a stream, or give null when the file holds more than `maxBytes`. At most `maxBytes` plus
+ * one byte is read. The bytes stay in memory only while the file is within `textLimit`.
+ */
+const digestBytes = async (path: string, textLimit: number, maxBytes: number): Promise<FileDigest | null> => {
   const hash = createHash('sha256');
   const kept: Buffer[] = [];
   let size = 0;
-  for await (const chunk of createReadStream(path)) {
+  for await (const chunk of createReadStream(path, { start: 0, end: maxBytes })) {
     const bytes = chunk as Buffer;
     hash.update(bytes);
     size += bytes.length;
     if (size <= textLimit) kept.push(bytes);
     else kept.length = 0;
   }
+  if (size > maxBytes) return null;
   return { size, sha256: hash.digest('hex'), text: size <= textLimit ? Buffer.concat(kept).toString('utf8') : null };
 };
 
@@ -188,7 +192,7 @@ const nodeFs: Fs = {
     if (!text.ok) return text;
     return text.value === null ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text.value);
   },
-  digestFile: (path, textLimit) => guard('read', path, () => digestBytes(path, textLimit)),
+  digestFile: (path, textLimit, maxBytes) => guard('read', path, () => digestBytes(path, textLimit, maxBytes)),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
   writeTextExclusive: (path, text, mode) =>
     guard('write', path, async () => {

@@ -24,13 +24,18 @@ const MAX_PATH_CHARS = 4096;
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 const BLOB_HEX = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
-/** A path below the factory folder, written with slashes: not absolute, with no `..` part and no NUL byte. */
+const CONTROL_CHARACTER = /\p{Cc}/u;
+
+/**
+ * A path below the factory folder, written with slashes: not absolute, with no `..` part and no control character. A path
+ * with a line break would write lines of its own into a text that a person reads.
+ */
 const relativePath = z
   .string()
   .min(1)
   .max(MAX_PATH_CHARS)
   .refine(
-    (path) => !isAbsolute(path) && !path.includes('\0') && !path.split('/').includes('..'),
+    (path) => !isAbsolute(path) && !CONTROL_CHARACTER.test(path) && !path.split('/').includes('..'),
     `must be a path below the ${places.folder}`,
   );
 
@@ -124,8 +129,17 @@ const tooManyFiles = (): CliResult<never> =>
     `Remove the files that the ${places.folder} does not need, then run "${commandText(commands.init)}" again.`,
   );
 
-/** Every control character, apart from the newline and the tab, and every character that only formats text. */
-const HIDDEN_CHARACTERS = /(?![\n\t])[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+/**
+ * The characters that show as nothing and that no control or format class holds: the variation selectors, the Hangul
+ * fillers and the Mongolian free variation selectors.
+ */
+const INVISIBLE_FILLER = /[\u{115f}\u{1160}\u{180b}-\u{180d}\u{180f}\u{3164}\u{fe00}-\u{fe0f}\u{ffa0}\u{e0100}-\u{e01ef}]/u;
+
+/** True when the text holds a character of `INVISIBLE_FILLER`. */
+export const holdsInvisibleFiller = (value: string): boolean => INVISIBLE_FILLER.test(value);
+
+/** Every control character, apart from the newline and the tab, every character that only formats text, and every filler. */
+const HIDDEN_CHARACTERS = new RegExp(`(?![\\n\\t])(?:[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]|${INVISIBLE_FILLER.source})`, 'gu');
 
 const escapeOf = (character: string): string => {
   const code = character.codePointAt(0) ?? 0;
@@ -135,9 +149,12 @@ const escapeOf = (character: string): string => {
 /** The text with each control character shown as an escape, so that the screen shows the text of the bytes. */
 export const visibleText = (value: string): string => value.replace(HIDDEN_CHARACTERS, escapeOf);
 
+/** A path as one line of text: every control character shows as an escape, the line break and the tab among them. */
+export const visiblePath = (path: string): string => visibleText(path).replaceAll('\n', '\\n').replaceAll('\t', '\\t');
+
 const fileTooLarge = (path: string): CliResult<never> =>
   safetyRefusal(
-    `the file ${visibleText(path)} has more than ${trackedFiles.maxFileBytes} bytes, so ${program} does not hash it`,
+    `the file ${visiblePath(path)} has more than ${trackedFiles.maxFileBytes} bytes, so ${program} does not hash it`,
     `Make the file smaller, or remove it from git with "git rm --cached", then run "${commandText(commands.init)}" again.`,
   );
 
@@ -151,8 +168,9 @@ export interface CollectOptions {
  * Read each file of the set to its end, and make the manifest from the bytes. The root is the factory folder, and each
  * path is a path below it. A file that is not there, a folder, a list over the bound and a file over the byte cap are
  * errors: the manifest never covers part of a set or part of a file. The size of a file is checked before its bytes are
- * read, and again from the bytes. A link counts as a link, and its bytes are the bytes that a session reads through it.
- * `blobs` holds the git blob id of each file that git tracks.
+ * read, and the read itself stops at the byte cap, so a file that grows during the read is an error. A link counts as a
+ * link, and its bytes are the bytes that a session reads through it. `blobs` holds the git blob id of each file that git
+ * tracks.
  */
 export const collectManifest = async (
   deps: Deps,
@@ -167,23 +185,23 @@ export const collectManifest = async (
   const texts = new Map<string, string | null>();
   for (const path of unique) {
     if (!relativePath.safeParse(path).success) {
-      return failure(`the setup path ${visibleText(path)} is not a path below the ${places.folder}`);
+      return failure(`the setup path ${visiblePath(path)} is not a path below the ${places.folder}`);
     }
     const absolute = join(root, path);
     const kind = await deps.fs.lstat(absolute);
     if (!kind.ok) return kind;
     if (kind.value !== 'file' && kind.value !== 'link') {
-      return failure(`the setup path ${visibleText(path)} is ${kind.value === null ? 'not there' : 'not a file'}`);
+      return failure(`the setup path ${visiblePath(path)} is ${kind.value === null ? 'not there' : 'not a file'}`);
     }
     const info = await deps.fs.statInfo(absolute);
     if (!info.ok) return info;
     if (info.value === null || info.value.kind !== 'file') {
-      return failure(`the setup path ${visibleText(path)} is ${info.value === null ? 'not there' : 'not a file'}`);
+      return failure(`the setup path ${visiblePath(path)} is ${info.value === null ? 'not there' : 'not a file'}`);
     }
     if (info.value.size > trackedFiles.maxFileBytes) return fileTooLarge(path);
-    const digest = await deps.fs.digestFile(absolute, options.textLimit ?? setupAcceptance.maxDisplayBytes);
+    const digest = await deps.fs.digestFile(absolute, options.textLimit ?? setupAcceptance.maxDisplayBytes, trackedFiles.maxFileBytes);
     if (!digest.ok) return digest;
-    if (digest.value.size > trackedFiles.maxFileBytes) return fileTooLarge(path);
+    if (digest.value === null || digest.value.size > trackedFiles.maxFileBytes) return fileTooLarge(path);
     entries.push({ path, type: kind.value, size: digest.value.size, sha256: digest.value.sha256, blob: blobs.get(path) ?? null });
     texts.set(path, digest.value.text);
   }
@@ -220,7 +238,7 @@ const shownIn = (change: ManifestChange, path: string): string =>
   change.added.includes(path) ? 'added' : change.changed.includes(path) ? 'changed' : 'unchanged';
 
 const listOf = (title: string, paths: readonly string[]): readonly string[] =>
-  paths.length === 0 ? [] : [`${title}:`, ...paths.map((path) => `  ${visibleText(path)}`)];
+  paths.length === 0 ? [] : [`${title}:`, ...paths.map((path) => `  ${visiblePath(path)}`)];
 
 /** The part of the prompt for one added or changed file: its text in full, or the reason why it is not shown. */
 const fileSection = (input: {
@@ -232,8 +250,8 @@ const fileSection = (input: {
 }): readonly string[] => {
   const { root, entry, label, text, room } = input;
   const kind = entry.type === 'link' ? ', a link; the text is the text of its target' : '';
-  const title = `---- ${visibleText(entry.path)} (${label}${kind}) ----`;
-  const end = `---- end of ${visibleText(entry.path)} ----`;
+  const title = `---- ${visiblePath(entry.path)} (${label}${kind}) ----`;
+  const end = `---- end of ${visiblePath(entry.path)} ----`;
   if (text !== null && room) return [title, visibleText(text), end];
   const why =
     text === null
@@ -242,7 +260,7 @@ const fileSection = (input: {
   return [
     title,
     `${why} ${program} does not show the full text of this file, and it never shows part of a file.`,
-    `Read it with: ${visibleText(`cat -v -- ${quoted(join(root, entry.path))}`)}`,
+    `Read it with: ${visiblePath(`cat -v -- ${quoted(join(root, entry.path))}`)}`,
     end,
   ];
 };
@@ -262,7 +280,7 @@ export const acceptPromptText = (input: {
   const { root, node, current, accepted } = input;
   const change = manifestChange(accepted, current.manifest.entries);
   const lines: string[] = [
-    `The setup of the ${places.folder} ${visibleText(root)} (${roles.node} id ${visibleText(node)}) goes into the instructions of the sessions.`,
+    `The setup of the ${places.folder} ${visiblePath(root)} (${roles.node} id ${visiblePath(node)}) goes into the instructions of the sessions.`,
     `The ${roles.owner} must accept these files before a session starts.`,
     `Hash of all files: ${current.manifest.hash}`,
     ...(accepted === null ? [] : [`Hash of the files that you accepted before: ${manifestHash(accepted)}`]),

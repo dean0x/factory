@@ -4,11 +4,12 @@ import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { ok } from '../core/result.js';
+import { holdsInvisibleFiller } from '../core/setup-acceptance.js';
 import { commandText, maxSetupTextBytes, type CommandName } from '../names.js';
 import type { SetupTexts } from '../templates/types.js';
 import type { Layout } from './layout.js';
 
-/** A control character other than the line end and the tab. Plain text holds none of them. */
+/** A control character other than the line end and the tab. Plain text holds none of them, and no invisible filler. */
 const CONTROL_CHARACTER = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 
 /** The end of a remedy line: the person runs the command that stopped, by name. */
@@ -49,7 +50,7 @@ export const readSetupFile = async (
  * file and gives it to this function. `shown` is the path of the file for the message.
  */
 export const plainSetupText = (shown: string, raw: string, command: CommandName): CliResult<string> => {
-  if (CONTROL_CHARACTER.test(raw)) {
+  if (CONTROL_CHARACTER.test(raw) || holdsInvisibleFiller(raw)) {
     return failure(
       `${shown} is not plain text: it holds a control character`,
       `Remove the control characters from ${shown}, ${again(command)}`,

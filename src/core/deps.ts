@@ -29,11 +29,12 @@ export interface FileDigest {
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
   /**
-   * Read the file as a stream to its end, and hash all of its bytes. A link is followed. The text comes from the same
-   * bytes as the hash, so the text that a person sees is the text that the hash covers. A file with more than `textLimit`
-   * bytes gives no text; the size and the hash still cover the whole file.
+   * Read the file as a stream, and hash all of its bytes. A link is followed. The text comes from the same bytes as the
+   * hash, so the text that a person sees is the text that the hash covers. A file with more than `textLimit` bytes gives
+   * no text; the size and the hash still cover the whole file. The read stops at `maxBytes` plus one byte: the value is
+   * null for a file with more than `maxBytes` bytes, and the rest stays unread.
    */
-  digestFile(path: string, textLimit: number): Promise<CliResult<FileDigest>>;
+  digestFile(path: string, textLimit: number, maxBytes: number): Promise<CliResult<FileDigest | null>>;
   /** Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. */
   readTextLimited(path: string, maxBytes: number): Promise<CliResult<string>>;
   writeText(path: string, text: string): Promise<CliResult<void>>;

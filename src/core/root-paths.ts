@@ -16,7 +16,7 @@ import type { Layout } from '../state/layout.js';
 import type { Deps } from './deps.js';
 import { projectFolderKey } from './project-path.js';
 import { ok } from './result.js';
-import { visibleText } from './setup-acceptance.js';
+import { visiblePath } from './setup-acceptance.js';
 
 /** The most parts that one path below the factory folder can have. A longer path is not one of ours. */
 const MAX_PARTS = 32;
@@ -181,7 +181,7 @@ export const trackedProblems = (tracked: readonly string[], cloneFolders: readon
 export const MAX_NAMED_ITEMS = 5;
 
 /** A path as one line of text: every control character shows as an escape, the line break and the tab among them. */
-export const shownPath = (path: string): string => visibleText(path).replaceAll('\n', '\\n').replaceAll('\t', '\\t');
+export const shownPath = visiblePath;
 
 /** The first items of a list as text, and the count of the rest. */
 export const namedItems = (items: readonly string[]): string =>

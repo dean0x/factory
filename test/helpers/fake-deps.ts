@@ -163,10 +163,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         if (text === undefined) return enoent('read', path);
         return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text);
       },
-      digestFile: async (path, textLimit) => {
+      digestFile: async (path, textLimit, maxBytes) => {
         const text = files.get(path);
         if (text === undefined) return enoent('read', path);
         const size = Buffer.byteLength(text, 'utf8');
+        if (size > maxBytes) return ok(null);
         return ok({ size, sha256: createHash('sha256').update(text, 'utf8').digest('hex'), text: size <= textLimit ? text : null });
       },
       writeText: async (path, text) => {

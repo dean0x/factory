@@ -88,6 +88,9 @@ describe('readSetupFile', () => {
     ['an escape character', 'a\u001b[31mred'],
     ['a delete character', 'a\u007fb'],
     ['a form feed', 'a\u000cb'],
+    ['a variation selector', 'a\u{fe0f}b'],
+    ['a variation selector of the supplement', 'a\u{e0100}b'],
+    ['a Hangul filler', 'aㅤb'],
   ])('refuses %s, because the file is not plain text', async (_name, text) => {
     const deps = createFakeDeps();
     deps.seed(layout.setupCoordinatorFile, text);
