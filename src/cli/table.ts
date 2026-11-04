@@ -74,13 +74,14 @@ const foundHomeOption: FlagOption = {
 };
 
 /**
- * The hook that Claude Code runs. `runCli` routes it before the flags are read and prints none of its output, so that it
- * exits 0 with an empty stdout on every path. The table holds it for the help.
+ * The hook that Claude Code runs. `runCli` routes it before the flags are read. An event prints none of its output, so that
+ * it exits 0 with an empty stdout on every path, and the word `statusline` prints the status line (see `runStatusline`). The
+ * table holds it for the help.
  */
 export const hookCommandFor = (registry: RecipeRegistry): Command => ({
   name: commands.hook,
   summary: `Record when a ${places.session} was last seen. Claude Code runs it, not a person.`,
-  usage: `${commandText(commands.hook)} ${hookNames.events.join('|')}`,
+  usage: `${commandText(commands.hook)} ${[...hookNames.events, hookNames.statusline].join('|')}`,
   options: {},
   positionals: true,
   run: async (given, deps) => {

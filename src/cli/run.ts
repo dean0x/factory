@@ -1,5 +1,6 @@
 import type { Deps } from '../core/deps.js';
-import { commands, commandText, flags, flagShorts, flagText, helpTopics, program, schemaIds } from '../names.js';
+import { runStatusline } from '../hooks/statusline.js';
+import { commands, commandText, flags, flagShorts, flagText, helpTopics, hookNames, program, schemaIds } from '../names.js';
 import { exitCodeOf, failure } from './errors.js';
 import { detectStyle, printable, renderError, renderJson, renderText, renderWarnings } from './output.js';
 import { recipes, type RecipeRegistry } from '../recipes/index.js';
@@ -36,13 +37,19 @@ const wordsOnly = (words: readonly string[]): Given => ({
 });
 
 /**
- * The hook of Claude Code. It never fails the session that runs it, so every path exits 0 and prints nothing to stdout:
- * the route comes before the check of the platform and before the flags. A refusal or a failure of any kind, a throw
- * included, becomes one line on stderr.
+ * The hook of Claude Code. It never fails the session that runs it, so every path exits 0: the route comes before the
+ * check of the platform and before the flags. A refusal or a failure of any kind, a throw included, becomes one line on
+ * stderr. An event prints nothing to stdout. The word `statusline` prints the status line, which is the only output.
  */
 const runHookRoute = async (words: readonly string[], deps: Deps, sink: Sink, registry: RecipeRegistry): Promise<number> => {
   const note = (reason: string): string => `${program} ${commands.hook}: ${printable(reason).replace(/\s+/g, ' ')}\n`;
   try {
+    if (words.length === 1 && words[0] === hookNames.statusline) {
+      const shown = await runStatusline(deps, registry);
+      await sink.stdout(shown.text);
+      if (shown.note !== null) await sink.stderr(note(shown.note));
+      return EXIT_OK;
+    }
     const result = await hookCommandFor(registry).run(wordsOnly(words), deps);
     if (!result.ok) await sink.stderr(note(result.error.message));
   } catch (cause) {

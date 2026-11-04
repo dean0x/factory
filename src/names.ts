@@ -530,6 +530,20 @@ export const hookNames = {
   maxStdinBytes: maxFileBytes,
   /** The status line wrapper waits this many milliseconds for the command of the owner. */
   statuslineTimeoutMs: 2_000,
+  /** The program that runs the command of the owner, as `<shell> -c <command>`. */
+  shell: '/bin/sh',
+  /** The only keys that the status line wrapper reads from the input of Claude Code, besides the session id. Every other key is dropped unread. */
+  statuslineKeys: {
+    contextWindow: 'context_window',
+    usedPercentage: 'used_percentage',
+    windowSize: 'context_window_size',
+    currentUsage: 'current_usage',
+    inputTokens: 'input_tokens',
+    cacheCreationTokens: 'cache_creation_input_tokens',
+    cacheReadTokens: 'cache_read_input_tokens',
+  },
+  /** The mark in place of the number in the fallback line, when the input gives no context percent. */
+  unknownPercent: '?',
 } as const;
 
 /** One event of the fixed list. */
@@ -543,6 +557,12 @@ export type HookSession = (typeof hookSessions)[keyof typeof hookSessions];
 
 /** The command of a settings entry for an event, for example `factory hook Stop`. */
 export const hookCommandOf = (event: string): string => commandText(`${hookNames.command} ${event}`);
+
+/**
+ * The line that the status line wrapper prints when the config names no command of the owner, or the command fails:
+ * `context N%`. When the input gives no context percent, the number is a mark: `context ?%`.
+ */
+export const statuslineTextOf = (percent: number | null): string => `context ${percent ?? hookNames.unknownPercent}%`;
 
 /**
  * The last-seen line (design 4.6): one JSON text for each session, in the heartbeat folder of the run-time folder. It

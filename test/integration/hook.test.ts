@@ -14,6 +14,7 @@ const SESSION = '00000000-0000-4000-8000-000000000001';
 /** The captured payload of each event. The path is written out here: it is the contract with the program that reads the line. */
 const FIXTURE = JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'claude', 'payloads.json'), 'utf8')) as {
   readonly hooks: Readonly<Record<HookEvent, Readonly<Record<string, unknown>>>>;
+  readonly statusline: { readonly payload: Readonly<Record<string, unknown>> };
 };
 
 beforeEach(async () => {
@@ -86,7 +87,6 @@ describe('factory hook (built binary)', () => {
     ['a payload that is not JSON', 'Stop', 'not json'],
     ['an empty payload', 'Stop', ''],
     ['an event off the list', 'Notification', JSON.stringify(FIXTURE.hooks.Stop)],
-    ['the status line word, which is not on the list yet', 'statusline', JSON.stringify(FIXTURE.hooks.Stop)],
     ['an event that differs from the input', 'SessionStart', JSON.stringify(FIXTURE.hooks.Stop)],
     ['a session id that is not a UUID', 'Stop', JSON.stringify({ ...FIXTURE.hooks.Stop, session_id: '../../escape' })],
   ])('exits 0 with an empty stdout and one line on stderr for %s, and writes nothing (TP-12)', async (_name, event, input) => {
@@ -119,5 +119,81 @@ describe('factory hook (built binary)', () => {
       expect(result.code, args.join(' ')).toBe(0);
       expect(result.stdout, args.join(' ')).toBe('');
     }
+  });
+});
+
+/** The status line input of the fixture (built from the field names of the status line docs; the values are made up). */
+const STATUS_INPUT = JSON.stringify(FIXTURE.statusline.payload);
+
+/** Run the status line wrapper in the sandbox, as the status line of the coordinator session. */
+const statusline = (input: string, env: Readonly<Record<string, string>> = {}): Promise<RunResult> =>
+  box.run(['hook', 'statusline'], { cwd: home, env: { FACTORY_HOME: home, FACTORY_SESSION: NODE_ID, ...env }, input });
+
+/** Set the status line command of the owner in the private config. The file keeps its mode. */
+const setOwnerCommand = async (command: string): Promise<void> => {
+  const path = join(home, 'factory.local.yaml');
+  const text = await readFile(path, 'utf8');
+  expect(text).toContain('statusline: null');
+  await writeFile(path, text.replace('statusline: null', `statusline: ${JSON.stringify(command)}`));
+};
+
+describe('factory hook statusline (built binary)', () => {
+  it('prints the output of the command of the owner as it is, gives it the input, and writes the percent (TP-13)', async () => {
+    // The command prints the one part of its input that proves it got the input of the wrapper.
+    await setOwnerCommand(`grep -o '"session_id":"[^"]*"'`);
+    const result = await statusline(STATUS_INPUT);
+    expect(result).toEqual({ code: 0, stdout: `"session_id":"${SESSION}"\n`, stderr: '' });
+
+    const line = JSON.parse(await readFile(lastSeenFile(), 'utf8')) as Record<string, unknown>;
+    expect(line).toMatchObject({ session_id: SESSION, event: null, event_at: null, context_pct: 8 });
+    expect(Number.isNaN(Date.parse(String(line['pct_at'])))).toBe(false);
+    expect((await stat(lastSeenFile())).mode & 0o777).toBe(0o600);
+    const text = await readFile(lastSeenFile(), 'utf8');
+    expect(text).not.toContain('transcript');
+    expect(text).not.toContain('placeholder');
+  });
+
+  it('keeps the event that the hook wrote before', async () => {
+    await hook('Stop', JSON.stringify(FIXTURE.hooks.Stop));
+    await statusline(STATUS_INPUT);
+    expect(JSON.parse(await readFile(lastSeenFile(), 'utf8'))).toMatchObject({ event: 'Stop', context_pct: 8 });
+  });
+
+  it('prints context N% and exits 0 when the config names no command (TP-14)', async () => {
+    expect(await statusline(STATUS_INPUT)).toEqual({ code: 0, stdout: 'context 8%', stderr: '' });
+  });
+
+  it('prints context N%, drops the output of the command and exits 0 when the command fails (TP-14)', async () => {
+    await setOwnerCommand('echo half an output; exit 3');
+    const result = await statusline(STATUS_INPUT);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('context 8%');
+    expect(result.stderr).toMatch(/^factory hook: [^\n]*code 3\n$/);
+  });
+
+  it('prints context N% and exits 0 when the command does not end in time (TP-14)', async () => {
+    await setOwnerCommand('exec sleep 30');
+    const started = Date.now();
+    const result = await statusline(STATUS_INPUT);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('context 8%');
+    expect(result.stderr).toMatch(/^factory hook: [^\n]+\n$/);
+    expect(Date.now() - started).toBeLessThan(15_000);
+  });
+
+  it('prints the line and writes nothing outside a factory session', async () => {
+    await setOwnerCommand('echo owner');
+    const result = await box.run(['hook', 'statusline'], { cwd: home, input: STATUS_INPUT });
+    expect(result).toEqual({ code: 0, stdout: 'context 8%', stderr: '' });
+    expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
+  });
+
+  it('prints the line, runs no command and writes nothing for a session that is not the node', async () => {
+    await setOwnerCommand('echo owner');
+    const result = await statusline(STATUS_INPUT, { FACTORY_SESSION: 'another' });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('context 8%');
+    expect(result.stderr).toContain('FACTORY_SESSION');
+    expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
   });
 });

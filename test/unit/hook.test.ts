@@ -135,7 +135,7 @@ describe('factory hook: refusals of the input (TP-8)', () => {
   it.each([
     ['an event that is not on the list', ['Notification']],
     ['an event with other letter case', ['stop']],
-    ['the status line word, which is not on the list yet', [hookNames.statusline]],
+    ['the status line word, which is not an event', [hookNames.statusline]],
     ['no event', []],
     ['an extra word after the event', ['Stop', 'extra']],
   ])('writes nothing for %s', async (_name, args) => {

@@ -41,21 +41,18 @@ const sessionIdOfInput = async (deps: Deps, event: HookEvent): Promise<CliResult
   return ok(parsed.data[keys.sessionId]);
 };
 
-/**
- * Record the event as the last-seen line of the session. Outside a factory session (no factory folder in the environment) it
- * does nothing and reads nothing. Otherwise the factory folder must pass the registration check, and the session marker must
- * be the id of the node. The value is nothing; an error is the reason that the hook wrote nothing.
- */
-export const runHook = async (deps: Deps, args: readonly string[], registry: RecipeRegistry): Promise<CliResult<void>> => {
+/** True when the environment names a factory folder, so the program started this session. Outside such a session a hook does nothing. */
+export const inFactorySession = (deps: Deps): boolean => {
   const folder = deps.env[env.home];
-  if (folder === undefined || folder === '') return ok(undefined);
+  return folder !== undefined && folder !== '';
+};
 
-  const [event, ...extra] = args;
-  if (!isHookEvent(event) || extra.length > 0) return failure(`the command takes one event of: ${hookNames.events.join(', ')}`);
-
-  const sessionId = await sessionIdOfInput(deps, event);
-  if (!sessionId.ok) return sessionId;
-
+/**
+ * The factory folder of the session that runs a hook. The folder must pass the registration check, and the session marker
+ * must be the id of the node. The error is the reason that the hook must write nothing. The caller has checked
+ * `inFactorySession` first.
+ */
+export const sessionHomeOf = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<string>> => {
   const readNodeId = (readDeps: Deps, home: string) => readNodeIdentity(readDeps, home, registry);
   const located = await locateHomeFolder(deps, undefined, readNodeId, commands.hook);
   if (!located.ok) return located;
@@ -64,7 +61,26 @@ export const runHook = async (deps: Deps, args: readonly string[], registry: Rec
   if (deps.env[env.session] !== identity.value.id) {
     return failure(`${env.session} is not the id of the ${roles.node} of ${located.value.home}`);
   }
+  return ok(located.value.home);
+};
 
-  const written = await writeLastSeen(deps, located.value.home, sessionId.value, { kind: 'event', event });
+/**
+ * Record the event as the last-seen line of the session. Outside a factory session (no factory folder in the environment) it
+ * does nothing and reads nothing. Otherwise the factory folder must pass the registration check, and the session marker must
+ * be the id of the node. The value is nothing; an error is the reason that the hook wrote nothing.
+ */
+export const runHook = async (deps: Deps, args: readonly string[], registry: RecipeRegistry): Promise<CliResult<void>> => {
+  if (!inFactorySession(deps)) return ok(undefined);
+
+  const [event, ...extra] = args;
+  if (!isHookEvent(event) || extra.length > 0) return failure(`the command takes one event of: ${hookNames.events.join(', ')}`);
+
+  const sessionId = await sessionIdOfInput(deps, event);
+  if (!sessionId.ok) return sessionId;
+
+  const home = await sessionHomeOf(deps, registry);
+  if (!home.ok) return home;
+
+  const written = await writeLastSeen(deps, home.value, sessionId.value, { kind: 'event', event });
   return written.ok ? ok(undefined) : written;
 };
