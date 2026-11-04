@@ -1,11 +1,34 @@
+import { isPaneId } from '../../src/launch/tmux.js';
 import { tmuxNames } from '../../src/names.js';
 import { exited, missingProgram, type RunCall, type RunHandler } from './fake-deps.js';
+
+/** A pane that exists at the start, in a session of the fixture. */
+export interface PaneFixture {
+  /** The pane id, for example `%7`. Default: the next free id. */
+  readonly id?: string;
+  /** A session of the fixture. */
+  readonly session: string;
+  /** The window that holds the pane. A window that does not exist yet is made. Default: the workers window. */
+  readonly window?: string;
+  /** The pane options, for example `{ '@worker': 'alpha' }`. */
+  readonly options?: Readonly<Record<string, string>>;
+  /** The process id of the program of the pane. Default: the next free number from 4000. */
+  readonly pid?: number;
+  /** True for a pane whose program has ended. The pane stays, because of remain-on-exit. */
+  readonly dead?: boolean;
+  readonly cwd?: string;
+}
 
 export interface TmuxFixture {
   /** The text that `tmux -V` prints. Null means that tmux is not installed. Default: `tmux 3.4`. */
   readonly version?: string | null;
-  /** Sessions that run already, by name. The value is the node home in the session option, or null for no option. */
+  /**
+   * Sessions that run already, by name. The value is the node home in the session option, or null for no option. Each
+   * session has the windows that `start` makes: the view window with two panes, and the workers window with one pane.
+   */
   readonly sessions?: Readonly<Record<string, string | null>>;
+  /** More panes, in the sessions of the fixture. */
+  readonly panes?: readonly PaneFixture[];
   /** The first word of a tmux command that fails with exit code 1. */
   readonly failing?: string;
   /** Sessions whose coordinator program has ended. The pane stays, because of remain-on-exit. */
@@ -15,6 +38,21 @@ export interface TmuxFixture {
    * remain-on-exit for the window. With remain-on-exit the session stays, and its coordinator counts as ended.
    */
   readonly programEndsAtOnce?: boolean;
+  /** The program of each pane that `split-window` makes ends at once. The pane stays, as a dead pane. */
+  readonly newPanesEndAtOnce?: boolean;
+}
+
+/** The state of one pane, as the log shows it. */
+export interface PaneView {
+  readonly id: string;
+  readonly session: string;
+  readonly window: string;
+  readonly options: Readonly<Record<string, string>>;
+  readonly pid: number;
+  readonly dead: boolean;
+  readonly cwd: string | null;
+  /** The words after `--` in the call that made the pane. Empty for a pane that runs the shell. */
+  readonly command: readonly string[];
 }
 
 export interface TmuxLog {
@@ -23,9 +61,11 @@ export interface TmuxLog {
   commands(): string[];
   /** The sessions that run now, with the node home of their option. */
   sessions(): Map<string, string | null>;
+  /** The panes that exist now, in the order of their making. A swap exchanges the places of two panes in this list. */
+  panes(): readonly PaneView[];
 }
 
-/** The commands that fail for a session that does not exist. */
+/** The commands that fail for a session that does not exist, when their target names a session. */
 const NEEDS_SESSION = new Set([
   'set-environment',
   'set-option',
@@ -34,7 +74,11 @@ const NEEDS_SESSION = new Set([
   'switch-client',
   'kill-session',
   'display-message',
+  'list-panes',
 ]);
+
+const DEFAULT_LIST_FORMAT = '#{session_name}:#{window_name}.#{pane_index}';
+const FIRST_PID = 4000;
 
 /**
  * A command chain is a list of commands in one argument list. tmux reads the list this way: a word that ends in a
@@ -62,23 +106,165 @@ export const chainOf = (args: readonly string[]): readonly (readonly string[])[]
 const keepsPaneOnExit = (command: readonly string[]): boolean =>
   command[0] === 'set-option' && command.includes('remain-on-exit') && command.includes('on');
 
-/** A fake of the tmux program: it knows sessions and their home option, and records every call. */
+interface FakePane {
+  readonly id: string;
+  session: string;
+  window: string;
+  readonly options: Map<string, string>;
+  readonly pid: number;
+  dead: boolean;
+  readonly cwd: string | null;
+  readonly command: readonly string[];
+}
+
+/** The word after a flag, or an empty text. */
+const after = (command: readonly string[], flag: string): string => command[command.indexOf(flag) + 1] ?? '';
+
+/** What a new pane can have besides its place. */
+type PaneMore = Omit<PaneFixture, 'session' | 'window'> & {
+  /** The program of the pane, as an argument list. Empty for the shell. */
+  readonly command?: readonly string[];
+};
+
+/** The words after `--`: the program of a new pane. */
+const programOf = (command: readonly string[]): readonly string[] =>
+  command.includes('--') ? command.slice(command.indexOf('--') + 1) : [];
+
+/** A fake of the tmux program: it knows sessions, their home option, their windows and panes, and records every call. */
 export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; log: TmuxLog } => {
   const calls: RunCall[] = [];
-  const sessions = new Map<string, string | null>(Object.entries(fixture.sessions ?? {}));
+  const sessions = new Map<string, string | null>();
   const version = fixture.version === undefined ? 'tmux 3.4' : fixture.version;
   const endedCoordinators = new Set(fixture.endedCoordinators ?? []);
+  /** The windows of each session, in order. */
+  const windows = new Map<string, string[]>();
+  const panes: FakePane[] = [];
 
-  const targetSession = (args: readonly string[]): string => {
-    const target = args[args.indexOf('-t') + 1] ?? '';
-    return target.replace(/^=/, '').split(':')[0] ?? '';
+  const explicitIds = (fixture.panes ?? []).flatMap((pane) => (pane.id === undefined ? [] : [pane.id]));
+  for (const id of explicitIds) {
+    if (!isPaneId(id)) throw new Error(`the pane fixture has the id ${id}, which is not a pane id`);
+  }
+  if (new Set(explicitIds).size !== explicitIds.length) throw new Error('the pane fixture has the same pane id twice');
+  let nextId = Math.max(-1, ...explicitIds.map((id) => Number(id.slice(1)))) + 1;
+  let nextPid = FIRST_PID;
+
+  const panesOfWindow = (session: string, window: string): FakePane[] =>
+    panes.filter((pane) => pane.session === session && pane.window === window);
+
+  const addPane = (session: string, window: string, more: PaneMore = {}): FakePane => {
+    const names = windows.get(session) ?? [];
+    if (!names.includes(window)) windows.set(session, [...names, window]);
+    const pane: FakePane = {
+      id: more.id ?? `%${nextId++}`,
+      session,
+      window,
+      options: new Map(Object.entries(more.options ?? {})),
+      pid: more.pid ?? nextPid++,
+      dead: more.dead ?? false,
+      cwd: more.cwd || null,
+      command: more.command ?? [],
+    };
+    panes.push(pane);
+    return pane;
   };
+
+  const dropSession = (name: string): void => {
+    sessions.delete(name);
+    windows.delete(name);
+    for (let index = panes.length - 1; index >= 0; index -= 1) if (panes[index]?.session === name) panes.splice(index, 1);
+  };
+
+  /** A window with no pane is gone, and a session with no window is gone. */
+  const dropEmpty = (session: string): void => {
+    const names = (windows.get(session) ?? []).filter((name) => panesOfWindow(session, name).length > 0);
+    if (names.length === 0) dropSession(session);
+    else windows.set(session, names);
+  };
+
+  const markCoordinatorEnded = (session: string): void => {
+    endedCoordinators.add(session);
+    const coordinator = panesOfWindow(session, tmuxNames.windowView)[0];
+    if (coordinator !== undefined) coordinator.dead = true;
+  };
+
+  for (const [name, home] of Object.entries(fixture.sessions ?? {})) {
+    sessions.set(name, home);
+    addPane(name, tmuxNames.windowView);
+    addPane(name, tmuxNames.windowView);
+    addPane(name, tmuxNames.windowWorkers);
+    if (endedCoordinators.has(name)) markCoordinatorEnded(name);
+  }
+  for (const { session, window, ...more } of fixture.panes ?? []) {
+    if (!sessions.has(session)) throw new Error(`the pane fixture names the session ${session}, which is not in the fixture`);
+    addPane(session, window ?? tmuxNames.windowWorkers, more);
+  }
+
+  const targetOf = (command: readonly string[]): string => after(command, '-t');
+
+  const targetSession = (command: readonly string[]): string =>
+    targetOf(command).replace(/^=/, '').split(':')[0] ?? '';
+
+  /** A pane id, or a position in a window such as `=demo:view.{left}`. A position that holds no pane gives undefined. */
+  const resolvePane = (target: string): FakePane | undefined => {
+    if (isPaneId(target)) return panes.find((pane) => pane.id === target);
+    const match = /^=?([^:]+):([^.]*)(?:\.(.+))?$/.exec(target);
+    if (match === null) return undefined;
+    const [, session = '', window = '', spec = ''] = match;
+    const inWindow = panesOfWindow(session, window);
+    if (spec === '' || spec === '{left}') return inWindow[0];
+    if (spec === '{right}') return inWindow[1];
+    return /^[0-9]+$/.test(spec) ? inWindow[Number(spec)] : undefined;
+  };
+
+  /** The window that a target names: a pane id gives the window of the pane, and `=session:window` names it. */
+  const resolveWindow = (target: string): { readonly session: string; readonly window: string } | undefined => {
+    if (isPaneId(target)) {
+      const pane = panes.find((candidate) => candidate.id === target);
+      return pane === undefined ? undefined : { session: pane.session, window: pane.window };
+    }
+    const session = target.replace(/^=/, '').split(':')[0] ?? '';
+    const named = target.includes(':') ? (target.split(':')[1] ?? '').split('.')[0] ?? '' : '';
+    const window = named === '' ? windows.get(session)?.[0] : named;
+    return window !== undefined && (windows.get(session) ?? []).includes(window) ? { session, window } : undefined;
+  };
+
+  const expand = (format: string, pane: FakePane): string =>
+    format.replace(/#\{([^}]*)\}/g, (_match, key: string) => {
+      switch (key) {
+        case 'pane_id':
+          return pane.id;
+        case 'pane_pid':
+          return String(pane.pid);
+        case 'pane_dead':
+          return pane.dead ? '1' : '0';
+        case 'pane_current_path':
+          return pane.cwd ?? '';
+        case 'pane_index':
+          return String(panesOfWindow(pane.session, pane.window).indexOf(pane));
+        case 'session_name':
+          return pane.session;
+        case 'window_name':
+          return pane.window;
+        default:
+          return key.startsWith('@') ? (pane.options.get(key) ?? '') : '';
+      }
+    });
+
+  const printed = (command: readonly string[], pane: FakePane) =>
+    command.includes('-P') ? exited(0, `${expand(after(command, '-F') || DEFAULT_LIST_FORMAT, pane)}\n`) : exited(0);
+
+  const cantFindPane = (target: string) => exited(1, '', `can't find pane: ${target}\n`);
 
   const execute = (command: readonly string[]) => {
     const [word, ...rest] = command;
     if (word === '-V') return exited(0, `${version}\n`);
     if (word === fixture.failing) return exited(1, '', `${word} failed\n`);
-    if (word !== undefined && NEEDS_SESSION.has(word) && !sessions.has(targetSession(command))) {
+    if (
+      word !== undefined &&
+      NEEDS_SESSION.has(word) &&
+      !isPaneId(targetOf(command)) &&
+      !sessions.has(targetSession(command))
+    ) {
       return exited(1, '', "can't find session\n");
     }
     switch (word) {
@@ -89,18 +275,70 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
       case 'display-message':
         return exited(0, `${endedCoordinators.has(targetSession(command)) ? 1 : 0}\n`);
       case 'new-session': {
-        const name = rest[rest.indexOf('-s') + 1] ?? '';
+        const name = after(rest, '-s');
         if (sessions.has(name)) return exited(1, '', 'duplicate session\n');
         sessions.set(name, null);
+        addPane(name, after(rest, '-n') || '0', { cwd: after(rest, '-c'), command: programOf(rest) });
         return exited(0);
       }
-      case 'set-option':
+      case 'new-window': {
+        const session = targetSession(command);
+        const name = after(rest, '-n') || String((windows.get(session) ?? []).length);
+        if ((windows.get(session) ?? []).includes(name)) return exited(1, '', `duplicate window: ${name}\n`);
+        return printed(command, addPane(session, name, { cwd: after(rest, '-c'), command: programOf(rest) }));
+      }
+      case 'split-window': {
+        const where = resolveWindow(targetOf(command));
+        if (where === undefined) return exited(1, '', `can't find window: ${targetOf(command)}\n`);
+        const pane = addPane(where.session, where.window, {
+          cwd: after(rest, '-c'),
+          command: programOf(rest),
+          dead: fixture.newPanesEndAtOnce === true,
+        });
+        return printed(command, pane);
+      }
+      case 'list-panes': {
+        const wholeSession = command.includes('-s');
+        const where = wholeSession ? undefined : resolveWindow(targetOf(command));
+        if (!wholeSession && where === undefined) return exited(1, '', `can't find window: ${targetOf(command)}\n`);
+        const session = where?.session ?? targetSession(command);
+        const listed = (windows.get(session) ?? []).flatMap((window) =>
+          where === undefined || where.window === window ? panesOfWindow(session, window) : [],
+        );
+        const format = after(command, '-F') || DEFAULT_LIST_FORMAT;
+        return exited(0, listed.map((pane) => `${expand(format, pane)}\n`).join(''));
+      }
+      case 'set-option': {
         if (command.includes(tmuxNames.optionHome)) {
           sessions.set(targetSession(command), command.at(-1) ?? null);
+        } else if (command.includes('-p')) {
+          const pane = resolvePane(targetOf(command));
+          if (pane === undefined && isPaneId(targetOf(command))) return cantFindPane(targetOf(command));
+          pane?.options.set(command.at(-2) ?? '', command.at(-1) ?? '');
         }
         return exited(0);
+      }
+      case 'kill-pane': {
+        const pane = resolvePane(targetOf(command));
+        if (pane === undefined) return cantFindPane(targetOf(command));
+        panes.splice(panes.indexOf(pane), 1);
+        dropEmpty(pane.session);
+        return exited(0);
+      }
+      case 'swap-pane': {
+        const source = resolvePane(after(rest, '-s'));
+        const target = resolvePane(targetOf(command));
+        if (source === undefined) return cantFindPane(after(rest, '-s'));
+        if (target === undefined) return cantFindPane(targetOf(command));
+        const [session, window] = [source.session, source.window];
+        [source.session, source.window] = [target.session, target.window];
+        [target.session, target.window] = [session, window];
+        const [from, to] = [panes.indexOf(source), panes.indexOf(target)];
+        [panes[from], panes[to]] = [target, source];
+        return exited(0);
+      }
       case 'kill-session':
-        sessions.delete(targetSession(command));
+        dropSession(targetSession(command));
         return exited(0);
       default:
         return exited(0);
@@ -119,8 +357,8 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
     const created = chain.find((command) => command[0] === 'new-session');
     if (fixture.programEndsAtOnce === true && created !== undefined) {
       const name = created[created.indexOf('-s') + 1] ?? '';
-      if (chain.some(keepsPaneOnExit)) endedCoordinators.add(name);
-      else sessions.delete(name);
+      if (chain.some(keepsPaneOnExit)) markCoordinatorEnded(name);
+      else dropSession(name);
     }
     return result;
   };
@@ -130,6 +368,17 @@ export const tmuxHandler = (fixture: TmuxFixture = {}): { handler: RunHandler; l
       calls,
       commands: () => calls.map((call) => `${call.command === 'tmux' ? '' : `${call.command} `}${call.args.join(' ')}`),
       sessions: () => sessions,
+      panes: () =>
+        panes.map((pane) => ({
+          id: pane.id,
+          session: pane.session,
+          window: pane.window,
+          options: Object.fromEntries(pane.options),
+          pid: pane.pid,
+          dead: pane.dead,
+          cwd: pane.cwd,
+          command: pane.command,
+        })),
     },
   };
 };
