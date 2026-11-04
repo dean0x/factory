@@ -510,7 +510,8 @@ const applyExisting = async (
   // written, and it counts each changed point as `owner`. The second render comes after the records and follows the modes
   // that count, so a point whose record failed stays `owner`. A run that changes no mode renders nothing.
   const change = plan.modeChange;
-  const tightened = change === null ? null : await renderCoordinatorText(deps, layout.home, config, tightModes(points, change));
+  const tightened =
+    change === null ? null : await renderCoordinatorText(deps, layout.home, config, tightModes(points, change), commands.init);
   const records =
     standing.registration === 'registered'
       ? await recordApprovals(deps, layout.home, id, points, plan.approvals)
@@ -520,7 +521,7 @@ const applyExisting = async (
     ...config,
     core: { ...config.core, approval: plan.approvals.modes },
   });
-  const settled = change === null ? null : await renderCoordinatorText(deps, layout.home, config, approval);
+  const settled = change === null ? null : await renderCoordinatorText(deps, layout.home, config, approval, commands.init);
   const accepted = await recordAcceptance(deps, plan.acceptance);
   const renders = tightened !== null && settled !== null ? { tightened, settled } : null;
   return ok({

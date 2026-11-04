@@ -782,7 +782,10 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
   it('refuses a state folder inside the factory folder', async () => {
     const deps = person({ env: { XDG_STATE_HOME: `${ROOT}/state`, HOME: '/home/me' } });
     const result = await recordSetupAcceptance(deps, inputOf(await collect(deps)));
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: 'safety', hint: 'Set the state folder to a folder outside the factory folder, then run "factory init" again.' },
+    });
     expect(deps.files.has(`${ROOT}/state/factory/setup-acceptances.json`)).toBe(false);
   });
 

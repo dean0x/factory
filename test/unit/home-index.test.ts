@@ -20,6 +20,8 @@ import {
   type HomeEntry,
 } from '../../src/core/home-index.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
+import { changePrivateFile } from '../../src/core/private-file.js';
+import { ok } from '../../src/core/result.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 
 const INDEX = '/state/factory/homes.json';
@@ -84,6 +86,9 @@ describe('home index: the path', () => {
     for (const state of ['/home/me/.claude', '/home/me/.claude/state', '/home/me/.claude/a/../b']) {
       const result = await pathFor({ HOME: '/home/me', XDG_STATE_HOME: state });
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+      expect(!result.ok && result.error.hint).toBe(
+        'Claude Code owns that folder. Set XDG_STATE_HOME to another absolute folder, then run "factory doctor".',
+      );
     }
   });
 
@@ -649,6 +654,108 @@ describe('home index: two writers at once', () => {
     const result = await recordHome(denied, INDEX, entry(HOME_A, []));
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('EACCES') });
     expect(deps.sleeps).toEqual([]);
+  });
+
+  describe('the lock that stays after the change', () => {
+    const refusesToRemoveLock = (deps: FakeDeps): Deps => ({
+      ...deps,
+      fs: { ...deps.fs, remove: async (path) => (path === LOCK ? failure(`cannot remove ${path}: EACCES`) : deps.fs.remove(path)) },
+    });
+
+    it('stops with an error that names the lock file and the reason, and the change is saved', async () => {
+      const deps = fresh();
+      const result = await recordHome(refusesToRemoveLock(deps), INDEX, entry(HOME_A, []));
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK) });
+      expect(result).toMatchObject({ error: expect.stringContaining('EACCES') });
+      expect(result).toMatchObject({ error: expect.stringContaining('saved') });
+      expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_A, [])] });
+    });
+
+    it('gives the error of the failed write first, when the lock stays too', async () => {
+      const deps = fresh();
+      const both = refusesToRemoveLock(deps);
+      const failingWrite: Deps = { ...both, fs: { ...both.fs, writeTextAtomic: async () => failure('cannot write: disk full') } };
+      const result = await recordHome(failingWrite, INDEX, entry(HOME_A, []));
+      expect(result).toMatchObject({ ok: false, error: expect.stringContaining('disk full') });
+      expect(deps.files.has(INDEX)).toBe(false);
+    });
+  });
+
+  describe('a stale lock that two waiters see', () => {
+    const OTHER = 111;
+    const WAITER = 222;
+
+    it('stays with the waiter that took it over first, and the second waiter does not change the file', async () => {
+      const deps = fresh();
+      deps.seed(LOCK, '1\n');
+      deps.advance(5_001);
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered: () => void = () => undefined;
+      const inside = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const insideChange: string[] = [];
+      const started: Promise<unknown>[] = [];
+
+      // The second waiter has looked at the stale lock. Before it acts, the first waiter takes the lock over and holds it.
+      const second: Deps = {
+        ...deps,
+        pid: WAITER,
+        fs: {
+          ...deps.fs,
+          statInfo: async (path) => {
+            const seen = await deps.fs.statInfo(path);
+            if (path === LOCK && started.length === 0) {
+              started.push(
+                changePrivateFile({ ...deps, pid: OTHER }, INDEX, 1_000, async () => {
+                  insideChange.push('first');
+                  entered();
+                  await gate;
+                  return ok('first\n');
+                }),
+              );
+              await inside;
+            }
+            return seen;
+          },
+        },
+      };
+
+      try {
+        const result = await changePrivateFile(second, INDEX, 1_000, async () => {
+          insideChange.push('second');
+          return ok('second\n');
+        });
+        expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK) });
+        expect(insideChange).toEqual(['first']);
+        expect(deps.files.get(LOCK)).toBe(`${OTHER}\n`);
+      } finally {
+        release();
+      }
+      expect(await started[0]).toEqual({ ok: true, value: undefined });
+      expect(deps.files.get(INDEX)).toBe('first\n');
+      expect(deps.files.has(LOCK)).toBe(false);
+    });
+
+    it('leaves no file of the takeover behind', async () => {
+      const deps = fresh();
+      deps.seed(LOCK, '1\n');
+      deps.advance(5_001);
+      expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+      expect([...deps.files.keys()].sort()).toEqual([INDEX]);
+    });
+
+    it('takes over the claim of a process that ended, and goes on', async () => {
+      const deps = fresh();
+      deps.seed(LOCK, '1\n');
+      deps.seed(`${LOCK}.takeover`, '2\n');
+      deps.advance(5_001);
+      expect((await recordHome(deps, INDEX, entry(HOME_A, []))).ok).toBe(true);
+      expect([...deps.files.keys()].sort()).toEqual([INDEX]);
+    });
   });
 });
 

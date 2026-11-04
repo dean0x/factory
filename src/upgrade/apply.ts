@@ -4,6 +4,7 @@ import { appendBlocks, parseBlocks, renderBlock, replaceBlock, type ParsedBlock 
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { GIT_ENTRY, initRootRepo } from '../core/git.js';
+import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { inspectParsed, isRecord, requireValid } from '../migrate/inspect.js';
 import { isTextMigration, runMigrations, runTextMigrations } from '../migrate/runner.js';
@@ -18,6 +19,11 @@ export interface Written {
   /** The text before the change, or null when the file did not exist. */
   readonly previous: string | null;
 }
+
+/** The paths of `paths` that are in the state repo, relative to it, each one once. */
+export const inStateRepo = (layout: Layout, paths: readonly string[]): readonly string[] => [
+  ...new Set(paths.filter((path) => isSameOrInside(layout.stateDir, path)).map((path) => relative(layout.stateDir, path))),
+];
 
 const readIfFile = async (deps: Deps, path: string): Promise<CliResult<string | null>> => {
   const kind = await deps.fs.stat(path);

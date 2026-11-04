@@ -1,11 +1,14 @@
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { safetyRefusal, type CliResult } from '../cli/errors.js';
-import { dirs, env, privateFile, program } from '../names.js';
+import { commands, commandText, dirs, env, places, privateFile, program } from '../names.js';
 import type { Deps, PathInfo } from './deps.js';
 import { isSameOrInsideFolder } from './paths.js';
 import { err, ok, type Result } from './result.js';
 
 type Environment = Readonly<Record<string, string | undefined>>;
+
+/** The remedy line of a store file of the user that would lie inside the factory folder. */
+export const STORE_INSIDE_FOLDER_REMEDY = `Set the state folder to a folder outside the ${places.folder}, then run "${commandText(commands.init)}" again.`;
 
 /** The value of an environment variable when it is an absolute path, else undefined. */
 const absoluteEnv = (environment: Environment, name: string): string | undefined => {
@@ -34,7 +37,7 @@ export const userStatePathOf = async (deps: Deps, fileName: string): Promise<Cli
   if (inside.value) {
     return safetyRefusal(
       `the file would be ${path}, inside ${claudeDir}`,
-      `Claude Code owns that folder. Set ${env.stateHome} to another absolute folder.`,
+      `Claude Code owns that folder. Set ${env.stateHome} to another absolute folder, then run "${commandText(commands.doctor)}".`,
     );
   }
   return ok(path);
@@ -85,17 +88,55 @@ const prepareFolder = async (deps: Deps, path: string): Promise<Result<void, str
   return tightened.ok ? ok(undefined) : err(tightened.error.message);
 };
 
+/** True when a lock or a claim file is older than `privateFile.lockStaleMs`: a process that ended left it. */
+const isStale = (deps: Deps, info: PathInfo): boolean => deps.now().getTime() - info.mtimeMs > privateFile.lockStaleMs;
+
 /**
- * Remove a lock that is older than `privateFile.lockStaleMs`: a process that ended left it. The value is true when
- * the lock is gone and the caller may try to take it at once.
+ * Remove the lock only when it is still the stale lock that the caller saw. The caller holds the claim file, so no other
+ * waiter removes the lock now. A lock that a waiter took over in the meantime stays. The value is true when the lock is
+ * gone.
  */
-const dropStaleLock = async (deps: Deps, lockPath: string): Promise<Result<boolean, string>> => {
-  const info = await deps.fs.statInfo(lockPath);
-  if (!info.ok) return err(info.error.message);
-  if (info.value === null) return ok(true);
-  if (deps.now().getTime() - info.value.mtimeMs <= privateFile.lockStaleMs) return ok(false);
+const removeSeenLock = async (deps: Deps, lockPath: string, seen: PathInfo): Promise<Result<boolean, string>> => {
+  const current = await deps.fs.statInfo(lockPath);
+  if (!current.ok) return err(current.error.message);
+  if (current.value === null) return ok(true);
+  if (current.value.mtimeMs !== seen.mtimeMs) return ok(false);
   const removed = await deps.fs.remove(lockPath);
   return removed.ok ? ok(true) : err(removed.error.message);
+};
+
+/**
+ * Another waiter holds the claim file: the caller waits. A claim that is stale is removed, because the process that made
+ * it ended. The value is always false: the caller tries again after the wait.
+ */
+const dropStaleClaim = async (deps: Deps, claimPath: string): Promise<Result<boolean, string>> => {
+  const claim = await deps.fs.statInfo(claimPath);
+  if (!claim.ok) return err(claim.error.message);
+  if (claim.value === null || !isStale(deps, claim.value)) return ok(false);
+  const removed = await deps.fs.remove(claimPath);
+  return removed.ok ? ok(false) : err(removed.error.message);
+};
+
+/**
+ * Remove a lock that is older than `privateFile.lockStaleMs`: a process that ended left it. Only the waiter that holds
+ * the claim file beside the lock removes it, and only the stale lock that it saw, so a second waiter never removes the
+ * new lock of the first. The value is true when the lock is gone and the caller may try to take it at once.
+ */
+const dropStaleLock = async (deps: Deps, lockPath: string): Promise<Result<boolean, string>> => {
+  const seen = await deps.fs.statInfo(lockPath);
+  if (!seen.ok) return err(seen.error.message);
+  if (seen.value === null) return ok(true);
+  if (!isStale(deps, seen.value)) return ok(false);
+
+  const claimPath = `${lockPath}${privateFile.takeoverSuffix}`;
+  const claimed = await deps.fs.writeTextExclusive(claimPath, `${deps.pid}\n`, privateFile.fileMode);
+  if (!claimed.ok) return err(claimed.error.message);
+  if (!claimed.value) return dropStaleClaim(deps, claimPath);
+
+  const dropped = await removeSeenLock(deps, lockPath, seen.value);
+  const claimGone = await deps.fs.remove(claimPath);
+  if (!dropped.ok) return dropped;
+  return claimGone.ok ? dropped : err(claimGone.error.message);
 };
 
 /**
@@ -121,7 +162,8 @@ export type PrivateChange = (current: string | null) => Promise<Result<string, s
  * Change a per-user file. The call makes the folder ready, takes the lock file beside the file, reads the current text,
  * asks `change` for the new text and writes it atomically with mode 0600. A lock file lets only one process read, change
  * and write at a time, so two runs at once lose no change. A file that cannot be read stays as it is. The lock is taken
- * over once it is older than `privateFile.lockStaleMs`. The error is the reason.
+ * over once it is older than `privateFile.lockStaleMs`. The error is the reason. When the change is saved and the lock
+ * file cannot be removed, the error says so and names the lock file.
  */
 export const changePrivateFile = async (
   deps: Deps,
@@ -138,7 +180,10 @@ export const changePrivateFile = async (
   const current = await readPrivateText(deps, path, maxBytes);
   const next = current.ok ? await change(current.value) : err(`${path} cannot be read: ${current.error}`);
   const written = next.ok ? await deps.fs.writeTextAtomic(path, next.value, dirname(path), privateFile.fileMode) : null;
-  await deps.fs.remove(lockPath);
+  const lockGone = await deps.fs.remove(lockPath);
   if (!next.ok) return next;
-  return written?.ok === false ? err(written.error.message) : ok(undefined);
+  if (written?.ok === false) return err(written.error.message);
+  return lockGone.ok
+    ? ok(undefined)
+    : err(`the change is saved, but ${program} cannot remove the lock file ${lockPath}: ${lockGone.error.message}. Remove that file.`);
 };

@@ -310,6 +310,8 @@ export const privateFile = {
   groupOtherWrite: 0o022,
   /** The lock file beside a file: the name of the file and this suffix. */
   lockSuffix: '.lock',
+  /** The claim file beside the lock file. Only the process that holds it removes a stale lock. */
+  takeoverSuffix: '.takeover',
   /** A writer tries to take the lock this many times, and waits this long between two tries. */
   lockAttempts: 20,
   lockWaitMs: 50,

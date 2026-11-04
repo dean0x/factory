@@ -3,7 +3,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { defaultOwnerPrefix } from '../../src/names.js';
 import { ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates } from '../../src/templates/index.js';
-import type { BlockInput, BlockTemplate, SetupTexts } from '../../src/templates/types.js';
+import type { BlockInput, BlockTarget, BlockTemplate, SetupTexts } from '../../src/templates/types.js';
 
 /** The software recipe, the first recipe of the package. */
 export const [softwareRecipe] = recipes;
@@ -45,9 +45,19 @@ export const freshBlocks = (layer: number): readonly BlockTemplate[] =>
  * The text of `coordinator/CLAUDE.md` as the package renders it for this config and these modes: the role block and the
  * safety block of the file, one after the other, with no setup text.
  */
-export const claudeFileText = (config: FactoryConfig, modes: ApprovalModes = softwareOwnerModes): string => {
-  const blocks = blockTemplatesFor(blockInputOf(config, noSetupTexts, modes))
-    .filter((template) => template.target === 'claudeFile')
+export const claudeFileText = (config: FactoryConfig, modes: ApprovalModes = softwareOwnerModes): string =>
+  fileTextOf('claudeFile', config, noSetupTexts, modes);
+
+/** The text of `.factory/roles/worker.md` as the package renders it for this config and these setup texts. */
+export const workerFileText = (
+  config: FactoryConfig,
+  texts: SetupTexts,
+  modes: ApprovalModes = softwareOwnerModes,
+): string => fileTextOf('workerFile', config, texts, modes);
+
+const fileTextOf = (target: BlockTarget, config: FactoryConfig, texts: SetupTexts, modes: ApprovalModes): string => {
+  const blocks = blockTemplatesFor(blockInputOf(config, texts, modes))
+    .filter((template) => template.target === target)
     .map((template) => {
       const rendered = renderBlock(template);
       if (!rendered.ok) throw new Error(rendered.error.message);

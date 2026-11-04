@@ -52,8 +52,8 @@ export const readSetupFile = async (
 export const plainSetupText = (shown: string, raw: string, command: CommandName): CliResult<string> => {
   if (CONTROL_CHARACTER.test(raw) || holdsInvisibleFiller(raw)) {
     return failure(
-      `${shown} is not plain text: it holds a control character`,
-      `Remove the control characters from ${shown}, ${again(command)}`,
+      `${shown} is not plain text: it holds a control character or a hidden character`,
+      `Remove the control characters and the hidden characters from ${shown}, ${again(command)}`,
     );
   }
   if (holdsBlockMarker(raw)) {

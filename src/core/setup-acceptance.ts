@@ -8,7 +8,7 @@ import { parseJsonText } from '../state/load.js';
 import { ACCEPT_ANSWER, type Deps } from './deps.js';
 import { inFactorySession } from './factory-session.js';
 import { comparable, isSameOrInsideFolder } from './paths.js';
-import { changePrivateFile, readPrivateText, userStatePathOf } from './private-file.js';
+import { changePrivateFile, readPrivateText, STORE_INSIDE_FOLDER_REMEDY, userStatePathOf } from './private-file.js';
 import { err, ok, type Result } from './result.js';
 import { describeIssues } from './zod.js';
 
@@ -342,10 +342,7 @@ const storePathOf = async (deps: Deps, root: string): Promise<CliResult<string>>
   const inside = await isSameOrInsideFolder(deps, root, path.value);
   if (!inside.ok) return inside;
   if (inside.value) {
-    return safetyRefusal(
-      `the setup acceptances would be ${path.value}, inside the ${places.folder} ${root}`,
-      `Set the state folder to a folder outside the ${places.folder}.`,
-    );
+    return safetyRefusal(`the setup acceptances would be ${path.value}, inside the ${places.folder} ${root}`, STORE_INSIDE_FOLDER_REMEDY);
   }
   return ok(path.value);
 };

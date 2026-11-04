@@ -2904,7 +2904,9 @@ describe('upgrade: the setup text (TP-102)', () => {
     deps.files.set(SETUP, 'x'.repeat(65_537));
     expect(refusal(await upgrade(deps)).message).toBe('setup/coordinator.md is larger than 65536 bytes');
     deps.files.set(SETUP, 'a\u0000b');
-    expect(refusal(await upgrade(deps)).message).toBe('setup/coordinator.md is not plain text: it holds a control character');
+    expect(refusal(await upgrade(deps)).message).toBe(
+      'setup/coordinator.md is not plain text: it holds a control character or a hidden character',
+    );
   });
 
   it('puts back an edited setup block with no flag and no warning, and keeps the edit in a backup file (TP-142)', async () => {

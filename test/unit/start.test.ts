@@ -11,7 +11,7 @@ import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { env, trackedFiles } from '../../src/names.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
-import { claudeFileText, softwareOwnerModes } from '../helpers/blocks.js';
+import { claudeFileText, softwareOwnerModes, workerFileText } from '../helpers/blocks.js';
 import {
   createFakeDeps,
   exited,
@@ -87,6 +87,11 @@ interface Setup {
   readonly noRepo?: boolean;
   /** The answer to a question. Default: no answer, so a question fails the command. */
   readonly prompt?: PromptHandler;
+  /**
+   * The state folder is a git repo of its own. It answers the status, the identity, the staging and the commit.
+   * `status` is the porcelain text of `git status` (default: no change). `commitExit` is the exit code of the commit.
+   */
+  readonly stateRepo?: { readonly status?: string; readonly commitExit?: number };
 }
 
 /**
@@ -95,6 +100,11 @@ interface Setup {
  */
 const gitAnswer = (setup: Setup) => (call: RunCall) => {
   const command = call.args.slice(2).join(' ');
+  if (setup.stateRepo !== undefined && call.args[1] === STATE_DIR) {
+    if (command === 'status --porcelain -z --untracked-files=all') return exited(0, setup.stateRepo.status ?? '');
+    if (command === 'config user.name' || command === 'config user.email') return exited(0, 'Git User\n');
+    return exited(command.includes(' commit ') ? (setup.stateRepo.commitExit ?? 0) : 0);
+  }
   if (call.args.includes('--show-toplevel') && setup.workTree !== undefined) return exited(0, `${setup.workTree}\n`);
   if (setup.noRepo !== true) {
     if (command === 'rev-parse --is-inside-work-tree --show-prefix') return exited(0, 'true\n\n');
@@ -472,7 +482,10 @@ describe('start:a session that runs already', () => {
     const { deps, tmux } = make({ tmux: { sessions } });
     const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    if (!result.ok) expect(result.error.message).toBe('a tmux session demo belongs to another factory folder');
+    if (!result.ok) {
+      expect(result.error.message).toBe('a tmux session demo belongs to another factory folder');
+      expect(result.error.hint).toContain('or stop the other session. Then run "factory start" again.');
+    }
     expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
   });
 
@@ -766,7 +779,7 @@ describe('start:the registration check', () => {
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
       if (!result.ok) {
         expect(result.error.message).toContain(`${HOME}/web/factory.yaml`);
-        expect(result.error.hint).toContain(`name it with --home ${HOME}`);
+        expect(result.error.hint).toBe(`Go to the factory folder ${HOME}, or name it with --home ${HOME}. Then run "factory doctor".`);
       }
       expect(deps.fetched).toEqual([]);
       expect(tmux.calls).toEqual([]);
@@ -1400,6 +1413,79 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
       await acceptFiles(made.deps, HOME, 'other', [SETUP_PATH]);
       const error = await stopped(made, { dryRun: true });
       expect(error.hint).toBe(ACCEPT_COMMAND);
+    });
+  });
+
+  describe('the worker file in the state repo', () => {
+    const WORKER_SETUP_FILE = `${HOME}/setup/roles/worker.md`;
+    const WORKER_SETUP_PATH = 'setup/roles/worker.md';
+    const WORKER_FILE = `${STATE_DIR}/roles/worker.md`;
+
+    /** An own root whose two setup texts the owner accepted, and whose worker text a pull changed afterwards. */
+    const changedWorker = async (setup: Setup = {}) => {
+      const made = make({ origin: 'own', tty: true, prompt: yes, stateRepo: {}, ...setup });
+      made.deps.seedDir(`${STATE_DIR}/.git`);
+      made.deps.seed(SETUP_FILE, 'First rules.\n');
+      made.deps.seed(WORKER_SETUP_FILE, 'First worker rules.\n');
+      await acceptFiles(made.deps, HOME, 'demo', [SETUP_PATH, WORKER_SETUP_PATH]);
+      made.deps.seed(WORKER_FILE, workerFileText(sampleConfig(), { coordinator: 'First rules.', worker: 'First worker rules.' }));
+      made.deps.seed(WORKER_SETUP_FILE, 'Second worker rules.\n');
+      return made;
+    };
+
+    /** The git calls in the state repo, each one as the words after `-C <folder>`. */
+    const stateGit = (deps: FakeDeps): string[] =>
+      deps.calls.filter((call) => call.command === 'git' && call.args[1] === STATE_DIR).map((call) => call.args.slice(2).join(' '));
+
+    const writesOf = (calls: readonly string[]): string[] =>
+      calls.filter((call) => call.startsWith('add') || call.startsWith('reset') || call.includes(' commit '));
+
+    it('commits the worker file that it renders, and no other file', async () => {
+      const made = await changedWorker();
+      await succeeded(made.deps);
+      expect(made.deps.files.get(WORKER_FILE)).toContain('Second worker rules.');
+      expect(made.deps.files.get(CLAUDE_FILE)).toContain('<!-- factory:begin setup v');
+      const writes = writesOf(stateGit(made.deps));
+      expect(writes).toHaveLength(2);
+      expect(writes[0]).toBe('add -A -- roles/worker.md');
+      expect(writes[1]).toContain(' commit -q -m ');
+    });
+
+    it('makes no commit when only a file outside the state repo changes', async () => {
+      const made = make({ origin: 'own', tty: true, prompt: yes, stateRepo: {} });
+      made.deps.seed(SETUP_FILE, 'First rules.\n');
+      await acceptFiles(made.deps, HOME, 'demo', [SETUP_PATH]);
+      made.deps.seed(SETUP_FILE, 'Second rules.\n');
+      await succeeded(made.deps);
+      expect(made.deps.files.get(CLAUDE_FILE)).toContain('Second rules.');
+      expect(stateGit(made.deps)).toEqual([]);
+    });
+
+    it('stops with the command to run again, and writes and commits nothing, when the owner changed the worker file', async () => {
+      const made = await changedWorker({ stateRepo: { status: ' M roles/worker.md\0' } });
+      const before = [made.deps.files.get(CLAUDE_FILE), made.deps.files.get(WORKER_FILE)];
+      const result = await startFactory(made.deps);
+      expect(result).toMatchObject({ ok: false, error: { hint: expect.stringContaining('Then run "factory start" again.') } });
+      expect([made.deps.files.get(CLAUDE_FILE), made.deps.files.get(WORKER_FILE)]).toEqual(before);
+      expect(writesOf(stateGit(made.deps))).toEqual([]);
+    });
+
+    it('puts the coordinator file back when the worker file cannot be written', async () => {
+      const made = await changedWorker();
+      const before = [made.deps.files.get(CLAUDE_FILE), made.deps.files.get(WORKER_FILE)];
+      const result = await startFactory(withFailingWrites(made.deps, (path, attempt) => path === WORKER_FILE && attempt === 1));
+      expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('disk full') } });
+      expect([made.deps.files.get(CLAUDE_FILE), made.deps.files.get(WORKER_FILE)]).toEqual(before);
+      expect(writesOf(stateGit(made.deps))).toEqual([]);
+    });
+
+    it('puts both files back and clears the staged worker file when the commit fails', async () => {
+      const made = await changedWorker({ stateRepo: { commitExit: 1 } });
+      const before = [made.deps.files.get(CLAUDE_FILE), made.deps.files.get(WORKER_FILE)];
+      const result = await startFactory(made.deps);
+      expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('cannot commit the state files') } });
+      expect([made.deps.files.get(CLAUDE_FILE), made.deps.files.get(WORKER_FILE)]).toEqual(before);
+      expect(stateGit(made.deps)).toContain('reset -q -- roles/worker.md');
     });
   });
 

@@ -11,7 +11,7 @@ import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '..
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { runDoctor, runInit, runNode, runStart, runUpgrade } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
-import { allSourceFiles, literalsOf } from '../helpers/source-scan.js';
+import { allSourceFiles, callsOf, codeOfExpression, constantsOf, literalsOf, type Constant } from '../helpers/source-scan.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
@@ -170,6 +170,128 @@ describe('the remedy lines in the source', () => {
     expect(pointersIn('const a = `Then run "${x}" again.`;', path)).toEqual([]);
     expect(pointersIn("const a = 'List only the pid and the command name.';", path)).toEqual([]);
     expect(pointersIn("// then run the command again\nconst a = 'plain';", path)).toEqual([]);
+  });
+});
+
+describe('the remedy line of every stop in the source', () => {
+  /** A remedy line names a command when it reaches `commandText(` through its own text, a helper or a constant. */
+  const BUILDS_A_COMMAND = /\bcommandText\(/;
+
+  /** A remedy line that the call takes from a variable or a property, and builds elsewhere. */
+  const IS_A_REFERENCE = /^[A-Za-z_][\w.]*(?:\.join\([^()]*\))?$/;
+
+  const MAX_RESOLVE_DEPTH = 4;
+
+  /** The text of the constants of a file, joined by name. */
+  const textsOf = (source: string, only: (constant: Constant) => boolean): Map<string, string> => {
+    const texts = new Map<string, string>();
+    for (const constant of constantsOf(source).filter(only)) {
+      texts.set(constant.name, `${texts.get(constant.name) ?? ''} ${constant.text}`);
+    }
+    return texts;
+  };
+
+  /** True when the code of the expression reaches `commandText(`: the words in its string literals are not code. */
+  const namesCommand = (expression: string, known: ReadonlyMap<string, string>, depth = MAX_RESOLVE_DEPTH): boolean => {
+    const code = codeOfExpression(expression);
+    if (BUILDS_A_COMMAND.test(code)) return true;
+    if (depth === 0) return false;
+    const names = code.match(/(?<![\w.$])[A-Za-z_]\w*/g) ?? [];
+    return names.some((name) => {
+      const value = known.get(name);
+      return value !== undefined && namesCommand(value, known, depth - 1);
+    });
+  };
+
+  interface Sweep {
+    /** The number of calls of `safetyRefusal`. */
+    readonly calls: number;
+    /** The calls whose remedy line names no command, or that do not have two arguments. */
+    readonly missing: readonly string[];
+    /** The calls whose remedy line comes from a variable or a property that holds no command in the same file. */
+    readonly forwarded: readonly string[];
+  }
+
+  /** Check the remedy line of every call of `safetyRefusal` in the given sources (path to text). */
+  const sweepOf = (sources: ReadonlyMap<string, string>): Sweep => {
+    const exported = new Map<string, string>();
+    for (const source of sources.values()) {
+      for (const [name, text] of textsOf(source, (constant) => constant.exported)) {
+        exported.set(name, `${exported.get(name) ?? ''} ${text}`);
+      }
+    }
+    const missing: string[] = [];
+    const forwarded: string[] = [];
+    let calls = 0;
+    for (const [path, source] of sources) {
+      const known = new Map([...exported, ...textsOf(source, () => true)]);
+      for (const args of callsOf(source, 'safetyRefusal')) {
+        calls += 1;
+        const remedy = args[1] ?? '';
+        const place = `${path}: ${remedy}`;
+        if (args.length !== 2) missing.push(`${path}: ${args.length} arguments`);
+        else if (namesCommand(remedy, known)) continue;
+        else if (IS_A_REFERENCE.test(remedy)) forwarded.push(place);
+        else missing.push(place);
+      }
+    }
+    return { calls, missing, forwarded };
+  };
+
+  const sweepOfOne = (source: string): Sweep => sweepOf(new Map([['sample.ts', source]]));
+
+  /**
+   * The remedy lines that a stop takes from a variable or a property, and that the file of the call does not build. A
+   * new stop of this kind must be added here on purpose. The stops of the other kinds all reach `commandText(`.
+   */
+  const FORWARDED: readonly string[] = [
+    'commands/root-content.ts: remedies.join(\' \')',
+    'commands/setup-check.ts: check.stop.remedy',
+    'commands/setup-check.ts: remedy',
+    'core/home.ts: problem.remedy',
+    'migrate/inspect.ts: state.hint',
+  ];
+
+  it('names a command in the remedy line of each of the stops of src (TP-106)', () => {
+    const sources = new Map(allSourceFiles(SRC).map((path) => [relative(SRC, path), readFileSync(path, 'utf8')]));
+    const sweep = sweepOf(sources);
+    expect(sweep.calls).toBeGreaterThanOrEqual(45);
+    expect(sweep.missing).toEqual([]);
+  });
+
+  it('takes a remedy line from a variable or a property only in the places that this list names', () => {
+    const sources = new Map(allSourceFiles(SRC).map((path) => [relative(SRC, path), readFileSync(path, 'utf8')]));
+    expect([...sweepOf(sources).forwarded].sort()).toEqual(FORWARDED);
+  });
+
+  it('finds a remedy line with no command, and a call with a message only', () => {
+    expect(sweepOfOne("safetyRefusal('a reason', 'Set XDG_STATE_HOME to another absolute folder.');").missing).toHaveLength(1);
+    expect(sweepOfOne('safetyRefusal(`a ${f(1, 2)} reason`, `Set ${env.stateHome} to a folder.`);').missing).toHaveLength(1);
+    expect(sweepOfOne("safetyRefusal('a reason');").missing).toEqual(['sample.ts: 1 arguments']);
+  });
+
+  it('accepts a command, an overwrite command, and the helpers and constants that build one', () => {
+    const accepted = [
+      'safetyRefusal(`a reason`, `Then run "${commandText(commands.init)}" again.`);',
+      'export const overwriteCommand = (block: string): string => `${commandText(commands.upgrade)} ${block}`;\nsafetyRefusal(`a reason`, `Run "${overwriteCommand(name)}" to add it.`);',
+      'const terminalRemedy = (): string => `Run "${commandText(commands.init)}" in a terminal window.`;\nsafetyRefusal(`a`, terminalRemedy());',
+      'export const REMOVE_REMEDY = `Run "${commandText(commands.doctor)}".`;\nsafetyRefusal(`a`, REMOVE_REMEDY);',
+      'export const TRACKED_CAP_REMEDY = `then run "${commandText(commands.init)}" again.`;\nsafetyRefusal(`a`, TRACKED_CAP_REMEDY);',
+      'const again = (command: CommandName): string => `then run "${commandText(command)}" again.`;\nsafetyRefusal(`a`, `Move it. ${again(command)}`);',
+      'const remedy = `Run "${commandText(commands.init)}" first.`;\nsafetyRefusal(`a`, remedy);',
+      'const check = (remedy: string = LINK_REMEDY) => safetyRefusal(`a`, remedy);\nconst LINK_REMEDY = `Run "${commandText(commands.doctor)}".`;',
+    ];
+    for (const source of accepted) expect(sweepOfOne(source), source).toMatchObject({ missing: [], forwarded: [] });
+  });
+
+  it('finds a remedy line that a constant holds with no command, and one that comes from another place', () => {
+    const noCommand = sweepOfOne("const REMEDY = 'Fix it.';\nsafetyRefusal(`a`, REMEDY);");
+    expect(noCommand.forwarded).toEqual(['sample.ts: REMEDY']);
+    expect(sweepOfOne('safetyRefusal(`a`, problem.remedy);').forwarded).toEqual(['sample.ts: problem.remedy']);
+  });
+
+  it('does not count a call that only a comment holds', () => {
+    expect(sweepOfOne("// safetyRefusal('a', 'b');\n/* safetyRefusal('a', 'b') */\nconst a = 1;").calls).toBe(0);
   });
 });
 

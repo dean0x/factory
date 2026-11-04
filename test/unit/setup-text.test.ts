@@ -96,8 +96,8 @@ describe('readSetupFile', () => {
     deps.seed(layout.setupCoordinatorFile, text);
     const error = failureOf(await read(deps));
     expect(error.kind).toBe('failure');
-    expect(error.message).toBe('setup/coordinator.md is not plain text: it holds a control character');
-    expect(error.hint).toContain('Remove the control characters');
+    expect(error.message).toBe('setup/coordinator.md is not plain text: it holds a control character or a hidden character');
+    expect(error.hint).toContain('Remove the control characters and the hidden characters from setup/coordinator.md');
   });
 
   it.each([

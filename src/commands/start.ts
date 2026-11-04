@@ -178,7 +178,7 @@ const requireOwnSession = async (deps: Deps, id: string, home: string): Promise<
   if (await isSameHome(deps, shown.value.trim(), home)) return ok(undefined);
   return safetyRefusal(
     `a tmux session ${id} belongs to another ${places.folder}`,
-    `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session.`,
+    `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session. Then run "${commandText(commands.start)}" again.`,
   );
 };
 
@@ -234,7 +234,7 @@ const requireSafetyBlock = async (
       return ok([]);
     case 'different': {
       if (dryRun) return ok([`The block ${name} in ${file} is out of date. A real run renders it again.`]);
-      const written = await writeBlockPlans(deps, home, [planBlock(status, false)]);
+      const written = await writeBlockPlans(deps, home, [planBlock(status, false)], commands.start);
       if (!written.ok) return written;
       deps.warn(`Rendered the block ${name} in ${file} again, because the package or a setting changed its text.`);
       return ok([]);
@@ -268,7 +268,7 @@ const renderAcceptedSetup = async (
   config: FactoryConfig,
   texts: SetupTexts,
 ): Promise<CliResult<void>> => {
-  const rendered = await renderSetupText(deps, home, config, await effectiveModes(deps, home, config), texts);
+  const rendered = await renderSetupText(deps, home, config, await effectiveModes(deps, home, config), texts, commands.start);
   if (!rendered.ok) return rendered;
   if (rendered.value.wrote) deps.warn('Rendered the setup text again from the files that you accepted.');
   for (const name of rendered.value.kept) {

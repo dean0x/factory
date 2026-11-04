@@ -8,9 +8,8 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import {
   commitPaths,
   GIT_ENTRY,
-  hasIdentity,
   headOf,
-  requireStateRepoReady,
+  requireStateRepoCommit,
   unstagePaths,
   type RepoPaths,
 } from '../core/git.js';
@@ -18,7 +17,6 @@ import { locateHomeFolder, type NodeIdReader } from '../core/home.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { isSameOrInside } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { blockRenamesOf } from '../migrate/files.js';
@@ -38,7 +36,7 @@ import {
   rootRepo,
   schemaIds,
 } from '../names.js';
-import { layoutOf, type Layout } from '../state/layout.js';
+import { layoutOf } from '../state/layout.js';
 import type { SetupTexts } from '../templates/types.js';
 import {
   applyMoves,
@@ -46,6 +44,7 @@ import {
   backupBlocks,
   blockFileTexts,
   configFileText,
+  inStateRepo,
   localFileText,
   makeRootRepo,
   pruneBackups,
@@ -85,18 +84,6 @@ export interface UpgradeOptions {
 }
 
 const COMMIT_MESSAGE = 'chore: upgrade the state';
-
-/** The paths of `paths` that are in the state repo, relative to it, each one once. */
-const inStateRepo = (layout: Layout, paths: readonly string[]): readonly string[] => [
-  ...new Set(paths.filter((path) => isSameOrInside(layout.stateDir, path)).map((path) => relative(layout.stateDir, path))),
-];
-
-/**
- * Refuse when the commit of the upgrade could take a change of the owner. A file that the upgrade changes must have no
- * change of the owner, staged or not.
- */
-const checkStateRepoReady = (deps: Deps, layout: Layout, touched: readonly string[]): Promise<CliResult<void>> =>
-  requireStateRepoReady(deps, layout.stateDir, touched, 'the upgrade', `Then run "${commandText(commands.upgrade)}" again.`);
 
 /**
  * Put the upgraded home in the home index, as init does, so that a command finds the home from a project folder.
@@ -345,17 +332,6 @@ export const runUpgrade = async (
   const replacements = files.replaces.filter((replace) => replace.action === 'replace');
   const touchesState = state.value.kind === 'migrate' || changes.length > 0;
   if (touchesState) {
-    const repo = await deps.fs.stat(join(layout.stateDir, '.git'));
-    if (!repo.ok) return repo;
-    if (repo.value === null) {
-      return failure(`${dirs.state} is not a git repository`, `Run "${commandText(commands.doctor)}".`);
-    }
-    if (!(await hasIdentity(deps, layout.stateDir))) {
-      return failure(
-        'git has no user.name and user.email',
-        `Set both with "git config --global", then run "${commandText(commands.upgrade)}" again.`,
-      );
-    }
     // These are the files that the upgrade can change in the repo: the commit holds those and no other file.
     const touched = inStateRepo(layout, [
       ...files.moves.flatMap((move) => [move.fromPath, move.toPath]),
@@ -363,7 +339,7 @@ export const runUpgrade = async (
       ...(stateText.value === null ? [] : [layout.nodeJson]),
       ...changes.map((change) => fileOfTarget(layout, change.template.target)),
     ]);
-    const ready = await checkStateRepoReady(deps, layout, touched);
+    const ready = await requireStateRepoCommit(deps, layout.stateDir, touched, 'the upgrade', commands.upgrade);
     if (!ready.ok) return ready;
   }
 

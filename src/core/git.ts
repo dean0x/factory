@@ -1,7 +1,7 @@
 import { basename, join, resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
-import { commands, commandText, dirs, program, trackedFiles } from '../names.js';
+import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps } from './deps.js';
 import { ok } from './result.js';
 
@@ -404,6 +404,30 @@ export const requireStateRepoReady = async (
     );
   }
   return ok(undefined);
+};
+
+/**
+ * Refuse before a command writes files of the state repo and commits them: the state folder must be a git repo, git must
+ * have an identity, and the commit must not take a change of the owner (`requireStateRepoReady`). `changing` names the
+ * change ("the upgrade"), and `command` is the command that the person runs again.
+ */
+export const requireStateRepoCommit = async (
+  deps: Deps,
+  stateDir: string,
+  touched: readonly string[],
+  changing: string,
+  command: CommandName,
+): Promise<CliResult<void>> => {
+  const repo = await deps.fs.stat(join(stateDir, GIT_ENTRY));
+  if (!repo.ok) return repo;
+  if (repo.value === null) return failure(`${dirs.state} is not a git repository`, `Run "${commandText(commands.doctor)}".`);
+  if (!(await hasIdentity(deps, stateDir))) {
+    return failure(
+      'git has no user.name and user.email',
+      `Set both with "git config --global", then run "${commandText(command)}" again.`,
+    );
+  }
+  return requireStateRepoReady(deps, stateDir, touched, changing, `Then run "${commandText(command)}" again.`);
 };
 
 /** The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. */

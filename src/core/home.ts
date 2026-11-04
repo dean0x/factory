@@ -111,7 +111,7 @@ export const rootRefusalOf = (home: string, problem: RootProblem): Err<CliError>
     case 'in-clone':
       return safetyRefusal(
         message,
-        `Go to the ${places.folder} ${problem.factory}, or name it with ${flagText(flags.home)} ${problem.factory}.`,
+        `Go to the ${places.folder} ${problem.factory}, or name it with ${flagText(flags.home)} ${problem.factory}. Then run "${commandText(commands.doctor)}".`,
       );
     case 'state-not-folder':
       return safetyRefusal(
