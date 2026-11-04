@@ -5,6 +5,7 @@ import {
   newWindowArgs,
   paneListArgs,
   parsePaneList,
+  parsePaneListSoft,
   runShellBackgroundArgs,
   setPaneOptionArgs,
   splitWorkerPaneArgs,
@@ -217,5 +218,57 @@ describe('the pane list', () => {
     const result = parsePaneList('%0|4101|0|\n\n%1|4102|0|\n');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain('line 2');
+  });
+});
+
+describe('the pane list with a soft check of the worker mark', () => {
+  it('reads the same rows as the strict reader for a list of valid lines', () => {
+    const text = '%0|4101|0|\n%1|4102|0|\n%5|4210|1|alpha\n';
+    expect(parsePaneListSoft(text)).toEqual(parsePaneList(text));
+    expect(parsePaneListSoft('')).toEqual({ ok: true, value: [] });
+  });
+
+  it.each([
+    ['a space', 'a b'],
+    ['a leading dash', '-a'],
+    ['a shell character', 'a$(x)'],
+    ['the separator', 'a|b'],
+    ['a trailing separator', 'a|'],
+    ['too many characters', 'a'.repeat(101)],
+    ['a carriage return', 'a\r'],
+  ])('keeps the row of a pane whose worker mark has %s, and treats the pane as no worker', (_name, mark) => {
+    expect(parsePaneListSoft(`%0|4101|0|\n%5|4210|0|${mark}\n%6|4211|1|beta\n`)).toEqual({
+      ok: true,
+      value: [
+        { paneId: '%0', pid: 4101, dead: false, worker: null },
+        { paneId: '%5', pid: 4210, dead: false, worker: null },
+        { paneId: '%6', pid: 4211, dead: true, worker: 'beta' },
+      ],
+    });
+    expect(parsePaneList(`%5|4210|0|${mark}`).ok).toBe(false);
+  });
+
+  it.each([
+    ['too few fields', '%0|4101|0'],
+    ['no pane id', '|4101|0|a'],
+    ['a pane id with a letter', '%x|4101|0|a'],
+    ['a pid with a letter', '%0|41a1|0|a'],
+    ['a pid of 0, which names a process group', '%0|0|0|a'],
+    ['a pid with a leading zero', '%0|0412|0|a'],
+    ['a dead flag of 2', '%0|4101|2|a'],
+    ['an empty dead flag', '%0|4101||a'],
+  ])('still refuses the whole list for %s', (_name, line) => {
+    const result = parsePaneListSoft(`%1|4102|0|\n${line}\n`);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('line 2');
+  });
+
+  it('refuses an empty line inside the list, and names the line number but not the text', () => {
+    const result = parsePaneListSoft('%0|4101|0|\n\n%1|4102|0|secret value\n');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('line 2');
+      expect(result.error).not.toContain('secret');
+    }
   });
 });

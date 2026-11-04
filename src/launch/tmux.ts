@@ -100,31 +100,47 @@ const PID_PATTERN = /^[1-9][0-9]{0,9}$/;
 /** A worker id: letters, digits, dots, underscores and dashes, with a letter or a digit first. */
 const WORKER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
-const parsePaneLine = (line: string): PaneRow | null => {
+/** What a reader of the list does with a worker mark that is not a worker id: refuse the list, or read the pane as no worker. */
+type BadMark = 'refuse' | 'ignore';
+
+const parsePaneLine = (line: string, badMark: BadMark): PaneRow | null => {
   const fields = line.split(FIELD_SEPARATOR);
-  if (fields.length !== PANE_FIELDS) return null;
-  const [paneId = '', pid = '', dead = '', worker = ''] = fields;
+  if (fields.length < PANE_FIELDS || (badMark === 'refuse' && fields.length > PANE_FIELDS)) return null;
+  const [paneId = '', pid = '', dead = ''] = fields;
   if (!isPaneId(paneId) || !PID_PATTERN.test(pid)) return null;
   if (dead !== '0' && dead !== '1') return null;
-  if (worker !== '' && !WORKER_PATTERN.test(worker)) return null;
-  return { paneId, pid: Number(pid), dead: dead === '1', worker: worker === '' ? null : worker };
+  // The mark is the last field, and a program can set it to any text, also text with the separator. A reader that ignores
+  // a bad mark takes the rest of the line as the mark, so that a bad mark never moves the id, the pid or the dead flag.
+  const worker = fields.slice(PANE_FIELDS - 1).join(FIELD_SEPARATOR);
+  const valid = worker === '' || WORKER_PATTERN.test(worker);
+  if (!valid && badMark === 'refuse') return null;
+  return { paneId, pid: Number(pid), dead: dead === '1', worker: valid && worker !== '' ? worker : null };
+};
+
+const parsePaneLines = (text: string, badMark: BadMark): Result<readonly PaneRow[], string> => {
+  if (text === '') return ok([]);
+  const lines = (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
+  const rows: PaneRow[] = [];
+  for (const [index, line] of lines.entries()) {
+    const row = parsePaneLine(line, badMark);
+    if (row === null) return err(`line ${index + 1} of the pane list is malformed`);
+    rows.push(row);
+  }
+  return ok(rows);
 };
 
 /**
  * Reads the output of the call from `paneListArgs`. One malformed line refuses the whole list, so that a caller never
  * acts on a part of it. The error names the number of the line and never its text.
  */
-export const parsePaneList = (text: string): Result<readonly PaneRow[], string> => {
-  if (text === '') return ok([]);
-  const lines = (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
-  const rows: PaneRow[] = [];
-  for (const [index, line] of lines.entries()) {
-    const row = parsePaneLine(line);
-    if (row === null) return err(`line ${index + 1} of the pane list is malformed`);
-    rows.push(row);
-  }
-  return ok(rows);
-};
+export const parsePaneList = (text: string): Result<readonly PaneRow[], string> => parsePaneLines(text, 'refuse');
+
+/**
+ * Reads the same list as `parsePaneList`, with one change: a worker mark that is not a worker id makes the pane a pane with
+ * no worker, and the list stays whole. The id, the pid and the dead flag stay strict. A command that only looks at the
+ * panes, such as a launch, a list or a stop, uses this reader, so that a pane with a strange mark can not block it.
+ */
+export const parsePaneListSoft = (text: string): Result<readonly PaneRow[], string> => parsePaneLines(text, 'ignore');
 
 export const killPaneArgs = (pane: string): Result<TmuxArgs, string> => {
   const target = paneTarget(pane);
