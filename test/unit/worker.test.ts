@@ -224,6 +224,7 @@ const options = (change: Partial<WorkerOptions> = {}): WorkerOptions => ({
   words: ['new', 'alpha'],
   project: 'web',
   yes: true,
+  duration: undefined,
   ...change,
 });
 

@@ -26,6 +26,7 @@ import {
   program,
   roles,
   schemaIds,
+  summonLimits,
   values,
 } from '../names.js';
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
@@ -221,6 +222,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       `${commandText(commandLines.workerList)} [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerStop)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -229,6 +231,13 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'string',
         placeholder: 'PROJECT',
         description: `The id of the project that the ${roles.worker} works on. The ${roles.node} lists it in its config.`,
+      },
+      [flags.for]: {
+        type: 'string',
+        placeholder: 'TIME',
+        description:
+          `How long the slot shows the ${roles.worker} before it shows the board again: <n>m or <n>h, from ${summonLimits.minMinutes}m to ` +
+          `${summonLimits.maxMinutes / 60}h. Default: ${summonLimits.defaultFor}.`,
       },
       [flags.yes]: {
         type: 'boolean',
@@ -245,6 +254,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           words: given.positionals(),
           project: given.string(flags.project),
           yes: given.bool(flags.yes),
+          duration: given.string(flags.for),
         },
         registry,
       ),

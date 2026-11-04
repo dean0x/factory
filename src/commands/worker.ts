@@ -2,7 +2,7 @@ import { join, relative, resolve } from 'node:path';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
-import { isSlug } from '../config/primitives.js';
+import { durationMinutes, isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import {
   declinedHookText,
@@ -31,6 +31,7 @@ import {
   program,
   roles,
   schemaIds,
+  summonLimits,
   tmuxNames,
   workerCommands,
 } from '../names.js';
@@ -42,6 +43,7 @@ import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import { closePane, readPanes } from '../workers/panes.js';
 import { readWorkerRecord, writeWorkerRecord, type WorkerRecord } from '../workers/registry.js';
+import { summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
@@ -55,6 +57,8 @@ export interface WorkerOptions {
   readonly project: string | undefined;
   /** True when the person gave the yes flag. It is the consent to the change of the hook settings. */
   readonly yes: boolean;
+  /** The text of the time flag of a summon, `<n>m` or `<n>h`. Undefined: the default time. */
+  readonly duration: string | undefined;
 }
 
 const SUBCOMMANDS = Object.values(workerCommands).join(', ');
@@ -527,6 +531,68 @@ const runResume = async (
   });
 };
 
+/** The minutes of the time flag of a summon. No flag gives the default time. A text that is not `<n>m` or `<n>h` within the bounds is exit 2. */
+const summonMinutes = (duration: string | undefined): CliResult<number> => {
+  const given = duration ?? summonLimits.defaultFor;
+  const minutes = durationMinutes(given, summonLimits.minMinutes, summonLimits.maxMinutes);
+  if (minutes !== null) return ok(minutes);
+  return usageError(
+    `the value ${JSON.stringify(given)} of ${flagText(flags.for)} is not a time: it must be <n>m or <n>h, from ${summonLimits.minMinutes}m to ${summonLimits.maxMinutes / 60}h`,
+    `Run "${commandText(commandLines.workerSummon)} ID ${flagText(flags.for)} ${summonLimits.defaultFor}" with a time from ${summonLimits.minMinutes}m to ${summonLimits.maxMinutes / 60}h.`,
+  );
+};
+
+/**
+ * `worker summon ID [--for TIME]`: shows the pane of the worker in the slot of the view window until the time ends (`summonWorker`).
+ * The time and the id are checked before any other work. The id must have a record, else the command exits with code 2.
+ */
+const runSummon = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const [id] = args;
+  if (args.length !== 1 || id === undefined) {
+    return needsUsage(`${workerCommands.summon} takes one argument: the id of the ${roles.worker}`);
+  }
+  const minutes = summonMinutes(options.duration);
+  if (!minutes.ok) return minutes;
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const record = await requireRecord(deps, home, id, commandText(commandLines.workerSummon));
+  if (!record.ok) return record;
+  const summoned = await summonWorker(deps, {
+    home,
+    session: loaded.value.core.node.id,
+    workerId: id,
+    minutes: minutes.value,
+  });
+  if (!summoned.ok) return summoned;
+  const { pane, board, until, swapped } = summoned.value;
+  const time = `${minutes.value}m`;
+  return ok({
+    lines: [
+      text(`The ${roles.worker} ${id} shows in the slot of the window ${tmuxNames.windowView} (pane ${pane}).`),
+      text(`The board comes back after ${time}. Run "${commandText(commands.layout)}" to show it now.`),
+    ],
+    json: {
+      schema: schemaIds.workerSummon,
+      id,
+      pane,
+      board,
+      minutes: minutes.value,
+      until: until.toISOString(),
+      swapped,
+    },
+    warnings: [],
+    failed: false,
+  });
+};
+
 /** `worker <subcommand>`: the commands of the workers of a node. */
 export const runWorker = async (
   deps: Deps,
@@ -543,6 +609,8 @@ export const runWorker = async (
       return runStop(deps, options, args, registry);
     case workerCommands.resume:
       return runResume(deps, options, args, registry);
+    case workerCommands.summon:
+      return runSummon(deps, options, args, registry);
     case workerCommands.list:
       return args.length === 0
         ? runWorkerList(deps, { home: options.home }, registry)

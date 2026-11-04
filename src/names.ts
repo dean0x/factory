@@ -42,6 +42,7 @@ export const commands = {
   doctor: 'doctor',
   machine: 'machine',
   worker: 'worker',
+  layout: 'layout',
   upgrade: 'upgrade',
   hook: 'hook',
   version: 'version',
@@ -81,7 +82,7 @@ export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as cons
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
 /** The subcommands of `worker`. */
-export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume' } as const;
+export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume', summon: 'summon' } as const;
 
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
@@ -89,6 +90,7 @@ export const commandLines = {
   workerList: `${commands.worker} ${workerCommands.list}`,
   workerStop: `${commands.worker} ${workerCommands.stop}`,
   workerResume: `${commands.worker} ${workerCommands.resume}`,
+  workerSummon: `${commands.worker} ${workerCommands.summon}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -104,6 +106,7 @@ export const flags = {
   layer: 'layer',
   approval: 'approval',
   yes: 'yes',
+  for: 'for',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -905,6 +908,8 @@ export const schemaIds = {
   workerList: `${program}.worker-list/v1`,
   workerStop: `${program}.worker-stop/v1`,
   workerResume: `${program}.worker-resume/v1`,
+  workerSummon: `${program}.worker-summon/v1`,
+  layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
   version: `${program}.version/v1`,

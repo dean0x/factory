@@ -84,6 +84,7 @@ const options = (change: Partial<WorkerOptions> = {}): WorkerOptions => ({
   words: ['list'],
   project: undefined,
   yes: false,
+  duration: undefined,
   ...change,
 });
 
