@@ -7,7 +7,7 @@ import { ok } from '../core/result.js';
 import type { PaneRow } from '../launch/tmux.js';
 import { commands, hookNames, keys, lastSeen, roles, schemaIds, workerListWords } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { promptStateOf, readWorkerLastSeen } from '../workers/last-seen.js';
+import { promptStateOf, readOwnLastSeen } from '../workers/last-seen.js';
 import type { MachineLimits } from '../workers/machine.js';
 import { readPanes } from '../workers/panes.js';
 import { listWorkerRecords, type WorkerRecord } from '../workers/registry.js';
@@ -45,14 +45,17 @@ const stateWords: Readonly<Record<'prompt' | 'busy', WorkerState>> = {
   busy: workerListWords.states.busy,
 };
 
-/** What the last-seen line of the worker says. A line that is absent, not valid or not readable says nothing. */
+/**
+ * What the last-seen line of the worker says. The line counts only when it belongs to this worker (`readOwnLastSeen`), as for
+ * stop and resume. A line that is absent, not valid or not owned says nothing, and a line that cannot be read gives a warning.
+ */
 const lastSeenOf = async (
   deps: Deps,
   home: string,
   id: string,
 ): Promise<{ readonly state: WorkerState; readonly contextPct: number | null; readonly warning: string | null }> => {
   const unknown = { state: workerListWords.states.unknown, contextPct: null, warning: null };
-  const read = await readWorkerLastSeen(deps, home, id);
+  const read = await readOwnLastSeen(deps, home, id);
   if (!read.ok) return { ...unknown, warning: `cannot read the last-seen line of the ${roles.worker} ${id}: ${read.error.message}` };
   if (read.value.state !== 'valid') return unknown;
   const state = promptStateOf(read.value.line);

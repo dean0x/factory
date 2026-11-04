@@ -6,7 +6,7 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { schemaIds, type HookEvent } from '../../src/names.js';
 import { workerPathsOf } from '../../src/state/layout.js';
-import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
+import { readOwnLastSeen, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { runWorker } from '../helpers/package-registry.js';
@@ -28,6 +28,8 @@ interface WorkerSeed {
   readonly line?: { readonly event?: HookEvent; readonly percent?: number };
   /** The number of the session id, so two workers have two sessions. Default: the place of the seed in the list. */
   readonly session?: number;
+  /** The session marker that the line records. Default: the id of the worker. `null`: the line records no marker. */
+  readonly marker?: string | null;
 }
 
 interface Setup {
@@ -73,8 +75,9 @@ const make = async (setup: Setup = {}): Promise<Made> => {
     const session = sessionOf(seed.session ?? index + 1);
     const pointer = await writeWorkerSession(deps, HOME, seed.id, session);
     if (!pointer.ok) throw new Error(pointer.error.message);
-    if (seed.line.event !== undefined) await writeLastSeen(deps, HOME, session, { kind: 'event', event: seed.line.event });
-    if (seed.line.percent !== undefined) await writeLastSeen(deps, HOME, session, { kind: 'percent', percent: seed.line.percent });
+    const marker = seed.marker === undefined ? seed.id : (seed.marker ?? undefined);
+    if (seed.line.event !== undefined) await writeLastSeen(deps, HOME, session, { kind: 'event', event: seed.line.event }, marker);
+    if (seed.line.percent !== undefined) await writeLastSeen(deps, HOME, session, { kind: 'percent', percent: seed.line.percent }, marker);
   }
   return { deps, tmux: log };
 };
@@ -276,12 +279,66 @@ describe('worker list: the state from the last event', () => {
 
   it('reads the line of the newest session when the worker has had two', async () => {
     const made = await make({ workers: [{ id: 'alpha', session: 1, line: { event: 'Stop', percent: 50 } }] });
-    await writeLastSeen(made.deps, HOME, sessionOf(2), { kind: 'event', event: 'UserPromptSubmit' });
+    await writeLastSeen(made.deps, HOME, sessionOf(2), { kind: 'event', event: 'UserPromptSubmit' }, 'alpha');
     await writeWorkerSession(made.deps, HOME, 'alpha', sessionOf(2));
     expect(rowsOf(await listed(made))[0]).toMatchObject({ state: 'busy', context: '?', mark: '' });
   });
 
-  it('shows unknown, and names the fault in a warning, when the file system fails on the pointer of one worker', async () => {
+  it('shows unknown, and no percent, for a line that records no session marker', async () => {
+    const made = await make({ workers: [{ id: 'alpha', marker: null, line: { event: 'Stop', percent: 99 } }] });
+    const output = await listed(made);
+    expect(rowsOf(output)[0]).toMatchObject({ state: 'unknown', context: '?', mark: '' });
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('shows unknown, and no percent, for a line that records the session marker of another worker or of the coordinator', async () => {
+    const made = await make({
+      workers: [
+        { id: 'alpha', marker: 'beta', line: { event: 'Stop', percent: 99 } },
+        { id: 'beta', marker: NODE, line: { event: 'UserPromptSubmit', percent: 99 } },
+      ],
+    });
+    const output = await listed(made);
+    expect(rowsOf(output)).toMatchObject([
+      { id: 'alpha', state: 'unknown', context: '?', mark: '' },
+      { id: 'beta', state: 'unknown', context: '?', mark: '' },
+    ]);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('shows unknown for a worker whose session is the session that the pointer of another worker names', async () => {
+    const made = await make({
+      workers: [
+        { id: 'alpha', line: { event: 'Stop', percent: 40 } },
+        { id: 'beta', line: { event: 'UserPromptSubmit', percent: 5 } },
+      ],
+    });
+    await writeWorkerSession(made.deps, HOME, 'beta', sessionOf(1));
+    const output = await listed(made);
+    expect(rowsOf(output)[0]).toMatchObject({ id: 'alpha', state: 'unknown', context: '?', mark: '' });
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('shows unknown for each line that stop and resume do not use, and the state of a line that they use', async () => {
+    const made = await make({
+      workers: [
+        { id: 'alpha', line: { event: 'Stop', percent: 10 } },
+        { id: 'beta', marker: null, line: { event: 'Stop', percent: 10 } },
+        { id: 'gamma', marker: 'alpha', line: { event: 'Stop', percent: 10 } },
+        { id: 'delta' },
+      ],
+    });
+    const states = await Promise.all(
+      ['alpha', 'beta', 'gamma', 'delta'].map(async (id) => {
+        const read = await readOwnLastSeen(made.deps, HOME, id);
+        return read.ok ? read.value.state : 'fault';
+      }),
+    );
+    expect(states).toEqual(['valid', 'unknown', 'unknown', 'unknown']);
+    expect(rowsOf(await listed(made)).map((row) => row.context)).toEqual(['10%', '?', '?', '?']);
+  });
+
+  it('shows unknown, and names the fault in a warning for each worker, when the file system fails on a pointer', async () => {
     const made = await make({
       workers: [
         { id: 'alpha', line: { event: 'Stop', percent: 5 } },
@@ -295,13 +352,15 @@ describe('worker list: the state from the last event', () => {
     };
     const result = await runWorker(broken, options());
     if (!result.ok) throw new Error(result.error.message);
+    // The ownership check of beta reads the pointer of alpha too, so the fault stops the state of both workers, as it does for stop.
     expect(rowsOf(result.value)).toMatchObject([
       { id: 'alpha', state: 'unknown', context: '?' },
-      { id: 'beta', state: 'at prompt', context: '6%' },
+      { id: 'beta', state: 'unknown', context: '?' },
     ]);
-    expect(result.value.warnings).toHaveLength(1);
+    expect(result.value.warnings).toHaveLength(2);
     expect(result.value.warnings[0]).toContain('alpha');
-    expect(result.value.warnings[0]).toContain('EIO');
+    expect(result.value.warnings[1]).toContain('beta');
+    for (const warning of result.value.warnings) expect(warning).toContain('EIO');
   });
 
   it('never takes the line of another worker', async () => {
