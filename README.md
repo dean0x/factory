@@ -28,6 +28,8 @@ You need:
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
 | `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker. See "Resume a worker". |
+| `factory worker summon ID [--for TIME]` | Show the pane of the worker in the slot of the window `view` for `TIME` (default 15m, from 1m to 2h). The board comes back by itself. See "Summon a worker". |
+| `factory layout` | Make the window `workers` if it is missing, tile its panes, and put the board back in the slot of the window `view` after a summon. See "Make the windows again". |
 | `factory doctor` | Run 25 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
@@ -237,11 +239,11 @@ factory worker list --json
 | --- | --- |
 | `ID`, `PROJECT` | The id of the worker and its project. |
 | `PANE` | The id of the pane of the worker in the window `workers`. `dead` means that the program of the pane has ended. `none` means that the worker has no pane, also when no tmux session of the node runs. |
-| `STATE` | `at prompt` after the hook events `SessionStart` and `Stop`. `busy` after `UserPromptSubmit` and `PreCompact`. `unknown` when the worker has no valid last-seen line. |
+| `STATE` | `at prompt` after the hook events `SessionStart` and `Stop`. `busy` after `UserPromptSubmit` and `PreCompact`. `unknown` when the worker has no valid last-seen line that belongs to it. |
 | `CONTEXT` | The context percent of the last-seen line, or `?` when it is not known. |
 | `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. |
 
-A folder of `.factory/workers/` with no valid record is named in a warning, and the other workers are listed. If one pane has a worker mark that is not a worker id, the list skips that pane. If two panes carry the mark of one worker, the list shows the first live pane and warns with both ids. A tmux session of the same name that belongs to another factory folder stops the command with exit code 4. A last-seen line is a hint: the list never takes it as proof of which session wrote it.
+A folder of `.factory/workers/` with no valid record is named in a warning, and the other workers are listed. If one pane has a worker mark that is not a worker id, the list skips that pane. If two panes carry the mark of one worker, the list shows the first live pane and warns with both ids. A tmux session of the same name that belongs to another factory folder stops the command with exit code 4. The list takes a last-seen line only when it belongs to the worker, with the same checks as `worker stop` and `worker resume` (see "Resume a worker"). A line with no session marker, a line of another session, and a session that the pointer of another worker names all show `unknown` and `?`. A last-seen line is still a hint, not proof of the state of the program.
 
 ### Stop a worker
 
@@ -266,6 +268,38 @@ factory worker resume alpha
 `worker resume` starts a stopped worker again, in a new pane of the window `workers`, in its work copy. It runs the same checks as `worker new`: the tools, the safety block, the stops for the settings files (exit code 4, and nothing changes), and the tmux session of the node (exit code 3, and the message names `factory start`). The id must have a record, else the command exits with code 2. It exits with code 2 when a live pane of the worker exists: the worker runs already. A pane of the worker whose program has ended is removed first.
 
 The new program continues the earlier conversation of the worker, with `--resume`, only when the last-seen line belongs to the worker. A program in a pane can write the pointer to its own last session, so the command checks three facts: the session id is a UUID, the line records the id of this worker as its session marker, and no other worker has a pointer to the same session. The session of the coordinator and the session of another worker never pass. If a check fails, or the worker has no valid line, the command starts a new conversation and prints one warning. The warning says that the earlier conversation is NOT resumed, why, and that a new conversation starts.
+
+### Summon a worker
+
+```sh
+factory worker summon alpha
+factory worker summon alpha --for 30m
+```
+
+`worker summon` shows the pane of one worker in the slot of the window `view`, next to the coordinator. The slot is the pane that carries the mark `@slot`, which is the board pane that `factory start` makes. The command swaps the pane of the worker with the pane of the slot, so the board waits in the window `workers`. After `--for` time, the board comes back by itself. `--for` takes whole minutes or whole hours, for example `30m` or `2h`. The default is 15m, the least is 1m and the most is 2h. A time outside these bounds exits with code 2, and nothing changes.
+
+The checks, in order:
+
+- The id must have a record, else the command exits with code 2.
+- The tmux session of the node must run, else the command exits with code 3, and the message names `factory start`. A session of the same name that belongs to another factory folder exits with code 4.
+- The worker must have a live pane. With no live pane the command exits with code 3, and the message names `factory worker resume`. With two live panes it exits with code 2.
+- The board pane must be the only pane with the mark `@slot`. If the mark is on more than one pane, or the summon mark is not valid, the command exits with code 4 and moves nothing.
+
+The command writes a new random token into the pane option `@slot_summon` of the board pane, with the id of the summoned pane. It starts one `run-shell -b` timer. The timer swaps the panes back only while the token in `@slot_summon` is still the token of that timer. A newer summon replaces the token, so the timer of the older summon does nothing. A summon of a worker that holds the slot already only gives a new token and a new timer. A summon of another worker while a worker holds the slot puts the first worker back in its place, and shows the second. The text of a timer holds fixed words, digits, the token and pane ids, and nothing else. If tmux does not set the option, the command swaps the panes back. If the timer does not start, the worker stays in the slot, and the message names `factory layout`.
+
+### Make the windows again
+
+```sh
+factory layout
+```
+
+`layout` makes the windows of the tmux session of the node again, as far as it can:
+
+1. A missing window `workers` is made, in the folder of the coordinator.
+2. The panes of the window `workers` are tiled.
+3. If a summon moved the board out of the slot, the board goes back to the slot of the window `view`, and the summon mark is cleared. A timer that still waits then does nothing. If the mark names a pane that is gone, the command clears the mark and prints a warning.
+
+It works on a session that has only the window `view`. It never makes the window `view`, because that window holds the coordinator: if it is missing, the command warns and names `factory start`. The tmux session must run (exit code 3, and the message names `factory start`) and belong to this factory folder (exit code 4). The command writes no file.
 
 ### Child nodes
 
@@ -412,7 +446,7 @@ Only a check at a security boundary stops a command. A stop exits with code 4. I
 | 0 | Success. Warnings keep exit code 0. |
 | 1 | The command failed, or a check failed. |
 | 2 | The command line is wrong, or the command finds no factory folder. |
-| 3 | Not ready. No command uses this code yet. |
+| 3 | Not ready. The tmux session of the factory does not run (the message names `factory start`), or a worker has no pane that runs, or the state of a session is not known. |
 | 4 | A safety rule refused the action. |
 
 ## Development
