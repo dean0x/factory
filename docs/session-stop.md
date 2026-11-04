@@ -29,7 +29,8 @@ The verdict follows the facts:
 
 - `safe`: all four facts are `yes`, in a test that reached the case of the row.
 - `not safe`: at least one fact is `no`. A fact that no test observed stays `open`. One fact that is `no` is enough, because the rule asks for all four facts.
-- `not safe` for a row that no test reached: no fact is `no`, at least one fact is `open`, and the Probe cell starts with `not tested`. The run budget ended before the row. The factory never uses this way, so the row gets this verdict and not `open`. A fact that a test did observe keeps its value.
+- `not safe` for a row that no test reached: all four facts are `open`, and the Probe cell starts with `not tested`. The run budget ended before the row. The factory never uses this way, so the row gets this verdict and not `open`. A row with a fact that is `yes` or `no` is not a row that no test reached.
+- `not safe` for a row that a test reached in part: no fact is `no`, at least one fact is `yes`, at least one fact is `open`, and the Probe cell starts with `partly tested` and names the run and the reason. A test observed some facts, and the run budget ended before the other facts. The observed facts keep their values. The factory never uses this way, so the row gets this verdict and not `open`.
 - `not available`: the way does not exist in the program. All four facts are `n/a`.
 - `open`: at least one fact is `open`, or the test did not reach the case of the row, and the row is not one of the rows above. The notes under the table say why.
 
@@ -49,10 +50,10 @@ Idle means that no tool, no agent and no prompt is in flight. Busy means that a 
 | `/restart` | busy | no | open | open | open | not safe | I1 |
 | `kill -TERM` | idle | yes | yes | yes | yes | safe | V1, V2 |
 | `kill -TERM` | busy | yes | yes | yes | yes | safe | I2, V4, P1-1, P1-2 |
-| `kill -INT` | idle | yes | open | open | open | not safe | not tested (fact 1 in I0b; no run budget, see "Run limits and decisions") |
-| `kill -INT` | busy | yes | open | open | open | not safe | not tested (fact 1 in V4; P1-3 was not run, see "Run limits and decisions") |
-| `agent view delete` | idle | no | open | open | open | not safe | V3 |
-| `agent view delete` | busy | no | open | open | open | not safe | I2 |
+| `kill -INT` | idle | yes | open | open | open | not safe | partly tested (fact 1 in I0b; no run budget for the other facts, see "Run limits and decisions") |
+| `kill -INT` | busy | yes | open | open | open | not safe | partly tested (fact 1 in V4; P1-3 was not run, see "Run limits and decisions") |
+| `agent view delete` | idle | no: the view has no row for a pane session, so no delete ran | open | open | open | not safe | V3 |
+| `agent view delete` | busy | no: the view has no row for a pane session, so no delete ran | open | open | open | not safe | I2 |
 
 Fact 4 in the table was tested with background shell tasks only. No run used a cron or a background subagent. So a `yes` for fact 4 in a busy row says that a background shell task is recorded, and it says nothing about a cron or a background subagent. The stop code cannot see a cron or a background subagent either: it knows only the last hook event of the session. See "Not tested".
 
@@ -104,7 +105,7 @@ All three probes ran as `env -u ANTHROPIC_BASE_URL claude -p --model haiku`, wit
 | 1 | Started a busy print session. | The command line failed: the option `--allowedTools` took the prompt as a second tool name. The program printed "Input must be provided" and made no model call. | 0 | 0 |
 | P1-1 | Started a busy print session: one background `sleep 281`, and a foreground `sleep 111` that the program blocked. About 60 seconds after the start, `kill -TERM` went to the process id that the test started. | The marker file existed, so the hook ran. At the signal the turn had ended (a result line was printed) and the background task ran. The process was gone within 4 seconds and had exited with code 143. The background `sleep` was gone, and `pgrep -f` found no process with the session id or the probe tag. The program stopped its own task and wrote the events "stopped" and "killed" to its stream. | 6 in, 692 out, 32980 cache write, 64954 cache read | 0.00759 USD |
 | P1-2 | `--resume` of the session of P1-1, with a prompt that asks for the last turn and the state of the background task. No tool was allowed. | The session resumed with the same session id. It named the last request, said that the tool calls were "started, blocked", and said that the background task was "stopped". | 2 in, 310 out, 752 cache write, 32980 cache read | 0.00823 USD |
-| P1-3 | Not run. `kill -INT` on a busy print session. | Print run 1 failed at the command line and used the print budget of 3. No further print run was allowed. So the busy `kill -INT` row stays "not safe, not tested". | - | - |
+| P1-3 | Not run. `kill -INT` on a busy print session. | Print run 1 failed at the command line, and it was one of the 3 print runs. P1-1 and P1-2 were the other two. No fourth print run was allowed, so P1-3 was not run. So the busy `kill -INT` row stays "not safe, partly tested". | - | - |
 
 The cost is the field `total_cost_usd` of the result line of the run. The print runs together cost about 0.016 USD. The interactive run I2 later gave the case that the print probes lacked: a foreground tool in flight at the signal.
 
@@ -112,10 +113,10 @@ The cost is the field `total_cost_usd` of the result line of the run. The print 
 
 - **Decision D-76.** The founder allowed at most 4 short interactive haiku sessions for this PR, outside the 3 print probes. They ran on a scratch tmux socket, with the normal login, no copied credentials and no reads of the user Claude folder.
 - **Decision D-77.** A short resume of a test conversation (one prompt, then `/exit`) does not count as a run. The limits are at most 4 new conversations and at most 4 resume launches, all haiku, with the same rules as D-76.
-- **Source of the interactive rows.** The idle rows, `/exit`, `/restart` and the agent view delete come from runs inside these limits (I1, I2, V1 to V4).
-- **P1-3 was not run.** Print run 1 failed at the command line and used the print budget of 3. No further print run was allowed. So the busy `kill -INT` row stays "not safe, not tested".
+- **Source of the interactive rows.** The idle rows, `/exit`, `/restart` and the agent view delete come from runs inside these limits (I0a, I0b, I1, I2, V1 to V4). I0a, I0b, I1 and I2 are the 4 interactive sessions of D-76. I0a and I0b took no prompt and made no model call (see the count of launches under "The runs").
+- **P1-3 was not run.** Print run 1 failed at the command line, and it was one of the 3 print runs. P1-1 and P1-2 were the other two. No fourth print run was allowed, so P1-3 was not run. So the busy `kill -INT` row stays "not safe, partly tested".
 - **The `/quit` rows stay "not safe, not tested".** `/quit` is an alias of `/exit`. The run budget of D-76 and D-77 did not cover a separate `/quit` run.
-- **The idle `kill -INT` row stays "not tested"** for the same budget reason. Only fact 1 was seen, in I0b.
+- **The idle `kill -INT` row stays "partly tested"** for the same budget reason. Only fact 1 was seen, in I0b. I0b shows only the end of the process (fact 1): it is not a valid session for facts 2 to 4 (see the table of the runs).
 - **After this PR,** no more interactive or print runs are allowed for PR 2a.
 
 ## Findings for the stop code

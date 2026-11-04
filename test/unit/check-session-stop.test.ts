@@ -230,23 +230,34 @@ describe('scripts/check-session-stop.sh', () => {
       expect(failedChecks(result.out)).toEqual([]);
     });
 
-    it('accepts the verdict not safe for a row that was not tested, with open facts and no fact that is no', async () => {
+    it('accepts the verdict not safe for a row that was not tested, with four open facts', async () => {
       await change((text) =>
-        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | yes | open | open | open | not safe | not tested within the run budget |'),
+        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | open | open | open | open | not safe | not tested within the run budget |'),
       );
       const result = check();
       expect(result.code).toBe(0);
       expect(failedChecks(result.out)).toEqual([]);
     });
 
-    it('exits 1 for the verdict not safe with open facts and no fact that is no, when the Probe cell does not say not tested', async () => {
+    it('exits 1 for a row that says not tested when a fact is yes, and names the row', async () => {
       await change((text) =>
-        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | yes | open | open | open | not safe | R-8 |'),
+        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | yes | open | open | open | not safe | not tested within the run budget |'),
       );
       const result = check();
       expect(result.code).toBe(1);
       expect(failedChecks(result.out)).toEqual(['5']);
       expect(result.out).toContain('kill -INT');
+      expect(result.out).toContain('not tested');
+    });
+
+    it('exits 1 for a row that says not tested when a fact is no', async () => {
+      await change((text) =>
+        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | no | open | open | open | not safe | not tested within the run budget |'),
+      );
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['5']);
+      expect(result.out).toContain('not tested');
     });
 
     it('exits 1 for a row that says not tested when all four facts are observed and none is no', async () => {
@@ -256,6 +267,71 @@ describe('scripts/check-session-stop.sh', () => {
       const result = check();
       expect(result.code).toBe(1);
       expect(failedChecks(result.out)).toEqual(['5']);
+    });
+
+    it('accepts the verdict not safe for a row that was tested in part, with a yes, an open fact and no fact that is no', async () => {
+      await change((text) =>
+        replaceLine(
+          text,
+          '| `kill -INT` | busy |',
+          '| `kill -INT` | busy | yes | open | open | open | not safe | partly tested (fact 1 in V4; the run budget ended) |',
+        ),
+      );
+      const result = check();
+      expect(result.code).toBe(0);
+      expect(failedChecks(result.out)).toEqual([]);
+    });
+
+    it('exits 1 for a row that says partly tested when a fact is no', async () => {
+      await change((text) =>
+        replaceLine(
+          text,
+          '| `kill -INT` | busy |',
+          '| `kill -INT` | busy | yes | no | open | open | not safe | partly tested (fact 1 in V4; the run budget ended) |',
+        ),
+      );
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['5']);
+      expect(result.out).toContain('partly tested');
+    });
+
+    it('exits 1 for a row that says partly tested when no fact is yes', async () => {
+      await change((text) =>
+        replaceLine(
+          text,
+          '| `kill -INT` | busy |',
+          '| `kill -INT` | busy | open | open | open | open | not safe | partly tested (the run budget ended) |',
+        ),
+      );
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['5']);
+      expect(result.out).toContain('partly tested');
+    });
+
+    it('exits 1 for a row that says partly tested when no fact is open', async () => {
+      await change((text) =>
+        replaceLine(
+          text,
+          '| `kill -INT` | busy |',
+          '| `kill -INT` | busy | yes | yes | yes | yes | not safe | partly tested (the run budget ended) |',
+        ),
+      );
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['5']);
+      expect(result.out).toContain('partly tested');
+    });
+
+    it('exits 1 for the verdict not safe with open facts and no fact that is no, when the Probe cell says neither not tested nor partly tested', async () => {
+      await change((text) =>
+        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | yes | open | open | open | not safe | R-8 |'),
+      );
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['5']);
+      expect(result.out).toContain('kill -INT');
     });
 
     it('exits 1 for the verdict not available when a fact is not n/a', async () => {
