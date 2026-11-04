@@ -417,6 +417,49 @@ describe('the old words in the exit check', () => {
   });
 });
 
+describe('the flow and the clean-up of the exit check', () => {
+  const lines = readFileSync(EXIT_CHECK, 'utf8').split('\n');
+  const code = lines.filter((line) => !line.trimStart().startsWith('#'));
+
+  it('removes one folder only: the one that its own mktemp made, behind a guard that tests the variable', () => {
+    const removals = code.map((line, index) => ({ line: line.trim(), index })).filter(({ line }) => /\brm\b/.test(line));
+    expect(removals.map(({ line }) => line)).toEqual(['rm -rf "$tmp"']);
+    const removal = removals[0]?.index ?? -1;
+    expect(code[removal - 1]?.trim()).toBe('if [ -n "$tmp" ] && [ -d "$tmp" ]; then');
+    const assignments = code.map((line) => line.trim()).filter((line) => /^tmp=/.test(line));
+    expect(assignments).toEqual(['tmp=""', 'tmp="$(mktemp -d "${base%/}/factory-exit-check.XXXXXX")"']);
+  });
+
+  it('takes the base of its temp folder from FACTORY_TMP or TMPDIR', () => {
+    expect(shellValue(lines.join('\n'), 'base')).toBe('${FACTORY_TMP:-${TMPDIR:-/tmp}}');
+  });
+
+  it('makes the factory folder with init --yes inside a repo whose https origin a local bare repo serves', () => {
+    const text = code.join('\n');
+    expect(text).toMatch(/origin_url="https:\/\//);
+    expect(text).toMatch(/git config --file "\$GIT_CONFIG_GLOBAL" --add "url\.\$bare\.insteadOf" "\$origin_url"/);
+    expect(text).toMatch(/git -C "\$web" remote add origin "\$origin_url"/);
+    expect(text).toContain('cd "$web" && factory init --yes');
+    expect(text).toContain('home="$tmp/web-factory"');
+    expect(text).toContain('clone="$home/web"');
+  });
+
+  it('runs start --dry-run and doctor with no --home from the factory folder, the coordinator folder and the clone', () => {
+    const text = code.join('\n');
+    expect(text).toContain('for place in "$home" "$home/coordinator" "$clone"; do');
+    expect(text).toMatch(/run_in "\$place" factory start --dry-run/);
+    expect(text).toMatch(/run_in "\$place" factory doctor/);
+    expect(code.filter((line) => line.includes('--home'))).toEqual([]);
+  });
+
+  it('runs the scans after the commands', () => {
+    const text = code.join('\n');
+    const doctor = text.indexOf('run_in "$place" factory doctor');
+    expect(doctor).toBeGreaterThan(0);
+    expect(text.indexOf('step "deny list"')).toBeGreaterThan(doctor);
+  });
+});
+
 describe('the old words and the jargon words in the text of the source (TP-60)', () => {
   /** The folders that print text, and the top files of src. */
   const TEXT_FOLDERS = [

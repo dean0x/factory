@@ -290,6 +290,25 @@ export const jargonIn = (text: string): string[] => JARGON_PATTERNS.flatMap(({ p
 /** The docs that the scan reads in the docs change. */
 export const SCANNED_DOCS = ['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md'] as const;
 
+/** The files above the docs folder that the scan reads. The CHANGELOG is read for the part of one version only. */
+export const SCANNED_TOP_FILES = ['README.md', 'CHANGELOG.md'] as const;
+
+/** The version whose part of the CHANGELOG the scan reads. A released part keeps the words of its own time. */
+export const SCANNED_CHANGELOG_VERSION = '0.2.0';
+
+/**
+ * The part of a CHANGELOG that belongs to one version: the heading `## <version> ...` and the lines up to the next `## `
+ * heading. Every other line is blank, so a hit of the scan keeps its line number in the whole file.
+ */
+export const changelogPartOf = (text: string, version: string): string => {
+  const lines = text.split('\n');
+  const start = lines.findIndex((line) => line === `## ${version}` || line.startsWith(`## ${version} `));
+  if (start < 0) return '';
+  const next = lines.findIndex((line, index) => index > start && line.startsWith('## '));
+  const end = next < 0 ? lines.length : next;
+  return lines.map((line, index) => (index >= start && index < end ? line : '')).join('\n');
+};
+
 /**
  * A row of the trace that keeps an old word on purpose, in its quote cell (the second column). The docs review reads this
  * list.

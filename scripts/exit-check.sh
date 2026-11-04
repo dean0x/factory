@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Exit check: pack the CLI, install the tarball in a throw-away HOME, make a node for a git repo, and check it.
-# The flow: init --yes inside the repo "web" makes "web-factory"; start --dry-run and doctor must exit 0;
-# the generated files and the --help text of every command must hold no name from the deny list and no old word.
+# Exit check: pack the CLI, install the tarball in a throw-away HOME, make a factory folder for a git repo, and check it.
+# The flow: init --yes inside the repo "web" makes the factory folder "web-factory" with the clone "web". The origin of
+# the repo is an https URL that a local bare repo serves, so the check needs no network. start --dry-run and doctor must
+# exit 0 from the factory folder, from the coordinator folder and from the clone. The generated files and the --help text
+# of every command must hold no name from the deny list, no old word and no jargon word.
 # The real HOME, the real XDG state folder, the real tmux server, the real npm prefix and the real npm cache are never written.
 # It needs a build first: npm run build
 set -euo pipefail
@@ -90,25 +92,56 @@ installed="$(factory version)"
 [ "$installed" = "$version" ] || fail "factory version prints $installed, expected $version"
 printf 'installed factory %s\n' "$installed"
 
+step "origin"
+origin_url="https://example.com/acme/web.git"
+bare="$tmp/origins/web.git"
+seed="$tmp/origin-seeds/web"
+# A command that runs in "logged" ignores set -e, so the steps are joined with && and the first failure ends the function.
+make_origin() {
+  mkdir -p "$bare" "$seed" &&
+    git init -q --bare "$bare" &&
+    git -C "$seed" init -q &&
+    git -C "$seed" commit -q --allow-empty -m "first" &&
+    git -C "$seed" push -q "$bare" HEAD:refs/heads/main &&
+    git config --file "$GIT_CONFIG_GLOBAL" --add "url.$bare.insteadOf" "$origin_url"
+}
+logged origin make_origin
+
 step "init"
 web="$tmp/web"
 home="$tmp/web-factory"
+clone="$home/web"
 mkdir -p "$web"
 git -C "$web" init -q
+git -C "$web" remote add origin "$origin_url"
 init_in_web() { (cd "$web" && factory init --yes --owner-name "Test Owner"); }
 logged init init_in_web
 head -n 1 "$tmp/init.log"
 [ -f "$home/factory.yaml" ] || fail "init made no factory.yaml in $home"
-grep -Fq 'path: "web"' "$home/factory.yaml" || fail "the repo web is not a project of the node"
-[ -n "$(find "$XDG_STATE_HOME" -type f -print | head -n 1)" ] || fail "init wrote no home index in the state folder"
+[ -f "$home/factory.local.yaml" ] || fail "init made no factory.local.yaml in $home"
+[ -f "$home/coordinator/CLAUDE.md" ] || fail "init made no coordinator/CLAUDE.md in $home"
+[ -d "$clone/.git" ] || fail "init made no clone of the repo web in $home"
+grep -Fq 'path: "web"' "$home/factory.yaml" || fail "the repo web is not a project of the factory"
+grep -Fq "url: \"$origin_url\"" "$home/factory.yaml" || fail "the project web has no url in factory.yaml"
+[ -n "$(find "$XDG_STATE_HOME" -type f -print | head -n 1)" ] || fail "init wrote no factory list in the state folder"
 
-step "start --dry-run"
-logged start factory start --dry-run --home "$home"
-head -n 1 "$tmp/start.log"
+# No --home: each command finds the factory folder from where it runs.
+run_in() {
+  local folder="$1"
+  shift
+  (cd "$folder" && "$@")
+}
+for place in "$home" "$home/coordinator" "$clone"; do
+  label="$(basename "$place")"
 
-step "doctor"
-logged doctor factory doctor --home "$home"
-tail -n 1 "$tmp/doctor.log"
+  step "start --dry-run in $label"
+  logged "start-$label" run_in "$place" factory start --dry-run
+  head -n 1 "$tmp/start-$label.log"
+
+  step "doctor in $label"
+  logged "doctor-$label" run_in "$place" factory doctor
+  tail -n 1 "$tmp/doctor-$label.log"
+done
 
 # The help texts: the top-level help, the help of each command that it lists, and the help words.
 step "help texts"

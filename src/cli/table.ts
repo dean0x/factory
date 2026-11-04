@@ -66,7 +66,7 @@ const foundHomeOption: FlagOption = {
   type: 'string',
   placeholder: 'DIR',
   description:
-    `The ${roles.node} folder. Default: ${env.home}, else the folder of the nearest config file ` +
+    `The ${places.folder}. Default: ${env.home}, else the folder of the nearest config file ` +
     `above the current folder, else the ${places.folder} that the ${places.list} gives for the current folder.`,
 };
 
@@ -85,12 +85,12 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'string',
         placeholder: 'DIR',
         description:
-          `The ${roles.node} folder. Default: in a git work tree, a folder beside it; in a folder that holds git repos, ` +
+          `The ${places.folder}. Default: in a git work tree, a folder beside it; in a folder that holds git repos, ` +
           'a folder inside it; in both cases after you confirm. Else the current folder.',
       },
       [flags.yes]: {
         type: 'boolean',
-        description: `Use the proposed ${roles.node} folder. Ask no question. Every approval point is ${values.approvalModes[0]}.`,
+        description: `Use the proposed ${places.folder}. Ask no question. Every approval point is ${values.approvalModes[0]}.`,
       },
       [flags.name]: {
         type: 'string',

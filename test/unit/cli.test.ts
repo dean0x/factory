@@ -194,6 +194,29 @@ describe('the node command in the command line', () => {
   });
 });
 
+describe('the folder of a factory in the help text (TP-138)', () => {
+  const NAMES_WITH_FOLDER = commandTable.map((command) => [command.name]);
+
+  it.each(NAMES_WITH_FOLDER)('says factory folder, and not node folder, in the help of %s', async (name) => {
+    const result = await run([name, '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).not.toMatch(/node folder/i);
+    expect(result.out).not.toMatch(/\bhome\b(?! DIR)/i);
+  });
+
+  it('names the folder of the --home flag with the plain word', async () => {
+    for (const name of ['init', 'start', 'doctor', 'upgrade', 'node']) {
+      const result = await run([name, '--help']);
+      expect(result.out, name).toMatch(/--home DIR +The factory folder\./);
+    }
+  });
+
+  it('names the proposed folder of --yes with the plain word', async () => {
+    const result = await run(['init', '--help']);
+    expect(result.out).toContain('Use the proposed factory folder.');
+  });
+});
+
 describe('the approval flag of init in the command line (TP-37, TP-38, TP-81)', () => {
   const init = commandTable.find((command) => command.name === 'init');
   const STATE_ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
