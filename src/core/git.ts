@@ -339,6 +339,68 @@ export const trackedFilesOf = async (
   return ok({ paths: paths.slice(0, maxCount), reachedCap: paths.length > maxCount });
 };
 
+/** The git mode of a link. */
+export const LINK_MODE = '120000';
+
+const FILE_MODES: ReadonlySet<string> = new Set(['100644', '100755']);
+
+/** True for the git mode of a plain file. */
+export const isFileMode = (mode: string): boolean => FILE_MODES.has(mode);
+
+/** One entry of a git tree. */
+export interface TreeEntry {
+  readonly mode: string;
+  /** `blob` for a file or a link, `tree` for a folder, `commit` for a submodule. */
+  readonly kind: string;
+  readonly id: string;
+  /** The size in bytes of a file or a link, or null for any other entry. */
+  readonly size: number | null;
+  /** The path from the top folder of the repo. */
+  readonly path: string;
+}
+
+/** `<mode> <kind> <id> <size>TAB<path>`: the line of `git ls-tree -l -z`. The size is padded with spaces, and a folder has `-`. */
+const TREE_ENTRY = /^(\d{6}) ([a-z]+) ([0-9a-f]{40,64}) +(-|\d+)\t([\s\S]+)$/;
+
+const treeEntryOf = (record: string): TreeEntry | null => {
+  const [, mode, kind, id, size, path] = TREE_ENTRY.exec(record) ?? [];
+  if (mode === undefined || kind === undefined || id === undefined || size === undefined || path === undefined) return null;
+  return { mode, kind, id, size: size === '-' ? null : Number(size), path };
+};
+
+/**
+ * The entries that the last commit (HEAD) of the repo at `dir` has at `path` (`git ls-tree -z -l`), one level deep. A path with no
+ * trailing slash gives the entry of the path itself: a folder, a file or a link. A path with a trailing slash gives the entries
+ * of that folder. A repo with no commit, or a path that git can not read, is a failure. The commit is the one that a new work
+ * tree of the repo starts from.
+ */
+export const headEntriesAt = async (deps: Deps, dir: string, path: string): Promise<CliResult<readonly TreeEntry[]>> => {
+  const what = `cannot read ${path} of the last commit of ${dir}`;
+  const result = await deps.run('git', ['-C', dir, 'ls-tree', '-z', '-l', 'HEAD', '--', path], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  const entries: TreeEntry[] = [];
+  for (const record of result.value.stdout.split('\0')) {
+    if (record === '') continue;
+    const entry = treeEntryOf(record);
+    if (entry === null) return failure(`${what}: git printed an entry that ${program} can not read`);
+    entries.push(entry);
+  }
+  return ok(entries);
+};
+
+const OBJECT_ID = /^[0-9a-f]{40,64}$/;
+
+/** The text of the file of git with this object id. The caller checks the size first, from the entry of the file. */
+export const blobTextOf = async (deps: Deps, dir: string, id: string): Promise<CliResult<string>> => {
+  if (!OBJECT_ID.test(id)) return failure('cannot read a file of git: the object id is not valid');
+  const what = `cannot read the file ${id} of ${dir}`;
+  const result = await deps.run('git', ['-C', dir, 'cat-file', 'blob', id], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  return ok(result.value.stdout);
+};
+
 /** The most paths that one ignore check takes. */
 export const MAX_IGNORE_PATHS = 256;
 

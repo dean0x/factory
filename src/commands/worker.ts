@@ -37,7 +37,7 @@ import {
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { ensureCloneExclude } from '../workers/exclude.js';
-import { dismissCommand, launchWorker, resumeLine } from '../workers/launch.js';
+import { launchWorker, requireCleanTrackedSettings, resumeLine } from '../workers/launch.js';
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import type { BoundPane } from '../workers/panes.js';
@@ -74,6 +74,9 @@ const withHint = (error: CliError, hint: string): CliError => ({ ...error, hint 
 const newLine = (id: string, project: string): string =>
   `${commandText(commandLines.workerNew)} ${id} ${flagText(flags.project)} ${project}`;
 
+/** The end of the warning for a safety block that is out of date: this command does not render it, and the next `start` does. */
+const RENDERED_BY_START = `This command does not render it again: the next "${commandText(commands.start)}" does.`;
+
 /** The request for the consent to the hook settings of a work copy. */
 const hookRequestOf = (workCopy: string, yes: boolean): HookConsentRequest => ({
   folder: workCopy,
@@ -95,15 +98,17 @@ interface NewWorkerPlan {
 /**
  * The checks of the root and of the tools, as `start` makes them. A failing root check is a stop (exit 4) with one remedy
  * line, a warning is printed, and nothing changes. The owner accepts a change of the setup text with `start` or `upgrade`:
- * this command asks nothing about it. The safety block is checked and never rendered again here: the next `start` renders it.
+ * this command asks nothing about it. The safety block is checked and never rendered again here: a block that is out of
+ * date gives a warning, and the next `start` renders it.
  */
 const requireLaunchReady = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<void>> => {
   const scan = await scanRoot(deps, home, config);
   for (const notice of rootNotices(scan)) deps.warn(notice);
   const clean = requireRootClean(scan);
   if (!clean.ok) return clean;
-  const safety = await requireSafetyBlock(deps, home, config, true);
+  const safety = await requireSafetyBlock(deps, home, config, true, RENDERED_BY_START);
   if (!safety.ok) return safety;
+  for (const note of safety.value) deps.warn(note);
   const problems = await toolProblems(deps, true);
   if (problems.length > 0) {
     return failure(
@@ -255,21 +260,63 @@ const planNew = async (
   return ok({ id, project: project.id, clone, workCopy, branch });
 };
 
-/** The error of a step after the work copy and the record exist. Nothing is undone, and the remedy names the command that ends the worker. */
-const keptCopy = (error: CliError, id: string): CliError =>
-  withHint(
-    error,
-    `${error.hint === undefined ? '' : `${error.hint} `}Nothing is undone: the work copy and the record of the ${roles.worker} stay. ` +
-      `To end the ${roles.worker}, run "${dismissCommand(id)}".`,
-  );
+/** The error with its remedy line and these sentences, in order. */
+const withHintParts = (error: CliError, parts: readonly string[]): CliError =>
+  withHint(error, [...(error.hint === undefined ? [] : [error.hint]), ...parts].join(' '));
 
-/** The error of the record write: the work copy exists and has no record, so the remedy is the plain git command. */
+/** The two git commands that remove a work copy and then its branch. Git keeps the branch in use while the work copy exists. */
+const removeCopyAndBranch = (plan: NewWorkerPlan): string => {
+  const git = `git -C ${shellWord(plan.clone)}`;
+  return `"${git} worktree remove ${shellWord(plan.workCopy)}" and then "${git} branch -D ${shellWord(plan.branch)}"`;
+};
+
+/** The steps that remove a worker by hand: its work copy and its branch, then the folder of its record. */
+const removeByHand = (plan: NewWorkerPlan, home: string): string =>
+  `To remove the ${roles.worker} by hand, run ${removeCopyAndBranch(plan)}. ` +
+  `Then delete the folder ${shellWord(workerPathsOf(home, plan.id).dir)}.`;
+
+/**
+ * The error of a step after the work copy, the branch and the record exist. Nothing is undone, and the remedy names the steps that
+ * remove the worker by hand. `skipsSetup` is true for a step that ends before the launch: `worker resume` starts the worker then,
+ * but it does not make the exclude entry or the hook settings that the failed run did not reach.
+ */
+const keptCopy = (error: CliError, plan: NewWorkerPlan, home: string, skipsSetup: boolean): CliError =>
+  withHintParts(error, [
+    `Nothing is undone: the work copy, the branch and the record of the ${roles.worker} stay.`,
+    ...(skipsSetup
+      ? [
+          `To start the ${roles.worker}, run "${commandText(resumeLine(plan.id))}". ` +
+            'That command does not make the exclude entry or the hook settings again.',
+        ]
+      : []),
+    removeByHand(plan, home),
+  ]);
+
+/** The error of a failed record write: the work copy and the branch exist and have no record, so the remedy is the git commands. */
 const keptBareCopy = (error: CliError, plan: NewWorkerPlan): CliError =>
-  withHint(
-    error,
-    `${error.hint === undefined ? '' : `${error.hint} `}The work copy ${plan.workCopy} stays and has no record. ` +
-      `To remove it, run "git -C ${shellWord(plan.clone)} worktree remove ${shellWord(plan.workCopy)}".`,
-  );
+  withHintParts(error, [
+    `The work copy ${plan.workCopy} and the branch ${plan.branch} stay, and the ${roles.worker} has no record.`,
+    `To remove them, run ${removeCopyAndBranch(plan)}.`,
+    `Then run "${newLine(plan.id, plan.project)}" again.`,
+  ]);
+
+/**
+ * The error of a failed record write. The record exists when only its inbox folder failed: the worker is then kept as a whole.
+ * With no record, the work copy and the branch are all that stay.
+ */
+const recordWriteError = async (deps: Deps, home: string, error: CliError, plan: NewWorkerPlan): Promise<CliError> => {
+  const written = await readWorkerRecord(deps, home, plan.id);
+  return written.ok && written.value.state === 'absent' ? keptBareCopy(error, plan) : keptCopy(error, plan, home, false);
+};
+
+/** The error of a failed `git worktree add`: git can keep the branch, and after a failed hook it keeps the work copy too. */
+const gitKeptHint = (error: CliError, plan: NewWorkerPlan): CliError =>
+  withHintParts(error, [
+    'Fix the cause that git reports.',
+    `Git can keep the branch ${plan.branch} and the folder ${plan.workCopy} after a failure.`,
+    `To remove what it kept, run ${removeCopyAndBranch(plan)}. Run the first command only if the folder is there.`,
+    `Then run "${newLine(plan.id, plan.project)}" again.`,
+  ]);
 
 /**
  * The steps that write, in order, after every check and the consent of the hook settings:
@@ -279,7 +326,7 @@ const keptBareCopy = (error: CliError, plan: NewWorkerPlan): CliError =>
  * 4. the settings file of the work copy, with the question for the consent when a terminal window can ask;
  * 5. the warning about the machine, which never stops the command;
  * 6. the launch, which checks the settings files of the work copy before it starts the pane.
- * A failure after step 1 keeps the work copy and the record and names the command that ends the worker.
+ * A failure after step 1 keeps what exists and names the steps that remove the worker by hand.
  */
 const makeWorker = async (
   deps: Deps,
@@ -290,21 +337,19 @@ const makeWorker = async (
 ): Promise<CliResult<{ readonly paneId: string; readonly proxy: string | null; readonly warnings: readonly string[] }>> => {
   const { id, project, clone, workCopy, branch } = plan;
   const made = await addWorkTree(deps, clone, branch, workCopy);
-  if (!made.ok) {
-    return { ...made, error: withHint(made.error, `Fix the cause that git reports. Then run "${newLine(id, project)}" again.`) };
-  }
+  if (!made.ok) return { ...made, error: gitKeptHint(made.error, plan) };
   const record = await writeWorkerRecord(deps, home, { id, project, workCopy, branch });
-  if (!record.ok) return { ...record, error: keptBareCopy(record.error, plan) };
+  if (!record.ok) return { ...record, error: await recordWriteError(deps, home, record.error, plan) };
   const exclude = await ensureCloneExclude(deps, clone);
-  if (!exclude.ok) return { ...exclude, error: keptCopy(exclude.error, id) };
+  if (!exclude.ok) return { ...exclude, error: keptCopy(exclude.error, plan, home, true) };
   const hook = await ensureHookSettings(deps, { ...hookRequestOf(workCopy, yes), dryRun: false });
-  if (!hook.ok) return { ...hook, error: keptCopy(hook.error, id) };
+  if (!hook.ok) return { ...hook, error: keptCopy(hook.error, plan, home, true) };
   if (hook.value.kind === 'declined') {
     deps.warn(declinedHookText(hook.value.file, commandLines.workerNew, hookSessions.workCopy));
   }
   for (const line of machineWarnings(await gatherMachine(deps, home, config.core.limits))) deps.warn(line);
   const launched = await launchWorker(deps, { home, config, workerId: id, workCopy, retry: resumeLine(id) });
-  if (!launched.ok) return { ...launched, error: keptCopy(launched.error, id) };
+  if (!launched.ok) return { ...launched, error: keptCopy(launched.error, plan, home, false) };
   return ok(launched.value);
 };
 
@@ -334,8 +379,12 @@ const runNew = async (
 
   const plan = await planNew(deps, home, config, id, options.project);
   if (!plan.ok) return plan;
-  // The consent comes before the first write. The question itself comes after the work copy exists, when a terminal can ask.
-  const consent = await requireHookConsent(deps, hookRequestOf(plan.value.workCopy, options.yes));
+  // Every refusal about the settings comes before the first write. The new branch starts at the last commit of the clone, so the
+  // files that git puts into the work copy are known now: the settings checks and the consent run on them.
+  // The question itself comes after the work copy exists, when a terminal can ask.
+  const tracked = await requireCleanTrackedSettings(deps, home, plan.value.clone, plan.value.workCopy);
+  if (!tracked.ok) return tracked;
+  const consent = await requireHookConsent(deps, hookRequestOf(plan.value.workCopy, options.yes), tracked.value.localText);
   if (!consent.ok) return consent;
 
   const made = await makeWorker(deps, home, config, plan.value, options.yes);

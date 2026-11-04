@@ -191,13 +191,17 @@ interface FileContent {
   readonly settings: Settings;
 }
 
+/** The settings object of the text of a settings file. A text that is not a JSON object is a failure. */
+const parseSettings = (text: string, file: string, command: CommandText): CliResult<FileContent> => {
+  const parsed = parseJsonText(text);
+  if (parsed.ok && isRecord(parsed.value)) return ok({ text, settings: parsed.value });
+  return failure(`${file} is not a JSON object`, `Fix the file, or move it away. ${again(command)}`);
+};
+
 /** The text and the settings object of the file. A file that is not a JSON object is a failure, and it stays as it is. */
 const readSettings = async (deps: Deps, file: string, command: CommandText): Promise<CliResult<FileContent>> => {
   const text = await deps.fs.readTextLimited(file, maxFileBytes);
-  if (!text.ok) return text;
-  const parsed = parseJsonText(text.value);
-  if (parsed.ok && isRecord(parsed.value)) return ok({ text: text.value, settings: parsed.value });
-  return failure(`${file} is not a JSON object`, `Fix the file, or move it away. ${again(command)}`);
+  return text.ok ? parseSettings(text.value, file, command) : text;
 };
 
 const hasCommand = (group: unknown, command: string): boolean =>
@@ -350,11 +354,16 @@ const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliR
   return change.ok ? ok({ target, text: content.value === null ? null : content.value.text, change: change.value }) : change;
 };
 
-/** The plan for a session folder that does not exist yet: the file is new, and the change is every own entry. */
-const newFilePlan = (request: HookConsentRequest): CliResult<Plan> => {
+/**
+ * The plan for a session folder that does not exist yet. The folder will hold the settings file that a checkout puts there, with
+ * the text `fileText`, or no file when it is null: then the file is new, and the change is every own entry.
+ */
+const futureFilePlan = (request: HookConsentRequest, fileText: string | null): CliResult<Plan> => {
   const target = targetOf(request.folder);
-  const change = addOwnEntries(NO_SETTINGS, target.file, request.command);
-  return change.ok ? ok({ target, text: null, change: change.value }) : change;
+  const content = fileText === null ? ok(null) : parseSettings(fileText, target.file, request.command);
+  if (!content.ok) return content;
+  const change = addOwnEntries(content.value === null ? NO_SETTINGS : content.value.settings, target.file, request.command);
+  return change.ok ? ok({ target, text: fileText, change: change.value }) : change;
 };
 
 /**
@@ -406,18 +415,25 @@ export const ensureHookSettings = async (deps: Deps, request: HookSettingsReques
  * The check for a command that writes other files before the settings file, and asks its question after them. It makes the
  * checks of the target and stops before the first write of the command when the question could not be answered later: the
  * change is to be made and either the yes flag is given inside a factory session, where it gives no consent (exit 2, also on
- * a terminal), or there is no terminal and no consent (exit 2). The session folder may not exist yet: the file is new then.
+ * a terminal), or there is no terminal and no consent (exit 2). The session folder may not exist yet.
  * A terminal, the yes flag outside a factory session, or entries in place let the command go on.
+ * A session folder that does not exist yet gets its settings file from a checkout when the repo tracks one: `checkoutText` is the
+ * text of that file, and null means that the checkout puts no settings file there. The call plans with that text, so the
+ * consent rule and a file that is no JSON object stop the command before the folder exists.
  * The call asks nothing and writes nothing. A session folder written inside the user settings folder stops it before any call
  * of the file system.
  */
-export const requireHookConsent = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<void>> => {
+export const requireHookConsent = async (
+  deps: Deps,
+  request: HookConsentRequest,
+  checkoutText: string | null = null,
+): Promise<CliResult<void>> => {
   const target = targetOf(request.folder);
   const written = requireOutsideUserFolder(deps, target, request.command, target.file);
   if (!written.ok) return written;
   const folder = await deps.fs.lstat(request.folder);
   if (!folder.ok) return folder;
-  const planned = folder.value === null ? newFilePlan(request) : await planChange(deps, request);
+  const planned = folder.value === null ? futureFilePlan(request, checkoutText) : await planChange(deps, request);
   if (!planned.ok) return planned;
   const { change, text } = planned.value;
   const exists = text !== null;

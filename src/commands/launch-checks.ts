@@ -20,6 +20,9 @@ import { writeBlockPlans } from '../upgrade/render.js';
 
 const MIN_TMUX_TEXT = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
 
+/** The end of the note of a dry run of `start`, which a real run of the same command renders again. */
+const RENDERED_BY_REAL_RUN = 'A real run renders it again.';
+
 /** The tools that a launch needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
 export const toolProblems = async (deps: Deps, readVersion: boolean): Promise<readonly string[]> => {
   const problems: string[] = [];
@@ -47,13 +50,15 @@ export const toolProblems = async (deps: Deps, readVersion: boolean): Promise<re
  *   a dry run writes nothing and returns a note;
  * - edited, missing or not readable: exit 4, because the safety rules are a security boundary.
  * A link at the coordinator file is a stop first: nothing is read or written through it. The coordinator folder exists
- * after this check, because a missing file is a missing block. The value is the notes of a dry run.
+ * after this check, because a missing file is a missing block. The value is the notes of a dry run. The note ends with
+ * `renderedBy`: the sentence that says which command renders the block again.
  */
 export const requireSafetyBlock = async (
   deps: Deps,
   home: string,
   config: FactoryConfig,
   dryRun: boolean,
+  renderedBy: string = RENDERED_BY_REAL_RUN,
 ): Promise<CliResult<readonly string[]>> => {
   const { claudeMd } = layoutOf(home);
   const plain = await requireNoLinks(deps, home, [claudeMd]);
@@ -66,7 +71,7 @@ export const requireSafetyBlock = async (
     case 'equal':
       return ok([]);
     case 'different': {
-      if (dryRun) return ok([`The block ${name} in ${file} is out of date. A real run renders it again.`]);
+      if (dryRun) return ok([`The block ${name} in ${file} is out of date. ${renderedBy}`]);
       const written = await writeBlockPlans(deps, home, [planBlock(status, false)], commands.start);
       if (!written.ok) return written;
       deps.warn(`Rendered the block ${name} in ${file} again, because the package or a setting changed its text.`);

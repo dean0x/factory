@@ -6,7 +6,7 @@ import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
+import { maxFileBytes, schemaIds, stopPoll, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -49,6 +49,40 @@ const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
 const FIXTURES = join(__dirname, '..', 'fixtures', 'machine', 'macos');
 const fixture = (name: string): string => readFileSync(join(FIXTURES, name), 'utf8');
 
+/** One path of the last commit of the clone. A text makes it a file that the checkout puts into the new work copy. */
+interface HeadEntry {
+  readonly path: string;
+  /** The git mode: 100644 for a file (the default) and 120000 for a link. */
+  readonly mode?: string;
+  readonly text?: string;
+}
+
+const LINK_MODE = '120000';
+const hex = (index: number): string => index.toString(16).padStart(40, '0');
+
+/** The tracked entries of the last commit below `.claude`, as the setup gives them. */
+const headOf = (setup: Setup): readonly HeadEntry[] => [
+  ...(setup.checkout === undefined ? [] : [{ path: '.claude/settings.local.json', text: setup.checkout }]),
+  ...(setup.head ?? []),
+];
+
+/** The answer of `git ls-tree -z -l HEAD -- <path>`: the entry `.claude` itself, or the entries one level below `.claude/`. */
+const listHead = (entries: readonly HeadEntry[], path: string): string => {
+  const line = (entry: HeadEntry, shown: string): string => {
+    const text = entry.text ?? '';
+    return `${entry.mode ?? '100644'} blob ${hex(entries.indexOf(entry) + 1)} ${String(text.length).padStart(7)}\t${shown}\0`;
+  };
+  if (path === '.claude') {
+    const own = entries.find((entry) => entry.path === '.claude');
+    if (own !== undefined) return line(own, '.claude');
+    return entries.some((entry) => entry.path.startsWith('.claude/')) ? `040000 tree ${hex(0)}       -\t.claude\0` : '';
+  }
+  return entries
+    .filter((entry) => entry.path.startsWith('.claude/') && !entry.path.slice('.claude/'.length).includes('/'))
+    .map((entry) => line(entry, entry.path))
+    .join('');
+};
+
 type FactName = 'memory' | 'disk' | 'load' | 'cpus';
 
 interface Setup {
@@ -71,8 +105,12 @@ interface Setup {
   readonly branches?: readonly string[];
   /** The exit code of `git worktree add`. Default: 0. */
   readonly worktreeExit?: number;
-  /** The text of a settings file that the checkout puts into the new work copy. */
+  /** The text of the file `.claude/settings.local.json` that the last commit of the clone tracks, and the checkout puts into the new work copy. */
   readonly checkout?: string;
+  /** More paths that the last commit of the clone tracks at or below `.claude`. */
+  readonly head?: readonly HeadEntry[];
+  /** True: git can not read the last commit of the clone. */
+  readonly headFails?: boolean;
   readonly claudeFile?: string | false;
   /** What a program of the machine check prints. A null text leaves the program out. */
   readonly machine?: Partial<Record<FactName, string | null>>;
@@ -113,8 +151,19 @@ const gitAnswer = (setup: Setup, made: () => FakeDeps) => (call: RunCall) => {
     if ((setup.worktreeExit ?? 0) !== 0) return exited(setup.worktreeExit ?? 0, '', 'fatal: cannot make the work copy\n');
     const folder = call.args[call.args.length - 1] ?? '';
     made().seedDir(folder);
-    if (setup.checkout !== undefined) made().seed(`${folder}/.claude/settings.local.json`, setup.checkout);
+    for (const entry of headOf(setup)) {
+      if (entry.text !== undefined && entry.mode !== LINK_MODE) made().seed(`${folder}/${entry.path}`, entry.text);
+    }
     return exited(0, 'Preparing worktree\n');
+  }
+  if (call.args[2] === 'ls-tree') {
+    if (setup.headFails === true) return exited(128, '', 'fatal: not a valid object name HEAD\n');
+    return exited(0, listHead(headOf(setup), call.args[call.args.length - 1] ?? ''));
+  }
+  if (call.args[2] === 'cat-file') {
+    const entries = headOf(setup);
+    const entry = entries.find((candidate) => hex(entries.indexOf(candidate) + 1) === call.args[4]);
+    return entry?.text === undefined ? exited(128, '', 'fatal: Not a valid object name\n') : exited(0, entry.text);
   }
   if (command.startsWith('rev-parse --verify --quiet refs/heads/')) {
     return (setup.branches ?? []).includes(command.slice('rev-parse --verify --quiet refs/heads/'.length)) ? exited(0, 'abc123\n') : exited(1);
@@ -221,6 +270,18 @@ const make = (setup: Setup = {}): Made => {
   return { deps, tmux: log, events, files: new Map(base.files), dirs: new Set(base.dirs) };
 };
 
+/** The coordinator file of an earlier package: the safety block is intact, but its text differs from the one that the package renders. */
+const olderClaudeFile = (): string => {
+  const config = sampleConfig();
+  const older = claudeFileText({ ...config, core: { ...config.core, owner: { ...config.core.owner, prefix: '[From {owner} at {node} on {date}]' } } });
+  expect(older).not.toBe(claudeFileText(config));
+  return older;
+};
+
+/** The warning for a safety block that is out of date: this command renders nothing, and the next start does. */
+const OUT_OF_DATE_NOTE =
+  'The block safety in coordinator/CLAUDE.md is out of date. This command does not render it again: the next "factory start" does.';
+
 const options = (change: Partial<WorkerOptions> = {}): WorkerOptions => ({
   home: HOME,
   words: ['new', 'alpha'],
@@ -255,6 +316,22 @@ const expectNothingChanged = (made: Made): void => {
 const indexOf = (made: Made, fragment: string): number => made.events.findIndex((event) => event.includes(fragment));
 
 const recordOf = (made: Made): Record<string, unknown> => JSON.parse(made.deps.files.get(RECORD) ?? 'null') as Record<string, unknown>;
+
+const RESUME = '"factory worker resume alpha"';
+const REMOVE_COPY = `git -C ${CLONE} worktree remove ${COPY}`;
+const DELETE_BRANCH = `git -C ${CLONE} branch -D ${BRANCH}`;
+const RECORD_DIR = '/w/node/.factory/workers/alpha';
+
+/**
+ * The remedy of a step that failed after the work copy, the branch and the record exist: nothing is undone, and the hint names the
+ * steps that remove the worker by hand, in the order that works. It names no command that does not exist.
+ */
+const expectKeptCopyHint = (error: CliError): void => {
+  const hint = error.hint ?? '';
+  expect(hint).toContain('Nothing is undone: the work copy, the branch and the record of the worker stay.');
+  expect(hint).toContain(`To remove the worker by hand, run "${REMOVE_COPY}" and then "${DELETE_BRANCH}". Then delete the folder ${RECORD_DIR}.`);
+  expect(hint).not.toContain('dismiss');
+};
 
 describe('worker new: the work, in order (TP-5)', () => {
   it('makes the work copy, the record, the exclude entry, the settings file and the pane, in this order', async () => {
@@ -405,15 +482,12 @@ describe('worker new: the root checks come first (TP-130)', () => {
     expectNothingChanged(made);
   });
 
-  it('does not render a safety block that is out of date, and says nothing: the next start renders it', async () => {
-    const config = sampleConfig();
-    const older = claudeFileText({ ...config, core: { ...config.core, owner: { ...config.core.owner, prefix: '[From {owner} at {node} on {date}]' } } });
-    expect(older).not.toBe(claudeFileText(config));
-    const made = make({ claudeFile: older });
+  it('does not render a safety block that is out of date, and warns that the next start renders it', async () => {
+    const made = make({ claudeFile: olderClaudeFile() });
     await succeeded(made);
-    expect(made.deps.files.get('/w/node/coordinator/CLAUDE.md')).toBe(older);
+    expect(made.deps.files.get('/w/node/coordinator/CLAUDE.md')).toBe(olderClaudeFile());
     expect(made.deps.warned.join(' ')).not.toContain('Rendered the block');
-    expect(made.deps.warned.join(' ')).not.toContain('out of date');
+    expect(made.deps.warned).toContain(OUT_OF_DATE_NOTE);
   });
 
   it('stops for a missing program before any change, and names the check command', async () => {
@@ -643,14 +717,12 @@ describe('worker new: the consent for the hook settings (TP-12, TP-13)', () => {
     expectNothingChanged(made);
   });
 
-  it('exits 2 inside a factory session for a work copy that the checkout gave a settings file (TP-13), and keeps the copy', async () => {
+  it('exits 2 inside a factory session for a work copy that the checkout gives a settings file (TP-13), before the work copy exists', async () => {
     const made = make({ ...NO_TERMINAL, env: { FACTORY_SESSION: 'demo' }, checkout: '{"permissions":{"allow":["Read"]}}\n' });
     const error = await failed(made, { yes: true });
     expect(exitCodeOf[error.kind]).toBe(2);
-    expect(error.hint).toContain('factory dismiss alpha');
-    expect(made.deps.files.get(SETTINGS_FILE)).toBe('{"permissions":{"allow":["Read"]}}\n');
-    expect(made.deps.files.has(RECORD)).toBe(true);
-    expect(made.events).not.toContain('tmux split-window');
+    expect(error.hint).toContain('--yes gives no consent inside a factory session');
+    expectNothingChanged(made);
   });
 
   it('keeps the other keys of a settings file that the checkout gave, and adds the own entries', async () => {
@@ -669,11 +741,93 @@ describe('worker new: the consent for the hook settings (TP-12, TP-13)', () => {
     expect(made.events).not.toContain('prompt');
   });
 
-  it('stops before any write when the settings of the work copy is a skip setting', async () => {
-    const made = make({ checkout: '{"permissions":{"defaultMode":"bypassPermissions"}}\n', tty: true, prompt: () => ok('y') });
+});
+
+describe('worker new: the settings that the clone tracks stop the command before the work copy exists', () => {
+  const SKIP = '{"permissions":{"defaultMode":"bypassPermissions"}}\n';
+
+  it('stops with exit 4 for a tracked settings file that skips the permission checks, and makes no work copy, record or branch', async () => {
+    const made = make({ checkout: SKIP, tty: true, prompt: () => ok('y') });
     const error = await failed(made, { yes: false });
     expect(exitCodeOf[error.kind]).toBe(4);
-    expect(made.events).not.toContain('tmux split-window');
+    expect(error.message).toContain('work-copies/web/alpha/.claude/settings.local.json');
+    expectNothingChanged(made);
+  });
+
+  it('checks every tracked settings file, not only the local one', async () => {
+    const made = make({ head: [{ path: '.claude/settings.json', text: SKIP }] });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('work-copies/web/alpha/.claude/settings.json');
+    expectNothingChanged(made);
+  });
+
+  it('stops with exit 4 for a tracked .claude that is a link, and makes no work copy, record or branch', async () => {
+    const made = make({ head: [{ path: '.claude', mode: LINK_MODE, text: '../elsewhere' }] });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('work-copies/web/alpha/.claude is a link');
+    expectNothingChanged(made);
+  });
+
+  it('stops with exit 4 for a tracked .claude that is a file, and makes no work copy', async () => {
+    const made = make({ head: [{ path: '.claude', text: 'not a folder\n' }] });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('work-copies/web/alpha/.claude is not a folder');
+    expectNothingChanged(made);
+  });
+
+  it('stops with exit 4 for a tracked settings file that is a link', async () => {
+    const made = make({ head: [{ path: '.claude/settings.local.json', mode: LINK_MODE, text: '../../elsewhere.json' }] });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('settings.local.json (a link)');
+    expectNothingChanged(made);
+  });
+
+  it('stops with exit 4 for a tracked settings file that is larger than the check reads, and does not read it', async () => {
+    const made = make({ head: [{ path: '.claude/settings.json', text: ' '.repeat(maxFileBytes + 1) }] });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('work-copies/web/alpha/.claude/settings.json (cannot be read)');
+    expect(made.deps.calls.filter((call) => call.command === 'git' && call.args[2] === 'cat-file')).toEqual([]);
+    // No diff of the file maps here: a failing run would print the large file.
+    expect(made.events).not.toContain('git worktree-add');
+    expect(made.deps.dirs.has(COPY)).toBe(false);
+    expect(made.deps.files.has(RECORD)).toBe(false);
+  });
+
+  it('stops with exit 4 for a settings folder with more settings files than the check reads', async () => {
+    const head = Array.from({ length: 65 }, (_, index) => ({ path: `.claude/settings${index}.json`, text: '{}\n' }));
+    const made = make({ head });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('holds more than 64 settings files');
+    expectNothingChanged(made);
+  });
+
+  it('exits 1 for a tracked settings file that is not a JSON object, before the work copy exists', async () => {
+    const made = make({ checkout: 'not json\n' });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('is not a JSON object');
+    expectNothingChanged(made);
+  });
+
+  it('fails when git can not read the last commit of the clone, and makes no work copy', async () => {
+    const made = make({ headFails: true });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('cannot read');
+    expectNothingChanged(made);
+  });
+
+  it('goes on for a tracked settings file with no finding, and the launch reads the file in the work copy', async () => {
+    const made = make({ head: [{ path: '.claude/settings.json', text: '{"permissions":{"allow":["Read"]}}\n' }] });
+    const output = await succeeded(made);
+    expect(output.json).toMatchObject({ pane: FIRST_NEW_PANE });
+    expect(made.deps.files.get('/w/node/work-copies/web/alpha/.claude/settings.json')).toBe('{"permissions":{"allow":["Read"]}}\n');
   });
 });
 
@@ -702,7 +856,8 @@ describe('worker new: the exclude entry of the clone (TP-14)', () => {
     const made = make({ links: { [EXCLUDE]: '/elsewhere/exclude' }, seed: { '/elsewhere/exclude': TEMPLATE } });
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(4);
-    expect(error.hint).toContain('factory dismiss alpha');
+    expectKeptCopyHint(error);
+    expect(error.hint).toContain(`To start the worker, run ${RESUME}. That command does not make the exclude entry or the hook settings again.`);
     expect(made.deps.files.has(RECORD)).toBe(true);
     expect(made.deps.dirs.has(COPY)).toBe(true);
     expect(made.deps.files.has(SETTINGS_FILE)).toBe(false);
@@ -753,12 +908,12 @@ describe('worker new: the machine warning (TP-21)', () => {
 });
 
 describe('worker new: a failure after the work copy exists', () => {
-  it('keeps the copy and the record when the pane does not start, and names factory dismiss', async () => {
+  it('keeps the copy and the record when the pane does not start, and names the steps that remove the worker by hand', async () => {
     const made = make({ tmux: { failing: 'split-window' } });
     const error = await failed(made);
     expect(error.kind).toBe('failure');
-    expect(error.hint).toContain('"factory dismiss alpha"');
-    expect(error.hint).toContain('stay');
+    expectKeptCopyHint(error);
+    expect(error.hint).not.toContain('does not make the exclude entry');
     expect(made.deps.dirs.has(COPY)).toBe(true);
     expect(made.deps.files.has(RECORD)).toBe(true);
     expect(made.deps.files.get(SETTINGS_FILE)).toBe(OWN_SETTINGS);
@@ -772,7 +927,7 @@ describe('worker new: a failure after the work copy exists', () => {
     expect(made.deps.calls.filter((call) => call.command === 'git' && call.args[2] === 'worktree')).toHaveLength(1);
   });
 
-  it('names the resume command and the dismiss command when the proxy does not answer', async () => {
+  it('names the resume command and the steps that remove the worker by hand when the proxy does not answer', async () => {
     const config = sampleConfig();
     const made = make({
       config: {
@@ -787,28 +942,55 @@ describe('worker new: a failure after the work copy exists', () => {
     });
     const error = await failed(made);
     expect(error.message).toContain('does not answer');
-    expect(error.hint).toContain('"factory worker resume alpha"');
-    expect(error.hint).toContain('"factory dismiss alpha"');
+    expect(error.hint).toContain(RESUME);
+    expectKeptCopyHint(error);
     expect(made.deps.files.has(RECORD)).toBe(true);
     expect(JSON.stringify(error)).not.toContain('secret-path');
   });
 
-  it('fails before it writes anything when git can not make the work copy', async () => {
+  it('puts a path with a brace and a comma in quotes in the steps that remove the worker by hand', async () => {
+    const config = sampleConfig();
+    const made = make({ tmux: { failing: 'split-window' }, config: { ...config, recipe: { ...config.recipe, projects: [{ ...config.recipe.projects[0]!, path: 'we{b,c}' }] } } });
+    made.deps.seedDir('/w/node/we{b,c}');
+    made.deps.seedDir('/w/node/we{b,c}/.git');
+    const error = await failed(made);
+    expect(error.hint).toContain("git -C '/w/node/we{b,c}' worktree remove");
+  });
+
+  it('fails before it writes anything when git can not make the work copy, and says what git can keep and how to remove it', async () => {
     const made = make({ worktreeExit: 128 });
     const error = await failed(made);
     expect(error.kind).toBe('failure');
     expect(error.message).toContain('cannot make the work copy');
-    expect(error.hint).toContain('factory worker new');
+    expect(error.hint).toContain(`Git can keep the branch ${BRANCH} and the folder ${COPY} after a failure.`);
+    expect(error.hint).toContain(`"${REMOVE_COPY}"`);
+    expect(error.hint).toContain(`"${DELETE_BRANCH}"`);
+    expect(error.hint).toContain('"factory worker new alpha --project web" again');
     expectNothingChanged({ ...made, events: made.events.filter((event) => event !== 'git worktree-add') });
   });
 
-  it('names the git command that removes the copy when the record can not be written', async () => {
+  it('names the git commands that remove the copy and the branch when the record can not be written', async () => {
     const made = make({ failWrite: RECORD });
     const error = await failed(made);
     expect(error.kind).toBe('failure');
-    expect(error.hint).toContain(`git -C ${CLONE} worktree remove ${COPY}`);
-    expect(error.hint).not.toContain('factory dismiss');
+    expect(error.hint).toContain(`The work copy ${COPY} and the branch ${BRANCH} stay, and the worker has no record.`);
+    expect(error.hint).toContain(`"${REMOVE_COPY}"`);
+    expect(error.hint).toContain(`"${DELETE_BRANCH}"`);
+    expect(error.hint).toContain('"factory worker new alpha --project web" again');
+    expect(error.hint).not.toContain('dismiss');
     expect(made.deps.files.has(RECORD)).toBe(false);
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('says that the record stays when only the inbox folder can not be made, and names the steps that remove the worker by hand', async () => {
+    const made = make({ seed: { [INBOX]: 'in the way\n' } });
+    const error = await failed(made);
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain(`cannot write in ${INBOX}`);
+    expectKeptCopyHint(error);
+    expect(error.hint).not.toContain('has no record');
+    expect(error.hint).not.toContain('does not make the exclude entry');
+    expect(made.deps.files.has(RECORD)).toBe(true);
     expect(made.events).not.toContain('tmux split-window');
   });
 });
@@ -1199,7 +1381,16 @@ describe('worker resume: the session of the worker (TP-30)', () => {
     expect(indexOf(made, 'tmux swap-pane')).toBeLessThan(indexOf(made, 'tmux kill-pane'));
   });
 
-  it('names the resume command and the dismiss command when the proxy does not answer', async () => {
+  it('warns that a safety block that is out of date is not rendered by this command, and goes on', async () => {
+    const made = await withWorkers({ claudeFile: olderClaudeFile() });
+    const output = await resumed(made);
+    expect(made.deps.warned).toContain(OUT_OF_DATE_NOTE);
+    expect(made.deps.files.get('/w/node/coordinator/CLAUDE.md')).toBe(olderClaudeFile());
+    expect(output.failed).toBe(false);
+    expect(made.events).toContain('tmux split-window');
+  });
+
+  it('names the resume command when the proxy does not answer', async () => {
     const config = sampleConfig();
     const made = await withWorkers({
       config: {

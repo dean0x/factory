@@ -1,6 +1,6 @@
 import { basename, dirname, isAbsolute } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
-import { checkFolderSettings, requireNoFailures, warningLines } from '../commands/root-content.js';
+import { checkFolderSettings, checkTrackedSettings, requireNoFailures, warningLines } from '../commands/root-content.js';
 import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
@@ -134,13 +134,11 @@ const WORK_COPY_PLACE = 'a work copy';
 /** The command that starts a stopped worker again, without the program name: for the retry of a launch. */
 export const resumeLine = (workerId: string): string => `${commandLines.workerResume} ${workerId}`;
 
-/** The command that starts a stopped worker again, and the command that ends it. */
+/** The command that starts a stopped worker again. */
 const resumeCommand = (workerId: string): string => commandText(resumeLine(workerId));
-export const dismissCommand = (workerId: string): string => commandText(`dismiss ${workerId}`);
 
-/** The two ways out of a failed launch, for the end of a remedy line: start the worker again, or end it. */
-const tryAgainOrEnd = (workerId: string): string =>
-  `"${resumeCommand(workerId)}" to try again, or "${dismissCommand(workerId)}" to end the ${roles.worker}`;
+/** The way out of a failed launch, for the end of a remedy line: start the worker again. */
+const tryAgain = (workerId: string): string => `"${resumeCommand(workerId)}" to try again`;
 
 /**
  * The work copy must be the folder of this worker: exactly `work-copies/<project>/<id>` of the factory folder, as the path is
@@ -168,7 +166,7 @@ const requireWorkCopy = async (deps: Deps, home: string, workerId: string, workC
   }
   return failure(
     `the work copy ${workCopy} of the ${roles.worker} ${workerId} is not a folder`,
-    `Restore the folder, or end the ${roles.worker} with "${dismissCommand(workerId)}".`,
+    `Restore the folder. Then run ${tryAgain(workerId)}.`,
   );
 };
 
@@ -179,6 +177,24 @@ const requireCleanSettings = async (deps: Deps, home: string, workCopy: string):
   if (!clean.ok) return clean;
   for (const line of warningLines(findings)) deps.warn(line);
   return ok(undefined);
+};
+
+/**
+ * The settings files that a checkout puts into a new work copy, read from the last commit of the clone before the work copy exists:
+ * the same stops as `requireCleanSettings` (exit 4), so that a refusal leaves no work copy, no branch and no record. Warnings are
+ * not printed here: the launch prints them from the files of the work copy. The value is the text of the file that the program
+ * writes to, when the commit tracks one.
+ */
+export const requireCleanTrackedSettings = async (
+  deps: Deps,
+  home: string,
+  clone: string,
+  workCopy: string,
+): Promise<CliResult<{ readonly localText: string | null }>> => {
+  const tracked = await checkTrackedSettings(deps, home, clone, { path: workCopy, presence: WORK_COPY_PLACE });
+  if (!tracked.ok) return tracked;
+  const clean = requireNoFailures(tracked.value.findings);
+  return clean.ok ? ok({ localText: tracked.value.localText }) : clean;
 };
 
 /**
@@ -259,10 +275,10 @@ const markPane = async (deps: Deps, pane: string, workerId: string): Promise<Cli
   const close = killPaneArgs(pane);
   const closed = close.ok && (await tmuxStep(deps, close.value)).ok;
   return closed
-    ? failure(`${set.error.message}, so the pane ${pane} was closed`, `Run ${tryAgainOrEnd(workerId)}.`)
+    ? failure(`${set.error.message}, so the pane ${pane} was closed`, `Run ${tryAgain(workerId)}.`)
     : failure(
         `${set.error.message}, and the pane ${pane} stays open with no ${roles.worker} mark`,
-        `Close the pane with "${toolNames.tmux} kill-pane -t ${pane}". Then run ${tryAgainOrEnd(workerId)}.`,
+        `Close the pane with "${toolNames.tmux} kill-pane -t ${pane}". Then run ${tryAgain(workerId)}.`,
       );
 };
 
@@ -271,7 +287,7 @@ const markPane = async (deps: Deps, pane: string, workerId: string): Promise<Cli
  * launch. A pane with a strange worker mark does not stop this check. Nothing is undone: the pane stays for a person to read.
  */
 const requireRunningPane = async (deps: Deps, session: string, pane: string, workerId: string): Promise<CliResult<void>> => {
-  const remedy = `Run ${tryAgainOrEnd(workerId)}.`;
+  const remedy = `Run ${tryAgain(workerId)}.`;
   const listed = await tmuxStep(deps, paneListArgs(session));
   if (!listed.ok) return failure(`cannot check the pane ${pane}: ${listed.error.message}`, remedy);
   const rows = parsePaneListSoft(listed.value);

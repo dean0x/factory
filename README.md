@@ -211,9 +211,9 @@ factory worker new alpha --project web
 factory worker new alpha --project web --yes
 ```
 
-`worker new` makes one worker. The session of the node must run, so run `factory start` first. Without the session, `worker new` exits with code 3 and names `factory start`. It runs the same checks as `start`: the tools, the safety block, the stops for the settings files, and the warning for instruction files. A stop exits with code 4, and nothing changes.
+`worker new` makes one worker. The session of the node must run, so run `factory start` first. Without the session, `worker new` exits with code 3 and names `factory start`. It runs the same checks as `start`: the tools, the safety block, the stops for the settings files, and the warning for instruction files. A stop exits with code 4, and nothing changes. A safety block that is out of date gives a warning: `worker new` does not render it again, and the next `start` does.
 
-Before the first change, `worker new` checks these facts, and it exits with code 2 when one is false: the project is listed in the config, the id is a slug, the id is not the id of the node, and the id has no record, no folder in `work-copies/` and no branch `worker/ID` in the clone. It exits with code 4 when `work-copies/` or `work-copies/PROJECT/` is a link or a file.
+Before the first change, `worker new` checks these facts, and it exits with code 2 when one is false: the project is listed in the config, the id is a slug, the id is not the id of the node, and the id has no record, no folder in `work-copies/` and no branch `worker/ID` in the clone. It exits with code 4 when `work-copies/` or `work-copies/PROJECT/` is a link or a file. It also reads the files that the last commit of the clone tracks in `.claude/`, because git puts them into the work copy. It exits with code 4 for a link or an unsafe settings file there, and with code 2 for `--yes` inside a factory session when the clone tracks `.claude/settings.local.json`. These stops come before the work copy exists, so they leave no work copy, no branch and no record.
 
 Then it does these steps in order:
 
@@ -224,7 +224,7 @@ Then it does these steps in order:
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
 6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its inbox folder.
 
-If a step after the first fails, the work copy and the record stay, and nothing is undone. The message names `factory dismiss ID` as the command that ends the worker. That command comes in a later version. Until then, remove the work copy with `git worktree remove`.
+If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. The command `factory dismiss` is not built in this version.
 
 ### List the workers
 

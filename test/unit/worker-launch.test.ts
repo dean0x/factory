@@ -226,6 +226,7 @@ describe('the launch of a worker: the pane and the argument list', () => {
     const error = await failed(made);
     expect(error.kind).toBe('failure');
     expect(error.message).toContain(COPY);
+    expect(error.hint).toBe('Restore the folder. Then run "factory worker resume alpha" to try again.');
     expect(made.events).toEqual([]);
     expect(panesOf(made)).toBe(START_PANES);
   });
@@ -666,15 +667,14 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     },
   );
 
-  it('reports a pane that is dead at once as a failed launch, names the pane, and offers resume and dismiss', async () => {
+  it('reports a pane that is dead at once as a failed launch, names the pane, and offers resume only', async () => {
     const made = make({ tmux: { newPanesEndAtOnce: true } });
     const error = await failed(made, { resumeId: UUID });
     expect(error.kind).toBe('failure');
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(FIRST_NEW_PANE);
     expect(error.message).toContain('alpha');
-    expect(error.hint).toContain('factory worker resume alpha');
-    expect(error.hint).toContain('factory dismiss alpha');
+    expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
     expect(listCalls(made)).toHaveLength(1);
   });
 
@@ -697,7 +697,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     const error = await failed(made, { resumeId: UUID });
     expect(error.kind).toBe('failure');
     expect(error.message).toContain(FIRST_NEW_PANE);
-    expect(error.hint).toContain('factory worker resume alpha');
+    expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
   });
 
   it('reports a pane list that tmux can not give as a failure, and keeps the pane', async () => {
@@ -744,6 +744,7 @@ describe('the launch of a worker: a failure after the pane exists', () => {
     expect(error.kind).toBe('failure');
     expect(error.message).toContain('set-option');
     expect(error.message).toContain(FIRST_NEW_PANE);
+    expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
     expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux kill-pane']);
     expect(made.tmux.calls.at(-1)?.args).toEqual(['kill-pane', '-t', FIRST_NEW_PANE]);
     expect(panesOf(made)).toBe(START_PANES);
@@ -757,6 +758,6 @@ describe('the launch of a worker: a failure after the pane exists', () => {
     const error = await failed(made);
     expect(error.kind).toBe('failure');
     expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} stays`);
-    expect(error.hint).toContain(`kill-pane -t ${FIRST_NEW_PANE}`);
+    expect(error.hint).toBe(`Close the pane with "tmux kill-pane -t ${FIRST_NEW_PANE}". Then run "factory worker resume alpha" to try again.`);
   });
 });

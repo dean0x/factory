@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import {
   addWorkTree,
+  blobTextOf,
   branchExists,
   commitAll,
   commitPaths,
   gitClone,
+  headEntriesAt,
   headOf,
   ignoredPathsOf,
   initRootRepo,
+  isFileMode,
+  LINK_MODE,
   listRepoChildren,
   MAX_IGNORE_PATHS,
   MAX_SCAN_ENTRIES,
@@ -647,6 +651,80 @@ describe('git: a folder is the top of its own work tree', () => {
 
   it('stops with exit 4 for a folder that no work tree holds', async () => {
     expect(await check({})).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+});
+
+describe('git: the entries of the last commit (the settings folder of a new work copy)', () => {
+  const ID = 'edb1527b23ccdb7ac7d3ae02584b377b406514fe';
+  const OTHER = '3b9f379c935c5c919fc9b946a5103110cdeed1f3';
+  /** The lines that `git ls-tree -z -l` prints: the size is padded with spaces, and a folder has a dash. */
+  const listing = [
+    `040000 tree d955ddfa3a9e242df8971376e618f79b8496f7e6       -\t.claude/commands`,
+    `120000 blob ${ID}      19\t.claude/settings.json`,
+    `100644 blob ${OTHER}      35\t.claude/settings.local.json`,
+  ]
+    .map((line) => `${line}\0`)
+    .join('');
+
+  const askedWith = (answer: ReturnType<RunHandler>) => {
+    const calls: string[][] = [];
+    const deps = createFakeDeps({
+      run: (call) => {
+        calls.push([...call.args]);
+        return answer;
+      },
+    });
+    return { deps, calls };
+  };
+
+  it('reads the mode, the kind, the id, the size and the path of each entry, one level deep', async () => {
+    const { deps, calls } = askedWith(exited(0, listing));
+    const entries = await headEntriesAt(deps, '/r/web', '.claude/');
+    expect(calls).toEqual([['-C', '/r/web', 'ls-tree', '-z', '-l', 'HEAD', '--', '.claude/']]);
+    expect(entries).toEqual({
+      ok: true,
+      value: [
+        { mode: '040000', kind: 'tree', id: 'd955ddfa3a9e242df8971376e618f79b8496f7e6', size: null, path: '.claude/commands' },
+        { mode: LINK_MODE, kind: 'blob', id: ID, size: 19, path: '.claude/settings.json' },
+        { mode: '100644', kind: 'blob', id: OTHER, size: 35, path: '.claude/settings.local.json' },
+      ],
+    });
+  });
+
+  it('gives no entry for a path that the commit does not have', async () => {
+    const { deps } = askedWith(exited(0, ''));
+    expect(await headEntriesAt(deps, '/r/web', '.claude')).toEqual({ ok: true, value: [] });
+  });
+
+  it('is a failure when git can not read the commit, and when it prints a line that it does not know', async () => {
+    const unborn = await headEntriesAt(askedWith(exited(128, '', 'fatal: bad revision HEAD\n')).deps, '/r/web', '.claude');
+    expect(unborn).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    const odd = await headEntriesAt(askedWith(exited(0, 'something else\0')).deps, '/r/web', '.claude');
+    expect(odd).toMatchObject({ ok: false, error: { kind: 'failure' } });
+  });
+
+  it('tells a plain file mode from a link and a folder', () => {
+    expect([isFileMode('100644'), isFileMode('100755'), isFileMode(LINK_MODE), isFileMode('040000'), isFileMode('160000')]).toEqual([
+      true,
+      true,
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it('reads the text of a file by its object id, and refuses any other word before a call', async () => {
+    const { deps, calls } = askedWith(exited(0, '{"a":1}\n'));
+    expect(await blobTextOf(deps, '/r/web', OTHER)).toEqual({ ok: true, value: '{"a":1}\n' });
+    expect(calls).toEqual([['-C', '/r/web', 'cat-file', 'blob', OTHER]]);
+    calls.length = 0;
+    expect(await blobTextOf(deps, '/r/web', '--textconv')).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(calls).toEqual([]);
+  });
+
+  it('is a failure when git can not give the file', async () => {
+    const { deps } = askedWith(exited(128, '', 'fatal: Not a valid object name\n'));
+    expect(await blobTextOf(deps, '/r/web', OTHER)).toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 });
 
