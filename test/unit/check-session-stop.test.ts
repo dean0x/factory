@@ -223,8 +223,36 @@ describe('scripts/check-session-stop.sh', () => {
       expect(result.out).toContain('kill -TERM');
     });
 
-    it('exits 1 for the verdict not safe when a fact is open', async () => {
+    it('accepts the verdict not safe when one fact is no and another fact is open', async () => {
       await change((text) => text.replace('| yes | yes | yes | no | not safe | R-6 |', '| yes | open | yes | no | not safe | R-6 |'));
+      const result = check();
+      expect(result.code).toBe(0);
+      expect(failedChecks(result.out)).toEqual([]);
+    });
+
+    it('accepts the verdict not safe for a row that was not tested, with open facts and no fact that is no', async () => {
+      await change((text) =>
+        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | yes | open | open | open | not safe | not tested within the run budget |'),
+      );
+      const result = check();
+      expect(result.code).toBe(0);
+      expect(failedChecks(result.out)).toEqual([]);
+    });
+
+    it('exits 1 for the verdict not safe with open facts and no fact that is no, when the Probe cell does not say not tested', async () => {
+      await change((text) =>
+        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | yes | open | open | open | not safe | R-8 |'),
+      );
+      const result = check();
+      expect(result.code).toBe(1);
+      expect(failedChecks(result.out)).toEqual(['5']);
+      expect(result.out).toContain('kill -INT');
+    });
+
+    it('exits 1 for a row that says not tested when all four facts are observed and none is no', async () => {
+      await change((text) =>
+        replaceLine(text, '| `kill -INT` | busy |', '| `kill -INT` | busy | yes | yes | yes | yes | not safe | not tested |'),
+      );
       const result = check();
       expect(result.code).toBe(1);
       expect(failedChecks(result.out)).toEqual(['5']);
@@ -263,13 +291,10 @@ describe('scripts/check-session-stop.sh', () => {
   });
 
   describe('the doc of the repo', () => {
-    it('has the rule and the 12 rows in the table, each with four facts that agree with its verdict', () => {
+    it('has the rule and the 12 rows in the table, each with four facts and a verdict that agrees with them', () => {
       const result = check([join(ROOT, 'docs')]);
-      const failed = failedChecks(result.out);
-      expect(failed).not.toContain('1');
-      expect(failed).not.toContain('2');
-      expect(failed).not.toContain('3');
-      expect(failed).not.toContain('5');
+      expect(failedChecks(result.out)).toEqual([]);
+      expect(result.code).toBe(0);
     });
   });
 });

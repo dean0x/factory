@@ -11,7 +11,8 @@
 #   | Way | Case | fact 1 | fact 2 | fact 3 | fact 4 | Verdict | ... |
 # The six ways are /exit, /quit, /restart, kill -TERM, kill -INT and agent view delete. The two cases are idle and busy.
 # Backticks around a cell are ignored. A fact starts with yes, no, open or n/a, and a reason may follow. The verdict is
-# safe, not safe, not available or open.
+# safe, not safe, not available or open. The verdict not safe needs a fact that is no. The exception is a row that no test
+# reached: its facts are not no, at least one is open, and its Probe cell starts with "not tested".
 #
 # Exit code 0: every check passes. Exit code 1: a check fails. The output names the first failure of each check.
 # A check that did not run is a failure, never ok: a file that cannot be read, and an awk that stops with an error.
@@ -114,6 +115,7 @@ if findings=$(awk '
     rowline[key] = NR
     for (k = 1; k <= 4; k++) fact[key, k] = cell[3 + k]
     verdict[key] = plain(cell[8])
+    probe[key] = plain(cell[9])
     next
   }
   END {
@@ -162,9 +164,9 @@ if findings=$(awk '
         else if (!(text in verdict_word)) fail(4, sprintf("%s has the verdict \"%s\", which is not safe, not safe, not available or open", label, text))
         if (!facts_ok || !(text in verdict_word) || text == "open") continue
         if (text == "safe" && yes != 4) fail(5, sprintf("%s has the verdict safe, but a fact is not yes", label))
-        else if (text == "not safe" && (no == 0 || yes + no != 4)) {
-          if (no == 0) fail(5, sprintf("%s has the verdict not safe, but no fact is no", label))
-          else fail(5, sprintf("%s has the verdict not safe, but a fact is not observed", label))
+        else if (text == "not safe" && no == 0) {
+          if (open == 0) fail(5, sprintf("%s has the verdict not safe, but no fact is no", label))
+          else if (probe[key] !~ /^not tested/) fail(5, sprintf("%s has the verdict not safe, but no fact is no and the Probe cell does not start with \"not tested\"", label))
         } else if (text == "not available" && na != 4) fail(5, sprintf("%s has the verdict not available, but a fact is not n/a", label))
       }
     }
