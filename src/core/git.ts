@@ -1,4 +1,4 @@
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
 import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
@@ -8,6 +8,7 @@ import { ok } from './result.js';
 
 const GIT_TIMEOUT_MS = 15_000;
 const CLONE_TIMEOUT_MS = 300_000;
+const WORKTREE_TIMEOUT_MS = 120_000;
 /** The entry that every work tree has in its top folder: a folder, or a file for a linked work tree. */
 export const GIT_ENTRY = '.git';
 const MAX_STDERR_CHARS = 200;
@@ -174,6 +175,40 @@ export const gitClone = async (deps: Deps, url: string, target: string): Promise
   if (result.value.exitCode === 0) return ok(undefined);
   const detail = withoutUserinfo(result.value.stderr.trim().split('\n').at(-1) ?? '').slice(0, MAX_STDERR_CHARS);
   return failure(`cannot clone ${shown}: git exited with ${result.value.exitCode}${detail === '' ? '' : ` (${detail})`}`);
+};
+
+/**
+ * True when the repo of `dir` has a local branch of this name. Git answers with exit code 1 for a branch that is not there.
+ * Any other answer is a failure, because the repo may not be one.
+ */
+export const branchExists = async (deps: Deps, dir: string, branch: string): Promise<CliResult<boolean>> => {
+  if (!isBranchName(branch)) return failure('cannot look for a branch: the name is not a branch name');
+  const result = await deps.run('git', ['-C', dir, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
+  if (!result.ok) return failure(`cannot look for the branch ${branch}: ${result.error.message}`);
+  if (result.value.exitCode === 0) return ok(true);
+  if (result.value.exitCode === 1) return ok(false);
+  return failure(`cannot look for the branch ${branch}: git exited with ${result.value.exitCode}`);
+};
+
+/**
+ * Make the work copy of a worker: a new work tree of the repo of `clone` in `folder`, on the new branch `branch`. The branch
+ * starts at the head of the clone. Git makes the folders above `folder`, and it fails when the branch or the folder exists.
+ * The time limit is longer than for the other calls, because git writes every file of the project.
+ */
+export const addWorkTree = async (deps: Deps, clone: string, branch: string, folder: string): Promise<CliResult<void>> => {
+  if (!isBranchName(branch)) return failure('cannot make the work copy: the branch is not a branch name');
+  if (!isAbsolute(folder)) return failure('cannot make the work copy: the folder is not an absolute path');
+  const what = `make the work copy ${folder}`;
+  const result = await deps.run('git', ['-C', clone, 'worktree', 'add', '-b', branch, folder], { timeoutMs: WORKTREE_TIMEOUT_MS });
+  if (!result.ok && result.error.message.endsWith(`: ${TIME_LIMIT_SIGNAL}`)) {
+    return failure(`cannot ${what}: git took longer than ${WORKTREE_TIMEOUT_MS / 1000} seconds`);
+  }
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode === 0) return ok(undefined);
+  const detail = withoutUserinfo(result.value.stderr.trim().split('\n').at(-1) ?? '').slice(0, MAX_STDERR_CHARS);
+  return failure(`cannot ${what}: git exited with ${result.value.exitCode}${detail === '' ? '' : ` (${detail})`}`);
 };
 
 export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import {
+  addWorkTree,
+  branchExists,
   commitAll,
   commitPaths,
   gitClone,
@@ -224,6 +226,94 @@ describe('git: clone', () => {
     const result = await gitClone(deps, 'https://host/acme/api.git', '/w/api');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toBe('cannot clone https://host/acme/api.git: cannot run git: ENOENT');
+  });
+});
+
+describe('git: the work copy of a worker', () => {
+  const CLONE = '/w/web';
+  const COPY = '/w/work-copies/web/alpha';
+
+  const added = async (run: RunHandler, branch = 'worker/alpha', folder = COPY) => {
+    const deps = createFakeDeps({ cwd: WS, run });
+    const result = await addWorkTree(deps, CLONE, branch, folder);
+    return { result, deps };
+  };
+
+  it('makes the work copy with one git call: a new branch, the folder, no option after them, and a time limit of 120 s', async () => {
+    const { result, deps } = await added(() => exited(0));
+    expect(result.ok).toBe(true);
+    expect(deps.calls.map((call) => [call.command, ...call.args])).toEqual([
+      ['git', '-C', CLONE, 'worktree', 'add', '-b', 'worker/alpha', COPY],
+    ]);
+    expect(deps.calls[0]?.timeoutMs).toBe(120_000);
+  });
+
+  it('fails with the exit code and the last line of the git message', async () => {
+    const { result } = await added(() => exited(128, '', "Preparing worktree\nfatal: a branch named 'worker/alpha' already exists\n"));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!result.ok) {
+      expect(result.error.message).toContain(`cannot make the work copy ${COPY}`);
+      expect(result.error.message).toContain('git exited with 128');
+      expect(result.error.message).toContain("a branch named 'worker/alpha' already exists");
+      expect(result.error.message).not.toContain('Preparing worktree');
+    }
+  });
+
+  it('says that git took longer than the limit when the time limit stops git', async () => {
+    const { result } = await added(() => failure('cannot run git: SIGTERM'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toContain('took longer than 120 seconds');
+      expect(result.error.message).not.toContain('SIGTERM');
+    }
+  });
+
+  it('keeps the message of another failure to run git', async () => {
+    const { result } = await added(() => failure('cannot run git: ENOENT'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toBe(`cannot make the work copy ${COPY}: cannot run git: ENOENT`);
+  });
+
+  it.each([['-b'], ['a b'], [''], ['x;y']])('refuses the branch %j before it runs git', async (branch) => {
+    const { result, deps } = await added(() => exited(0), branch);
+    expect(result.ok).toBe(false);
+    expect(deps.calls).toEqual([]);
+  });
+
+  it('refuses a folder that is not an absolute path before it runs git', async () => {
+    const { result, deps } = await added(() => exited(0), 'worker/alpha', 'work-copies/web/alpha');
+    expect(result.ok).toBe(false);
+    expect(deps.calls).toEqual([]);
+  });
+
+  describe('the branch of the repo', () => {
+    const asked = async (run: RunHandler) => {
+      const deps = createFakeDeps({ cwd: WS, run });
+      return { result: await branchExists(deps, CLONE, 'worker/alpha'), deps };
+    };
+
+    it('asks git for the exact branch reference, and reads exit code 0 as a branch that exists', async () => {
+      const { result, deps } = await asked(() => exited(0, 'abc123\n'));
+      expect(result).toEqual({ ok: true, value: true });
+      expect(deps.calls.map((call) => [call.command, ...call.args])).toEqual([
+        ['git', '-C', CLONE, 'rev-parse', '--verify', '--quiet', 'refs/heads/worker/alpha'],
+      ]);
+    });
+
+    it('reads exit code 1 as a branch that does not exist', async () => {
+      expect((await asked(() => exited(1))).result).toEqual({ ok: true, value: false });
+    });
+
+    it('fails for any other exit code, and when git does not run', async () => {
+      expect((await asked(() => exited(128, '', 'fatal: not a git repository'))).result).toMatchObject({ ok: false });
+      expect((await asked(() => failure('cannot run git: ENOENT'))).result).toMatchObject({ ok: false });
+    });
+
+    it('refuses a branch that is not a branch name before it runs git', async () => {
+      const deps = createFakeDeps({ cwd: WS, run: () => exited(0) });
+      expect(await branchExists(deps, CLONE, '--all')).toMatchObject({ ok: false });
+      expect(deps.calls).toEqual([]);
+    });
   });
 });
 
