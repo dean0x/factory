@@ -1,3 +1,4 @@
+import { err, ok, type Result } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
 import { env, tmuxNames } from '../names.js';
 
@@ -56,6 +57,128 @@ export const switchArgs = (id: string): TmuxArgs => call('switch-client', '-t', 
 /** The command that a person types to attach to the session. */
 export const attachHint = (id: string): string => `${toolNames.tmux} attach -t ${id}`;
 
+/** The pane id of tmux: a percent sign and digits, for example `%12`. tmux makes the id, and a pane keeps it as long as it lives. */
+const PANE_ID_PATTERN = /^%[0-9]+$/;
+
+export const isPaneId = (text: string): boolean => PANE_ID_PATTERN.test(text);
+
+/** The name of a pane option that factory sets: an at sign, then lower case letters, digits and underscores. */
+const PANE_OPTION_PATTERN = /^@[a-z][a-z0-9_]{0,31}$/;
+
+const MAX_SHELL_TEXT_CHARS = 1024;
+
+const refuse = (what: string): Result<never, string> => err(`the tmux call refuses ${what}`);
+
+/** A pane is a target only by its id. A name, an index or a position can match another pane. */
+const paneTarget = (pane: string): Result<string, string> =>
+  isPaneId(pane) ? ok(pane) : refuse('a pane id that is not a percent sign and digits');
+
+const PANE_ID_FORMAT = '#{pane_id}';
+
+/** The words of one line of the pane list. No valid value holds this word, and a printable word survives the output of tmux. */
+const FIELD_SEPARATOR = '|';
+
+/** The format of one line of the pane list. The worker option is last, because a person or a program can set its value. */
+const PANE_LIST_FORMAT = [PANE_ID_FORMAT, '#{pane_pid}', '#{pane_dead}', `#{${tmuxNames.optionWorker}}`].join(FIELD_SEPARATOR);
+
+/** Lists every pane of every window of the session, one line for each pane. `parsePaneList` reads the output. */
+export const paneListArgs = (id: string): TmuxArgs =>
+  call('list-panes', '-s', '-t', windowTarget(id, ''), '-F', PANE_LIST_FORMAT);
+
+export interface PaneRow {
+  readonly paneId: string;
+  /** The process id of the program of the pane. For a pane that has ended, it is the id that the program had. */
+  readonly pid: number;
+  readonly dead: boolean;
+  /** The value of the worker option, or null for a pane with no worker, such as the coordinator and the slot. */
+  readonly worker: string | null;
+}
+
+const PANE_FIELDS = 4;
+/** A process id is a number from 1, with no leading zero and at most 10 digits. A pid of 0 would name a process group. */
+const PID_PATTERN = /^[1-9][0-9]{0,9}$/;
+/** A worker id: letters, digits, dots, underscores and dashes, with a letter or a digit first. */
+const WORKER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+
+const parsePaneLine = (line: string): PaneRow | null => {
+  const fields = line.split(FIELD_SEPARATOR);
+  if (fields.length !== PANE_FIELDS) return null;
+  const [paneId = '', pid = '', dead = '', worker = ''] = fields;
+  if (!isPaneId(paneId) || !PID_PATTERN.test(pid)) return null;
+  if (dead !== '0' && dead !== '1') return null;
+  if (worker !== '' && !WORKER_PATTERN.test(worker)) return null;
+  return { paneId, pid: Number(pid), dead: dead === '1', worker: worker === '' ? null : worker };
+};
+
+/**
+ * Reads the output of the call from `paneListArgs`. One malformed line refuses the whole list, so that a caller never
+ * acts on a part of it. The error names the number of the line and never its text.
+ */
+export const parsePaneList = (text: string): Result<readonly PaneRow[], string> => {
+  if (text === '') return ok([]);
+  const lines = (text.endsWith('\n') ? text.slice(0, -1) : text).split('\n');
+  const rows: PaneRow[] = [];
+  for (const [index, line] of lines.entries()) {
+    const row = parsePaneLine(line);
+    if (row === null) return err(`line ${index + 1} of the pane list is malformed`);
+    rows.push(row);
+  }
+  return ok(rows);
+};
+
+export const killPaneArgs = (pane: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  return target.ok ? ok(call('kill-pane', '-t', target.value)) : target;
+};
+
+/**
+ * Makes a pane in the workers window of the session, in the folder, with the command as an argument list and no shell.
+ * The pane does not become the active pane. The call prints the id of the new pane. A command that is empty makes tmux
+ * start a shell, so the call refuses it.
+ */
+export const splitWorkerPaneArgs = (input: {
+  readonly id: string;
+  readonly cwd: string;
+  readonly command: readonly string[];
+}): Result<TmuxArgs, string> => {
+  const { id, cwd, command } = input;
+  if (command.length === 0) return refuse('a pane with no command');
+  return ok(
+    call('split-window', '-d', '-P', '-F', PANE_ID_FORMAT, '-t', windowTarget(id, tmuxNames.windowWorkers), '-c', cwd, '--', ...command),
+  );
+};
+
+/** Sets a pane option on the pane, by its id. Only the options that factory sets are allowed: the name starts with an at sign. */
+export const setPaneOptionArgs = (pane: string, option: string, value: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  if (!target.ok) return target;
+  if (!PANE_OPTION_PATTERN.test(option)) return refuse('a pane option that is not a name with an at sign');
+  return ok(call('set-option', '-p', '-t', target.value, option, value));
+};
+
+/** Swaps two panes, by their ids. A pane keeps its id and its options. */
+export const swapPaneArgs = (source: string, target: string): Result<TmuxArgs, string> => {
+  const from = paneTarget(source);
+  if (!from.ok) return from;
+  const to = paneTarget(target);
+  return to.ok ? ok(call('swap-pane', '-s', from.value, '-t', to.value)) : to;
+};
+
+/**
+ * Runs a shell text in the background of the tmux server. The text goes to a shell, so the caller builds it from values that
+ * it made: digits, a token and pane ids. The call refuses an empty text, a control character, and a text that is too long.
+ */
+export const runShellBackgroundArgs = (text: string): Result<TmuxArgs, string> => {
+  if (text === '' || text.length > MAX_SHELL_TEXT_CHARS || /\p{Cc}/u.test(text)) {
+    return refuse('a shell text that is empty, too long, or has a control character');
+  }
+  return ok(call('run-shell', '-b', text));
+};
+
+/** Makes a window in the background, in the folder. The empty window in the target makes it a window of the session. */
+export const newWindowArgs = (id: string, name: string, cwd: string): TmuxArgs =>
+  call('new-window', '-d', '-t', windowTarget(id, ''), '-n', name, '-c', cwd);
+
 /**
  * The tmux calls that start the session of a node, in order. Each call is an argument list for a program that runs with no shell.
  * The view window holds the coordinator and the slot. The workers window holds the workers, which come in a later version.
@@ -91,6 +214,6 @@ export const startSteps = (input: {
     call('set-option', '-t', windowTarget(id, ''), tmuxNames.optionHome, home),
     call('split-window', '-d', '-h', '-t', view, '-c', coordinatorDir),
     call('set-option', '-p', '-t', `${view}.${RIGHT_PANE}`, tmuxNames.optionSlot, tmuxNames.slotBoard),
-    call('new-window', '-d', '-t', windowTarget(id, ''), '-n', tmuxNames.windowWorkers, '-c', coordinatorDir),
+    newWindowArgs(id, tmuxNames.windowWorkers, coordinatorDir),
   ];
 };
