@@ -3,6 +3,7 @@ import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from './fake-deps.js';
 import { sampleConfig, seedConfig } from './sample-config.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from './tmux-fake.js';
+import { launchWordsOf } from './worker-launch-words.js';
 
 export const HOME = '/w/node';
 /** The id of the node, and so the name of its tmux session. */
@@ -33,10 +34,14 @@ export interface SlotMade {
 /** The coordinator pane of the fixture: the first pane that the session of the node holds. */
 export const COORDINATOR_PANE = '%0';
 
-/** A pane of a worker, in the session of the node. The first one that a setup lists gets `%3`, because the session holds `%0` to `%2`. */
+/**
+ * A pane of a worker, in the session of the node: it carries the worker mark, and the launch of the worker made it, so its start
+ * command is the launch words. The first one that a setup lists gets `%3`, because the session holds `%0` to `%2`.
+ */
 export const workerPane = (worker: string, change: Partial<PaneFixture> = {}): PaneFixture => ({
   session: NODE,
   options: { '@worker': worker },
+  command: launchWordsOf(HOME, worker),
   ...change,
 });
 

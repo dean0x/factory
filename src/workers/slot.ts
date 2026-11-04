@@ -18,7 +18,7 @@ import {
 } from '../launch/tmux.js';
 import { requireSession, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
 import { commandLines, commands, commandText, program, roles, summonLimits, tmuxNames } from '../names.js';
-import { closePane, readPanes } from './panes.js';
+import { clearMarkText, closePane, readPanes, requireBoundPane, type BoundPane } from './panes.js';
 
 /**
  * The slot of the view window (design 4.11). The window `view` holds the coordinator and one slot. The slot shows the board, or
@@ -42,11 +42,11 @@ export interface SlotState {
 
 const layoutLine = (): string => commandText(commands.layout);
 
-/** The command line that summons the worker: the line to run again after a fix. */
-const summonLine = (workerId: string): string => `${commandText(commandLines.workerSummon)} ${workerId}`;
+/** The command that summons the worker, without the program name. */
+const summonWords = (workerId: string): string => `${commandLines.workerSummon} ${workerId}`;
 
-/** The tmux call that clears a mark by hand. */
-const clearText = (pane: string, option: string): string => `${toolNames.tmux} set-option -p -u -t ${pane} ${option}`;
+/** The command line that summons the worker: the line to run again after a fix. */
+const summonLine = (workerId: string): string => commandText(summonWords(workerId));
 
 /** Every pane of the session with its window and its slot marks, from one list call. A list that does not parse is a failure. */
 export const readSlotRows = async (deps: Deps, session: string): Promise<CliResult<readonly SlotRow[]>> => {
@@ -67,20 +67,88 @@ export const slotStateOf = (rows: readonly SlotRow[]): CliResult<SlotState> => {
   if (boards.length > 1) {
     return safetyRefusal(
       `${boards.length} panes carry the board mark: ${boards.map((row) => row.paneId).join(', ')}`,
-      `Keep one board pane. For each other pane, run "${clearText('PANE', tmuxNames.optionSlot)}" with the id of the pane. Then run "${layoutLine()}" to check the marks.`,
+      `Keep one board pane. For each other pane, run "${clearMarkText('PANE', tmuxNames.optionSlot)}" with the id of the pane. Then run "${layoutLine()}" to check the marks.`,
     );
   }
   const summon = parseSummonMark(board.summonText);
   if (!summon.ok) {
     return safetyRefusal(
       `the summon mark of the board pane ${board.paneId} is not a mark that ${program} wrote`,
-      `Run "${clearText(board.paneId, tmuxNames.optionSummon)}" to clear it. Then run "${layoutLine()}" to check the marks.`,
+      `Run "${clearMarkText(board.paneId, tmuxNames.optionSummon)}" to clear it. Then run "${layoutLine()}" to check the marks.`,
     );
   }
   return ok({ rows, board, summon: summon.value });
 };
 
 const inView = (row: SlotRow): boolean => row.window === tmuxNames.windowView;
+
+export interface WorkerPanesRequest {
+  /** The node home, the root of the config repo: an absolute path. */
+  readonly home: string;
+  /** The tmux session of the node: the id of the node. */
+  readonly session: string;
+  readonly workerId: string;
+  /** The command that a person runs again after a fix, without the program name (`commandText` adds it). */
+  readonly again: string;
+}
+
+/** The panes that belong to a worker: each one carries its mark, and the launch of the worker made it. */
+export interface WorkerPanes {
+  readonly live: readonly BoundPane[];
+  /** Panes whose program ended. */
+  readonly dead: readonly BoundPane[];
+}
+
+/**
+ * The window `view` holds the coordinator and the slot. A pane of a worker may be there only while a summon holds it in the slot,
+ * and the summon mark of the board pane names it. Any other pane of a worker in that window is a stop (exit 4). Slot marks that
+ * factory did not write are a stop too: no pane is trusted on marks that can not be trusted.
+ */
+const requireSummoned = async (
+  deps: Deps,
+  session: string,
+  panes: readonly BoundPane[],
+  workerId: string,
+  again: string,
+): Promise<CliResult<void>> => {
+  const shown = panes.filter((pane) => pane.inView);
+  if (shown.length === 0) return ok(undefined);
+  const rows = await readSlotRows(deps, session);
+  if (!rows.ok) return rows;
+  const state = slotStateOf(rows.value);
+  if (!state.ok) return state;
+  for (const pane of shown) {
+    if (state.value.summon?.pane !== pane.paneId) {
+      return safetyRefusal(
+        `the pane ${pane.paneId} carries the mark of the ${roles.worker} ${workerId} and is in the window ${tmuxNames.windowView}, but no summon put it there`,
+        `Look at the pane in tmux. When it is not a pane of the ${roles.worker} ${workerId}, run "${clearMarkText(pane.paneId, tmuxNames.optionWorker)}" to clear its mark. Then run "${commandText(again)}" again.`,
+      );
+    }
+  }
+  return ok(undefined);
+};
+
+/**
+ * The panes of the worker, each one read from tmux and bound to the worker (`requireBoundPane`). Every pane that carries the mark
+ * of the worker is checked, live or ended, before any count: a pane that was not made by the launch of the worker is a stop
+ * (exit 4), and it is never taken for a second pane of the worker (exit 2). A pane that a summon holds in the window `view` is
+ * the only pane of a worker that may be in that window. A session that does not run has no panes.
+ */
+export const readWorkerPanes = async (deps: Deps, request: WorkerPanesRequest): Promise<CliResult<WorkerPanes>> => {
+  const { home, session, workerId, again } = request;
+  const listed = await readPanes(deps, session, home);
+  if (!listed.ok) return listed;
+  const ids = new Set((listed.value ?? []).filter((row) => row.worker === workerId).map((row) => row.paneId));
+  const bound: BoundPane[] = [];
+  for (const paneId of ids) {
+    const pane = await requireBoundPane(deps, { home, paneId, workerId, again });
+    if (!pane.ok) return pane;
+    bound.push(pane.value);
+  }
+  const placed = await requireSummoned(deps, session, bound, workerId, again);
+  if (!placed.ok) return placed;
+  return ok({ live: bound.filter((pane) => !pane.dead), dead: bound.filter((pane) => pane.dead) });
+};
 
 export interface SummonRequest {
   /** The factory folder: an absolute path. */
@@ -130,7 +198,8 @@ const holderOf = (rows: readonly SlotRow[], board: SlotRow, summon: SummonMark |
 /**
  * Shows the pane of a worker in the slot of the view window for `minutes`. In order:
  * 1. the tmux session of the node must run (exit 3) and belong to this factory folder (exit 4);
- * 2. the worker must have one live pane: none is exit 3 and names `worker resume`, and two are exit 2;
+ * 2. each pane that carries the mark of the worker is read and bound to the worker (`readWorkerPanes`): a pane that the launch of
+ *    the worker did not make is exit 4. The worker must have one live pane: none is exit 3 and names `worker resume`, and two are exit 2;
  * 3. the slot marks are read: one board pane, and a summon mark that factory wrote;
  * 4. the pane of the worker is swapped with the pane that holds the slot (the board pane, or the pane of an earlier summon), unless
  *    it holds the slot already;
@@ -141,9 +210,9 @@ export const summonWorker = async (deps: Deps, request: SummonRequest): Promise<
   const { home, session, workerId, minutes } = request;
   const ready = await requireSession(deps, session, home, summonLine(workerId));
   if (!ready.ok) return ready;
-  const panes = await readPanes(deps, session, home);
+  const panes = await readWorkerPanes(deps, { home, session, workerId, again: summonWords(workerId) });
   if (!panes.ok) return panes;
-  const live = (panes.value ?? []).filter((row) => row.worker === workerId && !row.dead);
+  const { live } = panes.value;
   const [target] = live;
   if (target === undefined) {
     return notReady(
@@ -172,7 +241,7 @@ export const summonWorker = async (deps: Deps, request: SummonRequest): Promise<
   if (board.paneId === target.paneId) {
     return safetyRefusal(
       `the pane ${board.paneId} carries the board mark and the mark of the ${roles.worker} ${workerId}`,
-      `Clear one mark with "${clearText(board.paneId, tmuxNames.optionWorker)}" or "${clearText(board.paneId, tmuxNames.optionSlot)}". Then run "${summonLine(workerId)}" again.`,
+      `Clear one mark with "${clearMarkText(board.paneId, tmuxNames.optionWorker)}" or "${clearMarkText(board.paneId, tmuxNames.optionSlot)}". Then run "${summonLine(workerId)}" again.`,
     );
   }
   const holder = holderOf(state.value.rows, board, state.value.summon, workerId);

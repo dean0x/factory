@@ -27,6 +27,7 @@ import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { launchWordsOf } from '../helpers/worker-launch-words.js';
 
 const HOME = '/w/node';
 const CLONE = '/w/node/web';
@@ -823,11 +824,13 @@ const BETA_SESSION = 'b4a2d3e5-2c3d-4e6f-9a01-23456789abcd';
 const COORDINATOR_SESSION = '0b6c1f9e-2d3a-4b5c-8d7e-9f0a1b2c3d4e';
 const SEEN_AT = '2030-01-02T03:04:05.678Z';
 
+/** The pane of alpha: the launch of alpha made it, so its start command is the launch words. */
 const alphaPane = (change: Partial<PaneFixture> = {}): PaneFixture => ({
   id: ALPHA_PANE,
   session: 'demo',
   options: { '@worker': 'alpha' },
   pid: ALPHA_PID,
+  command: launchWordsOf(HOME, 'alpha'),
   ...change,
 });
 
@@ -1282,6 +1285,69 @@ describe('worker resume: a conversation that does not belong to the worker is no
   it('says once that the earlier conversation is not resumed', async () => {
     const made = await withWorkers({}, { pointer: null, lines: [] });
     expect((await resumed(made)).warnings).toHaveLength(1);
+  });
+});
+
+describe('worker resume: a pane that the launch of the worker did not make', () => {
+  /** The coordinator pane after a program in a worker pane set the mark of alpha on it: it has the node mark, and it was not launched for alpha. */
+  const coordinatorWithMark = (change: Partial<PaneFixture> = {}): PaneFixture => ({
+    id: '%8',
+    session: 'demo',
+    window: 'view',
+    options: { '@worker': 'alpha', '@node': 'demo' },
+    pid: 4999,
+    command: ['claude'],
+    ...change,
+  });
+
+  /** The resume must stop with exit 4, close no pane and start no pane. */
+  const refused = async (made: Made): Promise<CliError> => {
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(killed(made)).toEqual([]);
+    expect(made.events).not.toContain('tmux split-window');
+    expect(made.deps.terminated).toEqual([]);
+    return error;
+  };
+
+  it('refuses a pane that carries the mark of the worker and the node mark, and names the pane', async () => {
+    const error = await refused(await withWorkers({ tmux: { panes: [coordinatorWithMark()] } }));
+    expect(error.message).toContain('%8');
+  });
+
+  it('refuses the mark on a pane whose program ended, and does not close it', async () => {
+    await refused(await withWorkers({ tmux: { panes: [coordinatorWithMark({ dead: true })] } }));
+  });
+
+  it('refuses a pane of the shell that carries the mark of the worker', async () => {
+    await refused(await withWorkers({ tmux: { panes: [alphaPane({ command: [] })] } }));
+  });
+
+  it('refuses the forged pane as exit 4, and not as a worker that runs already (exit 2), when the pane of the worker runs too', async () => {
+    const error = await refused(await withWorkers({ tmux: { panes: [alphaPane(), coordinatorWithMark()] } }));
+    expect(error.message).not.toContain('runs already');
+    expect(error.hint).not.toContain('worker stop');
+  });
+
+  it('names the tmux command that clears the mark, and the command to run again', async () => {
+    const error = await refused(await withWorkers({ tmux: { panes: [coordinatorWithMark()] } }));
+    expect(error.hint).toContain('set-option -p -u -t %8 @worker');
+    expect(error.hint).toContain('worker resume alpha');
+  });
+
+  it('still says that the worker runs already, with exit 2, for a pane that the launch made', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane()] } });
+    const error = await resumeFailed(made);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('runs already');
+    expect(made.events).not.toContain('tmux split-window');
+  });
+
+  it('closes a pane that the launch made and that ended, and starts the worker again', async () => {
+    const made = await withWorkers({ tmux: { panes: [alphaPane({ dead: true })] } });
+    await resumed(made);
+    expect(killed(made)).toEqual([`kill-pane -t ${ALPHA_PANE}`]);
+    expect(made.tmux.panes().at(-1)).toMatchObject({ id: NEW_PANE });
   });
 });
 

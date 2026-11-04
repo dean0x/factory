@@ -4,8 +4,10 @@ import {
   joinPaneArgs,
   killPaneArgs,
   newWindowArgs,
+  paneBindArgs,
   paneListArgs,
   paneReadArgs,
+  parsePaneBind,
   parsePaneList,
   parsePaneListSoft,
   parseSlotList,
@@ -68,6 +70,82 @@ describe('the tmux call that reads one pane', () => {
 
   it.each(badPaneIds)('refuses the target %j', (target) => {
     expect(paneReadArgs(target).ok).toBe(false);
+  });
+});
+
+describe('the tmux call that reads one pane to bind it to a worker', () => {
+  it('prints the id, the pid, the end flag, four flags that tmux computes, and the start command last', () => {
+    expect(argvOf(paneBindArgs('%12', 'alpha'))).toEqual([
+      'display-message',
+      '-p',
+      '-t',
+      '%12',
+      '#{pane_id}|#{pane_pid}|#{pane_dead}|#{==:#{@worker},alpha}|#{!=:#{@node},}|#{==:#{@slot},board}|#{==:#{window_name},view}|#{pane_start_command}',
+    ]);
+  });
+
+  it('never reads the text of a mark that a program in a pane can set: tmux compares it', () => {
+    const format = argvOf(paneBindArgs('%12', 'alpha')).at(-1) ?? '';
+    expect(format).not.toMatch(/(^|\|)#\{@(worker|node|slot)\}(\||$)/);
+  });
+
+  it.each(badPaneIds)('refuses the target %j', (target) => {
+    expect(paneBindArgs(target, 'alpha').ok).toBe(false);
+  });
+
+  it.each(['', 'a|b', 'a,b', 'a}b', 'a#b', 'a b', 'a\nb', '-x'])('refuses the worker id %j', (workerId) => {
+    expect(paneBindArgs('%12', workerId).ok).toBe(false);
+  });
+});
+
+describe('the pane that the read for the binding gives', () => {
+  const START = 'env FACTORY_SESSION=alpha claude --permission-mode auto';
+  const line = (flags = '1|0|0|0', start = START, head = '%3|4777|0'): string => `${head}|${flags}|${start}\n`;
+
+  it('gives the pane with its flags and its start command', () => {
+    expect(parsePaneBind(line())).toEqual({
+      ok: true,
+      value: { paneId: '%3', pid: 4777, dead: false, marked: true, node: false, board: false, view: false, startCommand: START },
+    });
+  });
+
+  it('reads each flag from its own place', () => {
+    expect(parsePaneBind(line('0|1|0|0'))).toMatchObject({ ok: true, value: { marked: false, node: true, board: false, view: false } });
+    expect(parsePaneBind(line('0|0|1|0'))).toMatchObject({ ok: true, value: { marked: false, node: false, board: true, view: false } });
+    expect(parsePaneBind(line('0|0|0|1'))).toMatchObject({ ok: true, value: { view: true } });
+    expect(parsePaneBind(line('1|0|0|0', START, '%3|4777|1'))).toMatchObject({ ok: true, value: { dead: true } });
+  });
+
+  it('keeps the separator inside the start command: the start command is all that comes after the seventh separator', () => {
+    expect(parsePaneBind(line('1|0|0|0', 'a|b|c'))).toMatchObject({ ok: true, value: { startCommand: 'a|b|c' } });
+  });
+
+  it('gives an empty start command for a pane that runs the shell', () => {
+    expect(parsePaneBind(line('1|0|0|0', ''))).toMatchObject({ ok: true, value: { startCommand: '' } });
+  });
+
+  it.each([
+    ['no text', ''],
+    ['a pane id that is not one', `x3|4777|0|1|0|0|0|${'a'}\n`],
+    ['a pid of 0', '%3|0|0|1|0|0|0|a\n'],
+    ['a pid with a leading zero', '%3|0477|0|1|0|0|0|a\n'],
+    ['an end flag that is not 0 or 1', '%3|4777|2|1|0|0|0|a\n'],
+    ['a mark flag that is not 0 or 1', '%3|4777|0|x|0|0|0|a\n'],
+    ['a node flag that is not 0 or 1', '%3|4777|0|1|2|0|0|a\n'],
+    ['a board flag that is not 0 or 1', '%3|4777|0|1|0|y|0|a\n'],
+    ['a view flag that is not 0 or 1', '%3|4777|0|1|0|0|z|a\n'],
+    ['too few fields', '%3|4777|0|1|0|0|0\n'],
+    ['two lines', `${line()}${line()}`],
+    ['text after an empty line', `${line()}\n`],
+    ['text that is not a pane line', 'no such pane\n'],
+  ])('refuses %s', (_name, text) => {
+    expect(parsePaneBind(text).ok).toBe(false);
+  });
+
+  it('does not repeat the text of the read in the reason', () => {
+    const result = parsePaneBind('%3|4777|0|1|0|0|0|a\nSECRET-TEXT\n');
+    if (result.ok) throw new Error('the read should have been refused');
+    expect(result.error).not.toContain('SECRET-TEXT');
   });
 });
 

@@ -501,6 +501,12 @@ export const tmuxNames = {
 } as const;
 
 /**
+ * The check that a pane was started for a worker (design 4.11, "The pane of a worker"): a reader cuts the start command of a pane
+ * at `maxStartCommandChars` characters and `maxWords` words. A longer text is not the start command of a launch of factory.
+ */
+export const paneBinding = { maxStartCommandChars: 32_768, maxWords: 1_024 } as const;
+
+/**
  * The summon of a worker pane into the slot of the view window (design 4.11): the default time of the summon, its bounds in
  * minutes, and the count of random bytes of its token.
  */

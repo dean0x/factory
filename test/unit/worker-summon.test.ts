@@ -9,6 +9,7 @@ import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, makeSlot, workerPane, type SlotMade, type SlotSetup } from '../helpers/slot-fixture.js';
 import { captureSink } from '../helpers/sink.js';
 import { tmuxCallOfShellText } from '../helpers/tmux-fake.js';
+import { launchWordsOf } from '../helpers/worker-launch-words.js';
 
 /** The panes of the session `demo` that the fixture makes: the coordinator, the board pane (the slot) and the shell of the workers window. */
 const COORDINATOR = '%0';
@@ -73,6 +74,69 @@ describe('worker summon: a record that is not the record of its worker', () => {
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain(file);
     expect(swaps(made)).toEqual([]);
+  });
+});
+
+describe('worker summon: a pane that the launch of the worker did not make', () => {
+  const SHELL = '%2';
+  /** The pane of alpha after a program in it removed its own mark: the launch made it, and it has no mark. */
+  const unmarked = (): SlotSetup => ({ workers: ['alpha'], panes: [workerPane('alpha', { options: {} })] });
+
+  /** The summon must stop with exit 4, move no pane, and set no mark and no timer. */
+  const refused = async (made: SlotMade): Promise<CliError> => {
+    const error = await failedWith(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(swaps(made)).toEqual([]);
+    expect(timers(made)).toEqual([]);
+    expect(optionsOf(made, BOARD)['@slot_summon']).toBeUndefined();
+    return error;
+  };
+
+  it.each([
+    ['the coordinator pane', COORDINATOR],
+    ['the board pane', BOARD],
+    ['a pane of the workers window that runs the shell', SHELL],
+  ])('refuses %s that carries the mark of the worker', async (_name, pane) => {
+    const made = await makeSlot(unmarked());
+    made.serverCall(['set-option', '-p', '-t', pane, '@worker', 'alpha']);
+    const error = await refused(made);
+    expect(error.message).toContain(pane);
+  });
+
+  it('refuses the coordinator pane as the exit 4 that it is, and not as two live panes of the worker (exit 2), when the pane of the worker keeps its mark', async () => {
+    const made = await makeSlot(ALPHA_ONLY);
+    made.serverCall(['set-option', '-p', '-t', COORDINATOR, '@worker', 'alpha']);
+    const error = await refused(made);
+    expect(error.message).not.toContain('live panes');
+  });
+
+  it('refuses a pane that the launch of another worker made', async () => {
+    const made = await makeSlot({ workers: ['alpha', 'beta'], panes: [workerPane('alpha', { command: launchWordsOf(HOME, 'beta') })] });
+    await refused(made);
+  });
+
+  it('refuses a pane that has the mark and runs another program than the launch', async () => {
+    const made = await makeSlot({ workers: ['alpha'], panes: [workerPane('alpha', { command: ['sleep', '3000'] })] });
+    await refused(made);
+  });
+
+  it('refuses a pane that the launch made, in the window view, when no summon names it', async () => {
+    const made = await makeSlot({ workers: ['alpha'], panes: [workerPane('alpha', { window: 'view' })] });
+    const error = await refused(made);
+    expect(error.message).toContain('view');
+  });
+
+  it('names the tmux command that clears the mark', async () => {
+    const made = await makeSlot(unmarked());
+    made.serverCall(['set-option', '-p', '-t', COORDINATOR, '@worker', 'alpha']);
+    const error = await refused(made);
+    expect(error.hint).toContain(`set-option -p -u -t ${COORDINATOR} @worker`);
+  });
+
+  it('does not check a pane of another worker', async () => {
+    const made = await makeSlot({ workers: ['alpha', 'beta'], panes: [workerPane('alpha'), workerPane('beta', { command: [] })] });
+    expect(await summoned(made)).toMatchObject({ failed: false });
+    expect(swaps(made)).toEqual([`swap-pane -d -s ${ALPHA} -t ${BOARD}`]);
   });
 });
 

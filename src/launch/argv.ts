@@ -54,6 +54,9 @@ const MODEL_NAME = /^(?!-)[^\s\u0000-\u001f\u007f]+$/;
  */
 const PROGRAM_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
+/** The flag of the program that adds a folder to the scope of a session. */
+export const ADD_DIR_FLAG = '--add-dir';
+
 const isAbsolute = (path: string): boolean => path.startsWith('/');
 
 const refuse = (what: string): Result<never, string> => err(`the launch refuses ${what}`);
@@ -90,7 +93,6 @@ const startArgv = (input: SessionInput, variables: readonly string[], folders: r
   ...parentSessionEnv.flatMap((name) => ['-u', name]),
   ...(input.proxyBaseUrl === null ? [] : [`${env.proxyBaseUrl}=${input.proxyBaseUrl}`]),
   ...(input.path === null ? [] : [`${env.path}=${input.path}`]),
-  `${env.home}=${input.home}`,
   ...variables,
   input.agent,
   '--permission-mode',
@@ -99,7 +101,7 @@ const startArgv = (input: SessionInput, variables: readonly string[], folders: r
   input.effort,
   ...(input.model === DEFAULT_MODEL ? [] : ['--model', input.model]),
   ...(input.resumeId === undefined ? [] : ['--resume', input.resumeId]),
-  ...folders.flatMap((folder) => ['--add-dir', folder]),
+  ...folders.flatMap((folder) => [ADD_DIR_FLAG, folder]),
 ];
 
 /** The argument list that starts the coordinator session. It has the state folder and each project folder. */
@@ -117,7 +119,26 @@ export const launchArgv = (input: LaunchInput): Result<readonly string[], string
   if (input.projects.some((project) => isSameOrInside(project, input.home))) {
     return refuse(`a project folder that is the ${places.folder} or holds it`);
   }
-  return ok(startArgv(input, [`${env.session}=${input.sessionId}`], [input.stateDir, ...input.projects]));
+  return ok(
+    startArgv(input, [`${env.home}=${input.home}`, `${env.session}=${input.sessionId}`], [input.stateDir, ...input.projects]),
+  );
+};
+
+/**
+ * The words that the launch of a worker puts in its argument list to name that worker: the variables of the home, of the session
+ * and of the inbox, and the one folder that the session gets. tmux fixes the start command of a pane when it makes the pane, and no
+ * program in the pane can change it, so these words in the start command of a pane show that the launch of this worker made the
+ * pane. The launch and the check of the pane (`startsWorker`) both read the words from here.
+ */
+export const workerLaunchMarks = (
+  home: string,
+  workerId: string,
+): { readonly variables: readonly string[]; readonly folder: string } => {
+  const { inboxDir } = workerPathsOf(home, workerId);
+  return {
+    variables: [`${env.home}=${home}`, `${env.session}=${workerId}`, `${env.inbox}=${inboxDir}`],
+    folder: inboxDir,
+  };
 };
 
 /**
@@ -129,6 +150,6 @@ export const workerLaunchArgv = (input: WorkerLaunchInput): Result<readonly stri
   const session = checkSession(input);
   if (!session.ok) return session;
   if (!isSlug(input.workerId)) return refuse(`a ${roles.worker} id that is not a slug`);
-  const { inboxDir } = workerPathsOf(input.home, input.workerId);
-  return ok(startArgv(input, [`${env.session}=${input.workerId}`, `${env.inbox}=${inboxDir}`], [inboxDir]));
+  const marks = workerLaunchMarks(input.home, input.workerId);
+  return ok(startArgv(input, marks.variables, [marks.folder]));
 };

@@ -95,6 +95,91 @@ export const paneReadArgs = (pane: string): Result<TmuxArgs, string> => {
   return target.ok ? ok(call('display-message', '-p', '-t', target.value, PANE_LIST_FORMAT)) : target;
 };
 
+/** The compare of a pane option with a text, which tmux does: `1` for a pane with that value and `0` for any other pane. */
+const optionIs = (option: string, value: string): string => `#{==:#{${option}},${value}}`;
+
+/**
+ * Prints the facts that a command needs before it acts on the pane of a worker, for the pane id only: the id, the pid and the end
+ * flag; then four flags that tmux computes itself (the pane has the worker mark of this worker, the pane has a node mark, the
+ * pane has the board mark, the pane is in the window `view`); then the start command of the pane, last. A program in a pane can set
+ * each mark to any text, so the call never prints a mark: tmux compares it, and a flag is `0` or `1` whatever the text holds. The
+ * start command is the one fact that no program in a pane can set, so it is the one that binds the pane to a launch. `parsePaneBind`
+ * reads the output.
+ */
+export const paneBindArgs = (pane: string, workerId: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  if (!target.ok) return target;
+  if (!WORKER_PATTERN.test(workerId)) return refuse('an id that is not a name of letters, digits and the signs . _ -');
+  const format = [
+    PANE_ID_FORMAT,
+    '#{pane_pid}',
+    '#{pane_dead}',
+    optionIs(tmuxNames.optionWorker, workerId),
+    `#{!=:#{${tmuxNames.optionNode}},}`,
+    optionIs(tmuxNames.optionSlot, tmuxNames.slotBoard),
+    `#{==:#{window_name},${tmuxNames.windowView}}`,
+    '#{pane_start_command}',
+  ].join(FIELD_SEPARATOR);
+  return ok(call('display-message', '-p', '-t', target.value, format));
+};
+
+/** What the read of `paneBindArgs` finds. */
+export interface PaneBind {
+  readonly paneId: string;
+  readonly pid: number;
+  readonly dead: boolean;
+  /** True when the worker mark of the pane is the worker id of the call. */
+  readonly marked: boolean;
+  /** True when the pane has a node mark: it is the pane of the coordinator. */
+  readonly node: boolean;
+  /** True when the pane has the board mark. */
+  readonly board: boolean;
+  /** True when the pane is in the window `view`. */
+  readonly view: boolean;
+  /** The command that made the pane, as tmux shows it. Empty for a pane that runs the shell. */
+  readonly startCommand: string;
+}
+
+/** The count of fields before the start command: the id, the pid, the end flag and the four flags of the read. */
+const FIELDS_BEFORE_START = 7;
+
+/** The flags of the fields: `1` is true and `0` is false. Any other text gives null. */
+const flagsOf = (fields: readonly string[]): readonly boolean[] | null => {
+  const flags: boolean[] = [];
+  for (const field of fields) {
+    if (field !== '0' && field !== '1') return null;
+    flags.push(field === '1');
+  }
+  return flags;
+};
+
+/**
+ * Reads the output of the call from `paneBindArgs`: one line, with seven fields that have a fixed form and the start command
+ * after the seventh separator. The start command is the rest of the line, because it holds text of the launch (paths, the PATH)
+ * that can hold the separator, and it holds no new line, because tmux writes a control character as an escape. The error names no
+ * text of the output.
+ */
+export const parsePaneBind = (text: string): Result<PaneBind, string> => {
+  const malformed = err('the read gives text that is not the line of one pane');
+  const line = text.endsWith('\n') ? text.slice(0, -1) : text;
+  const fields = line.split(FIELD_SEPARATOR);
+  if (line.includes('\n') || fields.length <= FIELDS_BEFORE_START) return malformed;
+  const [paneId = '', pid = ''] = fields;
+  const flags = flagsOf(fields.slice(2, FIELDS_BEFORE_START));
+  if (!isPaneId(paneId) || !PID_PATTERN.test(pid) || flags === null) return malformed;
+  const [dead = false, marked = false, node = false, board = false, view = false] = flags;
+  return ok({
+    paneId,
+    pid: Number(pid),
+    dead,
+    marked,
+    node,
+    board,
+    view,
+    startCommand: fields.slice(FIELDS_BEFORE_START).join(FIELD_SEPARATOR),
+  });
+};
+
 export interface PaneRow {
   readonly paneId: string;
   /** The process id of the program of the pane. For a pane that has ended, it is the id that the program had. */

@@ -2,15 +2,15 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { ok } from '../../src/core/result.js';
 import { stopFallback, stopPoll, stopWay, stopWays, schemaIds, type HookEvent } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession, type OwnSessionRead } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
-import { confirmPane, stopCaseOf, stopWorker, wayFor, type StopOutcome } from '../../src/workers/stop.js';
+import { stopCaseOf, stopWorker, wayFor, type StopOutcome } from '../../src/workers/stop.js';
 import { paneListArgs } from '../../src/launch/tmux.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { launchWordsOf } from '../helpers/worker-launch-words.js';
 
 const HOME = '/w/node';
 const NODE = 'demo';
@@ -19,11 +19,13 @@ const PANE = '%3';
 const PID = 4777;
 const AT = '2030-01-02T03:04:05.678Z';
 
+/** The pane of alpha: the launch of alpha made it, so its start command is the launch words. */
 const alphaPane = (change: Partial<PaneFixture> = {}): PaneFixture => ({
   id: PANE,
   session: NODE,
   options: { '@worker': 'alpha' },
   pid: PID,
+  command: launchWordsOf(HOME, 'alpha'),
   ...change,
 });
 
@@ -41,6 +43,8 @@ interface Setup {
   readonly paneGoneAtRead?: boolean;
   /** A summon before the stop: the pane is swapped with the board pane, and the board pane gets the summon mark. */
   readonly summoned?: { readonly pane: string; readonly mark: string };
+  /** Pane options that a program in a pane sets before the stop, on any pane: the pane, the option and the value. */
+  readonly marks?: readonly (readonly [pane: string, option: string, value: string])[];
 }
 
 /** The board pane of the fixture: the three panes of the session come after the pane %3, so the board pane is %5. */
@@ -58,6 +62,9 @@ const make = (setup: Setup = {}): Made => {
   if (setup.summoned !== undefined) {
     handler({ command: 'tmux', args: ['swap-pane', '-d', '-s', setup.summoned.pane, '-t', BOARD], cwd: undefined });
     handler({ command: 'tmux', args: ['set-option', '-p', '-t', BOARD, '@slot_summon', setup.summoned.mark], cwd: undefined });
+  }
+  for (const [pane, option, value] of setup.marks ?? []) {
+    handler({ command: 'tmux', args: ['set-option', '-p', '-t', pane, option, value], cwd: undefined });
   }
   const events: string[] = [];
   const base = createFakeDeps({
@@ -229,39 +236,6 @@ describe('stopCaseOf', () => {
   });
 });
 
-describe('confirmPane: the pane that a second read gives', () => {
-  const good = `${PANE}|${PID}|0|alpha\n`;
-
-  it('gives the row of the pane when the id and the mark are the expected ones', () => {
-    expect(confirmPane(good, PANE, 'alpha')).toEqual(ok({ paneId: PANE, pid: PID, dead: false, worker: 'alpha' }));
-  });
-
-  it('gives the row of a pane that has ended', () => {
-    expect(confirmPane(`${PANE}|${PID}|1|alpha\n`, PANE, 'alpha')).toEqual(ok({ paneId: PANE, pid: PID, dead: true, worker: 'alpha' }));
-  });
-
-  it.each([
-    ['another pane id', `%4|${PID}|0|alpha\n`],
-    ['another worker mark', `${PANE}|${PID}|0|beta\n`],
-    ['no worker mark', `${PANE}|${PID}|0|\n`],
-    ['two lines, the second one forged', `${PANE}|${PID}|0|x\n${PANE}|9999|0|alpha\n`],
-    ['a mark with a new line and a forged line behind it', `${PANE}|${PID}|0|alpha\n%9|9999|0|alpha\n`],
-    ['a mark with the separator', `${PANE}|${PID}|0|alpha|1|0|alpha\n`],
-    ['a trailing empty line', `${good}\n`],
-    ['no text', ''],
-    ['text that is not a pane line', 'no such pane\n'],
-    ['a pid of 0', `${PANE}|0|0|alpha\n`],
-  ])('refuses %s', (_name, output) => {
-    expect(confirmPane(output, PANE, 'alpha').ok).toBe(false);
-  });
-
-  it('does not repeat the text of the read in the reason', () => {
-    const result = confirmPane(`${PANE}|${PID}|0|alpha\nSECRET-TEXT\n`, PANE, 'alpha');
-    if (result.ok) throw new Error('the read should have been refused');
-    expect(result.error).not.toContain('SECRET-TEXT');
-  });
-});
-
 describe('worker stop: a session at the prompt (TP-26)', () => {
   it('sends TERM to the pane pid, and closes the pane by its id after the process ends', async () => {
     const made = make();
@@ -293,10 +267,18 @@ describe('worker stop: a session at the prompt (TP-26)', () => {
     await succeeded(made);
     const paneList = JSON.stringify(paneListArgs(NODE));
     expect(made.deps.calls.filter((call) => JSON.stringify(call.args) === paneList)).toHaveLength(1);
-    expect(made.events.slice(made.events.indexOf('tmux display-message'), made.events.indexOf(`terminate ${PID}`) + 1)).toEqual([
+    expect(made.events.slice(made.events.lastIndexOf('tmux display-message'), made.events.indexOf(`terminate ${PID}`) + 1)).toEqual([
       'tmux display-message',
       `terminate ${PID}`,
     ]);
+  });
+
+  it('reads the pane to bind it to the worker before the last-seen file is read, and again right before the signal', async () => {
+    const made = make();
+    await seed(made.deps);
+    await succeeded(made);
+    expect(made.events.filter((event) => event === 'tmux display-message')).toHaveLength(2);
+    expect(made.events.indexOf('tmux display-message')).toBeLessThan(made.events.indexOf(`terminate ${PID}`));
   });
 
   it.each(['UserPromptSubmit', 'PreCompact'] as const)('sends TERM to a busy session too (the last event is %s)', async (event) => {
@@ -495,15 +477,142 @@ describe('worker stop: a forged line in the pane list', () => {
   });
 });
 
+describe('worker stop: a pane that the launch of the worker did not make', () => {
+  // The fixture has the explicit pane %3, so the panes that the session starts with are: the coordinator %4, the board %5, the shell %6.
+  const COORDINATOR = '%4';
+  const SHELL = '%6';
+  /** The pane of the worker after a program in it removed its own mark: the launch made it, and it has no mark. */
+  const unmarked = (): PaneFixture => alphaPane({ options: {} });
+
+  /** The stop must refuse with exit 4, send no signal, close no pane and start no other program than tmux. */
+  const refused = async (made: Made): Promise<CliError> => {
+    await seed(made.deps);
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
+    expect(made.deps.calls.every((call) => call.command === 'tmux')).toBe(true);
+    return error;
+  };
+
+  it('refuses the coordinator pane that carries the mark of the worker, and sends nothing to its process', async () => {
+    const error = await refused(make({ panes: [unmarked()], marks: [[COORDINATOR, '@worker', 'alpha']] }));
+    expect(error.message).toContain(COORDINATOR);
+  });
+
+  it('refuses the board pane that carries the mark of the worker', async () => {
+    const error = await refused(make({ panes: [unmarked()], marks: [[BOARD, '@worker', 'alpha']] }));
+    expect(error.message).toContain(BOARD);
+  });
+
+  it('refuses a pane of the workers window that runs the shell and carries the mark of the worker', async () => {
+    const error = await refused(make({ panes: [unmarked()], marks: [[SHELL, '@worker', 'alpha']] }));
+    expect(error.message).toContain(SHELL);
+  });
+
+  it('refuses the coordinator pane as the exit 4 that it is, and not as two live panes of the worker (exit 2), when the pane of the worker keeps its mark', async () => {
+    const error = await refused(make({ panes: [alphaPane()], marks: [[COORDINATOR, '@worker', 'alpha']] }));
+    expect(error.message).toContain(COORDINATOR);
+    expect(error.message).not.toContain('live panes');
+  });
+
+  it('refuses a pane that the launch of another worker made', async () => {
+    await refused(make({ panes: [alphaPane({ command: launchWordsOf(HOME, 'beta') })] }));
+  });
+
+  it('refuses a pane that the launch of the worker made in another factory folder', async () => {
+    await refused(make({ panes: [alphaPane({ command: launchWordsOf('/other/node', 'alpha') })] }));
+  });
+
+  it('refuses a pane that has the mark and runs another program than the launch', async () => {
+    await refused(make({ panes: [alphaPane({ command: ['sleep', '3000'] })] }));
+  });
+
+  it('refuses a pane that has the mark and the words of the launch inside one quoted word', async () => {
+    await refused(make({ panes: [alphaPane({ command: ['env', launchWordsOf(HOME, 'alpha').join(' ')] })] }));
+  });
+
+  it('refuses a coordinator pane whose program ended, and closes nothing', async () => {
+    const error = await refused(
+      make({
+        panes: [{ id: '%7', session: NODE, window: 'view', options: { '@node': NODE, '@worker': 'alpha' }, dead: true, command: ['claude'] }],
+      }),
+    );
+    expect(error.message).toContain('%7');
+  });
+
+  it('refuses a pane that has the launch words of the worker and the node mark', async () => {
+    const error = await refused(make({ panes: [alphaPane({ options: { '@worker': 'alpha', '@node': NODE } })] }));
+    expect(error.message).toContain('coordinator');
+  });
+
+  it('refuses a pane that has the launch words of the worker and the board mark', async () => {
+    const error = await refused(make({ panes: [alphaPane({ options: { '@worker': 'alpha', '@slot': 'board' } })] }));
+    expect(error.message).toContain('board');
+  });
+
+  it('refuses a pane in the window view that no summon names, also when the launch of the worker made it', async () => {
+    const error = await refused(make({ panes: [alphaPane({ window: 'view' })] }));
+    expect(error.message).toContain('view');
+  });
+
+  it('names the tmux command that clears the mark, and the command to run again', async () => {
+    const error = await refused(make({ panes: [unmarked()], marks: [[COORDINATOR, '@worker', 'alpha']] }));
+    expect(error.hint).toContain(`set-option -p -u -t ${COORDINATOR} @worker`);
+    expect(error.hint).toContain('worker stop alpha');
+  });
+
+  it('refuses at the second read when the pane has lost its mark by then, and sends nothing', async () => {
+    let reads = 0;
+    const made = make({ rewriteRead: (stdout) => (++reads === 2 ? stdout.replace(`|${PID}|0|1|`, `|${PID}|0|0|`) : stdout) });
+    await refused(made);
+    expect(reads).toBe(2);
+  });
+
+  it('refuses at the second read when the pane shows no start command by then, and sends nothing', async () => {
+    let reads = 0;
+    const made = make({ rewriteRead: (stdout) => (++reads === 2 ? `${stdout.split('|').slice(0, 7).join('|')}|\n` : stdout) });
+    await refused(made);
+    expect(reads).toBe(2);
+  });
+
+  it('stops the pane that the launch made, with the mark, in the workers window', async () => {
+    const made = make({ panes: [alphaPane()], marks: [[COORDINATOR, '@worker', 'beta']] });
+    await seed(made.deps);
+    expect(await succeeded(made)).toMatchObject({ kind: 'stopped', paneId: PANE, pid: PID });
+    expect(made.deps.terminated).toEqual([PID]);
+  });
+
+  it('stops a pane that the launch made when the factory folder has a space in its path', async () => {
+    const spaced = '/w/my node';
+    const { handler } = tmuxHandler({
+      sessions: { demo: spaced },
+      panes: [{ id: PANE, session: NODE, options: { '@worker': 'alpha' }, pid: PID, command: launchWordsOf(spaced, 'alpha') }],
+    });
+    const deps = createFakeDeps({ cwd: '/w', run: handler });
+    for (const id of ['alpha']) {
+      const written = await writeWorkerRecord(deps, spaced, { ...record(id), workCopy: `${spaced}/work-copies/web/${id}` });
+      if (!written.ok) throw new Error(written.error.message);
+    }
+    await writeWorkerSession(deps, spaced, 'alpha', SESSION);
+    deps.seed(
+      `${layoutOf(spaced).heartbeatDir}/${SESSION}`,
+      `${JSON.stringify({ schema: schemaIds.lastSeen, session_id: SESSION, event: 'Stop', event_at: AT, context_pct: null, pct_at: null, session_marker: 'alpha' })}\n`,
+    );
+    const result = await stopWorker(deps, { home: spaced, session: NODE, workerId: 'alpha' });
+    expect(result.ok).toBe(true);
+    expect(deps.terminated).toEqual([PID]);
+  });
+});
+
 describe('worker stop: never its own pane', () => {
-  it('exits 2 when the pane of the caller is the pane of the worker, and reads and signals nothing', async () => {
+  it('exits 2 when the pane of the caller is the pane of the worker, and signals and closes nothing', async () => {
     const made = make({ env: { TMUX_PANE: PANE } });
     await seed(made.deps);
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain(PANE);
     expect(made.deps.terminated).toEqual([]);
-    expect(made.events).not.toContain('tmux display-message');
     expect(killed(made)).toEqual([]);
   });
 
@@ -570,13 +679,14 @@ describe('worker stop: a pane that a summon put in the slot of the view window',
     expect(paneOf(made, BOARD)?.options['@slot_summon']).toBe(`%2:${TOKEN}`);
   });
 
-  it('stops and closes the pane all the same, and moves no pane, when the summon mark is not one that factory wrote', async () => {
+  it('refuses with exit 4 a pane in the window view when the summon mark is not one that factory wrote, and moves no pane', async () => {
     const made = make({ summoned: { pane: PANE, mark: `${PANE}:not-a-token` } });
     await seed(made.deps);
-    expect(await succeeded(made)).toMatchObject({ kind: 'stopped', pane: 'closed' });
-    expect(made.deps.terminated).toEqual([PID]);
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(made.deps.terminated).toEqual([]);
     expect(made.events).not.toContain('tmux swap-pane');
-    expect(killed(made)).toEqual([`kill-pane -t ${PANE}`]);
+    expect(killed(made)).toEqual([]);
   });
 });
 

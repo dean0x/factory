@@ -17,7 +17,6 @@ import { warnInstructionFiles } from '../core/instruction-files.js';
 import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
-import type { PaneRow } from '../launch/tmux.js';
 import { requireSession } from '../launch/tmux-run.js';
 import {
   commandLines,
@@ -41,9 +40,9 @@ import { ensureCloneExclude } from '../workers/exclude.js';
 import { dismissCommand, launchWorker, resumeLine } from '../workers/launch.js';
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
-import { readPanes } from '../workers/panes.js';
+import type { BoundPane } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, workCopyOf, writeWorkerRecord, type WorkerRecord } from '../workers/registry.js';
-import { closeWorkerPane, summonWorker } from '../workers/slot.js';
+import { closeWorkerPane, readWorkerPanes, summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
@@ -460,8 +459,8 @@ const chooseSession = async (deps: Deps, home: string, id: string): Promise<CliR
 };
 
 /** A pane of the worker whose program runs is a stop of the resume (exit 2): the worker runs already. */
-const requireNoLivePane = (rows: readonly PaneRow[], id: string): CliResult<void> => {
-  const live = rows.filter((row) => row.worker === id && !row.dead).map((row) => row.paneId);
+const requireNoLivePane = (panes: readonly BoundPane[], id: string): CliResult<void> => {
+  const live = panes.map((pane) => pane.paneId);
   if (live.length === 0) return ok(undefined);
   return usageError(
     `the ${roles.worker} ${id} runs already in the ${live.length === 1 ? 'pane' : 'panes'} ${live.join(', ')}`,
@@ -473,7 +472,9 @@ const requireNoLivePane = (rows: readonly PaneRow[], id: string): CliResult<void
  * `worker resume ID`: starts the program of a stopped worker again, in a new pane, with the earlier conversation when it is
  * the one of this worker. In order:
  * 1. the checks of `worker new` (the root, the tools and the tmux session): a failing root check is exit 4 and changes nothing;
- * 2. the record must exist (exit 2), and a pane of the worker that runs is a stop (exit 2);
+ * 2. the record must exist (exit 2). Each pane that carries the mark of the worker is read and bound to the worker
+ *    (`readWorkerPanes`): a pane that the launch of the worker did not make is a stop (exit 4), and it is not taken for the
+ *    pane of the worker that runs. A pane of the worker that runs is a stop (exit 2);
  * 3. the session to resume. No valid line, or a line that does not belong to the worker, gives no `--resume` and one warning;
  * 4. the old panes of the worker whose programs ended are closed, by their ids. A pane that a summon left in the slot goes back
  *    first, and the board comes back into the slot;
@@ -498,16 +499,20 @@ const runResume = async (
 
   const record = await requireRecord(deps, home, id, commandText(commandLines.workerResume));
   if (!record.ok) return record;
-  const panes = await readPanes(deps, config.core.node.id, home);
+  const panes = await readWorkerPanes(deps, {
+    home,
+    session: config.core.node.id,
+    workerId: id,
+    again: resumeLine(id),
+  });
   if (!panes.ok) return panes;
-  const rows = panes.value ?? [];
-  const running = requireNoLivePane(rows, id);
+  const running = requireNoLivePane(panes.value.live, id);
   if (!running.ok) return running;
   const chosen = await chooseSession(deps, home, id);
   if (!chosen.ok) return chosen;
 
-  for (const row of rows.filter((candidate) => candidate.worker === id)) {
-    const closed = await closeWorkerPane(deps, config.core.node.id, row.paneId);
+  for (const pane of panes.value.dead) {
+    const closed = await closeWorkerPane(deps, config.core.node.id, pane.paneId);
     if (!closed.ok) return closed;
   }
   const launched = await launchWorker(deps, {

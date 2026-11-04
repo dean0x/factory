@@ -17,6 +17,11 @@ export interface PaneFixture {
   /** True for a pane whose program has ended. The pane stays, because of remain-on-exit. */
   readonly dead?: boolean;
   readonly cwd?: string;
+  /**
+   * The program of the pane as an argument list: the words after `--` in the call that made it. Default: none, as for a pane that
+   * runs the shell. tmux shows these words as the start command of the pane, and no program in the pane can change them.
+   */
+  readonly command?: readonly string[];
 }
 
 export interface TmuxFixture {
@@ -148,10 +153,7 @@ const hasFlag = (command: readonly string[], flag: string): boolean =>
   (command.includes('--') ? command.slice(0, command.indexOf('--')) : command).includes(flag);
 
 /** What a new pane can have besides its place. */
-type PaneMore = Omit<PaneFixture, 'session' | 'window'> & {
-  /** The program of the pane, as an argument list. Empty for the shell. */
-  readonly command?: readonly string[];
-};
+type PaneMore = Omit<PaneFixture, 'session' | 'window'>;
 
 /** The words after `--`: the program of a new pane. */
 const programOf = (command: readonly string[]): readonly string[] =>
@@ -199,9 +201,48 @@ const splitComparison = (text: string): readonly [string, string] => {
   return [text, ''];
 };
 
+/** The characters that make tmux put a word of a start command in double quotes, and the ones that make it use single quotes. */
+const DOUBLE_QUOTED = ' #\';${}%';
+const SINGLE_QUOTED = ' "';
+
+/** One control character as tmux shows it in a start command: a backslash and a letter, or a backslash and three octal digits. */
+const controlText = (char: string): string => {
+  if (char === '\n') return '\\n';
+  if (char === '\t') return '\\t';
+  return `\\${char.charCodeAt(0).toString(8).padStart(3, '0')}`;
+};
+
+const isControl = (char: string): boolean => char < ' ' || char === '\u007f';
+
 /**
- * Expands the formats of a text as tmux does: an escape pair gives its one character, a comparison `#{==:a,b}` of two texts that
- * can hold formats gives `1` or `0`, and any other format gives the value of its key.
+ * One word of an argument list as tmux shows it in `#{pane_start_command}` (checked with tmux 3.6b): a word with a space or one of
+ * `#';${}%` is in double quotes, a word with a double quote is in single quotes, an empty word is two single quotes, a backslash is
+ * doubled, a dollar sign in double quotes has a backslash before it, and a tilde at the start has a backslash before it.
+ */
+export const startCommandWord = (word: string): string => {
+  if (word === '') return "''";
+  const chars = [...word];
+  const quote = chars.some((char) => DOUBLE_QUOTED.includes(char)) ? '"' : chars.some((char) => SINGLE_QUOTED.includes(char)) ? "'" : '';
+  if (chars.length === 1 && word !== ' ' && (quote !== '' || word === '~')) return `\\${word}`;
+  const escaped = chars
+    .map((char) => {
+      if (char === '\\') return '\\\\';
+      if (isControl(char)) return controlText(char);
+      if (quote === '"' && (char === '"' || char === '$')) return `\\${char}`;
+      return char;
+    })
+    .join('');
+  if (quote === "'") return `'${escaped}'`;
+  const tilde = escaped.startsWith('~') ? '\\' : '';
+  return quote === '"' ? `"${tilde}${escaped}"` : `${tilde}${escaped}`;
+};
+
+/** The start command of a pane that was made with these words: the words as tmux shows them, with one space between them. */
+export const startCommandText = (words: readonly string[]): string => words.map(startCommandWord).join(' ');
+
+/**
+ * Expands the formats of a text as tmux does: an escape pair gives its one character, a comparison `#{==:a,b}` or `#{!=:a,b}` of
+ * two texts that can hold formats gives `1` or `0`, and any other format gives the value of its key.
  */
 const expandFormat = (format: string, valueOf: (key: string) => string): string => {
   let text = '';
@@ -221,9 +262,10 @@ const expandFormat = (format: string, valueOf: (key: string) => string): string 
       break;
     }
     const inner = format.slice(index + 2, end);
-    if (inner.startsWith('==:')) {
+    if (inner.startsWith('==:') || inner.startsWith('!=:')) {
       const [left, right] = splitComparison(inner.slice('==:'.length));
-      text += expandFormat(left, valueOf) === expandFormat(right, valueOf) ? '1' : '0';
+      const same = expandFormat(left, valueOf) === expandFormat(right, valueOf);
+      text += same === inner.startsWith('==:') ? '1' : '0';
     } else {
       text += valueOf(inner);
     }
@@ -418,6 +460,8 @@ export const tmuxHandler = (
         return pane.session;
       case 'window_name':
         return pane.window;
+      case 'pane_start_command':
+        return startCommandText(pane.command);
       default:
         return key.startsWith('@') ? (pane.options.get(key) ?? '') : '';
     }
