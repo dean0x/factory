@@ -64,7 +64,7 @@ const makeDeps = ({ tty = false, answer = 'y', inSession = false, home = USER_HO
 };
 
 /** The same deps, with each call that changes the file system logged as `write:<call>` and each warning as `warn`. */
-const logged = (deps: FakeDeps, log: string[]): FakeDeps => ({
+const logged = <T extends Deps>(deps: T, log: string[]): T => ({
   ...withFsWatch(deps, (method) => {
     if (WRITE_CALLS.includes(method)) log.push(`write:${method}`);
   }),
@@ -82,6 +82,12 @@ const request = (overrides: Partial<HookSettingsRequest> = {}): HookSettingsRequ
   command: commands.start,
   ...overrides,
 });
+
+/** The request of a check before the first write of a command: it has no dry run. */
+const consentRequest = (overrides: Partial<HookSettingsRequest> = {}): Omit<HookSettingsRequest, 'dryRun'> => {
+  const { dryRun: _dryRun, ...rest } = request(overrides);
+  return rest;
+};
 
 const errorOf = <T>(result: CliResult<T>): { kind: string; message: string; hint?: string } => {
   if (result.ok) throw new Error('the call should have failed');
@@ -348,6 +354,46 @@ describe('hook settings: consent without a terminal or with the yes flag (TP-19)
   });
 });
 
+describe('hook settings: the remedy of a stop without consent', () => {
+  const OUTSIDE = 'Run "factory start" in a terminal window, or add --yes.';
+  const INSIDE = 'Run "factory start" outside the factory session, or in a terminal window and answer the question.';
+  const INSIDE_WITH_YES =
+    '--yes gives no consent inside a factory session. Run "factory start" outside the factory session, or in a terminal window without --yes and answer the question.';
+
+  /** A seeded session folder, with the file when `file` is set. */
+  const place = (inSession: boolean, file: boolean): FakeDeps => {
+    const deps = makeDeps({ inSession });
+    if (file) deps.seed(FILE, '{"model":"opus"}');
+    return deps;
+  };
+
+  const cases = [
+    { name: 'outside a factory session, with no yes flag: --yes is a consent, so the remedy offers it', inSession: false, file: false, over: {}, hint: OUTSIDE },
+    { name: 'inside a factory session, for the coordinator, with no yes flag: the remedy does not offer --yes', inSession: true, file: false, over: {}, hint: INSIDE },
+    { name: 'inside a factory session, for the coordinator, with the yes flag: the remedy says that --yes gives no consent', inSession: true, file: false, over: { yes: true }, hint: INSIDE_WITH_YES },
+    { name: 'inside a factory session, for a work copy with no file, with no yes flag: --yes is a consent, so the remedy offers it', inSession: true, file: false, over: { session: 'work-copy' as const }, hint: OUTSIDE },
+    { name: 'inside a factory session, for a work copy that has a file, with no yes flag: the remedy does not offer --yes', inSession: true, file: true, over: { session: 'work-copy' as const }, hint: INSIDE },
+    { name: 'inside a factory session, for a work copy that has a file, with the yes flag: the remedy says that --yes gives no consent', inSession: true, file: true, over: { session: 'work-copy' as const, yes: true }, hint: INSIDE_WITH_YES },
+  ];
+
+  it.each(cases)('ensureHookSettings $name', async ({ inSession, file, over, hint }) => {
+    const error = errorOf(await ensureHookSettings(place(inSession, file), request(over)));
+    expect(error.kind).toBe('usage');
+    expect(error.hint).toBe(hint);
+  });
+
+  it.each(cases)('requireHookConsent $name', async ({ inSession, file, over, hint }) => {
+    const error = errorOf(await requireHookConsent(place(inSession, file), consentRequest(over)));
+    expect(error.kind).toBe('usage');
+    expect(error.hint).toBe(hint);
+  });
+
+  it('names the command that asked', async () => {
+    const error = errorOf(await requireHookConsent(place(true, false), consentRequest({ command: commands.init })));
+    expect(error.hint).toBe(INSIDE.replace('factory start', 'factory init'));
+  });
+});
+
 describe('hook settings: the dry run', () => {
   it('shows the change and the target, and asks and writes nothing, also with no terminal and no consent', async () => {
     const log: string[] = [];
@@ -587,6 +633,80 @@ describe('hook settings: the target (TP-21)', () => {
   });
 });
 
+describe('hook settings: no file system call on the user Claude folder (TP-20)', () => {
+  interface Call {
+    readonly method: string;
+    readonly path: string;
+  }
+
+  const inUserFolder = (path: string): boolean => path === `${USER_HOME}/.claude` || path.startsWith(`${USER_HOME}/.claude/`);
+
+  const folders = [
+    { name: 'inside the user Claude folder', folder: `${USER_HOME}/.claude/proj` },
+    { name: 'the user home, so the .claude folder is the user Claude folder', folder: USER_HOME },
+    { name: 'the user Claude folder', folder: `${USER_HOME}/.claude` },
+  ];
+
+  it.each(folders)('refuses a session folder written as $name before any call on the file system', async ({ folder }) => {
+    const deps = makeDeps({ tty: true });
+    deps.seedDir(folder);
+    const calls: Call[] = [];
+    const watched = withFsWatch(deps, (method, path) => calls.push({ method, path }));
+    const error = errorOf(await ensureHookSettings(watched, request({ folder, yes: true })));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain('settings folder of Claude Code');
+    expect(calls).toEqual([]);
+  });
+
+  it.each(folders)('stops the check before the first write of a command at a session folder written as $name, before any call', async ({ folder }) => {
+    const deps = makeDeps({ tty: true });
+    deps.seedDir(folder);
+    const calls: Call[] = [];
+    const watched = withFsWatch(deps, (method, path) => calls.push({ method, path }));
+    const error = errorOf(await requireHookConsent(watched, consentRequest({ folder, command: commands.init })));
+    expect(error.kind).toBe('safety');
+    expect(calls).toEqual([]);
+  });
+
+  it('stops the check of a session folder that does not exist yet, when it is written inside the user Claude folder', async () => {
+    const deps = createFakeDeps({ env: { HOME: USER_HOME } });
+    const calls: Call[] = [];
+    const watched = withFsWatch(deps, (method, path) => calls.push({ method, path }));
+    const error = errorOf(await requireHookConsent(watched, consentRequest({ folder: `${USER_HOME}/.claude/new`, command: commands.init })));
+    expect(error.kind).toBe('safety');
+    expect(calls).toEqual([]);
+  });
+
+  it('refuses a session folder that reaches the user Claude folder through a link, with no call on the user Claude folder and no write', async () => {
+    const deps = createFakeDeps({
+      links: { '/via': `${USER_HOME}/.claude` },
+      env: { HOME: USER_HOME },
+      stdinIsTTY: true,
+      stdoutIsTTY: true,
+      prompt: () => ok('y'),
+    });
+    deps.seedDir('/via/proj');
+    const calls: Call[] = [];
+    const watched = withFsWatch(deps, (method, path) => calls.push({ method, path }));
+    const error = errorOf(await ensureHookSettings(watched, request({ folder: '/via/proj', yes: true })));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain('settings folder of Claude Code');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter(({ path }) => inUserFolder(path))).toEqual([]);
+    expect(calls.filter(({ method }) => WRITE_CALLS.includes(method))).toEqual([]);
+    expect(deps.prompts).toEqual([]);
+  });
+
+  it('makes no call on the user Claude folder when the session folder is outside it', async () => {
+    const deps = makeDeps({ tty: true });
+    const calls: Call[] = [];
+    const watched = withFsWatch(deps, (method, path) => calls.push({ method, path }));
+    expect(outcomeOf(await ensureHookSettings(watched, request({ yes: true }))).kind).toBe('written');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter(({ path }) => inUserFolder(path))).toEqual([]);
+  });
+});
+
 describe('hook settings: the file that is there (TP-22)', () => {
   it.each([
     ['an array', '[]'],
@@ -645,6 +765,103 @@ describe('hook settings: the file that is there (TP-22)', () => {
     expect(errorOf(await ensureHookSettings(broken, request({ yes: true }))).message).toContain('disk full');
     expect(deps.files.get(FILE)).toBe('{"model":"opus"}');
     expect([...deps.files.keys()]).toEqual([FILE]);
+  });
+});
+
+describe('hook settings: the file changes while the question waits', () => {
+  /** A person on a terminal window who answers yes after `during` has changed the file system. */
+  const answeringAfter = (deps: FakeDeps, during: () => void): Deps => ({
+    ...deps,
+    prompt: async (question) => {
+      during();
+      return deps.prompt(question);
+    },
+  });
+
+  const readsOfFile = (deps: Deps, reads: string[]): Deps => withFsWatch(deps, (method, path) => {
+    if (method === 'readTextLimited' && path === FILE) reads.push(path);
+  });
+
+  const ONE_RULE = { permissions: { allow: ['Read'] } };
+  const OWN_STOP = { hooks: { Stop: EXPECTED_ENTRIES.hooks.Stop } };
+
+  it('reads the file again after the answer, and writes the change that the person saw when the text is the same', async () => {
+    const reads: string[] = [];
+    const deps = makeDeps({ tty: true });
+    deps.seed(FILE, '{"model":"opus"}');
+    expect(outcomeOf(await ensureHookSettings(readsOfFile(deps, reads), request())).kind).toBe('written');
+    expect(reads).toHaveLength(2);
+    expect(stored(deps)).toEqual({ model: 'opus', ...EXPECTED_ENTRIES });
+  });
+
+  it('writes the change on the new text when the file changed in a way that leaves the shown lines the same, and keeps the new keys', async () => {
+    const reads: string[] = [];
+    const deps = makeDeps({ tty: true });
+    deps.seed(FILE, '{"model":"opus"}');
+    const asking = answeringAfter(deps, () => deps.seed(FILE, JSON.stringify({ model: 'opus', ...ONE_RULE })));
+    expect(outcomeOf(await ensureHookSettings(readsOfFile(asking, reads), request())).kind).toBe('written');
+    expect(stored(deps)).toEqual({ model: 'opus', ...ONE_RULE, ...EXPECTED_ENTRIES });
+    expect(reads).toHaveLength(2);
+  });
+
+  it('writes the change on the new text when the file did not exist at the question and another program made it', async () => {
+    const deps = makeDeps({ tty: true });
+    const asking = answeringAfter(deps, () => deps.seed(FILE, JSON.stringify(ONE_RULE)));
+    expect(outcomeOf(await ensureHookSettings(asking, request())).kind).toBe('written');
+    expect(stored(deps)).toEqual({ ...ONE_RULE, ...EXPECTED_ENTRIES });
+  });
+
+  it.each([
+    { name: 'the file now holds one of the own entries', content: { model: 'opus', ...OWN_STOP } },
+    { name: 'the file now holds a status line that the person did not see', content: { model: 'opus', statusLine: { type: 'command', command: 'my-line' } } },
+    { name: 'the file now holds all the own entries', content: { model: 'opus', ...EXPECTED_ENTRIES } },
+  ])('writes nothing and stops with exit 1 when $name', async ({ content }) => {
+    const log: string[] = [];
+    const reads: string[] = [];
+    const deps = makeDeps({ tty: true, log });
+    deps.seed(FILE, '{"model":"opus"}');
+    const changed = JSON.stringify(content);
+    const asking = answeringAfter(deps, () => deps.seed(FILE, changed));
+    const error = errorOf(await ensureHookSettings(logged(readsOfFile(asking, reads), log), request()));
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain(FILE);
+    expect(error.message).toContain('changed while the question waited');
+    expect(error.hint).toContain('factory start');
+    expect(deps.files.get(FILE)).toBe(changed);
+    expect(log.filter((line) => line.startsWith('write:'))).toEqual([]);
+    expect(reads).toHaveLength(2);
+  });
+
+  it('writes nothing and passes the failure on when the file now is not a JSON object', async () => {
+    const log: string[] = [];
+    const deps = makeDeps({ tty: true, log });
+    deps.seed(FILE, '{"model":"opus"}');
+    const asking = answeringAfter(deps, () => deps.seed(FILE, '[]'));
+    const error = errorOf(await ensureHookSettings(logged(asking, log), request()));
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain('not a JSON object');
+    expect(deps.files.get(FILE)).toBe('[]');
+    expect(log.filter((line) => line.startsWith('write:'))).toEqual([]);
+  });
+
+  it('writes nothing and stops with exit 4 when a link takes the place of the file during the question', async () => {
+    const links: Record<string, string> = {};
+    const deps = createFakeDeps({
+      links,
+      stdinIsTTY: true,
+      stdoutIsTTY: true,
+      prompt: () => {
+        links[FILE] = '/outside/file';
+        return ok('y');
+      },
+      env: { HOME: USER_HOME },
+    });
+    deps.seedDir(FOLDER);
+    deps.seed(FILE, '{"model":"opus"}');
+    const error = errorOf(await ensureHookSettings(deps, request()));
+    expect(error.kind).toBe('safety');
+    expect(deps.files.get(FILE)).toBe('{"model":"opus"}');
+    expect(deps.atomicWrites).toEqual([]);
   });
 });
 

@@ -28,7 +28,7 @@ import {
 import { parseJsonText } from '../state/load.js';
 import { ACCEPT_ANSWER, type Deps } from './deps.js';
 import { inFactorySession } from './factory-session.js';
-import { comparable, isSameOrInside, isSameOrInsideFolder, realPathOf, userClaudeFolderOf } from './paths.js';
+import { comparable, isSameOrInside, isWrittenInside, realPathOf, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
 import { writeInFolder } from './safe-write.js';
 
@@ -159,37 +159,44 @@ const checkParts = async (deps: Deps, target: Target, command: CommandName): Pro
   return ok({ exists });
 };
 
-/** The real path of the file must be inside the real path of the session folder. */
-const requireInsideSession = async (deps: Deps, target: Target, command: CommandName): Promise<CliResult<void>> => {
+/** The real path of the file must be inside the real path of the session folder. The value is the real path of the file. */
+const requireInsideSession = async (deps: Deps, target: Target, command: CommandName): Promise<CliResult<string>> => {
   const [folder, file] = [await realPathOf(deps, target.folder), await realPathOf(deps, target.file)];
   if (!folder.ok) return folder;
   if (!file.ok) return file;
-  if (isSameOrInside(comparable(deps, folder.value), comparable(deps, file.value))) return ok(undefined);
+  if (isSameOrInside(comparable(deps, folder.value), comparable(deps, file.value))) return ok(file.value);
   return safetyRefusal(
     `cannot write ${target.file}: its real path is outside ${target.folder}`,
     `Use a real folder in the session folder. ${again(command)}`,
   );
 };
 
-/** The file must not be in the user settings folder of Claude Code, as written or with the links resolved. */
-const requireOutsideUserFolder = async (deps: Deps, target: Target, command: CommandName): Promise<CliResult<void>> => {
+/**
+ * The path must not be in the user settings folder of Claude Code. The path is compared with the folder as text, as the folder
+ * is written, so no call of the file system is made on that folder: it is never resolved, read or listed. The caller gives the
+ * written path of the file before it makes any call on the target, and the real path of the file after it.
+ */
+const requireOutsideUserFolder = (deps: Deps, target: Target, command: CommandName, path: string): CliResult<void> => {
   const userFolder = userClaudeFolderOf(deps);
-  if (userFolder === null) return ok(undefined);
-  const inside = await isSameOrInsideFolder(deps, userFolder, target.file);
-  if (!inside.ok) return inside;
-  if (!inside.value) return ok(undefined);
+  if (userFolder === null || !isWrittenInside(deps, userFolder, path)) return ok(undefined);
   return safetyRefusal(
     `cannot write ${target.file}: it is inside the settings folder of Claude Code ${userFolder}`,
     `Claude Code owns that folder. Use a session folder outside it. ${again(command)}`,
   );
 };
 
-/** The settings object of the file. A file that is not a JSON object is a failure, and it stays as it is. */
-const readSettings = async (deps: Deps, file: string, command: CommandName): Promise<CliResult<Settings>> => {
+/** The text of the settings file, and the settings object that it holds. */
+interface FileContent {
+  readonly text: string;
+  readonly settings: Settings;
+}
+
+/** The text and the settings object of the file. A file that is not a JSON object is a failure, and it stays as it is. */
+const readSettings = async (deps: Deps, file: string, command: CommandName): Promise<CliResult<FileContent>> => {
   const text = await deps.fs.readTextLimited(file, maxFileBytes);
   if (!text.ok) return text;
   const parsed = parseJsonText(text.value);
-  if (parsed.ok && isRecord(parsed.value)) return ok(parsed.value);
+  if (parsed.ok && isRecord(parsed.value)) return ok({ text: text.value, settings: parsed.value });
   return failure(`${file} is not a JSON object`, `Fix the file, or move it away. ${again(command)}`);
 };
 
@@ -267,20 +274,29 @@ export const declinedHookText = (file: string, command: CommandName): string =>
   'and a restart or a reboot can not resume the session by its id. ' +
   `To add the settings later, run "${commandText(command)}" again and answer yes.`;
 
-/** The yes flag is a consent outside a factory session. Inside one it counts only for a work copy with no settings file. */
-const yesCounts = (deps: Deps, request: HookConsentRequest, fileExists: boolean): boolean =>
+/**
+ * The yes flag is a consent outside a factory session. Inside one it counts only for a work copy with no settings file. The
+ * test reads only the session marker, which the session controls: a process in the session can remove the variable before it
+ * runs the command. So the refusal stops an accidental consent only. It is not a security boundary.
+ */
+const yesCounts =(deps: Deps, request: HookConsentRequest, fileExists: boolean): boolean =>
   request.yes && (!inFactorySession(deps) || (request.session === hookSessions.workCopy && !fileExists));
 
 /** The yes flag inside a factory session, where it gives no consent: the command stops with a usage error, with or without a terminal. */
 const yesRefused = (deps: Deps, request: HookConsentRequest, fileExists: boolean): boolean =>
   request.yes && !yesCounts(deps, request, fileExists);
 
-const noConsentRemedy = (deps: Deps, request: HookConsentRequest): string => {
+/**
+ * The remedy of a stop without consent. It never offers a flag that the next run refuses: the yes flag is offered only when
+ * it would count for this session, this kind of session folder and this state of the file.
+ */
+const noConsentRemedy = (deps: Deps, request: HookConsentRequest, fileExists: boolean): string => {
   const run = `Run "${commandText(request.command)}"`;
-  return request.yes && inFactorySession(deps)
-    ? `${flagText(flags.yes)} gives no consent inside a ${places.session}. ${run} outside the ${places.session}, ` +
-        `or in a terminal window without ${flagText(flags.yes)} and answer the question.`
-    : `${run} in a terminal window, or add ${flagText(flags.yes)}.`;
+  if (yesCounts(deps, { ...request, yes: true }, fileExists)) return `${run} in a terminal window, or add ${flagText(flags.yes)}.`;
+  const elsewhere = `${run} outside the ${places.session}, or in a terminal window`;
+  return request.yes
+    ? `${flagText(flags.yes)} gives no consent inside a ${places.session}. ${elsewhere} without ${flagText(flags.yes)} and answer the question.`
+    : `${elsewhere} and answer the question.`;
 };
 
 /** True when the person agrees. The change is shown first: on the terminal in the question, or as a notice with the yes flag. */
@@ -290,39 +306,59 @@ const askConsent = async (deps: Deps, request: HookConsentRequest, shown: string
     return ok(true);
   }
   if (yesRefused(deps, request, fileExists) || !(deps.stdinIsTTY && deps.stdoutIsTTY)) {
-    return usageError(shown, noConsentRemedy(deps, request));
+    return usageError(shown, noConsentRemedy(deps, request, fileExists));
   }
   const answer = await deps.prompt(printable(`${shown}\nWrite this change? [y/N] `));
   return answer.ok ? ok(ACCEPT_ANSWER.test(answer.value.trim())) : answer;
 };
 
-/** What a call finds: the target, whether the file is there, and the change that the own entries make. Nothing is written. */
+/** What a call finds: the target, the text of the file, and the change that the own entries make. Nothing is written. */
 interface Plan {
   readonly target: Target;
-  readonly exists: boolean;
+  /** The text that the plan read, or null when there is no file. */
+  readonly text: string | null;
   readonly change: Change;
 }
 
-/** The checks of the target, then the change. A link, a real path outside the session folder or a file that is no object stops it. */
+/**
+ * The checks of the target, then the change. A path in the user settings folder, a link, a real path outside the session
+ * folder or a file that is no object stops it. The first check compares the written path of the file and makes no call of the
+ * file system, so it comes before any call on the target.
+ */
 const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<Plan>> => {
   const target = targetOf(request.folder);
+  const written = requireOutsideUserFolder(deps, target, request.command, target.file);
+  if (!written.ok) return written;
   const parts = await checkParts(deps, target, request.command);
   if (!parts.ok) return parts;
-  const inside = await requireInsideSession(deps, target, request.command);
-  if (!inside.ok) return inside;
-  const outside = await requireOutsideUserFolder(deps, target, request.command);
-  if (!outside.ok) return outside;
-  const existing = parts.value.exists ? await readSettings(deps, target.file, request.command) : ok(NO_SETTINGS);
-  if (!existing.ok) return existing;
-  const change = addOwnEntries(existing.value, target.file, request.command);
-  return change.ok ? ok({ target, exists: parts.value.exists, change: change.value }) : change;
+  const real = await requireInsideSession(deps, target, request.command);
+  if (!real.ok) return real;
+  const resolved = requireOutsideUserFolder(deps, target, request.command, real.value);
+  if (!resolved.ok) return resolved;
+  const content = parts.value.exists ? await readSettings(deps, target.file, request.command) : ok(null);
+  if (!content.ok) return content;
+  const change = addOwnEntries(content.value === null ? NO_SETTINGS : content.value.settings, target.file, request.command);
+  return change.ok ? ok({ target, text: content.value === null ? null : content.value.text, change: change.value }) : change;
 };
 
 /** The plan for a session folder that does not exist yet: the file is new, and the change is every own entry. */
 const newFilePlan = (request: HookConsentRequest): CliResult<Plan> => {
   const target = targetOf(request.folder);
   const change = addOwnEntries(NO_SETTINGS, target.file, request.command);
-  return change.ok ? ok({ target, exists: false, change: change.value }) : change;
+  return change.ok ? ok({ target, text: null, change: change.value }) : change;
+};
+
+/**
+ * The plan to write after the consent. The file may have changed while the person answered: Claude Code saves its permission
+ * rules in this file. So the call plans again from the file as it is now, with one read and no loop. It writes the new plan
+ * when the file has the same text, or when the new change has the same lines that the person saw: the write adds only content
+ * that the person saw, and it keeps what the other program saved. Any other change stops the call before the write.
+ */
+const planAfterConsent = async (deps: Deps, request: HookConsentRequest, seen: Plan): Promise<CliResult<Plan>> => {
+  const now = await planChange(deps, request);
+  if (!now.ok) return now;
+  if (now.value.text === seen.text || isDeepStrictEqual(now.value.change.lines, seen.change.lines)) return now;
+  return failure(`cannot write ${seen.target.file}: it changed while the question waited`, `Check the file. ${again(request.command)}`);
 };
 
 /**
@@ -330,25 +366,29 @@ const newFilePlan = (request: HookConsentRequest): CliResult<Plan> => {
  * come first: a link, a real path outside the session folder or inside the user settings folder is a stop (exit 4), and a
  * file that is not a JSON object is a failure (exit 1) that leaves its bytes. Entries in place need no question and no
  * write. Else the change is shown with its target, the person consents, and the write keeps every other key. With no
- * terminal and no consent, the call writes nothing and gives a usage error (exit 2). A dry run makes the same checks, then
- * returns the change with no question and no write.
+ * terminal and no consent, the call writes nothing and gives a usage error (exit 2). After the consent, the call reads the
+ * file again and plans once more: it writes the change that the person saw on the file as it is then, and when the file
+ * changed to a text that gives another change, it writes nothing and gives a failure (exit 1). A dry run makes the same
+ * checks, then returns the change with no question and no write.
  */
 export const ensureHookSettings = async (deps: Deps, request: HookSettingsRequest): Promise<CliResult<HookSettingsOutcome>> => {
   const planned = await planChange(deps, request);
   if (!planned.ok) return planned;
-  const { target, exists, change } = planned.value;
+  const { target, text, change } = planned.value;
   if (change.lines.length === 0) return ok({ kind: 'in-place', file: target.file });
   const shown = shownChange(target.file, change.lines);
   if (request.dryRun) return ok({ kind: 'would-write', file: target.file, change: shown });
-  const consent = await askConsent(deps, request, shown, exists);
+  const consent = await askConsent(deps, request, shown, text !== null);
   if (!consent.ok) return consent;
   if (!consent.value) return ok({ kind: 'declined', file: target.file });
-  const info = exists ? await deps.fs.statInfo(target.file) : ok(null);
+  const current = await planAfterConsent(deps, request, planned.value);
+  if (!current.ok) return current;
+  const info = current.value.text === null ? ok(null) : await deps.fs.statInfo(target.file);
   if (!info.ok) return info;
   const written = await writeInFolder(
     deps,
     { parent: target.folder, folder: target.claudeFolder, name: localSettingsFile, mode: info.value?.mode ?? localFileModes.private },
-    `${JSON.stringify(change.settings, null, 2)}\n`,
+    `${JSON.stringify(current.value.change.settings, null, 2)}\n`,
   );
   return written.ok ? ok({ kind: 'written', file: target.file }) : written;
 };
@@ -359,16 +399,21 @@ export const ensureHookSettings = async (deps: Deps, request: HookSettingsReques
  * change is to be made and either the yes flag is given inside a factory session, where it gives no consent (exit 2, also on
  * a terminal), or there is no terminal and no consent (exit 2). The session folder may not exist yet: the file is new then.
  * A terminal, the yes flag outside a factory session, or entries in place let the command go on.
- * The call asks nothing and writes nothing.
+ * The call asks nothing and writes nothing. A session folder written inside the user settings folder stops it before any call
+ * of the file system.
  */
 export const requireHookConsent = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<void>> => {
+  const target = targetOf(request.folder);
+  const written = requireOutsideUserFolder(deps, target, request.command, target.file);
+  if (!written.ok) return written;
   const folder = await deps.fs.lstat(request.folder);
   if (!folder.ok) return folder;
   const planned = folder.value === null ? newFilePlan(request) : await planChange(deps, request);
   if (!planned.ok) return planned;
-  const { change, exists } = planned.value;
+  const { change, text } = planned.value;
+  const exists = text !== null;
   const terminal = deps.stdinIsTTY && deps.stdoutIsTTY;
   if (change.lines.length === 0) return ok(undefined);
   if (!yesRefused(deps, request, exists) && (terminal || yesCounts(deps, request, exists))) return ok(undefined);
-  return usageError(shownChange(planned.value.target.file, change.lines), noConsentRemedy(deps, request));
+  return usageError(shownChange(target.file, change.lines), noConsentRemedy(deps, request, exists));
 };
