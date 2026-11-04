@@ -7,7 +7,7 @@ import { parseProjectUrl } from '../../src/commands/init-clone.js';
 import { MAX_CLONE_URL_CHARS } from '../../src/core/clone-url.js';
 import { commands, env, program } from '../../src/names.js';
 import { claudeFileText } from '../helpers/blocks.js';
-import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { runDoctor, runInit, runNode, runStart, runUpgrade } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
@@ -305,6 +305,32 @@ describe.each(COMMANDS)('stops of %s (exit 4)', (name, run) => {
   });
 });
 
+/** The settings folder of Claude Code in the test home of `makeNode` (the variable HOME is `/users/me`). */
+const USER_CLAUDE = '/users/me/.claude';
+
+const IN_USER_CLAUDE: readonly (readonly [string, (deps: FakeDeps, home: string) => Promise<CliResult<unknown>>])[] = [
+  ['start', (deps, home) => runStart(deps, { home, dryRun: true })],
+  ['doctor', (deps, home) => runDoctor(deps, { home })],
+  ['node', (deps, home) => runNode(deps, { home, words: ['children'] })],
+  ['upgrade', (deps, home) => runUpgrade(deps, { home, dryRun: true, overwrite: [], yes: true })],
+];
+
+describe.each(IN_USER_CLAUDE)('%s and a factory folder in the settings folder of Claude Code', (_name, run) => {
+  it.each([USER_CLAUDE, `${USER_CLAUDE}/factory`])(
+    'stops with exit 4 and one remedy line for %s, and makes no file call at or under that folder',
+    async (home) => {
+      const deps = await makeNode();
+      registerRoot(deps, home, 'demo');
+      deps.seed(`${home}/factory.yaml`, 'schema: 2\n');
+      const seen: string[] = [];
+      const error = errorOf(await run(withFsWatch(runWith(deps), (_method, path) => seen.push(path)), home));
+      expectRemedy(error, 4);
+      expect(error.message).toContain(USER_CLAUDE);
+      expect(seen.filter((path) => path === USER_CLAUDE || path.startsWith(`${USER_CLAUDE}/`))).toEqual([]);
+    },
+  );
+});
+
 describe('doctor and a local file with a wrong mode', () => {
   it('warns and names the chmod command, and does not stop', async () => {
     const deps = await makeNode();
@@ -401,6 +427,11 @@ describe('stops of init (exit 4)', () => {
 
   it('prints one remedy line that names a command for a delegated approval with no terminal window', async () => {
     const result = await runInit(initDeps(), options({ yes: false, approval: ['merge=delegated'] }));
+    expectRemedy(errorOf(result), 4);
+  });
+
+  it('prints one remedy line that names a command for a factory folder in the settings folder of Claude Code', async () => {
+    const result = await runInit(initDeps(), options({ home: `${USER_CLAUDE}/factory` }));
     expectRemedy(errorOf(result), 4);
   });
 

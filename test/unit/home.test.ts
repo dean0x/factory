@@ -8,7 +8,7 @@ import {
   type NodeIdReader,
 } from '../../src/core/home.js';
 import { err, ok } from '../../src/core/result.js';
-import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 
 const HOME = '/w/node';
 const INDEX = '/state/factory/homes.json';
@@ -84,6 +84,94 @@ describe('home: the order', () => {
     const deep = `${HOME}${'/d'.repeat(70)}`;
     const result = await locateHome(nodeAt(deep), undefined, reader);
     expect(result).toMatchObject({ ok: false, error: { kind: 'usage' } });
+  });
+});
+
+describe('home: a folder in the settings folder of Claude Code', () => {
+  const USER = '/users/me';
+  const CLAUDE = `${USER}/.claude`;
+  const underClaude = (path: string): boolean => {
+    const lower = path.toLowerCase();
+    return lower === CLAUDE || lower.startsWith(`${CLAUDE}/`);
+  };
+
+  /** A registered factory folder with a config file, a test home at `/users/me`, and the current folder `cwd`. */
+  const factoryIn = (
+    folder: string,
+    cwd = '/w',
+    env: Record<string, string | undefined> = {},
+    os = 'linux',
+  ): { readonly deps: FakeDeps; readonly seen: string[] } => {
+    const deps = createFakeDeps({ cwd, os, env: { XDG_STATE_HOME: '/state', HOME: USER, ...env } });
+    deps.seed(`${folder}/factory.yaml`, 'schema: 2\n');
+    deps.seedDir(cwd);
+    registerRoot(deps, folder, 'demo');
+    return { deps, seen: [] };
+  };
+
+  const expectStop = async (
+    folder: string,
+    homeFlag: string | undefined,
+    cwd = '/w',
+    env: Record<string, string | undefined> = {},
+    os = 'linux',
+  ): Promise<void> => {
+    const { deps, seen } = factoryIn(folder, cwd, env, os);
+    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), homeFlag, reader);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    if (result.ok) return;
+    expect(result.error.message).toContain('the settings folder of Claude Code /users/me/.claude');
+    expect(result.error.hint).toContain('Then run "factory doctor".');
+    expect(seen.filter(underClaude)).toEqual([]);
+  };
+
+  it.each([CLAUDE, `${CLAUDE}/factory`, `${CLAUDE}/a/b`])('stops for the home flag %s', async (folder) => {
+    await expectStop(folder, folder);
+  });
+
+  it('stops for a relative home flag that resolves into that folder', async () => {
+    await expectStop(`${CLAUDE}/factory`, 'factory', CLAUDE);
+  });
+
+  it('stops for FACTORY_HOME in that folder', async () => {
+    await expectStop(`${CLAUDE}/factory`, undefined, '/w', { FACTORY_HOME: `${CLAUDE}/factory` });
+  });
+
+  it('stops, and asks nothing about the folders, when the current folder is in that folder', async () => {
+    await expectStop(`${CLAUDE}/factory`, undefined, `${CLAUDE}/factory`);
+    await expectStop(`${CLAUDE}/factory`, undefined, `${CLAUDE}/factory/deep/er`);
+    await expectStop(CLAUDE, undefined, CLAUDE);
+  });
+
+  it('stops for a home that the factory list gives, when it is in that folder', async () => {
+    const { deps } = factoryIn(`${CLAUDE}/factory`, '/w/web/src');
+    registerRoot(deps, `${CLAUDE}/factory`, 'demo', ['/w/web']);
+    expect(await locateHome(deps, undefined, reader)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+
+  it('stops for a folder that differs only in the case of letters on macOS', async () => {
+    await expectStop('/users/me/.CLAUDE/factory', '/users/me/.CLAUDE/factory', '/w', {}, 'darwin');
+  });
+
+  it('does not stop for a folder with the same start in its name, or for the case of letters on Linux', async () => {
+    expect(await located(factoryIn('/users/me/.claude-factory', '/w').deps, '/users/me/.claude-factory')).toMatchObject({
+      source: 'flag',
+    });
+    expect(await located(factoryIn('/users/me/.CLAUDE/factory').deps, '/users/me/.CLAUDE/factory')).toMatchObject({
+      source: 'flag',
+    });
+  });
+
+  it('does not stop for a home flag outside that folder when the current folder is in it, and asks nothing about it', async () => {
+    const { deps, seen } = factoryIn('/w/node', `${CLAUDE}/work`);
+    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), '/w/node', reader);
+    expect(result).toMatchObject({ ok: true, value: { home: '/w/node', source: 'flag' } });
+    expect(seen.filter(underClaude)).toEqual([]);
+  });
+
+  it('does not stop when the variable of the user home is not set', async () => {
+    const { deps } = factoryIn(`${CLAUDE}/factory`, '/w', { HOME: undefined });
+    expect(await located(deps, `${CLAUDE}/factory`)).toMatchObject({ source: 'flag' });
   });
 });
 

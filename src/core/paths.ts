@@ -1,6 +1,6 @@
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { failure, type CliResult } from '../cli/errors.js';
-import { dirs, env } from '../names.js';
+import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { commandText, dirs, env, flags, flagText, type CommandName } from '../names.js';
 import type { Deps } from './deps.js';
 import { ok } from './result.js';
 
@@ -72,6 +72,20 @@ export const isWrittenInside = (deps: Deps, folder: string, path: string): boole
 export const userClaudeFolderOf = (deps: Deps): string | null => {
   const userHome = deps.env[env.userHome];
   return userHome === undefined || userHome === '' ? null : join(resolve(userHome), dirs.claude);
+};
+
+/**
+ * A stop (exit 4) when `folder` is the user settings folder of Claude Code or is inside it. The two paths are compared as
+ * they are written, so no call of the file system is made and nothing asks about that folder. With no user home variable,
+ * the folder is not known and nothing stops. The remedy names the command to run once the person has chosen another folder.
+ */
+export const requireOutsideUserClaudeFolder = (deps: Deps, folder: string, command: CommandName): CliResult<void> => {
+  const userFolder = userClaudeFolderOf(deps);
+  if (userFolder === null || !isWrittenInside(deps, userFolder, folder)) return ok(undefined);
+  return safetyRefusal(
+    `${resolve(folder)} is, or is inside, the settings folder of Claude Code ${userFolder}`,
+    `Claude Code owns that folder. Go to another folder, or name one with ${flagText(flags.home)} DIR. Then run "${commandText(command)}".`,
+  );
 };
 
 /**

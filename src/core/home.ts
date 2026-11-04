@@ -5,7 +5,7 @@ import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import type { Deps } from './deps.js';
 import { entryOfHome, findHomeInIndex, homeHoldingFolder, indexPathOf, readHomeIndex } from './home-index.js';
-import { realPathOf } from './paths.js';
+import { realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
 import { ok, type Err, type Result } from './result.js';
 
 const MAX_WALK_LEVELS = 64;
@@ -229,6 +229,9 @@ const chosenHome = async (
     const home = resolve(deps.cwd, fromEnv);
     return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'env' });
   }
+  // The walk asks about the current folder and every folder above it, so it never starts in the folder of Claude Code.
+  const outside = requireOutsideUserClaudeFolder(deps, deps.cwd, commands.doctor);
+  if (!outside.ok) return outside;
   const found = await findNearestConfig(deps, deps.cwd);
   if (!found.ok) return found;
   if (found.value !== null) {
@@ -260,6 +263,9 @@ export const locateHome = async (
   const chosen = await chosenHome(deps, homeFlag);
   if (!chosen.ok) return chosen;
   const { home, source } = chosen.value;
+  // The check comes before any call on the folder, whatever gave it: a factory folder never sits in the folder of Claude Code.
+  const outside = requireOutsideUserClaudeFolder(deps, home, commands.doctor);
+  if (!outside.ok) return outside;
   const problem = await rootProblemOf(deps, home, readNodeId);
   if (!problem.ok) return problem;
   if (problem.value === null) return ok({ home, source, unregistered: false });

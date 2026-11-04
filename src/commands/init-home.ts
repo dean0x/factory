@@ -5,6 +5,7 @@ import { localFileAccess } from '../config/load.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { listRepoChildren, MAX_SCAN_ENTRIES, workTreeTop, type SkippedFolder } from '../core/git.js';
 import { listedRootAbove, readHomeIndex } from '../core/home-index.js';
+import { requireOutsideUserClaudeFolder } from '../core/paths.js';
 import { ok } from '../core/result.js';
 import { commands, commandText, dirs, files, flags, flagText, places, program, roles } from '../names.js';
 import { isStagingDirName, layoutOf } from '../state/layout.js';
@@ -145,10 +146,14 @@ export const chooseHome = async (
   deps: Deps,
   options: { readonly home: string | undefined; readonly yes: boolean },
 ): Promise<CliResult<HomeChoice>> => {
-  if (options.home !== undefined) {
-    const home = resolve(deps.cwd, options.home);
-    const kind = await folderKindOf(deps, home);
-    return kind.ok ? ok({ home, ...NOT_PROPOSED, kind: kind.value }) : kind;
+  // The check comes before any call on a folder. With no home flag, the command asks about the current folder and the
+  // folders around it, so the current folder is the one to check.
+  const named = options.home === undefined ? undefined : resolve(deps.cwd, options.home);
+  const outside = requireOutsideUserClaudeFolder(deps, named ?? resolve(deps.cwd), commands.init);
+  if (!outside.ok) return outside;
+  if (named !== undefined) {
+    const kind = await folderKindOf(deps, named);
+    return kind.ok ? ok({ home: named, ...NOT_PROPOSED, kind: kind.value }) : kind;
   }
   const refuse = (folder: string): CliResult<never> =>
     usageError(`cannot make a name for the ${places.folder} from the folder ${folder}`, `Pass ${flagText(flags.home)} DIR.`);

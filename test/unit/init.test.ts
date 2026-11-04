@@ -375,6 +375,65 @@ describe('init: a new root inside a root that the factory list holds', () => {
   });
 });
 
+describe('init: a folder in the settings folder of Claude Code', () => {
+  const CLAUDE = '/users/me/.claude';
+  const CHANGES = new Set(['mkdir', 'writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'chmod', 'copyTree']);
+  const underClaude = (path: string): boolean => {
+    const lower = path.toLowerCase();
+    return lower === CLAUDE || lower.startsWith(`${CLAUDE}/`);
+  };
+
+  /** Run `init` on deps that note every file call, with a test home at `/users/me`. */
+  const attempt = async (extra: FakeOptions, change: Partial<InitOptions>) => {
+    const { deps } = setup({}, extra);
+    const before = snapshot(deps);
+    const seen: { readonly method: string; readonly path: string }[] = [];
+    const result = await runInit(withFsWatch(deps, (method, path) => seen.push({ method, path })), options(change));
+    return { deps, before, seen, result };
+  };
+
+  const expectStop = (run: Awaited<ReturnType<typeof attempt>>): void => {
+    expect(run.result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(run.result)).toContain('the settings folder of Claude Code /users/me/.claude');
+    expect(messageOf(run.result)).toContain('Then run "factory init".');
+    expect(snapshot(run.deps)).toBe(run.before);
+    expect(run.seen.filter((call) => CHANGES.has(call.method))).toEqual([]);
+    expect(run.seen.filter((call) => underClaude(call.path))).toEqual([]);
+    expect(run.deps.calls).toEqual([]);
+  };
+
+  it.each([CLAUDE, `${CLAUDE}/factory`, `${CLAUDE}/a/b/c`])(
+    'stops with exit 4 for --home %s, writes nothing and makes no call at or under that folder',
+    async (home) => {
+      expectStop(await attempt({}, { home }));
+    },
+  );
+
+  it('stops for a relative --home that resolves into that folder', async () => {
+    expectStop(await attempt({ cwd: CLAUDE }, { home: 'factory' }));
+  });
+
+  it('stops with no --home when the current folder is in that folder, and runs no git command', async () => {
+    expectStop(await attempt({ cwd: `${CLAUDE}/work` }, { home: undefined }));
+  });
+
+  it('stops for a folder that differs only in the case of letters on macOS', async () => {
+    expectStop(await attempt({ os: 'darwin' }, { home: '/users/me/.CLAUDE/factory' }));
+  });
+
+  it('does not stop for a folder with the same start in its name, or for the case of letters on Linux', async () => {
+    const beside = await attempt({}, { home: '/users/me/.claude-factory' });
+    expect(beside.result.ok).toBe(true);
+    const upper = await attempt({ os: 'linux' }, { home: '/users/me/.CLAUDE/factory' });
+    expect(upper.result.ok).toBe(true);
+  });
+
+  it('does not stop when the variable of the user home is not set', async () => {
+    const run = await attempt({ env: { XDG_STATE_HOME: '/state' } }, { home: `${CLAUDE}/factory` });
+    expect(run.result.ok).toBe(true);
+  });
+});
+
 describe('init: the proposed home in a git work tree', () => {
   const REPO = '/w/web';
   const PROPOSAL = '/w/web-factory';
