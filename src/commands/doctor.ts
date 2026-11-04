@@ -413,7 +413,7 @@ export const checkNodeBlocks = async (
   const layout = layoutOf(home);
   const plain = await requireNoRootLinks(deps, layout);
   if (!plain.ok) return failedFrom(checkIds.blocks, plain.error);
-  const setup = await readSetupTexts(deps, layout);
+  const setup = await readSetupTexts(deps, layout, commands.doctor);
   if (!setup.ok) return failedFrom(checkIds.blocks, setup.error);
   const input = blockInputOf(state.value, setup.value, await effectiveModes(deps, home, state.value));
   const pending = { ...NO_PENDING_FILES, renames: [...blockRenamesOf(fileSteps), ...roleBlockRenames(input.recipe, input.layer)] };
@@ -456,7 +456,7 @@ const strayLinesOf = async (deps: Deps, home: string, pair: RenderedPair): Promi
   const blocks = parseBlocks(rendered.value);
   // A file with broken markers is the business of the blocks check.
   if (!blocks.ok) return ok(null);
-  const setup = await readSetupFile(deps, layoutOf(home), pair.setup);
+  const setup = await readSetupFile(deps, layoutOf(home), pair.setup, commands.doctor);
   if (!setup.ok) return setup;
   const known = new Set((setup.value ?? '').split('\n').map((line) => line.trim()));
   return ok(linesOutsideBlocks(rendered.value, blocks.value).filter((line) => !known.has(line)).length);

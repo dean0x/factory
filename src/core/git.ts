@@ -164,7 +164,7 @@ export const gitClone = async (deps: Deps, url: string, target: string): Promise
   if (!result.ok && result.error.message.endsWith(`: ${TIME_LIMIT_SIGNAL}`)) {
     return failure(
       `cannot clone ${shown}: the clone took longer than ${CLONE_TIMEOUT_MS / 1000} seconds`,
-      'An ssh clone can wait for a prompt that nobody sees. Load the key into an ssh agent, or sign in with "gh auth login", then run the command again.',
+      `An ssh clone can wait for a prompt that nobody sees. Load the key into an ssh agent, or sign in with "gh auth login", then run "${commandText(commands.init)}" again.`,
     );
   }
   if (!result.ok) return failure(`cannot clone ${shown}: ${withoutUserinfo(result.error.message)}`);

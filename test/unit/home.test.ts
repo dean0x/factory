@@ -202,7 +202,7 @@ describe('home: the registration check', () => {
     deps.seed(MARKER, '{"schema_version": 99}');
     const error = await stopped(deps);
     expect(error.kind).toBe('safety');
-    expect(error.hint).toContain('Upgrade factory');
+    expect(error.hint).toBe('Upgrade factory, then run "factory doctor".');
   });
 
   it('exits 4 with the remedy of a clone when the config file is in a clone of a registered factory', async () => {
@@ -214,7 +214,7 @@ describe('home: the registration check', () => {
     expect(error.kind).toBe('safety');
     expect(error.message).toContain('/w/factory/web/factory.yaml');
     expect(error.message).toContain('clone');
-    expect(error.hint).toBe('Run the command from the factory folder /w/factory, or name it with --home /w/factory.');
+    expect(error.hint).toBe('Go to the factory folder /w/factory, or name it with --home /w/factory.');
   });
 
   it('gives the same remedy of a clone for FACTORY_HOME and the home flag that name the clone', async () => {

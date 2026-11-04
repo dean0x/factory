@@ -10,7 +10,7 @@ import {
   type SetupCheck,
 } from '../../src/commands/setup-check.js';
 import { collectSetup } from '../../src/commands/init-received.js';
-import { env, maxSetupTextBytes, trackedFiles } from '../../src/names.js';
+import { commands, env, maxSetupTextBytes, trackedFiles } from '../../src/names.js';
 import { createFakeDeps, type FakeDeps, type PromptHandler } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
@@ -277,7 +277,7 @@ describe('setup check: settle the setup text before a command renders it', () =>
     const settled = await settle(deps);
     expect(settled).toEqual(ok({ texts: { coordinator: 'Second rules.\n', worker: null }, accepted: true }));
     expect(deps.prompts).toHaveLength(1);
-    const set = await collectSetup(deps, HOME, [COORDINATOR]);
+    const set = await collectSetup(deps, HOME, [COORDINATOR], commands.init);
     expect(JSON.parse(storeOf(deps)).acceptances).toEqual([
       expect.objectContaining({ node: NODE, hash: set.ok ? set.value.collected.manifest.hash : '', reason }),
     ]);

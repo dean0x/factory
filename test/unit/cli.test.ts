@@ -104,7 +104,8 @@ describe('the refusal on Windows', () => {
       const result = await runOn('win32', argv);
       expect(result.code).toBe(1);
       expect(result.out).toBe('');
-      expect(result.err).toBe('error: factory runs on macOS and Linux\nUse WSL, then run the command again.\n');
+      const typed = commandTable.some((command) => command.name === argv[0]) ? argv[0] : 'help';
+      expect(result.err).toBe(`error: factory runs on macOS and Linux\nUse WSL, then run "factory ${typed}" there.\n`);
     },
   );
 

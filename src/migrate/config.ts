@@ -106,7 +106,7 @@ const checkChildren = (root: YAMLMap): CliResult<void> => {
   if (children.items.length === 0) return ok(undefined);
   return failure(
     `${keys.root.children}: a ${roles.node} on layer ${COORDINATOR_LAYER} has ${roles.worker}s as its children, ` +
-      `so this list must be empty. Remove the entries and run the command again. ` +
+      `so this list must be empty. Remove the entries and run "${commandText(commands.upgrade)}" again. ` +
       `To manage other ${roles.node}s, set ${keys.root.node}.${keys.node.layer} to 2 after the upgrade, ` +
       `and add them with "${commandText(commands.node)} ${nodeCommands.addChild}".`,
   );

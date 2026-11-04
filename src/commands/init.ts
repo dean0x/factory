@@ -67,6 +67,7 @@ import {
   findRecipe,
   recipeIds,
   type ApprovalModes,
+  type InitProjectKey,
   type RecipeEntry,
   type RecipeRegistry,
 } from '../recipes/index.js';
@@ -266,18 +267,19 @@ const describeProject = async (
 ): Promise<CliResult<DescribedProject>> => {
   const id = slugify(planned.name);
   if (id === null) return usageError(`cannot make a project id from the folder name ${planned.name}`);
+  const holds = (key: InitProjectKey): boolean => recipe.initProjectKeys.includes(key);
   const repo = planned.origin.kind === 'shareable' ? parseGithubRepo(planned.origin.url) : null;
-  const branch = (await defaultBranchOf(deps, planned.target)) ?? DEFAULT_BRANCH;
+  const branch = holds(keys.project.defaultBranch) ? ((await defaultBranchOf(deps, planned.target)) ?? DEFAULT_BRANCH) : null;
   const fields = urlFieldsOf(planned.origin, id, planned.oldFolder ?? planned.target);
   return ok({
     project: {
       [keys.project.id]: id,
-      ...(fields.url === null ? {} : { [keys.project.url]: fields.url }),
-      ...(repo === null ? {} : { [keys.project.repo]: repo }),
+      ...(fields.url === null || !holds(keys.project.url) ? {} : { [keys.project.url]: fields.url }),
+      ...(repo === null || !holds(keys.project.repo) ? {} : { [keys.project.repo]: repo }),
       [keys.project.path]: planned.name,
-      [keys.project.defaultBranch]: branch,
+      ...(branch === null ? {} : { [keys.project.defaultBranch]: branch }),
       ...recipe.projectDefaults,
-      [keys.project.gate]: { [keys.gate.checks]: [] },
+      ...(holds(keys.project.gate) ? { [keys.project.gate]: { [keys.gate.checks]: [] } } : {}),
     },
     path: planned.name,
     source: fields.source,
@@ -431,7 +433,10 @@ const requireKind = async (
   const found = await deps.fs.stat(path);
   if (!found.ok) return found;
   if (found.value !== null && found.value !== kind) {
-    return failure(`${name} is not a ${kind === 'dir' ? 'folder' : 'file'}`, 'Move it away, then run the command again.');
+    return failure(
+      `${name} is not a ${kind === 'dir' ? 'folder' : 'file'}`,
+      `Move it away, then run "${commandText(commands.init)}" again.`,
+    );
   }
   return ok(found.value !== null);
 };
@@ -446,7 +451,7 @@ const setupTextOf = async (
   path: string,
   template: string,
 ): Promise<CliResult<{ readonly write: string | null; readonly use: string | null }>> => {
-  const found = await readSetupFile(deps, layout, path);
+  const found = await readSetupFile(deps, layout, path, commands.init);
   if (!found.ok) return found;
   return ok({ write: found.value === null ? template : null, use: renderableSetupText(found.value ?? template) });
 };
@@ -456,7 +461,7 @@ const setupTextOf = async (
  * share list. A setup text that is there stays as it is. This function writes nothing.
  */
 const rootTextsOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootTexts>> => {
-  const gitignore = await rootGitignoreOf(deps, layout);
+  const gitignore = await rootGitignoreOf(deps, layout, commands.init);
   if (!gitignore.ok) return gitignore;
   const setupExists = await requireKind(deps, layout.setupDir, 'dir', dirs.setup);
   if (!setupExists.ok) return setupExists;

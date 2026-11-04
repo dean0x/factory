@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { files, ownerRecords, places, values } from '../names.js';
+import { commands, commandText, files, ownerRecords, places, values } from '../names.js';
 import { ownerModes, type ApprovalMode, type ApprovalModes } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
@@ -105,7 +105,7 @@ const storePathOf = async (deps: Deps, root: string): Promise<CliResult<string>>
  * before the first clone and not after the last write.
  */
 export const requireOwnerChannel = (deps: Deps): CliResult<void> => {
-  const remedy = `Run the command in a terminal window outside a ${places.session}.`;
+  const remedy = `Run "${commandText(commands.init)}" in a terminal window outside a ${places.session}.`;
   if (inFactorySession(deps)) return safetyRefusal(`a ${places.session} cannot write an approval record`, remedy);
   if (!deps.stdinIsTTY) return safetyRefusal('an approval record needs a terminal window', remedy);
   return ok(undefined);

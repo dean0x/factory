@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { values } from '../names.js';
+import { keys, values } from '../names.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
 /** The mode of an approval point: `owner` or `delegated`. */
@@ -36,6 +36,13 @@ export interface RecipeProject {
   readonly [key: string]: unknown;
 }
 
+/** The keys of a project that `init` fills from the clone and its origin. A recipe holds each of them or none. */
+export type InitProjectKey =
+  | typeof keys.project.url
+  | typeof keys.project.repo
+  | typeof keys.project.defaultBranch
+  | typeof keys.project.gate;
+
 /** The parsed `recipe` block, as the core reads it. */
 export interface RecipeConfig {
   readonly id: string;
@@ -68,6 +75,7 @@ export interface RecipeRoles {
  * - `safetyLines` is the part of the safety block that belongs to the recipe.
  * - `projectKeys` names the keys that the recipe adds to a project, in the order of the file.
  * - `projectDefaults` gives the value of each of those keys for a new project.
+ * - `initProjectKeys` names the keys of the core that `init` writes into a new project. A project of the recipe holds no other.
  * - `roles` sets the role of each layer.
  */
 export interface RecipeEntry {
@@ -79,6 +87,7 @@ export interface RecipeEntry {
   readonly safetyLines: readonly string[];
   readonly projectKeys: readonly string[];
   readonly projectDefaults: Readonly<Record<string, string>>;
+  readonly initProjectKeys: readonly InitProjectKey[];
   readonly roles: RecipeRoles;
 }
 

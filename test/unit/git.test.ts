@@ -165,6 +165,7 @@ describe('git: clone', () => {
       expect(result.error.message).toContain('took longer than 300 seconds');
       expect(result.error.hint).toContain('ssh agent');
       expect(result.error.hint).toContain('gh auth login');
+      expect(result.error.hint).toContain('then run "factory init" again.');
       expect(JSON.stringify(result.error)).not.toContain('SIGTERM');
       expect(JSON.stringify(result.error)).not.toContain('tok3n');
     }

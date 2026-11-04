@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CliError } from '../../src/cli/errors.js';
-import { maxSetupTextBytes } from '../../src/names.js';
+import { commands, maxSetupTextBytes } from '../../src/names.js';
 import { readSetupFile, readSetupTexts, renderableSetupText } from '../../src/state/setup-text.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
@@ -26,7 +26,7 @@ describe('renderableSetupText', () => {
 });
 
 describe('readSetupFile', () => {
-  const read = (deps: ReturnType<typeof createFakeDeps>) => readSetupFile(deps, layout, layout.setupCoordinatorFile);
+  const read = (deps: ReturnType<typeof createFakeDeps>) => readSetupFile(deps, layout, layout.setupCoordinatorFile, commands.init);
 
   it('gives null for a file that is absent', async () => {
     expect(await read(createFakeDeps())).toEqual({ ok: true, value: null });
@@ -50,7 +50,22 @@ describe('readSetupFile', () => {
     const error = failureOf(await read(deps));
     expect(error.kind).toBe('failure');
     expect(error.message).toBe('setup/coordinator.md is not a file');
-    expect(error.hint).toBe('Move it away, then run the command again.');
+    expect(error.hint).toBe('Move it away, then run "factory init" again.');
+  });
+
+  it('names the command that the caller passes in each remedy', async () => {
+    const folder = createFakeDeps();
+    folder.seedDir(layout.setupCoordinatorFile);
+    const large = createFakeDeps();
+    large.seed(layout.setupCoordinatorFile, 'x'.repeat(maxSetupTextBytes + 1));
+    const hidden = createFakeDeps();
+    hidden.seed(layout.setupCoordinatorFile, 'a\u0000b');
+    const marker = createFakeDeps();
+    marker.seed(layout.setupCoordinatorFile, '<!-- factory:begin coordinator v1 sha256=abc -->\n');
+    for (const deps of [folder, large, hidden, marker]) {
+      const error = failureOf(await readSetupFile(deps, layout, layout.setupCoordinatorFile, commands.doctor));
+      expect(error.hint).toMatch(/, then run "factory doctor" again\.$/);
+    }
   });
 
   it('refuses a file over the byte bound, and names the bound', async () => {
@@ -111,14 +126,17 @@ describe('readSetupFile', () => {
 
 describe('readSetupTexts', () => {
   it('gives null for both texts of a factory folder with no setup folder', async () => {
-    expect(await readSetupTexts(createFakeDeps(), layout)).toEqual({ ok: true, value: { coordinator: null, worker: null } });
+    expect(await readSetupTexts(createFakeDeps(), layout, commands.doctor)).toEqual({
+      ok: true,
+      value: { coordinator: null, worker: null },
+    });
   });
 
   it('gives each text from its own file', async () => {
     const deps = createFakeDeps();
     deps.seed(layout.setupCoordinatorFile, 'For the coordinator.\n');
     deps.seed(layout.setupWorkerFile, 'For every worker.\n');
-    expect(await readSetupTexts(deps, layout)).toEqual({
+    expect(await readSetupTexts(deps, layout, commands.doctor)).toEqual({
       ok: true,
       value: { coordinator: 'For the coordinator.\n', worker: 'For every worker.\n' },
     });
@@ -128,30 +146,36 @@ describe('readSetupTexts', () => {
     const deps = createFakeDeps();
     deps.seed(layout.setupCoordinatorFile, '\n\n');
     deps.seed(layout.setupWorkerFile, '');
-    expect(await readSetupTexts(deps, layout)).toEqual({ ok: true, value: { coordinator: null, worker: null } });
+    expect(await readSetupTexts(deps, layout, commands.doctor)).toEqual({ ok: true, value: { coordinator: null, worker: null } });
   });
 
   it('gives null for the worker text when only the coordinator text is there, and the other way round', async () => {
     const onlyCoordinator = createFakeDeps();
     onlyCoordinator.seed(layout.setupCoordinatorFile, 'A.\n');
-    expect(await readSetupTexts(onlyCoordinator, layout)).toEqual({ ok: true, value: { coordinator: 'A.\n', worker: null } });
+    expect(await readSetupTexts(onlyCoordinator, layout, commands.doctor)).toEqual({
+      ok: true,
+      value: { coordinator: 'A.\n', worker: null },
+    });
     const onlyWorker = createFakeDeps();
     onlyWorker.seed(layout.setupWorkerFile, 'B.\n');
-    expect(await readSetupTexts(onlyWorker, layout)).toEqual({ ok: true, value: { coordinator: null, worker: 'B.\n' } });
+    expect(await readSetupTexts(onlyWorker, layout, commands.doctor)).toEqual({
+      ok: true,
+      value: { coordinator: null, worker: 'B.\n' },
+    });
   });
 
   it('names the worker file when it holds a marker', async () => {
     const deps = createFakeDeps();
     deps.seed(layout.setupCoordinatorFile, 'Fine.\n');
     deps.seed(layout.setupWorkerFile, '<!-- factory:begin worker v1 sha256=abc -->\n');
-    const error = failureOf(await readSetupTexts(deps, layout));
+    const error = failureOf(await readSetupTexts(deps, layout, commands.doctor));
     expect(error.message).toBe('setup/roles/worker.md holds a line that starts a managed block');
   });
 
   it('stops with exit 4 when the roles folder of the setup is a link', async () => {
     const deps = createFakeDeps({ links: { [layout.setupRolesDir]: '/outside/roles' } });
     deps.seed(layout.setupWorkerFile, 'B.\n');
-    const error = failureOf(await readSetupTexts(deps, layout));
+    const error = failureOf(await readSetupTexts(deps, layout, commands.doctor));
     expect(error.kind).toBe('safety');
     expect(error.message).toBe('setup/roles is a link, so factory does not use it');
   });

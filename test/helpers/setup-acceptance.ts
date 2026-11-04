@@ -1,5 +1,6 @@
 import { collectSetup } from '../../src/commands/init-received.js';
 import { trackedSetOf } from '../../src/core/root-paths.js';
+import { commands } from '../../src/names.js';
 import type { FakeDeps } from './fake-deps.js';
 
 /** The store of the setup acceptances for a deps whose state folder is `/state`. */
@@ -19,7 +20,7 @@ export const acceptFiles = async (
   paths: readonly string[],
   at: string = ACCEPTED_AT,
 ): Promise<void> => {
-  const collected = await collectSetup(deps, root, paths);
+  const collected = await collectSetup(deps, root, paths, commands.init);
   if (!collected.ok) throw new Error(collected.error.message);
   const { manifest } = collected.value.collected;
   deps.seed(

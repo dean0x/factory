@@ -12,7 +12,7 @@ import { parseBlocks } from '../../src/blocks/managed.js';
 import { ok } from '../../src/core/result.js';
 import { recipeGlossary } from '../../src/glossary.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
-import { gitHandler } from '../helpers/git-fake.js';
+import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { publishApprovalPoints, publishRecipe, publishRegistry, twoRecipeRegistry } from '../helpers/publish-recipe.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -38,8 +38,8 @@ const options = (extra: Partial<InitOptions> = {}): InitOptions => ({
 });
 
 /** A person at a terminal window who types the answers in the list, one for each question. */
-const make = (answers: readonly string[] = ['', '']): FakeDeps => {
-  const git = gitHandler({ gh: 'some-login' });
+const make = (answers: readonly string[] = ['', ''], fixture: GitFixture = {}): FakeDeps => {
+  const git = gitHandler({ gh: 'some-login', ...fixture });
   const tmux = tmuxHandler();
   const queue = [...answers];
   const deps = createFakeDeps({
@@ -226,6 +226,39 @@ describe('the fixture recipe: a project with an id and a path', () => {
   it('reads the block with the registry of two recipes', () => {
     const texts = renderConfig(projectConfig());
     expect(parseConfigTexts(texts.shared, texts.local, twoRecipeRegistry).ok).toBe(true);
+  });
+});
+
+describe('the fixture recipe: init with a project', () => {
+  const BOOK = { id: 'book', path: 'book' };
+
+  const projectsOf = async (deps: FakeDeps) => {
+    const config = await loadConfig(deps, HOME, publishRegistry);
+    if (!config.ok) throw new Error(config.error.message);
+    return config.value.recipe.projects;
+  };
+
+  it('writes the id and the path of a project, and no key that the recipe does not hold', async () => {
+    const deps = make(['', ''], { repos: { '/w/book': {} } });
+    succeeded(await runInit(deps, options({ projects: ['/w/book'] }), publishRegistry));
+    expect(await projectsOf(deps)).toEqual([BOOK]);
+    expect(fileOf(deps, 'factory.yaml')).not.toMatch(/default_branch|gate|merge_method/);
+  });
+
+  it('leaves out the url and the repo of the origin too, because the recipe holds neither', async () => {
+    const repos = {
+      '/w/book': { origin: 'https://github.com/acme/book.git' },
+      '/w/node/book': { origin: 'https://github.com/acme/book.git' },
+    };
+    const deps = make(['', ''], { repos });
+    succeeded(await runInit(deps, options({ projects: ['/w/book'] }), publishRegistry));
+    expect(await projectsOf(deps)).toEqual([BOOK]);
+  });
+
+  it('takes the project with --yes as well', async () => {
+    const deps = make([], { repos: { '/w/book': {} } });
+    succeeded(await runInit(deps, options({ projects: ['/w/book'], yes: true }), publishRegistry));
+    expect(await projectsOf(deps)).toEqual([BOOK]);
   });
 });
 

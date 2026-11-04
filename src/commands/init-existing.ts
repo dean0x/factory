@@ -172,7 +172,7 @@ const checkExisting = async (
   if (given.length > 0) {
     return usageError(
       `${given.join(', ')}: the files of the ${places.folder} ${home} hold these values`,
-      `Run the command again without ${given.length === 1 ? 'this flag' : 'these flags'}.`,
+      `Run "${commandText(commands.init)}" again without ${given.length === 1 ? 'this flag' : 'these flags'}.`,
     );
   }
   const outside = await checkHomeOutsideRoots(deps, indexPath, home);
@@ -576,7 +576,7 @@ export const runExisting = async (
   const id = config.core.node.id;
   const received = standing.registration !== 'registered';
 
-  const setup = await collectSetup(deps, home, root.set);
+  const setup = await collectSetup(deps, home, root.set, commands.init);
   if (!setup.ok) return setup;
   const listing = received ? listingOf(home, id, standing) : [];
   const asking = received ? withFirstQuestion(deps, listing.join('\n')) : deps;

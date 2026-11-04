@@ -12,7 +12,7 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { acceptanceState, manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { env, files as fileNames, setupAcceptance, values } from '../../src/names.js';
+import { commands, env, files as fileNames, setupAcceptance, values } from '../../src/names.js';
 import { SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
 import { loadState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
@@ -2202,7 +2202,7 @@ describe('init: the checks before a clone', () => {
     const { result, log, changed } = await initWithUrl({}, {}, prepare);
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(messageOf(result)).toContain(text);
-    expect(messageOf(result)).toContain('then run the command again');
+    expect(messageOf(result)).toContain('then run "factory init" again');
     expect(log.clones()).toEqual([]);
     expect(changed).toBe(false);
   });
@@ -2697,7 +2697,7 @@ describe('init: the setup texts and the link rule (TP-102, TP-130)', () => {
     const result = await runInit(deps, options({ projects: ['https://host/acme/api.git'] }));
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
     expect(messageOf(result)).toContain(`${shown} holds a line that starts a managed block`);
-    expect(messageOf(result)).toContain(`Remove the marker lines from ${shown}, then run the command again.`);
+    expect(messageOf(result)).toContain(`Remove the marker lines from ${shown}, then run "factory init" again.`);
     expect(log.clones()).toEqual([]);
     expect(snapshot(deps)).toBe(before);
   });
@@ -3189,7 +3189,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
   it('hashes the bytes that it wrote: the files on disk give the hash of the acceptance, and a second run has nothing to accept', async () => {
     const { deps } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
-    const set = await collectSetup(deps, HOME, [COORDINATOR, WORKER]);
+    const set = await collectSetup(deps, HOME, [COORDINATOR, WORKER], commands.init);
     expect(set.ok).toBe(true);
     if (!set.ok) return;
     expect(set.value.collected.manifest.hash).toBe(acceptancesOf(deps)[0]?.hash);
@@ -3273,7 +3273,7 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     expect((await runInit(deps, options())).ok).toBe(true);
     expect(acceptancesOf(deps)).toEqual([expect.objectContaining({ hash: expect.any(String) })]);
     expect(acceptancesOf(deps)[0]?.manifest.map((entry) => entry.path)).toEqual([WORKER]);
-    const set = await collectSetup(deps, HOME, [COORDINATOR, WORKER]);
+    const set = await collectSetup(deps, HOME, [COORDINATOR, WORKER], commands.init);
     expect(set.ok && set.value.collected.manifest.hash).toBe(acceptancesOf(deps)[0]?.hash);
   });
 

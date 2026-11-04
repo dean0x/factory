@@ -123,7 +123,7 @@ export const planLocal = async (
       ? ok({ kind: 'create' })
       : failure(
           `${upgrade.local.spec.file} exists already, but ${upgrade.config.spec.file} has ${upgrade.config.spec.key} ${config.from}`,
-          `Move ${upgrade.local.spec.file} away, then run the command again.`,
+          `Move ${upgrade.local.spec.file} away, then run "${commandText(commands.upgrade)}" again.`,
         );
   }
   return access.value.kind === 'absent' ? requireInit() : planFile(deps, layout.localConfigFile, upgrade.local);
@@ -254,7 +254,7 @@ const gitignoreActionOf = (original: string | null, text: string): GitignoreActi
  * repo only where there is none, and it never touches the repo that is there. The plan reads only.
  */
 export const planRoot = async (deps: Deps, layout: Layout): Promise<CliResult<RootPlan>> => {
-  const current = await rootGitignoreOf(deps, layout);
+  const current = await rootGitignoreOf(deps, layout, commands.upgrade);
   if (!current.ok) return current;
   const { original, text } = current.value;
   const action = gitignoreActionOf(original, text);
@@ -291,7 +291,10 @@ export const planFiles = async (
     const target = await deps.fs.stat(toPath);
     if (!target.ok) return target;
     if (target.value !== null) {
-      return failure(`cannot move ${from} to ${to}: the target exists`, `Move or remove ${to}, then run the command again.`);
+      return failure(
+        `cannot move ${from} to ${to}: the target exists`,
+        `Move or remove ${to}, then run "${commandText(commands.upgrade)}" again.`,
+      );
     }
     moves.push({ from, to, fromPath, toPath });
   }

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, safetyRefusal, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { renderError } from '../../src/cli/output.js';
@@ -9,8 +11,10 @@ import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '..
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { runDoctor, runInit, runNode, runStart, runUpgrade } from '../helpers/package-registry.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { allSourceFiles, literalsOf } from '../helpers/source-scan.js';
 import { tmuxHandler } from '../helpers/tmux-fake.js';
 
+const SRC = join(__dirname, '..', '..', 'src');
 const HOME = '/w/node';
 const LOCAL = `${HOME}/factory.local.yaml`;
 const CLAUDE = `${HOME}/coordinator/CLAUDE.md`;
@@ -136,6 +140,36 @@ describe('the refusal helper', () => {
     expect(POINTS_AT_A_COMMAND.test('Rename the repo. Then run the same command again.')).toBe(true);
     expect(POINTS_AT_A_COMMAND.test('Move it away, then run the command again.')).toBe(true);
     expect(POINTS_AT_A_COMMAND.test('Rename the repo. Then run "factory init" again.')).toBe(false);
+  });
+});
+
+describe('the remedy lines in the source', () => {
+  /**
+   * The phrases that point at the command that just ran, in a text that a person reads. "The command name" in a role text
+   * is no remedy, so only a phrase that tells the person to run a command is a hit.
+   */
+  const VAGUE_REMEDY = /\bthe same command\b|\bthe command again\b|\b(?:run|rerun|repeat) the command\b/i;
+
+  /** The string literals of src that point at the command that just ran, with the file. */
+  const pointersIn = (source: string, path: string): string[] =>
+    literalsOf(source)
+      .filter((literal) => VAGUE_REMEDY.test(literal))
+      .map((literal) => `${relative(SRC, path)}: "${literal}"`);
+
+  it('say "the same command" or "the command again" in no string literal, so each remedy names its command', () => {
+    const files = allSourceFiles(SRC);
+    expect(files.length).toBeGreaterThan(60);
+    expect(files.flatMap((path) => pointersIn(readFileSync(path, 'utf8'), path))).toEqual([]);
+  });
+
+  it('finds a pointer in a literal, and leaves a quoted command, a command name and a comment alone', () => {
+    const path = join(SRC, 'commands', 'sample.ts');
+    expect(pointersIn("const a = 'Move it away, then run the command again.';", path)).toHaveLength(1);
+    expect(pointersIn("const a = 'Then run the same command again.';", path)).toHaveLength(1);
+    expect(pointersIn("const a = 'Run the command in a terminal window.';", path)).toHaveLength(1);
+    expect(pointersIn('const a = `Then run "${x}" again.`;', path)).toEqual([]);
+    expect(pointersIn("const a = 'List only the pid and the command name.';", path)).toEqual([]);
+    expect(pointersIn("// then run the command again\nconst a = 'plain';", path)).toEqual([]);
   });
 });
 

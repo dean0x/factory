@@ -50,6 +50,7 @@ import {
   roles,
   schemaIds,
   setupAcceptance,
+  type CommandName,
 } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import { plainSetupText, renderableSetupText } from '../state/setup-text.js';
@@ -219,7 +220,12 @@ const isSetupText = (path: string): boolean => setupAcceptance.setupTextFiles.so
  * Read the files of the set once, and hash and render the same bytes. A setup text that is absent or empty is not part of
  * the set, and it never skips the acceptance of the listed files. The text of a setup file must be plain text.
  */
-export const collectSetup = async (deps: Deps, home: string, set: readonly string[]): Promise<CliResult<CollectedSetup>> => {
+export const collectSetup = async (
+  deps: Deps,
+  home: string,
+  set: readonly string[],
+  command: CommandName,
+): Promise<CliResult<CollectedSetup>> => {
   const read = await collectManifest(deps, home, set, new Map(), { textLimit: maxSetupTextBytes });
   if (!read.ok) return read;
   // A text over the bound for a setup text is not blank: it stays in the set, and `textOf` refuses it.
@@ -232,9 +238,12 @@ export const collectSetup = async (deps: Deps, home: string, set: readonly strin
     if (!entries.some((entry) => entry.path === path)) return ok(null);
     const raw = read.value.texts.get(path);
     if (raw === undefined || raw === null) {
-      return failure(`${path} is larger than ${maxSetupTextBytes} bytes`, `Shorten ${path}, then run the command again.`);
+      return failure(
+        `${path} is larger than ${maxSetupTextBytes} bytes`,
+        `Shorten ${path}, then run "${commandText(command)}" again.`,
+      );
     }
-    const plain = plainSetupText(path, raw);
+    const plain = plainSetupText(path, raw, command);
     return plain.ok ? ok(renderableSetupText(plain.value)) : plain;
   };
   const [coordinatorPath, workerPath] = setupAcceptance.setupTextFiles;
@@ -334,7 +343,7 @@ const askLine = async <T>(
     const parsed = parse(answer.value.trim());
     if (parsed !== null) return ok(parsed);
   }
-  return usageError(`no valid answer for ${what}`, `Pass the flag for ${what}, or run the command again.`);
+  return usageError(`no valid answer for ${what}`, `Pass the flag for ${what}, or run "${commandText(commands.init)}" again.`);
 };
 
 const parseName = (text: string): string | null =>
@@ -392,7 +401,7 @@ const requireFlagsThatApply = (options: InitOptions): CliResult<void> => {
     ? ok(undefined)
     : usageError(
         `${given.join(', ')}: a received ${places.folder} takes these values from ${files.config}`,
-        `Run the command again without ${given.length === 1 ? 'this flag' : 'these flags'}.`,
+        `Run "${commandText(commands.init)}" again without ${given.length === 1 ? 'this flag' : 'these flags'}.`,
       );
 };
 
@@ -495,7 +504,7 @@ export const runReceived = async (
   if (!leftover.ok) return leftover;
   const projects = await planReceivedProjects(deps, home, shared.recipe.projects, commands.init);
   if (!projects.ok) return projects;
-  const setup = await collectSetup(deps, home, root.value.set);
+  const setup = await collectSetup(deps, home, root.value.set, commands.init);
   if (!setup.ok) return setup;
 
   const listing = listingOf(home, shared);

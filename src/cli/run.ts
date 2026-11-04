@@ -34,13 +34,14 @@ export const runCli = async (
 ): Promise<number> => {
   const table = commandTableFor(registry);
   const findCommand = (name: string) => table.find((command) => command.name === name);
+  const [first, ...rest] = argv;
   if (deps.platform.os === NATIVE_WINDOWS) {
-    const unsupported = failure(`${program} runs on macOS and Linux`, 'Use WSL, then run the command again.');
+    // The remedy names the command that the person typed, when the table holds it. The name comes from the table, not from the line.
+    const typed = (first === undefined ? undefined : findCommand(first)?.name) ?? commands.help;
+    const unsupported = failure(`${program} runs on macOS and Linux`, `Use WSL, then run "${commandText(typed)}" there.`);
     await sink.stderr(renderError(unsupported.error));
     return exitCodeOf[unsupported.error.kind];
   }
-
-  const [first, ...rest] = argv;
 
   if (first === commands.help && rest[0] === helpTopics.words) {
     const parsed = parseFlags(rest.slice(1), globalOptions);

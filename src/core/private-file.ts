@@ -111,7 +111,7 @@ const takeLock = async (deps: Deps, lockPath: string): Promise<Result<void, stri
     if (!dropped.ok) return dropped;
     if (!dropped.value && attempt < privateFile.lockAttempts) await deps.sleep(privateFile.lockWaitMs);
   }
-  return err(`another ${program} command holds the lock ${lockPath}. Run the command again, or remove that file when no such command runs.`);
+  return err(`another ${program} command holds the lock ${lockPath}. Wait until that command ends, or remove that file when no such command runs.`);
 };
 
 /** What a change of a per-user file reads and gives: the current text, or null for a file that does not exist. */

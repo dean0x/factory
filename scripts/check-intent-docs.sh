@@ -230,28 +230,60 @@ first=$(awk '
 ' "$budget") || first=$awk_failed
 report 6 "token-budget.md has one row for each of the 17 jobs" "$first"
 
-# 7. No file under docs/research holds the whole word lane or lanes. The search goes down five levels.
+# Checks 7 and 8 read a folder tree with the same walk. `scan_folder DIR DEPTH CHECK` runs the function CHECK on each file
+# of the folder DIR, then on each file of each folder in it. DEPTH is the depth of DIR: the folder where the walk starts is
+# at depth 0. The files and the folders with a name that starts with a dot count. CHECK gets the path of one file, and it
+# sets $first to the reason and returns 1 when the file fails. A link to a folder is followed, and the depth limit ends a
+# loop of links.
+max_depth=10
+
+scan_folder() {
+  if [ ! -r "$1" ] || [ ! -x "$1" ]; then
+    first="the folder $1 cannot be read"
+    return 1
+  fi
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    if [ -f "$entry" ]; then
+      "$3" "$entry" || return 1
+    fi
+  done
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    if [ -d "$entry" ]; then
+      if [ "$2" -ge "$max_depth" ]; then
+        first="the folder $entry is deeper than $max_depth levels"
+        return 1
+      fi
+      scan_folder "$entry" $(($2 + 1)) "$3" || return 1
+    fi
+  done
+  return 0
+}
+
+# 7. No file under docs/research (all levels, dot files too) holds the whole word lane or lanes. A file or a folder that
+# cannot be read, and a folder deeper than the depth limit, are a failure.
+
+# Sets $first to the reason that the file $1 was not read or holds the word lane, and returns 1.
+scan_lane_file() {
+  if [ ! -r "$1" ]; then
+    first="the file $1 cannot be read"
+    return 1
+  fi
+  hit=$(grep -n -i -E '(^|[^[:alnum:]_])lanes?($|[^[:alnum:]_])' "$1" | awk 'NR == 1 { print; exit }') || {
+    first=$awk_failed
+    return 1
+  }
+  if [ -n "$hit" ]; then
+    first="${1}:${hit%%:*} holds the word lane"
+    return 1
+  fi
+  return 0
+}
+
 first=""
 if [ ! -d "$research" ]; then
   first="the folder $research is missing"
-elif [ ! -r "$research" ] || [ ! -x "$research" ]; then
-  first="the folder $research cannot be read"
 else
-  for file in "$research"/* "$research"/*/* "$research"/*/*/* "$research"/*/*/*/* "$research"/*/*/*/*/*; do
-    [ -f "$file" ] || continue
-    if [ ! -r "$file" ]; then
-      first="the file $file cannot be read"
-      break
-    fi
-    hit=$(grep -n -i -E '(^|[^[:alnum:]_])lanes?($|[^[:alnum:]_])' "$file" | awk 'NR == 1 { print; exit }') || {
-      first=$awk_failed
-      break
-    }
-    if [ -n "$hit" ]; then
-      first="${file}:${hit%%:*} holds the word lane"
-      break
-    fi
-  done
+  scan_folder "$research" 0 scan_lane_file
 fi
 report 7 "no file under docs/research holds the word lane" "$first"
 
@@ -263,7 +295,6 @@ report 7 "no file under docs/research holds the word lane" "$first"
 # letter, a digit or one of _ . ~ - is part of a longer relative path (docs/private/), so it is not a local path; the
 # drive letter of a WSL path is the only exception. The output names the file, the line and the kind of path, never the
 # path. A file or a folder that cannot be read, and a folder deeper than the depth limit, are a failure.
-max_depth=10
 
 # Sets $first to the first local path of the file $1, and returns 1, or to the reason that the file was not read.
 scan_file() {
@@ -326,32 +357,8 @@ scan_file() {
   return 0
 }
 
-# Reads the files of the folder $1, then each folder in it. $2 is the depth of $1: the docs folder is at depth 0. A link
-# to a folder is followed, and the depth limit ends a loop of links.
-scan_folder() {
-  if [ ! -r "$1" ] || [ ! -x "$1" ]; then
-    first="the folder $1 cannot be read"
-    return 1
-  fi
-  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
-    if [ -f "$entry" ]; then
-      scan_file "$entry" || return 1
-    fi
-  done
-  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
-    if [ -d "$entry" ]; then
-      if [ "$2" -ge "$max_depth" ]; then
-        first="the folder $entry is deeper than $max_depth levels"
-        return 1
-      fi
-      scan_folder "$entry" $(($2 + 1)) || return 1
-    fi
-  done
-  return 0
-}
-
 first=""
-scan_folder "$docs" 0
+scan_folder "$docs" 0 scan_file
 for file in "$docs/../README.md" "$docs/../CHANGELOG.md"; do
   if [ -z "$first" ] && [ -f "$file" ]; then
     scan_file "$file"

@@ -786,7 +786,7 @@ describe('doctor: proxies', () => {
       expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
       if (!result.ok) {
         expect(result.error.message).toContain(`${HOME}/web/factory.yaml`);
-        expect(result.error.hint).toBe(`Run the command from the factory folder ${HOME}, or name it with --home ${HOME}.`);
+        expect(result.error.hint).toBe(`Go to the factory folder ${HOME}, or name it with --home ${HOME}.`);
       }
       expect(deps.fetched).toEqual([]);
     });

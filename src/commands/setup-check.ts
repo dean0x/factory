@@ -95,7 +95,7 @@ export const checkSetupSet = async (
       `Fix ${files.config}, then run "${commandText(commands.doctor)}".`,
     );
   }
-  const read = await collectSetup(deps, home, set);
+  const read = await collectSetup(deps, home, set, commands.doctor);
   if (!read.ok) return unusable(read.error, FIRST_REMEDY);
   const { entries, hash } = read.value.collected.manifest;
   if (entries.length === 0) return { kind: 'empty' };

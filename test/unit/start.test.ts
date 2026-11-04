@@ -1145,7 +1145,7 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
   const storeOf = (deps: FakeDeps): string => deps.files.get(ACCEPTANCES) ?? '';
 
   const hashOf = async (deps: FakeDeps, paths: readonly string[]): Promise<string> => {
-    const set = await collectSetup(deps, HOME, paths);
+    const set = await collectSetup(deps, HOME, paths, 'init');
     if (!set.ok) throw new Error(set.error.message);
     return set.value.collected.manifest.hash;
   };

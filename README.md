@@ -85,7 +85,7 @@ A `factory.yaml` counts only at a root that `init` registered. This holds for al
 - The `id` of that entry is the `node.id` of the `factory.yaml`.
 - The factory marker `.factory/node.json` is there and valid. A marker that an older version wrote is valid; `doctor` then names `upgrade`.
 
-For any other `factory.yaml`, `start`, `doctor`, `node` and `upgrade` exit with code 4. They name the file, the reason and one remedy. For a missing entry, another id or a missing marker, the remedy is to run `factory init` in the factory folder. For a clone of a registered factory that holds its own `factory.yaml`, the remedy is to run the command from the factory folder, or to name it with `--home`. If `.factory` is not a folder, the command stops with exit code 4 too; move the file away, then run `factory init`. If you received the folder or moved it, `factory init` registers it.
+For any other `factory.yaml`, `start`, `doctor`, `node` and `upgrade` exit with code 4. They name the file, the reason and one remedy. For a missing entry, another id or a missing marker, the remedy is to run `factory init` in the factory folder. For a clone of a registered factory that holds its own `factory.yaml`, the remedy is to go to the factory folder, or to name it with `--home`. If `.factory` is not a folder, the command stops with exit code 4 too; move the file away, then run `factory init`. If you received the folder or moved it, `factory init` registers it.
 
 ### Run `init` again
 

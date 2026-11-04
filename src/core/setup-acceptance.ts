@@ -121,7 +121,7 @@ export const entryOfText = (path: string, text: string): ManifestEntry => {
 const tooManyFiles = (): CliResult<never> =>
   safetyRefusal(
     `the setup holds more than ${setupAcceptance.maxManifestFiles} files`,
-    `Remove the files that the ${places.folder} does not need, then run the command again.`,
+    `Remove the files that the ${places.folder} does not need, then run "${commandText(commands.init)}" again.`,
   );
 
 /** Every control character, apart from the newline and the tab, and every character that only formats text. */

@@ -1,4 +1,4 @@
-import { values } from '../../names.js';
+import { keys, values } from '../../names.js';
 import type { RecipeEntry } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
 import { softwareRecipeSchema } from './config.js';
@@ -21,5 +21,6 @@ export const softwareRecipe: RecipeEntry = {
   safetyLines: softwareSafetyLines,
   projectKeys: [softwareProjectKeys.mergeMethod],
   projectDefaults: { [softwareProjectKeys.mergeMethod]: mergeMethods[0] },
+  initProjectKeys: [keys.project.url, keys.project.repo, keys.project.defaultBranch, keys.project.gate],
   roles: softwareRoles,
 };

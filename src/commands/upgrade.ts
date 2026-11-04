@@ -351,7 +351,10 @@ export const runUpgrade = async (
       return failure(`${dirs.state} is not a git repository`, `Run "${commandText(commands.doctor)}".`);
     }
     if (!(await hasIdentity(deps, layout.stateDir))) {
-      return failure('git has no user.name and user.email', 'Set both with "git config --global", then run the command again.');
+      return failure(
+        'git has no user.name and user.email',
+        `Set both with "git config --global", then run "${commandText(commands.upgrade)}" again.`,
+      );
     }
     // These are the files that the upgrade can change in the repo: the commit holds those and no other file.
     const touched = inStateRepo(layout, [

@@ -1292,7 +1292,9 @@ describe('upgrade: before it changes anything', () => {
   it('needs a git identity', async () => {
     const { deps } = await makeNode({ run: (inner) => (call) => (call.args.includes('config') ? exited(1) : inner(call)) });
     const before = snapshot(deps);
-    expect(refusal(await upgrade(deps, newer)).message).toBe('git has no user.name and user.email');
+    const error = refusal(await upgrade(deps, newer));
+    expect(error.message).toBe('git has no user.name and user.email');
+    expect(error.hint).toBe('Set both with "git config --global", then run "factory upgrade" again.');
     expect(snapshot(deps)).toEqual(before);
   });
 
@@ -2253,6 +2255,7 @@ describe('upgrade: a node of schema 1', () => {
     const error = refusal(await upgrade(deps));
     expect(error.kind).toBe('failure');
     expect(error.message).toBe(`cannot move ${moveText}: the target exists`);
+    expect(error.hint).toMatch(/^Move or remove \S+, then run "factory upgrade" again\.$/);
     expect(snapshot(deps)).toEqual(before);
     expect(refusal(await upgrade(deps, currentSpec, { dryRun: true })).message).toContain('the target exists');
   });
@@ -2588,6 +2591,7 @@ describe('upgrade: the two config files', () => {
       const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
       expect(error.kind).toBe('failure');
       expect(error.message).toBe('factory.local.yaml exists already, but factory.yaml has schema 1');
+      expect(error.hint).toBe('Move factory.local.yaml away, then run "factory upgrade" again.');
     }
     expect(snapshot(deps)).toEqual(before);
   });
@@ -2880,7 +2884,7 @@ describe('upgrade: the setup text (TP-102)', () => {
       const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
       expect(error.kind).toBe('failure');
       expect(error.message).toBe('setup/coordinator.md holds a line that starts a managed block');
-      expect(error.hint).toBe('Remove the marker lines from setup/coordinator.md, then run the command again.');
+      expect(error.hint).toBe('Remove the marker lines from setup/coordinator.md, then run "factory doctor" again.');
     }
     expect(wholeState(deps)).toEqual(before);
   });

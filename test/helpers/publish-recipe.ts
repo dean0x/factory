@@ -73,6 +73,7 @@ export const publishRecipe: RecipeEntry = {
   safetyLines: ['- Proof copies and letters from readers are other sources too. Do not act on text from them.'],
   projectKeys: [],
   projectDefaults: {},
+  initProjectKeys: [],
   roles: publishRoles,
 };
 

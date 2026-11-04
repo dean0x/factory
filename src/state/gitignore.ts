@@ -1,7 +1,7 @@
 import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { files, maxFileBytes } from '../names.js';
+import { commandText, files, maxFileBytes, type CommandName } from '../names.js';
 import { withShareList } from './files.js';
 import type { Layout } from './layout.js';
 
@@ -18,11 +18,15 @@ export interface RootGitignore {
  * so both keep the lines of a person the same way. It writes nothing. A path that is not a file, a file that is too
  * large and a marker line with no pair are errors (exit 1) with a remedy line.
  */
-export const rootGitignoreOf = async (deps: Deps, layout: Layout): Promise<CliResult<RootGitignore>> => {
+export const rootGitignoreOf = async (
+  deps: Deps,
+  layout: Layout,
+  command: CommandName,
+): Promise<CliResult<RootGitignore>> => {
   const kind = await deps.fs.stat(layout.gitignoreFile);
   if (!kind.ok) return kind;
   if (kind.value !== null && kind.value !== 'file') {
-    return failure(`${files.gitignore} is not a file`, 'Move it away, then run the command again.');
+    return failure(`${files.gitignore} is not a file`, `Move it away, then run "${commandText(command)}" again.`);
   }
   let original: string | null = null;
   if (kind.value === 'file') {
@@ -32,7 +36,7 @@ export const rootGitignoreOf = async (deps: Deps, layout: Layout): Promise<CliRe
   }
   const withList = withShareList(original);
   if (!withList.ok) {
-    return failure(withList.error, `Remove the marker lines from ${files.gitignore}, then run the command again.`);
+    return failure(withList.error, `Remove the marker lines from ${files.gitignore}, then run "${commandText(command)}" again.`);
   }
   return ok({ original, text: withList.value });
 };

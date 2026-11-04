@@ -111,7 +111,7 @@ export const rootRefusalOf = (home: string, problem: RootProblem): Err<CliError>
     case 'in-clone':
       return safetyRefusal(
         message,
-        `Run the command from the ${places.folder} ${problem.factory}, or name it with ${flagText(flags.home)} ${problem.factory}.`,
+        `Go to the ${places.folder} ${problem.factory}, or name it with ${flagText(flags.home)} ${problem.factory}.`,
       );
     case 'state-not-folder':
       return safetyRefusal(
@@ -119,7 +119,7 @@ export const rootRefusalOf = (home: string, problem: RootProblem): Err<CliError>
         `Move ${layout.stateDir} away, then run "${INIT}" in the ${places.folder} ${home}.`,
       );
     case 'marker-newer':
-      return safetyRefusal(message, `Upgrade ${program}, then run the command again.`);
+      return safetyRefusal(message, `Upgrade ${program}, then run "${commandText(commands.doctor)}".`);
     case 'list':
       return safetyRefusal(message, problem.remedy);
     default: {

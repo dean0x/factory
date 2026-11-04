@@ -122,6 +122,7 @@ describe('no software word in the core (TP-97)', () => {
     expect(entry?.glossary.flatMap((word) => softwareWordsIn(`${word.term} ${word.text}`)).length).toBeGreaterThan(0);
     expect(entry?.safetyLines.flatMap(softwareWordsIn).length).toBeGreaterThan(0);
     expect(entry?.projectKeys).toEqual(['merge_method']);
+    expect(entry?.initProjectKeys).toEqual(['url', 'repo', 'default_branch', 'gate']);
   });
 });
 

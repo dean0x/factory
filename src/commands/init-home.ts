@@ -64,7 +64,7 @@ const confirmProposal = async (
   if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) {
     return usageError(
       about,
-      `Run the command again with ${flagText(flags.yes)} to use it, or with ${flagText(flags.home)} DIR to choose another folder.`,
+      `Run "${commandText(commands.init)}" again with ${flagText(flags.yes)} to use it, or with ${flagText(flags.home)} DIR to choose another folder.`,
     );
   }
   const answer = await deps.prompt(printable(`${about}\nCreate the ${places.folder} here? [y/N] `));
@@ -119,7 +119,10 @@ export const checkHomeIsNew = async (deps: Deps, home: string): Promise<CliResul
 export const checkHomeOutsideRoots = async (deps: Deps, indexPath: string, home: string): Promise<CliResult<void>> => {
   const entries = await readHomeIndex(deps, indexPath);
   if (!entries.ok) {
-    return failure(`the ${places.list} ${indexPath} cannot be read: ${entries.error}`, 'Fix or remove that file, then run the command again.');
+    return failure(
+      `the ${places.list} ${indexPath} cannot be read: ${entries.error}`,
+      `Fix or remove that file, then run "${commandText(commands.init)}" again.`,
+    );
   }
   const around = await listedRootAbove(deps, entries.value, home);
   if (!around.ok) return around;
