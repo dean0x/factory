@@ -751,7 +751,6 @@ export const templateValues: Readonly<Record<string, string>> = {
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,
-  claudeDir: dirs.claude,
 };
 
 /**

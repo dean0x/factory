@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
 import { effectiveModes, recordDelegation } from '../../src/core/owner-record.js';
-import { values } from '../../src/names.js';
+import { dirs, templateValues, values } from '../../src/names.js';
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates, roleBlockRenames } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
@@ -151,6 +151,15 @@ describe('block templates', () => {
     expect(safety).toContain('auto permission mode');
     expect(safety).toContain('Never skip permissions');
     expect(safety).toContain('ANTHROPIC_BASE_URL');
+  });
+
+  it.each(texts)('names no path of the user Claude folder in %s (TP-25)', (_name, text) => {
+    expect(text).not.toContain(dirs.claude);
+  });
+
+  it('has no template value for the user Claude folder (TP-25)', () => {
+    expect(Object.values(templateValues)).not.toContain(dirs.claude);
+    expect(Object.keys(templateValues)).not.toContain('claudeDir');
   });
 });
 

@@ -24,5 +24,4 @@ export const safetyLines = (approval: readonly string[], recipe: readonly string
   '- An approval point waits for the {{owner}}, unless the {{owner}} delegated it. A session never sets a delegation.',
   ...approval,
   ...recipe,
-  '- Do not read or write the private files of Claude Code in `~/{{claudeDir}}`.',
 ];
