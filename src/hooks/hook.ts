@@ -9,6 +9,7 @@ import { commands, env, hookNames, lastSeen, roles, type HookEvent } from '../na
 import type { RecipeRegistry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import { writeLastSeen } from '../workers/last-seen.js';
+import { readWorkerRecord } from '../workers/registry.js';
 
 /**
  * The hook of Claude Code (design 4.6): Claude Code runs `<program> hook <event>` at the events of the fixed list and passes
@@ -51,26 +52,42 @@ export const hasFactoryHome = (deps: Deps): boolean => {
 };
 
 /**
+ * True when the session marker is the id of a worker that has a valid record in the registry of the node. An id that is
+ * not a slug, a missing record and an invalid or linked record are false. The failure is a fault of the file system only.
+ */
+const isRegisteredWorker = async (deps: Deps, home: string, session: string | undefined): Promise<CliResult<boolean>> => {
+  if (session === undefined) return ok(false);
+  const read = await readWorkerRecord(deps, home, session);
+  return read.ok ? ok(read.value.state === 'valid') : read;
+};
+
+/**
  * The factory folder of the session that runs a hook. The folder must pass the registration check, and the session marker
- * must be the id of the node. The error is the reason that the hook must write nothing. The caller has checked
- * `hasFactoryHome` first.
+ * must be the id of the node, or the id of a worker that the registry of the node holds. The coordinator never reads the
+ * registry. The error is the reason that the hook must write nothing. The caller has checked `hasFactoryHome` first.
  */
 export const sessionHomeOf = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<string>> => {
   const readNodeId = (readDeps: Deps, home: string) => readNodeIdentity(readDeps, home, registry);
   const located = await locateHomeFolder(deps, undefined, readNodeId, commands.hook);
   if (!located.ok) return located;
-  const identity = await readNodeId(deps, located.value.home);
+  const { home } = located.value;
+  const identity = await readNodeId(deps, home);
   if (!identity.ok) return failure(`cannot read the id of the ${roles.node}: ${identity.error}`);
-  if (deps.env[env.session] !== identity.value.id) {
-    return failure(`${env.session} is not the id of the ${roles.node} of ${located.value.home}`);
+  const session = deps.env[env.session];
+  if (session === identity.value.id) return ok(home);
+  const registered = await isRegisteredWorker(deps, home, session);
+  if (!registered.ok) return registered;
+  if (!registered.value) {
+    return failure(`${env.session} is not the id of the ${roles.node} or of a ${roles.worker} of ${home}`);
   }
-  return ok(located.value.home);
+  return ok(home);
 };
 
 /**
  * Record the event as the last-seen line of the session. Outside a factory session (no factory folder in the environment) it
  * does nothing and reads nothing. Otherwise the factory folder must pass the registration check, and the session marker must
- * be the id of the node. The value is nothing; an error is the reason that the hook wrote nothing.
+ * be the id of the node or the id of a worker in its registry. The value is nothing; an error is the reason that the hook
+ * wrote nothing.
  */
 export const runHook = async (deps: Deps, args: readonly string[], registry: RecipeRegistry): Promise<CliResult<void>> => {
   if (!hasFactoryHome(deps)) return ok(undefined);

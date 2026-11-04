@@ -7,6 +7,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { hookNames, schemaIds, statuslineTextOf } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
+import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, exited, registerRoot, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -321,6 +322,24 @@ describe('factory hook statusline: the guards of the write', () => {
     expect(result.err).toContain('FACTORY_SESSION');
     expect(heartbeatFiles(deps)).toEqual([]);
     expect(deps.calls).toEqual([]);
+  });
+
+  it('writes the percent for the id of a worker that has a record in the registry (TP-125)', async () => {
+    const deps = make({ env: { FACTORY_SESSION: 'fix-login' } });
+    const record = { id: 'fix-login', project: 'web', workCopy: '/h/factory/work-copies/web-fix-login', branch: 'fix/login' };
+    expect((await writeWorkerRecord(deps, HOME, record)).ok).toBe(true);
+    const result = await statusline(deps);
+    expect(result).toEqual({ code: 0, out: 'context 8%', err: '' });
+    expect(lineOf(deps)).toMatchObject({ session_id: SESSION, context_pct: 8, pct_at: NOW });
+  });
+
+  it('writes nothing for the id of a worker that has no record, and still prints a line', async () => {
+    const deps = make({ env: { FACTORY_SESSION: 'fix-login' } });
+    const result = await statusline(deps);
+    expect(result.code).toBe(0);
+    expect(result.out).toBe('context 8%');
+    expect(result.err).toMatch(ONE_STDERR_LINE);
+    expect(heartbeatFiles(deps)).toEqual([]);
   });
 
   it.each([

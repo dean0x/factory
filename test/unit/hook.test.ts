@@ -5,7 +5,8 @@ import type { CliResult } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import type { Deps } from '../../src/core/deps.js';
 import { hookNames, schemaIds, type HookEvent } from '../../src/names.js';
-import { layoutOf } from '../../src/state/layout.js';
+import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
+import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { runHook } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -222,6 +223,163 @@ describe('factory hook: the factory folder and the session (TP-9)', () => {
     const deps = make({ stdin: payload('Stop') });
     expect((await runHook(deps, ['Stop'])).ok).toBe(true);
     expect(lineOf(deps)).toMatchObject({ event: 'Stop' });
+  });
+});
+
+describe('factory hook: the id of a worker in the registry as the session (TP-125)', () => {
+  const WORKER_ID = 'fix-login';
+  const paths = workerPathsOf(HOME, WORKER_ID);
+  const OTHER = '/elsewhere/worker-record';
+
+  /** A node with the record of a worker in its registry, and the environment of a hook of that worker. */
+  const makeWorker = async (options: MakeOptions = {}): Promise<FakeDeps> => {
+    const deps = make({ stdin: payload('Stop'), ...options, env: { FACTORY_SESSION: WORKER_ID, ...options.env } });
+    const written = await writeWorkerRecord(deps, HOME, {
+      id: WORKER_ID,
+      project: 'web',
+      workCopy: '/h/factory/work-copies/web-fix-login',
+      branch: 'fix/login',
+    });
+    expect(written.ok).toBe(true);
+    return deps;
+  };
+
+  const refuses = async (deps: FakeDeps): Promise<string> => {
+    const before = snapshot(deps);
+    const message = errorOf(await runHook(deps, ['Stop']));
+    expect(snapshot(deps)).toBe(before);
+    return message;
+  };
+
+  it('writes the last-seen line of the session for the id of a worker that has a record', async () => {
+    const deps = await makeWorker();
+    expect(await runHook(deps, ['Stop'])).toEqual({ ok: true, value: undefined });
+    expect(lineOf(deps)).toEqual({
+      schema: schemaIds.lastSeen,
+      session_id: SESSION,
+      event: 'Stop',
+      event_at: NOW,
+      context_pct: null,
+      pct_at: null,
+    });
+    expect([...deps.files.keys()].filter((path) => path.startsWith(`${FOLDER}/`))).toEqual([FILE]);
+  });
+
+  it.each(hookNames.events)('writes the line for %s from a worker', async (event) => {
+    const deps = await makeWorker({ stdin: JSON.stringify(FIXTURE.hooks[event]) });
+    expect((await runHook(deps, [event])).ok).toBe(true);
+    expect(lineOf(deps)).toMatchObject({ session_id: SESSION, event });
+  });
+
+  it('writes nothing for an id that has no record, and names the variable', async () => {
+    const deps = make({ stdin: payload('Stop'), env: { FACTORY_SESSION: WORKER_ID } });
+    expect(await refuses(deps)).toContain('FACTORY_SESSION');
+  });
+
+  it('writes nothing for an id that differs from the ids of the records', async () => {
+    const deps = await makeWorker({ env: { FACTORY_SESSION: 'someone-else' } });
+    expect(await refuses(deps)).toContain('FACTORY_SESSION');
+  });
+
+  it.each([
+    ['an id that is not a slug', 'Fix_Login'],
+    ['an id that climbs out of the folder', '../../escape'],
+    ['an id with a path separator', 'a/b'],
+    ['an empty id', ''],
+  ])('writes nothing for %s, and touches no path of the registry', async (_name, id) => {
+    const deps = await makeWorker({ env: { FACTORY_SESSION: id } });
+    const before = snapshot(deps);
+    const touched: string[] = [];
+    const watched = withFsWatch(deps, (method, path) => touched.push(`${method} ${path}`));
+    expect(errorOf(await runHook(watched, ['Stop'])).length).toBeGreaterThan(0);
+    expect(touched.filter((call) => call.includes(layoutOf(HOME).workersDir))).toEqual([]);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it.each([
+    ['a record that is not JSON', 'not json'],
+    ['a record with a field too many', JSON.stringify({ extra: 1 })],
+    ['an empty record', ''],
+  ])('writes nothing for %s', async (_name, content) => {
+    const deps = await makeWorker();
+    deps.files.set(paths.recordFile, content);
+    await refuses(deps);
+  });
+
+  it('writes nothing when the record names another id than its folder', async () => {
+    const deps = await makeWorker();
+    const record = JSON.parse(deps.files.get(paths.recordFile) ?? 'null') as Record<string, unknown>;
+    deps.files.set(paths.recordFile, JSON.stringify({ ...record, id: 'other-worker' }));
+    await refuses(deps);
+  });
+
+  it('writes nothing for a record that is a link, and the target stays as it is', async () => {
+    const links: Record<string, string> = {};
+    const deps = await makeWorker({ links });
+    deps.seed(OTHER, deps.files.get(paths.recordFile) ?? '');
+    links[paths.recordFile] = OTHER;
+    const target = deps.files.get(OTHER);
+    await refuses(deps);
+    expect(deps.files.get(OTHER)).toBe(target);
+  });
+
+  it('writes nothing for a worker folder that is a link', async () => {
+    const links: Record<string, string> = {};
+    const deps = await makeWorker({ links });
+    links[paths.dir] = '/elsewhere/worker-dir';
+    await refuses(deps);
+  });
+
+  it('writes nothing for a workers folder that is a link', async () => {
+    const links: Record<string, string> = {};
+    const deps = await makeWorker({ links });
+    links[layoutOf(HOME).workersDir] = '/elsewhere/workers';
+    await refuses(deps);
+  });
+
+  it('writes nothing for a worker of a factory folder that the factory list does not hold', async () => {
+    await refuses(await makeWorker({ registered: false }));
+  });
+
+  it('writes nothing for a worker record in a folder that holds no config', async () => {
+    const deps = await makeWorker({ env: { FACTORY_HOME: '/h/empty' } });
+    deps.seedDir('/h/empty');
+    await refuses(deps);
+  });
+
+  it('does not read the registry for the id of the node', async () => {
+    const deps = await makeWorker({ env: { FACTORY_SESSION: NODE_ID } });
+    const touched: string[] = [];
+    const watched = withFsWatch(deps, (method, path) => touched.push(`${method} ${path}`));
+    expect((await runHook(watched, ['Stop'])).ok).toBe(true);
+    expect(touched.filter((call) => call.includes(layoutOf(HOME).workersDir))).toEqual([]);
+    expect(lineOf(deps)).toMatchObject({ event: 'Stop' });
+  });
+
+  it('exits 0 with an empty stdout and writes the line, through runCli', async () => {
+    const deps = await makeWorker();
+    expect(await runLine(['hook', 'Stop'], deps)).toEqual({ code: 0, out: '', err: '' });
+    expect(lineOf(deps)).toMatchObject({ event: 'Stop', session_id: SESSION });
+  });
+
+  it('exits 0 with an empty stdout and one line on stderr for an id with no record, through runCli', async () => {
+    const deps = make({ stdin: payload('Stop'), env: { FACTORY_SESSION: WORKER_ID } });
+    const before = snapshot(deps);
+    const result = await runLine(['hook', 'Stop'], deps);
+    expect(result.code).toBe(0);
+    expect(result.out).toBe('');
+    expect(result.err).toMatch(/^factory hook: [^\n]+\n$/);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('exits 0 with an empty stdout for a record that is a link, through runCli', async () => {
+    const links: Record<string, string> = {};
+    const deps = await makeWorker({ links });
+    links[paths.recordFile] = OTHER;
+    const result = await runLine(['hook', 'Stop'], deps);
+    expect(result.code).toBe(0);
+    expect(result.out).toBe('');
+    expect(deps.files.has(FILE)).toBe(false);
   });
 });
 
