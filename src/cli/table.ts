@@ -2,6 +2,7 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
+import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
 import { runUpgrade } from '../commands/upgrade.js';
@@ -216,6 +217,13 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     usage: `${commandText(commands.doctor)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
     run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.machine,
+    summary: 'Check the memory, the disk and the processors against the limits.',
+    usage: `${commandText(commands.machine)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runMachine(deps, { home: given.string(flags.home) }, registry),
   },
   {
     name: commands.upgrade,

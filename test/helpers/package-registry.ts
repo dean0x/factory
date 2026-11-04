@@ -1,6 +1,7 @@
 import { fileTransport as fileTransportOf } from '../../src/comms/transport.js';
 import { runDoctor as runDoctorOf, checkChildren as checkChildrenOf } from '../../src/commands/doctor.js';
 import { planInit as planInitOf, runInit as runInitOf } from '../../src/commands/init.js';
+import { runMachine as runMachineOf } from '../../src/commands/machine.js';
 import { runNode as runNodeOf } from '../../src/commands/node.js';
 import { runHook as runHookOf } from '../../src/hooks/hook.js';
 import { runStart as runStartOf } from '../../src/commands/start.js';
@@ -31,6 +32,7 @@ export const runInit = withPackageRecipes(runInitOf);
 export const planInit = withPackageRecipes(planInitOf);
 export const runStart = withPackageRecipes(runStartOf);
 export const runDoctor = withPackageRecipes(runDoctorOf);
+export const runMachine = withPackageRecipes(runMachineOf);
 export const runNode = withPackageRecipes(runNodeOf);
 export const runHook = withPackageRecipes(runHookOf);
 export const checkChildren = withPackageRecipes(checkChildrenOf);

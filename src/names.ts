@@ -40,6 +40,7 @@ export const commands = {
   start: 'start',
   node: 'node',
   doctor: 'doctor',
+  machine: 'machine',
   upgrade: 'upgrade',
   hook: 'hook',
   version: 'version',
@@ -678,6 +679,28 @@ export const values = {
 /** The bounds of a duration setting `<n>m` or `<n>h`: the watch interval of a tracker and the idle limit of a worker. */
 export const durationBounds = { minAmount: 1, maxMinutes: 24 * 60, maxHours: 24 } as const;
 
+/**
+ * The facts of the machine check (design 4.2): the names of the facts, the two systems that it knows, the programs and the
+ * system files that give each fact, and the bounds of a call. Any other system gives unknown facts.
+ */
+export const machineNames = {
+  facts: { memory: 'memory', disk: 'disk', load: 'load', cpus: 'cpus' },
+  systems: { macos: 'darwin', linux: 'linux' },
+  programs: { memoryPressure: 'memory_pressure', sysctl: 'sysctl', df: 'df', nproc: 'nproc' },
+  /** The names that `sysctl` reads on macOS: the load averages and the count of processors. */
+  sysctlNames: { load: 'vm.loadavg', cpus: 'hw.ncpu' },
+  /** The files of the Linux kernel that give the memory and the load. */
+  procFiles: { memory: '/proc/meminfo', load: '/proc/loadavg' },
+  /** The time limit of each program that the check runs, in milliseconds. A program that takes longer gives an unknown fact. */
+  callTimeoutMs: 5_000,
+  /** The most bytes of a system file that the check reads. A larger file gives an unknown fact. */
+  maxFileBytes: 65_536,
+  /** One GB is this many blocks of 1 KiB, as `df -h` counts it. */
+  kibPerGb: 1_048_576,
+  /** The most processors that the check accepts. A larger count is not a count. */
+  maxCpus: 4_096,
+} as const;
+
 /** The question of `init` about one approval point: it asks this many times, then it stops with a usage error. */
 export const approvalQuestion = { maxAttempts: 3 } as const;
 
@@ -771,6 +794,7 @@ export const schemaIds = {
   nodeChildren: `${program}.node-children/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
+  machine: `${program}.machine/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
   version: `${program}.version/v1`,
