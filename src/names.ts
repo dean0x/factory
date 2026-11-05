@@ -542,6 +542,28 @@ export const paneBinding = { maxStartCommandChars: 32_768, maxWords: 1_024 } as 
  */
 export const summonLimits = { defaultFor: '15m', minMinutes: 1, maxMinutes: 120, tokenBytes: 16 } as const;
 
+/** The signs that mark the chosen entry of a dialog list in a screen of the agent program. */
+const dialogPointers = ['❯', '>'] as const;
+
+/**
+ * The typed input of one line into a pane (design 4.12). `lines` are the only lines that a command types. `keys` are the only
+ * key names: one clears the input line before the text, one ends the line. A text longer than `maxChars` is refused. The check
+ * of the screen reads the bottom `captureLines` lines of a capture. It sees a dialog list when one line starts with a pointer
+ * from `pointers`, then digits and a dot, and a second line starts with digits and a dot. Both patterns allow spaces only before
+ * the first sign.
+ */
+export const typing = {
+  lines: { clear: '/clear', compact: '/compact' },
+  keys: { clearLine: 'C-u', enter: 'Enter' },
+  maxChars: 300,
+  captureLines: 20,
+  pointers: dialogPointers,
+  optionList: {
+    pointerLine: new RegExp(`^ *(?:${dialogPointers.join('|')}) *[0-9]+\\.`, 'u'),
+    numberedLine: /^ *[0-9]+\./u,
+  },
+} as const;
+
 /**
  * The permission bits of the local config file (design 4.4). The file has mode 600. A group or other read bit gets
  * fixed with a notice. A group or other write bit, or another owner, stops the command.

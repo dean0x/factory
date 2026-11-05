@@ -27,6 +27,14 @@ const literalWord = (word: string): string =>
 /** One tmux command as an argument list. No word of it ends the command. */
 const call = (...words: readonly string[]): TmuxArgs => words.map(literalWord);
 
+/**
+ * Joins tmux commands, each a list of words, into one argument list that tmux runs as a chain in one call. Every word goes
+ * through `call`, so a word that ends in a semicolon stays one word, and only the joiner between two commands ends a command.
+ * tmux stops the chain at the first command that fails.
+ */
+export const chainedArgs = (commands: readonly (readonly string[])[]): TmuxArgs =>
+  commands.flatMap((words, index) => (index === 0 ? call(...words) : [NEXT_COMMAND, ...call(...words)]));
+
 /** The left pane of the view window is the coordinator, the right pane is the slot. */
 const LEFT_PANE = '{left}';
 const RIGHT_PANE = '{right}';
@@ -93,6 +101,15 @@ export const paneListArgs = (id: string): TmuxArgs =>
 export const paneReadArgs = (pane: string): Result<TmuxArgs, string> => {
   const target = paneTarget(pane);
   return target.ok ? ok(call('display-message', '-p', '-t', target.value, PANE_LIST_FORMAT)) : target;
+};
+
+/**
+ * Prints the text on the screen of one pane, for the pane id only: the visible lines, with no escape sequences and no scroll-back.
+ * The call fails for a pane that does not exist. The caller reads the bottom lines of the output.
+ */
+export const capturePaneArgs = (pane: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  return target.ok ? ok(call('capture-pane', '-p', '-t', target.value)) : target;
 };
 
 /**
@@ -508,11 +525,10 @@ export const startSteps = (input: {
   const { id, home, coordinatorDir, launch } = input;
   const view = windowTarget(id, tmuxNames.windowView);
   return [
-    [
-      ...call('new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', coordinatorDir, '--', ...launch),
-      NEXT_COMMAND,
-      ...call('set-option', '-w', '-t', view, 'remain-on-exit', 'on'),
-    ],
+    chainedArgs([
+      ['new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', coordinatorDir, '--', ...launch],
+      ['set-option', '-w', '-t', view, 'remain-on-exit', 'on'],
+    ]),
     call('set-environment', '-t', sessionTarget(id), '-r', env.proxyBaseUrl),
     call('set-environment', '-t', sessionTarget(id), env.session, id),
     call('set-option', '-p', '-t', coordinatorPane(id), tmuxNames.optionNode, id),
