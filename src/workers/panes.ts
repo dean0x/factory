@@ -3,13 +3,16 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
 import {
+  coordinatorReadArgs,
   killPaneArgs,
   paneBindArgs,
   paneAbsent,
   paneListArgs,
   paneReadArgs,
+  parseCoordinatorPane,
   parsePaneBind,
   parsePaneListSoft,
+  type CoordinatorPane,
   type PaneRow,
 } from '../launch/tmux.js';
 import { requireOwnSession, sessionExists, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
@@ -129,6 +132,22 @@ export const readPaneLife = async (deps: Deps, request: Omit<BindRequest, 'again
   if (bind.value.paneId !== paneId) return failure(`cannot read the pane ${paneId}: the read gives another pane`);
   if (!startsWorker(bind.value.startCommand, home, workerId)) return ok('other');
   return ok(bind.value.dead ? 'ended' : 'running');
+};
+
+/**
+ * Reads the pane of the coordinator, the left pane of the window `view`, right before a stop acts on it. The pane counts only when
+ * tmux says that it carries the node mark of this session (tmux compares the mark, so no text of a mark is read): the pane that
+ * `start` made for the coordinator. The value is null when tmux has no such pane or the pane does not carry the mark, and the stop
+ * then sends nothing. A call that tmux does not answer, and an answer that is not the line of one pane, are failures. The pid of the
+ * value is the pid of this read.
+ */
+export const readCoordinatorPane = async (deps: Deps, session: string): Promise<CliResult<CoordinatorPane | null>> => {
+  const read = await tmuxCall(deps, coordinatorReadArgs(session));
+  if (!read.ok) return read;
+  if (read.value.exitCode !== 0 || paneAbsent(read.value.stdout)) return ok(null);
+  const parsed = parseCoordinatorPane(read.value.stdout);
+  if (!parsed.ok) return failure(`cannot read the pane of the ${roles.coordinator} of the session ${session}: ${parsed.error}`);
+  return ok(parsed.value.node ? parsed.value : null);
 };
 
 /**

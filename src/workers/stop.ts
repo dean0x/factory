@@ -144,27 +144,42 @@ const closeEnded = async (deps: Deps, session: string, paneIds: readonly string[
   return ok(paneIds.length === 0 ? { kind: 'no-pane' } : { kind: 'closed-dead', paneIds });
 };
 
+/**
+ * Sends TERM to the process of a pane and waits for its end for at most `stopPoll.attempts` checks. It never sends another signal.
+ * A process that stays is a failure (exit 1): the message names the pane and the process, and the remedy names `again`, the
+ * command that a person runs again, without the program name. The stop of a worker and the end of the coordinator use this one rule.
+ */
+export const terminatePane = async (
+  deps: Deps,
+  pane: { readonly paneId: string; readonly pid: number },
+  again: string,
+): Promise<CliResult<void>> => {
+  const sent = deps.terminate(pane.pid);
+  if (!sent.ok) {
+    return failure(
+      sent.error.message,
+      `Look at the pane ${pane.paneId}. The command sent no other signal. Run "${commandText(again)}" again, or end the process yourself.`,
+    );
+  }
+  if (sent.value === 'gone') return ok(undefined);
+  for (let attempt = 0; attempt < stopPoll.attempts; attempt += 1) {
+    await deps.sleep(stopPoll.intervalMs);
+    const running = deps.isRunning(pane.pid);
+    if (!running.ok) return running;
+    if (!running.value) return ok(undefined);
+  }
+  const seconds = (stopPoll.attempts * stopPoll.intervalMs) / 1000;
+  return failure(
+    `the process ${pane.pid} of the pane ${pane.paneId} did not end within ${seconds} seconds after the signal TERM`,
+    `The command never sends KILL. Look at the pane ${pane.paneId}. Run "${commandText(again)}" again, or end the process yourself.`,
+  );
+};
+
 /** Ends the process with the way, and waits for its end for at most `stopPoll.attempts` checks. A process that stays is a failure. */
 const endProcess = async (deps: Deps, row: BoundPane, way: StopWay, workerId: string): Promise<CliResult<void>> => {
   switch (way) {
-    case stopWay.term: {
-      const sent = deps.terminate(row.pid);
-      if (!sent.ok) {
-        return failure(sent.error.message, `Look at the pane ${row.paneId}. The command sent no other signal.`);
-      }
-      if (sent.value === 'gone') return ok(undefined);
-      for (let attempt = 0; attempt < stopPoll.attempts; attempt += 1) {
-        await deps.sleep(stopPoll.intervalMs);
-        const running = deps.isRunning(row.pid);
-        if (!running.ok) return running;
-        if (!running.value) return ok(undefined);
-      }
-      const seconds = (stopPoll.attempts * stopPoll.intervalMs) / 1000;
-      return failure(
-        `the process ${row.pid} of the pane ${row.paneId} did not end within ${seconds} seconds after the signal TERM`,
-        `The command never sends KILL. Look at the pane ${row.paneId}. Run "${stopLine(workerId)}" again, or end the process yourself.`,
-      );
-    }
+    case stopWay.term:
+      return terminatePane(deps, row, stopWords(workerId));
     default: {
       const unreachable: never = way;
       return unreachable;

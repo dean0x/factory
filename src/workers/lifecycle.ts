@@ -8,10 +8,10 @@ import { commandLines, commands, commandText, env, lastSeen, roles, type Command
 import { clearActiveMark, type ClearOutcome } from '../state/active-machine.js';
 import { readOwnLastSeen, type OwnSessionRead } from './last-seen.js';
 import { chooseProxy, requireCleanSettings, requireWorkCopy, type ProxyAnswers, type ProxyWish } from './launch.js';
-import type { BoundPane } from './panes.js';
+import { readCoordinatorPane, type BoundPane } from './panes.js';
 import type { WorkerRecord } from './registry.js';
 import { readWorkerPanes } from './slot.js';
-import { requireOneLivePane, requireStopCase, stopWorker } from './stop.js';
+import { requireOneLivePane, requireStopCase, stopWorker, terminatePane } from './stop.js';
 
 /**
  * The shared steps of `shutdown`, `restart` and `reboot` (design 4.11, "The lifecycle verbs"). A command reads the list of the
@@ -20,7 +20,8 @@ import { requireOneLivePane, requireStopCase, stopWorker } from './stop.js';
  * launch did not make, a pane in the view window that no summon put there and two live panes are faults of the check. Then each
  * worker stops one at a time with the list (`stopWorkers`), and the stop reads its panes again right before the signal. After the
  * checks, a stop can still fail (a process that does not end, a pane that changed since the check): the error then names the
- * workers that stopped before it (`withStopped`).
+ * workers that stopped before it (`withStopped`). A command that ends the session stops the program of the coordinator pane the
+ * same way, before the session ends (`endSession`).
  */
 
 const keys = lastSeen.keys;
@@ -247,15 +248,34 @@ export interface EndRequest extends StopAllRequest {
 }
 
 /**
- * Ends the session of the node after the checks: each worker stops (`stopWorkers`), the mark of the active machine is cleared, and
- * the session ends by its exact name. The mark is cleared before the session ends, so a fault of the end leaves a session with no
- * worker and no mark, and the command run again ends it. A fault at any step names the workers that stopped before it.
+ * Ends the program of the coordinator pane before the session ends: TERM and a bounded wait, as the stop of a worker does it
+ * (`terminatePane`, docs/session-stop.md). Without it, the end of the session would hang up the program, a way that no test covers.
+ * The pane is read right before the signal. A pane that tmux does not show as the coordinator pane gets no signal, and neither does
+ * a pane whose program ended. The pane of the caller gets none either: the signal would end the command before it reports, so the
+ * caller reports first (`beforeEnd`) and the end of the session ends the pane. A program that does not end is a failure (exit 1)
+ * that names the pane and the process, and the session stays: the command run again ends it. The command never sends KILL.
+ */
+const stopCoordinator = async (deps: Deps, session: string, command: CommandName): Promise<CliResult<void>> => {
+  const read = await readCoordinatorPane(deps, session);
+  if (!read.ok) return failure(read.error.message, `Run "${commandText(command)}" again.`);
+  const pane = read.value;
+  if (pane === null || pane.dead || deps.env[env.tmuxPane] === pane.paneId) return ok(undefined);
+  return terminatePane(deps, pane, command);
+};
+
+/**
+ * Ends the session of the node after the checks: each worker stops (`stopWorkers`), the mark of the active machine is cleared, the
+ * program of the coordinator pane gets TERM (`stopCoordinator`), and the session ends by its exact name. The mark is cleared before
+ * the session ends, so a fault of the end leaves a session with no worker and no mark, and the command run again ends it. A fault
+ * at any step names the workers that stopped before it.
  */
 export const endSession = async (deps: Deps, request: EndRequest): Promise<CliResult<EndedSession>> => {
   const { home, session, command, beforeEnd } = request;
   const run = await stopWorkers(deps, request);
   if (run.fault !== null) return err(faultBeforeEnd(command, run.fault, run.stopped));
   const done: EndedSession = { stopped: run.stopped, mark: await clearMark(deps, home, command) };
+  const coordinator = await stopCoordinator(deps, session, command);
+  if (!coordinator.ok) return err(faultBeforeEnd(command, coordinator.error, run.stopped));
   beforeEnd?.(done);
   const ended = await tmuxStep(deps, killSessionArgs(session));
   if (!ended.ok) {

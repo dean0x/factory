@@ -1,3 +1,5 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hasTmux, isAlive, LIFECYCLE_CASE_MS, useLab, waitUntilEnded } from './lifecycle-lab.js';
 
@@ -29,6 +31,17 @@ describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server,
     expect(isAlive(bystander)).toBe(true);
     expect((await lab.box.git(lab.stateOf(), ['ls-files', '--', MARK_FILE])).stdout.trim()).toBe('');
     expect((await lab.box.git(lab.stateOf(), ['log', '-1', '--format=%s'])).stdout.trim()).toBe(CLEAR_COMMIT);
+  }, LIFECYCLE_CASE_MS);
+
+  it('ends the program of the coordinator pane with TERM before it ends the session (F-7)', async () => {
+    await writeFile(join(lab.outDir, 'record-term-demo'), '');
+    await lab.node();
+
+    const result = await lab.factory('shutdown');
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Ended the tmux session demo.');
+    expect(await lab.hasSession('demo')).toBe(false);
+    expect(await readFile(join(lab.outDir, 'termed-demo'), 'utf8')).toBe('termed\n');
   }, LIFECYCLE_CASE_MS);
 
   it('says that nothing runs and exits 0 when no session runs, also on a second run (TP-41)', async () => {

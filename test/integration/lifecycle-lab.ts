@@ -37,7 +37,8 @@ export type Marker = keyof typeof SESSIONS;
 /**
  * A fake claude. The names of its files end with the session marker: `argv-<marker>` holds the arguments of the last launch, and
  * `launches-<marker>` has one line for each launch that ran on. A launch with `--resume <id>` acts like the program: the hook of the
- * new session writes its last-seen line.
+ * new session writes its last-seen line. A launch whose marker has a file `record-term-<marker>` in the folder records the signal TERM in
+ * `termed-<marker>` and ends with the code 143. A hang-up ends it too, but records nothing.
  */
 const fakeClaude = (dir: string): string =>
   [
@@ -52,6 +53,14 @@ const fakeClaude = (dir: string): string =>
     'done',
     'if [ -n "$resume" ]; then',
     `  printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$resume" | '${process.execPath}' '${DIST}' hook SessionStart`,
+    'fi',
+    'if [ -e "$dir/record-term-$FACTORY_SESSION" ]; then',
+    `  trap 'echo termed >> "$dir/termed-$FACTORY_SESSION"; kill "$child"; exit 143' TERM`,
+    '  sleep 300 &',
+    '  child=$!',
+    '  echo launched >> "$dir/launches-$FACTORY_SESSION"',
+    '  wait "$child"',
+    '  exit 0',
     'fi',
     'echo launched >> "$dir/launches-$FACTORY_SESSION"',
     'exec sleep 300',

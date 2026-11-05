@@ -435,6 +435,7 @@ describe('worker stop: the wait for the end of the process (TP-29)', () => {
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('EPERM');
+    expect(error.hint).toContain('Run "factory worker stop ');
     expect(killed(made)).toEqual([]);
   });
 

@@ -80,8 +80,8 @@ interface Setup {
   readonly sessions?: TmuxFixture['sessions'];
   /** Panes of other sessions of the fixture. */
   readonly otherPanes?: readonly PaneFixture[];
-  /** The command runs in this pane of the session: the pane of the coordinator, or the pane of a worker. Default: outside the session. */
-  readonly from?: 'coordinator' | Id;
+  /** The command runs in this pane of the session: the pane of the coordinator, the board pane, or the pane of a worker. Default: outside the session. */
+  readonly from?: 'coordinator' | 'board' | Id;
   readonly config?: FactoryConfig;
   readonly claudeFile?: string;
   readonly hookSettings?: string;
@@ -90,8 +90,10 @@ interface Setup {
   /** The mark of the active machine: of this machine, or of another one. Default: no mark. */
   readonly mark?: 'own' | 'other';
   readonly fetch?: FetchHandler;
-  /** The process of this worker does not end after TERM. */
-  readonly stuck?: Id;
+  /** The process of this worker, or of the coordinator, does not end after TERM. */
+  readonly stuck?: Id | 'coordinator';
+  /** True: the program of the coordinator pane has ended, and the pane stays. */
+  readonly endedCoordinator?: boolean;
   /** The exit code of the commit in the state repo. Default: 0. */
   readonly commitExit?: number;
   /** False: git has no user.name and user.email. Default: true. */
@@ -107,6 +109,8 @@ interface Made {
   readonly tmux: TmuxLog;
   /** The id of the coordinator pane. */
   readonly coordinator: string;
+  /** The process id of the coordinator pane, or undefined when no session runs. */
+  readonly coordinatorPid: number | undefined;
   /**
    * What happened, in order: `tmux <command>`, `git <subcommand>`, `terminate <pid>`, `write <path>` (an atomic write, or the
    * rename that ends a write through a temporary file) and `warn` (a warning printed at once).
@@ -180,10 +184,17 @@ const make = async (setup: Setup = {}): Promise<Made> => {
     sessions,
     panes: [...panes, ...(setup.otherPanes ?? [])],
     ...(setup.failing === undefined ? {} : { failing: setup.failing }),
+    ...(setup.endedCoordinator === true ? { endedCoordinators: [NODE] } : {}),
   });
-  // The fixture makes the panes of the session after the panes with an id: the coordinator pane comes first among them.
+  // The fixture makes the panes of the session after the panes with an id: the coordinator pane comes first among them, then the board pane.
   const coordinator = `%${Math.max(-1, ...panes.map((pane) => Number((pane.id ?? '%-1').slice(1)))) + 1}`;
-  const from = setup.from === undefined ? {} : { TMUX_PANE: setup.from === 'coordinator' ? coordinator : PANE[setup.from] };
+  const board = `%${Number(coordinator.slice(1)) + 1}`;
+  const coordinatorPid = log.panes().find((pane) => pane.id === coordinator)?.pid;
+  const callerPane = (pane: 'coordinator' | 'board' | Id): string => {
+    if (pane === 'coordinator') return coordinator;
+    return pane === 'board' ? board : PANE[pane];
+  };
+  const from = setup.from === undefined ? {} : { TMUX_PANE: callerPane(setup.from) };
   const git = gitAnswer(setup.commitExit ?? 0, setup.identity ?? true);
   const events: string[] = [];
   const base = createFakeDeps({
@@ -201,7 +212,11 @@ const make = async (setup: Setup = {}): Promise<Made> => {
     fetch: setup.fetch ?? answers,
     ...(setup.answer === undefined ? {} : { stdinIsTTY: true, stdoutIsTTY: true, prompt: () => ok(setup.answer ?? '') }),
   });
-  const stuckPid = setup.stuck === undefined ? undefined : PID[setup.stuck];
+  const stuckProcess = (): number | undefined => {
+    if (setup.stuck === undefined) return undefined;
+    return setup.stuck === 'coordinator' ? coordinatorPid : PID[setup.stuck];
+  };
+  const stuckPid = stuckProcess();
   const deps: FakeDeps = {
     ...base,
     fs: {
@@ -242,7 +257,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   }
   deps.warned.splice(0);
   events.splice(0);
-  return { deps: withProgram(deps, log, setup.program ?? startsSessions(HOME, byResume)), tmux: log, coordinator, events };
+  return { deps: withProgram(deps, log, setup.program ?? startsSessions(HOME, byResume)), tmux: log, coordinator, coordinatorPid, events };
 };
 
 const withProxy = (): FactoryConfig => {
@@ -367,7 +382,7 @@ describe('shutdown (AC-18)', () => {
   it('stops each worker with TERM in order, then ends the session by its exact name (TP-135)', async () => {
     const made = await make({ workers: { alpha: { event: 'UserPromptSubmit' }, beta: {}, gamma: { event: 'UserPromptSubmit' } } });
     const output = await succeeded(shutdown(made));
-    expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma]);
+    expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma, made.coordinatorPid]);
     expect(made.tmux.commands().filter((command) => command.startsWith('kill-pane'))).toEqual([
       `kill-pane -t ${PANE.alpha}`,
       `kill-pane -t ${PANE.beta}`,
@@ -378,6 +393,85 @@ describe('shutdown (AC-18)', () => {
     expect(made.tmux.sessions().has(NODE)).toBe(false);
     expect(textOf(output)).toBe(`Stopped the workers: alpha, beta, gamma.\nEnded the tmux session ${NODE}.`);
     expect(output.json).toMatchObject({ schema: schemaIds.shutdown, running: true, workers: ['alpha', 'beta', 'gamma'] });
+  });
+
+  describe('the end of the coordinator (F-7)', () => {
+    it.each([
+      ['shutdown', shutdown],
+      ['reboot', reboot],
+    ] as const)('%s from outside the session: the coordinator gets TERM after the workers and before the session ends', async (_name, run) => {
+      const made = await make();
+      await succeeded(run(made));
+      const termAt = made.events.indexOf(`terminate ${made.coordinatorPid}`);
+      expect(termAt).toBeGreaterThan(made.events.lastIndexOf(`terminate ${PID.gamma}`));
+      expect(termAt).toBeLessThan(made.events.indexOf('tmux kill-session'));
+      expect(made.deps.terminated.filter((pid) => pid === made.coordinatorPid)).toHaveLength(1);
+    });
+
+    it('shutdown from the board pane: the coordinator gets TERM, then the report is printed, then the session ends', async () => {
+      const made = await make({ from: 'board' });
+      const output = await succeeded(shutdown(made));
+      const termAt = made.events.indexOf(`terminate ${made.coordinatorPid}`);
+      const reportAt = made.events.indexOf('warn');
+      expect(termAt).toBeGreaterThan(made.events.lastIndexOf(`terminate ${PID.gamma}`));
+      expect(reportAt).toBeGreaterThan(termAt);
+      expect(made.events.indexOf('tmux kill-session')).toBeGreaterThan(made.events.lastIndexOf('warn'));
+      expect(made.deps.warned.join('\n')).toContain(`The tmux session ${NODE} ends next`);
+      expect(output.json).toMatchObject({ schema: schemaIds.shutdown, running: true, workers: ['alpha', 'beta', 'gamma'] });
+    });
+
+    it.each([
+      ['shutdown', shutdown, 'Run "factory shutdown" again, or end the process yourself.'],
+      ['reboot', reboot, REBOOT_AGAIN],
+    ] as const)('%s: a coordinator that does not end keeps the session, sends no other signal and gives a remedy', async (_name, run, hint) => {
+      const made = await make({ stuck: 'coordinator', mark: 'own' });
+      const error = await failed(run(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain(`the process ${made.coordinatorPid} of the pane ${made.coordinator} did not end`);
+      expect(error.message).toContain('Stopped before this fault: alpha, beta, gamma');
+      expect(error.hint).toContain(hint);
+      expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma, made.coordinatorPid]);
+      expect(countOf(made, 'kill-session')).toBe(0);
+      expect(countOf(made, 'new-session')).toBe(0);
+      expect(made.tmux.sessions().has(NODE)).toBe(true);
+    });
+
+    it('exits 1, sends nothing to the coordinator and keeps the session when tmux gives an answer about its pane that is not one pane', async () => {
+      const made = await make();
+      const run = made.deps.run;
+      const unreadable: Made = {
+        ...made,
+        deps: {
+          ...made.deps,
+          run: (command, args, options) =>
+            command === 'tmux' && args[0] === 'display-message' && args.some((word) => word.endsWith('{left}'))
+              ? Promise.resolve(exited(0, 'not a pane\n'))
+              : run(command, args, options),
+        },
+      };
+      const error = await failed(shutdown(unreadable));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('cannot read the pane of the coordinator');
+      expect(error.message).toContain('Stopped before this fault: alpha, beta, gamma');
+      expect(error.hint).toBe('Run "factory shutdown" again.');
+      expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma]);
+      expect(countOf(made, 'kill-session')).toBe(0);
+    });
+
+    it('sends no signal to a coordinator whose program has ended, and still ends the session', async () => {
+      const made = await make({ endedCoordinator: true });
+      await succeeded(shutdown(made));
+      expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma]);
+      expect(made.tmux.sessions().has(NODE)).toBe(false);
+    });
+
+    it('sends no signal to a pane that has lost the node mark, and still ends the session', async () => {
+      const made = await make();
+      expect((await made.deps.run('tmux', ['set-option', '-p', '-u', '-t', made.coordinator, tmuxNames.optionNode])).ok).toBe(true);
+      await succeeded(shutdown(made));
+      expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma]);
+      expect(made.tmux.sessions().has(NODE)).toBe(false);
+    });
   });
 
   it('does one session check and one list of the panes for three workers', async () => {
@@ -423,13 +517,13 @@ describe('shutdown (AC-18)', () => {
     expect(textOf(output)).toBe(`Ended the tmux session ${NODE}.`);
     expect(made.tmux.sessions().get('other')).toBe(OTHER_HOME);
     expect(made.tmux.panes().some((pane) => pane.session === 'other')).toBe(true);
-    expect(made.deps.terminated).toEqual([]);
+    expect(made.deps.terminated).toEqual([made.coordinatorPid]);
   });
 
   it('closes the pane of a worker whose program ended, with no signal', async () => {
     const made = await make({ workers: { alpha: { pane: 'dead' } } });
     const output = await succeeded(shutdown(made));
-    expect(made.deps.terminated).toEqual([]);
+    expect(made.deps.terminated).toEqual([made.coordinatorPid]);
     expect(made.tmux.commands()).toContain(`kill-pane -t ${PANE.alpha}`);
     expect(output.json).toMatchObject({ workers: ['alpha'] });
   });
@@ -499,6 +593,14 @@ describe('shutdown (AC-18)', () => {
       expect(report).toContain(`The tmux session ${NODE} ends next`);
       expect(output.failed).toBe(false);
       expect(output.json).toMatchObject({ schema: schemaIds.shutdown, running: true, workers: ['alpha', 'beta', 'gamma'], mark: 'cleared' });
+    });
+
+    it('sends no signal to its own coordinator pane: the report comes first, then the session ends (F-7)', async () => {
+      const made = await make({ from: 'coordinator' });
+      await succeeded(shutdown(made));
+      expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma]);
+      expect(made.events.indexOf('warn')).toBeGreaterThan(made.events.lastIndexOf(`terminate ${PID.gamma}`));
+      expect(made.events.indexOf('warn')).toBeLessThan(made.events.indexOf('tmux kill-session'));
     });
 
     it('exits 1 with the message of the fault when the session does not end', async () => {
@@ -763,7 +865,7 @@ describe('reboot (AC-20)', () => {
       otherPanes: [{ session: 'other', options: { '@worker': 'alpha' }, pid: 9001 }],
     });
     const output = await succeeded(reboot(made));
-    expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma]);
+    expect(made.deps.terminated).toEqual([PID.alpha, PID.beta, PID.gamma, made.coordinatorPid]);
     expect(countOf(made, 'kill-session')).toBe(1);
     expect(countOf(made, 'new-session')).toBe(1);
     expect(made.events.indexOf('tmux kill-session')).toBeGreaterThan(made.events.lastIndexOf(`terminate ${PID.gamma}`));
@@ -818,7 +920,7 @@ describe('reboot (AC-20)', () => {
       const made = await make({ hookSettings: WARNING_SETTINGS });
       await succeeded(reboot(made));
       expect(made.deps.warned.filter((warning) => warning.includes('Bash'))).toHaveLength(1);
-      expect(made.deps.terminated).toHaveLength(3);
+      expect(made.deps.terminated).toHaveLength(IDS.length + 1);
     });
 
     it('exits 4 and stops nothing when the settings file of one work copy is wrong', async () => {
@@ -863,7 +965,7 @@ describe('reboot (AC-20)', () => {
       expect(renderAt).toBeGreaterThanOrEqual(0);
       expect(renderAt).toBeLessThan(made.events.indexOf(`terminate ${PID.alpha}`));
       expect(renderAt).toBeLessThan(made.events.indexOf('tmux new-session'));
-      expect(made.deps.terminated).toHaveLength(3);
+      expect(made.deps.terminated).toHaveLength(IDS.length + 1);
       expect(countOf(made, 'new-session')).toBe(1);
     });
 
@@ -902,7 +1004,7 @@ describe('reboot (AC-20)', () => {
       const writeAt = made.events.indexOf(`write ${SETTINGS_FILE}`);
       expect(writeAt).toBeGreaterThanOrEqual(0);
       expect(writeAt).toBeLessThan(made.events.indexOf(`terminate ${PID.alpha}`));
-      expect(made.deps.terminated).toHaveLength(3);
+      expect(made.deps.terminated).toHaveLength(IDS.length + 1);
     });
 
     it('goes on without the hook settings after a no, and says so', async () => {
