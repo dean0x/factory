@@ -24,6 +24,9 @@ You need:
 | --- | --- |
 | `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
+| `factory shutdown` | End this factory and nothing else: stop each worker, clear the mark of the active machine, and end the tmux session. It exits with code 0 when no session runs. See "Shut down, restart and reboot". |
+| `factory restart ID` | Stop one worker and start it again with its session id. The other workers keep their panes. See "Shut down, restart and reboot". |
+| `factory reboot` | Stop every worker and start each recorded worker again with its session id. Outside the session it also ends the session and starts it again. See "Shut down, restart and reboot". |
 | `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
@@ -274,6 +277,28 @@ A resume with `--resume` prints "Resumed" only after the new session proves itse
 - 0: the session proved itself. The command prints "Resumed".
 - 1: the pane is gone or its program ended. The message starts with "resume failed". A usual cause is a pointer to a session that has no transcript. To start a new conversation, delete the file `.factory/workers/ID/last-session` (the message gives the full path), then run `factory worker resume ID`.
 - 3: the pane runs, but no matching line came within 10 seconds. The message starts with "resume not confirmed" and names the pane. Run `factory worker summon ID` to look at it. If the earlier conversation did not load, run `factory worker stop ID`, delete the same file, and run `factory worker resume ID`.
+
+### Shut down, restart and reboot
+
+```sh
+factory shutdown
+factory restart alpha
+factory reboot
+```
+
+These commands stop only the panes that factory made for this factory folder. A tmux session of another factory, a session of the same name that belongs to another folder, and a `claude` program outside these panes keep running. Each command reads the list of the panes once. Before the first stop, it checks every worker that it stops or starts again, so a failed check leaves everything as it was:
+
+- Each worker needs a session id that passed the ownership check of `worker resume`, and a known state of its session. Else the command exits with code 3 and stops nothing.
+- A worker that starts again needs a work copy with settings files that pass the check of `worker new`. `restart` and `reboot` also run the root checks of `start`. A failed check exits with code 4.
+- The command never ends the pane that runs it: that is exit code 2.
+
+After these checks, a stop can still fail: a process that does not end gives exit code 1, and a pane that the launch did not make gives exit code 4. The message then names the workers that stopped before the fault.
+
+`shutdown` stops each worker, clears the mark of the active machine (a mark of another machine stays), and ends the tmux session by its exact name. If a session of the same name belongs to another factory folder, or has no home option, it ends nothing and exits with code 4. The remedy is `factory shutdown` in the folder that owns the session. With no session it says that nothing runs and exits with code 0.
+
+`restart ID` stops the worker and starts it again with `--resume` and its session id. The id must have a record, else exit code 2. With no tmux session it exits with code 3 and names `factory start`. If the new session does not write its line, the message says that the worker stopped and did not start again, and names `factory worker resume ID`.
+
+`reboot` stops every worker and starts each recorded worker again with its session id. Run outside the session, it also ends the session as `shutdown` does, starts it again with the recovery of `start`, and prints the command that attaches. Run in a pane of the session, it stops and starts only the workers, and the session and the coordinator pane stay. A worker that did not start again is named, and the exit code is 1. One run asks each proxy once.
 
 ### Summon a worker
 
