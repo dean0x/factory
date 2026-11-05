@@ -337,11 +337,11 @@ These commands stop only the panes that factory made for this factory folder. A 
 
 After these checks, a stop can still fail: a process that does not end gives exit code 1, and a pane that the launch did not make gives exit code 4. The message then names the workers that stopped before the fault.
 
-`shutdown` stops each worker, clears the mark of the active machine (a mark of another machine stays), and ends the tmux session by its exact name. If a session of the same name belongs to another factory folder, or has no home option, it ends nothing and exits with code 4. The remedy is `factory shutdown` in the folder that owns the session. With no session it says that nothing runs and exits with code 0.
+`shutdown` stops each worker, clears the mark of the active machine (a mark of another machine stays), and ends the tmux session by its exact name. If a session of the same name belongs to another factory folder, or has no home option, it ends nothing and exits with code 4. The remedy is `factory shutdown` in the folder that owns the session. With no session it says that nothing runs and exits with code 0, and it still clears the mark of the active machine of this machine.
 
 `restart ID` stops the worker and starts it again with `--resume` and its session id. The id must have a record, else exit code 2. With no tmux session it exits with code 3 and names `factory start`. If the new session does not write its line, the message says that the worker stopped and did not start again, and names `factory worker resume ID`.
 
-`reboot` stops every worker and starts each recorded worker again with its session id. Run outside the session, it also ends the session as `shutdown` does, starts it again with the recovery of `start`, and prints the command that attaches. Run in a pane of the session, it stops and starts only the workers, and the session and the coordinator pane stay. A worker that did not start again is named, and the exit code is 1. One run asks each proxy once.
+`reboot` stops every worker and starts each recorded worker again with its session id. Run outside the session, it first makes the steps of `start` that change a file, before it stops any worker: it renders a safety block that is out of date, and it makes sure of the hook settings of the coordinator (it has no `--yes`, so a missing change needs an answer in a terminal window, else it exits with code 2). Then it ends the session as `shutdown` does, starts it again with the recovery of `start`, and prints the command that attaches. Run in a pane of the session, it stops and starts only the workers, and the session and the coordinator pane stay. A worker that did not start again is named, and the exit code is 1. One run asks each proxy once.
 
 ### Summon a worker
 
