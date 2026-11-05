@@ -687,10 +687,6 @@ export type StopCase = 'idle' | 'busy';
 
 /** The case of the table for each state of a session that a last-seen line gives. */
 export const stopCaseOfState = { prompt: 'idle', busy: 'busy' } as const satisfies Readonly<Record<'prompt' | 'busy', StopCase>>;
-
-/** The git words that test if one commit lies below another. The core of the program keeps the word of the first one out of its text. */
-export const gitAncestorWords = ['merge-base', '--is-ancestor'] as const;
-
 /** The safe way for each case. A case with no safe way has null and uses `stopFallback`. */
 export const stopWays: Readonly<Record<StopCase, StopWay | null>> = { idle: stopWay.term, busy: stopWay.term };
 

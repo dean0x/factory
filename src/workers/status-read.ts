@@ -3,6 +3,7 @@ import { durationMinutes } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import type { PaneRow } from '../launch/tmux.js';
 import { durationBounds, keys, roles } from '../names.js';
 import { readOwnLastSeen } from './last-seen.js';
 import { readPanes } from './panes.js';
@@ -15,6 +16,11 @@ export interface StatusRequest {
   readonly home: string;
   readonly config: FactoryConfig;
   readonly workItems: WorkItemPort;
+  /**
+   * The list of the panes that the caller read already, or null when no session of this factory runs. A caller that must act on
+   * the same list gives it here, so one list call serves both. Without it, the read makes the call.
+   */
+  readonly panes?: readonly PaneRow[] | null;
 }
 
 export interface StatusReport {
@@ -76,7 +82,7 @@ export const readStatus = async (deps: Deps, request: StatusRequest): Promise<Cl
   if (idleAfterMinutes === null) return failure(`the setting ${keys.limits.idleAfter} is not a duration: ${idleAfter}`);
   const records = await listWorkerRecords(deps, home);
   if (!records.ok) return records;
-  const panes = await readPanes(deps, config.core.node.id, home);
+  const panes = request.panes === undefined ? await readPanes(deps, config.core.node.id, home) : ok(request.panes);
   if (!panes.ok) return panes;
 
   const workers = records.value.workers;

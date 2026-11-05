@@ -1,4 +1,5 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
+import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
@@ -235,6 +236,34 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     usage: `${commandText(commands.status)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
     run: (given, deps) => runStatus(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.dismiss,
+    summary:
+      `End a ${roles.worker} and free its work copy, when its work is pushed. It changes nothing until ${flagText(flags.yes)}. ` +
+      `With ${flagText(flags.idle)}, list the idle ${roles.worker}s and pick which to dismiss.`,
+    usage: [
+      `${commandText(commands.dismiss)} ID [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+      `${commandText(commands.dismiss)} ${flagText(flags.idle)} [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.idle]: {
+        type: 'boolean',
+        description: `List the idle ${roles.worker}s, and let you pick in a terminal window. The pick step stops inside a ${places.session}.`,
+      },
+      [flags.yes]: {
+        type: 'boolean',
+        description: `Free the ${roles.worker}: end its pane, remove its work copy, and delete its record. Not allowed inside a ${places.session}.`,
+      },
+    },
+    run: (given, deps) =>
+      runDismiss(
+        deps,
+        { home: given.string(flags.home), words: given.positionals(), idle: given.bool(flags.idle), yes: given.bool(flags.yes) },
+        registry,
+      ),
   },
   {
     name: commands.node,

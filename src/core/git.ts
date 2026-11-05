@@ -1,7 +1,7 @@
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
-import { commands, commandText, dirs, gitAncestorWords, program, trackedFiles, type CommandName } from '../names.js';
+import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps } from './deps.js';
 import { isInUserClaudeFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
@@ -606,18 +606,18 @@ export const remoteBranchHeadOf = async (
 };
 
 /**
- * True when the commit `ancestor` is the commit `descendant` or lies below it (the ancestor test of git). Git answers with
- * exit code 1 for a commit that is not below the other. Any other answer is a failure, so an error is never read as either answer.
- * Both words must be commit ids.
+ * True when the commit `ancestor` is the commit `descendant` or lies below it. Git counts the commits that `ancestor` holds and
+ * `descendant` lacks: a count of 0 means that every commit of `ancestor` is on `descendant`. A bad exit code and text that is no
+ * count are failures, so an error is never read as either answer. Both words must be commit ids.
  */
 export const isAncestor = async (deps: Deps, dir: string, ancestor: string, descendant: string): Promise<CliResult<boolean>> => {
   if (!OBJECT_ID.test(ancestor) || !OBJECT_ID.test(descendant)) return failure('cannot compare commits: a commit id is not valid');
   const what = 'compare two commits';
-  const result = await deps.run('git', ['-C', dir, ...gitAncestorWords, ancestor, descendant], { timeoutMs: GIT_TIMEOUT_MS });
+  const result = await deps.run('git', ['-C', dir, 'rev-list', '--count', `${descendant}..${ancestor}`], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
-  if (result.value.exitCode === 0) return ok(true);
-  if (result.value.exitCode === 1) return ok(false);
-  return exitFailure(what, result.value.exitCode, result.value.stderr);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  const count = result.value.stdout.trim();
+  return /^\d+$/.test(count) ? ok(count === '0') : failure(`cannot ${what}: git printed text that is not a count`);
 };
 
 /**

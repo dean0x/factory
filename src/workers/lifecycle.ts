@@ -44,7 +44,7 @@ const resumeIdOf = (id: string, seen: OwnSessionRead): CliResult<string> =>
       );
 
 /** A command never ends the pane that it runs in (exit 2): the stop would end the command with it. */
-const requireOtherPane = (deps: Deps, id: string, pane: PaneRow, again: string): CliResult<void> =>
+export const requireOtherPane = (deps: Deps, id: string, pane: PaneRow, again: string): CliResult<void> =>
   deps.env[env.tmuxPane] === pane.paneId
     ? usageError(
         `cannot end the ${roles.worker} ${id} from its own pane ${pane.paneId}`,

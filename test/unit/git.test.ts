@@ -818,21 +818,23 @@ describe('git: the checks before a work copy is freed', () => {
   });
 
   describe('the ancestor test', () => {
-    it('is true when git exits with 0: the commit is on the other commit', async () => {
-      const { deps, calls } = asked(exited(0));
+    it('is true when no commit of the first commit is missing from the second: git counts 0', async () => {
+      const { deps, calls } = asked(exited(0, '0\n'));
       expect(await isAncestor(deps, COPY, HEAD, REMOTE_HEAD)).toEqual({ ok: true, value: true });
-      expect(calls).toEqual([['-C', COPY, 'merge-base', '--is-ancestor', HEAD, REMOTE_HEAD]]);
+      expect(calls).toEqual([['-C', COPY, 'rev-list', '--count', `${REMOTE_HEAD}..${HEAD}`]]);
     });
 
-    it('is false when git exits with 1', async () => {
-      expect(await isAncestor(asked(exited(1)).deps, COPY, HEAD, REMOTE_HEAD)).toEqual({ ok: true, value: false });
+    it('is false when git counts a commit that the second commit lacks', async () => {
+      expect(await isAncestor(asked(exited(0, '3\n')).deps, COPY, HEAD, REMOTE_HEAD)).toEqual({ ok: true, value: false });
     });
 
-    it('is a failure for any other exit code: an error is never read as "not an ancestor", and never as "an ancestor"', async () => {
-      expect(await isAncestor(asked(exited(128, '', 'fatal: Not a valid commit name\n')).deps, COPY, HEAD, REMOTE_HEAD)).toMatchObject({
+    it('is a failure for a bad exit code and for text that is no count: an error is never read as either answer', async () => {
+      expect(await isAncestor(asked(exited(128, '', 'fatal: bad revision\n')).deps, COPY, HEAD, REMOTE_HEAD)).toMatchObject({
         ok: false,
         error: { kind: 'failure' },
       });
+      expect(await isAncestor(asked(exited(0, '')).deps, COPY, HEAD, REMOTE_HEAD)).toMatchObject({ ok: false });
+      expect(await isAncestor(asked(exited(0, 'zero\n')).deps, COPY, HEAD, REMOTE_HEAD)).toMatchObject({ ok: false });
     });
 
     it('refuses a word that is not a commit id, before any call', async () => {
