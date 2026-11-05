@@ -27,6 +27,7 @@ You need:
 | `factory shutdown` | End this factory and nothing else: stop each worker, clear the mark of the active machine, and end the tmux session. It exits with code 0 when no session runs. See "Shut down, restart and reboot". |
 | `factory restart ID` | Stop one worker and start it again with its session id. The other workers keep their panes. See "Shut down, restart and reboot". |
 | `factory reboot` | Stop every worker and start each recorded worker again with its session id. Outside the session it also ends the session and starts it again. See "Shut down, restart and reboot". |
+| `factory status` | List each worker with its state, its work item and its idle state. It changes nothing. See "Show the status". |
 | `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
@@ -107,7 +108,7 @@ A command finds the factory folder in this order:
 3. The nearest `factory.yaml` above the current folder (at most 64 levels).
 4. The factory list.
 
-The clones are inside the factory folder, so a walk up from a clone or from `coordinator/` finds `factory.yaml`. `init` writes the factory list: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The list holds paths only, and it is never under `~/.claude`. The check resolves links, and on macOS it ignores the case of letters. The list file has mode 0600 and its folder has mode 0700. A command refuses a list file or folder that another user owns or that a group or other user can write. For a command with no `--home`, no `FACTORY_HOME` and no `factory.yaml` above, the deepest project folder that holds the current folder decides. If no entry fits, the command exits with code 2 and prints a hint. If two factories list the same project, it exits with code 2 and names both folders.
+The clones are inside the factory folder, so a walk up from a clone or from `coordinator/` finds `factory.yaml`. `init` writes the factory list: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The list holds paths only, and it is never under `~/.claude`. The check resolves links, and on macOS it ignores the case of letters. The list file has mode 0600 and its folder has mode 0700. A command refuses a list file or folder that another user owns or that a group or other user can write. For a command with no `--home`, no `FACTORY_HOME` and no `factory.yaml` above, the deepest project folder that holds the current folder decides. If no project folder holds it, but the current folder is a git work tree whose common git folder is the `.git` folder of a listed project (for example a work tree that `git worktree add` made outside the factory folder), the factory of that project decides. If no entry fits, the command exits with code 2 and prints a hint. If two factories list the same project, it exits with code 2 and names both folders.
 
 A `factory.yaml` counts only at a factory folder that `init` registered. This holds for all four ways above. Three things must be true:
 
@@ -247,6 +248,24 @@ factory worker list --json
 | `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. |
 
 A folder of `.factory/workers/` with no valid record is named in a warning, and the other workers are listed. If one pane has a worker mark that is not a worker id, the list skips that pane. If two panes carry the mark of one worker, the list shows the first live pane and warns with both ids. A tmux session of the same name that belongs to another factory folder stops the command with exit code 4. The list takes a last-seen line only when it belongs to the worker, with the same checks as `worker stop` and `worker resume` (see "Resume a worker"). A line with no session marker, a line of another session, and a session that the pointer of another worker names all show `unknown` and `?`. A last-seen line is still a hint, not proof of the state of the program.
+
+### Show the status
+
+```sh
+factory status
+factory status --json
+```
+
+`status` shows one line for each worker, in the order of the ids. It changes nothing. It reads what `worker list` reads, with one `list-panes` call, and it asks the work item port for the work items.
+
+| Column | Meaning |
+| --- | --- |
+| `ID`, `PROJECT` | The id of the worker and its project. |
+| `STATE` | `stopped` when the worker has no live pane, also when no tmux session of the node runs. Else `at prompt`, `busy` or `unknown`, as in `worker list`. |
+| `WORK ITEM` | The work item of the worker, `none` when it has no open work, or `unknown` when the board does not give it. |
+| `IDLE` | `yes` when the last activity of the worker is older than `limits.idle_after` and the worker has no open work. Else `no`. |
+
+A work item that is not known never makes a worker idle. The board reader is not built yet (FAC-M5), so for now every work item is `unknown` and `status` shows no idle worker. Run `status` in a git work tree of a listed project to use the factory of that project (see "Find the factory folder").
 
 ### Stop a worker
 
