@@ -4,24 +4,27 @@ import { failure, type CliResult } from '../cli/errors.js';
 import { isSlug, slug } from '../config/primitives.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { withFolderLock, writeInFolder } from '../core/safe-write.js';
+import { withFolderLock, writeInFolder, type FolderTarget } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
 import { eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, type HookEvent } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
-import { listWorkerRecords, readWorkerFile } from './registry.js';
+import { listWorkerRecords, readCheckedFile, readWorkerFile, type WorkerFileRead } from './registry.js';
 
 /**
  * The last-seen line of a session (design 4.6). The hook of Claude Code writes the last event and its time. The status
  * line writes the context percent and its time. Each write keeps the part that it does not set, so one file holds both.
  * The file is one JSON text in the heartbeat folder of the run-time folder, named by the session id. A worker has one more
  * file, a pointer in its own folder that holds the id of its newest session, so the line of a worker is found from the id
- * of the worker. This module is the only writer and the only reader of both files.
+ * of the worker. The coordinator has the same pointer in the run-time folder, so its newest session is found from the id of the
+ * node. This module is the only writer and the only reader of these files.
  *
  * The line also records the session marker: the id that the session marker held when the line was made, which is the id of the
  * node for a coordinator session and the id of a worker for a worker session. A program in a worker pane can write the pointer
  * of its own worker, so a command that acts on a session of a worker (stop, resume) reads the line with `readOwnLastSeen`,
- * which accepts a session only when the line carries the id of this worker as its session marker.
+ * which accepts a session only when the line carries the id of this worker as its session marker. A command that resumes the
+ * coordinator reads the line with `readOwnCoordinatorSession`, which accepts a session only when the line carries the id of
+ * the node.
  */
 
 const keys = lastSeen.keys;
@@ -216,6 +219,12 @@ export const writeLastSeen = async (
   });
 };
 
+/** Write a pointer file: the session id and a new line, replaced as a whole. `who` names the owner in the failure. */
+const writePointer = async (deps: Deps, who: string, target: FolderTarget, sessionId: string): Promise<CliResult<void>> => {
+  if (!isSessionId(sessionId)) return failure(`cannot record the session of the ${who}: the session id is not a UUID`);
+  return writeInFolder(deps, target, `${sessionId}\n`);
+};
+
 /**
  * Record the newest session of a worker: the pointer in the folder of the worker holds the session id and a new line. The
  * file is replaced as a whole, so a reader sees the old id or the new id. The write is refused, and nothing changes, for a
@@ -229,9 +238,9 @@ export const writeWorkerSession = async (
   sessionId: string,
 ): Promise<CliResult<void>> => {
   if (!isSlug(workerId)) return failure(`cannot record the session of the ${roles.worker}: the id is not a slug`);
-  if (!isSessionId(sessionId)) return failure(`cannot record the session of the ${roles.worker}: the session id is not a UUID`);
-  return writeInFolder(
+  return writePointer(
     deps,
+    roles.worker,
     {
       parent: layoutOf(home).workersDir,
       folder: workerPathsOf(home, workerId).dir,
@@ -239,7 +248,29 @@ export const writeWorkerSession = async (
       mode: privateFile.fileMode,
       folderMode: privateFile.folderMode,
     },
-    `${sessionId}\n`,
+    sessionId,
+  );
+};
+
+/**
+ * Record the newest session of the coordinator: the pointer in the run-time folder holds the session id and a new line. The
+ * rules are those of `writeWorkerSession`: the file is replaced as a whole, a session id that is not a UUID is refused and
+ * nothing changes, and a folder or a file that is a link is a security stop (exit 4). The caller has written the last-seen
+ * line of the session first, under the session marker of the node.
+ */
+export const writeCoordinatorSession = async (deps: Deps, home: string, sessionId: string): Promise<CliResult<void>> => {
+  const layout = layoutOf(home);
+  return writePointer(
+    deps,
+    roles.coordinator,
+    {
+      parent: layout.stateDir,
+      folder: layout.runtimeDir,
+      name: files.coordinatorLastSession,
+      mode: privateFile.fileMode,
+      folderMode: privateFile.folderMode,
+    },
+    sessionId,
   );
 };
 
@@ -251,24 +282,44 @@ export const writeWorkerSession = async (
  * a caller treats absent and invalid as unknown. The failure is a fault of the file system only.
  */
 export const readWorkerLastSeen = async (deps: Deps, home: string, workerId: string): Promise<CliResult<LastSeenRead>> => {
-  const pointer = await readPointer(deps, home, workerId);
+  const pointer = await readPointer(deps, home, workerPointer(workerId));
   if (!pointer.ok) return pointer;
   if (pointer.value.state !== 'found') return ok(pointer.value);
   return readLastSeen(deps, home, pointer.value.sessionId);
 };
 
-/** What the pointer of a worker holds: a session id, a file that is not valid and the reason, or no file. */
+/** What the pointer holds: a session id, a file that is not valid and the reason, or no file. */
 type PointerRead =
   | { readonly state: 'found'; readonly sessionId: string }
   | { readonly state: 'invalid'; readonly reason: string }
   | { readonly state: 'absent' };
 
-const readPointer = async (deps: Deps, home: string, workerId: string): Promise<CliResult<PointerRead>> => {
-  const pointer = await readWorkerFile(deps, home, workerId, {
-    of: 'lastSessionFile',
-    what: 'the pointer',
-    maxBytes: lastSeen.pointerMaxBytes,
-  });
+/** Whose pointer to read: the pointer of a worker, or the pointer of the coordinator. */
+type PointerOwner =
+  | { readonly kind: typeof roles.worker; readonly id: string }
+  | { readonly kind: typeof roles.coordinator };
+
+const workerPointer = (id: string): PointerOwner => ({ kind: roles.worker, id });
+const COORDINATOR_POINTER: PointerOwner = { kind: roles.coordinator };
+
+const POINTER_WHAT = 'the pointer';
+
+/** The pointer file of the owner, read with the link and size checks of `readCheckedFile`. */
+const readPointerFile = (deps: Deps, home: string, owner: PointerOwner): Promise<CliResult<WorkerFileRead>> => {
+  if (owner.kind === roles.worker) {
+    return readWorkerFile(deps, home, owner.id, { of: 'lastSessionFile', what: POINTER_WHAT, maxBytes: lastSeen.pointerMaxBytes });
+  }
+  const layout = layoutOf(home);
+  return readCheckedFile(
+    deps,
+    [{ path: layout.runtimeDir, what: 'the run-time folder' }],
+    { path: layout.coordinatorLastSessionFile, what: POINTER_WHAT },
+    lastSeen.pointerMaxBytes,
+  );
+};
+
+const readPointer = async (deps: Deps, home: string, owner: PointerOwner): Promise<CliResult<PointerRead>> => {
+  const pointer = await readPointerFile(deps, home, owner);
   if (!pointer.ok) return pointer;
   if (pointer.value.state !== 'text') return ok(pointer.value);
   const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;
@@ -289,13 +340,17 @@ export type OwnSessionRead =
 
 const unknown = (why: 'no-line' | 'not-owned', reason: string): CliResult<OwnSessionRead> => ok({ state: 'unknown', why, reason });
 
+/** Why a line is not the line of the owner: it records no session marker, or the marker of another session. */
+const foreignMarkerReason = (marker: string | undefined): string =>
+  marker === undefined ? 'the last-seen line records no session marker' : `the last-seen line belongs to the session of ${marker}`;
+
 /** The id of another worker whose pointer names the session, or null when no other pointer names it. */
 const otherHolderOf = async (deps: Deps, home: string, workerId: string, sessionId: string): Promise<CliResult<string | null>> => {
   const listed = await listWorkerRecords(deps, home);
   if (!listed.ok) return listed;
   for (const record of listed.value.workers) {
     if (record.id === workerId) continue;
-    const pointer = await readPointer(deps, home, record.id);
+    const pointer = await readPointer(deps, home, workerPointer(record.id));
     if (!pointer.ok) return pointer;
     if (pointer.value.state === 'found' && pointer.value.sessionId === sessionId) return ok(record.id);
   }
@@ -318,17 +373,49 @@ export const readOwnLastSeen = async (deps: Deps, home: string, workerId: string
   if (read.value.state === 'invalid') return unknown('no-line', `the last-seen line is not valid: ${read.value.reason}`);
   const { line } = read.value;
   const marker = line[keys.sessionMarker];
-  if (marker !== workerId) {
-    return unknown(
-      'not-owned',
-      marker === undefined ? 'the last-seen line records no session marker' : `the last-seen line belongs to the session of ${marker}`,
-    );
-  }
+  if (marker !== workerId) return unknown('not-owned', foreignMarkerReason(marker));
   const holder = await otherHolderOf(deps, home, workerId, line[keys.sessionId]);
   if (!holder.ok) return holder;
   return holder.value === null
     ? ok({ state: 'valid', line })
     : unknown('not-owned', `the pointer of the ${roles.worker} ${holder.value} names the same session`);
+};
+
+/** What a command may use of the newest session of the coordinator: its id and line, or the reason that there is none it may use. */
+export type CoordinatorSessionRead =
+  | { readonly state: 'valid'; readonly sessionId: string; readonly line: LastSeen }
+  /** There is no pointer: the coordinator never ran a session that recorded one. */
+  | { readonly state: 'absent' }
+  /** The pointer, or the line that it names, can not be used: not valid, a link, or a pointer to a session with no line. */
+  | { readonly state: 'invalid'; readonly reason: string }
+  /** There is a valid line, and it does not belong to the coordinator of this node. */
+  | { readonly state: 'not-owned'; readonly reason: string };
+
+/**
+ * The newest session of the coordinator, for a command that resumes it. The pointer in the run-time folder is a hint that a
+ * program in a worker pane may be able to write, so the id counts only when the line that it names records the id of the node
+ * (`nodeId`) as its session marker. A session of a worker, of another node, and a line with no session marker are not owned.
+ * No pointer is absent: the caller starts a new conversation. The failure is a fault of the file system only.
+ */
+export const readOwnCoordinatorSession = async (
+  deps: Deps,
+  home: string,
+  nodeId: string,
+): Promise<CliResult<CoordinatorSessionRead>> => {
+  const pointer = await readPointer(deps, home, COORDINATOR_POINTER);
+  if (!pointer.ok) return pointer;
+  if (pointer.value.state === 'absent') return ok({ state: 'absent' });
+  if (pointer.value.state === 'invalid') return ok({ state: 'invalid', reason: pointer.value.reason });
+  const { sessionId } = pointer.value;
+  const read = await readLastSeen(deps, home, sessionId);
+  if (!read.ok) return read;
+  if (read.value.state === 'absent') return ok({ state: 'invalid', reason: 'the pointer names a session that has no last-seen line' });
+  if (read.value.state === 'invalid') return ok({ state: 'invalid', reason: `the last-seen line is not valid: ${read.value.reason}` });
+  const { line } = read.value;
+  const marker = line[keys.sessionMarker];
+  return marker === nodeId
+    ? ok({ state: 'valid', sessionId, line })
+    : ok({ state: 'not-owned', reason: foreignMarkerReason(marker) });
 };
 
 /**

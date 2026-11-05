@@ -131,6 +131,8 @@ export const files = {
   workerRecord: 'worker.json',
   /** The pointer of one worker to its newest session: `workers/<id>/last-session` holds a session id. */
   workerLastSession: 'last-session',
+  /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
+  coordinatorLastSession: 'coordinator-last-session',
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',

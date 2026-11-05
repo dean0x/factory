@@ -7,10 +7,13 @@ import {
   parsePercent,
   promptStateOf,
   readLastSeen,
+  readOwnCoordinatorSession,
   readOwnLastSeen,
   readWorkerLastSeen,
+  writeCoordinatorSession,
   writeLastSeen,
   writeWorkerSession,
+  type CoordinatorSessionRead,
   type LastSeen,
   type LastSeenRead,
   type OwnSessionRead,
@@ -935,6 +938,168 @@ describe('the session pointer of a worker', () => {
         fs: { ...deps.fs, lstat: async (path) => (path === OTHER_POINTER ? failure('cannot stat: EIO') : deps.fs.lstat(path)) },
       };
       expect(errorOf(await readOwnLastSeen(broken, HOME, WORKER)).message).toContain('EIO');
+    });
+  });
+});
+
+describe('the session pointer of the coordinator', () => {
+  const NODE_ID = 'demo';
+  const WORKER = 'fix-login';
+  const POINTER = layoutOf(HOME).coordinatorLastSessionFile;
+  const NEXT = '0b9c7d5e-2f31-4a68-9c4d-5e6f708192a3';
+
+  const seedSession = (deps: FakeDeps, session: string, fields: Record<string, unknown> = {}): void => {
+    deps.seed(`${FOLDER}/${session}`, `${JSON.stringify(line({ session_id: session, event: 'Stop', event_at: T0, ...fields }))}\n`);
+  };
+
+  const readOwn = async (deps: Deps): Promise<CoordinatorSessionRead> => {
+    const result = await readOwnCoordinatorSession(deps, HOME, NODE_ID);
+    if (!result.ok) throw new Error(`the read failed: ${result.error.message}`);
+    return result.value;
+  };
+
+  const withRuntime = (links: Record<string, string> = {}): FakeDeps => {
+    const deps = createFakeDeps({ links });
+    deps.seedDir(layoutOf(HOME).stateDir);
+    deps.seedDir(layoutOf(HOME).runtimeDir);
+    return deps;
+  };
+
+  it('puts the pointer in the run-time folder, which the state repo ignores', () => {
+    expect(POINTER).toBe('/h/node/.factory/state/coordinator-last-session');
+  });
+
+  describe('writeCoordinatorSession', () => {
+    it('writes the session id and a new line into the pointer file', async () => {
+      const deps = withRuntime();
+      expect(await writeCoordinatorSession(deps, HOME, ID)).toEqual({ ok: true, value: undefined });
+      expect(deps.files.get(POINTER)).toBe(`${ID}\n`);
+      expect([...deps.files.keys()]).toEqual([POINTER]);
+    });
+
+    it('replaces the session id with the id of a newer session', async () => {
+      const deps = withRuntime();
+      await writeCoordinatorSession(deps, HOME, ID);
+      await writeCoordinatorSession(deps, HOME, NEXT);
+      expect(deps.files.get(POINTER)).toBe(`${NEXT}\n`);
+    });
+
+    it.each([
+      ['a session id that is not a UUID', 'abc'],
+      ['a session id with upper case letters', ID.toUpperCase()],
+      ['a session id with a path in it', `${ID}/../x`],
+    ])('writes nothing for %s', async (_name, session) => {
+      const deps = withRuntime();
+      const before = snapshot(deps);
+      expect(errorOf(await writeCoordinatorSession(deps, HOME, session)).kind).toBe('failure');
+      expect(snapshot(deps)).toBe(before);
+    });
+
+    it('refuses a pointer that is a link, and keeps its target', async () => {
+      const deps = withRuntime({ [POINTER]: '/outside/target' });
+      deps.seed('/outside/target', 'victim');
+      expect(errorOf(await writeCoordinatorSession(deps, HOME, ID)).kind).toBe('safety');
+      expect(deps.files.get('/outside/target')).toBe('victim');
+    });
+  });
+
+  describe('readOwnCoordinatorSession', () => {
+    it('gives absent when there is no pointer', async () => {
+      expect(await readOwn(withRuntime())).toEqual({ state: 'absent' });
+    });
+
+    it('gives absent when the run-time folder does not exist', async () => {
+      expect(await readOwn(createFakeDeps())).toEqual({ state: 'absent' });
+    });
+
+    it('gives the id and the line of a session that carries the id of the node as its session marker', async () => {
+      const deps = withRuntime();
+      await writeCoordinatorSession(deps, HOME, ID);
+      seedSession(deps, ID, { session_marker: NODE_ID });
+      expect(await readOwn(deps)).toEqual({
+        state: 'valid',
+        sessionId: ID,
+        line: line({ event: 'Stop', event_at: T0, session_marker: NODE_ID }),
+      });
+    });
+
+    it('follows the pointer to the newest session', async () => {
+      const deps = withRuntime();
+      seedSession(deps, ID, { session_marker: NODE_ID });
+      seedSession(deps, NEXT, { session_marker: NODE_ID });
+      await writeCoordinatorSession(deps, HOME, ID);
+      await writeCoordinatorSession(deps, HOME, NEXT);
+      expect(await readOwn(deps)).toMatchObject({ state: 'valid', sessionId: NEXT });
+    });
+
+    it.each([
+      ['text that is not a session id', 'abc\n'],
+      ['a session id with a path behind it', `${ID}/../../x\n`],
+      ['a second line', `${ID}\nx\n`],
+      ['an empty file', ''],
+    ])('gives invalid for a pointer that holds %s', async (_name, text) => {
+      const deps = withRuntime();
+      deps.seed(POINTER, text);
+      seedSession(deps, ID, { session_marker: NODE_ID });
+      expect(await readOwn(deps)).toMatchObject({ state: 'invalid', reason: expect.stringContaining('session id') });
+    });
+
+    it('gives invalid for a pointer that is a link, and does not read the target', async () => {
+      const deps = withRuntime({ [POINTER]: '/outside/target' });
+      deps.seed('/outside/target', `${ID}\n`);
+      seedSession(deps, ID, { session_marker: NODE_ID });
+      expect(await readOwn(deps)).toMatchObject({ state: 'invalid', reason: expect.stringContaining('the pointer is a link') });
+    });
+
+    it('gives invalid for a run-time folder that is a link', async () => {
+      const deps = withRuntime({ [layoutOf(HOME).runtimeDir]: '/outside' });
+      deps.seed('/outside/coordinator-last-session', `${ID}\n`);
+      expect(await readOwn(deps)).toMatchObject({ state: 'invalid', reason: expect.stringContaining('is a link') });
+    });
+
+    it('gives invalid for a pointer that names a session that has no line', async () => {
+      const deps = withRuntime();
+      await writeCoordinatorSession(deps, HOME, ID);
+      expect(await readOwn(deps)).toMatchObject({ state: 'invalid', reason: expect.stringContaining('no last-seen line') });
+    });
+
+    it('gives invalid for a line that is not valid', async () => {
+      const deps = withRuntime();
+      await writeCoordinatorSession(deps, HOME, ID);
+      deps.seed(FILE, 'not json');
+      expect(await readOwn(deps)).toMatchObject({ state: 'invalid', reason: expect.stringContaining('not valid JSON') });
+    });
+
+    it.each([
+      ['a line with no session marker', {}],
+      ['a line of a worker session', { session_marker: WORKER }],
+      ['a line of another node', { session_marker: 'other-node' }],
+    ])('says that %s is not owned', async (_name, fields) => {
+      const deps = withRuntime();
+      await writeCoordinatorSession(deps, HOME, ID);
+      seedSession(deps, ID, fields);
+      expect(await readOwn(deps)).toMatchObject({ state: 'not-owned' });
+    });
+
+    it('names the marker of a foreign line', async () => {
+      const deps = withRuntime();
+      await writeCoordinatorSession(deps, HOME, ID);
+      seedSession(deps, ID, { session_marker: WORKER });
+      expect(await readOwn(deps)).toMatchObject({ state: 'not-owned', reason: expect.stringContaining(WORKER) });
+    });
+
+    it('does not read the pointer of a worker', async () => {
+      const deps = withRuntime();
+      deps.seedDir(workerPathsOf(HOME, WORKER).dir);
+      deps.seed(workerPathsOf(HOME, WORKER).lastSessionFile, `${ID}\n`);
+      seedSession(deps, ID, { session_marker: NODE_ID });
+      expect(await readOwn(deps)).toEqual({ state: 'absent' });
+    });
+
+    it('fails when the file system fails', async () => {
+      const deps = withRuntime();
+      const broken: Deps = { ...deps, fs: { ...deps.fs, lstat: async () => failure('cannot stat: EIO') } };
+      expect(errorOf(await readOwnCoordinatorSession(broken, HOME, NODE_ID)).message).toContain('EIO');
     });
   });
 });

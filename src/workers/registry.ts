@@ -118,11 +118,45 @@ export type WorkerFileRead =
   | { readonly state: 'invalid'; readonly reason: string }
   | { readonly state: 'absent' };
 
+/** A path that `readCheckedFile` checks, and what it is, for the reason: for example `the pointer`. */
+export interface NamedPath {
+  readonly path: string;
+  readonly what: string;
+}
+
+/**
+ * Read a file below a chain of folders. The folders are checked from the top down, then the file: a part that is a link or of
+ * the wrong kind is invalid, and a part that is missing is absent. The read never follows a link and caps the bytes. The reason
+ * never holds a part of the file. The failure is a fault of the file system only.
+ */
+export const readCheckedFile = async (
+  deps: Deps,
+  folders: readonly NamedPath[],
+  file: NamedPath,
+  maxBytes: number,
+): Promise<CliResult<WorkerFileRead>> => {
+  const parts = [
+    ...folders.map((folder) => ({ ...folder, kind: 'dir' as const })),
+    { ...file, kind: 'file' as const },
+  ];
+  for (const { path, kind, what } of parts) {
+    const found = await deps.fs.lstat(path);
+    if (!found.ok) return found;
+    if (found.value === null) return ok({ state: 'absent' });
+    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link` });
+    if (found.value !== kind) return ok({ state: 'invalid', reason: `${what} is not a ${kind === 'dir' ? 'folder' : 'file'}` });
+  }
+  const info = await deps.fs.statInfo(file.path);
+  if (!info.ok) return info;
+  if (info.value === null) return ok({ state: 'absent' });
+  if (info.value.size > maxBytes) return ok({ state: 'invalid', reason: `larger than ${maxBytes} bytes` });
+  const text = await deps.fs.readTextLimited(file.path, maxBytes);
+  return text.ok ? ok({ state: 'text', text: text.value }) : text;
+};
+
 /**
  * Read one file in the folder of a worker, for the record and for the pointer to the session. The read checks the workers
- * folder, the folder of the worker and the file, refuses each one that is a link or of the wrong kind, never follows a link,
- * and caps the bytes. An id that is not a slug is invalid, and no path is touched. The reason never holds a part of the file.
- * The failure is a fault of the file system only.
+ * folder, the folder of the worker and the file (`readCheckedFile`). An id that is not a slug is invalid, and no path is touched.
  */
 export const readWorkerFile = async (
   deps: Deps,
@@ -132,25 +166,15 @@ export const readWorkerFile = async (
 ): Promise<CliResult<WorkerFileRead>> => {
   if (!isSlug(id)) return ok({ state: 'invalid', reason: `the ${roles.worker} id is not a slug` });
   const paths = workerPathsOf(home, id);
-  const path = paths[file.of];
-  const checked = [
-    { path: layoutOf(home).workersDir, kind: 'dir', what: `the ${roles.worker}s folder` },
-    { path: paths.dir, kind: 'dir', what: `the folder of the ${roles.worker}` },
-    { path, kind: 'file', what: file.what },
-  ] as const;
-  for (const { path: checkedPath, kind, what } of checked) {
-    const found = await deps.fs.lstat(checkedPath);
-    if (!found.ok) return found;
-    if (found.value === null) return ok({ state: 'absent' });
-    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link` });
-    if (found.value !== kind) return ok({ state: 'invalid', reason: `${what} is not a ${kind === 'dir' ? 'folder' : 'file'}` });
-  }
-  const info = await deps.fs.statInfo(path);
-  if (!info.ok) return info;
-  if (info.value === null) return ok({ state: 'absent' });
-  if (info.value.size > file.maxBytes) return ok({ state: 'invalid', reason: `larger than ${file.maxBytes} bytes` });
-  const text = await deps.fs.readTextLimited(path, file.maxBytes);
-  return text.ok ? ok({ state: 'text', text: text.value }) : text;
+  return readCheckedFile(
+    deps,
+    [
+      { path: layoutOf(home).workersDir, what: `the ${roles.worker}s folder` },
+      { path: paths.dir, what: `the folder of the ${roles.worker}` },
+    ],
+    { path: paths[file.of], what: file.what },
+    file.maxBytes,
+  );
 };
 
 /** Read the record of a worker. The checks of the read are those of `readWorkerFile`, then those of `readOfText`. */

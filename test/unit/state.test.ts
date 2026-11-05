@@ -141,6 +141,7 @@ describe('layout', () => {
       workersDir: '/h/node/.factory/workers',
       runtimeDir: '/h/node/.factory/state',
       heartbeatDir: '/h/node/.factory/state/heartbeat',
+      coordinatorLastSessionFile: '/h/node/.factory/state/coordinator-last-session',
       locksDir: '/h/node/.factory/locks',
     });
   });

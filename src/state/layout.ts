@@ -51,12 +51,15 @@ export interface Layout {
   readonly runtimeDir: string;
   /** The last-seen files, one for each session. It is inside the run-time folder. */
   readonly heartbeatDir: string;
+  /** The pointer to the newest session of the coordinator: the file that names its last-seen line. It is inside the run-time folder. */
+  readonly coordinatorLastSessionFile: string;
   readonly locksDir: string;
 }
 
 /** Every path inside a node home comes from here. */
 export const layoutOf = (home: string): Layout => {
   const stateDir = join(home, dirs.state);
+  const runtimeDir = join(stateDir, stateRel.runtime);
   const coordinatorDir = join(home, dirs.coordinator);
   const setupDir = join(home, dirs.setup);
   const setupRolesDir = join(setupDir, dirs.roles);
@@ -78,8 +81,9 @@ export const layoutOf = (home: string): Layout => {
     workerMd: join(stateDir, stateRel.worker),
     backupsDir: join(stateDir, stateRel.backups),
     workersDir: join(stateDir, stateRel.workers),
-    runtimeDir: join(stateDir, stateRel.runtime),
+    runtimeDir,
     heartbeatDir: join(stateDir, stateRel.heartbeat),
+    coordinatorLastSessionFile: join(runtimeDir, files.coordinatorLastSession),
     locksDir: join(stateDir, stateRel.locks),
   };
 };
