@@ -44,6 +44,11 @@ export interface TmuxFixture {
   /** Sessions whose coordinator program has ended. The pane stays, because of remain-on-exit. */
   readonly endedCoordinators?: readonly string[];
   /**
+   * The program of the coordinator pane of a session of the fixture, as an argument list (see `PaneFixture.command`), by session
+   * name. Default: none, as for a pane that runs the shell.
+   */
+  readonly coordinatorCommands?: Readonly<Record<string, readonly string[]>>;
+  /**
    * The program of a new session ends at once. Like tmux, the fake then ends the session too, unless the same call sets
    * remain-on-exit for the window. With remain-on-exit the session stays, and its coordinator counts as ended.
    */
@@ -424,7 +429,10 @@ export const tmuxHandler = (
   for (const [name, home] of Object.entries(fixture.sessions ?? {})) {
     sessions.set(name, home);
     // The marks that `start` sets: the node on the coordinator pane, and the board on the slot pane.
-    addPane(name, tmuxNames.windowView, { options: { [tmuxNames.optionNode]: name } });
+    addPane(name, tmuxNames.windowView, {
+      options: { [tmuxNames.optionNode]: name },
+      command: fixture.coordinatorCommands?.[name] ?? [],
+    });
     addPane(name, tmuxNames.windowView, { options: { [tmuxNames.optionSlot]: tmuxNames.slotBoard } });
     addPane(name, tmuxNames.windowWorkers);
     if (endedCoordinators.has(name)) markCoordinatorEnded(name);

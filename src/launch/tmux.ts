@@ -208,9 +208,10 @@ export const parsePaneBind = (text: string): Result<PaneBind, string> => {
 };
 
 /**
- * Prints the facts that a stop needs about the coordinator pane, the left pane of the window `view`: the id, the pid, the end flag,
- * and one flag that tmux computes itself (the pane carries the node mark of this session). A program can set the mark to any text,
- * so the call never prints it: tmux compares it, and the flag is `0` or `1`. `parseCoordinatorPane` reads the output.
+ * Prints the facts that a command needs about the coordinator pane, the left pane of the window `view`: the id, the pid, the end
+ * flag, and one flag that tmux computes itself (the pane carries the node mark of this session); then the start command of the
+ * pane, last. A program can set the mark to any text, so the call never prints it: tmux compares it, and the flag is `0` or `1`.
+ * The start command is the fact that no program in the pane can set. `parseCoordinatorPane` reads the output.
  */
 export const coordinatorReadArgs = (id: string): TmuxArgs =>
   call(
@@ -218,7 +219,7 @@ export const coordinatorReadArgs = (id: string): TmuxArgs =>
     '-p',
     '-t',
     coordinatorPane(id),
-    [PANE_ID_FORMAT, '#{pane_pid}', '#{pane_dead}', optionIs(tmuxNames.optionNode, id)].join(FIELD_SEPARATOR),
+    [PANE_ID_FORMAT, '#{pane_pid}', '#{pane_dead}', optionIs(tmuxNames.optionNode, id), '#{pane_start_command}'].join(FIELD_SEPARATOR),
   );
 
 /** What the read of `coordinatorReadArgs` finds. */
@@ -229,22 +230,39 @@ export interface CoordinatorPane {
   readonly dead: boolean;
   /** True when the pane carries the node mark of the session: it is the pane that `start` made for the coordinator. */
   readonly node: boolean;
+  /** The command that made the pane, as tmux shows it. Empty for a pane that runs the shell. */
+  readonly startCommand: string;
 }
 
-/** The count of fields of the read of the coordinator pane. */
-const COORDINATOR_FIELDS = 4;
+/** The count of fields before the start command in the read of the coordinator pane: the id, the pid, the end flag and the node flag. */
+const COORDINATOR_FIELDS_BEFORE_START = 4;
 
-/** Reads the output of the call from `coordinatorReadArgs`: one line, with four fields that have a fixed form. The error names no text of the output. */
+/**
+ * Reads the output of the call from `coordinatorReadArgs`: one line, with four fields that have a fixed form and the start command
+ * after the fourth separator. The start command is the rest of the line, as in `parsePaneBind`. The error names no text of the output.
+ */
 export const parseCoordinatorPane = (text: string): Result<CoordinatorPane, string> => {
   const line = text.endsWith('\n') ? text.slice(0, -1) : text;
   const fields = line.split(FIELD_SEPARATOR);
   const [paneId = '', pid = ''] = fields;
-  const flags = flagsOf(fields.slice(2));
-  if (fields.length !== COORDINATOR_FIELDS || !isPaneId(paneId) || !PID_PATTERN.test(pid) || flags === null) {
+  const flags = flagsOf(fields.slice(2, COORDINATOR_FIELDS_BEFORE_START));
+  if (
+    line.includes('\n') ||
+    fields.length <= COORDINATOR_FIELDS_BEFORE_START ||
+    !isPaneId(paneId) ||
+    !PID_PATTERN.test(pid) ||
+    flags === null
+  ) {
     return err('the read gives text that is not the line of one pane');
   }
   const [dead = false, node = false] = flags;
-  return ok({ paneId, pid: Number(pid), dead, node });
+  return ok({
+    paneId,
+    pid: Number(pid),
+    dead,
+    node,
+    startCommand: fields.slice(COORDINATOR_FIELDS_BEFORE_START).join(FIELD_SEPARATOR),
+  });
 };
 
 export interface PaneRow {
