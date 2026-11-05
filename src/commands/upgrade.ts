@@ -68,6 +68,7 @@ import {
   planLocal,
   planRoot,
   planRootMoves,
+  planStateGitignore,
   refusalOf,
   settleSetupBlocks,
   type FilesPlan,
@@ -238,6 +239,8 @@ export const runUpgrade = async (
   const files: FilesPlan = { ...stateFiles.value, moves: [...rootMoved.value, ...stateFiles.value.moves] };
   const root = await planRoot(deps, layout);
   if (!root.ok) return root;
+  const stateGitignore = await planStateGitignore(deps, layout);
+  if (!stateGitignore.ok) return stateGitignore;
   const blockSet = await planBlockSet(config.value, local.value, upgrade, setup.value, (parsed) =>
     effectiveModes(deps, home, parsed),
   );
@@ -268,6 +271,7 @@ export const runUpgrade = async (
     local.value.kind !== 'current' ||
     state.value.kind === 'migrate' ||
     files.moves.length > 0 ||
+    stateGitignore.value.action !== 'current' ||
     root.value.gitignore.action !== 'current' ||
     root.value.repo ||
     changes.length > 0;
@@ -281,7 +285,7 @@ export const runUpgrade = async (
   if (!localText.ok) return localText;
 
   const lines: OutLine[] = [
-    ...planLines(config.value, local.value, state.value, files, root.value, blocks, upgrade),
+    ...planLines(config.value, local.value, state.value, files, stateGitignore.value, root.value, blocks, upgrade),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
   ];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
@@ -294,6 +298,7 @@ export const runUpgrade = async (
     state: { from: state.value.kind === 'current' ? state.value.version : state.value.from, to: upgrade.state.spec.supported },
     moves: files.moves.map((move) => ({ from: move.from, to: move.to })),
     replaces: files.replaces.map((replace) => ({ path: replace.path, action: replace.action })),
+    stateGitignore: stateGitignore.value.action,
     gitignore: root.value.gitignore.action,
     rootRepo: root.value.repo,
     blocks: blocks.map((plan) => ({
@@ -330,12 +335,13 @@ export const runUpgrade = async (
   if (options.dryRun) return done([{ level: 'text', text: 'Dry run: no file was changed.' }], null, false);
 
   const replacements = files.replaces.filter((replace) => replace.action === 'replace');
-  const touchesState = state.value.kind === 'migrate' || changes.length > 0;
+  const touchesState = state.value.kind === 'migrate' || changes.length > 0 || stateGitignore.value.text !== null;
   if (touchesState) {
     // These are the files that the upgrade can change in the repo: the commit holds those and no other file.
     const touched = inStateRepo(layout, [
       ...files.moves.flatMap((move) => [move.fromPath, move.toPath]),
       ...replacements.map((replace) => replace.filePath),
+      ...(stateGitignore.value.text === null ? [] : [stateGitignore.value.filePath]),
       ...(stateText.value === null ? [] : [layout.nodeJson]),
       ...changes.map((change) => fileOfTarget(layout, change.template.target)),
     ]);
@@ -412,6 +418,7 @@ export const runUpgrade = async (
     ...blockTexts.value,
     ...replacements.map((replace) => ({ path: replace.filePath, text: replace.text })),
     ...(stateText.value === null ? [] : [{ path: layout.nodeJson, text: stateText.value }]),
+    ...(stateGitignore.value.text === null ? [] : [{ path: stateGitignore.value.filePath, text: stateGitignore.value.text }]),
     ...(root.value.gitignore.text === null ? [] : [{ path: root.value.gitignore.filePath, text: root.value.gitignore.text }]),
     // The local file comes before the shared file, which is the last to change. A run that stops between the two leaves
     // the old shared file with all its keys.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSlug, slugify } from '../../src/config/primitives.js';
+import { durationMinutes, isSlug, slugify } from '../../src/config/primitives.js';
 import { localConfigSchema, mergeConfig, splitConfigValue } from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
 import { files, values } from '../../src/names.js';
@@ -174,6 +174,9 @@ describe('config schema 2', () => {
       ['permission_mode', (raw: Raw) => (raw['session'].permission_mode = 'bypassPermissions'), 'session.permission_mode:'],
       ['effort', (raw: Raw) => (raw['session'].effort = 'extreme'), 'session.effort:'],
       ['model', (raw: Raw) => (raw['session'].model = ''), 'session.model:'],
+      ['agent', (raw: Raw) => (raw['session'].agent = 'codex'), 'session.agent:'],
+      ['idle_after 0m', (raw: Raw) => (raw['limits'].idle_after = '0m'), 'limits.idle_after:'],
+      ['idle_after 25h', (raw: Raw) => (raw['limits'].idle_after = '25h'), 'limits.idle_after:'],
       ['memory pct', (raw: Raw) => (raw['limits'].memory_free_min_pct = 91), 'limits.memory_free_min_pct:'],
       ['disk gb', (raw: Raw) => (raw['limits'].disk_free_min_gb = -1), 'limits.disk_free_min_gb:'],
       ['load_max', (raw: Raw) => (raw['limits'].load_max = 'many'), 'limits.load_max:'],
@@ -189,6 +192,48 @@ describe('config schema 2', () => {
     ])('rejects %s', (_name, mutate, expected) => {
       expect(check(mutate)).toContain(expected);
     });
+  });
+
+  describe('session.agent (AC-1, TP-2)', () => {
+    it('accepts claude, and defaults to claude when the key is missing', () => {
+      expect(parsedOf(sampleObject()).core.session.agent).toBe('claude');
+      const raw = sampleObject();
+      delete raw['session'].agent;
+      expect(parsedOf(raw).core.session.agent).toBe('claude');
+    });
+
+    it.each(['codex', 'Claude', '', 'claude ', 'claude-code', 1, true, null, ['claude']])(
+      'refuses the agent %j, and names the key as a bad value, not as an unknown key',
+      (agent) => {
+        const message = check((raw) => (raw['session'].agent = agent));
+        expect(message).toContain('session.agent:');
+        expect(message).not.toContain('unknown key');
+      },
+    );
+  });
+
+  describe('limits.idle_after (AC-2, TP-4)', () => {
+    it('defaults to 2h when the key is missing', () => {
+      const raw = sampleObject();
+      delete raw['limits'].idle_after;
+      expect(parsedOf(raw).core.limits.idle_after).toBe('2h');
+    });
+
+    it.each(['1m', '90m', '1440m', '1h', '2h', '24h'])('accepts %s', (idle) => {
+      expect(check((raw) => (raw['limits'].idle_after = idle))).toBeNull();
+      const raw = sampleObject();
+      raw['limits'].idle_after = idle;
+      expect(parsedOf(raw).core.limits.idle_after).toBe(idle);
+    });
+
+    it.each(['0m', '0h', '1441m', '25h', '100h', '2d', '2', 'h', '1.5h', '-1m', ' 2h', '2h ', '01h', 2, 0, true, null, ['2h']])(
+      'refuses %j, and names the key as a bad value, not as an unknown key',
+      (idle) => {
+        const message = check((raw) => (raw['limits'].idle_after = idle));
+        expect(message).toContain('limits.idle_after:');
+        expect(message).not.toContain('unknown key');
+      },
+    );
   });
 
   describe('tracker', () => {
@@ -647,13 +692,32 @@ describe('the shared file and the local file (design 4.4)', () => {
   it('keeps the tracker, the project list, the session way of working and the limits in the shared file', () => {
     const raw = sampleFiles().shared;
     expect(Object.keys(raw).sort()).toEqual(['limits', 'node', 'recipe', 'schema', 'session', 'tracker']);
-    expect(Object.keys(raw['session']).sort()).toEqual(['effort', 'model', 'permission_mode']);
+    expect(Object.keys(raw['session']).sort()).toEqual(['agent', 'effort', 'model', 'permission_mode']);
+    expect(Object.keys(raw['limits'])).toContain('idle_after');
     expect(
       sharedOf((shared) => {
         shared['tracker'] = { kind: 'github', items: 'acme/web', decisions: 'acme/decisions' };
         shared['session'] = { permission_mode: 'auto', effort: 'max', model: 'opus' };
       }).success,
     ).toBe(true);
+  });
+
+  it('loads a shared file with no agent key and no idle_after key, as every node of an older version has', () => {
+    const parsed = sharedOf((shared) => {
+      delete shared['session'].agent;
+      delete shared['limits'].idle_after;
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data.core.session.agent).toBe('claude');
+    expect(parsed.data.core.limits.idle_after).toBe('2h');
+  });
+
+  it('keeps session.agent in the shared file: the local file refuses it, and the shared file does not call it local', () => {
+    expect(sharedOf((raw) => (raw['session'].agent = 'claude')).success).toBe(true);
+    expect(messageOf(sharedOf((raw) => (raw['session'].agent = 'claude')))).not.toContain('is a local key');
+    expect(messageOf(localOf((raw) => (raw['session'].agent = 'claude')))).toContain('session.agent: unknown key');
+    expect(messageOf(localOf((raw) => (raw['limits'] = { idle_after: '2h' })))).toContain('limits: unknown key');
   });
 
   it.each([
@@ -847,6 +911,30 @@ describe('the shared file and the local file (design 4.4)', () => {
       const sources = Object.fromEntries(projects.map((project) => [project.path, `/srv/${project.id}`]));
       expect(messageWith(sources, (raw) => (raw['recipe'].projects = projects))).toBe('');
     });
+  });
+});
+
+describe('the minutes of a duration', () => {
+  it.each([
+    ['1m', 1],
+    ['90m', 90],
+    ['1h', 60],
+    ['2h', 120],
+    ['24h', 1440],
+  ])('reads %s as %d minutes', (text, minutes) => {
+    expect(durationMinutes(text, 1, 1440)).toBe(minutes);
+  });
+
+  it('refuses a value outside the bounds, and the bounds themselves are in', () => {
+    expect(durationMinutes('0m', 1, 120)).toBeNull();
+    expect(durationMinutes('1m', 1, 120)).toBe(1);
+    expect(durationMinutes('120m', 1, 120)).toBe(120);
+    expect(durationMinutes('121m', 1, 120)).toBeNull();
+    expect(durationMinutes('3h', 1, 120)).toBeNull();
+  });
+
+  it.each(['', '5', '5s', 'm', 'h', '-1m', '1.5h', '05m', ' 5m', '5m ', '5 m', '1e1m', '1234567m', '+5m'])('refuses the text %j', (text) => {
+    expect(durationMinutes(text, 0, 1_000_000)).toBeNull();
   });
 });
 

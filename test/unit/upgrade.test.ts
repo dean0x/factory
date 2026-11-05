@@ -315,6 +315,189 @@ describe('upgrade: the root .gitignore (TP-117)', () => {
   });
 });
 
+describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
+  const STATE_DIR = `${HOME}/.factory`;
+  const STATE_IGNORE = `${STATE_DIR}/.gitignore`;
+  /** The lines that a state repo from before the registry of the workers holds. */
+  const BEFORE_WORKERS = 'state/\nlocks/\nbackups/\n';
+  const LINE = 'workers/\n';
+  const COMMIT = '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state';
+
+  it('adds the workers line to a state repo that has none, and commits the file', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(STATE_IGNORE, BEFORE_WORKERS);
+    const output = success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${BEFORE_WORKERS}${LINE}`);
+    expect(output.json).toMatchObject({ changed: true, stateGitignore: 'add', gitignore: 'current', committed: true });
+    expect(output.lines.at(-1)?.text).toMatch(/^Changed 1 file\./);
+    expect(gitWrites(gitSince())).toEqual(['add -A -- .gitignore', COMMIT]);
+  });
+
+  it('keeps every other line byte for byte: the order, the comments, the blank lines and the lines of the person', async () => {
+    const { deps } = await makeNode();
+    const mine = '# the runtime\nstate/\n\n!keep-me.md\nlocks/\n*.tmp\n  indented line\nbackups/\n# end of the file\n';
+    deps.files.set(STATE_IGNORE, mine);
+    success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${mine}${LINE}`);
+  });
+
+  it('keeps a last line that has no line break, and puts the new line below it', async () => {
+    const { deps } = await makeNode();
+    const mine = 'state/\nlocks/\nlast line with no line break';
+    deps.files.set(STATE_IGNORE, mine);
+    success(await upgrade(deps));
+    const written = text(deps, STATE_IGNORE);
+    expect(written.startsWith(mine)).toBe(true);
+    expect(written).toBe(`${mine}\n${LINE}`);
+  });
+
+  it('adds the line to an empty file', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(STATE_IGNORE, '');
+    success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(LINE);
+  });
+
+  it('adds nothing the second time', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(STATE_IGNORE, BEFORE_WORKERS);
+    success(await upgrade(deps));
+    const after = snapshot(deps);
+    const writes = deps.atomicWrites.length;
+    const commands = gitSince().length;
+    const again = success(await upgrade(deps));
+    expect(again.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(again.json).toMatchObject({ changed: false, stateGitignore: 'current' });
+    expect(text(deps, STATE_IGNORE)).toBe(`${BEFORE_WORKERS}${LINE}`);
+    expect(snapshot(deps)).toEqual(after);
+    expect(deps.atomicWrites).toHaveLength(writes);
+    expect(gitSince().slice(commands).filter((command) => !command.startsWith('config'))).toEqual([]);
+  });
+
+  it.each([
+    ['in the middle of other lines', `state/\nworkers/\n*.tmp\nlocks/\n`],
+    ['with trailing blanks', 'state/\nworkers/  \n'],
+    ['in a file with CRLF line ends', 'state/\r\nworkers/\r\n'],
+    ['as the last line with no line break', 'state/\nworkers/'],
+  ])('writes nothing when the line is there already, %s', async (_name, mine) => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(STATE_IGNORE, mine);
+    const writes = deps.atomicWrites.length;
+    const output = success(await upgrade(deps));
+    expect(output.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(output.json).toMatchObject({ changed: false, stateGitignore: 'current' });
+    expect(text(deps, STATE_IGNORE)).toBe(mine);
+    expect(deps.atomicWrites).toHaveLength(writes);
+    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+  });
+
+  it('does not take a comment or a longer name for the line', async () => {
+    const { deps } = await makeNode();
+    const mine = '# workers/\nmy-workers/\nworkers/more\n!workers/\n';
+    deps.files.set(STATE_IGNORE, mine);
+    success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${mine}${LINE}`);
+  });
+
+  it('makes the file with the lines of a new state repo when it is missing', async () => {
+    const { deps } = await makeNode();
+    deps.files.delete(STATE_IGNORE);
+    const output = success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${BEFORE_WORKERS}${LINE}`);
+    expect(output.json).toMatchObject({ changed: true, stateGitignore: 'create' });
+  });
+
+  it('names the change in a dry run and writes nothing', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(STATE_IGNORE, `# mine\n${BEFORE_WORKERS}`);
+    const before = wholeState(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain('.factory/.gitignore: add the line workers/. Your lines stay as they are.');
+    expect(output.json).toMatchObject({ changed: true, dryRun: true, stateGitignore: 'add', committed: false });
+    expect(wholeState(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+  });
+
+  it('names the new file in a dry run', async () => {
+    const { deps } = await makeNode();
+    deps.files.delete(STATE_IGNORE);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain('.factory/.gitignore: new file, with the lines of a new state repo');
+    expect(deps.files.has(STATE_IGNORE)).toBe(false);
+  });
+
+  it('gives no line for a state .gitignore that is current', async () => {
+    const { deps } = await makeNode();
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output).some((line) => line.startsWith('.factory/.gitignore'))).toBe(false);
+    expect(output.json).toMatchObject({ changed: false, stateGitignore: 'current' });
+  });
+
+  it('exits 1 for a .gitignore that is not a file, and writes nothing, also in a dry run', async () => {
+    const { deps } = await makeNode();
+    deps.files.delete(STATE_IGNORE);
+    deps.seedDir(STATE_IGNORE);
+    const before = wholeState(deps);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.kind).toBe('failure');
+      expect(error.message).toBe('.factory/.gitignore is not a file');
+    }
+    expect(wholeState(deps)).toEqual(before);
+  });
+
+  it('exits 4 for a .gitignore that is a link, writes nothing, and leaves the target as it is, also in a dry run', async () => {
+    const links: Record<string, string> = {};
+    const { deps, gitSince } = await makeNode({ links });
+    deps.files.set(STATE_IGNORE, BEFORE_WORKERS);
+    links[STATE_IGNORE] = '/outside/ignore';
+    deps.files.set('/outside/ignore', BEFORE_WORKERS);
+    const before = wholeState(deps);
+    for (const dryRun of [false, true]) {
+      const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+      expect(error.kind).toBe('safety');
+      expect(error.message).toBe('.factory/.gitignore is a link, so factory does not use it');
+    }
+    expect(wholeState(deps)).toEqual(before);
+    expect(text(deps, '/outside/ignore')).toBe(BEFORE_WORKERS);
+    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+  });
+
+  it('exits 1 for a .gitignore with a change that is not committed, and writes nothing', async () => {
+    const dirty = (inner: RunHandler): RunHandler => (call) =>
+      call.args[0] === '-C' && call.args[1] === STATE_DIR && call.args[2] === 'status' ? exited(0, ' M .gitignore\0') : inner(call);
+    const { deps } = await makeNode({ run: dirty });
+    deps.files.set(STATE_IGNORE, `${BEFORE_WORKERS}!mine\n`);
+    const before = wholeState(deps);
+    const error = refusal(await upgrade(deps));
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain('.gitignore');
+    expect(wholeState(deps)).toEqual(before);
+  });
+
+  it('puts the file back when a later write fails', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(STATE_IGNORE, BEFORE_WORKERS);
+    const failing = withFailingWrites(deps, (path, attempt) => path === NODE_JSON && attempt === 1);
+    expect(refusal(await upgrade(failing, blocksSpec(withBlock('coordinator', 'New coordinator text.')))).message).toContain(
+      'The files are as they were.',
+    );
+    expect(text(deps, STATE_IGNORE)).toBe(BEFORE_WORKERS);
+  });
+
+  it('is part of the same commit as the other files of the state repo', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(STATE_IGNORE, BEFORE_WORKERS);
+    success(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.'))));
+    const commits = gitWrites(gitSince());
+    expect(commits).toHaveLength(2);
+    expect(commits[0]).toMatch(/^add -A -- /);
+    expect(commits[0]).toContain('.gitignore');
+    expect(commits[0]).toContain('node.json');
+    expect(commits[1]).toBe(COMMIT);
+  });
+});
+
 describe('upgrade: the root repo (TP-23)', () => {
   const noIdentity = (inner: RunHandler): RunHandler => (call) =>
     call.args.includes('user.name') ? exited(1) : inner(call);
@@ -1556,14 +1739,15 @@ describe('upgrade: a node of schema 1', () => {
       blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
     });
 
-    expect(output.lines.at(-1)?.text).toBe('Changed 10 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
-    expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S } });
+    expect(text(deps, `${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\n');
+    expect(output.lines.at(-1)?.text).toBe('Changed 11 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+    expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S }, stateGitignore: 'add' });
     expect(gitWrites(gitSince())).toEqual([
       'init -q -b main',
       'add -- .gitignore factory.yaml',
       '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the config repo',
       'rm -r -q --cached --ignore-unmatch -- protocol.md briefs',
-      'add -A -- roles/worker.md roadmaps/README.md node.json orders',
+      'add -A -- roles/worker.md roadmaps/README.md node.json .gitignore orders',
       '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
     ]);
     expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
@@ -1631,7 +1815,8 @@ describe('upgrade: a node of schema 1', () => {
       success(await upgrade(deps));
       expect(text(deps, GITIGNORE)).toBe(SHARE_LIST_PART);
       expect(gitSince().some((command) => command.startsWith('init'))).toBe(false);
-      expect(gitWrites(gitSince()).some((command) => command.includes('.gitignore'))).toBe(false);
+      // The root repo is not made, so no command adds the root .gitignore. The state repo commit holds its own .gitignore.
+      expect(gitWrites(gitSince()).some((command) => command.startsWith('add -- '))).toBe(false);
     });
 
     it('names both in a dry run, and writes nothing', async () => {
@@ -1757,9 +1942,9 @@ describe('upgrade: a node of schema 1', () => {
       expect(note?.level).toBe('warn');
       expect(note?.text).toContain('factory help words');
       expect(output.warnings).toEqual([note?.text]);
-      expect(output.lines.at(-1)?.text).toBe('Changed 9 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
+      expect(output.lines.at(-1)?.text).toBe('Changed 10 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
       expect(gitWrites(gitSince()).find((command) => command.startsWith('add -A'))).toBe(
-        'add -A -- roles/worker.md node.json orders',
+        'add -A -- roles/worker.md node.json .gitignore orders',
       );
     });
 
@@ -2062,7 +2247,8 @@ describe('upgrade: a node of schema 1', () => {
     const sharedValue = shared.ok ? (shared.value as Record<string, Record<string, unknown>>) : {};
     expect(Object.keys(sharedValue)).toEqual(['schema', 'node', 'session', 'limits', 'tracker', 'recipe']);
     expect(Object.keys(sharedValue['node'] ?? {})).toEqual(['id', 'layer']);
-    expect(Object.keys(sharedValue['session'] ?? {})).toEqual(['permission_mode', 'effort', 'model']);
+    expect(Object.keys(sharedValue['session'] ?? {})).toEqual(['permission_mode', 'agent', 'effort', 'model']);
+    expect(Object.keys(sharedValue['limits'] ?? {})).toContain('idle_after');
     expect(sharedValue['recipe']).toMatchObject({ projects: [] });
 
     const local = parseYamlText(text(deps, LOCAL));
@@ -2091,7 +2277,7 @@ describe('upgrade: a node of schema 1', () => {
       expect(sharedText).not.toContain(`  ${key}`);
     }
     const localText = text(deps, LOCAL);
-    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'effort', 'model']) {
+    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'agent', 'effort', 'model', 'idle_after']) {
       expect(localText).not.toMatch(new RegExp(`^\\s*${key}:`, 'm'));
     }
   });

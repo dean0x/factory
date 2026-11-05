@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames, type HookEvent } from '../../src/names.js';
@@ -137,6 +137,53 @@ describe('factory hook (built binary)', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('FACTORY_SESSION');
     expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
+  });
+
+  describe('with the id of a worker as the session (TP-125)', () => {
+    const WORKER_ID = 'fix-login';
+
+    /** The record of a worker as the file on disk holds it. The key names are written out: they are the file format. */
+    const writeRecord = async (id: string): Promise<void> => {
+      const folder = join(home, '.factory', 'workers', id);
+      await mkdir(join(folder, 'inbox'), { recursive: true });
+      const record = {
+        schema: 'factory.worker/v1',
+        id,
+        project: 'web',
+        work_copy: join(home, 'work-copies', 'web', id),
+        branch: `worker/${id}`,
+        created_at: new Date().toISOString(),
+      };
+      await writeFile(join(folder, 'worker.json'), `${JSON.stringify(record, null, 2)}\n`);
+    };
+
+    it('writes the last-seen line of a worker that has a record', async () => {
+      await writeRecord(WORKER_ID);
+      const result = await hook('Stop', JSON.stringify(FIXTURE.hooks.Stop), { FACTORY_SESSION: WORKER_ID });
+      expect(result).toEqual({ code: 0, stdout: '', stderr: '' });
+      expect(JSON.parse(await readFile(lastSeenFile(), 'utf8'))).toMatchObject({
+        schema: 'factory.last-seen/v1',
+        session_id: SESSION,
+        event: 'Stop',
+      });
+    });
+
+    it('writes nothing for an id that has no record, and says why on one line of stderr', async () => {
+      const result = await hook('Stop', JSON.stringify(FIXTURE.hooks.Stop), { FACTORY_SESSION: WORKER_ID });
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toMatch(/^factory hook: [^\n]+\n$/);
+      expect(result.stderr).toContain('FACTORY_SESSION');
+      expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
+    });
+
+    it('writes nothing for the id of another worker than the one that has a record', async () => {
+      await writeRecord(WORKER_ID);
+      const result = await hook('Stop', JSON.stringify(FIXTURE.hooks.Stop), { FACTORY_SESSION: 'other-worker' });
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe('');
+      expect(await exists(join(home, '.factory', 'state', 'heartbeat'))).toBe(false);
+    });
   });
 
   it('exits 0 with an empty stdout for a broken config, and writes nothing (TP-12)', async () => {

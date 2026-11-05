@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { getEventListeners } from 'node:events';
 import { createServer, type Server } from 'node:http';
@@ -898,6 +899,121 @@ describe('node deps: sleep', () => {
     const start = Date.now();
     await deps.sleep(40);
     expect(Date.now() - start).toBeGreaterThanOrEqual(35);
+  });
+});
+
+describe('node deps: random hex text', () => {
+  it('gives two characters of lower case hex text for each byte', () => {
+    const result = deps.randomHex(16);
+    expect(result.ok && result.value).toMatch(/^[0-9a-f]{32}$/);
+  });
+
+  it('gives a new text for each call', () => {
+    const texts = new Set(Array.from({ length: 20 }, () => deps.randomHex(16)).map((result) => result.ok && result.value));
+    expect(texts.size).toBe(20);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 65])('refuses the count %s of bytes', (bytes) => {
+    expect(deps.randomHex(bytes).ok).toBe(false);
+  });
+});
+
+describe('node deps: end a process', () => {
+  const PID = 4321;
+  const failWith = (code: string) => () => {
+    throw Object.assign(new Error(code), { code });
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('sends TERM to the pid, and no other signal', () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    expect(deps.terminate(PID)).toEqual({ ok: true, value: 'sent' });
+    expect(kill.mock.calls).toEqual([[PID, 'SIGTERM']]);
+  });
+
+  it('says that the process is gone when there is none with that pid', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('ESRCH'));
+    expect(deps.terminate(PID)).toEqual({ ok: true, value: 'gone' });
+  });
+
+  it('fails with the code when the program may not signal the process', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('EPERM'));
+    const result = deps.terminate(PID);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error.message).toContain('EPERM');
+  });
+
+  it.each([0, 1, -1, -PID, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31, process.pid])(
+    'refuses the pid %j and sends nothing',
+    (pid) => {
+      const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+      expect(deps.terminate(pid).ok).toBe(false);
+      expect(deps.isRunning(pid).ok).toBe(false);
+      expect(kill).not.toHaveBeenCalled();
+    },
+  );
+
+  it('asks with the signal 0 whether a process runs', () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    expect(deps.isRunning(PID)).toEqual({ ok: true, value: true });
+    expect(kill.mock.calls).toEqual([[PID, 0]]);
+  });
+
+  it('says that no process runs when there is none with that pid', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('ESRCH'));
+    expect(deps.isRunning(PID)).toEqual({ ok: true, value: false });
+  });
+
+  it('says that a process runs when the program may not signal it', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('EPERM'));
+    expect(deps.isRunning(PID)).toEqual({ ok: true, value: true });
+  });
+
+  it('fails for any other error of the check', () => {
+    vi.spyOn(process, 'kill').mockImplementation(failWith('EINVAL'));
+    expect(deps.isRunning(PID).ok).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('node deps: a process that ended but is not collected yet', () => {
+  const children: ChildProcess[] = [];
+
+  /**
+   * Starts a program that makes a short child and then becomes `sleep`, which never collects the exit status of that child. The child
+   * ends at once and stays a zombie. The value is the pid of the child and the pid of its parent.
+   */
+  const withZombie = async (): Promise<{ readonly zombie: number; readonly parent: number }> => {
+    const parent = spawn('sh', ['-c', 'sleep 0.1 & echo $!; exec sleep 30'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    children.push(parent);
+    const first = await new Promise<string>((resolve) => parent.stdout.once('data', (chunk: Buffer) => resolve(chunk.toString())));
+    await wait(700);
+    return { zombie: Number(first.trim()), parent: parent.pid ?? 0 };
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    for (const child of children.splice(0)) child.kill('SIGKILL');
+  });
+
+  it('counts a zombie as ended, although the signal 0 still reaches it', async () => {
+    const { zombie } = await withZombie();
+    expect(() => process.kill(zombie, 0)).not.toThrow();
+    expect(deps.isRunning(zombie)).toEqual({ ok: true, value: false });
+  });
+
+  it('counts a process that runs as running', async () => {
+    const { parent } = await withZombie();
+    expect(deps.isRunning(parent)).toEqual({ ok: true, value: true });
+  });
+
+  it('counts a process as running when the state can not be read', async () => {
+    const { zombie, parent } = await withZombie();
+    vi.stubEnv('PATH', '/nonexistent-folder-of-the-test');
+    expect(deps.isRunning(parent)).toEqual({ ok: true, value: true });
+    expect(deps.isRunning(zombie)).toEqual({ ok: true, value: true });
   });
 });
 

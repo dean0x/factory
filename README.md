@@ -24,9 +24,16 @@ You need:
 | --- | --- |
 | `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
+| `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
+| `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
+| `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
+| `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker, and it says "Resumed" only after the new session wrote its SessionStart line. See "Resume a worker". |
+| `factory worker summon ID [--for TIME]` | Show the pane of the worker in the slot of the window `view` for `TIME` (default 15m, from 1m to 2h). The board comes back by itself. See "Summon a worker". |
+| `factory layout` | Make the window `workers` if it is missing, tile its panes, and put the board back in the slot of the window `view` after a summon. See "Make the windows again". |
 | `factory doctor` | Run 25 checks. See "Doctor". |
+| `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
-| `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. It exits with code 0 and prints nothing to stdout on every path. |
+| `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
 | `factory hook statusline` | For Claude Code, not for people. It is the status line of the coordinator. It records the context percent of the session in the last-seen record, then prints the output of the command in `session.statusline` of `factory.local.yaml` as it is (the command gets the same input, and has 2 seconds; at the limit, every process that it started stops, and a SIGTERM, SIGHUP or SIGINT of the wrapper stops them too; a SIGKILL of the wrapper leaves them running). With no command, or with a command that fails or takes too long, it prints `context N%`. When the input gives no percent, or is not whole after 2 seconds, it prints `context ?%`. It exits with code 0 on every path and prints at most one line on stderr. The field names of the input come from the devflow HUD, which reads the live payload; checked against the Claude Code status line docs. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
@@ -197,6 +204,109 @@ The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy co
 
 A second `start` starts no second coordinator. It attaches to the session. If the program of the coordinator has ended, `start` says so and names the commands that remove the session and start it again. `--dry-run` prints the tmux calls and starts no session. `start` counts a `factory.yaml` only at a registered factory (see "Find the factory folder"). So a `factory.yaml` that a cloned repo holds never starts a session.
 
+### Make a worker
+
+```sh
+factory worker new alpha --project web
+factory worker new alpha --project web --yes
+```
+
+`worker new` makes one worker. The session of the node must run, so run `factory start` first. Without the session, `worker new` exits with code 3 and names `factory start`. It runs the same checks as `start`: the tools, the safety block, the stops for the settings files, and the warning for instruction files. A stop exits with code 4, and nothing changes. A safety block that is out of date gives a warning: `worker new` does not render it again, and the next `start` does.
+
+Before the first change, `worker new` checks these facts, and it exits with code 2 when one is false: the project is listed in the config, the id is a slug, the id is not the id of the node, and the id has no record, no folder in `work-copies/` and no branch `worker/ID` in the clone. It exits with code 4 when `work-copies/` or `work-copies/PROJECT/` is a link or a file. It also reads the files that the last commit of the clone tracks in `.claude/`, because git puts them into the work copy. It exits with code 4 for a link or an unsafe settings file there, and with code 2 for `--yes` inside a factory session when the clone tracks `.claude/settings.local.json`. These stops come before the work copy exists, so they leave no work copy, no branch and no record.
+
+Then it does these steps in order:
+
+1. It makes the work copy `work-copies/PROJECT/ID` with `git worktree add -b worker/ID`. The new branch starts at the head of the clone.
+2. It writes the record of the worker in `.factory/workers/ID/`.
+3. It adds the line `/.claude/settings.local.json` to `info/exclude` in the git folder of the clone, once. Git then shows the work copy as clean when it holds only the hook settings.
+4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
+5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
+6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its inbox folder. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
+
+If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. The command `factory dismiss` is not built in this version.
+
+### List the workers
+
+```sh
+factory worker list
+factory worker list --json
+```
+
+`worker list` shows one line for each worker, in the order of the ids. It changes nothing, so it also runs when no tmux session of the node runs.
+
+| Column | Meaning |
+| --- | --- |
+| `ID`, `PROJECT` | The id of the worker and its project. |
+| `PANE` | The id of the pane of the worker in the window `workers`. `dead` means that the program of the pane has ended. `none` means that the worker has no pane, also when no tmux session of the node runs. |
+| `STATE` | `at prompt` after the hook events `SessionStart` and `Stop`. `busy` after `UserPromptSubmit` and `PreCompact`. `unknown` when the worker has no valid last-seen line that belongs to it. |
+| `CONTEXT` | The context percent of the last-seen line, or `?` when it is not known. |
+| `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. |
+
+A folder of `.factory/workers/` with no valid record is named in a warning, and the other workers are listed. If one pane has a worker mark that is not a worker id, the list skips that pane. If two panes carry the mark of one worker, the list shows the first live pane and warns with both ids. A tmux session of the same name that belongs to another factory folder stops the command with exit code 4. The list takes a last-seen line only when it belongs to the worker, with the same checks as `worker stop` and `worker resume` (see "Resume a worker"). A line with no session marker, a line of another session, and a session that the pointer of another worker names all show `unknown` and `?`. A last-seen line is still a hint, not proof of the state of the program.
+
+### Stop a worker
+
+```sh
+factory worker stop alpha
+```
+
+`worker stop` ends the program of the pane of one worker and closes the pane. The id must have a record, else the command exits with code 2. It sends `kill -TERM` to the process of the pane, for an idle session and for a busy session. It never sends `KILL`. It waits up to 30 seconds for the process to end. If the process is still there, the command exits with code 1 and names the process id.
+
+The command exits with code 3 only when it does not know the state of the session: the worker has no valid last-seen line, the line holds no event, or the line does not belong to the worker. The message names the pane and the process id, and the remedy names the signal that you can send by hand. The command sends nothing in that case.
+
+These cases exit with code 2 and send nothing: two live panes carry the mark of the worker, and the pane of the worker is the pane that runs the command. A worker with no pane gives exit code 0, and nothing changes. A pane whose program has ended is closed with no signal. If `worker summon` put the pane in the slot of the window `view`, the board comes back into the slot before the pane closes. Before it sends the signal, the command reads the pane again by its id. If the pane id or the mark of the worker differs, it exits with code 4 and sends nothing. A program in a pane can set the mark to any text, so the command never trusts the first list alone.
+
+The tests of the table in `docs/session-stop.md` used background shell tasks only. A cron or a background subagent in a busy session can be lost without a record.
+
+### Resume a worker
+
+```sh
+factory worker resume alpha
+```
+
+`worker resume` starts a stopped worker again, in a new pane of the window `workers`, in its work copy. It runs the same checks as `worker new`: the tools, the safety block, the stops for the settings files (exit code 4, and nothing changes), and the tmux session of the node (exit code 3, and the message names `factory start`). The id must have a record, else the command exits with code 2. It exits with code 2 when a live pane of the worker exists: the worker runs already. A pane of the worker whose program has ended is removed first. If a summon left that pane in the slot of the window `view`, the board comes back into the slot first.
+
+The new program continues the earlier conversation of the worker, with `--resume`, only when the last-seen line belongs to the worker. A program in a pane can write the pointer to its own last session, so the command checks three facts: the session id is a UUID, the line records the id of this worker as its session marker, and no other worker has a pointer to the same session. The session of the coordinator and the session of another worker never pass. If a check fails, or the worker has no valid line, the command starts a new conversation and prints one warning. The warning says that the earlier conversation is NOT resumed, why, and that a new conversation starts.
+
+A resume with `--resume` prints "Resumed" only after the new session proves itself. The command checks up to 10 times, one second apart. At each check, the pane must still run the launch of the worker, and the last-seen line of the worker must hold the event `SessionStart`, written after the start, with the id of the worker as its session marker. The exit codes are these:
+
+- 0: the session proved itself. The command prints "Resumed".
+- 1: the pane is gone or its program ended. The message starts with "resume failed". A usual cause is a pointer to a session that has no transcript. To start a new conversation, delete the file `.factory/workers/ID/last-session` (the message gives the full path), then run `factory worker resume ID`.
+- 3: the pane runs, but no matching line came within 10 seconds. The message starts with "resume not confirmed" and names the pane. Run `factory worker summon ID` to look at it. If the earlier conversation did not load, run `factory worker stop ID`, delete the same file, and run `factory worker resume ID`.
+
+### Summon a worker
+
+```sh
+factory worker summon alpha
+factory worker summon alpha --for 30m
+```
+
+`worker summon` shows the pane of one worker in the slot of the window `view`, next to the coordinator. The slot is the pane that carries the mark `@slot`, which is the board pane that `factory start` makes. The command swaps the pane of the worker with the pane of the slot, so the board waits in the window `workers`. After `--for` time, the board comes back by itself. `--for` takes whole minutes or whole hours, for example `30m` or `2h`. The default is 15m, the least is 1m and the most is 2h. A time outside these bounds exits with code 2, and nothing changes.
+
+The checks, in order:
+
+- The id must have a record, else the command exits with code 2.
+- The tmux session of the node must run, else the command exits with code 3, and the message names `factory start`. A session of the same name that belongs to another factory folder exits with code 4.
+- The worker must have a live pane. With no live pane the command exits with code 3, and the message names `factory worker resume`. With two live panes it exits with code 2.
+- The board pane must be the only pane with the mark `@slot`. If the mark is on more than one pane, or the summon mark is not valid, the command exits with code 4 and moves nothing.
+
+The command writes a new random token into the pane option `@slot_summon` of the board pane, with the id of the summoned pane. It starts one `run-shell -b` timer. The timer swaps the panes back only while the token in `@slot_summon` is still the token of that timer. A newer summon replaces the token, so the timer of the older summon does nothing. A summon of a worker that holds the slot already only gives a new token and a new timer. A summon of another worker while a worker holds the slot puts the first worker back in its place, and shows the second. The text of a timer holds fixed words, digits, the token and pane ids, and nothing else. No swap moves the focus: the pane that is active in the window `view` stays the active pane, so your keys never go to a worker or to the board by a swap. If tmux does not set the option, the command swaps the panes back. If the timer does not start, the worker stays in the slot, and the message names `factory layout`.
+
+### Make the windows again
+
+```sh
+factory layout
+```
+
+`layout` makes the windows of the tmux session of the node again, as far as it can:
+
+1. A missing window `workers` is made, in the folder of the coordinator.
+2. The panes of the window `workers` are tiled.
+3. If a summon moved the board out of the slot, the board goes back to the slot of the window `view`, and the summon mark is cleared. A timer that still waits then does nothing. If the mark names a pane that is gone, the command clears the mark and prints a warning. If the board pane is still outside the window `view` (with a mark or without), a second warning names the `tmux join-pane` command that puts it back. The command does not run that command itself.
+
+It works on a session that has only the window `view`. It never makes the window `view`, because that window holds the coordinator: if it is missing, the command warns and names `factory start`. The tmux session must run (exit code 3, and the message names `factory start`) and belong to this factory folder (exit code 4). The command writes no file.
+
 ### Child nodes
 
 A node on layer 2 can have child nodes on layer 1. A child address is a `file://` address on this machine. Other addresses are refused.
@@ -229,6 +339,22 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 - `project-urls`: a project with no URL that you can share is a warning.
 
 `doctor` warns about each temp folder that a stopped `init` left. It removes nothing.
+
+### Machine
+
+`factory machine` reads four facts of this machine: the free memory, the free disk space of the file system of the factory folder, the load of the last minute and the count of processors. It judges the first three against `limits` in `factory.yaml`: `memory_free_min_pct`, `disk_free_min_gb` and `load_max`. With `load_max: cpu_count`, the limit is the count of processors. A value that equals its limit is `ok`.
+
+```sh
+factory machine
+```
+
+Each fact has one format: a value, a limit and a verdict, `ok`, `fail` or `unknown`. The first line of the output shows the worst verdict. `--json` prints the facts.
+
+- On macOS, it runs `memory_pressure`, `df -Pk` and `sysctl`.
+- On Linux, it reads `/proc/meminfo` and `/proc/loadavg`, and runs `df -Pk` and `nproc`. The free memory is `MemAvailable` of `MemTotal`.
+- On another system, each fact is `unknown`.
+
+Each program has 5 seconds. A program that does not run, that takes too long or that exits with an error gives `unknown`. So does an output that does not parse. The command exits with code 0 for every verdict. It exits with another code only for a usage error, or when it finds no valid factory folder.
 
 ### Upgrade a factory
 
@@ -326,7 +452,7 @@ Only a check at a security boundary stops a command. A stop exits with code 4. I
 | 0 | Success. Warnings keep exit code 0. |
 | 1 | The command failed, or a check failed. |
 | 2 | The command line is wrong, or the command finds no factory folder. |
-| 3 | Not ready. No command uses this code yet. |
+| 3 | Not ready. The tmux session of the factory does not run (the message names `factory start`), or a worker has no pane that runs, or the state of a session is not known. |
 | 4 | A safety rule refused the action. |
 
 ## Development

@@ -14,6 +14,22 @@ export const isSlug = (text: string): boolean => SLUG_PATTERN.test(text);
 
 export const isBranchName = (text: string): boolean => BRANCH_PATTERN.test(text);
 
+const MAX_DURATION_DIGITS = 6;
+const MINUTES_PER_HOUR = 60;
+/** `<n>m` or `<n>h`, with no leading zero. The amount `0` has no leading zero, so the bounds of the caller refuse it. */
+const DURATION_PATTERN = new RegExp(`^(0|[1-9][0-9]{0,${MAX_DURATION_DIGITS - 1}})([mh])$`);
+
+/**
+ * The minutes of a duration text `<n>m` or `<n>h`. The value is null for any other text, and for a duration below `min` or above
+ * `max` minutes. The watch interval of a tracker, the idle limit of a worker and the time of a summon use this one reader.
+ */
+export const durationMinutes = (text: string, min: number, max: number): number | null => {
+  const match = DURATION_PATTERN.exec(text);
+  if (match === null) return null;
+  const minutes = Number(match[1]) * (match[2] === 'h' ? MINUTES_PER_HOUR : 1);
+  return minutes >= min && minutes <= max ? minutes : null;
+};
+
 /** A folder path without its `.` segments and its slashes at the end, so two ways to write one path give one key. */
 export const folderKey = (path: string): string => posix.normalize(path).replace(/\/+$/, '');
 

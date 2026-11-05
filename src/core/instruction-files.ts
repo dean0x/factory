@@ -100,19 +100,22 @@ const lookIn = async (deps: Deps, user: UserFolders | null, folder: string, isRo
 
 /**
  * Find the instruction files in the root and in the folders above it, at most `MAX_WALK_LEVELS` folders. A path that is
- * a link counts as a file. The scan never fails: a folder that can not be read is part of the result.
+ * a link counts as a file. The scan never fails: a folder that can not be read is part of the result. With `stopFolder`,
+ * the walk ends after that folder, so a caller can ask for the files in a part of the way up only. A stop folder that is
+ * not above the root changes nothing.
  */
-export const scanInstructionFiles = async (deps: Deps, root: string): Promise<InstructionFileScan> => {
+export const scanInstructionFiles = async (deps: Deps, root: string, stopFolder?: string): Promise<InstructionFileScan> => {
   const user = await userFoldersOf(deps);
   const found: string[] = [];
   const unreadable: UnreadableFolder[] = [];
+  const stop = stopFolder === undefined ? null : resolve(stopFolder);
   let folder = resolve(root);
   for (let level = 0; level < MAX_WALK_LEVELS; level += 1) {
     const looked = await lookIn(deps, user, folder, level === 0);
     found.push(...looked.found);
     if (looked.unreadable !== null) unreadable.push(looked.unreadable);
     const parent = dirname(folder);
-    if (parent === folder) return { found, unreadable, truncated: false };
+    if (parent === folder || folder === stop) return { found, unreadable, truncated: false };
     folder = parent;
   }
   return { found, unreadable, truncated: true };

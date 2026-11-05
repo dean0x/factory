@@ -1,19 +1,27 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { failure, type CliResult } from '../cli/errors.js';
+import { isSlug, slug } from '../config/primitives.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { withFolderLock, writeInFolder } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { hookNames, lastSeen, privateFile, schemaIds, type HookEvent } from '../names.js';
-import { layoutOf } from '../state/layout.js';
+import { eventState, files, hookNames, lastSeen, privateFile, roles, schemaIds, type HookEvent } from '../names.js';
+import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
+import { listWorkerRecords, readWorkerFile } from './registry.js';
 
 /**
  * The last-seen line of a session (design 4.6). The hook of Claude Code writes the last event and its time. The status
  * line writes the context percent and its time. Each write keeps the part that it does not set, so one file holds both.
- * The file is one JSON text in the heartbeat folder of the run-time folder, named by the session id. This module is the
- * only writer and the only reader of that file.
+ * The file is one JSON text in the heartbeat folder of the run-time folder, named by the session id. A worker has one more
+ * file, a pointer in its own folder that holds the id of its newest session, so the line of a worker is found from the id
+ * of the worker. This module is the only writer and the only reader of both files.
+ *
+ * The line also records the session marker: the id that the session marker held when the line was made, which is the id of the
+ * node for a coordinator session and the id of a worker for a worker session. A program in a worker pane can write the pointer
+ * of its own worker, so a command that acts on a session of a worker (stop, resume) reads the line with `readOwnLastSeen`,
+ * which accepts a session only when the line carries the id of this worker as its session marker.
  */
 
 const keys = lastSeen.keys;
@@ -28,6 +36,7 @@ const lastSeenSchema = z
     [keys.eventAt]: time.nullable(),
     [keys.contextPct]: z.number().min(lastSeen.minPercent).max(lastSeen.maxPercent).nullable(),
     [keys.pctAt]: time.nullable(),
+    [keys.sessionMarker]: slug.optional(),
   })
   .superRefine((line, ctx) => {
     if ((line[keys.event] === null) !== (line[keys.eventAt] === null)) {
@@ -110,6 +119,7 @@ const lineWith = (
   eventAt: string | null,
   percent: number | null,
   percentAt: string | null,
+  marker: string | undefined,
 ): LastSeen => ({
   [keys.schema]: schemaIds.lastSeen,
   [keys.sessionId]: sessionId,
@@ -117,23 +127,43 @@ const lineWith = (
   [keys.eventAt]: eventAt,
   [keys.contextPct]: percent,
   [keys.pctAt]: percentAt,
+  ...(marker === undefined ? {} : { [keys.sessionMarker]: marker }),
 });
 
-/** The line after a change: the part that the change does not set is the stored part, or empty when there is none. */
-const changedLine = (stored: LastSeen | null, sessionId: string, change: LastSeenChange, at: string): LastSeen =>
-  change.kind === 'event'
-    ? lineWith(sessionId, change.event, at, stored?.[keys.contextPct] ?? null, stored?.[keys.pctAt] ?? null)
+/**
+ * The line after a change: the part that the change does not set is the stored part, or empty when there is none. A stored
+ * line keeps its session marker, or keeps having none: a write never gives a marker to a line that has none. A line that is
+ * new, or that replaces a text that is not valid, gets the marker of the writer.
+ */
+const changedLine = (
+  stored: LastSeen | null,
+  sessionId: string,
+  change: LastSeenChange,
+  at: string,
+  writer: string | undefined,
+): LastSeen => {
+  const marker = stored === null ? writer : stored[keys.sessionMarker];
+  return change.kind === 'event'
+    ? lineWith(sessionId, change.event, at, stored?.[keys.contextPct] ?? null, stored?.[keys.pctAt] ?? null, marker)
     : lineWith(
         sessionId,
         stored?.[keys.event] ?? null,
         stored?.[keys.eventAt] ?? null,
         change.percent,
         change.percent === null ? null : at,
+        marker,
       );
+};
 
 /** The line after a change, or the reason that the change is refused. */
-const nextLine = (stored: LastSeen | null, sessionId: string, change: LastSeenChange, at: Date): CliResult<LastSeen> => {
-  const checked = lastSeenSchema.safeParse(changedLine(stored, sessionId, change, at.toISOString()));
+const nextLine = (
+  stored: LastSeen | null,
+  sessionId: string,
+  change: LastSeenChange,
+  at: Date,
+  writer: string | undefined,
+): CliResult<LastSeen> => {
+  const checked = lastSeenSchema.safeParse(changedLine(stored, sessionId, change, at.toISOString(), writer));
   return checked.success ? ok(checked.data) : failure(`cannot record the last-seen line: ${describeIssues(checked.error)}`);
 };
 
@@ -148,15 +178,20 @@ const nextLine = (stored: LastSeen | null, sessionId: string, change: LastSeenCh
  * write never puts back older data. A writer that does not get the lock within the wait bound writes nothing, and the value
  * is a failure (exit 1): that update is skipped, and the next event or refresh sets it again. A lock path that is a link is a
  * security stop (exit 4). The value is the line.
+ *
+ * `marker` is the id that the session marker of the writer holds (a slug). A new line records it. A stored line that records
+ * another marker is never changed: the write is a failure, so a session of one node or worker can not rewrite the line of a
+ * session of another.
  */
 export const writeLastSeen = async (
   deps: Deps,
   home: string,
   sessionId: string,
   change: LastSeenChange,
+  marker?: string,
 ): Promise<CliResult<LastSeen>> => {
   if (!isSessionId(sessionId)) return failure('cannot record the last-seen line: the session id is not a UUID');
-  const allowed = nextLine(null, sessionId, change, deps.now());
+  const allowed = nextLine(null, sessionId, change, deps.now(), marker);
   if (!allowed.ok) return allowed;
   const layout = layoutOf(home);
   const target = {
@@ -169,9 +204,138 @@ export const writeLastSeen = async (
   return withFolderLock(deps, target, hookNames.heartbeatLock, async () => {
     const stored = await readLastSeen(deps, home, sessionId);
     if (!stored.ok) return stored;
-    const next = nextLine(stored.value.state === 'valid' ? stored.value.line : null, sessionId, change, deps.now());
+    const storedLine = stored.value.state === 'valid' ? stored.value.line : null;
+    const storedMarker = storedLine?.[keys.sessionMarker];
+    if (marker !== undefined && storedMarker !== undefined && storedMarker !== marker) {
+      return failure(`cannot record the last-seen line: the session belongs to ${storedMarker}, not to ${marker}`);
+    }
+    const next = nextLine(storedLine, sessionId, change, deps.now(), marker);
     if (!next.ok) return next;
     const written = await writeInFolder(deps, target, `${JSON.stringify(next.value)}\n`);
     return written.ok ? next : written;
   });
+};
+
+/**
+ * Record the newest session of a worker: the pointer in the folder of the worker holds the session id and a new line. The
+ * file is replaced as a whole, so a reader sees the old id or the new id. The write is refused, and nothing changes, for a
+ * worker id that is not a slug and a session id that is not a UUID. A folder or a file that is a link is a security stop
+ * (exit 4) from the safe write. The caller has checked that the worker has a record.
+ */
+export const writeWorkerSession = async (
+  deps: Deps,
+  home: string,
+  workerId: string,
+  sessionId: string,
+): Promise<CliResult<void>> => {
+  if (!isSlug(workerId)) return failure(`cannot record the session of the ${roles.worker}: the id is not a slug`);
+  if (!isSessionId(sessionId)) return failure(`cannot record the session of the ${roles.worker}: the session id is not a UUID`);
+  return writeInFolder(
+    deps,
+    {
+      parent: layoutOf(home).workersDir,
+      folder: workerPathsOf(home, workerId).dir,
+      name: files.workerLastSession,
+      mode: privateFile.fileMode,
+      folderMode: privateFile.folderMode,
+    },
+    `${sessionId}\n`,
+  );
+};
+
+/**
+ * Read the last-seen line of a worker: the pointer of the worker names its newest session, and the line of that session is
+ * the value. The pointer and the line are each checked as `readLastSeen` checks a line, and the session id in the line must
+ * be the id in the pointer. A pointer that is not valid, or a line that is not valid, gives invalid with the reason. No
+ * pointer, or a pointer to a session with no line, gives absent. A line is a hint and never proof of which session wrote it:
+ * a caller treats absent and invalid as unknown. The failure is a fault of the file system only.
+ */
+export const readWorkerLastSeen = async (deps: Deps, home: string, workerId: string): Promise<CliResult<LastSeenRead>> => {
+  const pointer = await readPointer(deps, home, workerId);
+  if (!pointer.ok) return pointer;
+  if (pointer.value.state !== 'found') return ok(pointer.value);
+  return readLastSeen(deps, home, pointer.value.sessionId);
+};
+
+/** What the pointer of a worker holds: a session id, a file that is not valid and the reason, or no file. */
+type PointerRead =
+  | { readonly state: 'found'; readonly sessionId: string }
+  | { readonly state: 'invalid'; readonly reason: string }
+  | { readonly state: 'absent' };
+
+const readPointer = async (deps: Deps, home: string, workerId: string): Promise<CliResult<PointerRead>> => {
+  const pointer = await readWorkerFile(deps, home, workerId, {
+    of: 'lastSessionFile',
+    what: 'the pointer',
+    maxBytes: lastSeen.pointerMaxBytes,
+  });
+  if (!pointer.ok) return pointer;
+  if (pointer.value.state !== 'text') return ok(pointer.value);
+  const sessionId = pointer.value.text.endsWith('\n') ? pointer.value.text.slice(0, -1) : pointer.value.text;
+  return isSessionId(sessionId)
+    ? ok({ state: 'found', sessionId })
+    : ok({ state: 'invalid', reason: 'the pointer does not hold a session id' });
+};
+
+/** What a command may use of the newest session of a worker: its line, or the reason that there is no line it may use. */
+export type OwnSessionRead =
+  | { readonly state: 'valid'; readonly line: LastSeen }
+  | {
+      readonly state: 'unknown';
+      /** `no-line`: there is no valid line. `not-owned`: there is a line, and it does not belong to this worker. */
+      readonly why: 'no-line' | 'not-owned';
+      readonly reason: string;
+    };
+
+const unknown = (why: 'no-line' | 'not-owned', reason: string): CliResult<OwnSessionRead> => ok({ state: 'unknown', why, reason });
+
+/** The id of another worker whose pointer names the session, or null when no other pointer names it. */
+const otherHolderOf = async (deps: Deps, home: string, workerId: string, sessionId: string): Promise<CliResult<string | null>> => {
+  const listed = await listWorkerRecords(deps, home);
+  if (!listed.ok) return listed;
+  for (const record of listed.value.workers) {
+    if (record.id === workerId) continue;
+    const pointer = await readPointer(deps, home, record.id);
+    if (!pointer.ok) return pointer;
+    if (pointer.value.state === 'found' && pointer.value.sessionId === sessionId) return ok(record.id);
+  }
+  return ok(null);
+};
+
+/**
+ * The last-seen line of the newest session of a worker, for a command that acts on that session (stop, resume). A program in a
+ * worker pane can write the pointer of its own worker, so the line counts only when all of these hold:
+ * - the pointer and the line are valid (`readWorkerLastSeen`), else the state is unknown with `no-line`;
+ * - the line records the id of this worker as its session marker. A session of the coordinator, of another worker, and a line
+ *   that records no session marker all fail here, so the state is unknown with `not-owned`;
+ * - no other worker has a pointer that names the same session.
+ * The failure is a fault of the file system only.
+ */
+export const readOwnLastSeen = async (deps: Deps, home: string, workerId: string): Promise<CliResult<OwnSessionRead>> => {
+  const read = await readWorkerLastSeen(deps, home, workerId);
+  if (!read.ok) return read;
+  if (read.value.state === 'absent') return unknown('no-line', `the ${roles.worker} has no last-seen line`);
+  if (read.value.state === 'invalid') return unknown('no-line', `the last-seen line is not valid: ${read.value.reason}`);
+  const { line } = read.value;
+  const marker = line[keys.sessionMarker];
+  if (marker !== workerId) {
+    return unknown(
+      'not-owned',
+      marker === undefined ? 'the last-seen line records no session marker' : `the last-seen line belongs to the session of ${marker}`,
+    );
+  }
+  const holder = await otherHolderOf(deps, home, workerId, line[keys.sessionId]);
+  if (!holder.ok) return holder;
+  return holder.value === null
+    ? ok({ state: 'valid', line })
+    : unknown('not-owned', `the pointer of the ${roles.worker} ${holder.value} names the same session`);
+};
+
+/**
+ * What the last event of a line says: the session waits at the prompt (`prompt`) or it works (`busy`). A line with no event,
+ * which holds only a percent, says nothing (null). The rule is the table `eventState` of names.ts.
+ */
+export const promptStateOf = (line: LastSeen): 'prompt' | 'busy' | null => {
+  const event = line[keys.event];
+  return event === null ? null : eventState[event];
 };

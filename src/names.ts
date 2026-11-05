@@ -40,6 +40,9 @@ export const commands = {
   start: 'start',
   node: 'node',
   doctor: 'doctor',
+  machine: 'machine',
+  worker: 'worker',
+  layout: 'layout',
   upgrade: 'upgrade',
   hook: 'hook',
   version: 'version',
@@ -78,6 +81,21 @@ export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as cons
 /** The subcommands of `node`. */
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
+/** The subcommands of `worker`. */
+export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume', summon: 'summon' } as const;
+
+/** The commands with a subcommand that a remedy line names, without the program name. */
+export const commandLines = {
+  workerNew: `${commands.worker} ${workerCommands.new}`,
+  workerList: `${commands.worker} ${workerCommands.list}`,
+  workerStop: `${commands.worker} ${workerCommands.stop}`,
+  workerResume: `${commands.worker} ${workerCommands.resume}`,
+  workerSummon: `${commands.worker} ${workerCommands.summon}`,
+} as const;
+
+/** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
+export type CommandText = CommandName | (typeof commandLines)[keyof typeof commandLines];
+
 export const flags = {
   home: 'home',
   name: 'name',
@@ -88,6 +106,7 @@ export const flags = {
   layer: 'layer',
   approval: 'approval',
   yes: 'yes',
+  for: 'for',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -108,6 +127,10 @@ export const files = {
   setupCoordinator: 'coordinator.md',
   nodeState: 'node.json',
   worker: 'worker.md',
+  /** The record of one worker in the state folder: `workers/<id>/worker.json`. */
+  workerRecord: 'worker.json',
+  /** The pointer of one worker to its newest session: `workers/<id>/last-session` holds a session id. */
+  workerLastSession: 'last-session',
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',
@@ -133,6 +156,10 @@ export const dirs = {
   roadmaps: 'roadmaps',
   roles: 'roles',
   orders: 'orders',
+  /** The folder of the workers in the state folder: one folder for each worker, named by its id. */
+  workers: 'workers',
+  /** The folder of the messages for a worker, inside its folder. The session of the worker gets it with `--add-dir`. */
+  inbox: 'inbox',
   backups: 'backups',
   runtime: 'state',
   /** The folder of the last-seen files, inside the run-time folder: one file for each session. */
@@ -271,9 +298,46 @@ export const env = {
   factoryPrefix: 'FACTORY_',
   home: 'FACTORY_HOME',
   session: 'FACTORY_SESSION',
+  /** The inbox folder of a worker. Only the launch of a worker sets it. */
+  inbox: 'FACTORY_INBOX',
+  /** The id of the tmux pane that a process runs in. tmux sets it for each program that it starts in a pane. */
+  tmuxPane: 'TMUX_PANE',
   /** The folder of the per-user state. The home index lives below it. */
   stateHome: 'XDG_STATE_HOME',
   userHome: 'HOME',
+} as const;
+
+/**
+ * The strip of the variables that a Claude Code session sets for its children (CLAUDECODE, CLAUDE_CODE_CHILD_SESSION, the
+ * session id, the messaging socket and token, and others). A launch removes every variable whose name starts with `prefix`,
+ * except the names of `kept`, so the new session does not start as a child of the session that ran `factory`, and a name
+ * that a later Claude Code adds does not pass either. Only `CLAUDE_CODE_CHILD_SESSION` is proven to matter: a session that
+ * starts with it saves no transcript, so `--resume` fails later (docs/session-stop.md).
+ *
+ * `kept` holds the settings of the user. Each name is a setting that the user chose, none of them names a session, a parent,
+ * a socket, a token, an entry point or a process, and the public environment variable reference of Claude Code
+ * (https://code.claude.com/docs/en/env-vars and the pages of the providers) lists each one as a setting:
+ * - `CLAUDE_CONFIG_DIR`: the folder of the settings and of the login. Without it the session reads another folder.
+ * - `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_MANTLE`: the switches that
+ *   choose the service of the session. Without them the session calls another service than the user chose.
+ * A user who needs another name adds it here. A name that an app or a parent session sets for the session that it starts
+ * (a login token, a socket, an id) stays out.
+ *
+ * The strip runs in the pane, because a new pane gets its environment from the tmux server and not from the process that
+ * runs `factory`. `shell` starts the pane, `scriptName` is the name that the shell shows for the script, and the script is
+ * `stripScript` in launch/argv.ts.
+ */
+export const claudeEnvStrip = {
+  prefix: 'CLAUDE',
+  kept: [
+    'CLAUDE_CONFIG_DIR',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
+    'CLAUDE_CODE_USE_FOUNDRY',
+    'CLAUDE_CODE_USE_MANTLE',
+  ],
+  shell: '/bin/sh',
+  scriptName: 'factory-launch',
 } as const;
 
 /**
@@ -443,8 +507,25 @@ export const tmuxNames = {
   optionSlot: '@slot',
   /** The pane option that holds the worker id, on a worker pane. */
   optionWorker: '@worker',
+  /**
+   * The pane option of the board pane while a worker pane is in the slot: the pane id of that worker pane, a colon and the token
+   * of the summon. The option is unset while the board is in the slot.
+   */
+  optionSummon: '@slot_summon',
   slotBoard: 'board',
 } as const;
+
+/**
+ * The check that a pane was started for a worker (design 4.11, "The pane of a worker"): a reader cuts the start command of a pane
+ * at `maxStartCommandChars` characters and `maxWords` words. A longer text is not the start command of a launch of factory.
+ */
+export const paneBinding = { maxStartCommandChars: 32_768, maxWords: 1_024 } as const;
+
+/**
+ * The summon of a worker pane into the slot of the view window (design 4.11): the default time of the summon, its bounds in
+ * minutes, and the count of random bytes of its token.
+ */
+export const summonLimits = { defaultFor: '15m', minMinutes: 1, maxMinutes: 120, tokenBytes: 16 } as const;
 
 /**
  * The permission bits of the local config file (design 4.4). The file has mode 600. A group or other read bit gets
@@ -474,6 +555,7 @@ export const keys = {
   owner: { display: 'display', github: 'github', prefix: 'prefix' },
   session: {
     permissionMode: 'permission_mode',
+    agent: 'agent',
     effort: 'effort',
     model: 'model',
     proxy: 'proxy',
@@ -488,6 +570,7 @@ export const keys = {
     loadMax: 'load_max',
     contextPreparePct: 'context_prepare_pct',
     contextMaxPct: 'context_max_pct',
+    idleAfter: 'idle_after',
   },
   project: {
     id: 'id',
@@ -567,6 +650,61 @@ export const hookNames = {
 /** One event of the fixed list. */
 export type HookEvent = (typeof hookNames.events)[number];
 
+/**
+ * What the last hook event says about a session: it waits at the prompt (a session that started, or a turn that ended), or
+ * it works (a turn that began, or a compact that is about to run). Every event has an entry.
+ */
+export const eventState = {
+  SessionStart: 'prompt',
+  Stop: 'prompt',
+  UserPromptSubmit: 'busy',
+  PreCompact: 'busy',
+} as const satisfies Readonly<Record<HookEvent, 'prompt' | 'busy'>>;
+
+/**
+ * The ways that the stop code uses to end a session. Each is a way of the table of docs/session-stop.md that has the verdict
+ * `safe`. `check-session-stop` and a test read the table, so a change of the table or of these names that makes them differ
+ * fails a test.
+ */
+export const stopWay = { term: 'kill -TERM' } as const;
+
+export type StopWay = (typeof stopWay)[keyof typeof stopWay];
+
+/** The two cases of the table of ways to stop a session: the session waits at the prompt, or it works. */
+export type StopCase = 'idle' | 'busy';
+
+/** The safe way for each case. A case with no safe way has null and uses `stopFallback`. */
+export const stopWays: Readonly<Record<StopCase, StopWay | null>> = { idle: stopWay.term, busy: stopWay.term };
+
+/** The way for a case that has no safe way: the prompt fallback of the table. */
+export const stopFallback: StopWay = stopWay.term;
+
+/**
+ * The wait for the end of a process after TERM: the stop checks `attempts` times, and waits `intervalMs` before each check. So
+ * the wait is at most `attempts` times `intervalMs`. A session of the program ended 4 to 6 seconds after TERM in every run of
+ * docs/session-stop.md. The stop never sends KILL: a process that does not end in the wait is a failure that names the pid.
+ */
+export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
+
+/**
+ * The wait after the pane of a worker starts (design 4.11): the launch checks at most `attempts` times, and waits `intervalMs`
+ * before each check. So the wait is at most `attempts` times `intervalMs`. A launch with a session to resume checks the pane and
+ * the last-seen line of the worker at each check, and it is confirmed when the pane runs and the line holds the hook event `event`,
+ * written after the start, with the session marker of the worker. Any other launch checks the pane once, after one wait.
+ */
+export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionStart' } as const;
+
+/** The words of `worker list`: the titles of the columns, the pane column, the state of a worker and the mark of its context. */
+export const workerListWords = {
+  columns: { id: 'ID', project: 'PROJECT', pane: 'PANE', state: 'STATE', context: 'CONTEXT', mark: 'MARK' },
+  /** The pane column for a worker with no pane, and for a worker whose pane has ended. */
+  pane: { none: 'none', dead: 'dead' },
+  /** The state column: the session waits at the prompt, it works, or the last-seen line does not say. */
+  states: { prompt: 'at prompt', busy: 'busy', unknown: 'unknown' },
+  /** The mark of the context column: the percent is at the prepare limit or above, or above the max limit. */
+  marks: { prepare: 'PREPARE', max: 'MAX' },
+} as const;
+
 /** The session folders that get the hook settings: the folder of the coordinator, and the work copy of a worker. */
 export const hookSessions = { coordinator: roles.coordinator, workCopy: 'work-copy' } as const;
 
@@ -595,18 +733,72 @@ export const lastSeen = {
     eventAt: 'event_at',
     contextPct: 'context_pct',
     pctAt: 'pct_at',
+    /** The id that the session marker held when the line was made: the id of the node, or the id of a worker. */
+    sessionMarker: 'session_marker',
   },
   /** The id of a session: a UUID with lower case letters. */
   sessionIdPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   /** A reader refuses a file of more bytes than this. */
   maxBytes: 4_096,
+  /** A reader refuses a worker pointer of more bytes than this. A session id and a new line are 37 bytes. */
+  pointerMaxBytes: 64,
   minPercent: 0,
   maxPercent: 100,
+} as const;
+
+/**
+ * The record of a worker (design 4.6): one JSON text in `workers/<id>/worker.json` of the state folder. It holds what a
+ * worker is, and no process id: a process id says nothing about a worker after a restart. The id of the worker names
+ * the folder, so the id must be a slug before it is used in a path.
+ */
+export const workerRecord = {
+  keys: {
+    schema: 'schema',
+    id: 'id',
+    project: 'project',
+    workCopy: 'work_copy',
+    branch: 'branch',
+    createdAt: 'created_at',
+  },
+  /** A reader refuses a file of more bytes than this. */
+  maxBytes: 4_096,
+  /** A list reads at most this many entries of the workers folder. More is a failure, and the list is not cut short. */
+  maxEntries: 256,
+  /** The permission bits of a worker folder and of its record. The record is private to the user. */
+  folderMode: privateFile.folderMode,
+  fileMode: privateFile.fileMode,
+} as const;
+
+/**
+ * The exclude file of a project clone (design 4.6): `info/exclude` in the common git folder, which every work copy of the
+ * clone shares. It holds one entry that hides the settings file of the work copies from git, so a work copy that has only
+ * that file counts as clean. The entry anchors at the top of a work tree.
+ */
+export const cloneExclude = {
+  folder: 'info',
+  file: 'exclude',
+  entry: `/${dirs.claude}/${localSettingsFile}`,
+  /** The permission bits of a new file and of a new folder. An existing file keeps its own bits. */
+  fileMode: 0o644,
+  folderMode: 0o755,
+  /** The call reads at most this many bytes. A larger file is a failure, and nothing is written. */
+  maxBytes: 1_048_576,
+  /** The lock beside the file: two commands that add an entry at the same time do not lose one write. */
+  lock: {
+    suffix: privateFile.lockSuffix,
+    takeoverSuffix: privateFile.takeoverSuffix,
+    mode: privateFile.fileMode,
+    attempts: privateFile.lockAttempts,
+    waitMs: privateFile.lockWaitMs,
+    staleMs: privateFile.lockStaleMs,
+  },
 } as const;
 
 /** The words that a config value can take. */
 export const values = {
   permissionMode: 'auto',
+  /** The only agent program that a session starts. */
+  agent: 'claude',
   efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
   noProxy: 'none',
   onFail: ['stop', 'direct'],
@@ -618,6 +810,33 @@ export const values = {
   trackerLocal: 'local',
   trackerHosted: ['github', 'jira', 'linear'],
   defaultWatchInterval: '5m',
+  /** A worker with no activity for this time, and no open work, is idle. */
+  defaultIdleAfter: '2h',
+} as const;
+
+/** The bounds of a duration setting `<n>m` or `<n>h`: the watch interval of a tracker and the idle limit of a worker. */
+export const durationBounds = { minMinutes: 1, maxMinutes: 24 * 60 } as const;
+
+/**
+ * The facts of the machine check (design 4.2): the names of the facts, the two systems that it knows, the programs and the
+ * system files that give each fact, and the bounds of a call. Any other system gives unknown facts.
+ */
+export const machineNames = {
+  facts: { memory: 'memory', disk: 'disk', load: 'load', cpus: 'cpus' },
+  systems: { macos: 'darwin', linux: 'linux' },
+  programs: { memoryPressure: 'memory_pressure', sysctl: 'sysctl', df: 'df', nproc: 'nproc' },
+  /** The names that `sysctl` reads on macOS: the load averages and the count of processors. */
+  sysctlNames: { load: 'vm.loadavg', cpus: 'hw.ncpu' },
+  /** The files of the Linux kernel that give the memory and the load. */
+  procFiles: { memory: '/proc/meminfo', load: '/proc/loadavg' },
+  /** The time limit of each program that the check runs, in milliseconds. A program that takes longer gives an unknown fact. */
+  callTimeoutMs: 5_000,
+  /** The most bytes of a system file that the check reads. A larger file gives an unknown fact. */
+  maxFileBytes: 65_536,
+  /** One GB is this many blocks of 1 KiB, as `df -h` counts it. */
+  kibPerGb: 1_048_576,
+  /** The most processors that the check accepts. A larger count is not a count. */
+  maxCpus: 4_096,
 } as const;
 
 /** The question of `init` about one approval point: it asks this many times, then it stops with a usage error. */
@@ -713,11 +932,19 @@ export const schemaIds = {
   nodeChildren: `${program}.node-children/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
+  machine: `${program}.machine/v1`,
+  workerNew: `${program}.worker-new/v1`,
+  workerList: `${program}.worker-list/v1`,
+  workerStop: `${program}.worker-stop/v1`,
+  workerResume: `${program}.worker-resume/v1`,
+  workerSummon: `${program}.worker-summon/v1`,
+  layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
   lastSeen: `${program}.last-seen/v1`,
+  workerRecord: `${program}.worker/v1`,
 } as const;
 
 /** Placeholders of the prefix that marks input with the authority of the owner. */

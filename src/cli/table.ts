@@ -2,13 +2,17 @@ import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
+import { runLayout } from '../commands/layout.js';
+import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
+import { runWorker } from '../commands/worker.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import {
+  commandLines,
   commands,
   commandText,
   env,
@@ -23,6 +27,7 @@ import {
   program,
   roles,
   schemaIds,
+  summonLimits,
   values,
 } from '../names.js';
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
@@ -211,11 +216,70 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
   },
   {
+    name: commands.worker,
+    summary: `Make and run the ${roles.worker}s of the ${roles.node}.`,
+    usage: [
+      `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+      `${commandText(commandLines.workerList)} [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerStop)} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.project]: {
+        type: 'string',
+        placeholder: 'PROJECT',
+        description: `The id of the project that the ${roles.worker} works on. The ${roles.node} lists it in its config.`,
+      },
+      [flags.for]: {
+        type: 'string',
+        placeholder: 'TIME',
+        description:
+          `How long the slot shows the ${roles.worker} before it shows the board again: <n>m or <n>h, from ${summonLimits.minMinutes}m to ` +
+          `${summonLimits.maxMinutes / 60}h. Default: ${summonLimits.defaultFor}.`,
+      },
+      [flags.yes]: {
+        type: 'boolean',
+        description:
+          `Agree to the change of the Claude Code settings of the work copy (the hook and the status line), with no question. ` +
+          `Not allowed inside a ${places.session}, unless the work copy has no settings file.`,
+      },
+    },
+    run: (given, deps) =>
+      runWorker(
+        deps,
+        {
+          home: given.string(flags.home),
+          words: given.positionals(),
+          project: given.string(flags.project),
+          yes: given.bool(flags.yes),
+          duration: given.string(flags.for),
+        },
+        registry,
+      ),
+  },
+  {
+    name: commands.layout,
+    summary: `Make the windows of the tmux session of the ${roles.node} again, and show the board in the slot.`,
+    usage: `${commandText(commands.layout)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runLayout(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
     name: commands.doctor,
     summary: `Check the ${roles.node}, its config and its state.`,
     usage: `${commandText(commands.doctor)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
     run: (given, deps) => runDoctor(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.machine,
+    summary: 'Check the memory, the disk and the processors against the limits.',
+    usage: `${commandText(commands.machine)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runMachine(deps, { home: given.string(flags.home) }, registry),
   },
   {
     name: commands.upgrade,

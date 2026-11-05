@@ -15,7 +15,7 @@ import {
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
-import { commands, hookNames, maxFileBytes, ownHookCommand } from '../../src/names.js';
+import { commands, hookNames, hookSessions, maxFileBytes, ownHookCommand } from '../../src/names.js';
 import { createFakeDeps, withFsWatch, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 
 const FOLDER = '/h/factory/coordinator';
@@ -531,6 +531,30 @@ describe('hook settings: the check before the first write of a command (TP-16)',
     deps.seed(FILE, '[]');
     expect(errorOf(await requireHookConsent(deps, asked({ yes: true }))).kind).toBe('failure');
     expect(deps.files.get(FILE)).toBe('[]');
+  });
+
+  describe('for a folder that does not exist yet and gets a settings file from a checkout', () => {
+    const inSession = (): FakeDeps => newFolder({ env: { HOME: USER_HOME, FACTORY_SESSION: 'node-1' } });
+    const workCopy = (): Omit<HookSettingsRequest, 'dryRun'> => asked({ yes: true, session: hookSessions.workCopy });
+
+    it('counts the yes flag inside a factory session when the checkout gives no file', async () => {
+      expect(await requireHookConsent(inSession(), workCopy())).toEqual(ok(undefined));
+      expect(await requireHookConsent(inSession(), workCopy(), null)).toEqual(ok(undefined));
+    });
+
+    it('refuses the yes flag inside a factory session when the checkout gives a file that needs the change (exit 2)', async () => {
+      const error = errorOf(await requireHookConsent(inSession(), workCopy(), '{"permissions":{}}\n'));
+      expect(error.kind).toBe('usage');
+      expect(error.hint).toContain('gives no consent inside a factory session');
+    });
+
+    it('goes on when the file of the checkout holds the entries already', async () => {
+      expect(await requireHookConsent(inSession(), workCopy(), JSON.stringify(EXPECTED_ENTRIES))).toEqual(ok(undefined));
+    });
+
+    it('stops with exit 1 when the file of the checkout is not a JSON object', async () => {
+      expect(errorOf(await requireHookConsent(inSession(), workCopy(), '[]')).kind).toBe('failure');
+    });
   });
 });
 

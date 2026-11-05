@@ -55,7 +55,17 @@ export interface FakeOptions {
   readonly runAttached?: AttachedHandler;
   /** Links: a path under a key resolves to the same path under the value. `lstat` gives `link` for a key itself. */
   readonly links?: Readonly<Record<string, string>>;
+  /**
+   * After a TERM, a process still runs for this many checks of `isRunning`, and then it ends. Default: 0, so the first check
+   * finds it ended. Infinity: it never ends.
+   */
+  readonly termEndsAfterChecks?: number;
+  /** The text of a failure of `terminate`, for example for a process of another user. Default: the call works. */
+  readonly terminateFails?: string;
 }
+
+/** The count of bytes that the fake `randomHex` accepts at most, as the real call does. */
+const MAX_RANDOM_BYTES = 64;
 
 export interface FakeDeps extends Deps {
   readonly files: Map<string, string>;
@@ -81,6 +91,12 @@ export interface FakeDeps extends Deps {
   readonly mtimes: Map<string, number>;
   /** The waits of `sleep`, in order. */
   readonly sleeps: number[];
+  /** The pids that `terminate` got, in order. The fake sends no signal to a real process. The call has no other signal. */
+  readonly terminated: number[];
+  /** The pids that `isRunning` got, in order. */
+  readonly checked: number[];
+  /** The texts that `randomHex` gave, in order. The first is 1, the next is 2, and so on, as hex text of the asked length. */
+  readonly randomTexts: string[];
   /** The signals of the process. A test sends a signal with `emit`, and counts the handlers with `listenerCount`. */
   readonly signals: EventEmitter;
   /** Move the clock on by `ms` milliseconds. `sleep` does the same. */
@@ -116,6 +132,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const owners = new Map<string, number>();
   const mtimes = new Map<string, number>();
   const sleeps: number[] = [];
+  const terminated: number[] = [];
+  const checked: number[] = [];
+  const randomTexts: string[] = [];
+  /** A pid that got a TERM, with the number of checks that still find it running. A pid that ended is removed. */
+  const checksLeft = new Map<number, number>();
+  const ended = new Set<number>();
   const uid = options.uid === undefined ? DEFAULT_UID : options.uid;
   let clock = (options.now ?? DEFAULT_NOW).getTime();
   const touch = (path: string): void => void mtimes.set(path, clock);
@@ -155,7 +177,35 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     owners,
     mtimes,
     sleeps,
+    terminated,
+    checked,
+    randomTexts,
+    randomHex: (bytes) => {
+      if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_RANDOM_BYTES) return failure(`cannot make random text for ${bytes} bytes`);
+      const text = (randomTexts.length + 1).toString(16).padStart(bytes * 2, '0').slice(-bytes * 2);
+      randomTexts.push(text);
+      return ok(text);
+    },
     signals: new EventEmitter(),
+    terminate: (pid) => {
+      terminated.push(pid);
+      if (options.terminateFails !== undefined) return failure(`cannot signal the process ${pid}: ${options.terminateFails}`);
+      if (ended.has(pid)) return ok('gone');
+      checksLeft.set(pid, options.termEndsAfterChecks ?? 0);
+      return ok('sent');
+    },
+    isRunning: (pid) => {
+      checked.push(pid);
+      const left = checksLeft.get(pid);
+      if (left === undefined) return ok(!ended.has(pid));
+      if (left > 0) {
+        checksLeft.set(pid, left - 1);
+        return ok(true);
+      }
+      checksLeft.delete(pid);
+      ended.add(pid);
+      return ok(false);
+    },
     advance: (ms) => {
       clock += ms;
     },

@@ -44,7 +44,7 @@ import { gitHandler } from '../helpers/git-fake.js';
 import { OLD_WORD_ENDINGS, OLD_WORD_LIST, oldWordsIn } from '../helpers/old-words.js';
 import { runInit } from '../helpers/package-registry.js';
 import { JARGON_ERE, JARGON_PATTERNS, jargonIn } from '../helpers/plain-words.js';
-import { allSourceFiles, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
+import { allSourceFiles, callsOf, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
@@ -970,5 +970,40 @@ describe('the root checks (TP-44, TP-179, TP-180)', () => {
 
   it('keeps the names of the settings that approve project MCP servers in names.ts', () => {
     expect(withText(/enableAllProjectMcpServers|enabledMcpjsonServers/).filter((path) => path !== 'names.ts')).toEqual([]);
+  });
+});
+
+describe('the agent program (TP-3)', () => {
+  const sources = allSourceFiles(SRC).map((path) => ({ file: relative(SRC, path), code: stripComments(readFileSync(path, 'utf8')) }));
+  const withText = (pattern: RegExp): string[] => sources.filter(({ code }) => pattern.test(code)).map(({ file }) => file);
+  const callsIn = (names: readonly string[]): { readonly file: string; readonly args: readonly string[] }[] =>
+    sources.flatMap(({ file, code }) => names.flatMap((name) => callsOf(code, name)).map((args) => ({ file, args })));
+
+  it('starts a process in one module only: core/node-deps.ts', () => {
+    expect(withText(/\bchild_process\b/)).toEqual(['core/node-deps.ts']);
+  });
+
+  it('holds the name of the agent program in no call that runs a program', () => {
+    const agentName = /\btoolNames\.claude\b|\bvalues\.agent\b|['"`]claude['"`]/;
+    const runs = callsIn(['run', 'runAttached', 'spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'fork']);
+    expect(runs.filter(({ args }) => args.some((arg) => agentName.test(arg))).map(({ file }) => file)).toEqual([]);
+  });
+
+  it('uses the tool name of the agent program only to look for it on PATH and to name it in a message', () => {
+    expect(withText(/\btoolNames\.claude\b/)).toEqual(['commands/doctor.ts', 'commands/launch-checks.ts', 'commands/start.ts']);
+  });
+
+  it('builds the program of a start from the agent input in launch/argv.ts, and from no name of a tool', () => {
+    const argv = sources.find(({ file }) => file === 'launch/argv.ts')?.code ?? '';
+    expect(argv).toMatch(/\binput\.agent\b/);
+    expect(argv).not.toMatch(/\btoolNames\b|['"`]claude['"`]/);
+  });
+
+  it('gives every start the agent of the config: each call of a launch argument builder passes session.agent', () => {
+    const calls = callsIn(['launchArgv', 'workerLaunchArgv']);
+    expect(calls.length).toBeGreaterThan(0);
+    for (const { file, args } of calls) {
+      expect({ file, passesAgent: /\bagent:\s*[\w.]*\bsession\.agent\b/.test(args.join(' ')) }).toEqual({ file, passesAgent: true });
+    }
   });
 });

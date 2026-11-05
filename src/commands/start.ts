@@ -1,6 +1,5 @@
-import { join, resolve } from 'node:path';
-import { inspectBlock, safetyStateOf } from '../blocks/status.js';
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { resolve } from 'node:path';
+import { failure, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
@@ -10,33 +9,19 @@ import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { err, ok } from '../core/result.js';
-import { requireNoLinks } from '../core/root-paths.js';
-import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
+import { shellWord } from '../core/shell-word.js';
+import { toolNames } from '../core/tools.js';
 import { launchArgv } from '../launch/argv.js';
+import { attachArgs, attachHint, killSessionArgs, startSteps, switchArgs, type TmuxArgs } from '../launch/tmux.js';
+import { coordinatorEnded, requireOwnSession, sessionExists, tmuxStep } from '../launch/tmux-run.js';
 import {
-  attachArgs,
-  attachHint,
-  coordinatorEndedArgs,
-  hasSessionArgs,
-  killSessionArgs,
-  showHomeArgs,
-  startSteps,
-  switchArgs,
-  type TmuxArgs,
-} from '../launch/tmux.js';
-import {
-  blockNames,
   capitalize,
   commands,
   commandText,
-  dirs,
   env,
-  files,
   flags,
   flagText,
   hookSessions,
-  keys,
-  overwriteCommand,
   places,
   program,
   roles,
@@ -45,13 +30,12 @@ import {
   tmuxNames,
   values,
 } from '../names.js';
-import { checkProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { safetyTemplateFor } from '../templates/index.js';
 import type { SetupTexts } from '../templates/types.js';
-import { planBlock } from '../upgrade/plan.js';
-import { renderSetupText, writeBlockPlans } from '../upgrade/render.js';
+import { renderSetupText } from '../upgrade/render.js';
+import { chooseProxy, type ProxyChoice } from '../workers/launch.js';
+import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { failsOnlyOnSetup, requireRootClean, rootNotices, scanRoot, withSetupAccepted } from './root-content.js';
 import { acceptReason, settleSetup } from './setup-check.js';
 
@@ -62,20 +46,8 @@ export interface StartOptions {
   readonly yes: boolean;
 }
 
-const TMUX_TIMEOUT_MS = 15_000;
-const MAX_DETAIL_CHARS = 200;
-const MIN_TMUX_TEXT = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
-
 /** How the command shows the session to the person: attach, switch the client of tmux, or print how to attach. */
 type Reach = 'attach' | 'switch' | 'print';
-
-interface ProxyChoice {
-  /** The base URL for the launch, or null for no proxy. */
-  readonly baseUrl: string | null;
-  /** The id, host and port. Safe to print. Null when the session uses no proxy. */
-  readonly label: string | null;
-  readonly warning?: string;
-}
 
 interface StartPlan {
   readonly proxy: ProxyChoice;
@@ -110,157 +82,8 @@ const presentProjects = async (
   return ok({ folders, warnings });
 };
 
-const shellWord = (word: string): string =>
-  /^[A-Za-z0-9_@%+=:,./{}-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
-
 /** A tmux call as a person could type it, for the dry run. */
 const commandLine = (args: TmuxArgs): string => [toolNames.tmux, ...args].map(shellWord).join(' ');
-
-const detailOf = (stderr: string): string => {
-  const line = stderr
-    .split('\n')
-    .find((candidate) => candidate.trim() !== '')
-    ?.trim()
-    .slice(0, MAX_DETAIL_CHARS);
-  return line === undefined ? '' : `: ${line}`;
-};
-
-const tmuxCall = (deps: Deps, args: TmuxArgs) =>
-  deps.run(toolNames.tmux, args, { inheritEnv: true, timeoutMs: TMUX_TIMEOUT_MS });
-
-/** A tmux call that must work. The result is its output. */
-const tmuxStep = async (deps: Deps, args: TmuxArgs): Promise<CliResult<string>> => {
-  const result = await tmuxCall(deps, args);
-  if (!result.ok) return result;
-  const { exitCode, stdout, stderr } = result.value;
-  if (exitCode === 0) return ok(stdout);
-  return failure(`${toolNames.tmux} ${args[0]} failed (exit code ${exitCode})${detailOf(stderr)}`);
-};
-
-/** True when a session with this exact name runs. A tmux that does not run counts as no session. */
-const sessionExists = async (deps: Deps, id: string): Promise<boolean> => {
-  const result = await tmuxCall(deps, hasSessionArgs(id));
-  return result.ok && result.value.exitCode === 0;
-};
-
-/** True when the program of the coordinator pane has ended. A pane that cannot be read counts as one that runs. */
-const coordinatorEnded = async (deps: Deps, id: string): Promise<boolean> => {
-  const result = await tmuxCall(deps, coordinatorEndedArgs(id));
-  return result.ok && result.value.exitCode === 0 && result.value.stdout.trim() === '1';
-};
-
-/** The tools that `start` needs. A real run also reads the version of tmux. A dry run starts no tmux command for it. */
-const toolProblems = async (deps: Deps, readVersion: boolean): Promise<readonly string[]> => {
-  const problems: string[] = [];
-  if (!(await onPath(deps, toolNames.tmux))) {
-    problems.push(`${toolNames.tmux} is not on PATH. Install ${toolNames.tmux} ${MIN_TMUX_TEXT} or newer`);
-  } else if (readVersion) {
-    const version = await tmuxVersionOf(deps);
-    if (version === null) {
-      problems.push(`cannot read the version of ${toolNames.tmux}`);
-    } else if (!isTmuxNewEnough(version)) {
-      problems.push(
-        `${toolNames.tmux} ${version.major}.${version.minor} is too old. ${capitalize(program)} needs ${toolNames.tmux} ${MIN_TMUX_TEXT} or newer`,
-      );
-    }
-  }
-  if (!(await onPath(deps, toolNames.claude))) problems.push(`${toolNames.claude} is not on PATH`);
-  return problems;
-};
-
-/** The session is of this home when its option holds this home, also through a link. */
-const isSameHome = async (deps: Deps, stored: string, home: string): Promise<boolean> => {
-  if (stored === '') return false;
-  if (stored === home) return true;
-  const [a, b] = await Promise.all([deps.fs.realpath(stored), deps.fs.realpath(home)]);
-  return a.ok && b.ok && a.value === b.value;
-};
-
-const requireOwnSession = async (deps: Deps, id: string, home: string): Promise<CliResult<void>> => {
-  const shown = await tmuxStep(deps, showHomeArgs(id));
-  if (!shown.ok) return shown;
-  if (await isSameHome(deps, shown.value.trim(), home)) return ok(undefined);
-  return safetyRefusal(
-    `a tmux session ${id} belongs to another ${places.folder}`,
-    `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session. Then run "${commandText(commands.start)}" again.`,
-  );
-};
-
-/** The proxy of the session, by the rules of design 4.6: only a proxy that the config names, and only when it answers. */
-const chooseProxy = async (deps: Deps, config: FactoryConfig): Promise<CliResult<ProxyChoice>> => {
-  const { core } = config;
-  const wanted = core.session.proxy;
-  if (wanted === values.noProxy) return ok({ baseUrl: null, label: null });
-  const proxy = core.proxies.find((candidate) => candidate.id === wanted);
-  if (proxy === undefined) {
-    return failure(`${keys.root.session}.${keys.session.proxy} names a proxy that is not defined in ${keys.root.proxies}`);
-  }
-  const health = await checkProxyHealth(deps, proxy);
-  if (health.up) return ok({ baseUrl: proxy.base_url, label: health.label });
-  if (proxy.on_fail === values.onFail[1]) {
-    return ok({
-      baseUrl: null,
-      label: null,
-      warning: `${health.label} does not answer. ${keys.proxy.onFail} is ${proxy.on_fail}: the session starts without a proxy.`,
-    });
-  }
-  return failure(
-    `${health.label} does not answer`,
-    `Start the proxy, or set ${keys.root.session}.${keys.session.proxy} to ${values.noProxy} for the session. Then run "${commandText(commands.start)}" again.`,
-  );
-};
-
-/**
- * The safety block, for every launch (design 4.8). `start` never launches with a safety body that differs from the text
- * that the package renders for the config, the effective approval modes and the owner prefix:
- * - equal: no action;
- * - intact but different (the package, a mode or the prefix changed): render the block again, print a notice and go on;
- *   a dry run writes nothing and returns a note;
- * - edited, missing or not readable: exit 4, because the safety rules are a security boundary.
- * A link at the coordinator file is a stop first: nothing is read or written through it. The coordinator folder exists
- * after this check, because a missing file is a missing block. The value is the notes of a dry run.
- */
-const requireSafetyBlock = async (
-  deps: Deps,
-  home: string,
-  config: FactoryConfig,
-  dryRun: boolean,
-): Promise<CliResult<readonly string[]>> => {
-  const { claudeMd } = layoutOf(home);
-  const plain = await requireNoLinks(deps, home, [claudeMd]);
-  if (!plain.ok) return plain;
-  const name = blockNames.safety;
-  const file = join(dirs.coordinator, files.claudeMd);
-  const status = await inspectBlock(deps, home, safetyTemplateFor(config, await effectiveModes(deps, home, config)));
-  const state = safetyStateOf(status);
-  switch (state) {
-    case 'equal':
-      return ok([]);
-    case 'different': {
-      if (dryRun) return ok([`The block ${name} in ${file} is out of date. A real run renders it again.`]);
-      const written = await writeBlockPlans(deps, home, [planBlock(status, false)], commands.start);
-      if (!written.ok) return written;
-      deps.warn(`Rendered the block ${name} in ${file} again, because the package or a setting changed its text.`);
-      return ok([]);
-    }
-    case 'edited':
-      return safetyRefusal(
-        `the block ${name} in ${file} was edited`,
-        `Run "${overwriteCommand(name)}" to replace the text. It keeps the old text in a backup file.`,
-      );
-    case 'missing':
-      return safetyRefusal(`the block ${name} is missing in ${file}`, `Run "${overwriteCommand(name)}" to add it.`);
-    case 'malformed':
-      return safetyRefusal(
-        `the block ${name} in ${file} can not be read${status.kind === 'malformed' ? `: ${status.message}` : ''}`,
-        `Fix the marker lines in ${file}, then run "${commandText(commands.doctor)}".`,
-      );
-    default: {
-      const unreachable: never = state;
-      return unreachable;
-    }
-  }
-};
 
 /**
  * Render the setup blocks again after the owner accepted a change: the texts are the bytes that the acceptance hashed. A
@@ -303,6 +126,7 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
       model: core.session.model,
       proxyBaseUrl,
       path: path === undefined || path === '' ? null : path,
+      agent: core.session.agent,
       projects: projects.value.folders,
     });
     return launch.ok ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value })) : failure(launch.error);

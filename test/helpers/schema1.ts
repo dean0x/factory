@@ -89,5 +89,7 @@ export const seedSchema1Node = (deps: FakeDeps, home: string, doc: Record<string
   deps.seed(paths.briefsKeep, '');
   deps.seed(paths.board, '{}\n');
   deps.seed(paths.roadmaps, OLD_ROADMAPS_README);
+  // The lines that FAC-M1 wrote: the state repo ignores the run-time folders and the backups.
+  deps.seed(`${paths.state}/.gitignore`, 'state/\nlocks/\nbackups/\n');
   deps.seedDir(`${paths.state}/.git`);
 };

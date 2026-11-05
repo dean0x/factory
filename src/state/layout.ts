@@ -14,6 +14,7 @@ export const stateRel = {
   ordersKeep: join(dirs.orders, files.ordersKeep),
   gitignore: files.gitignore,
   backups: dirs.backups,
+  workers: dirs.workers,
   runtime: dirs.runtime,
   heartbeat: join(dirs.runtime, dirs.heartbeat),
   locks: dirs.locks,
@@ -40,8 +41,12 @@ export interface Layout {
   readonly workCopiesDir: string;
   readonly stateDir: string;
   readonly nodeJson: string;
+  /** The `.gitignore` of the state repo: it keeps the run-time folders, the backups and the workers out of the repo. */
+  readonly stateGitignoreFile: string;
   readonly workerMd: string;
   readonly backupsDir: string;
+  /** The folder of the workers: one folder for each worker. Git ignores it. */
+  readonly workersDir: string;
   /** The run-time folders. Their files are not part of the state repository. */
   readonly runtimeDir: string;
   /** The last-seen files, one for each session. It is inside the run-time folder. */
@@ -69,11 +74,35 @@ export const layoutOf = (home: string): Layout => {
     workCopiesDir: join(home, dirs.workCopies),
     stateDir,
     nodeJson: join(stateDir, stateRel.nodeJson),
+    stateGitignoreFile: join(stateDir, stateRel.gitignore),
     workerMd: join(stateDir, stateRel.worker),
     backupsDir: join(stateDir, stateRel.backups),
+    workersDir: join(stateDir, stateRel.workers),
     runtimeDir: join(stateDir, stateRel.runtime),
     heartbeatDir: join(stateDir, stateRel.heartbeat),
     locksDir: join(stateDir, stateRel.locks),
+  };
+};
+
+/** The paths of one worker below the workers folder. */
+export interface WorkerPaths {
+  /** The folder of the worker. */
+  readonly dir: string;
+  readonly recordFile: string;
+  /** The pointer to the newest session of the worker: the file that names its last-seen line. */
+  readonly lastSessionFile: string;
+  /** The folder of the messages for the worker. */
+  readonly inboxDir: string;
+}
+
+/** The paths of a worker. The id names a folder, so the caller checks that it is a slug before it uses a path. */
+export const workerPathsOf = (home: string, id: string): WorkerPaths => {
+  const dir = join(layoutOf(home).workersDir, id);
+  return {
+    dir,
+    recordFile: join(dir, files.workerRecord),
+    lastSessionFile: join(dir, files.workerLastSession),
+    inboxDir: join(dir, dirs.inbox),
   };
 };
 

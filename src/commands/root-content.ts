@@ -3,7 +3,17 @@ import { safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import { isOwnSettingsText } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
-import { ignoredPathsOf, isWorkTreeRoot, trackedFilesOf, type TrackedList } from '../core/git.js';
+import {
+  blobTextOf,
+  headEntriesAt,
+  ignoredPathsOf,
+  isFileMode,
+  isWorkTreeRoot,
+  LINK_MODE,
+  trackedFilesOf,
+  type TrackedList,
+  type TreeEntry,
+} from '../core/git.js';
 import { originOfHome, type Origin } from '../core/home-index.js';
 import { delegationReport, type DelegationReport } from '../core/owner-record.js';
 import { comparable, isSameOrInside, isWrittenInside, userClaudeFolderOf } from '../core/paths.js';
@@ -35,6 +45,7 @@ import {
   env,
   files,
   homeIndex,
+  localSettingsFile,
   places,
   program,
   reservedRootNames,
@@ -497,6 +508,15 @@ const unfinishedStop = (id: string, shown: string, reason: string): FolderSettin
   ],
 });
 
+/** The stop for a settings folder that holds more settings files than the check reads. */
+const tooManySettings = (id: string, shown: string): RootFinding =>
+  finding(
+    id,
+    'fail',
+    `${shown} holds more than ${MAX_SETTINGS_FILES} settings files, and ${program} does not read all of them`,
+    `Move the settings files that the session does not need out of ${shown}, then ${doctorAgain}.`,
+  );
+
 /**
  * The settings files that a folder holds: the files of its settings folder. A folder with none gives nothing. A link
  * stops the scan, and so does a folder that can not be read to the end. A settings folder that is the user settings
@@ -532,17 +552,7 @@ const settingsOfFolder = async (
       display: homeRelative(home, join(settingsFolder, name)),
       presence: folder.presence,
     })),
-    findings:
-      settings.length > MAX_SETTINGS_FILES
-        ? [
-            finding(
-              id,
-              'fail',
-              `${shown} holds more than ${MAX_SETTINGS_FILES} settings files, and ${program} does not read all of them`,
-              `Move the settings files that the session does not need out of ${shown}, then ${doctorAgain}.`,
-            ),
-          ]
-        : [],
+    findings: settings.length > MAX_SETTINGS_FILES ? [tooManySettings(id, shown)] : [],
   };
 };
 
@@ -652,6 +662,72 @@ export const checkFolderSettings = async (
   const found = await settingsOfFolder(deps, home, userClaudeFolderOf(deps), { path: folder, presence });
   const judged = await judgeSources(deps, found.sources);
   return withoutRepeats([...found.findings, ...judged.findings, ...unreadFindings(judged.unread)]);
+};
+
+/** What the settings files of a commit give: the findings, and the text of the settings file that the program writes to. */
+export interface TrackedSettings {
+  readonly findings: readonly RootFinding[];
+  /** The text of the file `localSettingsFile` in the commit, or null when the commit has no file of that name that can be read. */
+  readonly localText: string | null;
+}
+
+/** The text of a file of git that the check reads, or null for a link, a large file or any entry that is not a plain file. */
+const trackedText = async (deps: Deps, clone: string, entry: TreeEntry): Promise<string | null> => {
+  const readable = entry.kind === 'blob' && isFileMode(entry.mode) && entry.size !== null && entry.size <= trackedFiles.maxFileBytes;
+  if (!readable) return null;
+  const text = await blobTextOf(deps, clone, entry.id);
+  return text.ok ? text.value : null;
+};
+
+/**
+ * The failures and warnings for the settings files that the last commit of `clone` tracks in its settings folder. A new work
+ * tree of the clone starts from that commit, so the result is what `checkFolderSettings` gives for `folder` after the checkout:
+ * the same judgment, with the same stops for a link and for a file that can not be read. A command that makes the work copy calls
+ * this first, so a stop comes before the work copy exists. Git is read, and no call of the file system names `folder`, which may
+ * not exist yet. A clone that git can not read is a failure.
+ */
+export const checkTrackedSettings = async (
+  deps: Deps,
+  home: string,
+  clone: string,
+  folder: { readonly path: string; readonly presence: string },
+): Promise<CliResult<TrackedSettings>> => {
+  const id = checkIds.permissionMode;
+  const settingsFolder = join(folder.path, dirs.claude);
+  const shown = shownPath(homeRelative(home, settingsFolder));
+  const own = await headEntriesAt(deps, clone, dirs.claude);
+  if (!own.ok) return own;
+  const entry = own.value.find((candidate) => candidate.path === dirs.claude);
+  if (entry === undefined) return ok({ findings: [], localText: null });
+  if (entry.mode === LINK_MODE) return ok({ findings: linkStop(id, shown).findings, localText: null });
+  if (entry.kind !== 'tree') {
+    const notFolder = finding(
+      id,
+      'fail',
+      `${shown} is not a folder, so ${program} can not write its settings file there`,
+      `Make ${shown} a folder in the repo of the project, or remove it from the repo.`,
+    );
+    return ok({ findings: [notFolder], localText: null });
+  }
+  const children = await headEntriesAt(deps, clone, `${dirs.claude}/`);
+  if (!children.ok) return children;
+  const settings = children.value.filter((child) => isSettingsName(basename(child.path))).sort((a, b) => a.path.localeCompare(b.path));
+  const findings: RootFinding[] = settings.length > MAX_SETTINGS_FILES ? [tooManySettings(id, shown)] : [];
+  const unread: string[] = [];
+  let localText: string | null = null;
+  for (const child of settings.slice(0, MAX_SETTINGS_FILES)) {
+    const name = basename(child.path);
+    const absolute = join(settingsFolder, name);
+    const display = homeRelative(home, absolute);
+    const text = child.mode === LINK_MODE ? null : await trackedText(deps, clone, child);
+    if (text === null) {
+      unread.push(`${shownPath(display)} (${child.mode === LINK_MODE ? 'a link' : 'cannot be read'})`);
+      continue;
+    }
+    findings.push(...judgeSettings({ absolute, display, presence: folder.presence }, text));
+    if (name === localSettingsFile) localText = text;
+  }
+  return ok({ findings: withoutRepeats([...findings, ...unreadFindings(unread)]), localText });
 };
 
 /**
@@ -796,11 +872,11 @@ export const rootCheckResults = (scan: RootScan): readonly RootCheckResult[] => 
 export const hasRootFailure = (scan: RootScan): boolean => scan.findings.some((entry) => entry.level === 'fail');
 
 /**
- * The stop of `start` (exit 4): the failures, at most three of them by name, and one line with the distinct remedies.
- * A warning never stops. Nothing starts after a stop.
+ * The stop (exit 4) for a list of findings: the failures, at most three of them by name, and one line with the distinct
+ * remedies. A warning never stops. Nothing starts after a stop.
  */
-export const requireRootClean = (scan: RootScan): CliResult<void> => {
-  const failures = scan.findings.filter((entry) => entry.level === 'fail');
+export const requireNoFailures = (findings: readonly RootFinding[]): CliResult<void> => {
+  const failures = findings.filter((entry) => entry.level === 'fail');
   if (failures.length === 0) return ok(undefined);
   const shown = failures.slice(0, MAX_NAMED_FAILURES).map((entry) => entry.text);
   const rest = failures.length - shown.length;
@@ -808,9 +884,16 @@ export const requireRootClean = (scan: RootScan): CliResult<void> => {
   return safetyRefusal(`${shown.join('; ')}${rest > 0 ? ` and ${rest} more` : ''}`, remedies.join(' '));
 };
 
+/** The stop of `start` for the findings of the root checks. */
+export const requireRootClean = (scan: RootScan): CliResult<void> => requireNoFailures(scan.findings);
+
+/** One line for each warning of a list of findings, with its remedy. */
+export const warningLines = (findings: readonly RootFinding[]): readonly string[] =>
+  findings.filter((entry) => entry.level === 'warn').map(sentence);
+
 /** The lines that `start` prints before it acts: each warning with its remedy, and the approval points that are delegated. */
 export const rootNotices = (scan: RootScan): readonly string[] => [
-  ...scan.findings.filter((entry) => entry.level === 'warn').map(sentence),
+  ...warningLines(scan.findings),
   ...(scan.delegations === null || scan.delegations.active.length === 0
     ? []
     : [`Approval points with the mode ${DELEGATED}: ${scan.delegations.active.map((entry) => `${entry.point} since ${entry.at}`).join(', ')}.`]),

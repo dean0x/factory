@@ -79,6 +79,10 @@ step "docs check"
 logged docs sh "$root/scripts/check-intent-docs.sh"
 tail -n 1 "$tmp/docs.log"
 
+step "session-stop check"
+logged session-stop sh "$root/scripts/check-session-stop.sh"
+tail -n 1 "$tmp/session-stop.log"
+
 step "pack"
 pack() { (cd "$root" && npm pack --silent --ignore-scripts --pack-destination "$tmp/pack"); }
 logged pack pack

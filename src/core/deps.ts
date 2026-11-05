@@ -169,6 +169,23 @@ export interface Deps {
   warn(message: string): void;
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly signals: SignalSource;
+  /**
+   * Ask the process with this pid to end: send it the TERM signal, and no other signal. The value is `sent`, or `gone` when no
+   * process has this pid. The call refuses a pid that is not a whole number above 1, and the pid of this process: it sends
+   * nothing for them, so it never reaches a process group or every process.
+   */
+  terminate(pid: number): CliResult<'sent' | 'gone'>;
+  /**
+   * True when a process with this pid exists. A process of another user exists too. A process that has ended and waits only for its
+   * parent to collect its exit status (a zombie) has ended: it counts as not running, when the system says so. A process whose state
+   * can not be read counts as running. The same refusals as `terminate`.
+   */
+  isRunning(pid: number): CliResult<boolean>;
+  /**
+   * `bytes` random bytes from the system source, as lower case hex text with two characters for each byte. The call refuses a
+   * count that is not a whole number from 1 to 64.
+   */
+  randomHex(bytes: number): CliResult<string>;
   /** One GET request with a time limit. Any HTTP answer is a success. */
   fetch(url: string, timeoutMs: number): Promise<CliResult<FetchStatus>>;
   now(): Date;

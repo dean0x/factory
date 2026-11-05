@@ -44,6 +44,26 @@ describe('parseConfigTexts', () => {
     expect(parsed.ok && parsed.value).toEqual(sampleConfig());
   });
 
+  it('writes session.agent and limits.idle_after in the shared file only, and reads them back', () => {
+    const base = sampleConfig();
+    const texts = renderConfig(withCore({ limits: { ...base.core.limits, idle_after: '90m' } }));
+    expect(texts.shared).toMatch(/^session:\n(?: {2}.+\n)* {2}agent: claude(?: +#.*)?$/m);
+    expect(texts.shared).toMatch(/^limits:\n(?: {2}.+\n)* {2}idle_after: 90m(?: +#.*)?$/m);
+    expect(texts.local).not.toContain('agent:');
+    expect(texts.local).not.toContain('idle_after:');
+    const parsed = parseConfigTexts(texts.shared, texts.local);
+    expect(parsed.ok && [parsed.value.core.session.agent, parsed.value.core.limits.idle_after]).toEqual(['claude', '90m']);
+  });
+
+  it('loads the shared text of a node that has no agent key and no idle_after key', () => {
+    const texts = sample();
+    const older = texts.shared.replace(/^ {2}agent: .*\n/m, '').replace(/^ {2}idle_after: .*\n/m, '');
+    expect(older).not.toContain('agent:');
+    expect(older).not.toContain('idle_after:');
+    const parsed = parseConfigTexts(older, texts.local);
+    expect(parsed.ok && [parsed.value.core.session.agent, parsed.value.core.limits.idle_after]).toEqual(['claude', '2h']);
+  });
+
   it('fails, and names the key and the file, for a shared text that is not valid', () => {
     const texts = sample();
     const parsed = parseConfigTexts(texts.shared.replace('effort: high', 'effort: wild'), texts.local);
@@ -495,10 +515,17 @@ describe('renderConfig', () => {
       core: {
         ...base.core,
         owner: { ...base.core.owner, display: 'Name: "quoted" # not a comment', github: 'some-login' },
-        session: { permission_mode: 'auto', effort: 'max', model: 'a model', proxy: 'local', statusline: 'my-status --short' },
+        session: {
+          permission_mode: 'auto',
+          agent: 'claude',
+          effort: 'max',
+          model: 'a model',
+          proxy: 'local',
+          statusline: 'my-status --short',
+        },
         proxies: [{ id: 'local', base_url: 'http://127.0.0.1:8787/v1', health: '/health', on_fail: 'direct' }],
         workers: { 'web-search': { proxy: 'none' }, no: { proxy: 'local' } },
-        limits: { ...base.core.limits, load_max: 7.5 },
+        limits: { ...base.core.limits, load_max: 7.5, idle_after: '45m' },
         approval: { ...base.core.approval, [firstPoint ?? '']: 'delegated' },
         tracker: { kind: 'jira', items: 'ACME', decisions: 'ACME-DEC', watch_interval: '2h' },
         parent: { id: 'acme', address: 'file:///srv/nodes/acme-factory' },
@@ -570,6 +597,7 @@ describe('renderConfig', () => {
     ]);
     expect(shared.ok && Object.keys((shared.value as Record<string, object>)['session'] ?? {})).toEqual([
       'permission_mode',
+      'agent',
       'effort',
       'model',
     ]);

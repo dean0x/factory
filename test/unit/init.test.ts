@@ -127,7 +127,7 @@ describe('init: the files', () => {
     expect(local).toContain('github: "some-login"');
     expect(local).toContain('proxy: none');
     expect(local).toContain('children: []');
-    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'effort', 'model']) {
+    for (const key of ['node', 'limits', 'tracker', 'recipe', 'permission_mode', 'agent', 'effort', 'model', 'idle_after']) {
       expect(local).not.toMatch(new RegExp(`^\\s*${key}:`, 'm'));
     }
     expect(shared).toContain('schema: 2');
@@ -205,7 +205,7 @@ describe('init: the files', () => {
     expect(read('board.json')).toEqual({ queue: [], items: [] });
     expect(read('waiting.json')).toEqual({ intro: '', groups: [], items: [] });
     expect(read('decision-log.json')).toEqual({ rows: [] });
-    expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\n');
+    expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\n');
     expect(deps.files.get(`${HOME}/.factory/orders/.gitkeep`)).toBe('');
   });
 

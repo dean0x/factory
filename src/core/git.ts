@@ -1,4 +1,4 @@
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
 import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
@@ -8,6 +8,7 @@ import { ok } from './result.js';
 
 const GIT_TIMEOUT_MS = 15_000;
 const CLONE_TIMEOUT_MS = 300_000;
+const WORKTREE_TIMEOUT_MS = 120_000;
 /** The entry that every work tree has in its top folder: a folder, or a file for a linked work tree. */
 export const GIT_ENTRY = '.git';
 const MAX_STDERR_CHARS = 200;
@@ -176,6 +177,40 @@ export const gitClone = async (deps: Deps, url: string, target: string): Promise
   return failure(`cannot clone ${shown}: git exited with ${result.value.exitCode}${detail === '' ? '' : ` (${detail})`}`);
 };
 
+/**
+ * True when the repo of `dir` has a local branch of this name. Git answers with exit code 1 for a branch that is not there.
+ * Any other answer is a failure, because the repo may not be one.
+ */
+export const branchExists = async (deps: Deps, dir: string, branch: string): Promise<CliResult<boolean>> => {
+  if (!isBranchName(branch)) return failure('cannot look for a branch: the name is not a branch name');
+  const result = await deps.run('git', ['-C', dir, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
+  if (!result.ok) return failure(`cannot look for the branch ${branch}: ${result.error.message}`);
+  if (result.value.exitCode === 0) return ok(true);
+  if (result.value.exitCode === 1) return ok(false);
+  return failure(`cannot look for the branch ${branch}: git exited with ${result.value.exitCode}`);
+};
+
+/**
+ * Make the work copy of a worker: a new work tree of the repo of `clone` in `folder`, on the new branch `branch`. The branch
+ * starts at the head of the clone. Git makes the folders above `folder`, and it fails when the branch or the folder exists.
+ * The time limit is longer than for the other calls, because git writes every file of the project.
+ */
+export const addWorkTree = async (deps: Deps, clone: string, branch: string, folder: string): Promise<CliResult<void>> => {
+  if (!isBranchName(branch)) return failure('cannot make the work copy: the branch is not a branch name');
+  if (!isAbsolute(folder)) return failure('cannot make the work copy: the folder is not an absolute path');
+  const what = `make the work copy ${folder}`;
+  const result = await deps.run('git', ['-C', clone, 'worktree', 'add', '-b', branch, folder], { timeoutMs: WORKTREE_TIMEOUT_MS });
+  if (!result.ok && result.error.message.endsWith(`: ${TIME_LIMIT_SIGNAL}`)) {
+    return failure(`cannot ${what}: git took longer than ${WORKTREE_TIMEOUT_MS / 1000} seconds`);
+  }
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode === 0) return ok(undefined);
+  const detail = withoutUserinfo(result.value.stderr.trim().split('\n').at(-1) ?? '').slice(0, MAX_STDERR_CHARS);
+  return failure(`cannot ${what}: git exited with ${result.value.exitCode}${detail === '' ? '' : ` (${detail})`}`);
+};
+
 export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>
   gitStep(deps, dir, ['init', '-q'], 'create the state repository');
 
@@ -302,6 +337,68 @@ export const trackedFilesOf = async (
     .split('\0')
     .filter((path) => path !== '' && (userFolder === null || !isWrittenInside(deps, userFolder, join(dir, path))));
   return ok({ paths: paths.slice(0, maxCount), reachedCap: paths.length > maxCount });
+};
+
+/** The git mode of a link. */
+export const LINK_MODE = '120000';
+
+const FILE_MODES: ReadonlySet<string> = new Set(['100644', '100755']);
+
+/** True for the git mode of a plain file. */
+export const isFileMode = (mode: string): boolean => FILE_MODES.has(mode);
+
+/** One entry of a git tree. */
+export interface TreeEntry {
+  readonly mode: string;
+  /** `blob` for a file or a link, `tree` for a folder, `commit` for a submodule. */
+  readonly kind: string;
+  readonly id: string;
+  /** The size in bytes of a file or a link, or null for any other entry. */
+  readonly size: number | null;
+  /** The path from the top folder of the repo. */
+  readonly path: string;
+}
+
+/** `<mode> <kind> <id> <size>TAB<path>`: the line of `git ls-tree -l -z`. The size is padded with spaces, and a folder has `-`. */
+const TREE_ENTRY = /^(\d{6}) ([a-z]+) ([0-9a-f]{40,64}) +(-|\d+)\t([\s\S]+)$/;
+
+const treeEntryOf = (record: string): TreeEntry | null => {
+  const [, mode, kind, id, size, path] = TREE_ENTRY.exec(record) ?? [];
+  if (mode === undefined || kind === undefined || id === undefined || size === undefined || path === undefined) return null;
+  return { mode, kind, id, size: size === '-' ? null : Number(size), path };
+};
+
+/**
+ * The entries that the last commit (HEAD) of the repo at `dir` has at `path` (`git ls-tree -z -l`), one level deep. A path with no
+ * trailing slash gives the entry of the path itself: a folder, a file or a link. A path with a trailing slash gives the entries
+ * of that folder. A repo with no commit, or a path that git can not read, is a failure. The commit is the one that a new work
+ * tree of the repo starts from.
+ */
+export const headEntriesAt = async (deps: Deps, dir: string, path: string): Promise<CliResult<readonly TreeEntry[]>> => {
+  const what = `cannot read ${path} of the last commit of ${dir}`;
+  const result = await deps.run('git', ['-C', dir, 'ls-tree', '-z', '-l', 'HEAD', '--', path], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  const entries: TreeEntry[] = [];
+  for (const record of result.value.stdout.split('\0')) {
+    if (record === '') continue;
+    const entry = treeEntryOf(record);
+    if (entry === null) return failure(`${what}: git printed an entry that ${program} can not read`);
+    entries.push(entry);
+  }
+  return ok(entries);
+};
+
+const OBJECT_ID = /^[0-9a-f]{40,64}$/;
+
+/** The text of the file of git with this object id. The caller checks the size first, from the entry of the file. */
+export const blobTextOf = async (deps: Deps, dir: string, id: string): Promise<CliResult<string>> => {
+  if (!OBJECT_ID.test(id)) return failure('cannot read a file of git: the object id is not valid');
+  const what = `cannot read the file ${id} of ${dir}`;
+  const result = await deps.run('git', ['-C', dir, 'cat-file', 'blob', id], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  return ok(result.value.stdout);
 };
 
 /** The most paths that one ignore check takes. */
