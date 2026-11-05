@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { failure, type CliResult } from '../cli/errors.js';
+import { failure, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { commitPaths, requireStateRepoCommit, unstagePaths, type RepoPaths } from '../core/git.js';
 import { ok } from '../core/result.js';
@@ -139,6 +139,16 @@ export const readActiveMark = async (deps: Deps, home: string): Promise<CliResul
   return ok({ state: 'valid', mark: { machine: parsed.data[keys.machine], at: parsed.data[keys.at] }, text });
 };
 
+/**
+ * True when the mark is valid and names this machine. A mark or an id that can not be read counts as not naming it, and the claim
+ * that follows reports the fault.
+ */
+export const markNamesThisMachine = async (deps: Deps, home: string): Promise<boolean> => {
+  const machine = await machineIdOf(deps, home);
+  const mark = await readActiveMark(deps, home);
+  return machine.ok && mark.ok && mark.value.state === 'valid' && mark.value.mark.machine === machine.value;
+};
+
 const markTextOf = (machine: string, at: Date): string =>
   `${JSON.stringify({ [keys.schema]: schemaIds.activeMachine, [keys.machine]: machine, [keys.at]: at.toISOString() })}\n`;
 
@@ -150,7 +160,11 @@ const otherMachineWarning = (other: ActiveMark): string =>
   `The state shows another machine as the active one: ${other.machine}, since ${other.at}. ` +
   `Two machines that run one ${places.folder} can write the same branches. ${STOP_OTHER_MACHINE}`;
 
-const notMarked = (reason: string): string => `The mark of the active machine is not written: ${reason}.`;
+/** The warning for a mark that is not written: the reason, and the remedy of the error when it has one. */
+const notMarked = (reason: string, hint?: string): string =>
+  `The mark of the active machine is not written: ${reason}.${hint === undefined ? '' : ` ${hint}`}`;
+
+const notMarkedBy = (error: CliError): string => notMarked(error.message, error.hint);
 
 /**
  * Put the file of the mark back after a commit that failed: the text that it had, or no file when it had none. Then clear the
@@ -180,12 +194,12 @@ export const claimActiveMachine = async (deps: Deps, home: string): Promise<Clai
   const layout = layoutOf(home);
   const id = await machineIdOf(deps, home);
   if (!id.ok) {
-    deps.warn(notMarked(id.error.message));
+    deps.warn(notMarkedBy(id.error));
     return { claimed: false, other: null };
   }
   const read = await readActiveMark(deps, home);
   if (!read.ok) {
-    deps.warn(notMarked(read.error.message));
+    deps.warn(notMarkedBy(read.error));
     return { claimed: false, other: null };
   }
   const other = read.value.state === 'valid' && read.value.mark.machine !== id.value ? read.value.mark : null;
@@ -200,13 +214,13 @@ export const claimActiveMachine = async (deps: Deps, home: string): Promise<Clai
 
   const ready = await requireStateRepoCommit(deps, layout.stateDir, [files.activeMachine], 'this command', commands.start);
   if (!ready.ok) {
-    deps.warn(notMarked(ready.error.message));
+    deps.warn(notMarkedBy(ready.error));
     return { claimed: false, other };
   }
   const previous = read.value.state === 'absent' ? null : read.value.text;
   const written = await deps.fs.writeTextAtomic(layout.activeMachineFile, markTextOf(id.value, deps.now()), layout.stateDir);
   if (!written.ok) {
-    deps.warn(notMarked(written.error.message));
+    deps.warn(notMarkedBy(written.error));
     return { claimed: false, other };
   }
   const committed = await commitPaths(deps, layout.stateDir, MARK_PATHS, activeMachine.commitMessages.set);

@@ -32,7 +32,7 @@ import {
   type CommandName,
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
-import { claimActiveMachine, machineIdOf, readActiveMark } from '../state/active-machine.js';
+import { claimActiveMachine, markNamesThisMachine } from '../state/active-machine.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import type { SetupTexts } from '../templates/types.js';
 import { renderSetupText } from '../upgrade/render.js';
@@ -174,16 +174,6 @@ const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, a
   if (recovered.ok) return recovered.value;
   deps.warn(`The ${roles.worker}s are not resumed: ${recovered.error.message}. ${recovered.error.hint ?? ''}`.trimEnd());
   return null;
-};
-
-/**
- * True when the mark of the active machine is valid and names this machine. A mark or an id that can not be read counts as not
- * naming it, and the claim that follows reports the fault.
- */
-const markNamesThisMachine = async (deps: Deps, home: string): Promise<boolean> => {
-  const machine = await machineIdOf(deps, home);
-  const mark = await readActiveMark(deps, home);
-  return machine.ok && mark.ok && mark.value.state === 'valid' && mark.value.mark.machine === machine.value;
 };
 
 /**

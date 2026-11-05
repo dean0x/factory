@@ -5,6 +5,7 @@ import {
   claimActiveMachine,
   clearActiveMark,
   machineIdOf,
+  markNamesThisMachine,
   readActiveMark,
 } from '../../src/state/active-machine.js';
 import { createFakeDeps, exited, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
@@ -254,6 +255,13 @@ describe('the mark of the active machine: the claim', () => {
     },
   );
 
+  it('ends the warning with the command that tries again, which claims the mark also while the session runs', async () => {
+    const deps = make({ identity: false });
+    await claimActiveMachine(deps, HOME);
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain('Set both with "git config --global", then run "factory start" again.');
+  });
+
   it('still warns about another machine when it can not commit the mark', async () => {
     const deps = make({ identity: false });
     deps.seed(LAYOUT.activeMachineFile, markText(OTHER_ID, OTHER_AT));
@@ -290,6 +298,38 @@ describe('the mark of the active machine: the claim', () => {
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain(files.machineId);
     expect(writesOf(deps)).toEqual([]);
+  });
+});
+
+describe('the mark of the active machine: who it names', () => {
+  const withMark = (text: string): FakeDeps => {
+    const deps = make();
+    deps.seed(LAYOUT.machineIdFile, `${FIRST_ID}\n`);
+    deps.seed(LAYOUT.activeMachineFile, text);
+    return deps;
+  };
+
+  it('is true for a valid mark that names this machine', async () => {
+    expect(await markNamesThisMachine(withMark(markText(FIRST_ID, OTHER_AT)), HOME)).toBe(true);
+  });
+
+  it.each([
+    ['names another machine', markText(OTHER_ID, OTHER_AT)],
+    ['is not valid', 'not json'],
+  ])('is false for a mark that %s', async (_name, text) => {
+    expect(await markNamesThisMachine(withMark(text), HOME)).toBe(false);
+  });
+
+  it('is false when there is no mark', async () => {
+    const deps = make();
+    deps.seed(LAYOUT.machineIdFile, `${FIRST_ID}\n`);
+    expect(await markNamesThisMachine(deps, HOME)).toBe(false);
+  });
+
+  it('is false when the id of the machine can not be read', async () => {
+    const deps = withMark(markText(FIRST_ID, OTHER_AT));
+    deps.seed(LAYOUT.machineIdFile, 'not an id\n');
+    expect(await markNamesThisMachine(deps, HOME)).toBe(false);
   });
 });
 
