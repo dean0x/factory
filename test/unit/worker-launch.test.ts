@@ -6,7 +6,14 @@ import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
 import { launchConfirm } from '../../src/names.js';
-import { launchWorker, newProxyAnswers, type WorkerLaunch, type WorkerLaunchRequest } from '../../src/workers/launch.js';
+import {
+  launchWorker,
+  newProxyAnswers,
+  resumeWorker,
+  type WorkerLaunch,
+  type WorkerLaunchRequest,
+  type WorkerResumeRequest,
+} from '../../src/workers/launch.js';
 import { createFakeDeps, exited, type FakeDeps, type FetchHandler, type RunCall } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
@@ -818,6 +825,43 @@ describe('the launch of a worker: a launch with no resume id checks the pane onc
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
     expect(error.hint).not.toContain(POINTER);
+  });
+});
+
+describe('the resume of a worker: the shared launch of a stopped worker', () => {
+  const DEAD_PANE = '%20';
+  const deadPane = { paneId: DEAD_PANE, pid: 4000, dead: true, inView: false } as const;
+  const withDeadPane = (): Made => make({ tmux: { panes: [{ id: DEAD_PANE, session: 'demo', options: { '@worker': 'alpha' }, dead: true }] } });
+
+  const resumed = async (made: Made, change: Partial<WorkerResumeRequest> = {}) => resumeWorker(made.deps, { ...request(), ...change });
+
+  it('launches with the checked id after --resume', async () => {
+    const made = make();
+    const result = await resumed(made, { resumeId: UUID });
+    expect(result).toMatchObject({ ok: true, value: { paneId: FIRST_NEW_PANE } });
+    const words = wordsOf(made.tmux);
+    expect(words[words.indexOf('--resume') + 1]).toBe(UUID);
+  });
+
+  it('starts a new conversation, with no --resume, when the caller gives no id', async () => {
+    const made = make({ program: () => undefined });
+    expect(await resumed(made)).toMatchObject({ ok: true, value: { paneId: FIRST_NEW_PANE } });
+    expect(wordsOf(made.tmux)).not.toContain('--resume');
+  });
+
+  it('closes each dead pane of the worker by its id before the launch', async () => {
+    const made = withDeadPane();
+    expect(await resumed(made, { resumeId: UUID, deadPanes: [deadPane] })).toMatchObject({ ok: true });
+    expect(made.tmux.panes().map((pane) => pane.id)).not.toContain(DEAD_PANE);
+    expect(made.events.indexOf('tmux kill-pane')).toBeGreaterThanOrEqual(0);
+    expect(made.events.indexOf('tmux kill-pane')).toBeLessThan(made.events.indexOf('tmux split-window'));
+  });
+
+  it('refuses an id that is not a UUID and starts nothing, as the launch does', async () => {
+    const made = make();
+    const result = await resumed(made, { resumeId: 'not-a-uuid' });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(made.events).toEqual([]);
   });
 });
 

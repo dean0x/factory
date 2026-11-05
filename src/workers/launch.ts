@@ -15,8 +15,9 @@ import { commandLines, commands, commandText, dirs, env, keys, places, roles, tm
 import { checkProxyHealth, type ProxyHealth } from '../safety/proxy.js';
 import { layoutOf } from '../state/layout.js';
 import { confirmLaunch, paneFailure, type PaneFailureRequest } from './confirm.js';
-import { closePane } from './panes.js';
+import { closePane, type BoundPane } from './panes.js';
 import { workCopyOf } from './registry.js';
+import { closeWorkerPane } from './slot.js';
 
 /**
  * The one path that starts a worker (design 4.6): `worker new`, `worker resume`, and later `restart`, `reboot` and the restore
@@ -164,8 +165,12 @@ const requireWorkCopy = async (deps: Deps, home: string, workerId: string, workC
   );
 };
 
-/** The settings files of the work copy: a failure stops the launch (exit 4), and a warning is printed at once. */
-const requireCleanSettings = async (deps: Deps, home: string, workCopy: string): Promise<CliResult<void>> => {
+/**
+ * The settings files of the work copy: a failure stops the launch (exit 4), and a warning is printed at once. `launchWorker`
+ * runs it. A command that must check the work copy before it changes anything, for example before it stops a worker, can run
+ * it alone.
+ */
+export const requireCleanSettings = async (deps: Deps, home: string, workCopy: string): Promise<CliResult<void>> => {
   const findings = await checkFolderSettings(deps, home, workCopy, WORK_COPY_PLACE);
   const clean = requireNoFailures(findings);
   if (!clean.ok) return clean;
@@ -337,4 +342,25 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
     proxy: proxy.value.label,
     warnings: [...(proxy.value.warning === undefined ? [] : [proxy.value.warning]), ...tileWarnings],
   });
+};
+
+export interface WorkerResumeRequest extends WorkerLaunchRequest {
+  /** The panes of the worker whose programs ended. They are closed, by id, before the launch. */
+  readonly deadPanes?: readonly BoundPane[];
+}
+
+/**
+ * Starts a stopped worker again: closes the old panes of the worker whose programs ended, then launches (`launchWorker`, which
+ * waits for the pane to prove itself). `resumeId` is the id of an earlier session that the caller has checked: the caller
+ * decides what a bad id means. `worker resume` starts a new conversation without `resumeId` and warns, and a recovery or a
+ * restart passes only an id that passed the strict check, and starts nothing for a worker that has none. The caller has
+ * checked the root, the tools and the tmux session (`prepareLaunch`), and that no pane of the worker runs.
+ */
+export const resumeWorker = async (deps: Deps, request: WorkerResumeRequest): Promise<CliResult<WorkerLaunch>> => {
+  const { deadPanes = [], ...launch } = request;
+  for (const pane of deadPanes) {
+    const closed = await closeWorkerPane(deps, launch.config.core.node.id, pane.paneId);
+    if (!closed.ok) return closed;
+  }
+  return launchWorker(deps, launch);
 };

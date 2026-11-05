@@ -1,21 +1,39 @@
 import { join } from 'node:path';
 import { inspectBlock, safetyStateOf } from '../blocks/status.js';
-import { safetyRefusal, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { loadConfig, settleLocalMode } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
+import { shellWord } from '../core/shell-word.js';
 import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
-import { blockNames, capitalize, commands, commandText, dirs, files, overwriteCommand, program } from '../names.js';
+import { requireSession } from '../launch/tmux-run.js';
+import {
+  blockNames,
+  capitalize,
+  commands,
+  commandText,
+  dirs,
+  files,
+  flags,
+  flagText,
+  overwriteCommand,
+  program,
+} from '../names.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { safetyTemplateFor } from '../templates/index.js';
 import { planBlock } from '../upgrade/plan.js';
 import { writeBlockPlans } from '../upgrade/render.js';
+import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
 
 /**
  * The checks that come before every launch of a session, after the root checks: the tools that the launch needs, and the
- * safety block of the coordinator file. `start` and `worker new` use them.
+ * safety block of the coordinator file. `start` uses them. A command that starts a worker pane uses `prepareLaunch`, which makes
+ * the same checks in the order of `start`.
  */
 
 const MIN_TMUX_TEXT = `${MIN_TMUX.major}.${MIN_TMUX.minor}`;
@@ -94,4 +112,56 @@ export const requireSafetyBlock = async (
       return unreachable;
     }
   }
+};
+
+/** The end of the warning for a safety block that is out of date: a command that starts a worker does not render it, and the next `start` does. */
+const RENDERED_BY_START = `This command does not render it again: the next "${commandText(commands.start)}" does.`;
+
+/**
+ * The checks of the root and of the tools, as `start` makes them. A failing root check is a stop (exit 4) with one remedy
+ * line, a warning is printed, and nothing changes. The owner accepts a change of the setup text with `start` or `upgrade`:
+ * this command asks nothing about it. The safety block is checked and never rendered again here: a block that is out of
+ * date gives a warning, and the next `start` renders it.
+ */
+export const requireLaunchReady = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<void>> => {
+  const scan = await scanRoot(deps, home, config);
+  for (const notice of rootNotices(scan)) deps.warn(notice);
+  const clean = requireRootClean(scan);
+  if (!clean.ok) return clean;
+  const safety = await requireSafetyBlock(deps, home, config, true, RENDERED_BY_START);
+  if (!safety.ok) return safety;
+  for (const note of safety.value) deps.warn(note);
+  const problems = await toolProblems(deps, true);
+  if (problems.length > 0) {
+    return failure(
+      problems.join('. '),
+      `Run "${commandText(commands.doctor)} ${flagText(flags.home)} ${shellWord(home)}" to check the tools.`,
+    );
+  }
+  return ok(undefined);
+};
+
+/**
+ * Everything that a command that starts a pane checks before its own checks, in this order: the warning about instruction files,
+ * the config, the local mode, the root and the tools (exit 4, and nothing changes), and the tmux session of the node (exit 3).
+ * `again` is the command line that a person runs again after a fix.
+ */
+export const prepareLaunch = async (
+  deps: Deps,
+  home: string,
+  registry: RecipeRegistry,
+  again: string,
+): Promise<CliResult<{ readonly config: FactoryConfig; readonly notes: readonly string[] }>> => {
+  // The warning about instruction files comes before any change or launch, and it never stops the command.
+  await warnInstructionFiles(deps, home);
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const config = loaded.value;
+  const notes = await settleLocalMode(deps, home, true);
+  if (!notes.ok) return notes;
+  const ready = await requireLaunchReady(deps, home, config);
+  if (!ready.ok) return ready;
+  const session = await requireSession(deps, config.core.node.id, home, again);
+  if (!session.ok) return session;
+  return ok({ config, notes: notes.value });
 };
