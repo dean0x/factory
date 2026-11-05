@@ -82,6 +82,8 @@ export interface Lab {
   node(options?: NodeOptions): Promise<void>;
   /** Writes the SessionStart line of a session, as the hook of the program does. */
   sessionStarted(marker: Marker): Promise<RunResult>;
+  /** One hook event of a session, as Claude Code sends it. `UserPromptSubmit` makes the session busy. */
+  event(marker: Marker, name: string): Promise<RunResult>;
   waitForFile(name: string): Promise<string>;
   argvOf(marker: Marker): Promise<readonly string[]>;
   /** How many times the program ran with this session marker. */
@@ -210,12 +212,14 @@ export const useLab = (): Lab => {
     expect(made.code, made.stderr).toBe(0);
   };
 
-  const sessionStarted = (marker: Marker): Promise<RunResult> =>
-    sandbox().run(['hook', 'SessionStart'], {
+  const event = (marker: Marker, name: string): Promise<RunResult> =>
+    sandbox().run(['hook', name], {
       cwd: sandbox().node,
       env: { FACTORY_HOME: sandbox().node, FACTORY_SESSION: marker },
-      input: JSON.stringify({ session_id: SESSIONS[marker], hook_event_name: 'SessionStart' }),
+      input: JSON.stringify({ session_id: SESSIONS[marker], hook_event_name: name }),
     });
+
+  const sessionStarted = (marker: Marker): Promise<RunResult> => event(marker, 'SessionStart');
 
   const node = async (options: NodeOptions = {}): Promise<void> => {
     await init();
@@ -251,6 +255,7 @@ export const useLab = (): Lab => {
     init,
     node,
     sessionStarted,
+    event,
     waitForFile,
     argvOf: async (marker) => (await readFile(join(outDir, `argv-${marker}`), 'utf8')).trim().split('\n'),
     launchCount: async (marker) =>

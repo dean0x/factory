@@ -1355,6 +1355,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       expect(made.deps.warned).toHaveLength(1);
       expect(made.deps.warned[0]).toContain(OTHER_MACHINE);
       expect(made.deps.warned[0]).toContain(OTHER_AT);
+      expect(made.deps.warned[0]).toContain('factory shutdown');
       // Only the split of the view window had run: no worker had a pane yet.
       expect(made.splitsAtWarnings).toEqual([1]);
       expect(splitsOf(made.deps)).toBe(1 + IDS.length);

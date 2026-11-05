@@ -12,7 +12,7 @@ const resumeIdOf = (argv: readonly string[]): string | undefined => {
   return at < 0 ? undefined : argv[at + 1];
 };
 
-describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, AC-19, TP-17, TP-43, TP-44, TP-131, TP-132)', () => {
+describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, AC-19, TP-17, TP-43, TP-44, TP-132)', () => {
   it('stops one worker and starts it again with its session id, and the other worker keeps its pane and its process (TP-43)', async () => {
     await lab.node();
     const alpha = await lab.livePaneOf('alpha');
@@ -85,6 +85,8 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, 
     const made = await lab.tmux(['new-session', '-d', '-s', 'demo', '-P', '-F', '#{pane_pid}', 'sleep 300']);
     expect(made.code, made.stderr).toBe(0);
     const pid = Number(made.stdout.trim());
+    const other = join(lab.box.root, 'other-home');
+    expect((await lab.tmux(['set-option', '-t', '=demo:', '@factory_home', other])).code).toBe(0);
 
     const result = await lab.factory('restart', ['alpha']);
     expect(result.code, result.stderr).toBe(4);

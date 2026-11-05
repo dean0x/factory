@@ -1,4 +1,5 @@
 import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded } from './lifecycle-lab.js';
 
@@ -78,6 +79,8 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, A
     const made = await lab.tmux(['new-session', '-d', '-s', 'demo', '-P', '-F', '#{pane_pid}', 'sleep 300']);
     expect(made.code, made.stderr).toBe(0);
     const pid = Number(made.stdout.trim());
+    const other = join(lab.box.root, 'other-home');
+    expect((await lab.tmux(['set-option', '-t', '=demo:', '@factory_home', other])).code).toBe(0);
 
     const result = await lab.factory('reboot');
     expect(result.code, result.stderr).toBe(4);

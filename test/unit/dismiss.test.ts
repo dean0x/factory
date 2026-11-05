@@ -429,7 +429,7 @@ describe('dismiss ID: the work must be pushed', () => {
 });
 
 describe('dismiss ID --yes: the free', () => {
-  it('ends the pane, removes the work copy with no force, and deletes the record and its last-seen line, in this order (TP-53, TP-55, TP-57)', async () => {
+  it('ends the pane before it removes the work copy with no force, and deletes the record and its last-seen line (TP-53, TP-55, TP-57)', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     const pane = paneOf(made, 'alpha');
     const output = await outputOf(made, { words: ['alpha'], yes: true });

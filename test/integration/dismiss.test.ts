@@ -19,14 +19,6 @@ const push = async (id: string): Promise<void> => {
   expect(pushed.code, pushed.stderr).toBe(0);
 };
 
-/** One hook event of a worker session, as Claude Code sends it. */
-const event = (marker: Marker, name: string) =>
-  lab.box.run(['hook', name], {
-    cwd: lab.box.node,
-    env: { FACTORY_HOME: lab.box.node, FACTORY_SESSION: marker },
-    input: JSON.stringify({ session_id: SESSIONS[marker], hook_event_name: name }),
-  });
-
 /** Nothing of the worker changed: its work copy, its record, its last-seen line and its live pane are there. */
 const expectIntact = async (id: Marker): Promise<void> => {
   expect(existsSync(copyOf(id))).toBe(true);
@@ -205,7 +197,7 @@ describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick s
   it('refuses a worker whose session works with exit 1 and a remedy, and ends nothing', async () => {
     await lab.node();
     await push('alpha');
-    expect((await event('alpha', 'UserPromptSubmit')).code).toBe(0);
+    expect((await lab.event('alpha', 'UserPromptSubmit')).code).toBe(0);
 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stdout).toBe(1);

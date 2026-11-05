@@ -747,9 +747,19 @@ describe.skipIf(!hasTmux)(
         },
       ],
       [
-        'a worker whose pointer names a session of the coordinator (TP-134)',
+        'a worker whose pointer names a session of the coordinator',
         async (): Promise<void> => {
           await writeFile(pointerOf('beta'), `${COORDINATOR_SESSION}\n`, { mode: 0o600 });
+        },
+      ],
+      [
+        'a worker whose last-seen line has no session marker, as an old hook wrote it (TP-134)',
+        async (): Promise<void> => {
+          const file = join(stateOf(), 'state', 'heartbeat', SESSIONS.beta);
+          const line = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+          expect(line).toHaveProperty('session_marker', 'beta');
+          const oldLine = Object.fromEntries(Object.entries(line).filter(([key]) => key !== 'session_marker'));
+          await writeFile(file, `${JSON.stringify(oldLine)}\n`);
         },
       ],
     ])('skips %s with one warning, resumes the other worker, keeps the session and exits 0', async (_name, damage) => {

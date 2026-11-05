@@ -9,8 +9,9 @@ const MARK_FILE = 'active-machine.json';
 const CLEAR_COMMIT = 'chore: clear the mark of the active machine';
 
 describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server, AC-18, TP-39, TP-40, TP-41, TP-42, TP-135)', () => {
-  it('stops each worker, clears the mark, ends the session by its name, and leaves a session of another user and its program running (TP-39, TP-135)', async () => {
+  it('stops each worker, also one whose session works, clears the mark, ends the session by its name, and leaves a session of another user and its program running (TP-39, TP-135)', async () => {
     await lab.node();
+    expect((await lab.event('alpha', 'UserPromptSubmit')).code).toBe(0);
     const bystander = await lab.bystander();
     const pids = (await lab.workerPanes()).map((fact) => fact.pid);
     expect(pids).toHaveLength(2);
