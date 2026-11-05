@@ -425,12 +425,13 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(sessions.stdout.trim().split('\n')).toEqual(['demo']);
   });
 
-  it('refuses a session of another home with exit code 4', async () => {
+  it('refuses a session of another home with exit code 4, and the remedy names factory shutdown (TP-132)', async () => {
     await initNode();
     expect((await tmux(['new-session', '-d', '-s', 'demo', 'sleep', '300'])).code).toBe(0);
     const result = await startFactory();
     expect(result.code).toBe(4);
     expect(result.stderr).toContain('a tmux session demo belongs to another factory folder');
+    expect(result.stderr).toContain('factory shutdown');
   });
 
   it('exits 4 in a project clone that holds its own config with a proxy entry, and starts nothing (TP-16)', async () => {

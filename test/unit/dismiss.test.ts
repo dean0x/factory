@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CliError } from '../../src/cli/errors.js';
+import { exitCodeOf, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runDismiss, type DismissOptions } from '../../src/commands/dismiss.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
@@ -234,7 +234,7 @@ describe('dismiss ID: the dry run', () => {
     expect(lineExists(made, 'alpha')).toBe(true);
   });
 
-  it('names the ignored files that the removal deletes, at most the cap, and says that there are more', async () => {
+  it('names the ignored files that the removal deletes, at most the cap, says that there are more, and changes nothing (TP-56)', async () => {
     const files = Array.from({ length: dismissWords.maxIgnoredShown + 5 }, (_, index) => `cache/file-${String(index).padStart(2, '0')}.log`);
     const made = await make({ workers: [{ id: 'alpha' }], git: { ignoredFiles: { [copyOf('alpha')]: files } } });
     const text = textOf(await outputOf(made, { words: ['alpha'] }));
@@ -243,6 +243,8 @@ describe('dismiss ID: the dry run', () => {
     expect(text).toContain(at(dismissWords.maxIgnoredShown - 1));
     expect(text).not.toContain(at(dismissWords.maxIgnoredShown));
     expect(text).toContain('and more');
+    await expectNothingChanged(made, ['alpha']);
+    expect(lineExists(made, 'alpha')).toBe(true);
   });
 
   it('says nothing about ignored files when there are none, and says that the branch stays', async () => {
@@ -275,7 +277,7 @@ describe('dismiss ID: the work must be pushed', () => {
     ],
   ];
 
-  it.each(cases)('prints a STUCK line and frees nothing when %s', async (_name, git, reason) => {
+  it.each(cases)('prints a STUCK line and frees nothing when %s (TP-54)', async (_name, git, reason) => {
     const made = await make({ workers: [{ id: 'alpha' }], git });
     const dry = await outputOf(made, { words: ['alpha'] });
     const dryStuck = dry.lines.filter((line) => line.text.startsWith(dismissWords.stuck));
@@ -292,7 +294,7 @@ describe('dismiss ID: the work must be pushed', () => {
     expect(lineExists(made, 'alpha')).toBe(true);
   });
 
-  it('prints one STUCK line for each reason', async () => {
+  it('prints one STUCK line for each reason (TP-54)', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], git: { status: { [alpha]: ' M a.ts\0' }, stashes: { [alpha]: 2 } } });
     const output = await outputOf(made, { words: ['alpha'] });
     expect(output.lines.filter((line) => line.text.startsWith(dismissWords.stuck))).toHaveLength(2);
@@ -323,7 +325,7 @@ describe('dismiss ID: the work must be pushed', () => {
 });
 
 describe('dismiss ID --yes: the free', () => {
-  it('ends the pane, removes the work copy with no force, and deletes the record and its last-seen line, in this order', async () => {
+  it('ends the pane, removes the work copy with no force, and deletes the record and its last-seen line, in this order (TP-53, TP-55, TP-57)', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     const pane = paneOf(made, 'alpha');
     const output = await outputOf(made, { words: ['alpha'], yes: true });
@@ -417,17 +419,29 @@ describe('dismiss ID: a worker that must not end', () => {
     expect(output.failed).toBe(false);
   });
 
-  it('is a security stop and ends nothing when another folder owns the session of the node', async () => {
+  it('refuses a worker whose state is not known with exit 1 and a remedy that names its pane (TP-59)', async () => {
+    const made = await make({ workers: [{ id: 'alpha', event: null }] });
+    const pane = paneOf(made, 'alpha');
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.hint).toContain(`the pane ${pane.id}`);
+    expect(error.hint).toContain('dismiss alpha');
+    await expectNothingChanged(made, ['alpha']);
+    expect(hasPane(made, 'alpha')).toBe(true);
+  });
+
+  it('is a security stop and ends nothing when another folder owns the session of the node, so that session keeps running (TP-59)', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], tmux: { sessions: { [NODE]: '/other/node' } } });
     const error = await errorOf(made, { words: ['alpha'], yes: true });
     expect(error.kind).toBe('safety');
+    expect(made.tmux.sessions().has(NODE)).toBe(true);
     await expectNothingChanged(made, ['alpha']);
     expect(hasPane(made, 'alpha')).toBe(true);
   });
 });
 
 describe('dismiss ID: the path of the work copy', () => {
-  it('is a security stop for a record whose work copy is outside work-copies/', async () => {
+  it('is a security stop for a record whose work copy is outside work-copies/ (TP-55)', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     const file = workerPathsOf(HOME, 'alpha').recordFile;
     made.deps.seed(file, (made.deps.files.get(file) ?? '').replace(copyOf('alpha'), '/elsewhere/alpha'));
@@ -437,7 +451,7 @@ describe('dismiss ID: the path of the work copy', () => {
     await expectNothingChanged(made, []);
   });
 
-  it('is a security stop when a folder above the work copy is a link, and the primary clone is untouched', async () => {
+  it('is a security stop when a folder above the work copy is a link, and the primary clone is untouched (TP-55)', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], links: { [`${HOME}/work-copies/web`]: cloneOf('web') } });
     const error = await errorOf(made, { words: ['alpha'], yes: true });
     expect(error.kind).toBe('safety');
@@ -445,7 +459,7 @@ describe('dismiss ID: the path of the work copy', () => {
     await expectNothingChanged(made, ['alpha']);
   });
 
-  it('is a security stop when the real path of the work copy leaves work-copies/, whatever the checks of the path said', async () => {
+  it('is a security stop when the real path of the work copy leaves work-copies/, whatever the checks of the path said (TP-55)', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], links: { [`${HOME}/work-copies/web`]: '/elsewhere/web' } });
     // The link appears after the check of the path: lstat still says folder, and the real path leads outside.
     const hidden: FakeDeps = { ...made.deps, fs: { ...made.deps.fs, lstat: async (path) => (path === `${HOME}/work-copies/web` ? ok('dir' as const) : made.deps.fs.lstat(path)) } };
@@ -487,7 +501,7 @@ describe('dismiss --idle', () => {
 
   const idleFleet = (change: Partial<Setup> = {}): Promise<Made> => make({ workers: fleet, config, ...change });
 
-  it('lists the idle workers with their state and whether the work is pushed, and changes nothing', async () => {
+  it('lists the idle workers with their state and whether the work is pushed, and changes nothing (TP-58)', async () => {
     const made = await idleFleet({ git: { status: { [copyOf('beta')]: ' M b.ts\0' } } });
     const output = await outputOf(made, { idle: true }, portOf(items));
     const rows = rowsOf(output, 3);
@@ -509,7 +523,7 @@ describe('dismiss --idle', () => {
     expect(output.failed).toBe(false);
   });
 
-  it('fetches once for each clone, also when the owner picks', async () => {
+  it('fetches once for each clone, also when the owner picks (TP-60)', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha gamma' } });
     await outputOf(made, { idle: true }, portOf(items));
     const fetched = made.git.calls.filter((call) => call.args[2] === 'fetch').map((call) => call.args[1]);
@@ -524,7 +538,7 @@ describe('dismiss --idle', () => {
     expect(made.deps.prompts).toEqual([]);
   });
 
-  it('ends only the panes that the owner picks, and frees those workers', async () => {
+  it('ends only the panes that the owner picks on a terminal window, and frees those workers (TP-58)', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha gamma' } });
     const pane = (id: string) => paneOf(made, id).pid;
     const [alphaPid, gammaPid] = [pane('alpha'), pane('gamma')];
@@ -568,10 +582,11 @@ describe('dismiss --idle', () => {
     ['a busy worker', 'alpha', { id: 'alpha', event: 'UserPromptSubmit' }, 'dismiss --idle'],
     ['a worker whose state is not known', 'alpha', { id: 'alpha', event: null, percentOnly: true }, 'pane'],
     ['a worker with no live pane', 'alpha', { id: 'alpha', pane: false }, 'dismiss alpha'],
-  ])('refuses the pick of %s with a remedy, exit 1, and ends nothing', async (_name, pick, seed, remedy) => {
+  ])('refuses the pick of %s with a remedy, exit 1, and ends nothing (TP-59)', async (_name, pick, seed, remedy) => {
     const made = await make({ workers: [seed, { id: 'zed' }], terminal: { answer: `${pick} zed` } });
     const error = await errorOf(made, { idle: true }, portOf({ alpha: NONE, delta: NONE, zed: NONE }));
     expect(error.kind).toBe('failure');
+    expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.hint).toContain(remedy);
     await expectNothingChanged(made, [seed.id, 'zed']);
     expect(hasPane(made, 'zed')).toBe(true);
@@ -588,7 +603,7 @@ describe('dismiss --idle', () => {
     ]);
   });
 
-  it('lists, then stops with exit 4 in a factory session, and asks nothing', async () => {
+  it('lists, then stops with exit 4 in a factory session, and asks nothing (TP-60)', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha' }, env: { FACTORY_SESSION: 'demo' } });
     const output = await outputOf(made, { idle: true }, portOf(items));
     expect(output.failed).toBe(true);
@@ -599,7 +614,7 @@ describe('dismiss --idle', () => {
     await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
   });
 
-  it('stops with exit 4 in a factory session also when no worker is idle, so the exit code does not depend on the list', async () => {
+  it('stops with exit 4 in a factory session also when no worker is idle, so the exit code does not depend on the list (TP-60)', async () => {
     const made = await idleFleet({ env: { FACTORY_SESSION: 'demo' } });
     const output = await outputOf(made, { idle: true });
     expect(textOf(output)).toContain('No idle');
@@ -608,10 +623,11 @@ describe('dismiss --idle', () => {
     await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
   });
 
-  it('ends nothing when another folder owns the session of the node', async () => {
+  it('ends nothing when another folder owns the session of the node, so that session keeps running (TP-59)', async () => {
     const made = await idleFleet({ terminal: { answer: 'alpha' }, tmux: { sessions: { [NODE]: '/other/node' } } });
     const error = await errorOf(made, { idle: true }, portOf(items));
     expect(error.kind).toBe('safety');
+    expect(made.tmux.sessions().has(NODE)).toBe(true);
     expect(made.deps.prompts).toEqual([]);
     await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
   });

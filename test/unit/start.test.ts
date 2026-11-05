@@ -512,7 +512,7 @@ describe('start:a session that runs already', () => {
   it.each([
     ['another home', { demo: '/w/other-factory' }],
     ['no home option', { demo: null }],
-  ])('refuses with exit kind safety for a session with %s', async (_name, sessions) => {
+  ])('refuses with exit kind safety for a session with %s, and the remedy names factory shutdown (TP-132)', async (_name, sessions) => {
     const { deps, tmux } = make({ tmux: { sessions } });
     const result = await startFactory(deps);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });

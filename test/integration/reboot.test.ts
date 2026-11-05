@@ -73,7 +73,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, A
     expect(await lab.launchCount('demo')).toBe(1);
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 and ends nothing for a session of the same name that belongs to another home', async () => {
+  it('exits 4 and ends nothing for a session of the same name that belongs to another home (TP-45)', async () => {
     await lab.init();
     const made = await lab.tmux(['new-session', '-d', '-s', 'demo', '-P', '-F', '#{pane_pid}', 'sleep 300']);
     expect(made.code, made.stderr).toBe(0);

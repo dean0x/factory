@@ -8,7 +8,7 @@ const lab = useLab();
 const MARK_FILE = 'active-machine.json';
 const CLEAR_COMMIT = 'chore: clear the mark of the active machine';
 
-describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server, AC-18, TP-39, TP-41, TP-42, TP-135)', () => {
+describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server, AC-18, TP-39, TP-40, TP-41, TP-42, TP-135)', () => {
   it('stops each worker, clears the mark, ends the session by its name, and leaves a session of another user and its program running (TP-39, TP-135)', async () => {
     await lab.node();
     const bystander = await lab.bystander();
@@ -52,7 +52,7 @@ describe.skipIf(!hasTmux)('factory shutdown (built binary, separate tmux server,
     expect((await lab.box.git(lab.stateOf(), ['ls-files', '--', MARK_FILE])).stdout.trim()).toBe(MARK_FILE);
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 and keeps a session of the same name that has no home option', async () => {
+  it('exits 4 and keeps a session of the same name that has no home option (TP-40)', async () => {
     await lab.init();
     const made = await lab.tmux(['new-session', '-d', '-s', 'demo', '-P', '-F', '#{pane_pid}', 'sleep 300']);
     expect(made.code, made.stderr).toBe(0);

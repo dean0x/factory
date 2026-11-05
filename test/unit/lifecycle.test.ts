@@ -468,7 +468,7 @@ describe('restart (AC-19)', () => {
     expectNothingStopped(made);
   });
 
-  it('exits 3 and stops nothing for a session whose line holds no event', async () => {
+  it('exits 3 and stops nothing for a session whose line holds no event (TP-44)', async () => {
     const made = await make({ workers: { alpha: {} } });
     seedLineWithoutEvent(made.deps, 'alpha');
     const error = await failed(restart(made, 'alpha'));
