@@ -41,6 +41,7 @@ export const commands = {
   shutdown: 'shutdown',
   restart: 'restart',
   reboot: 'reboot',
+  status: 'status',
   node: 'node',
   doctor: 'doctor',
   machine: 'machine',
@@ -714,6 +715,17 @@ export const workerListWords = {
   marks: { prepare: 'PREPARE', max: 'MAX' },
 } as const;
 
+/**
+ * The words of `status`: the titles of the columns, the state of a worker that has no live pane, the work item column for a work item
+ * that the board does not give and for a worker with no open work, and the idle column. The other states are `workerListWords.states`.
+ */
+export const statusWords = {
+  columns: { id: 'ID', project: 'PROJECT', state: 'STATE', workItem: 'WORK ITEM', idle: 'IDLE' },
+  stopped: 'stopped',
+  workItem: { unknown: 'unknown', none: 'none' },
+  idle: { yes: 'yes', no: 'no' },
+} as const;
+
 /** The session folders that get the hook settings: the folder of the coordinator, and the work copy of a worker. */
 export const hookSessions = { coordinator: roles.coordinator, workCopy: 'work-copy' } as const;
 
@@ -967,6 +979,7 @@ export const schemaIds = {
   shutdown: `${program}.shutdown/v1`,
   restart: `${program}.restart/v1`,
   reboot: `${program}.reboot/v1`,
+  status: `${program}.status/v1`,
   nodeChildren: `${program}.node-children/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,

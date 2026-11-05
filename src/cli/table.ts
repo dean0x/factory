@@ -7,6 +7,7 @@ import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
+import { runStatus } from '../commands/status.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import { runWorker } from '../commands/worker.js';
@@ -227,6 +228,13 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     usage: `${commandText(commands.reboot)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
     run: (given, deps) => runReboot(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.status,
+    summary: `Show each ${roles.worker} with its state, its work item and its idle state.`,
+    usage: `${commandText(commands.status)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runStatus(deps, { home: given.string(flags.home) }, registry),
   },
   {
     name: commands.node,
