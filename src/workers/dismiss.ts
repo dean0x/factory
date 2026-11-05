@@ -42,6 +42,7 @@ export interface DismissTarget {
 export interface DismissPlan extends DismissTarget {
   /** The primary clone of the project. It is never changed. */
   readonly clone: string;
+  /** The real path of the work copy, as the checks of the path proved it. Every read and the removal use this path. */
   readonly workCopy: string;
   readonly branch: string;
   /** The default branch of the clone (`defaultBranchOf`), or null when the clone names none. */
@@ -113,7 +114,7 @@ export const planDismiss = async (deps: Deps, home: string, config: FactoryConfi
       `Check the path of the project in the config. ${again}`,
     );
   }
-  return ok({ id, project: projectId, clone, workCopy, branch: branchOf(id), defaultBranch: await defaultBranchOf(deps, clone) });
+  return ok({ id, project: projectId, clone, workCopy: real.value, branch: branchOf(id), defaultBranch: await defaultBranchOf(deps, clone) });
 };
 
 /** The reason that a worker may not end now, or ok. The caller gives the command that a person runs again. */

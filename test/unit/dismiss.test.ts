@@ -591,6 +591,27 @@ describe('dismiss ID: the path of the work copy', () => {
     await expectNothingChanged(made, ['alpha']);
   });
 
+  it('removes the work copy by the real path that the checks proved, not by the path of the record rule (TP-55)', async () => {
+    // The folder of the node is a link: every real path lies below another folder than the path of the record rule.
+    const real = (path: string): string => (path.startsWith(HOME) ? `/real/node${path.slice(HOME.length)}` : path);
+    const made = await make({ workers: [{ id: 'alpha' }], git: { heads: { [real(copyOf('alpha'))]: HEAD } } });
+    const linked: FakeDeps = {
+      ...made.deps,
+      fs: {
+        ...made.deps.fs,
+        realpath: async (path) => {
+          const resolved = await made.deps.fs.realpath(path);
+          return resolved.ok ? ok(real(resolved.value)) : resolved;
+        },
+      },
+    };
+    const result = await runDismiss(linked, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownWorkItems);
+    if (!result.ok) throw new Error(result.error.message);
+    expect(result.value.failed).toBe(false);
+    expect(removals(made)).toEqual([`worktree remove -- ${real(copyOf('alpha'))}`]);
+    expect(textOf(result.value)).toContain(`Removed the work copy ${real(copyOf('alpha'))}`);
+  });
+
   it('is a failure when the work copy is not a folder, and nothing changes', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     made.deps.dirs.delete(copyOf('alpha'));
