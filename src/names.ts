@@ -38,6 +38,9 @@ export const places = {
 export const commands = {
   init: 'init',
   start: 'start',
+  shutdown: 'shutdown',
+  restart: 'restart',
+  reboot: 'reboot',
   node: 'node',
   doctor: 'doctor',
   machine: 'machine',
@@ -961,6 +964,9 @@ export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash:
 export const schemaIds = {
   init: `${program}.init/v1`,
   start: `${program}.start/v1`,
+  shutdown: `${program}.shutdown/v1`,
+  restart: `${program}.restart/v1`,
+  reboot: `${program}.reboot/v1`,
   nodeChildren: `${program}.node-children/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,

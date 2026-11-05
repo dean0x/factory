@@ -141,17 +141,18 @@ export const requireLaunchReady = async (deps: Deps, home: string, config: Facto
   return ok(undefined);
 };
 
+/** The config of a factory folder that passed the checks before a launch, and the notes of the local file. */
+export interface Prepared {
+  readonly config: FactoryConfig;
+  readonly notes: readonly string[];
+}
+
 /**
- * Everything that a command that starts a pane checks before its own checks, in this order: the warning about instruction files,
- * the config, the local mode, the root and the tools (exit 4, and nothing changes), and the tmux session of the node (exit 3).
- * `again` is the command line that a person runs again after a fix.
+ * The checks of a command that starts a pane, up to the tmux session, in this order: the warning about instruction files, the
+ * config, the local mode, the root and the tools (exit 4, and nothing changes). A command that has no session to check yet
+ * (`reboot` with no session) uses this one, and `prepareLaunch` adds the session check.
  */
-export const prepareLaunch = async (
-  deps: Deps,
-  home: string,
-  registry: RecipeRegistry,
-  again: string,
-): Promise<CliResult<{ readonly config: FactoryConfig; readonly notes: readonly string[] }>> => {
+export const prepareRoot = async (deps: Deps, home: string, registry: RecipeRegistry): Promise<CliResult<Prepared>> => {
   // The warning about instruction files comes before any change or launch, and it never stops the command.
   await warnInstructionFiles(deps, home);
   const loaded = await loadConfig(deps, home, registry);
@@ -161,7 +162,21 @@ export const prepareLaunch = async (
   if (!notes.ok) return notes;
   const ready = await requireLaunchReady(deps, home, config);
   if (!ready.ok) return ready;
-  const session = await requireSession(deps, config.core.node.id, home, again);
-  if (!session.ok) return session;
   return ok({ config, notes: notes.value });
+};
+
+/**
+ * Everything that a command that starts a pane checks before its own checks: the checks of `prepareRoot`, then the tmux session of
+ * the node (exit 3). `again` is the command line that a person runs again after a fix.
+ */
+export const prepareLaunch = async (
+  deps: Deps,
+  home: string,
+  registry: RecipeRegistry,
+  again: string,
+): Promise<CliResult<Prepared>> => {
+  const prepared = await prepareRoot(deps, home, registry);
+  if (!prepared.ok) return prepared;
+  const session = await requireSession(deps, prepared.value.config.core.node.id, home, again);
+  return session.ok ? prepared : session;
 };

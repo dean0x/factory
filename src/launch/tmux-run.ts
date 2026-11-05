@@ -49,13 +49,24 @@ export const isSameHome = async (deps: Deps, stored: string, home: string): Prom
   return a.ok && b.ok && a.value === b.value;
 };
 
-export const requireOwnSession = async (deps: Deps, id: string, home: string): Promise<CliResult<void>> => {
+/**
+ * The session must be the session of this factory folder (exit 4). The remedy names `shutdown` in the folder that owns the
+ * session. `again` is the command line to run again after the fix: `start` for a caller that names none.
+ */
+export const requireOwnSession = async (
+  deps: Deps,
+  id: string,
+  home: string,
+  again: string = commandText(commands.start),
+): Promise<CliResult<void>> => {
   const shown = await tmuxStep(deps, showHomeArgs(id));
   if (!shown.ok) return shown;
   if (await isSameHome(deps, shown.value.trim(), home)) return ok(undefined);
   return safetyRefusal(
     `a tmux session ${id} belongs to another ${places.folder}`,
-    `Two ${roles.node}s on one machine need two ids. Change ${keys.root.node}.${keys.node.id} in the config of one of them, or stop the other session. Then run "${commandText(commands.start)}" again.`,
+    `Run "${commandText(commands.shutdown)}" in the ${places.folder} that owns the session, or end that session by hand. ` +
+      `Two ${roles.node}s on one machine need two ids: change ${keys.root.node}.${keys.node.id} in the config of one of them. ` +
+      `Then run "${again}" again.`,
   );
 };
 
@@ -70,5 +81,5 @@ export const requireSession = async (deps: Deps, id: string, home: string, again
       `Run "${commandText(commands.start)}" to start it. Then run "${again}" again.`,
     );
   }
-  return requireOwnSession(deps, id, home);
+  return requireOwnSession(deps, id, home, again);
 };

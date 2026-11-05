@@ -17,18 +17,31 @@ import { commandText, program, roles, tmuxNames } from '../names.js';
 import { startsWorker } from './binding.js';
 
 /**
- * The panes of the tmux session of the node, from one list call, or null when no session of this factory runs. A session of
- * the same name that belongs to another factory folder is a stop (exit 4). A pane with a bad worker mark is a pane with no
- * worker, and the list stays whole.
+ * The panes of the tmux session, from one list call, for a caller that has checked already that the session runs and belongs to
+ * its factory folder. A pane with a bad worker mark is a pane with no worker, and the list stays whole.
  */
-export const readPanes = async (deps: Deps, id: string, home: string): Promise<CliResult<readonly PaneRow[] | null>> => {
-  if (!(await sessionExists(deps, id))) return ok(null);
-  const own = await requireOwnSession(deps, id, home);
-  if (!own.ok) return own;
+export const listPanes = async (deps: Deps, id: string): Promise<CliResult<readonly PaneRow[]>> => {
   const listed = await tmuxStep(deps, paneListArgs(id));
   if (!listed.ok) return listed;
   const rows = parsePaneListSoft(listed.value);
   return rows.ok ? ok(rows.value) : failure(`cannot read the list of panes: ${rows.error}`);
+};
+
+/**
+ * The panes of the tmux session of the node, from one list call, or null when no session of this factory runs. A session of
+ * the same name that belongs to another factory folder is a stop (exit 4). A pane with a bad worker mark is a pane with no
+ * worker, and the list stays whole. `again` is the command line to run again after the fix of a session of another folder.
+ */
+export const readPanes = async (
+  deps: Deps,
+  id: string,
+  home: string,
+  again?: string,
+): Promise<CliResult<readonly PaneRow[] | null>> => {
+  if (!(await sessionExists(deps, id))) return ok(null);
+  const own = await requireOwnSession(deps, id, home, again);
+  if (!own.ok) return own;
+  return listPanes(deps, id);
 };
 
 /** The tmux command that a person runs to clear a mark that a program set on a pane. */

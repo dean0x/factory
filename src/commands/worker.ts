@@ -105,7 +105,7 @@ const locateNode = async (deps: Deps, options: WorkerOptions, registry: RecipeRe
  * a work copy or a branch that is not the one of its worker is a security stop (exit 4): a command that starts or ends a session
  * must not act on it. The message names the record file and what differs.
  */
-const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
+export const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
   const read = await readWorkerRecord(deps, home, id);
   if (!read.ok) return read;
   if (read.value.state === 'valid') return ok(read.value.record);

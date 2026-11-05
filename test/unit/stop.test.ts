@@ -7,7 +7,8 @@ import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession, type OwnSessionRead } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { stopCaseOf, stopWorker, wayFor, type StopOutcome } from '../../src/workers/stop.js';
-import { paneListArgs } from '../../src/launch/tmux.js';
+import { paneListArgs, type PaneRow } from '../../src/launch/tmux.js';
+import { listPanes } from '../../src/workers/panes.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { launchWordsOf } from '../helpers/worker-launch-words.js';
@@ -733,6 +734,59 @@ describe('worker stop: a worker with no live pane', () => {
     await seed(made.deps);
     expect(await succeeded(made)).toEqual({ kind: 'no-pane' });
     expect(made.deps.terminated).toEqual([]);
+  });
+});
+
+describe('worker stop: with the list of panes of a caller', () => {
+  const runWith = async (made: Made, panes: readonly PaneRow[]) =>
+    stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', panes });
+
+  const listed = async (made: Made): Promise<readonly PaneRow[]> => {
+    const rows = await listPanes(made.deps, NODE);
+    if (!rows.ok) throw new Error(rows.error.message);
+    return rows.value;
+  };
+
+  it('stops the worker with no check of the session and no list of its own', async () => {
+    const made = make();
+    await seed(made.deps);
+    const panes = await listed(made);
+    const eventsBefore = made.events.length;
+    const callsBefore = made.deps.calls.length;
+    const result = await runWith(made, panes);
+    expect(result).toMatchObject({ ok: true, value: { kind: 'stopped', paneId: PANE, pid: PID, state: 'idle' } });
+    const events = made.events.slice(eventsBefore);
+    expect(events).not.toContain('tmux has-session');
+    expect(events).not.toContain('tmux show-options');
+    expect(made.deps.calls.slice(callsBefore).some((call) => JSON.stringify(call.args) === JSON.stringify(paneListArgs(NODE)))).toBe(false);
+    expect(made.deps.terminated).toEqual([PID]);
+    expect(killed(made)).toEqual([`kill-pane -t ${PANE}`]);
+  });
+
+  it('reads the pane by its id before the signal, so a pane that changed after the list is not trusted', async () => {
+    const made = make({ rewriteRead: (stdout) => stdout.replace(`|${PID}|`, '|4888|') });
+    await seed(made.deps);
+    const panes = await listed(made);
+    await runWith(made, panes);
+    expect(made.deps.terminated).toEqual([4888]);
+  });
+
+  it('says that there is no pane for a list with no pane of the worker, and calls no tmux command', async () => {
+    const made = make();
+    await seed(made.deps);
+    const before = made.events.length;
+    expect(await runWith(made, [])).toEqual({ ok: true, value: { kind: 'no-pane' } });
+    expect(made.events.slice(before)).toEqual([]);
+    expect(made.deps.terminated).toEqual([]);
+  });
+
+  it('closes a pane that has ended by its id, from the list', async () => {
+    const made = make({ panes: [alphaPane({ dead: true })] });
+    await seed(made.deps);
+    const panes = await listed(made);
+    expect(await runWith(made, panes)).toEqual({ ok: true, value: { kind: 'closed-dead', paneIds: [PANE] } });
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([`kill-pane -t ${PANE}`]);
   });
 });
 

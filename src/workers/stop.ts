@@ -1,6 +1,7 @@
 import { failure, notReady, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import type { PaneRow } from '../launch/tmux.js';
 import {
   commandLines,
   commandText,
@@ -31,6 +32,11 @@ export interface StopRequest {
   readonly session: string;
   /** The id of the worker: a slug. The caller has checked that the worker has a record. */
   readonly workerId: string;
+  /**
+   * The list of the panes of the session, from the one list call of a caller that stops more than one worker. The caller has
+   * checked that the session runs and belongs to this folder. A call with no list reads the session and the list by itself.
+   */
+  readonly panes?: readonly PaneRow[];
 }
 
 export type StopOutcome =
@@ -70,6 +76,25 @@ export const wayFor = (stopCase: StopCase, ways: Readonly<Record<StopCase, StopW
 const stopWords = (workerId: string): string => `${commandLines.workerStop} ${workerId}`;
 
 const stopLine = (workerId: string): string => commandText(stopWords(workerId));
+
+/**
+ * The case of the session, or a stop with exit 3 that names the pane and its process: a state that is not known is never guessed.
+ * `stopWorker` and the commands that check every worker before the first stop use this one rule.
+ */
+export const requireStopCase = (
+  workerId: string,
+  seen: OwnSessionRead,
+  pane: { readonly paneId: string; readonly pid: number },
+): CliResult<StopCase> => {
+  const stopCase = stopCaseOf(seen);
+  if (stopCase !== null) return ok(stopCase);
+  const reason = seen.state === 'unknown' ? seen.reason : 'the last-seen line holds no event';
+  return notReady(
+    `cannot tell if the ${roles.worker} ${workerId} waits at its prompt or works: ${reason}. The pane ${pane.paneId} runs the process ${pane.pid}`,
+    `Look at the pane. When the ${roles.worker} waits at its prompt, run "${stopLine(workerId)}" again after its next hook event. ` +
+      `To stop it now, run "${stopWay.term} ${pane.pid}" yourself.`,
+  );
+};
 
 /** Closes panes whose program has ended, by their ids (`closeWorkerPane`). With no pane there is nothing to close. */
 const closeEnded = async (deps: Deps, session: string, paneIds: readonly string[]): Promise<CliResult<StopOutcome>> => {
@@ -126,9 +151,9 @@ const endProcess = async (deps: Deps, row: BoundPane, way: StopWay, workerId: st
  * A worker with no pane gives `no-pane` and changes nothing.
  */
 export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliResult<StopOutcome>> => {
-  const { home, session, workerId } = request;
+  const { home, session, workerId, panes: listed } = request;
   const again = stopWords(workerId);
-  const panes = await readWorkerPanes(deps, { home, session, workerId, again });
+  const panes = await readWorkerPanes(deps, { home, session, workerId, again, ...(listed === undefined ? {} : { panes: listed }) });
   if (!panes.ok) return panes;
   const { live, dead } = panes.value;
   if (live.length > 1) {
@@ -153,15 +178,9 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const row = read.value;
   if (row.dead) return closeEnded(deps, session, [row.paneId]);
 
-  const stopCase = stopCaseOf(seen.value);
-  if (stopCase === null) {
-    const reason = seen.value.state === 'unknown' ? seen.value.reason : 'the last-seen line holds no event';
-    return notReady(
-      `cannot tell if the ${roles.worker} ${workerId} waits at its prompt or works: ${reason}. The pane ${row.paneId} runs the process ${row.pid}`,
-      `Look at the pane. When the ${roles.worker} waits at its prompt, run "${stopLine(workerId)}" again after its next hook event. ` +
-        `To stop it now, run "${stopWay.term} ${row.pid}" yourself.`,
-    );
-  }
+  const known = requireStopCase(workerId, seen.value, row);
+  if (!known.ok) return known;
+  const stopCase = known.value;
   const way = wayFor(stopCase);
   const ended = await endProcess(deps, row, way, workerId);
   if (!ended.ok) return ended;

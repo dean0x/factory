@@ -518,7 +518,8 @@ describe('start:a session that runs already', () => {
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     if (!result.ok) {
       expect(result.error.message).toBe('a tmux session demo belongs to another factory folder');
-      expect(result.error.hint).toContain('or stop the other session. Then run "factory start" again.');
+      expect(result.error.hint).toContain('Run "factory shutdown" in the factory folder that owns the session, or end that session by hand.');
+      expect(result.error.hint).toContain('Then run "factory start" again.');
     }
     expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
   });

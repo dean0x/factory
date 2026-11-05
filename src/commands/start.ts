@@ -175,6 +175,42 @@ const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, a
   return null;
 };
 
+/** What `startAgain` made: the session, the coordinator that resumes, and the workers that run again. */
+export interface RestartedSession {
+  /** The id, host and port of the proxy of the session, or null for none. Safe to print. */
+  readonly proxy: string | null;
+  readonly coordinatorResumed: boolean;
+  /** The workers by what happened, or null when the workers could not be listed. */
+  readonly workers: RecoveryReport | null;
+  /** The warnings of the plan: a project folder that is missing, a coordinator that is not resumed, a proxy that does not answer. */
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Makes the session of the node and recovers its coordinator and its workers: the steps of `start` after its checks and before
+ * the person reaches the session. The caller has made the checks of the root and the tools, and the session does not run. `reboot`
+ * calls this after it ended the session. `answers` holds the proxy answers of the run, so each proxy is asked once.
+ */
+export const startAgain = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  answers: ProxyAnswers,
+): Promise<CliResult<RestartedSession>> => {
+  const plan = await planStart(deps, home, config, answers);
+  if (!plan.ok) return plan;
+  const started = await startSession(deps, config.core.node.id, plan.value.steps);
+  if (!started.ok) return started;
+  const workers = await recoverSession(deps, home, config, answers);
+  const { proxy, resumeId, warnings } = plan.value;
+  return ok({
+    proxy: proxy.label,
+    coordinatorResumed: resumeId !== null,
+    workers,
+    warnings: [...warnings, ...(proxy.warning === undefined ? [] : [proxy.warning])],
+  });
+};
+
 /** The lines about the recovery: the coordinator that resumes, and the workers that run again. A start that resumes nothing says nothing. */
 const recoveryLines = (plan: StartPlan, recovery: Recovery): readonly OutLine[] => [
   ...(plan.resumeId === null ? [] : [text(`The ${roles.coordinator} resumes its earlier conversation.`)]),

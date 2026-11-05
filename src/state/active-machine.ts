@@ -3,7 +3,6 @@ import { failure, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { commitPaths, requireStateRepoCommit, unstagePaths, type RepoPaths } from '../core/git.js';
 import { ok } from '../core/result.js';
-import { toolNames } from '../core/tools.js';
 import { describeIssues } from '../core/zod.js';
 import { activeMachine, commands, commandText, files, places, schemaIds, type CommandName } from '../names.js';
 import { readCheckedFile } from '../workers/registry.js';
@@ -144,7 +143,7 @@ const markTextOf = (machine: string, at: Date): string =>
   `${JSON.stringify({ [keys.schema]: schemaIds.activeMachine, [keys.machine]: machine, [keys.at]: at.toISOString() })}\n`;
 
 /** The way out for a person when a mark names another machine. */
-const STOP_OTHER_MACHINE = `End the ${toolNames.tmux} session of this ${places.folder} on that machine.`;
+const STOP_OTHER_MACHINE = `Run "${commandText(commands.shutdown)}" in this ${places.folder} on that machine.`;
 
 /** The warning for a mark that names another machine. */
 const otherMachineWarning = (other: ActiveMark): string =>

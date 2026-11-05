@@ -212,6 +212,7 @@ describe('the mark of the active machine: the claim', () => {
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain(OTHER_ID);
     expect(deps.warned[0]).toContain(OTHER_AT);
+    expect(deps.warned[0]).toContain('Run "factory shutdown" in this factory folder on that machine.');
     expect(markOf(deps)).toEqual({ machine: FIRST_ID, at: NOW });
   });
 
