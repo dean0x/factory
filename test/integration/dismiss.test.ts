@@ -105,7 +105,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
 
     const result = await lab.factory('dismiss', ['beta', '--yes']);
     expect(result.code, result.stderr).toBe(1);
-    expect(result.stdout).toMatch(/^STUCK: .*is not on the remote origin/m);
+    expect(result.stdout).toMatch(/^\[FAIL\] STUCK: .*is not on the remote origin/m);
     await expectIntact('beta');
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
@@ -117,7 +117,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stderr).toBe(1);
-    expect(result.stdout).toMatch(/^STUCK: .*has commits that origin\/worker\/alpha does not hold/m);
+    expect(result.stdout).toMatch(/^\[FAIL\] STUCK: .*has commits that origin\/worker\/alpha does not hold/m);
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
@@ -128,7 +128,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stderr).toBe(1);
-    expect(result.stdout).toMatch(/^STUCK: .*notes\.txt/m);
+    expect(result.stdout).toMatch(/^\[FAIL\] STUCK: .*notes\.txt/m);
     expect(await readFile(join(copyOf('alpha'), 'notes.txt'), 'utf8')).toBe('not committed\n');
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
@@ -142,7 +142,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stderr).toBe(1);
-    expect(result.stdout).toMatch(/^STUCK: .*stash/m);
+    expect(result.stdout).toMatch(/^\[FAIL\] STUCK: .*stash/m);
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
@@ -157,7 +157,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stderr).toBe(1);
-    expect(result.stdout).toMatch(/^STUCK: .*is not on the remote origin/m);
+    expect(result.stdout).toMatch(/^\[FAIL\] STUCK: .*is not on the remote origin/m);
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
@@ -227,7 +227,7 @@ describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick s
     await lab.node();
     await push('alpha');
     const other = join(lab.box.root, 'other-home');
-    expect((await lab.tmux(['set-option', '-t', '=demo', '@factory_home', other])).code).toBe(0);
+    expect((await lab.tmux(['set-option', '-t', '=demo:', '@factory_home', other])).code).toBe(0);
 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stderr).toBe(4);
