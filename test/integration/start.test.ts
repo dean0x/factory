@@ -841,7 +841,28 @@ describe.skipIf(!hasTmux)('factory start: the mark of the active machine (built 
     expect((await box.git(stateOf(), ['log', '-1', '--format=%s'])).stdout.trim()).toBe(MARK_COMMIT);
   }, RECOVERY_CASE_MS);
 
-  it('writes no machine id and no mark when the session runs already', async () => {
+  it('claims a mark of another machine and names the worker with no pane, but resumes no worker, when the session runs already', async () => {
+    await recoveringNode();
+    const alphaPanes = (await workerPanes()).filter((line) => line.endsWith(' alpha')).map((line) => line.split(' ')[0] ?? '');
+    expect(alphaPanes).toHaveLength(1);
+    expect((await tmux(['kill-pane', '-t', alphaPanes[0] ?? ''])).code).toBe(0);
+    await writeFile(join(stateOf(), 'active-machine.json'), markText(OTHER_MACHINE));
+    expect((await box.git(stateOf(), ['add', 'active-machine.json'])).code).toBe(0);
+    expect((await box.git(stateOf(), ['commit', '-q', '-m', 'mark another machine'])).code).toBe(0);
+
+    const again = await startFactory();
+    expect(again.code, again.stderr).toBe(0);
+    expect(again.stderr.split('\n').filter((line) => line.includes(OTHER_MACHINE))).toHaveLength(1);
+    expect(again.stderr).toContain('"factory worker resume alpha"');
+    expect(again.stderr).not.toContain('factory worker resume beta');
+    expect(await hasWorkerPane('alpha')).toBe(false);
+    expect(await hasWorkerPane('beta')).toBe(true);
+    const id = (await readFile(join(stateOf(), 'state', 'machine-id'), 'utf8')).trim();
+    expect(JSON.parse(await readFile(join(stateOf(), 'active-machine.json'), 'utf8'))).toMatchObject({ machine: id });
+    expect((await box.git(stateOf(), ['log', '-1', '--format=%s'])).stdout.trim()).toBe(MARK_COMMIT);
+  }, RECOVERY_CASE_MS);
+
+  it('writes no machine id and no mark when the session runs already and the mark names this machine', async () => {
     await initNode();
     expect((await startFactory()).code).toBe(0);
     await waitForLaunch();

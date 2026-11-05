@@ -2,16 +2,18 @@ import type { CliError, CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commandText, lastSeen, roles } from '../names.js';
+import { commands, commandText, lastSeen, roles } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { readOwnCoordinatorSession, readOwnLastSeen } from './last-seen.js';
 import { resumeLine, resumeWorker, type ProxyAnswers } from './launch.js';
+import { listPanes } from './panes.js';
 import { listWorkerRecords, type InvalidWorker, type WorkerRecord } from './registry.js';
 
 /**
  * The recovery after the tmux server was killed (design 4.11, "After a machine restart"): `start` makes the session again, and
  * then the coordinator and each recorded worker run again with the session id that they had. A session id enters a command line
- * only when the pointer and the last-seen line pass the owner check, so a program in a pane can not name the session to resume.
+ * only when the pointer and the last-seen line pass the owner check. The check keeps a pointer from naming the session of the
+ * coordinator or of another worker. It does not prove who wrote the line: the pointer and the line stay hints.
  * A coordinator or a worker with no usable id never gets a guess: the coordinator starts a new conversation, and a worker is
  * skipped with a warning that names the command to start it by hand.
  */
@@ -143,3 +145,28 @@ export const recoverWorkers = async (deps: Deps, request: RecoveryRequest): Prom
   }
   return ok(report);
 };
+
+/**
+ * The recorded workers that have no live pane in a session that runs already, in order of the ids. A pane whose program ended is
+ * no live pane. The caller has checked that the session belongs to its home. A folder with no valid record is not named: no command
+ * starts it. With no recorded worker, no pane list is read. Nothing is changed, and no worker is started.
+ */
+export const workersWithoutPane = async (deps: Deps, home: string, session: string): Promise<CliResult<readonly string[]>> => {
+  const listed = await listWorkerRecords(deps, home);
+  if (!listed.ok) return listed;
+  if (listed.value.workers.length === 0) return ok([]);
+  const panes = await listPanes(deps, session);
+  if (!panes.ok) return panes;
+  const live = new Set(panes.value.flatMap((row) => (row.dead || row.worker === null ? [] : [row.worker])));
+  return ok(listed.value.workers.flatMap((record) => (live.has(record.id) ? [] : [record.id])));
+};
+
+/**
+ * The one warning of a start that finds its session running: it names each worker with no live pane and the command that starts
+ * it. `start` never resumes these workers, because a worker that was stopped on purpose must stay stopped.
+ */
+export const noPaneWarning = (ids: readonly string[]): string =>
+  `The session runs already. These ${roles.worker}s have no live pane: ` +
+  `${ids.map((id) => `${id} (start it with "${commandText(resumeLine(id))}")`).join(', ')}. ` +
+  `"${commandText(commands.start)}" does not start them, because a ${roles.worker} that was stopped on purpose must stay stopped. ` +
+  `To start every ${roles.worker} again, run "${commandText(commands.reboot)}". It stops the running ${roles.worker}s first.`;

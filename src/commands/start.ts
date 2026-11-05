@@ -32,12 +32,12 @@ import {
   type CommandName,
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
-import { claimActiveMachine } from '../state/active-machine.js';
+import { claimActiveMachine, machineIdOf, readActiveMark } from '../state/active-machine.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import type { SetupTexts } from '../templates/types.js';
 import { renderSetupText } from '../upgrade/render.js';
 import { chooseProxy, newProxyAnswers, sessionProxyWish, type ProxyAnswers, type ProxyChoice } from '../workers/launch.js';
-import { coordinatorResumeOf, recoverWorkers, type RecoveryReport } from '../workers/recovery.js';
+import { coordinatorResumeOf, noPaneWarning, recoverWorkers, workersWithoutPane, type RecoveryReport } from '../workers/recovery.js';
 import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { failsOnlyOnSetup, requireRootClean, rootNotices, scanRoot, withSetupAccepted } from './root-content.js';
 import { acceptReason, settleSetup } from './setup-check.js';
@@ -174,6 +174,33 @@ const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, a
   if (recovered.ok) return recovered.value;
   deps.warn(`The ${roles.worker}s are not resumed: ${recovered.error.message}. ${recovered.error.hint ?? ''}`.trimEnd());
   return null;
+};
+
+/**
+ * True when the mark of the active machine is valid and names this machine. A mark or an id that can not be read counts as not
+ * naming it, and the claim that follows reports the fault.
+ */
+const markNamesThisMachine = async (deps: Deps, home: string): Promise<boolean> => {
+  const machine = await machineIdOf(deps, home);
+  const mark = await readActiveMark(deps, home);
+  return machine.ok && mark.ok && mark.value.state === 'valid' && mark.value.mark.machine === machine.value;
+};
+
+/**
+ * What `start` does for a session that runs already: it claims the mark of the active machine when the mark does not name this
+ * machine, and then it warns once about the recorded workers that have no live pane. It never resumes a worker, because a worker
+ * that was stopped on purpose stays stopped. The value is the workers that the warning names. A fault is a warning, and the exit
+ * code stays 0.
+ */
+const checkRunningSession = async (deps: Deps, home: string, session: string): Promise<readonly string[]> => {
+  if (!(await markNamesThisMachine(deps, home))) await claimActiveMachine(deps, home);
+  const missing = await workersWithoutPane(deps, home, session);
+  if (!missing.ok) {
+    deps.warn(`The ${roles.worker}s are not checked: ${missing.error.message}. ${missing.error.hint ?? ''}`.trimEnd());
+    return [];
+  }
+  if (missing.value.length > 0) deps.warn(noPaneWarning(missing.value));
+  return missing.value;
 };
 
 /** What `startAgain` made: the session, the coordinator that resumes, and the workers that run again. */
@@ -466,6 +493,8 @@ export const runStart = async (
   }
   // The recovery runs only for a session that this run made, and before the person is in the session.
   const recovery = planned === null ? null : await recoverSession(deps, home, loaded.value, answers);
+  // A session that runs already resumes no worker. It claims the mark and names the workers that have no pane.
+  const withoutPane = planned === null ? await checkRunningSession(deps, home, id) : [];
   // A session that runs already can hold a coordinator pane that stays after its program ended.
   const ended = planned === null && (await coordinatorEnded(deps, id));
   const attached = await reach(deps, how, id);
@@ -489,6 +518,7 @@ export const runStart = async (
       attached: attached.value,
       proxy: planned?.proxy.label ?? null,
       ...(planned === null ? {} : { coordinatorResumed: planned.resumeId !== null, workers: recovery }),
+      ...(withoutPane.length === 0 ? {} : { workersWithoutPane: withoutPane }),
       ...(ended ? { coordinatorEnded: true } : {}),
     },
     warnings: [...notes.value, ...(planned?.warnings ?? []), ...(planned?.proxy.warning === undefined ? [] : [planned.proxy.warning])],

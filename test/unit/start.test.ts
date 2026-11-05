@@ -33,7 +33,7 @@ import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
-import { chainOf, tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { chainOf, tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
 
 const HOME = '/w/node';
@@ -1090,14 +1090,12 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       expect(made.deps.files.has(MACHINE_ID_FILE)).toBe(false);
     });
 
-    it('resumes nothing and writes no mark for a session that runs already', async () => {
+    it('resumes no worker for a session that runs already', async () => {
       const made = await seeded({ tmux: { sessions: { demo: HOME } } });
       const output = await succeeded(made.deps);
       expect(output.json).not.toHaveProperty('workers');
       expect(workerPanes(made.tmux)).toEqual([]);
-      expect(made.deps.files.has(MARK_FILE)).toBe(false);
-      expect(made.deps.files.has(MACHINE_ID_FILE)).toBe(false);
-      expect(stateWrites(made.deps)).toEqual([]);
+      expect(splitsOf(made.deps)).toBe(0);
     });
 
     it('resumes nothing, writes nothing and shows the resume of the coordinator in a dry run', async () => {
@@ -1111,8 +1109,112 @@ describe('start:the recovery after a kill of the server and the mark of the acti
     });
   });
 
+  describe('a session that runs already (AC-16)', () => {
+    const RUNNING = { demo: HOME };
+    const paneOf = (worker: string, dead = false): PaneFixture => ({
+      session: 'demo',
+      options: { [tmuxNames.optionWorker]: worker },
+      ...(dead ? { dead: true } : {}),
+    });
+
+    it('warns once with each worker that has no live pane and the command that starts it, resumes none, and exits 0', async () => {
+      const made = await seeded({ tmux: { sessions: RUNNING, panes: [paneOf('beta')] } });
+      const result = await startFactory(made.deps);
+      expect(result).toMatchObject({ ok: true, value: { failed: false } });
+      expect(made.deps.warned).toHaveLength(1);
+      const [warning = ''] = made.deps.warned;
+      expect(warning).toContain('"factory worker resume alpha"');
+      expect(warning).toContain('"factory worker resume gamma"');
+      expect(warning).toContain('"factory reboot"');
+      expect(warning).not.toContain('beta');
+      expect(splitsOf(made.deps)).toBe(0);
+      expect(workerPanes(made.tmux)).toHaveLength(1);
+      if (result.ok) expect(result.value.json).toMatchObject({ started: false, workersWithoutPane: ['alpha', 'gamma'] });
+    });
+
+    it('counts a pane whose program ended as no live pane', async () => {
+      const made = await seeded({ tmux: { sessions: RUNNING, panes: [paneOf('alpha', true), paneOf('beta'), paneOf('gamma')] } });
+      const output = await succeeded(made.deps);
+      expect(made.deps.warned).toHaveLength(1);
+      expect(made.deps.warned[0]).toContain('"factory worker resume alpha"');
+      expect(output.json).toMatchObject({ workersWithoutPane: ['alpha'] });
+    });
+
+    it('prints no warning and no list when each recorded worker has a live pane', async () => {
+      const made = await seeded({ tmux: { sessions: RUNNING, panes: IDS.map((id) => paneOf(id)) } });
+      const output = await succeeded(made.deps);
+      expect(made.deps.warned).toEqual([]);
+      expect(output.json).not.toHaveProperty('workersWithoutPane');
+    });
+
+    it('claims the mark when there is none, with no warning', async () => {
+      const made = await seeded({ workers: [], tmux: { sessions: RUNNING } });
+      await succeeded(made.deps);
+      const id = (made.deps.files.get(MACHINE_ID_FILE) ?? '').trim();
+      expect(id).toMatch(activeMachine.idPattern);
+      expect(markedMachine(made.deps)).toBe(id);
+      expect(stateWrites(made.deps)).toHaveLength(2);
+      expect(made.deps.warned).toEqual([]);
+    });
+
+    it('claims the mark that names another machine, and warns about the machine before it warns about the workers', async () => {
+      const made = await seeded({ workers: ['alpha'], mark: markText(OTHER_MACHINE), tmux: { sessions: RUNNING } });
+      const result = await startFactory(made.deps);
+      expect(result).toMatchObject({ ok: true, value: { failed: false } });
+      expect(made.deps.warned).toHaveLength(2);
+      expect(made.deps.warned[0]).toContain(OTHER_MACHINE);
+      expect(made.deps.warned[1]).toContain('"factory worker resume alpha"');
+      expect(markedMachine(made.deps)).toBe((made.deps.files.get(MACHINE_ID_FILE) ?? '').trim());
+      expect(workerPanes(made.tmux)).toEqual([]);
+    });
+
+    it('writes nothing in the state repo when the mark names this machine', async () => {
+      const made = await seeded({ workers: [], mark: markText(OWN_MACHINE), tmux: { sessions: RUNNING } });
+      made.deps.seed(MACHINE_ID_FILE, `${OWN_MACHINE}\n`);
+      await succeeded(made.deps);
+      expect(stateWrites(made.deps)).toEqual([]);
+      expect(markedMachine(made.deps)).toBe(OWN_MACHINE);
+      expect(made.deps.warned).toEqual([]);
+    });
+
+    it('warns about the mark and about the workers, and exits 0, when the mark can not be committed', async () => {
+      const made = await seeded({ workers: ['alpha'], stateRepo: { commitExit: 1 }, tmux: { sessions: RUNNING } });
+      const result = await startFactory(made.deps);
+      expect(result).toMatchObject({ ok: true, value: { failed: false } });
+      expect(made.deps.warned).toHaveLength(2);
+      expect(made.deps.warned[0]).toContain('cannot commit the state files');
+      expect(made.deps.warned[1]).toContain('"factory worker resume alpha"');
+    });
+
+    it('warns once, and exits 0, when the workers can not be listed', async () => {
+      const made = await seeded({ workers: [], links: { [layoutOf(HOME).workersDir]: '/elsewhere/workers' }, tmux: { sessions: RUNNING } });
+      const result = await startFactory(made.deps);
+      expect(result).toMatchObject({ ok: true, value: { failed: false } });
+      expect(made.deps.warned).toHaveLength(1);
+      expect(made.deps.warned[0]).toContain('it is a link');
+      if (result.ok) expect(result.value.json).not.toHaveProperty('workersWithoutPane');
+    });
+
+    it('warns once, and exits 0, when the panes can not be listed', async () => {
+      const made = await seeded({ tmux: { sessions: RUNNING, failing: 'list-panes' } });
+      const result = await startFactory(made.deps);
+      expect(result).toMatchObject({ ok: true, value: { failed: false } });
+      expect(made.deps.warned).toHaveLength(1);
+      expect(made.deps.warned[0]).toContain('The workers are not checked');
+      if (result.ok) expect(result.value.json).not.toHaveProperty('workersWithoutPane');
+    });
+
+    it('reads nothing of the workers and writes nothing in a dry run', async () => {
+      const made = await seeded({ tmux: { sessions: RUNNING } });
+      await succeeded(made.deps, { dryRun: true });
+      expect(made.tmux.commands()).toEqual(['has-session -t =demo']);
+      expect(stateWrites(made.deps)).toEqual([]);
+      expect(made.deps.warned).toEqual([]);
+    });
+  });
+
   describe('the coordinator (AC-16, TP-37)', () => {
-    const startArgs = (tmux: TmuxLog): readonly string[] => tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
+    const startArgs =(tmux: TmuxLog): readonly string[] => tmux.calls.find((call) => call.args[0] === 'new-session')?.args ?? [];
 
     it('resumes the session of its pointer in the launch of the new session, before the folders', async () => {
       const made = await seeded({ coordinator: 'owned', workers: [] });

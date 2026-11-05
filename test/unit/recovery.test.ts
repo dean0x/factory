@@ -7,11 +7,11 @@ import { launchConfirm, tmuxNames } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { chooseProxy, newProxyAnswers, sessionProxyWish } from '../../src/workers/launch.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
-import { coordinatorResumeOf, recoverWorkers, type RecoveryReport } from '../../src/workers/recovery.js';
+import { coordinatorResumeOf, noPaneWarning, recoverWorkers, workersWithoutPane, type RecoveryReport } from '../../src/workers/recovery.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
-import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
 
 const HOME = '/h/node';
@@ -419,5 +419,53 @@ describe('the recovery of the workers: a list that can not be read', () => {
     const result = await recoverWorkers(made.deps, { home: HOME, config: configWith(), proxyAnswers: newProxyAnswers() });
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     expect(splits(made)).toBe(0);
+  });
+});
+
+describe('the workers of a session that runs already: the workers with no live pane', () => {
+  const paneOf = (worker: string, dead = false): PaneFixture => ({
+    session: NODE,
+    options: { [tmuxNames.optionWorker]: worker },
+    ...(dead ? { dead: true } : {}),
+  });
+
+  it('names the recorded workers that have no pane, in order of the ids, and starts no pane', async () => {
+    const made = await make({ tmux: { panes: [paneOf('beta')] } });
+    expect(await workersWithoutPane(made.deps, HOME, NODE)).toMatchObject({ ok: true, value: ['alpha', 'gamma'] });
+    expect(splits(made)).toBe(0);
+  });
+
+  it('counts a pane whose program ended as no live pane', async () => {
+    const made = await make({ tmux: { panes: [paneOf('alpha', true), paneOf('beta'), paneOf('gamma')] } });
+    expect(await workersWithoutPane(made.deps, HOME, NODE)).toMatchObject({ ok: true, value: ['alpha'] });
+  });
+
+  it('names no worker when each recorded worker has a live pane', async () => {
+    const made = await make({ tmux: { panes: IDS.map((id) => paneOf(id)) } });
+    expect(await workersWithoutPane(made.deps, HOME, NODE)).toMatchObject({ ok: true, value: [] });
+  });
+
+  it('reads no pane list when no worker is recorded', async () => {
+    const made = await make({ workers: [] });
+    expect(await workersWithoutPane(made.deps, HOME, NODE)).toMatchObject({ ok: true, value: [] });
+    expect(made.events).toEqual([]);
+  });
+
+  it('fails when the list of panes can not be read', async () => {
+    const made = await make({ tmux: { failing: 'list-panes' } });
+    expect(await workersWithoutPane(made.deps, HOME, NODE)).toMatchObject({ ok: false });
+  });
+
+  it('fails with a security stop when the workers folder is a link', async () => {
+    const made = await make({ links: { [layoutOf(HOME).workersDir]: '/elsewhere/workers' }, workers: [] });
+    expect(await workersWithoutPane(made.deps, HOME, NODE)).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+
+  it('writes one warning with each worker, the command that starts it, and the command that starts every worker', () => {
+    const warning = noPaneWarning(['alpha', 'gamma']);
+    expect(warning).toContain('alpha (start it with "factory worker resume alpha")');
+    expect(warning).toContain('gamma (start it with "factory worker resume gamma")');
+    expect(warning).toContain('"factory reboot"');
+    expect(warning).toContain('stopped on purpose must stay stopped');
   });
 });
