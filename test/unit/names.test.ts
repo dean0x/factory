@@ -22,6 +22,7 @@ import {
   schema1,
   schema2,
   schemaIds,
+  sessionNames,
   setupAcceptance,
   stateKeys,
   templateValues,
@@ -1004,6 +1005,45 @@ describe('the agent program (TP-3)', () => {
     expect(calls.length).toBeGreaterThan(0);
     for (const { file, args } of calls) {
       expect({ file, passesAgent: /\bagent:\s*[\w.]*\bsession\.agent\b/.test(args.join(' ')) }).toEqual({ file, passesAgent: true });
+    }
+  });
+});
+
+describe('the names of the sessions (TP-10)', () => {
+  const valueOf = (result: ReturnType<typeof sessionNames.coordinator>): string | null => (result.ok ? result.value : null);
+
+  it('names the session of the coordinator with the id of the node', () => {
+    expect(sessionNames.coordinator('demo')).toEqual({ ok: true, value: 'demo' });
+  });
+
+  it('names the session of a worker with the id of the node, a hyphen and the id of the worker', () => {
+    expect(sessionNames.worker('demo', 'alpha')).toEqual({ ok: true, value: 'demo-alpha' });
+  });
+
+  it('gives a name that is one word for a flag: no space, no control character, no leading hyphen', () => {
+    const longest = 'a'.repeat(40);
+    for (const name of [valueOf(sessionNames.coordinator(longest)), valueOf(sessionNames.worker(longest, longest))]) {
+      expect(name).toMatch(/^[a-z0-9][a-z0-9-]*$/);
+    }
+  });
+
+  const NOT_SLUGS = ['', 'Demo', 'a b', '-demo', '../demo', 'demo\n--x', '--dangerously-skip-permissions', '__proto__', 'a'.repeat(41)];
+
+  it.each(NOT_SLUGS)('refuses the node id %j for the coordinator, and does not throw', (id) => {
+    const result = sessionNames.coordinator(id);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('not a slug');
+  });
+
+  it.each(NOT_SLUGS)('refuses %j as the node id and as the worker id of a worker, and does not throw', (id) => {
+    expect(sessionNames.worker(id, 'alpha').ok).toBe(false);
+    expect(sessionNames.worker('demo', id).ok).toBe(false);
+  });
+
+  it('does not repeat a refused id in the error', () => {
+    for (const result of [sessionNames.coordinator('Secret/Id'), sessionNames.worker('demo', 'Secret/Id'), sessionNames.worker('Secret/Id', 'alpha')]) {
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).not.toMatch(/secret/i);
     }
   });
 });
