@@ -321,6 +321,7 @@ describe('dismiss ID: the work must be pushed', () => {
     ],
     ['the branch is not on the remote', { remotes: { [cloneOf('web')]: { copies: {} } } }, 'is not on the remote'],
     ['the head has commits that the remote branch lacks', { remotes: { [cloneOf('web')]: { copies: { 'worker/alpha': OLDER } } } }, 'commits that'],
+    ['the work copy has no commit', { heads: {} }, 'the work copy has no commit'],
     ['a tracked file changed', { status: { [alpha]: ' M src/changed.ts\0' } }, 'src/changed.ts'],
     ['an untracked file exists', { status: { [alpha]: '?? notes/new.md\0' } }, 'notes/new.md'],
     ['the stash holds an entry', { stashes: { [cloneOf('web')]: 1 } }, 'stash'],
@@ -508,6 +509,24 @@ describe('dismiss ID --yes: the free', () => {
     expect(error.hint).toContain('dismiss alpha');
     expect(await recordState(made, 'alpha')).toBe('valid');
     expect(lineExists(made, 'alpha')).toBe(true);
+  });
+
+  it('names the unlock command for a locked work copy, and the steps by hand for a work copy with submodules, when git refuses the removal', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], git: { worktreeRemoveFails: { [cloneOf('web')]: 'fatal: cannot remove a locked working tree' } } });
+    const lineFile = `${layoutOf(HOME).heartbeatDir}/${made.sessions.get('alpha') ?? ''}`;
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    const hint = error.hint ?? '';
+    expect(hint).toContain(`git -C ${cloneOf('web')} worktree unlock ${copyOf('alpha')}`);
+    expect(hint).toContain('dismiss alpha" again');
+    expect(hint).toContain(`git -C ${cloneOf('web')} worktree remove --force ${copyOf('alpha')}`);
+    expect(hint).toContain(`${lineFile} and ${workerPathsOf(HOME, 'alpha').dir} by hand`);
+    expect(removals(made)).toEqual([`worktree remove -- ${copyOf('alpha')}`]);
+  });
+
+  it('names no last-seen line to delete by hand when the worker has none', async () => {
+    const made = await make({ workers: [{ id: 'alpha', event: null, pane: false }], git: { worktreeRemoveFails: { [cloneOf('web')]: 'fatal: contains submodules' } } });
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(error.hint).toContain(`Then delete ${workerPathsOf(HOME, 'alpha').dir} by hand`);
   });
 
   it.each<[string, 'line' | 'record']>([

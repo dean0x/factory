@@ -305,6 +305,24 @@ const afterSteps = (error: CliError, id: string, done: readonly string[], leftBy
   return { ...error, message, hint: error.hint === undefined ? byHand : `${error.hint} ${byHand}` };
 };
 
+/**
+ * The remedy for a removal that git refuses. Git also refuses a work copy that is locked, and one that holds submodules, and
+ * `dismiss` run again gets the same answer for both. A locked work copy is unlocked first. For submodules, the checks of `dismiss`
+ * passed, so the work is pushed, and git removes the work copy only with force. After that removal, `dismiss` can not run for the
+ * worker again, so the remedy names the paths to delete by hand.
+ */
+const removalHint = (home: string, plan: DismissPlan, lineSession: string | null): string => {
+  const clone = shellWord(plan.clone);
+  const copy = shellWord(plan.workCopy);
+  const leftByHand = [...(lineSession === null ? [] : [join(layoutOf(home).heartbeatDir, lineSession)]), workerPathsOf(home, plan.id).dir];
+  return (
+    `Git also refuses a work copy that is locked or that holds submodules. ` +
+    `If it is locked, run "git -C ${clone} worktree unlock ${copy}". Then run "${commandText(dismissLine(plan.id))}" again. ` +
+    `If it holds submodules, run "git -C ${clone} worktree remove --force ${copy}": the checks of ${commands.dismiss} passed, so its work is pushed. ` +
+    `Then delete ${leftByHand.map(shellWord).join(' and ')} by hand.`
+  );
+};
+
 const stoppedStep = (stopped: StopOutcome): readonly string[] => {
   switch (stopped.kind) {
     case 'no-pane':
@@ -337,7 +355,9 @@ export const freeWorker = async (deps: Deps, request: FreeRequest): Promise<CliR
   if (!stopped.ok) return err(afterSteps(stopped.error, plan.id, done));
   done.push(...stoppedStep(stopped.value));
   const removed = await removeWorkTree(deps, plan.clone, plan.workCopy);
-  if (!removed.ok) return err(afterSteps(removed.error, plan.id, done));
+  if (!removed.ok) {
+    return err(afterSteps({ ...removed.error, hint: removed.error.hint ?? removalHint(home, plan, lineSession) }, plan.id, done));
+  }
   done.push(`removed the work copy ${plan.workCopy}`);
   const recordDir = workerPathsOf(home, plan.id).dir;
   if (lineSession !== null) {
