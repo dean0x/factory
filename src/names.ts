@@ -38,6 +38,11 @@ export const places = {
 export const commands = {
   init: 'init',
   start: 'start',
+  shutdown: 'shutdown',
+  restart: 'restart',
+  reboot: 'reboot',
+  status: 'status',
+  dismiss: 'dismiss',
   node: 'node',
   doctor: 'doctor',
   machine: 'machine',
@@ -106,6 +111,7 @@ export const flags = {
   layer: 'layer',
   approval: 'approval',
   yes: 'yes',
+  idle: 'idle',
   for: 'for',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
@@ -131,6 +137,12 @@ export const files = {
   workerRecord: 'worker.json',
   /** The pointer of one worker to its newest session: `workers/<id>/last-session` holds a session id. */
   workerLastSession: 'last-session',
+  /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
+  coordinatorLastSession: 'coordinator-last-session',
+  /** The id of this machine, in the run-time folder: made once, and never shared. */
+  machineId: 'machine-id',
+  /** The mark of the active machine, in the state folder: the state repo tracks it, so it travels with the state. */
+  activeMachine: 'active-machine.json',
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',
@@ -673,11 +685,16 @@ export type StopWay = (typeof stopWay)[keyof typeof stopWay];
 /** The two cases of the table of ways to stop a session: the session waits at the prompt, or it works. */
 export type StopCase = 'idle' | 'busy';
 
+/** The case of the table for each state of a session that a last-seen line gives. */
+export const stopCaseOfState = { prompt: 'idle', busy: 'busy' } as const satisfies Readonly<Record<'prompt' | 'busy', StopCase>>;
 /** The safe way for each case. A case with no safe way has null and uses `stopFallback`. */
 export const stopWays: Readonly<Record<StopCase, StopWay | null>> = { idle: stopWay.term, busy: stopWay.term };
 
 /** The way for a case that has no safe way: the prompt fallback of the table. */
 export const stopFallback: StopWay = stopWay.term;
+
+/** The cases in which `dismiss` ends a session: only a session that waits at its prompt. `shutdown` and `restart` end both cases. */
+export const dismissStopCases: readonly StopCase[] = ['idle'];
 
 /**
  * The wait for the end of a process after TERM: the stop checks `attempts` times, and waits `intervalMs` before each check. So
@@ -704,6 +721,39 @@ export const workerListWords = {
   /** The mark of the context column: the percent is at the prepare limit or above, or above the max limit. */
   marks: { prepare: 'PREPARE', max: 'MAX' },
 } as const;
+
+/**
+ * The words of `status`: the titles of the columns, the state of a worker that has no live pane, the work item column for a work item
+ * that the board does not give and for a worker with no open work, and the idle column. The other states are `workerListWords.states`.
+ */
+export const statusWords = {
+  columns: { id: 'ID', project: 'PROJECT', state: 'STATE', workItem: 'WORK ITEM', idle: 'IDLE' },
+  stopped: 'stopped',
+  workItem: { unknown: 'unknown', none: 'none' },
+  idle: { yes: 'yes', no: 'no' },
+} as const;
+
+/**
+ * The rules and the words of `dismiss` (design 4.11). The work of a worker is pushed when, after a fetch of `remote`, the head of its
+ * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run and the free
+ * name at most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
+ * files. The table of `--idle` has the columns `columns`.
+ */
+export const dismissWords = {
+  remote: 'origin',
+  stuck: 'STUCK:',
+  maxIgnoredShown: 20,
+  maxFilesNamed: 5,
+  columns: { id: 'ID', project: 'PROJECT', state: 'STATE', pushed: 'PUSHED' },
+  pushed: { yes: 'yes', no: 'no' },
+} as const;
+
+/**
+ * How git links a work copy to its clone (the files that `git worktree add` makes). The file `.git` in the work copy has a line that
+ * starts with `linkPrefix` and names a folder `<git folder of the clone>/<adminFolder>/<name>`. The file `backPointer` in that folder
+ * names the `.git` file of the work copy. Both files are at most `maxBytes` long.
+ */
+export const workCopyGit = { linkPrefix: 'gitdir:', adminFolder: 'worktrees', backPointer: 'gitdir', maxBytes: 4096 } as const;
 
 /** The session folders that get the hook settings: the folder of the coordinator, and the work copy of a worker. */
 export const hookSessions = { coordinator: roles.coordinator, workCopy: 'work-copy' } as const;
@@ -767,6 +817,32 @@ export const workerRecord = {
   /** The permission bits of a worker folder and of its record. The record is private to the user. */
   folderMode: privateFile.folderMode,
   fileMode: privateFile.fileMode,
+} as const;
+
+/**
+ * The mark of the active machine (design 4.3): `active-machine.json` in the state folder holds the id of the machine that
+ * started the factory last, and the time. The state repo tracks it, so another machine that pulls the state can see it.
+ * The id of a machine is a random UUID that `machine-id` in the run-time folder holds. That file is never shared.
+ */
+export const activeMachine = {
+  keys: {
+    schema: 'schema',
+    machine: 'machine',
+    at: 'at',
+  },
+  /** The id of a machine: a UUID with lower case letters. */
+  idPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /** The random bytes of an id. */
+  idBytes: 16,
+  /** A reader refuses a file of more bytes than this. A UUID and a new line are 37 bytes. */
+  idMaxBytes: 64,
+  /** A reader refuses a mark of more bytes than this. */
+  maxBytes: 1_024,
+  /** The permission bits of the id file and of its folder when the call makes them. */
+  idFileMode: privateFile.fileMode,
+  folderMode: privateFile.folderMode,
+  /** The commit message of a write of the mark, and of its removal. */
+  commitMessages: { set: 'chore: mark this machine as the active one', clear: 'chore: clear the mark of the active machine' },
 } as const;
 
 /**
@@ -929,6 +1005,11 @@ export const marker = { prefix: `${program}:`, begin: 'begin', end: 'end', hash:
 export const schemaIds = {
   init: `${program}.init/v1`,
   start: `${program}.start/v1`,
+  shutdown: `${program}.shutdown/v1`,
+  restart: `${program}.restart/v1`,
+  reboot: `${program}.reboot/v1`,
+  status: `${program}.status/v1`,
+  dismiss: `${program}.dismiss/v1`,
   nodeChildren: `${program}.node-children/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
@@ -945,6 +1026,7 @@ export const schemaIds = {
   error: `${program}.error/v1`,
   lastSeen: `${program}.last-seen/v1`,
   workerRecord: `${program}.worker/v1`,
+  activeMachine: `${program}.active-machine/v1`,
 } as const;
 
 /** Placeholders of the prefix that marks input with the authority of the owner. */

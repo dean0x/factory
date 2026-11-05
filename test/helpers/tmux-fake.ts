@@ -505,6 +505,11 @@ export const tmuxHandler = (
           const pane = resolvePane(targetOf(command));
           return exited(0, `${pane === undefined ? expandFormat(command.at(-1) ?? '', () => '') : expand(command.at(-1) ?? '', pane)}\n`);
         }
+        // A position in a window (the left pane of the view window) prints the format of the pane that holds it. A format of the
+        // one key that asks if the coordinator ended keeps the answer of the fixture.
+        const format = command.at(-1) ?? '';
+        const held = resolvePane(targetOf(command));
+        if (held !== undefined && format !== '#{pane_dead}') return exited(0, `${expand(format, held)}\n`);
         return exited(0, `${endedCoordinators.has(targetSession(command)) ? 1 : 0}\n`);
       }
       case 'new-session': {

@@ -1,11 +1,14 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
+import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
 import { runLayout } from '../commands/layout.js';
+import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
+import { runStatus } from '../commands/status.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import { runWorker } from '../commands/worker.js';
@@ -202,6 +205,65 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     },
     run: (given, deps) =>
       runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun), yes: given.bool(flags.yes) }, registry),
+  },
+  {
+    name: commands.shutdown,
+    summary: `Stop the ${roles.worker}s and end the tmux session of the ${roles.node}. Nothing else stops.`,
+    usage: `${commandText(commands.shutdown)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runShutdown(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.restart,
+    summary: `Stop one ${roles.worker} and start it again with its session id. The other ${roles.worker}s keep their panes.`,
+    usage: `${commandText(commands.restart)} ID [${flagText(flags.home)} DIR]`,
+    positionals: true,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runRestart(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
+  },
+  {
+    name: commands.reboot,
+    summary:
+      `Stop every ${roles.worker} and start each one again with its session id. ` +
+      `Outside the ${places.session}, the tmux session of the ${roles.node} ends and starts again too.`,
+    usage: `${commandText(commands.reboot)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runReboot(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.status,
+    summary: `Show each ${roles.worker} with its state, its work item and its idle state.`,
+    usage: `${commandText(commands.status)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runStatus(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.dismiss,
+    summary:
+      `End a ${roles.worker} and free its work copy, when its work is pushed. It changes nothing until ${flagText(flags.yes)}. ` +
+      `With ${flagText(flags.idle)}, list the idle ${roles.worker}s and pick which to dismiss.`,
+    usage: [
+      `${commandText(commands.dismiss)} ID [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+      `${commandText(commands.dismiss)} ${flagText(flags.idle)} [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.idle]: {
+        type: 'boolean',
+        description: `List the idle ${roles.worker}s, and let you pick in a terminal window. The pick step stops inside a ${places.session}.`,
+      },
+      [flags.yes]: {
+        type: 'boolean',
+        description: `Free the ${roles.worker}: end its pane, remove its work copy, and delete its record. Not allowed inside a ${places.session}.`,
+      },
+    },
+    run: (given, deps) =>
+      runDismiss(
+        deps,
+        { home: given.string(flags.home), words: given.positionals(), idle: given.bool(flags.idle), yes: given.bool(flags.yes) },
+        registry,
+      ),
   },
   {
     name: commands.node,

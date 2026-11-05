@@ -3,13 +3,16 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
 import {
+  coordinatorReadArgs,
   killPaneArgs,
   paneBindArgs,
   paneAbsent,
   paneListArgs,
   paneReadArgs,
+  parseCoordinatorPane,
   parsePaneBind,
   parsePaneListSoft,
+  type CoordinatorPane,
   type PaneRow,
 } from '../launch/tmux.js';
 import { requireOwnSession, sessionExists, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
@@ -17,18 +20,31 @@ import { commandText, program, roles, tmuxNames } from '../names.js';
 import { startsWorker } from './binding.js';
 
 /**
- * The panes of the tmux session of the node, from one list call, or null when no session of this factory runs. A session of
- * the same name that belongs to another factory folder is a stop (exit 4). A pane with a bad worker mark is a pane with no
- * worker, and the list stays whole.
+ * The panes of the tmux session, from one list call, for a caller that has checked already that the session runs and belongs to
+ * its factory folder. A pane with a bad worker mark is a pane with no worker, and the list stays whole.
  */
-export const readPanes = async (deps: Deps, id: string, home: string): Promise<CliResult<readonly PaneRow[] | null>> => {
-  if (!(await sessionExists(deps, id))) return ok(null);
-  const own = await requireOwnSession(deps, id, home);
-  if (!own.ok) return own;
+export const listPanes = async (deps: Deps, id: string): Promise<CliResult<readonly PaneRow[]>> => {
   const listed = await tmuxStep(deps, paneListArgs(id));
   if (!listed.ok) return listed;
   const rows = parsePaneListSoft(listed.value);
   return rows.ok ? ok(rows.value) : failure(`cannot read the list of panes: ${rows.error}`);
+};
+
+/**
+ * The panes of the tmux session of the node, from one list call, or null when no session of this factory runs. A session of
+ * the same name that belongs to another factory folder is a stop (exit 4). A pane with a bad worker mark is a pane with no
+ * worker, and the list stays whole. `again` is the command line to run again after the fix of a session of another folder.
+ */
+export const readPanes = async (
+  deps: Deps,
+  id: string,
+  home: string,
+  again?: string,
+): Promise<CliResult<readonly PaneRow[] | null>> => {
+  if (!(await sessionExists(deps, id))) return ok(null);
+  const own = await requireOwnSession(deps, id, home, again);
+  if (!own.ok) return own;
+  return listPanes(deps, id);
 };
 
 /** The tmux command that a person runs to clear a mark that a program set on a pane. */
@@ -116,6 +132,22 @@ export const readPaneLife = async (deps: Deps, request: Omit<BindRequest, 'again
   if (bind.value.paneId !== paneId) return failure(`cannot read the pane ${paneId}: the read gives another pane`);
   if (!startsWorker(bind.value.startCommand, home, workerId)) return ok('other');
   return ok(bind.value.dead ? 'ended' : 'running');
+};
+
+/**
+ * Reads the pane of the coordinator, the left pane of the window `view`, right before a stop acts on it. The pane counts only when
+ * tmux says that it carries the node mark of this session (tmux compares the mark, so no text of a mark is read): the pane that
+ * `start` made for the coordinator. The value is null when tmux has no such pane or the pane does not carry the mark, and the stop
+ * then sends nothing. A call that tmux does not answer, and an answer that is not the line of one pane, are failures. The pid of the
+ * value is the pid of this read.
+ */
+export const readCoordinatorPane = async (deps: Deps, session: string): Promise<CliResult<CoordinatorPane | null>> => {
+  const read = await tmuxCall(deps, coordinatorReadArgs(session));
+  if (!read.ok) return read;
+  if (read.value.exitCode !== 0 || paneAbsent(read.value.stdout)) return ok(null);
+  const parsed = parseCoordinatorPane(read.value.stdout);
+  if (!parsed.ok) return failure(`cannot read the pane of the ${roles.coordinator} of the session ${session}: ${parsed.error}`);
+  return ok(parsed.value.node ? parsed.value : null);
 };
 
 /**

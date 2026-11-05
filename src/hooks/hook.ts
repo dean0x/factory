@@ -8,7 +8,7 @@ import { describeIssues } from '../core/zod.js';
 import { commands, env, hookNames, lastSeen, roles, type HookEvent } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
-import { writeLastSeen, writeWorkerSession } from '../workers/last-seen.js';
+import { writeCoordinatorSession, writeLastSeen, writeWorkerSession } from '../workers/last-seen.js';
 import { readWorkerRecord } from '../workers/registry.js';
 
 /**
@@ -94,9 +94,10 @@ export const sessionIdentityOf = async (deps: Deps, registry: RecipeRegistry): P
 /**
  * Record the event as the last-seen line of the session. Outside a factory session (no factory folder in the environment) it
  * does nothing and reads nothing. Otherwise the factory folder must pass the registration check, and the session marker must
- * be the id of the node or the id of a worker in its registry. For a worker, the hook also records the session as the newest
- * session of the worker, after the line is written, so a reader finds the line from the id of the worker. The line records
- * the id of the session marker, and a session with one marker never rewrites the line of a session with another.
+ * be the id of the node or the id of a worker in its registry. The hook also records the session as the newest session of its
+ * owner, the worker or the coordinator, after the line is written, so a reader finds the line from the id of the worker or
+ * from the id of the node. The line records the id of the session marker, and a session with one marker never rewrites the
+ * line of a session with another.
  * The value is nothing; an error is the reason that the hook wrote nothing, or that it did not write the pointer.
  */
 export const runHook = async (deps: Deps, args: readonly string[], registry: RecipeRegistry): Promise<CliResult<void>> => {
@@ -114,5 +115,7 @@ export const runHook = async (deps: Deps, args: readonly string[], registry: Rec
 
   const written = await writeLastSeen(deps, home, sessionId.value, { kind: 'event', event }, marker);
   if (!written.ok) return written;
-  return worker === null ? ok(undefined) : writeWorkerSession(deps, home, worker, sessionId.value);
+  return worker === null
+    ? writeCoordinatorSession(deps, home, sessionId.value)
+    : writeWorkerSession(deps, home, worker, sessionId.value);
 };

@@ -98,6 +98,17 @@ export const renderText =(output: CommandOutput, style: Style, quiet: boolean): 
   return shown.map((line) => `${style.paint(line.level, printable(line.text))}\n`).join('');
 };
 
+/**
+ * The lines of a table: the title line as a heading, then one text line for each row. A column is as wide as its widest cell, and
+ * two spaces part the columns. A line has no space at its end.
+ */
+export const tableLines = (title: readonly string[], rows: readonly (readonly string[])[]): readonly OutLine[] => {
+  const all = [title, ...rows];
+  const widths = title.map((_, column) => Math.max(...all.map((row) => (row[column] ?? '').length)));
+  const lineOf = (row: readonly string[]): string => row.map((cell, column) => cell.padEnd(widths[column] ?? 0)).join('  ').trimEnd();
+  return [{ level: 'heading', text: lineOf(title) }, ...rows.map((row): OutLine => ({ level: 'text', text: lineOf(row) }))];
+};
+
 export const renderWarnings = (warnings: readonly string[]): string =>
   warnings.map((warning) => `warning: ${printable(warning)}\n`).join('');
 

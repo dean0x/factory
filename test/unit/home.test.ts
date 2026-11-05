@@ -10,6 +10,7 @@ import {
 import { err, ok } from '../../src/core/result.js';
 import { commands } from '../../src/names.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
+import { gitHandler, type GitFixture, type GitLog } from '../helpers/git-fake.js';
 
 const HOME = '/w/node';
 const INDEX = '/state/factory/homes.json';
@@ -216,6 +217,105 @@ describe('home: the index', () => {
     const deps = indexed('/w/web/src');
     deps.files.delete(`${INDEX_HOME}/.factory/node.json`);
     expect(await stopped(deps)).toMatchObject({ kind: 'safety', message: expect.stringContaining('factory marker') });
+  });
+});
+
+describe('home: a git work tree of a listed project (TP-51, TP-52)', () => {
+  const FACTORY = '/w/web-factory';
+  const PROJECT = '/w/web';
+  /** A separate git work tree of the project, outside the factory folder. */
+  const TREE = '/elsewhere/web-fix';
+
+  /** A factory folder that lists the project, and a current folder that is a linked work tree with the given git folder. */
+  const treeDeps = (
+    commonDir: string | null = `${PROJECT}/.git`,
+    cwd = TREE,
+    env: Record<string, string | undefined> = {},
+  ): { readonly deps: FakeDeps; readonly git: GitLog } => {
+    const fixture: GitFixture = { repos: commonDir === null ? {} : { [cwd]: { commonDir } } };
+    const { handler, log } = gitHandler(fixture);
+    const deps = createFakeDeps({ cwd, env: { XDG_STATE_HOME: '/state', ...env }, run: handler });
+    deps.seed(`${FACTORY}/factory.yaml`, 'schema: 2\n');
+    deps.seedDir(cwd);
+    deps.seedDir(`${PROJECT}/.git`);
+    registerRoot(deps, FACTORY, 'demo', [PROJECT]);
+    return { deps, git: log };
+  };
+
+  it('finds the home through the common git folder of the work tree, with one git call', async () => {
+    const { deps, git } = treeDeps();
+    expect(await located(deps)).toEqual({ home: FACTORY, source: 'index', unregistered: false });
+    expect(git.commands()).toEqual(['rev-parse --git-common-dir']);
+  });
+
+  it('asks git only when no other source finds a home: a current folder in the project needs no git call', async () => {
+    const { deps, git } = treeDeps(undefined, `${PROJECT}/src`);
+    expect(await located(deps)).toMatchObject({ home: FACTORY, source: 'index' });
+    expect(git.commands()).toEqual([]);
+  });
+
+  it('keeps the home flag and FACTORY_HOME before the work tree', async () => {
+    expect(await located(treeDeps().deps, '/flag')).toMatchObject({ home: '/flag', source: 'flag' });
+    expect(await located(treeDeps(undefined, TREE, { FACTORY_HOME: '/elsewhere-home' }).deps)).toMatchObject({
+      home: '/elsewhere-home',
+      source: 'env',
+    });
+  });
+
+  it('fails with exit 2 and the hint for a work tree of no listed project', async () => {
+    const { deps } = treeDeps('/w/other/.git');
+    const error = await stopped(deps);
+    expect(error.kind).toBe('usage');
+    expect(error.message).toContain('no factory.yaml found');
+    expect(error.message).toContain('git repo');
+    expect(error.hint).toContain('Run "factory init" here, or use --home DIR');
+  });
+
+  it('fails with exit 2 for a folder that is in no git work tree', async () => {
+    const { deps } = treeDeps(null);
+    expect(await stopped(deps)).toMatchObject({ kind: 'usage' });
+  });
+
+  it.each([`${PROJECT}.git`, `${PROJECT}/.git/worktrees/x`, `${PROJECT}/src/.git`, '/w/.git'])(
+    'does not count the common git folder %s: it is not the .git folder of a listed project',
+    async (commonDir) => {
+      expect(await stopped(treeDeps(commonDir).deps)).toMatchObject({ kind: 'usage' });
+    },
+  );
+
+  it('applies the registration check to the home that it finds', async () => {
+    const { deps } = treeDeps();
+    deps.files.delete(`${FACTORY}/.factory/node.json`);
+    expect(await stopped(deps)).toMatchObject({ kind: 'safety', message: expect.stringContaining('factory marker') });
+  });
+
+  it('ignores a factory folder that holds no config file any more', async () => {
+    const { deps } = treeDeps();
+    deps.files.delete(`${FACTORY}/factory.yaml`);
+    expect(await stopped(deps)).toMatchObject({ kind: 'usage' });
+  });
+
+  it('fails with exit 2 and names both folders when two factory folders list the project', async () => {
+    const { deps } = treeDeps();
+    deps.seed('/w/second/factory.yaml', 'schema: 2\n');
+    registerRoot(deps, '/w/second', 'second', [PROJECT]);
+    const error = await stopped(deps);
+    expect(error.kind).toBe('usage');
+    expect(error.message).toContain(FACTORY);
+    expect(error.message).toContain('/w/second');
+    expect(error.hint).toContain('--home DIR');
+  });
+
+  it('stops for a factory folder in the settings folder of Claude Code, and makes no call at or under it', async () => {
+    const claude = '/users/me/.claude/factory';
+    const { deps } = treeDeps(undefined, TREE, { HOME: '/users/me' });
+    deps.seed(`${claude}/factory.yaml`, 'schema: 2\n');
+    registerRoot(deps, claude, 'demo', [PROJECT]);
+    deps.files.delete(`${FACTORY}/factory.yaml`);
+    const seen: string[] = [];
+    const result = await locateHome(withFsWatch(deps, (_method, path) => seen.push(path)), undefined, reader, commands.node);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(seen.filter((path) => path.startsWith('/users/me/.claude'))).toEqual([]);
   });
 });
 

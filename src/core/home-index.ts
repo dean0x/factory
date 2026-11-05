@@ -1,10 +1,11 @@
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import { commands, commandText, env, files, flagText, flags, homeIndex, places, type CommandName } from '../names.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
+import { commonDirOf, GIT_ENTRY } from './git.js';
 import { comparable, isInUserClaudeFolder, isSameOrInside, realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
 import { changePrivateFile, readPrivateText, userStatePathOf } from './private-file.js';
 import { err, ok, type Result } from './result.js';
@@ -265,11 +266,15 @@ export type IndexMatch =
 export const matchFolder = (projects: readonly IndexedProject[], folder: string): IndexMatch => {
   const holding = projects.filter(({ project }) => isSameOrInside(project, folder));
   const deepest = Math.max(0, ...holding.map(({ project }) => project.length));
-  if (deepest === 0) return { kind: 'none' };
-  const homes = [...new Set(holding.filter(({ project }) => project.length === deepest).map(({ home }) => home))].sort();
-  const [first, ...others] = homes;
+  return matchOfHomes(holding.filter(({ project }) => project.length === deepest).map(({ home }) => home));
+};
+
+/** No home, one home, or a tie between the different homes of the list. */
+const matchOfHomes = (homes: readonly string[]): IndexMatch => {
+  const sorted = [...new Set(homes)].sort();
+  const [first, ...others] = sorted;
   if (first === undefined) return { kind: 'none' };
-  return others.length === 0 ? { kind: 'one', home: first } : { kind: 'tie', homes };
+  return others.length === 0 ? { kind: 'one', home: first } : { kind: 'tie', homes: sorted };
 };
 
 const unusable = (path: string, reason: string, command: CommandName): CliResult<never> =>
@@ -278,28 +283,27 @@ const unusable = (path: string, reason: string, command: CommandName): CliResult
     `Fix or remove that file, or use ${flagText(flags.home)} DIR. Then run "${commandText(command)}" again.`,
   );
 
-/**
- * The node home whose project holds the current folder, or null when no entry does. A home that is gone is ignored.
- * An index that cannot be read, and a tie between two homes, are errors that name the file or the homes. An entry that
- * holds the current folder and whose home is in the settings folder of Claude Code is a stop (exit 4) before any call on it.
- * `command` is the command that runs: the remedy line of an error names it.
- */
-export const findHomeInIndex = async (deps: Deps, command: CommandName): Promise<CliResult<string | null>> => {
+/** The entries of the index file, or null when no variable names a folder for it. An index that cannot be read is an error. */
+const readEntries = async (deps: Deps, command: CommandName): Promise<CliResult<readonly HomeEntry[] | null>> => {
   const path = await indexPathOf(deps);
   if (!path.ok) return path;
   if (path.value === null) return ok(null);
   const entries = await readHomeIndex(deps, path.value);
-  if (!entries.ok) return unusable(path.value, entries.error, command);
+  return entries.ok ? ok(entries.value) : unusable(path.value, entries.error, command);
+};
 
-  const folder = await deps.fs.realpath(deps.cwd);
-  if (!folder.ok) return folder;
-  const candidates = entries.value.flatMap((entry) =>
-    entry[homeIndex.keys.projects].map((project) => ({ home: entry[homeIndex.keys.home], project })),
-  );
-  const holding = candidates.filter(({ project }) => isSameOrInside(project, folder.value));
+/** Every project of every entry, with the home of its entry. */
+const projectsOf = (entries: readonly HomeEntry[]): readonly IndexedProject[] =>
+  entries.flatMap((entry) => entry[homeIndex.keys.projects].map((project) => ({ home: entry[homeIndex.keys.home], project })));
+
+/**
+ * The candidates whose home still holds its config file. A home in the settings folder of Claude Code is a stop (exit 4) before
+ * any call on it. Each home is checked once.
+ */
+const presentOf = async (deps: Deps, candidates: readonly IndexedProject[]): Promise<CliResult<readonly IndexedProject[]>> => {
   const present: IndexedProject[] = [];
   const checked = new Map<string, boolean>();
-  for (const candidate of holding) {
+  for (const candidate of candidates) {
     const outside = requireOutsideUserClaudeFolder(deps, candidate.home, commands.doctor);
     if (!outside.ok) return outside;
     const known = checked.get(candidate.home);
@@ -307,8 +311,11 @@ export const findHomeInIndex = async (deps: Deps, command: CommandName): Promise
     checked.set(candidate.home, exists);
     if (exists) present.push(candidate);
   }
+  return ok(present);
+};
 
-  const match = matchFolder(present, folder.value);
+/** The home that a match names: its one home, or null for none. Two homes are an error, and `tie` is the start of its message. */
+const homeOfMatch = (match: IndexMatch, tie: string, command: CommandName): CliResult<string | null> => {
   switch (match.kind) {
     case 'none':
       return ok(null);
@@ -316,7 +323,7 @@ export const findHomeInIndex = async (deps: Deps, command: CommandName): Promise
       return ok(match.home);
     case 'tie':
       return usageError(
-        `the folder ${folder.value} is in a project of more than one ${places.folder}: ${match.homes.join(', ')}`,
+        `${tie}: ${match.homes.join(', ')}`,
         `Run "${commandText(command)}" again with ${flagText(flags.home)} DIR to choose one.`,
       );
     default: {
@@ -324,4 +331,59 @@ export const findHomeInIndex = async (deps: Deps, command: CommandName): Promise
       return unreachable;
     }
   }
+};
+
+/** The home whose project holds the current folder, or null. The caller has read the entries. */
+const homeHoldingCwd = async (deps: Deps, entries: readonly HomeEntry[], command: CommandName): Promise<CliResult<string | null>> => {
+  const folder = await deps.fs.realpath(deps.cwd);
+  if (!folder.ok) return folder;
+  const holding = projectsOf(entries).filter(({ project }) => isSameOrInside(project, folder.value));
+  const present = await presentOf(deps, holding);
+  if (!present.ok) return present;
+  return homeOfMatch(
+    matchFolder(present.value, folder.value),
+    `the folder ${folder.value} is in a project of more than one ${places.folder}`,
+    command,
+  );
+};
+
+/**
+ * The home of a listed project whose git folder is the common git folder of the current folder, or null. The current folder is then
+ * a git work tree of the project that lies outside it, for example a work tree that `git worktree add` made. A project counts when
+ * the common git folder is its own `.git` folder, so the check is one git call on the current folder and no call on a project.
+ */
+const homeOfWorkTree = async (deps: Deps, entries: readonly HomeEntry[], command: CommandName): Promise<CliResult<string | null>> => {
+  const projects = projectsOf(entries);
+  if (projects.length === 0) return ok(null);
+  const common = await commonDirOf(deps, deps.cwd);
+  if (common === null) return ok(null);
+  const real = await realPathOf(deps, common);
+  if (!real.ok) return real;
+  if (basename(real.value) !== GIT_ENTRY) return ok(null);
+  const repo = dirname(real.value);
+  const present = await presentOf(
+    deps,
+    projects.filter(({ project }) => comparable(deps, project) === comparable(deps, repo)),
+  );
+  if (!present.ok) return present;
+  return homeOfMatch(
+    matchOfHomes(present.value.map(({ home }) => home)),
+    `the git repo ${repo} belongs to a project of more than one ${places.folder}`,
+    command,
+  );
+};
+
+/**
+ * The node home whose project holds the current folder, or null when no entry does. When no project holds the folder, the home
+ * whose project has the same git repo as the folder (a work tree of the project outside it). A home that is gone is ignored.
+ * An index that cannot be read, and a tie between two homes, are errors that name the file or the homes. An entry that
+ * holds the current folder and whose home is in the settings folder of Claude Code is a stop (exit 4) before any call on it.
+ * `command` is the command that runs: the remedy line of an error names it.
+ */
+export const findHomeInIndex = async (deps: Deps, command: CommandName): Promise<CliResult<string | null>> => {
+  const entries = await readEntries(deps, command);
+  if (!entries.ok || entries.value === null) return entries.ok ? ok(null) : entries;
+  const holding = await homeHoldingCwd(deps, entries.value, command);
+  if (!holding.ok || holding.value !== null) return holding;
+  return homeOfWorkTree(deps, entries.value, command);
 };

@@ -13,6 +13,7 @@ import {
   summonTimerArgs,
   swapPaneArgs,
   unsetPaneOptionArgs,
+  type PaneRow,
   type SlotRow,
   type SummonMark,
 } from '../launch/tmux.js';
@@ -90,6 +91,11 @@ export interface WorkerPanesRequest {
   readonly workerId: string;
   /** The command that a person runs again after a fix, without the program name (`commandText` adds it). */
   readonly again: string;
+  /**
+   * The list of the panes of the session that the caller read already, after it checked that the session is its own. A call
+   * with no list reads the session and the list by itself. Each pane of the worker is read again by its id in both cases.
+   */
+  readonly panes?: readonly PaneRow[];
 }
 
 /** The panes that belong to a worker: each one carries its mark, and the launch of the worker made it. */
@@ -135,8 +141,8 @@ const requireSummoned = async (
  * the only pane of a worker that may be in that window. A session that does not run has no panes.
  */
 export const readWorkerPanes = async (deps: Deps, request: WorkerPanesRequest): Promise<CliResult<WorkerPanes>> => {
-  const { home, session, workerId, again } = request;
-  const listed = await readPanes(deps, session, home);
+  const { home, session, workerId, again, panes } = request;
+  const listed = panes === undefined ? await readPanes(deps, session, home) : ok(panes);
   if (!listed.ok) return listed;
   const ids = new Set((listed.value ?? []).filter((row) => row.worker === workerId).map((row) => row.paneId));
   const bound: BoundPane[] = [];

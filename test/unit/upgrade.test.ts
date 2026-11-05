@@ -1582,7 +1582,7 @@ describe('upgrade: when the state repo holds changes of the owner', () => {
   it('stops when git cannot give the status', async () => {
     const { deps } = await makeNode({ run: (inner) => (call) => (call.args.includes('status') ? exited(128) : inner(call)) });
     const before = snapshot(deps);
-    expect(refusal(await upgrade(deps, newer)).message).toContain('cannot read the changes of the state repository');
+    expect(refusal(await upgrade(deps, newer)).message).toContain(`cannot read the changes of ${HOME}/.factory`);
     expect(snapshot(deps)).toEqual(before);
   });
 });

@@ -12,6 +12,19 @@ export interface FakeRepo {
   readonly branch?: string;
 }
 
+/** The folder of the local copies of the remote branches of the remote `origin`. */
+const REMOTE_REFS = 'refs/remotes/origin/';
+
+/** The remote branches that the repo of one folder knows, and what the remote has now. */
+export interface FakeRemote {
+  /** The local copies of the remote branches (`refs/remotes/origin/<branch>`) at the start: the branch and its commit id. */
+  readonly copies: Readonly<Record<string, string>>;
+  /** What the remote has now. A fetch makes the copies equal to it, and drops a copy that it lacks. Default: the copies. */
+  readonly now?: Readonly<Record<string, string>>;
+  /** The exit code of `git fetch`. Default: 0. */
+  readonly fetchExit?: number;
+}
+
 export interface GitFixture {
   /** The value of git config user.name and user.email. False means no identity. */
   readonly identity?: boolean;
@@ -46,6 +59,18 @@ export interface GitFixture {
   readonly checkIgnoreFailsFor?: readonly string[];
   /** The folders that stay out of every work tree, also after `git init` ran in them. */
   readonly noWorkTree?: readonly string[];
+  /** The commit id that `git rev-parse --verify HEAD` prints, by folder. It wins over `committed`. */
+  readonly heads?: Readonly<Record<string, string>>;
+  /** The remote branches of a repo, by the folder that git runs in. A folder with no entry has no remote branch. */
+  readonly remotes?: Readonly<Record<string, FakeRemote>>;
+  /** The commits below another commit, by the commit above them. The count of `rev-list` is 0 for the same commit too. */
+  readonly ancestors?: Readonly<Record<string, readonly string[]>>;
+  /** The count of entries of the stash, by folder. A folder with no entry has an empty stash. */
+  readonly stashes?: Readonly<Record<string, number>>;
+  /** The files that git ignores and that exist, by folder. `git status --ignored` lists them as `!!` entries. */
+  readonly ignoredFiles?: Readonly<Record<string, readonly string[]>>;
+  /** The text of the error of `git worktree remove`, by the folder that git runs in. The command then fails with exit code 128. */
+  readonly worktreeRemoveFails?: Readonly<Record<string, string>>;
 }
 
 export interface GitLog {
@@ -55,6 +80,18 @@ export interface GitLog {
   /** The argument lists of the clones. */
   clones(): (readonly string[])[];
 }
+
+/** The words that a read of a work copy puts after `-C <folder>`: the file monitor off, the git folder and the work tree. */
+const PIN_WORDS = 6;
+
+/**
+ * The argument list of a git call without the words of a pinned read (`-c core.fsmonitor=false --git-dir X --work-tree Y`), so a read
+ * of a work copy gets the same answer as the same read without them. Any other list stays as it is.
+ */
+const unpinned = (args: readonly string[]): readonly string[] =>
+  args[2] === '-c' && args[3] === 'core.fsmonitor=false' && args[4] === '--git-dir' && args[6] === '--work-tree'
+    ? [...args.slice(0, 2), ...args.slice(2 + PIN_WORDS)]
+    : args;
 
 /**
  * The top folder of the work tree that holds `dir`: the nearest folder above `dir`, or `dir` itself, that is a work tree.
@@ -74,6 +111,13 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
   /** The work trees that a clone made. A fixture repo at the same folder wins. */
   const cloned = new Map<string, FakeRepo>();
   const repoAt = (dir: string): FakeRepo | undefined => fixture.repos?.[dir] ?? cloned.get(dir);
+  /** The local copies of the remote branches by folder, as pairs of the branch and its commit id. A fetch replaces them. */
+  const copies = new Map<string, [string, string][]>();
+  const copiesOf = (dir: string, remote: FakeRemote): [string, string][] => {
+    const found = copies.get(dir) ?? Object.entries(remote.copies);
+    copies.set(dir, found);
+    return found;
+  };
   const handler: RunHandler = (call) => {
     calls.push(call);
     if (call.command === 'gh') {
@@ -92,11 +136,13 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       return exited(0);
     }
     if (call.command !== 'git' || call.args[0] !== '-C') return missingProgram(call.command);
-    const dir = call.args[1] ?? '';
-    const rest = call.args.slice(2).join(' ');
+    // A read of a work copy names its git folder and turns the file monitor off: the answer is the same as without these words.
+    const args = unpinned(call.args);
+    const dir = args[1] ?? '';
+    const rest = args.slice(2).join(' ');
     const repo = repoAt(dir);
     // As real git does: `git init` makes the folder the top of a work tree.
-    if (call.args[2] === 'init') {
+    if (args[2] === 'init') {
       if (fixture.noWorkTree?.includes(dir) !== true) cloned.set(dir, {});
       return exited(0);
     }
@@ -106,16 +152,46 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       if (fixture.lsFilesOverflow === true) return failure('cannot run git: ERR_CHILD_PROCESS_STDIO_MAXBUFFER');
       return exited(0, (fixture.tracked?.[dir] ?? []).map((path) => `${path}\0`).join(''));
     }
-    if (call.args[2] === 'check-ignore') {
+    if (args[2] === 'check-ignore') {
       if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
       if (fixture.checkIgnoreExit !== undefined) return exited(fixture.checkIgnoreExit, '', 'fatal: check-ignore failed');
-      const asked = call.args.slice(call.args.indexOf('--') + 1);
+      const asked = args.slice(args.indexOf('--') + 1);
       if (asked.some((path) => fixture.checkIgnoreFailsFor?.includes(path) === true)) {
         return exited(128, '', 'fatal: check-ignore failed');
       }
       const rules = fixture.ignored?.[dir];
       const found = rules === undefined ? asked : asked.filter((path) => rules.includes(path));
       return found.length === 0 ? exited(1) : exited(0);
+    }
+    if (args[2] === 'fetch') {
+      const remote = fixture.remotes?.[dir];
+      if (remote?.fetchExit !== undefined && remote.fetchExit !== 0) {
+        return exited(remote.fetchExit, '', 'fatal: unable to access the remote');
+      }
+      if (remote !== undefined) copiesOf(dir, remote).splice(0, Infinity, ...Object.entries(remote.now ?? remote.copies));
+      return exited(0);
+    }
+    if (rest.startsWith(`rev-parse --verify --quiet ${REMOTE_REFS}`)) {
+      const branch = rest.slice(`rev-parse --verify --quiet ${REMOTE_REFS}`.length);
+      const remote = fixture.remotes?.[dir];
+      const copy = remote === undefined ? undefined : copiesOf(dir, remote).find(([name]) => name === branch);
+      return copy === undefined ? exited(1) : exited(0, `${copy[1]}\n`);
+    }
+    if (args[2] === 'rev-list' && args[3] === '--count') {
+      const [descendant = '', ancestor = ''] = (args[4] ?? '').split('..');
+      return ancestor === descendant || fixture.ancestors?.[descendant]?.includes(ancestor) === true ? exited(0, '0\n') : exited(0, '1\n');
+    }
+    if (rest === 'stash list --format=%gd') {
+      const count = fixture.stashes?.[dir] ?? 0;
+      return exited(0, Array.from({ length: count }, (_, index) => `stash@{${index}}\n`).join(''));
+    }
+    if (rest === 'status --porcelain -z --ignored') {
+      const ignored = (fixture.ignoredFiles?.[dir] ?? []).map((path) => `!! ${path}\0`).join('');
+      return exited(0, `${fixture.status?.[dir] ?? ''}${ignored}`);
+    }
+    if (args[2] === 'worktree' && args[3] === 'remove') {
+      const failed = fixture.worktreeRemoveFails?.[dir];
+      return failed === undefined ? exited(0) : exited(128, '', `${failed}\n`);
     }
     switch (rest) {
       case 'status --porcelain -z --untracked-files=all':
@@ -141,6 +217,7 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       case 'branch --show-current':
         return repo?.branch === undefined ? exited(0, '\n') : exited(0, `${repo.branch}\n`);
       case 'rev-parse --verify HEAD':
+        if (fixture.heads?.[dir] !== undefined) return exited(0, `${fixture.heads[dir]}\n`);
         return fixture.committed?.includes(dir) === true ? exited(0, 'abc123\n') : exited(128);
       default:
         return exited(0);

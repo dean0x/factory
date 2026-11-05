@@ -107,8 +107,15 @@ describe('the home of a session', () => {
     if (!result.ok) {
       expect(result.error.kind).toBe('safety');
       expect(result.error.message).toContain('belongs to another');
-      expect(result.error.hint).toContain('stop the other session');
+      expect(result.error.hint).toContain('Run "factory shutdown" in the factory folder that owns the session');
+      expect(result.error.hint).toContain('Then run "factory start" again.');
     }
+  });
+
+  it('names the command to run again in the remedy, when the caller gives one', async () => {
+    const { deps } = make({ sessions: { demo: '/w/other' } });
+    const result = await requireOwnSession(deps, 'demo', HOME, 'factory restart alpha');
+    expect(!result.ok && result.error.hint).toContain('Then run "factory restart alpha" again.');
   });
 
   it('refuses a session that has no home option', async () => {

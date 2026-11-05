@@ -1,7 +1,7 @@
 import { join, relative, resolve } from 'node:path';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
-import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js';
+import { loadConfig, readNodeIdentity } from '../config/load.js';
 import { durationMinutes, isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import {
@@ -13,11 +13,9 @@ import {
 import type { Deps } from '../core/deps.js';
 import { addWorkTree, branchExists, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
-import { warnInstructionFiles } from '../core/instruction-files.js';
 import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
-import { requireSession } from '../launch/tmux-run.js';
 import {
   commandLines,
   commands,
@@ -27,6 +25,7 @@ import {
   flagText,
   hookSessions,
   lastSeen,
+  places,
   program,
   roles,
   schemaIds,
@@ -36,16 +35,16 @@ import {
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
+import { dismissLine } from '../workers/dismiss.js';
 import { ensureCloneExclude } from '../workers/exclude.js';
-import { launchWorker, requireCleanTrackedSettings, resumeLine } from '../workers/launch.js';
+import { launchWorker, requireCleanTrackedSettings, resumeLine, resumeWorker } from '../workers/launch.js';
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import type { BoundPane } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, workCopyOf, writeWorkerRecord, type WorkerRecord } from '../workers/registry.js';
-import { closeWorkerPane, readWorkerPanes, summonWorker } from '../workers/slot.js';
+import { readWorkerPanes, summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
-import { requireSafetyBlock, toolProblems } from './launch-checks.js';
-import { requireRootClean, rootNotices, scanRoot } from './root-content.js';
+import { prepareLaunch } from './launch-checks.js';
 import { runWorkerList } from './worker-list.js';
 
 export interface WorkerOptions {
@@ -74,9 +73,6 @@ const withHint = (error: CliError, hint: string): CliError => ({ ...error, hint 
 const newLine = (id: string, project: string): string =>
   `${commandText(commandLines.workerNew)} ${id} ${flagText(flags.project)} ${project}`;
 
-/** The end of the warning for a safety block that is out of date: this command does not render it, and the next `start` does. */
-const RENDERED_BY_START = `This command does not render it again: the next "${commandText(commands.start)}" does.`;
-
 /** The request for the consent to the hook settings of a work copy. */
 const hookRequestOf = (workCopy: string, yes: boolean): HookConsentRequest => ({
   folder: workCopy,
@@ -95,30 +91,6 @@ interface NewWorkerPlan {
   readonly branch: string;
 }
 
-/**
- * The checks of the root and of the tools, as `start` makes them. A failing root check is a stop (exit 4) with one remedy
- * line, a warning is printed, and nothing changes. The owner accepts a change of the setup text with `start` or `upgrade`:
- * this command asks nothing about it. The safety block is checked and never rendered again here: a block that is out of
- * date gives a warning, and the next `start` renders it.
- */
-const requireLaunchReady = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<void>> => {
-  const scan = await scanRoot(deps, home, config);
-  for (const notice of rootNotices(scan)) deps.warn(notice);
-  const clean = requireRootClean(scan);
-  if (!clean.ok) return clean;
-  const safety = await requireSafetyBlock(deps, home, config, true, RENDERED_BY_START);
-  if (!safety.ok) return safety;
-  for (const note of safety.value) deps.warn(note);
-  const problems = await toolProblems(deps, true);
-  if (problems.length > 0) {
-    return failure(
-      problems.join('. '),
-      `Run "${commandText(commands.doctor)} ${flagText(flags.home)} ${shellWord(home)}" to check the tools.`,
-    );
-  }
-  return ok(undefined);
-};
-
 /** The factory folder of the command: the folder of the option, or the one that the current folder is in. */
 const locateNode = async (deps: Deps, options: WorkerOptions, registry: RecipeRegistry): Promise<CliResult<string>> => {
   const located = await locateHomeFolder(
@@ -131,36 +103,11 @@ const locateNode = async (deps: Deps, options: WorkerOptions, registry: RecipeRe
 };
 
 /**
- * Everything that a command that starts a pane checks before its own checks, in this order: the warning about instruction files,
- * the config, the local mode, the root and the tools (exit 4, and nothing changes), and the tmux session of the node (exit 3).
- * `again` is the command line that a person runs again after a fix.
- */
-const prepareLaunch = async (
-  deps: Deps,
-  home: string,
-  registry: RecipeRegistry,
-  again: string,
-): Promise<CliResult<{ readonly config: FactoryConfig; readonly notes: readonly string[] }>> => {
-  // The warning about instruction files comes before any change or launch, and it never stops the command.
-  await warnInstructionFiles(deps, home);
-  const loaded = await loadConfig(deps, home, registry);
-  if (!loaded.ok) return loaded;
-  const config = loaded.value;
-  const notes = await settleLocalMode(deps, home, true);
-  if (!notes.ok) return notes;
-  const ready = await requireLaunchReady(deps, home, config);
-  if (!ready.ok) return ready;
-  const session = await requireSession(deps, config.core.node.id, home, again);
-  if (!session.ok) return session;
-  return ok({ config, notes: notes.value });
-};
-
-/**
  * The record of the worker. A worker with no record, or with a record that is not valid, is a wrong id (exit 2). A record that names
  * a work copy or a branch that is not the one of its worker is a security stop (exit 4): a command that starts or ends a session
  * must not act on it. The message names the record file and what differs.
  */
-const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
+export const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
   const read = await readWorkerRecord(deps, home, id);
   if (!read.ok) return read;
   if (read.value.state === 'valid') return ok(read.value.record);
@@ -270,8 +217,13 @@ const removeCopyAndBranch = (plan: NewWorkerPlan): string => {
   return `"${git} worktree remove ${shellWord(plan.workCopy)}" and then "${git} branch -D ${shellWord(plan.branch)}"`;
 };
 
-/** The steps that remove a worker by hand: its work copy and its branch, then the folder of its record. */
+/**
+ * The ways to remove a worker: the command that frees it once its branch is pushed, and the steps by hand, which are the way for a
+ * branch that is not pushed: the work copy and its branch, then the folder of its record.
+ */
 const removeByHand = (plan: NewWorkerPlan, home: string): string =>
+  `After its branch is pushed, ${program} can remove it: run "${commandText(dismissLine(plan.id))}" to see the steps, ` +
+  `then add ${flagText(flags.yes)} in a terminal window outside a ${places.session}. ` +
   `To remove the ${roles.worker} by hand, run ${removeCopyAndBranch(plan)}. ` +
   `Then delete the folder ${shellWord(workerPathsOf(home, plan.id).dir)}.`;
 
@@ -525,9 +477,9 @@ const requireNoLivePane = (panes: readonly BoundPane[], id: string): CliResult<v
  *    (`readWorkerPanes`): a pane that the launch of the worker did not make is a stop (exit 4), and it is not taken for the
  *    pane of the worker that runs. A pane of the worker that runs is a stop (exit 2);
  * 3. the session to resume. No valid line, or a line that does not belong to the worker, gives no `--resume` and one warning;
- * 4. the old panes of the worker whose programs ended are closed, by their ids. A pane that a summon left in the slot goes back
- *    first, and the board comes back into the slot;
- * 5. the launch of the same path as `worker new` (it checks the settings files of the work copy).
+ * 4. `resumeWorker` closes the old panes of the worker whose programs ended, by their ids (a pane that a summon left in the slot
+ *    goes back first, and the board comes back into the slot), then launches by the same path as `worker new` (it checks the
+ *    settings files of the work copy).
  */
 const runResume = async (
   deps: Deps,
@@ -560,16 +512,13 @@ const runResume = async (
   const chosen = await chooseSession(deps, home, id);
   if (!chosen.ok) return chosen;
 
-  for (const pane of panes.value.dead) {
-    const closed = await closeWorkerPane(deps, config.core.node.id, pane.paneId);
-    if (!closed.ok) return closed;
-  }
-  const launched = await launchWorker(deps, {
+  const launched = await resumeWorker(deps, {
     home,
     config,
     workerId: id,
     workCopy: record.value.workCopy,
     retry: resumeLine(id),
+    deadPanes: panes.value.dead,
     ...(chosen.value.kind === 'resume' ? { resumeId: chosen.value.sessionId } : {}),
   });
   if (!launched.ok) return launched;

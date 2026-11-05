@@ -39,8 +39,10 @@ describe('parseBudgetRows', () => {
 });
 
 describe('the token budget of this PR (TP-64)', () => {
-  /** The jobs that FAC-M4 PR 2a builds: the worker creation and the resource check. */
+  /** The jobs that FAC-M4 builds so far: the status round, the restart of all workers, the worker creation and the resource check. */
   it.each([
+    [2, 'factory status'],
+    [3, 'factory reboot'],
     [4, 'factory worker new'],
     [16, 'factory machine'],
   ])('has a measured size within the budget for the job %i (%s)', (job, command) => {

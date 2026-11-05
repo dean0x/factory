@@ -7,7 +7,7 @@ import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { hookNames, schemaIds, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
-import { readWorkerLastSeen, writeLastSeen } from '../../src/workers/last-seen.js';
+import { readOwnCoordinatorSession, readWorkerLastSeen, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { runHook } from '../helpers/package-registry.js';
@@ -408,7 +408,7 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
       });
     });
 
-    it('writes no pointer for the session of the node', async () => {
+    it('writes no worker pointer for the session of the node', async () => {
       const deps = await makeWorker({ env: { FACTORY_SESSION: NODE_ID } });
       expect((await runHook(deps, ['Stop'])).ok).toBe(true);
       expect(deps.files.has(paths.lastSessionFile)).toBe(false);
@@ -448,6 +448,93 @@ describe('factory hook: the id of a worker in the registry as the session (TP-12
       const deps = await makeWorker();
       expect(await runLine(['hook', 'Stop'], deps)).toEqual({ code: 0, out: '', err: '' });
       expect(deps.files.get(paths.lastSessionFile)).toBe(`${SESSION}\n`);
+    });
+  });
+
+  describe('the session pointer of the coordinator (TP-133)', () => {
+    const NEXT_SESSION = '00000000-0000-4000-8000-000000000002';
+    const POINTER = layoutOf(HOME).coordinatorLastSessionFile;
+    const asNode = (options: MakeOptions = {}): Promise<FakeDeps> =>
+      makeWorker({ ...options, env: { FACTORY_SESSION: NODE_ID, ...options.env } });
+    const ownRead = async (deps: Deps) => {
+      const read = await readOwnCoordinatorSession(deps, HOME, NODE_ID);
+      if (!read.ok) throw new Error(read.error.message);
+      return read.value;
+    };
+
+    it('records the session of the event with the marker of the node, so a reader finds the owned id', async () => {
+      const deps = await asNode();
+      expect((await runHook(deps, ['Stop'])).ok).toBe(true);
+      expect(deps.files.get(POINTER)).toBe(`${SESSION}\n`);
+      expect(lineOf(deps)).toMatchObject({ session_id: SESSION, session_marker: NODE_ID });
+      expect(await ownRead(deps)).toMatchObject({ state: 'valid', sessionId: SESSION });
+    });
+
+    it.each(hookNames.events)('records the pointer for %s', async (event) => {
+      const deps = await asNode({ stdin: JSON.stringify(FIXTURE.hooks[event]) });
+      expect((await runHook(deps, [event])).ok).toBe(true);
+      expect(deps.files.get(POINTER)).toBe(`${SESSION}\n`);
+    });
+
+    it('moves the pointer to the new session when the coordinator gets a new session id', async () => {
+      const deps = await asNode();
+      await runHook(deps, ['Stop']);
+      const restarted: FakeDeps = { ...deps, readStdin: async () => ok(payload('SessionStart', { session_id: NEXT_SESSION })) };
+      expect((await runHook(restarted, ['SessionStart'])).ok).toBe(true);
+      expect(deps.files.get(POINTER)).toBe(`${NEXT_SESSION}\n`);
+      expect(await ownRead(deps)).toMatchObject({ state: 'valid', sessionId: NEXT_SESSION });
+    });
+
+    it('writes no coordinator pointer for the session of a worker', async () => {
+      const deps = await makeWorker();
+      expect((await runHook(deps, ['Stop'])).ok).toBe(true);
+      expect(deps.files.has(paths.lastSessionFile)).toBe(true);
+      expect(deps.files.has(POINTER)).toBe(false);
+    });
+
+    it('writes no pointer when the line is not written', async () => {
+      const deps = await asNode();
+      deps.seedDir(FILE);
+      expect(errorOf(await runHook(deps, ['Stop']))).toContain('not a file');
+      expect(deps.files.has(POINTER)).toBe(false);
+    });
+
+    it.each([
+      ['a worker', WORKER_ID],
+      ['another node', 'other-node'],
+    ])('does not rewrite the line of a session of %s, and writes no pointer for it', async (_name, other) => {
+      const deps = await asNode();
+      await writeLastSeen(deps, HOME, SESSION, { kind: 'event', event: 'SessionStart' }, other);
+      const before = deps.files.get(FILE);
+      expect(errorOf(await runHook(deps, ['Stop']))).toContain(other);
+      expect(deps.files.get(FILE)).toBe(before);
+      expect(deps.files.has(POINTER)).toBe(false);
+    });
+
+    it.each([
+      ['a worker', WORKER_ID],
+      ['another node', 'other-node'],
+    ])('does not own a pointer that names a line of %s', async (_name, marker) => {
+      const deps = await asNode();
+      await writeLastSeen(deps, HOME, SESSION, { kind: 'event', event: 'SessionStart' }, marker);
+      deps.seed(POINTER, `${SESSION}\n`);
+      expect(await ownRead(deps)).toMatchObject({ state: 'not-owned' });
+    });
+
+    it('keeps the line and names the pointer when the pointer is a link', async () => {
+      const links: Record<string, string> = {};
+      const deps = await asNode({ links });
+      links[POINTER] = OTHER;
+      deps.seed(OTHER, 'victim');
+      expect(errorOf(await runHook(deps, ['Stop']))).toContain('coordinator-last-session');
+      expect(lineOf(deps)).toMatchObject({ event: 'Stop' });
+      expect(deps.files.get(OTHER)).toBe('victim');
+    });
+
+    it('exits 0 and records the pointer through runCli', async () => {
+      const deps = await asNode();
+      expect(await runLine(['hook', 'Stop'], deps)).toEqual({ code: 0, out: '', err: '' });
+      expect(deps.files.get(POINTER)).toBe(`${SESSION}\n`);
     });
   });
 

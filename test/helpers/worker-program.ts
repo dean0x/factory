@@ -62,6 +62,17 @@ export const startsSession =
     if (!line.ok) throw new Error(line.error.message);
   };
 
+/**
+ * The sessions of a run that resumes more than one worker: `byResume` maps the session id of a resume to the worker that resumes
+ * it, and the launch with that id starts as `startsSession` does for that worker. A launch with an id that the map lacks does nothing.
+ */
+export const startsSessions =
+  (home: string, byResume: Readonly<Record<string, string>>): Program =>
+  async (wait) => {
+    const worker = wait.resumeId === undefined ? undefined : byResume[wait.resumeId];
+    if (worker !== undefined) await startsSession(home, worker)(wait);
+  };
+
 /** The program of the pane ends and tmux removes the pane, as it does in a window that does not keep ended panes. */
 export const endsPane: Program = async ({ deps, pane }) => {
   if (pane === undefined) throw new Error('no pane to end');

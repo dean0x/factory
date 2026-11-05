@@ -244,7 +244,8 @@ const chosenHome = async (
   if (!indexed.ok) return indexed;
   if (indexed.value !== null) return ok({ home: indexed.value, source: 'index' });
   return usageError(
-    `no ${files.config} found in this folder or in a parent folder, and no ${places.folder} in the ${places.list} lists this folder`,
+    `no ${files.config} found in this folder or in a parent folder, and no ${places.folder} in the ${places.list} lists this folder ` +
+      'or the git repo of this folder',
     `Run "${commandText(commands.init)}" here, or use ${flagText(flags.home)} DIR.`,
   );
 };
@@ -252,7 +253,8 @@ const chosenHome = async (
 /**
  * The node home and how it was found: the home flag, else the home variable of the environment, else the folder of
  * the nearest config file above the current folder, else the home index, which matches the current folder to a
- * project path. The registration check applies to the home from every source. A config that does not pass it is a
+ * project path, and then a git work tree of a project (a work tree outside the project that shares its git folder) to
+ * that project. The registration check applies to the home from every source. A config that does not pass it is a
  * security stop (exit 4) that names the file, the reason and the remedy. `command` is the command that runs: the remedy
  * line of an error of the home index names it.
  */

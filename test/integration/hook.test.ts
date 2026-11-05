@@ -96,6 +96,15 @@ describe('factory hook (built binary)', () => {
     expect((await stat(lastSeenFile())).mode & 0o777).toBe(0o600);
   });
 
+  it('records the pointer to the newest session of the coordinator in the run-time folder, which the state repo ignores (TP-133)', async () => {
+    expect(await hook('SessionStart', JSON.stringify(FIXTURE.hooks.SessionStart))).toEqual({ code: 0, stdout: '', stderr: '' });
+    const pointer = join(home, '.factory', 'state', 'coordinator-last-session');
+    expect(await readFile(pointer, 'utf8')).toBe(`${SESSION}\n`);
+    expect((await stat(pointer)).mode & 0o777).toBe(0o600);
+    const ignored = (await readFile(join(home, '.factory', '.gitignore'), 'utf8')).split('\n');
+    expect(ignored).toContain('state/');
+  });
+
   it('keeps one file for the session, with the event of the last call', async () => {
     for (const event of hookNames.events) {
       expect(await hook(event, JSON.stringify(FIXTURE.hooks[event]))).toEqual({ code: 0, stdout: '', stderr: '' });

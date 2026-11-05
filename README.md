@@ -2,7 +2,7 @@
 
 Set up and run a node of Claude Code sessions with safe defaults.
 
-A node is a folder with a config file, a layer and an owner. A node on layer 1 or above has a factory folder. The factory folder is a git repo of its own, the config repo. It holds the config files, your setup text, a clone of each project and the folder `coordinator/` with the role text of the coordinator. The state folder `.factory/` is a second git repo inside it. The config repo shares only `factory.yaml`, `.gitignore` and `setup/`. The command `factory start` starts the coordinator of the factory in tmux. The coordinator manages the projects of the factory. This version does not start workers yet.
+A node is a folder with a config file, a layer and an owner. A node on layer 1 or above has a factory folder. The factory folder is a git repo of its own, the config repo. It holds the config files, your setup text, a clone of each project and the folder `coordinator/` with the role text of the coordinator. The state folder `.factory/` is a second git repo inside it. The config repo shares only `factory.yaml`, `.gitignore` and `setup/`. The command `factory start` starts the coordinator of the factory in tmux. The coordinator manages the projects of the factory, and its workers work in work copies of the projects (see "Make a worker").
 
 ## Install
 
@@ -24,6 +24,11 @@ You need:
 | --- | --- |
 | `factory init` | Make a factory, or register a received or moved one. It writes `factory.yaml`, `factory.local.yaml`, `.gitignore`, `setup/coordinator.md`, `setup/roles/worker.md`, `coordinator/CLAUDE.md` and `.factory/`, and it clones each project. It makes the first commit in the state repo and the first commit in the config repo. Its last step is the entry in the factory list. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
 | `factory start` | Start the tmux session of the factory, with the windows `view` and `workers`, or attach to it. It asks before it writes the hook settings of the coordinator; `--yes` agrees. |
+| `factory shutdown` | End this factory and nothing else: stop each worker, clear the mark of the active machine, and end the tmux session. It exits with code 0 when no session runs. See "Shut down, restart and reboot". |
+| `factory restart ID` | Stop one worker and start it again with its session id. The other workers keep their panes. See "Shut down, restart and reboot". |
+| `factory reboot` | Stop every worker and start each recorded worker again with its session id. Outside the session it also ends the session and starts it again. See "Shut down, restart and reboot". |
+| `factory status` | List each worker with its state, its work item and its idle state. It changes nothing. See "Show the status". |
+| `factory dismiss ID` | End a worker and free its work copy, when its work is pushed. It is a dry run until `--yes`. `factory dismiss --idle` lists the idle workers, and you pick which to dismiss. See "Dismiss a worker". |
 | `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
@@ -104,7 +109,7 @@ A command finds the factory folder in this order:
 3. The nearest `factory.yaml` above the current folder (at most 64 levels).
 4. The factory list.
 
-The clones are inside the factory folder, so a walk up from a clone or from `coordinator/` finds `factory.yaml`. `init` writes the factory list: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The list holds paths only, and it is never under `~/.claude`. The check resolves links, and on macOS it ignores the case of letters. The list file has mode 0600 and its folder has mode 0700. A command refuses a list file or folder that another user owns or that a group or other user can write. For a command with no `--home`, no `FACTORY_HOME` and no `factory.yaml` above, the deepest project folder that holds the current folder decides. If no entry fits, the command exits with code 2 and prints a hint. If two factories list the same project, it exits with code 2 and names both folders.
+The clones are inside the factory folder, so a walk up from a clone or from `coordinator/` finds `factory.yaml`. `init` writes the factory list: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json` when the variable is not set. The list holds paths only, and it is never under `~/.claude`. The check resolves links, and on macOS it ignores the case of letters. The list file has mode 0600 and its folder has mode 0700. A command refuses a list file or folder that another user owns or that a group or other user can write. For a command with no `--home`, no `FACTORY_HOME` and no `factory.yaml` above, the deepest project folder that holds the current folder decides. If no project folder holds it, but the current folder is a git work tree whose common git folder is the `.git` folder of a listed project (for example a work tree that `git worktree add` made outside the factory folder), the factory of that project decides. If no entry fits, the command exits with code 2 and prints a hint. If two factories list the same project, it exits with code 2 and names both folders.
 
 A `factory.yaml` counts only at a factory folder that `init` registered. This holds for all four ways above. Three things must be true:
 
@@ -202,6 +207,8 @@ The coordinator never inherits `ANTHROPIC_BASE_URL` from the shell. Its proxy co
 
 `start` also makes sure that `coordinator/.claude/settings.local.json` holds the last-seen hook and the status line wrapper (`factory hook EVENT` and `factory hook statusline`). It prints the exact change and the file first, then it asks (the default is no) in a terminal window. It keeps every other key of the file, and it names a status line that it replaces. After your answer, `start` reads the file again. If the file changed in the meantime so that the change differs from the one you saw, `start` writes nothing and exits with code 1. `--yes` is the yes outside a factory session. With no terminal window and no `--yes`, `start` writes nothing, starts nothing and exits with code 2. Inside a factory session, `--yes` gives no consent, so the exit code is also 2, also in a terminal window. Run the command outside the factory session, or answer the question without `--yes`. If you answer no, `start` goes on without the hook and prints one line: factory has no last-seen record of the coordinator, so a restart or a reboot can not resume the session by its id. To add the hook later, run `start` again and answer yes. When the entries are in place, `start` asks nothing and writes nothing, and the file gives no warning. `--dry-run` shows the change and writes nothing. A link at `.claude/` or at the file, or a real path outside `coordinator/`, stops `start` with exit code 4. A file that is not a JSON object stops it with exit code 1 and stays as it is.
 
+After the tmux server was killed, for example by a restart of the machine, `start` resumes the recorded workers, too. The coordinator resumes with the session id of its pointer `.factory/state/coordinator-last-session` when the last-seen line of that session belongs to the coordinator. Else it starts a new conversation. Each worker resumes with the session id of its last-seen line, under the rules of `worker resume`. A worker that has no usable id, or whose work copy has a wrong settings file, is skipped with a warning that names it. A worker that does not start again is reported, and the next worker still resumes. The session stays, and the exit code stays 0. One run asks each proxy once. `start` also writes the mark of the active machine, `.factory/active-machine.json`, with the id of this machine, and commits it. If the mark names another machine, `start` warns before it resumes any worker and names `factory shutdown`, which clears the mark on that machine. The exit code stays 0. When the session runs already, `start` resumes no worker, because a worker that was stopped on purpose stays stopped. It warns once and names each recorded worker that has no live pane, with the command that starts it (`factory worker resume ID`). It also writes the mark of the active machine when the mark does not name this machine. A tmux session of the same name that belongs to another factory folder stops `start` with exit code 4, and the remedy names `factory shutdown` in the folder that owns the session.
+
 A second `start` starts no second coordinator. It attaches to the session. If the program of the coordinator has ended, `start` says so and names the commands that remove the session and start it again. `--dry-run` prints the tmux calls and starts no session. `start` counts a `factory.yaml` only at a registered factory (see "Find the factory folder"). So a `factory.yaml` that a cloned repo holds never starts a session.
 
 ### Make a worker
@@ -224,7 +231,7 @@ Then it does these steps in order:
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
 6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its inbox folder. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
 
-If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. The command `factory dismiss` is not built in this version.
+If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. After the branch is pushed, `factory dismiss ID` frees the worker (see "Dismiss a worker"). A branch with a commit that no remote branch holds stops `dismiss`, so the steps by hand are the way for it.
 
 ### List the workers
 
@@ -244,6 +251,44 @@ factory worker list --json
 | `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. |
 
 A folder of `.factory/workers/` with no valid record is named in a warning, and the other workers are listed. If one pane has a worker mark that is not a worker id, the list skips that pane. If two panes carry the mark of one worker, the list shows the first live pane and warns with both ids. A tmux session of the same name that belongs to another factory folder stops the command with exit code 4. The list takes a last-seen line only when it belongs to the worker, with the same checks as `worker stop` and `worker resume` (see "Resume a worker"). A line with no session marker, a line of another session, and a session that the pointer of another worker names all show `unknown` and `?`. A last-seen line is still a hint, not proof of the state of the program.
+
+### Show the status
+
+```sh
+factory status
+factory status --json
+```
+
+`status` shows one line for each worker, in the order of the ids. It changes nothing. It reads what `worker list` reads, with one `list-panes` call, and it asks the work item port for the work items.
+
+| Column | Meaning |
+| --- | --- |
+| `ID`, `PROJECT` | The id of the worker and its project. |
+| `STATE` | `stopped` when the worker has no live pane, also when no tmux session of the node runs. Else `at prompt`, `busy` or `unknown`, as in `worker list`. |
+| `WORK ITEM` | The work item of the worker, `none` when it has no open work, or `unknown` when the board does not give it. |
+| `IDLE` | `yes` when the last activity of the worker is older than `limits.idle_after` and the worker has no open work. Else `no`. |
+
+A work item that is not known never makes a worker idle. The board reader is not built yet (FAC-M5), so for now every work item is `unknown` and `status` shows no idle worker. Run `status` in a git work tree of a listed project to use the factory of that project (see "Find the factory folder").
+
+### Dismiss a worker
+
+```sh
+factory dismiss alpha          # dry run: says what it would end and free
+factory dismiss alpha --yes    # frees the worker
+factory dismiss --idle         # lists the idle workers; in a terminal window you pick
+```
+
+`dismiss ID` ends the pane of a worker, removes its work copy, and deletes its record and its last-seen line. Without `--yes` it is a dry run: it prints the steps, the ignored files that the removal deletes (at most 20 are named), and changes nothing. In order, the checks come before any change:
+
+1. The work copy must be a folder `work-copies/PROJECT/ID` of the factory folder. The real paths are compared, and a link or a path that leads outside stops the command with exit code 4. The file `.git` of the work copy must name the git folder that the clone keeps for it, else the command stops with exit code 4 and runs no git command in the work copy. The primary clone of the project is never changed.
+2. A worker with open work, a worker whose session works now, and a worker with a live pane whose state is not known are refused with exit code 1 and a remedy line.
+3. The work must be pushed. `dismiss` fetches the `worker/` branches and the default branch of `origin` first, in one call, so a remote reference that the fetch did not update never counts (a branch that the remote dropped is pruned). The head of the branch must be on `origin/worker/ID` or on the default branch of `origin`. So a new worker with no commit of its own is not stuck, also when its branch was never pushed. The work copy must have no changed file and no untracked file, and the stash of the repo must be empty. Each reason that is not met prints one failed line (marked `[FAIL]`) that starts with `STUCK:`. Nothing is freed, and the exit code is 1.
+
+Then the pane ends (`kill -TERM`, the way of `worker stop`), the work copy is removed with the plain `git worktree remove` (never with force), and the record folder and its last-seen line are deleted together. The removal also deletes the files that git ignores in the work copy, so each free names them: their count and the first 20 paths (no line when there are none). The branch `worker/ID` stays, and the command prints the `git branch -D` line that deletes it. If a step fails, the message names the steps that were done. Up to the removal of the work copy, `dismiss` run again does the steps that are left. After the removal, `dismiss` can not check the worker again, so the message names the last-seen file and the record folder to delete by hand.
+
+`--yes` is the consent. It needs no terminal window, and inside a factory session it gives no consent: the command stops with exit code 4. The dry run works in a session.
+
+`dismiss --idle` lists the idle workers (see "Show the status") with their state and whether their work is pushed (`PUSHED`). It fetches once for each clone. It changes nothing by itself. In a terminal window outside a factory session it asks which workers to dismiss: type their ids with spaces. An empty answer ends nothing. After the answer, the state of the workers is read a second time. Every id is checked before the first change: an id that is not in the list, a worker with no live pane, a busy worker and a worker whose state is not known are refused with exit code 1. Only the panes of the picked workers end, and each free names the ignored files that it deletes. A picked worker whose work is not pushed prints `STUCK:` and keeps its pane. With no terminal window the command only lists. Inside a factory session it lists and stops with exit code 4. A tmux session of the same name that belongs to another factory folder also stops it with exit code 4, and nothing ends.
 
 ### Stop a worker
 
@@ -274,6 +319,29 @@ A resume with `--resume` prints "Resumed" only after the new session proves itse
 - 0: the session proved itself. The command prints "Resumed".
 - 1: the pane is gone or its program ended. The message starts with "resume failed". A usual cause is a pointer to a session that has no transcript. To start a new conversation, delete the file `.factory/workers/ID/last-session` (the message gives the full path), then run `factory worker resume ID`.
 - 3: the pane runs, but no matching line came within 10 seconds. The message starts with "resume not confirmed" and names the pane. Run `factory worker summon ID` to look at it. If the earlier conversation did not load, run `factory worker stop ID`, delete the same file, and run `factory worker resume ID`.
+
+### Shut down, restart and reboot
+
+```sh
+factory shutdown
+factory restart alpha
+factory reboot
+```
+
+These commands stop only the panes that factory made for this factory folder. A tmux session of another factory, a session of the same name that belongs to another folder, and a `claude` program outside these panes keep running. Each command reads the list of the panes once. Before the first stop, it checks every worker that it stops or starts again, so a failed check leaves everything as it was:
+
+- Each worker needs a session id that passed the ownership check of `worker resume`, and a known state of its session. Else the command exits with code 3 and stops nothing.
+- A worker that starts again needs a work copy with settings files that pass the check of `worker new`. `restart` and `reboot` also run the root checks of `start`. A failed check exits with code 4.
+- `restart` and `reboot` ask the proxy of each launch that comes after the stop, once for the run. A proxy that does not answer, when the config does not let the session go direct, exits with code 1.
+- The command never ends the pane that runs it: that is exit code 2.
+
+After these checks, a stop can still fail: a process that does not end gives exit code 1, and a pane that the launch did not make gives exit code 4. The message then names the workers that stopped before the fault.
+
+`shutdown` stops each worker, clears the mark of the active machine (a mark of another machine stays), stops the coordinator with `kill -TERM` and the same bounded wait, and then ends the tmux session by its exact name. Run in the coordinator pane, it does not stop its own pane: it prints its report first, and then ends the session. A coordinator that does not end in the wait gives exit code 1, and the session stays. If a session of the same name belongs to another factory folder, or has no home option, it ends nothing and exits with code 4. The remedy is `factory shutdown` in the folder that owns the session. With no session it says that nothing runs and exits with code 0, and it still clears the mark of the active machine of this machine.
+
+`restart ID` stops the worker and starts it again with `--resume` and its session id. The id must have a record, else exit code 2. With no tmux session it exits with code 3 and names `factory start`. If the new session does not write its line, the message says that the worker stopped and did not start again, and names `factory worker resume ID`.
+
+`reboot` stops every worker and starts each recorded worker again with its session id. Run outside the session, it first makes the steps of `start` that change a file, before it stops any worker: it renders a safety block that is out of date, and it makes sure of the hook settings of the coordinator (it has no `--yes`, so a missing change needs an answer in a terminal window, else it exits with code 2). Then it ends the session as `shutdown` does, starts it again with the recovery of `start`, and prints the command that attaches. Run in a pane of the session, it stops and starts only the workers, and the session and the coordinator pane stay. A worker that did not start again is named, and the exit code is 1. One run asks each proxy once.
 
 ### Summon a worker
 
