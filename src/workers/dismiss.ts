@@ -21,7 +21,7 @@ import { err, ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
 import type { PaneRow } from '../launch/tmux.js';
-import { commands, commandText, dirs, dismissWords, roles, workCopyGit, workerListWords } from '../names.js';
+import { commands, commandText, dirs, dismissStopCases, dismissWords, roles, workCopyGit, workerListWords } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { removeLastSeen } from './last-seen.js';
 import { branchOf, removeWorkerRecord, workCopyOf } from './registry.js';
@@ -321,7 +321,8 @@ const stoppedStep = (stopped: StopOutcome): readonly string[] => {
 };
 
 /**
- * Frees a worker after every check passed. In order: the pane ends (`stopWorker`, which sends TERM and never KILL); the work copy
+ * Frees a worker after every check passed. In order: the pane ends (`stopWorker`, which sends TERM and never KILL, and refuses a
+ * session that works now, also when it turned busy after the checks read its state); the work copy
  * is removed with the plain git command, which refuses a changed or untracked file and has no force; the last-seen line and the
  * record folder are deleted together. The branch stays. A fault names what was done before it. Up to the removal of the work
  * copy, `dismiss` run again does the steps that are left. A fault after it names the paths to delete by hand (`afterSteps`).
@@ -330,7 +331,9 @@ export const freeWorker = async (deps: Deps, request: FreeRequest): Promise<CliR
   const { home, session, plan, panes, lineSession } = request;
   const done: string[] = [];
   const stopped: CliResult<StopOutcome> =
-    panes === null ? ok({ kind: 'no-pane' }) : await stopWorker(deps, { home, session, workerId: plan.id, panes });
+    panes === null
+      ? ok({ kind: 'no-pane' })
+      : await stopWorker(deps, { home, session, workerId: plan.id, panes, allowed: dismissStopCases, again: dismissLine(plan.id) });
   if (!stopped.ok) return err(afterSteps(stopped.error, plan.id, done));
   done.push(...stoppedStep(stopped.value));
   const removed = await removeWorkTree(deps, plan.clone, plan.workCopy);

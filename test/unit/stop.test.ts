@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { stopFallback, stopPoll, stopWay, stopWays, schemaIds, type HookEvent } from '../../src/names.js';
+import { stopFallback, stopPoll, stopWay, stopWays, schemaIds, type HookEvent, type StopCase } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeWorkerSession, type OwnSessionRead } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -354,6 +354,49 @@ describe('worker stop: a state that is not known (TP-28)', () => {
     const made = make({ rewriteRead: (stdout) => stdout.replace(`|${PID}|`, '|4888|') });
     await seed(made.deps, { pointer: false });
     expect((await failed(made)).message).toContain('4888');
+  });
+});
+
+describe('worker stop: only the cases that the caller allows', () => {
+  const runOnly = (made: Made, allowed: readonly StopCase[]) =>
+    stopWorker(made.deps, { home: HOME, session: NODE, workerId: 'alpha', allowed, again: 'dismiss alpha' });
+
+  it.each(['UserPromptSubmit', 'PreCompact'] as const)(
+    'refuses a busy session when only the idle case is allowed (the last event is %s): exit 1, the command to run again, and nothing is sent or closed',
+    async (event) => {
+      const made = make();
+      await seed(made.deps, { event });
+      const result = await runOnly(made, ['idle']);
+      if (result.ok) throw new Error(`the stop should have failed, it gave ${JSON.stringify(result.value)}`);
+      expect(exitCodeOf[result.error.kind]).toBe(1);
+      expect(result.error.message).toContain('busy');
+      expect(result.error.hint).toContain('dismiss alpha');
+      expect(made.deps.terminated).toEqual([]);
+      expect(killed(made)).toEqual([]);
+    },
+  );
+
+  it('stops an idle session when only the idle case is allowed', async () => {
+    const made = make();
+    await seed(made.deps);
+    const result = await runOnly(made, ['idle']);
+    expect(result).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'idle' } });
+    expect(made.deps.terminated).toEqual([PID]);
+  });
+
+  it('stops a busy session when the busy case is allowed', async () => {
+    const made = make();
+    await seed(made.deps, { event: 'UserPromptSubmit' });
+    expect(await runOnly(made, ['idle', 'busy'])).toMatchObject({ ok: true, value: { kind: 'stopped', state: 'busy' } });
+  });
+
+  it('keeps exit 3 for a state that is not known, whatever the caller allows, and sends nothing', async () => {
+    const made = make();
+    await seed(made.deps, { event: null });
+    const result = await runOnly(made, ['idle']);
+    if (result.ok) throw new Error('the stop should have failed');
+    expect(exitCodeOf[result.error.kind]).toBe(3);
+    expect(made.deps.terminated).toEqual([]);
   });
 });
 

@@ -38,6 +38,14 @@ export interface StopRequest {
    * checked that the session runs and belongs to this folder. A call with no list reads the session and the list by itself.
    */
   readonly panes?: readonly PaneRow[];
+  /**
+   * The cases of the session in which the stop may end the process, read from the last-seen line right before the signal. A session
+   * in another case is a failure (exit 1), and nothing is sent. Default: every case of the table. A state that is not known is exit 3
+   * for any value.
+   */
+  readonly allowed?: readonly StopCase[];
+  /** The command that a person runs again after a refusal by `allowed`, without the program name. Default: the stop command of the worker. */
+  readonly again?: string;
 }
 
 export type StopOutcome =
@@ -95,6 +103,21 @@ export const requireStopCase = (
   );
 };
 
+/** What the session of a worker is doing in a case of the table, and what the person waits for before the command runs again. */
+const sessionWords: Readonly<Record<StopCase, { readonly now: string; readonly wait: string }>> = {
+  idle: { now: 'waits at its prompt', wait: 'waits at its prompt' },
+  busy: { now: 'is busy: its session works now', wait: 'works' },
+};
+
+/** A failure (exit 1) for a case that the caller does not allow, so the stop sends nothing. */
+const requireAllowedCase = (workerId: string, stopCase: StopCase, allowed: readonly StopCase[] | undefined, again: string): CliResult<void> =>
+  allowed === undefined || allowed.includes(stopCase)
+    ? ok(undefined)
+    : failure(
+        `the ${roles.worker} ${workerId} ${sessionWords[stopCase].now}`,
+        `Wait until it ${allowed.map((allowedCase) => sessionWords[allowedCase].wait).join(' or ')}. Run "${commandText(again)}" again.`,
+      );
+
 /** Closes panes whose program has ended, by their ids (`closeWorkerPane`). With no pane there is nothing to close. */
 const closeEnded = async (deps: Deps, session: string, paneIds: readonly string[]): Promise<CliResult<StopOutcome>> => {
   for (const paneId of paneIds) {
@@ -141,7 +164,7 @@ const endProcess = async (deps: Deps, row: BoundPane, way: StopWay, workerId: st
  *    stop (exit 2);
  * 2. the pane of the caller is never the target (exit 2), and no pane is signalled then;
  * 3. the last-seen line of the worker says if the session is idle or busy. Any state that is not known is exit 3 and names the
- *    pane and the process, and nothing is sent;
+ *    pane and the process, and nothing is sent. A case that the request does not allow (`allowed`) is exit 1, and nothing is sent;
  * 4. the pane is read and bound again right before the signal: the pane id and the pid come from this read, and a read that
  *    fails the binding is a security stop (exit 4);
  * 5. the way of the table for the case ends the process, and the command waits for its end. A pane that ended already gets no signal;
@@ -180,6 +203,8 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const known = requireStopCase(workerId, seen.value, row);
   if (!known.ok) return known;
   const stopCase = known.value;
+  const allowed = requireAllowedCase(workerId, stopCase, request.allowed, request.again ?? again);
+  if (!allowed.ok) return allowed;
   const way = wayFor(stopCase);
   const ended = await endProcess(deps, row, way, workerId);
   if (!ended.ok) return ended;

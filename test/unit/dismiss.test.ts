@@ -50,6 +50,10 @@ interface Setup {
   readonly terminal?: { readonly answer: string };
   readonly links?: Readonly<Record<string, string>>;
   readonly config?: FactoryConfig;
+  /** Runs at each `git fetch`, after the run read the state of the workers. It stands for a change of the machine during the fetch. */
+  readonly atFetch?: (made: Made) => void;
+  /** Runs when the command asks the owner to pick, before the answer. It stands for a change of the machine while the owner types. */
+  readonly atPrompt?: (made: Made) => void;
 }
 
 interface Made {
@@ -59,6 +63,8 @@ interface Made {
   /** The steps that change the machine, in order: `terminate` and `worktree-remove`. */
   readonly events: readonly string[];
   readonly sessions: ReadonlyMap<string, string>;
+  /** The session of a worker works from now on: its last-seen line holds a busy event. Only a setup with `atFetch` or `atPrompt` has the lines. */
+  readonly turnBusy: (id: string) => void;
 }
 
 const withProject = (config: FactoryConfig, id: string): FactoryConfig => {
@@ -96,6 +102,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   const git = gitHandler(pushedGit(seeds, setup.git));
   const run: RunHandler = (call) => {
     if (call.command === 'git' && call.args[2] === 'worktree') events.push('worktree-remove');
+    if (call.command === 'git' && call.args[2] === 'fetch') setup.atFetch?.(made);
     return call.command === 'git' ? git.handler(call) : tmux.handler(call);
   };
   const answer = setup.terminal?.answer;
@@ -106,7 +113,10 @@ const make = async (setup: Setup = {}): Promise<Made> => {
     run,
     stdinIsTTY: answer !== undefined,
     stdoutIsTTY: answer !== undefined,
-    prompt: () => ok(answer ?? ''),
+    prompt: () => {
+      setup.atPrompt?.(made);
+      return ok(answer ?? '');
+    },
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
   const deps: FakeDeps = {
@@ -143,7 +153,25 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   }
   deps.advance(3 * HOUR_MS);
   for (const [index, seed] of seeds.entries()) if (seed.recent === true) await write(seed, index);
-  return { deps, tmux: tmux.log, git: git.log, events, sessions };
+  // The busy line of each worker, made now and kept aside: the idle line stays in place until `turnBusy` swaps them.
+  const busyLines = new Map<string, { readonly file: string; readonly text: string }>();
+  if (setup.atFetch !== undefined || setup.atPrompt !== undefined) {
+    for (const [id, session] of sessions) {
+      const file = `${layoutOf(HOME).heartbeatDir}/${session}`;
+      const idleText = deps.files.get(file) ?? '';
+      const line = await writeLastSeen(deps, HOME, session, { kind: 'event', event: 'UserPromptSubmit' }, id);
+      if (!line.ok) throw new Error(line.error.message);
+      busyLines.set(id, { file, text: deps.files.get(file) ?? '' });
+      deps.seed(file, idleText);
+    }
+  }
+  const turnBusy = (id: string): void => {
+    const busy = busyLines.get(id);
+    if (busy === undefined) throw new Error(`no busy line was made for ${id}`);
+    deps.seed(busy.file, busy.text);
+  };
+  const made: Made = { deps, tmux: tmux.log, git: git.log, events, sessions, turnBusy };
+  return made;
 };
 
 const portOf = (items: Readonly<Record<string, WorkItem>>): WorkItemPort => ({
@@ -528,6 +556,19 @@ describe('dismiss ID: a worker that must not end', () => {
     expect(hasPane(made, 'alpha')).toBe(true);
   });
 
+  it('refuses a worker that turns busy after the first read of its state, ends nothing, and names the command to run again (TP-59)', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], atFetch: (turned) => turned.turnBusy('alpha') });
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(error.kind).toBe('failure');
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('busy');
+    expect(error.message).toContain('Nothing was freed');
+    expect(error.hint).toContain('dismiss alpha');
+    await expectNothingChanged(made, ['alpha']);
+    expect(hasPane(made, 'alpha')).toBe(true);
+    expect(lineExists(made, 'alpha')).toBe(true);
+  });
+
   it('does not refuse a stopped worker whose last event is busy: it has no process to end', async () => {
     const made = await make({ workers: [{ id: 'alpha', event: 'UserPromptSubmit', pane: false }] });
     const output = await outputOf(made, { words: ['alpha'], yes: true });
@@ -781,11 +822,18 @@ describe('dismiss --idle', () => {
     expect(output.failed).toBe(false);
   });
 
-  it('fetches once for each clone, also when the owner picks (TP-60)', async () => {
-    const made = await idleFleet({ terminal: { answer: 'alpha gamma' } });
+  const fetchedBy = (made: Made): string[] => made.git.calls.filter((call) => call.args[2] === 'fetch').map((call) => call.args[1] ?? '').sort();
+
+  it('fetches once for each clone to list the workers (TP-60)', async () => {
+    const made = await idleFleet();
     await outputOf(made, { idle: true }, portOf(items));
-    const fetched = made.git.calls.filter((call) => call.args[2] === 'fetch').map((call) => call.args[1]);
-    expect(fetched.sort()).toEqual([cloneOf('api'), cloneOf('web')]);
+    expect(fetchedBy(made)).toEqual([cloneOf('api'), cloneOf('web')]);
+  });
+
+  it('fetches again, once for each clone of a pick, after the pick, so the pushed test judges the remote of that time (TP-60)', async () => {
+    const made = await idleFleet({ terminal: { answer: 'alpha beta' } });
+    await outputOf(made, { idle: true }, portOf(items));
+    expect(fetchedBy(made)).toEqual([cloneOf('api'), cloneOf('web'), cloneOf('web')]);
   });
 
   it('only lists with no terminal window, and tells the owner how to pick', async () => {
@@ -828,6 +876,37 @@ describe('dismiss --idle', () => {
     expect(output.failed).toBe(true);
     expect(output.exitCode).toBe(1);
     expect(output.lines.filter((line) => line.text.startsWith(dismissWords.stuck))).toHaveLength(1);
+    expect(hasPane(made, 'beta')).toBe(true);
+    expect(await recordState(made, 'beta')).toBe('valid');
+    expect(hasPane(made, 'alpha')).toBe(false);
+    expect(await recordState(made, 'alpha')).toBe('absent');
+  });
+
+  it('reads the state of the workers again after the pick, and refuses a pick that turned busy while the owner typed, with nothing ended (TP-59)', async () => {
+    const made = await idleFleet({ terminal: { answer: 'alpha beta' }, atPrompt: (turned) => turned.turnBusy('alpha') });
+    const error = await errorOf(made, { idle: true }, portOf(items));
+    expect(error.kind).toBe('failure');
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('alpha');
+    expect(error.hint).toContain('dismiss --idle');
+    await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
+    expect(hasPane(made, 'alpha')).toBe(true);
+    expect(hasPane(made, 'beta')).toBe(true);
+  });
+
+  it('checks the pushed test again after the pick: work that the owner left changed while typing keeps its pane, and the others are freed (TP-54)', async () => {
+    const status: Record<string, string> = {};
+    const made = await idleFleet({
+      terminal: { answer: 'alpha beta' },
+      git: { status },
+      atPrompt: () => {
+        status[copyOf('beta')] = '?? late.md\0';
+      },
+    });
+    const output = await outputOf(made, { idle: true }, portOf(items));
+    expect(output.failed).toBe(true);
+    expect(output.exitCode).toBe(1);
+    expect(output.lines.filter((line) => line.text.startsWith(dismissWords.stuck)).map((line) => line.text).join('\n')).toContain('late.md');
     expect(hasPane(made, 'beta')).toBe(true);
     expect(await recordState(made, 'beta')).toBe('valid');
     expect(hasPane(made, 'alpha')).toBe(false);

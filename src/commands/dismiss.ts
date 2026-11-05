@@ -279,14 +279,7 @@ interface Pick {
   readonly lineSession: string | null;
 }
 
-const prepare = async (
-  deps: Deps,
-  home: string,
-  entry: WorkerStatus,
-  checked: ReadonlyMap<string, CliResult<Inspected>>,
-): Promise<CliResult<Pick>> => {
-  const inspected = checked.get(entry.id);
-  if (inspected === undefined) return failure(`cannot read the state of the ${roles.worker} ${entry.id}`);
+const prepare = async (deps: Deps, home: string, entry: WorkerStatus, inspected: CliResult<Inspected>): Promise<CliResult<Pick>> => {
   if (!inspected.ok) return inspected;
   const lineSession = await lineSessionOf(deps, home, entry.id);
   return lineSession.ok ? ok({ entry, inspected: inspected.value, lineSession: lineSession.value }) : lineSession;
@@ -319,34 +312,37 @@ const freePicks = async (
   return ok({ lines, freed, stuck });
 };
 
-/** What the list step of `dismiss --idle` gives the pick step: the idle workers, their checks, and the table and JSON of the list. */
+/** What the list step of `dismiss --idle` gives the pick step: the table and the JSON of the list. */
 interface Listed {
-  readonly idle: readonly WorkerStatus[];
-  readonly checked: ReadonlyMap<string, CliResult<Inspected>>;
   readonly table: readonly OutLine[];
   readonly json: JsonDoc;
 }
 
 /**
- * The pick step of `dismiss --idle`, in a terminal window outside a factory session: the owner types the ids, every id is checked
- * before the first change, and then each picked worker is freed as `dismiss ID --yes` frees it.
+ * The pick step of `dismiss --idle`, in a terminal window outside a factory session: the owner types the ids. The owner may take
+ * long, so after the answer the state of the workers is read again, and every picked id is checked again (it must be listed as
+ * idle, and its work must be pushed) before the first change. Then each picked worker is freed as `dismiss ID --yes` frees it.
  */
-const pickAndFree = async (deps: Deps, facts: Facts, listed: Listed): Promise<CliResult<CommandOutput>> => {
-  const { idle, checked, table, json } = listed;
+const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkItemPort, facts: Facts, listed: Listed): Promise<CliResult<CommandOutput>> => {
+  const { table, json } = listed;
   const { warnings } = facts;
   const answer = await deps.prompt(printable(`Dismiss which ${roles.worker}s? Type their ids with spaces, or press Enter to end nothing: `));
   if (!answer.ok) return answer;
   const ids = idsOf(answer.value);
   if (ids.length === 0) return ok({ lines: [...table, text('Nothing picked. Nothing changed.')], json, warnings, failed: false });
+  const now = await factsOf(deps, options, workItems, facts.home, facts.config);
+  if (!now.ok) return now;
+  const idleNow = now.value.entries.filter((entry) => entry.idle);
+  const inspect = inspectorOf(deps, now.value.home, now.value.config);
   const picks: Pick[] = [];
   for (const id of ids) {
-    const entry = requirePick(deps, id, idle, facts.panes ?? []);
+    const entry = requirePick(deps, id, idleNow, now.value.panes ?? []);
     if (!entry.ok) return entry;
-    const pick = await prepare(deps, facts.home, entry.value, checked);
+    const pick = await prepare(deps, now.value.home, entry.value, await inspect({ id, project: entry.value.project }));
     if (!pick.ok) return pick;
     picks.push(pick.value);
   }
-  const done = await freePicks(deps, facts, picks);
+  const done = await freePicks(deps, now.value, picks);
   if (!done.ok) return done;
   const { lines, freed, stuck } = done.value;
   return ok({
@@ -406,7 +402,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
       failed: false,
     });
   }
-  return pickAndFree(deps, facts.value, { idle, checked, table, json });
+  return pickAndFree(deps, options, workItems, facts.value, { table, json });
 };
 
 /**

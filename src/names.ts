@@ -693,6 +693,9 @@ export const stopWays: Readonly<Record<StopCase, StopWay | null>> = { idle: stop
 /** The way for a case that has no safe way: the prompt fallback of the table. */
 export const stopFallback: StopWay = stopWay.term;
 
+/** The cases in which `dismiss` ends a session: only a session that waits at its prompt. `shutdown` and `restart` end both cases. */
+export const dismissStopCases: readonly StopCase[] = ['idle'];
+
 /**
  * The wait for the end of a process after TERM: the stop checks `attempts` times, and waits `intervalMs` before each check. So
  * the wait is at most `attempts` times `intervalMs`. A session of the program ended 4 to 6 seconds after TERM in every run of
