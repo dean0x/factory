@@ -28,6 +28,7 @@ You need:
 | `factory restart ID` | Stop one worker and start it again with its session id. The other workers keep their panes. See "Shut down, restart and reboot". |
 | `factory reboot` | Stop every worker and start each recorded worker again with its session id. Outside the session it also ends the session and starts it again. See "Shut down, restart and reboot". |
 | `factory status` | List each worker with its state, its work item and its idle state. It changes nothing. See "Show the status". |
+| `factory dismiss ID` | End a worker and free its work copy, when its work is pushed. It is a dry run until `--yes`. `factory dismiss --idle` lists the idle workers, and you pick which to dismiss. See "Dismiss a worker". |
 | `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
@@ -228,7 +229,7 @@ Then it does these steps in order:
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
 6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its inbox folder. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
 
-If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. The command `factory dismiss` is not built in this version.
+If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. After the branch is pushed, `factory dismiss ID` frees the worker (see "Dismiss a worker"). A branch that is not pushed stops `dismiss`, so the steps by hand are the way for it.
 
 ### List the workers
 
@@ -266,6 +267,26 @@ factory status --json
 | `IDLE` | `yes` when the last activity of the worker is older than `limits.idle_after` and the worker has no open work. Else `no`. |
 
 A work item that is not known never makes a worker idle. The board reader is not built yet (FAC-M5), so for now every work item is `unknown` and `status` shows no idle worker. Run `status` in a git work tree of a listed project to use the factory of that project (see "Find the factory folder").
+
+### Dismiss a worker
+
+```sh
+factory dismiss alpha          # dry run: says what it would end and free
+factory dismiss alpha --yes    # frees the worker
+factory dismiss --idle         # lists the idle workers; in a terminal window you pick
+```
+
+`dismiss ID` ends the pane of a worker, removes its work copy, and deletes its record and its last-seen line. Without `--yes` it is a dry run: it prints the steps, the ignored files that the removal deletes (at most 20 are named), and changes nothing. In order, the checks come before any change:
+
+1. The work copy must be a folder `work-copies/PROJECT/ID` of the factory folder. The real paths are compared, and a link or a path that leads outside stops the command with exit code 4. The primary clone of the project is never changed.
+2. A worker with open work, a worker whose session works now, and a worker with a live pane whose state is not known are refused with exit code 1 and a remedy line.
+3. The work must be pushed. `dismiss` fetches the `worker/` branches of `origin` first, so a remote reference that the fetch did not update never counts (a branch that the remote dropped is pruned). The head of the branch must be on `origin/worker/ID`, the work copy must have no changed file and no untracked file, and the stash of the repo must be empty. Each reason that is not met prints one line that starts with `STUCK:`. Nothing is freed, and the exit code is 1.
+
+Then the pane ends (`kill -TERM`, the way of `worker stop`), the work copy is removed with the plain `git worktree remove` (never with force), and the record folder and its last-seen line are deleted together. The branch `worker/ID` stays, and the command prints the `git branch -D` line that deletes it. If a step fails, the message names the steps that were done, and `dismiss` run again does the steps that are left.
+
+`--yes` is the consent. It needs no terminal window, and inside a factory session it gives no consent: the command stops with exit code 4. The dry run works in a session.
+
+`dismiss --idle` lists the idle workers (see "Show the status") with their state and whether their work is pushed (`PUSHED`). It fetches once for each clone. It changes nothing by itself. In a terminal window outside a factory session it asks which workers to dismiss: type their ids with spaces. An empty answer ends nothing. Every id is checked before the first change: an id that is not in the list, a worker with no live pane, a busy worker and a worker whose state is not known are refused with exit code 1. Only the panes of the picked workers end, and a picked worker whose work is not pushed prints `STUCK:` and keeps its pane. With no terminal window the command only lists. Inside a factory session it lists and stops with exit code 4. A tmux session of the same name that belongs to another factory folder also stops it with exit code 4, and nothing ends.
 
 ### Stop a worker
 
