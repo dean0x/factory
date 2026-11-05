@@ -11,7 +11,7 @@ import { chooseProxy, requireCleanSettings, requireWorkCopy, type ProxyAnswers, 
 import type { BoundPane } from './panes.js';
 import type { WorkerRecord } from './registry.js';
 import { readWorkerPanes } from './slot.js';
-import { requireStopCase, stopWorker } from './stop.js';
+import { requireOneLivePane, requireStopCase, stopWorker } from './stop.js';
 
 /**
  * The shared steps of `shutdown`, `restart` and `reboot` (design 4.11, "The lifecycle verbs"). A command reads the list of the
@@ -84,15 +84,7 @@ export interface TargetCheck {
 const requireLivePane = async (deps: Deps, request: TargetCheck, id: string): Promise<CliResult<BoundPane | null>> => {
   const { home, session, again, panes } = request;
   const read = await readWorkerPanes(deps, { home, session, workerId: id, again, panes });
-  if (!read.ok) return read;
-  const { live } = read.value;
-  if (live.length > 1) {
-    return usageError(
-      `the ${roles.worker} ${id} has ${live.length} live panes: ${live.map((row) => row.paneId).join(', ')}`,
-      `Close all but one of these panes in tmux. Then run "${commandText(again)}" again.`,
-    );
-  }
-  return ok(live[0] ?? null);
+  return read.ok ? requireOneLivePane(id, read.value.live, again) : read;
 };
 
 /**

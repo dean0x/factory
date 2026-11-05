@@ -103,6 +103,23 @@ export const requireStopCase = (
   );
 };
 
+/**
+ * The one live pane of a worker, or null for none. Two live panes are exit 2: a stop could not tell which pane to end. `again` is
+ * the command that a person runs after the fix, without the program name. `stopWorker` and the commands that check every worker
+ * before the first stop use this one rule.
+ */
+export const requireOneLivePane = (
+  workerId: string,
+  live: readonly BoundPane[],
+  again: string,
+): CliResult<BoundPane | null> =>
+  live.length > 1
+    ? usageError(
+        `the ${roles.worker} ${workerId} has ${live.length} live panes: ${live.map((row) => row.paneId).join(', ')}`,
+        `Close all but one of these panes in tmux. Then run "${commandText(again)}" again.`,
+      )
+    : ok(live[0] ?? null);
+
 /** What the session of a worker is doing in a case of the table, and what the person waits for before the command runs again. */
 const sessionWords: Readonly<Record<StopCase, { readonly now: string; readonly wait: string }>> = {
   idle: { now: 'waits at its prompt', wait: 'waits at its prompt' },
@@ -178,14 +195,10 @@ export const stopWorker = async (deps: Deps, request: StopRequest): Promise<CliR
   const panes = await readWorkerPanes(deps, { home, session, workerId, again, ...(listed === undefined ? {} : { panes: listed }) });
   if (!panes.ok) return panes;
   const { live, dead } = panes.value;
-  if (live.length > 1) {
-    return usageError(
-      `the ${roles.worker} ${workerId} has ${live.length} live panes: ${live.map((row) => row.paneId).join(', ')}`,
-      `Close all but one of these panes in tmux. Then run "${stopLine(workerId)}" again.`,
-    );
-  }
-  const [target] = live;
-  if (target === undefined) return closeEnded(deps, session, dead.map((row) => row.paneId));
+  const single = requireOneLivePane(workerId, live, again);
+  if (!single.ok) return single;
+  const target = single.value;
+  if (target === null) return closeEnded(deps, session, dead.map((row) => row.paneId));
   if (deps.env[env.tmuxPane] === target.paneId) {
     return usageError(
       `cannot stop the ${roles.worker} ${workerId} from its own pane ${target.paneId}`,
