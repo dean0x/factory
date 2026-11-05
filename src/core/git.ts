@@ -566,16 +566,25 @@ const ALL_BELOW = '*';
  * Fetch the branches under `<prefix>/` of one remote into `refs/remotes/<remote>/<prefix>/`, in one call. A branch that the remote
  * no longer has is dropped from the local copies (`--prune`, limited to this prefix), so after a fetch that worked, a local copy
  * is the state of the remote now: it is never an older answer. A failed fetch leaves the copies as they were, and the caller must
- * not use them. No tag is fetched. The remote and the prefix must be names, so no word acts as an option.
+ * not use them. Each branch of `also` is fetched by its name in the same call, so one fetch updates every copy that a check reads.
+ * No tag is fetched. The remote, the prefix and the names must be branch names, so no word acts as an option.
  */
-export const fetchBranches = async (deps: Deps, dir: string, remote: string, prefix: string): Promise<CliResult<void>> => {
-  if (!isBranchName(remote) || !isBranchName(prefix)) return failure('cannot fetch: the remote and the branch prefix must be names');
+export const fetchBranches = async (
+  deps: Deps,
+  dir: string,
+  remote: string,
+  prefix: string,
+  also: readonly string[] = [],
+): Promise<CliResult<void>> => {
+  if (!isBranchName(remote) || !isBranchName(prefix) || !also.every(isBranchName)) {
+    return failure('cannot fetch: the remote, the branch prefix and the branches must be names');
+  }
   const what = `fetch ${remote}`;
-  const result = await deps.run(
-    'git',
-    ['-C', dir, 'fetch', '--prune', '--no-tags', remote, `+refs/heads/${prefix}/${ALL_BELOW}:refs/remotes/${remote}/${prefix}/${ALL_BELOW}`],
-    { timeoutMs: FETCH_TIMEOUT_MS },
-  );
+  const refspecs = [
+    `+refs/heads/${prefix}/${ALL_BELOW}:refs/remotes/${remote}/${prefix}/${ALL_BELOW}`,
+    ...also.map((branch) => `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`),
+  ];
+  const result = await deps.run('git', ['-C', dir, 'fetch', '--prune', '--no-tags', remote, ...refspecs], { timeoutMs: FETCH_TIMEOUT_MS });
   if (!result.ok && result.error.message.endsWith(`: ${TIME_LIMIT_SIGNAL}`)) {
     return failure(`cannot ${what}: git took longer than ${FETCH_TIMEOUT_MS / 1000} seconds`);
   }

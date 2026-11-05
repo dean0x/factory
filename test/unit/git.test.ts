@@ -775,6 +775,20 @@ describe('git: the checks before a work copy is freed', () => {
       expect(calls).toEqual([['-C', COPY, 'fetch', '--prune', '--no-tags', 'origin', '+refs/heads/worker/*:refs/remotes/origin/worker/*']]);
     });
 
+    it('fetches each extra branch by name in the same call, so one fetch updates every copy that a check reads (TP-60)', async () => {
+      const { deps, calls } = asked(exited(0));
+      expect(await fetchBranches(deps, COPY, 'origin', 'worker', ['main'])).toEqual({ ok: true, value: undefined });
+      expect(calls).toEqual([
+        ['-C', COPY, 'fetch', '--prune', '--no-tags', 'origin', '+refs/heads/worker/*:refs/remotes/origin/worker/*', '+refs/heads/main:refs/remotes/origin/main'],
+      ]);
+    });
+
+    it('refuses an extra branch that is not a branch name before any call', async () => {
+      const { deps, calls } = asked(exited(0));
+      expect(await fetchBranches(deps, COPY, 'origin', 'worker', ['--upload-pack=x'])).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(calls).toEqual([]);
+    });
+
     it('is a failure that names the remote and the exit code when git can not fetch', async () => {
       const { deps } = asked(exited(128, '', 'fatal: unable to access the remote\n'));
       expect(await fetchBranches(deps, COPY, 'origin', 'worker')).toMatchObject({

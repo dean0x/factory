@@ -264,7 +264,29 @@ describe('dismiss ID: the dry run', () => {
 
 describe('dismiss ID: the work must be pushed', () => {
   const alpha = copyOf('alpha');
+  /** The clone knows its default branch `main`, and the remote has it one commit ahead of the head of the worker. The branch of the worker is not on the remote. */
+  const onDefault: GitFixture = {
+    repos: { [cloneOf('web')]: { originHead: 'origin/main' } },
+    remotes: { [cloneOf('web')]: { copies: { main: OLDER } } },
+    ancestors: { [OLDER]: [HEAD] },
+  };
+  /** As `onDefault`, but the head of the worker is not below the default branch. */
+  const offDefault: GitFixture = { ...onDefault, ancestors: {} };
   const cases: readonly (readonly [string, GitFixture, string])[] = [
+    ['a worker with no commit of its own has an untracked file', { ...onDefault, status: { [alpha]: '?? notes/new.md\0' } }, 'notes/new.md'],
+    ['a worker with no commit of its own has a changed file', { ...onDefault, status: { [alpha]: ' M src/changed.ts\0' } }, 'src/changed.ts'],
+    ['a worker with no commit of its own sees an entry in the stash', { ...onDefault, stashes: { [alpha]: 1 } }, 'stash'],
+    ['the head is on no remote branch of the clone', offDefault, 'is not on the remote'],
+    [
+      'the remote dropped the branch, and the head is not on the default branch',
+      { ...offDefault, remotes: { [cloneOf('web')]: { copies: { 'worker/alpha': HEAD, main: OLDER }, now: { main: OLDER } } } },
+      'is not on the remote',
+    ],
+    [
+      'the head has commits that the remote branch and the default branch both lack',
+      { ...offDefault, remotes: { [cloneOf('web')]: { copies: { 'worker/alpha': OLDER, main: OLDER } } } },
+      'commits that',
+    ],
     ['the branch is not on the remote', { remotes: { [cloneOf('web')]: { copies: {} } } }, 'is not on the remote'],
     ['the head has commits that the remote branch lacks', { remotes: { [cloneOf('web')]: { copies: { 'worker/alpha': OLDER } } } }, 'commits that'],
     ['a tracked file changed', { status: { [alpha]: ' M src/changed.ts\0' } }, 'src/changed.ts'],
@@ -300,16 +322,65 @@ describe('dismiss ID: the work must be pushed', () => {
     expect(output.lines.filter((line) => line.text.startsWith(dismissWords.stuck))).toHaveLength(2);
   });
 
-  it('fetches the worker branches of the clone before it reads the copy of the remote branch', async () => {
+  it('frees a worker that has no commit of its own and was never pushed, because its head is below the default branch of the remote (TP-53)', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], git: onDefault });
+    const dry = await outputOf(made, { words: ['alpha'] });
+    expect(dry.failed).toBe(false);
+    expect(dry.lines.some((line) => line.text.startsWith(dismissWords.stuck))).toBe(false);
+    const output = await outputOf(made, { words: ['alpha'], yes: true });
+    expect(output.failed).toBe(false);
+    expect(made.events).toEqual(['terminate', 'worktree-remove']);
+    expect(await recordState(made, 'alpha')).toBe('absent');
+  });
+
+  it('frees a worker whose branch the remote dropped when its head is below the default branch (TP-53)', async () => {
+    const git: GitFixture = { ...onDefault, remotes: { [cloneOf('web')]: { copies: { 'worker/alpha': HEAD, main: OLDER }, now: { main: OLDER } } } };
+    const made = await make({ workers: [{ id: 'alpha' }], git });
+    const output = await outputOf(made, { words: ['alpha'], yes: true });
+    expect(output.failed).toBe(false);
+    expect(await recordState(made, 'alpha')).toBe('absent');
+  });
+
+  it('names the default branch in the reason when the head is on neither remote branch (TP-54)', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], git: offDefault });
+    const output = await outputOf(made, { words: ['alpha'] });
+    const stuck = output.lines.filter((line) => line.text.startsWith(dismissWords.stuck)).map((line) => line.text);
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0]).toContain('worker/alpha is not on the remote origin');
+    expect(stuck[0]).toContain('origin/main');
+  });
+
+  it('frees a worker with the plain rule when the clone knows no default branch and the branch is on the remote', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
+    const output = await outputOf(made, { words: ['alpha'], yes: true });
+    expect(output.failed).toBe(false);
+    expect(made.git.calls.find((call) => call.args[2] === 'fetch')?.args.slice(3)).toEqual([
+      '--prune',
+      '--no-tags',
+      'origin',
+      '+refs/heads/worker/*:refs/remotes/origin/worker/*',
+    ]);
+  });
+
+  it('fetches the worker branches and the default branch of the clone in one call before it reads the copies of the remote branches (TP-60)', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], git: onDefault });
     await outputOf(made, { words: ['alpha'] });
     const commands = made.git.commands();
+    const fetches = made.git.calls.filter((call) => call.args[2] === 'fetch');
     const fetchAt = commands.findIndex((command) => command.startsWith('fetch'));
-    const copyAt = commands.findIndex((command) => command.startsWith('rev-parse --verify --quiet refs/remotes/origin/worker/alpha'));
+    const copyAt = commands.findIndex((command) => command.startsWith('rev-parse --verify --quiet refs/remotes/origin/'));
+    expect(fetches).toHaveLength(1);
     expect(fetchAt).toBeGreaterThanOrEqual(0);
     expect(fetchAt).toBeLessThan(copyAt);
-    expect(commands[fetchAt]).toContain('--prune');
-    expect(made.git.calls.find((call) => call.args[2] === 'fetch')?.args[1]).toBe(cloneOf('web'));
+    expect(fetches[0]?.args.slice(1)).toEqual([
+      cloneOf('web'),
+      'fetch',
+      '--prune',
+      '--no-tags',
+      'origin',
+      '+refs/heads/worker/*:refs/remotes/origin/worker/*',
+      '+refs/heads/main:refs/remotes/origin/main',
+    ]);
   });
 
   it('is a failure, with nothing freed, when the fetch fails', async () => {
@@ -347,7 +418,7 @@ describe('dismiss ID --yes: the free', () => {
   it('keeps the branch, runs no branch command, and prints the command that deletes it', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     const text = textOf(await outputOf(made, { words: ['alpha'], yes: true }));
-    expect(made.git.commands().some((command) => command.startsWith('branch'))).toBe(false);
+    expect(made.git.commands().filter((command) => command.startsWith('branch') && command !== 'branch --show-current')).toEqual([]);
     expect(text).toContain(`git -C ${cloneOf('web')} branch -D worker/alpha`);
   });
 
@@ -468,6 +539,15 @@ describe('dismiss ID: the path of the work copy', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe('safety');
     expect(made.git.commands()).toEqual([]);
+    await expectNothingChanged(made, ['alpha']);
+  });
+
+  it('is a security stop when the clone of the project is a link into the work copy, so the clone is never freed (TP-55)', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], links: { [cloneOf('web')]: copyOf('alpha') } });
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(error.kind).toBe('safety');
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(made.git.commands().some((command) => command.startsWith('fetch'))).toBe(false);
     await expectNothingChanged(made, ['alpha']);
   });
 

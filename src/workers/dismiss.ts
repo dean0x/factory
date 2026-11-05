@@ -3,6 +3,7 @@ import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/er
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import {
+  defaultBranchOf,
   fetchBranches,
   headOf,
   ignoredFilesOf,
@@ -42,6 +43,8 @@ export interface DismissPlan extends DismissTarget {
   readonly clone: string;
   readonly workCopy: string;
   readonly branch: string;
+  /** The default branch of the clone (`defaultBranchOf`), or null when the clone names none. */
+  readonly defaultBranch: string | null;
 }
 
 /** The command that a person runs again, without the program name: `dismiss ID`, or the words that the caller gives. */
@@ -109,7 +112,7 @@ export const planDismiss = async (deps: Deps, home: string, config: FactoryConfi
       `Check the path of the project in the config. ${again}`,
     );
   }
-  return ok({ id, project: projectId, clone, workCopy, branch: branchOf(id) });
+  return ok({ id, project: projectId, clone, workCopy, branch: branchOf(id), defaultBranch: await defaultBranchOf(deps, clone) });
 };
 
 /** The reason that a worker may not end now, or ok. The caller gives the command that a person runs again. */
@@ -134,35 +137,65 @@ export const requireEndable = (entry: WorkerStatus, again: string): CliResult<vo
   return ok(undefined);
 };
 
-/** One fetch of the worker branches of a clone: after it, the copies of the remote branches are the state of the remote now. */
-export const fetchClone = (deps: Deps, clone: string): Promise<CliResult<void>> =>
-  fetchBranches(deps, clone, dismissWords.remote, roles.worker);
+/**
+ * One fetch of a clone, for the worker branches and for the default branch of the clone: after it, the copies of these remote
+ * branches are the state of the remote now.
+ */
+export const fetchClone = (deps: Deps, plan: DismissPlan): Promise<CliResult<void>> =>
+  fetchBranches(deps, plan.clone, dismissWords.remote, roles.worker, plan.defaultBranch === null ? [] : [plan.defaultBranch]);
 
 const namedFiles = (paths: readonly string[]): string => {
   const shown = paths.slice(0, dismissWords.maxFilesNamed).join(', ');
   return paths.length > dismissWords.maxFilesNamed ? `${shown} and ${paths.length - dismissWords.maxFilesNamed} more` : shown;
 };
 
+/** True when the commit `head` is the commit of the remote copy `copy` or lies below it. A missing copy holds no commit. */
+const isBelowCopy = async (deps: Deps, workCopy: string, head: string, copy: string | null): Promise<CliResult<boolean>> =>
+  copy === null ? ok(false) : isAncestor(deps, workCopy, head, copy);
+
+/**
+ * The reason that the commits of the branch are not on the remote, or null when they are. The head must be on the remote copy of
+ * the branch of the worker, or on the remote copy of the default branch of the clone: a new worker with no commit of its own has a
+ * head on the default branch, so it holds nothing that the remote lacks. The default branch is read only when the own branch fails.
+ */
+const missingCommits = async (deps: Deps, plan: DismissPlan, head: string): Promise<CliResult<string | null>> => {
+  const { clone, workCopy, branch, defaultBranch } = plan;
+  const remote = dismissWords.remote;
+  const own = await remoteBranchHeadOf(deps, clone, remote, branch);
+  if (!own.ok) return own;
+  const onOwn = await isBelowCopy(deps, workCopy, head, own.value);
+  if (!onOwn.ok) return onOwn;
+  if (onOwn.value) return ok(null);
+  const main = defaultBranch === null ? ok(null) : await remoteBranchHeadOf(deps, clone, remote, defaultBranch);
+  if (!main.ok) return main;
+  const onMain = await isBelowCopy(deps, workCopy, head, main.value);
+  if (!onMain.ok) return onMain;
+  if (onMain.value) return ok(null);
+  if (own.value === null) {
+    const also = defaultBranch === null ? '' : `, and its head is not on ${remote}/${defaultBranch}`;
+    return ok(`the branch ${branch} is not on the remote ${remote}${also}`);
+  }
+  const also = defaultBranch === null ? '' : `, and ${remote}/${defaultBranch} does not hold them either`;
+  return ok(`the branch ${branch} has commits that ${remote}/${branch} does not hold${also}`);
+};
+
 /**
  * The reasons that the work of a worker is not pushed, or an empty list when it is. The caller fetched the clone first
- * (`fetchClone`). The work is pushed when the head of the branch is on the remote branch (the head is that commit or below it), and
- * the work copy has no changed file, no untracked file and no stash entry. A git command that fails is a failure, never a reason.
+ * (`fetchClone`). The work is pushed when the head of the branch is on the remote branch of the worker or on the default branch of
+ * the clone (the head is that commit or below it), and the work copy has no changed file, no untracked file and no stash entry. A git
+ * command that fails is a failure, never a reason.
  */
 export const unpushedReasons = async (deps: Deps, plan: DismissPlan): Promise<CliResult<readonly string[]>> => {
-  const { clone, workCopy, branch } = plan;
-  const remote = dismissWords.remote;
+  const { workCopy } = plan;
   const reasons: string[] = [];
   const head = await headOf(deps, workCopy);
   if (!head.ok) return head;
-  const copy = await remoteBranchHeadOf(deps, clone, remote, branch);
-  if (!copy.ok) return copy;
-  if (head.value === null) reasons.push('the work copy has no commit');
-  if (copy.value === null) {
-    reasons.push(`the branch ${branch} is not on the remote ${remote}`);
-  } else if (head.value !== null) {
-    const below = await isAncestor(deps, workCopy, head.value, copy.value);
-    if (!below.ok) return below;
-    if (!below.value) reasons.push(`the branch ${branch} has commits that ${remote}/${branch} does not hold`);
+  if (head.value === null) {
+    reasons.push('the work copy has no commit');
+  } else {
+    const missing = await missingCommits(deps, plan, head.value);
+    if (!missing.ok) return missing;
+    if (missing.value !== null) reasons.push(missing.value);
   }
   const status = await statusOf(deps, workCopy);
   if (!status.ok) return status;

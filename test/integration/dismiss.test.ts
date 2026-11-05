@@ -37,8 +37,14 @@ const expectIntact = async (id: Marker): Promise<void> => {
   expect(isAlive(pane?.pid ?? 0)).toBe(true);
 };
 
-describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work is pushed (built binary, separate tmux server, AC-23, TP-53 to TP-58)', () => {
-  it('prints the dry run of a pushed worker and changes nothing (TP-53)', async () => {
+/** Commits in the work copy of a worker, so that its branch holds work that no remote branch holds. */
+const commitWork = async (id: string): Promise<void> => {
+  const committed = await lab.box.git(copyOf(id), ['commit', '--allow-empty', '-q', '-m', 'work of the worker']);
+  expect(committed.code, committed.stderr).toBe(0);
+};
+
+describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work is pushed (built binary, separate tmux server, AC-23, TP-53 to TP-57)', () => {
+  it('prints the dry run of a pushed worker, names the ignored settings file that the removal deletes, and changes nothing (TP-56)', async () => {
     await lab.node();
     await push('alpha');
     const before = await lab.workerPanes();
@@ -48,16 +54,18 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     expect(result.stdout).toContain('Would end the pane');
     expect(result.stdout).toContain('work-copies/web/alpha');
     expect(result.stdout).toContain('dismiss alpha --yes');
+    expect(result.stdout).toMatch(/The removal deletes the ignored files: .*\.claude/);
     expect(await lab.workerPanes()).toEqual(before);
     await expectIntact('alpha');
     await expectIntact('beta');
   }, LIFECYCLE_CASE_MS);
 
-  it('ends the pane, removes the work copy, deletes the record and the line, keeps the branch and the primary clone, and leaves the other worker alone (TP-54)', async () => {
+  it('ends the pane, removes the work copy that holds the excluded settings file, deletes the record and the line, keeps the branch and the primary clone, and leaves the other worker alone (TP-53, TP-55, TP-57)', async () => {
     await lab.node();
     await push('alpha');
     const pane = await lab.livePaneOf('alpha');
     expect(pane).toBeDefined();
+    expect(existsSync(join(copyOf('alpha'), '.claude', 'settings.local.json'))).toBe(true);
 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stderr).toBe(0);
@@ -78,8 +86,22 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     expect(status.stdout).toMatch(/\bbeta\b/);
   }, LIFECYCLE_CASE_MS);
 
-  it('prints STUCK and frees nothing for a branch that is not on the remote (TP-55)', async () => {
+  it('frees a worker that has no commit of its own and was never pushed, because its head is on the default branch of the remote (TP-53)', async () => {
     await lab.node();
+    const pane = await lab.livePaneOf('beta');
+    expect(pane).toBeDefined();
+
+    const result = await lab.factory('dismiss', ['beta', '--yes']);
+    expect(result.code, result.stderr).toBe(0);
+    expect(await waitUntilEnded(pane?.pid ?? 0)).toBe(true);
+    expect(existsSync(copyOf('beta'))).toBe(false);
+    expect(existsSync(recordDirOf('beta'))).toBe(false);
+    await expectIntact('alpha');
+  }, LIFECYCLE_CASE_MS);
+
+  it('prints STUCK and frees nothing for a branch that is not on the remote and holds a commit of its own (TP-54)', async () => {
+    await lab.node();
+    await commitWork('beta');
 
     const result = await lab.factory('dismiss', ['beta', '--yes']);
     expect(result.code, result.stderr).toBe(1);
@@ -88,11 +110,10 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prints STUCK and frees nothing for a head that is ahead of the remote branch (TP-55)', async () => {
+  it('prints STUCK and frees nothing for a head that is ahead of the remote branch (TP-54)', async () => {
     await lab.node();
     await push('alpha');
-    const committed = await lab.box.git(copyOf('alpha'), ['commit', '--allow-empty', '-q', '-m', 'more work']);
-    expect(committed.code, committed.stderr).toBe(0);
+    await commitWork('alpha');
 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stderr).toBe(1);
@@ -100,7 +121,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prints STUCK and keeps the file when the work copy has an untracked file (TP-56)', async () => {
+  it('prints STUCK and keeps the file when the work copy has an untracked file (TP-54)', async () => {
     await lab.node();
     await push('alpha');
     await writeFile(join(copyOf('alpha'), 'notes.txt'), 'not committed\n');
@@ -112,7 +133,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prints STUCK when the stash of the repo holds an entry (TP-56)', async () => {
+  it('prints STUCK when the stash of the repo holds an entry (TP-54)', async () => {
     await lab.node();
     await push('alpha');
     await writeFile(join(copyOf('alpha'), 'saved.txt'), 'in the stash\n');
@@ -125,8 +146,9 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('prunes a stale remote reference with its fetch, so a branch that the remote dropped is not pushed (TP-57)', async () => {
+  it('prunes a stale remote reference with its fetch, so a branch that the remote dropped is not pushed (TP-54)', async () => {
     await lab.node();
+    await commitWork('alpha');
     await push('alpha');
     const stale = await lab.box.git(cloneOf(), ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/worker/alpha']);
     expect(stale.code, stale.stderr).toBe(0);
@@ -139,7 +161,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('stops with exit 4 for a record whose work copy is outside work-copies/, and touches neither that folder nor the clone (TP-58)', async () => {
+  it('stops with exit 4 for a record whose work copy is outside work-copies/, and touches neither that folder nor the clone (TP-55)', async () => {
     await lab.node();
     await push('alpha');
     const outside = join(lab.box.root, 'elsewhere');
@@ -160,8 +182,8 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
   }, LIFECYCLE_CASE_MS);
 });
 
-describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick step stops in a session (built binary, separate tmux server, AC-24, TP-59, TP-60)', () => {
-  it('refuses a worker whose session works with exit 1 and a remedy, and ends nothing (TP-59)', async () => {
+describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick step stops in a session (built binary, separate tmux server, AC-24, TP-58 to TP-60)', () => {
+  it('refuses a worker whose session works with exit 1 and a remedy, and ends nothing', async () => {
     await lab.node();
     await push('alpha');
     expect((await event('alpha', 'UserPromptSubmit')).code).toBe(0);
@@ -173,7 +195,7 @@ describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick s
     await expectIntact('alpha');
   }, LIFECYCLE_CASE_MS);
 
-  it('lists no idle worker while the work item port knows no work item, and changes nothing (TP-59)', async () => {
+  it('lists no idle worker while the work item port knows no work item, and changes nothing (TP-58)', async () => {
     await lab.node();
     const before = await lab.workerPanes();
 
@@ -201,7 +223,7 @@ describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick s
     await expectIntact('beta');
   }, LIFECYCLE_CASE_MS);
 
-  it('exits 4 and ends nothing when a session of the same name has another home option (TP-60)', async () => {
+  it('exits 4 and ends nothing when a session of the same name has another home option, so it keeps running (TP-59)', async () => {
     await lab.node();
     await push('alpha');
     const other = join(lab.box.root, 'other-home');

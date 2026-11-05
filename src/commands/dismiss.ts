@@ -94,7 +94,7 @@ const inspectorOf = (deps: Deps, home: string, config: FactoryConfig): ((target:
     const plan = await planDismiss(deps, home, config, target);
     if (!plan.ok) return plan;
     const known = fetched.get(plan.value.clone);
-    const fetch = known ?? (await fetchClone(deps, plan.value.clone));
+    const fetch = known ?? (await fetchClone(deps, plan.value));
     fetched.set(plan.value.clone, fetch);
     if (!fetch.ok) return fetch;
     const reasons = await unpushedReasons(deps, plan.value);
