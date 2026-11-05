@@ -274,6 +274,7 @@ describe('dismiss ID: the dry run', () => {
     expect(text).toContain(at(0));
     expect(text).toContain(at(dismissWords.maxIgnoredShown - 1));
     expect(text).not.toContain(at(dismissWords.maxIgnoredShown));
+    expect(text).toContain(`The removal deletes more than ${dismissWords.maxIgnoredShown} ignored files`);
     expect(text).toContain('and more');
     await expectNothingChanged(made, ['alpha']);
     expect(lineExists(made, 'alpha')).toBe(true);
@@ -446,6 +447,28 @@ describe('dismiss ID --yes: the free', () => {
     expect(lineExists(made, 'alpha')).toBe(false);
     expect(text).toContain(`Ended the pane ${pane.id}`);
     expect(text).toContain(`Removed the work copy ${copyOf('alpha')}`);
+    expect(text).not.toContain('ignored');
+  });
+
+  it('names the count and the first paths of the ignored files that the removal deletes, and carries them in the json', async () => {
+    const files = ['cache/run.log', '.env.local', 'dist/'];
+    const made = await make({ workers: [{ id: 'alpha' }], git: { ignoredFiles: { [copyOf('alpha')]: files } } });
+    const output = await outputOf(made, { words: ['alpha'], yes: true });
+    expect(output.failed).toBe(false);
+    expect(textOf(output)).toContain('The removal deleted 3 ignored files: cache/run.log, .env.local, dist/.');
+    expect(output.json).toMatchObject({ freed: true, workers: [{ id: 'alpha', ignored: files }] });
+    expect(removals(made)).toEqual([`worktree remove -- ${copyOf('alpha')}`]);
+  });
+
+  it('names at most the cap of the ignored files that the removal deletes, and says that there are more', async () => {
+    const files = Array.from({ length: dismissWords.maxIgnoredShown + 5 }, (_, index) => `cache/file-${String(index).padStart(2, '0')}.log`);
+    const made = await make({ workers: [{ id: 'alpha' }], git: { ignoredFiles: { [copyOf('alpha')]: files } } });
+    const text = textOf(await outputOf(made, { words: ['alpha'], yes: true }));
+    expect(text).toContain(`The removal deleted more than ${dismissWords.maxIgnoredShown} ignored files`);
+    expect(text).toContain(files[0] ?? '');
+    expect(text).toContain(files[dismissWords.maxIgnoredShown - 1] ?? '');
+    expect(text).not.toContain(files[dismissWords.maxIgnoredShown] ?? '');
+    expect(text).toContain('and more');
   });
 
   it('frees a worker whose work copy holds the excluded settings file, because git ignores it and the removal deletes it (TP-53)', async () => {
@@ -880,6 +903,28 @@ describe('dismiss --idle', () => {
       expect(await recordState(made, id)).toBe('absent');
     }
     expect(removals(made).sort()).toEqual([`worktree remove -- ${copyOf('alpha')}`, `worktree remove -- ${copyOf('gamma', 'api')}`].sort());
+  });
+
+  it('names the count and the first paths of the ignored files that each free deletes, and carries them in the json', async () => {
+    const alphaFiles = ['cache/run.log', 'dist/'];
+    const gammaFiles = ['.env.local'];
+    const made = await idleFleet({
+      terminal: { answer: 'alpha gamma' },
+      git: { ignoredFiles: { [copyOf('alpha')]: alphaFiles, [copyOf('gamma', 'api')]: gammaFiles } },
+    });
+    const output = await outputOf(made, { idle: true }, portOf(items));
+    const text = textOf(output);
+    expect(output.failed).toBe(false);
+    expect(text).toContain('The removal deleted 2 ignored files: cache/run.log, dist/.');
+    expect(text).toContain('The removal deleted 1 ignored file: .env.local.');
+    expect(output.json).toMatchObject({
+      freed: true,
+      workers: expect.arrayContaining([
+        expect.objectContaining({ id: 'alpha', ignored: alphaFiles }),
+        expect.objectContaining({ id: 'gamma', ignored: gammaFiles }),
+      ]),
+    });
+    expect(removals(made)).toHaveLength(2);
   });
 
   it('changes nothing for an empty answer', async () => {

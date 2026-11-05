@@ -46,7 +46,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     expect(result.stdout).toContain('Would end the pane');
     expect(result.stdout).toContain('work-copies/web/alpha');
     expect(result.stdout).toContain('dismiss alpha --yes');
-    expect(result.stdout).toMatch(/The removal deletes the ignored files: .*\.claude/);
+    expect(result.stdout).toMatch(/The removal deletes \d+ ignored files?: .*\.claude/);
     expect(await lab.workerPanes()).toEqual(before);
     await expectIntact('alpha');
     await expectIntact('beta');
@@ -62,6 +62,7 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     const result = await lab.factory('dismiss', ['alpha', '--yes']);
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toContain('Removed the work copy');
+    expect(result.stdout).toMatch(/The removal deleted \d+ ignored files?: .*\.claude/);
     expect(result.stdout).toContain('branch -D worker/alpha');
 
     expect(await waitUntilEnded(pane?.pid ?? 0)).toBe(true);

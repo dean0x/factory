@@ -115,10 +115,21 @@ const stuckLines = (plan: DismissPlan, reasons: readonly string[]): readonly Out
   text(`Push the work of the ${roles.worker} ${plan.id}. Then run "${commandText(dismissLine(plan.id))}" again.`),
 ];
 
-const ignoredLines = (ignored: IgnoredList): readonly OutLine[] =>
-  ignored.paths.length === 0 && !ignored.reachedCap
-    ? []
-    : [text(`The removal deletes the ignored files: ${ignored.paths.join(', ')}${ignored.reachedCap ? ' and more' : ''}.`)];
+/** The ignored files that git does not hold: the removal of the work copy deletes them. */
+const NO_IGNORED: IgnoredList = { paths: [], reachedCap: false };
+
+/**
+ * The count and the first paths of the ignored files that the removal of the work copy deletes: the dry run says that it `deletes`
+ * them, and the free says that it `deleted` them. A list that reached the cap says "more than" the paths it holds. No line for none.
+ */
+const ignoredLines = (ignored: IgnoredList, verb: 'deletes' | 'deleted'): readonly OutLine[] => {
+  const { paths, reachedCap } = ignored;
+  if (paths.length === 0 && !reachedCap) return [];
+  const count = reachedCap ? `more than ${paths.length}` : `${paths.length}`;
+  const noun = !reachedCap && paths.length === 1 ? 'file' : 'files';
+  const names = [paths.join(', '), ...(reachedCap ? ['and more'] : [])].filter((part) => part !== '').join(' ');
+  return [text(`The removal ${verb} ${count} ignored ${noun}: ${names}.`)];
+};
 
 /** What the pane of the worker is now, for the words "end" and "close": a live pane ends, and a pane that ended is closed. */
 const paneStep = (entry: WorkerStatus): 'end' | 'close' | null => {
@@ -137,17 +148,18 @@ const dryRunLines = (entry: WorkerStatus, plan: DismissPlan, ignored: IgnoredLis
     text(`Would remove the work copy ${plan.workCopy}.`),
     text(`Would delete the record of the ${roles.worker} ${plan.id} and its last-seen line.`),
     keptBranchLine(plan),
-    ...ignoredLines(ignored),
+    ...ignoredLines(ignored, 'deletes'),
     text(`Nothing changed. Run "${commandText(dismissLine(plan.id))} ${flagText(flags.yes)}" to do it.`),
   ];
 };
 
-const freedLines = (plan: DismissPlan, freed: FreedWorker): readonly OutLine[] => {
+const freedLines = (plan: DismissPlan, freed: FreedWorker, ignored: IgnoredList): readonly OutLine[] => {
   const { stopped } = freed;
   return [
     ...(stopped.kind === 'stopped' ? [text(`Ended the pane ${stopped.paneId} of the ${roles.worker} ${plan.id}.`)] : []),
     ...(stopped.kind === 'closed-dead' ? [text(`Closed the ended pane ${stopped.paneIds.join(', ')} of the ${roles.worker} ${plan.id}.`)] : []),
     text(`Removed the work copy ${plan.workCopy}.`),
+    ...ignoredLines(ignored, 'deleted'),
     text(`Deleted the record of the ${roles.worker} ${plan.id}.`),
     keptBranchLine(plan),
   ];
@@ -216,9 +228,9 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
       exitCode: 1,
     });
   }
+  const ignored = await ignoredIn(deps, plan);
+  if (!ignored.ok) return ignored;
   if (!options.yes) {
-    const ignored = await ignoredIn(deps, plan);
-    if (!ignored.ok) return ignored;
     return ok({
       lines: dryRunLines(entry, plan, ignored.value),
       json: { ...base, freed: false, workers: [{ id, project: plan.project, pushed: true, stuck: [], ignored: ignored.value.paths }] },
@@ -231,8 +243,12 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
   const freed = await freeWorker(deps, { home, session: facts.value.session, plan, panes: facts.value.panes, lineSession: lineSession.value });
   if (!freed.ok) return freed;
   return ok({
-    lines: freedLines(plan, freed.value),
-    json: { ...base, freed: true, workers: [{ id, project: plan.project, pushed: true, stuck: [], ended: freed.value.stopped.kind !== 'no-pane' }] },
+    lines: freedLines(plan, freed.value, ignored.value),
+    json: {
+      ...base,
+      freed: true,
+      workers: [{ id, project: plan.project, pushed: true, stuck: [], ended: freed.value.stopped.kind !== 'no-pane', ignored: ignored.value.paths }],
+    },
     warnings,
     failed: false,
   });
@@ -277,24 +293,33 @@ interface Pick {
   readonly entry: WorkerStatus;
   readonly inspected: Inspected;
   readonly lineSession: string | null;
+  /** The ignored files that the free deletes. A worker with unpushed work is not freed, so its list is empty. */
+  readonly ignored: IgnoredList;
 }
 
 const prepare = async (deps: Deps, home: string, entry: WorkerStatus, inspected: CliResult<Inspected>): Promise<CliResult<Pick>> => {
   if (!inspected.ok) return inspected;
   const lineSession = await lineSessionOf(deps, home, entry.id);
-  return lineSession.ok ? ok({ entry, inspected: inspected.value, lineSession: lineSession.value }) : lineSession;
+  if (!lineSession.ok) return lineSession;
+  const ignored: CliResult<IgnoredList> = inspected.value.reasons.length === 0 ? await ignoredIn(deps, inspected.value.plan) : ok(NO_IGNORED);
+  return ignored.ok ? ok({ entry, inspected: inspected.value, lineSession: lineSession.value, ignored: ignored.value }) : ignored;
 };
 
+/** What the free of the picked workers did: the lines, the ids freed and stuck, and the ignored files that each free deleted. */
+interface PicksDone {
+  readonly lines: readonly OutLine[];
+  readonly freed: readonly string[];
+  readonly stuck: readonly string[];
+  readonly ignored: ReadonlyMap<string, readonly string[]>;
+}
+
 /** The picked workers: the ones with unpushed work get STUCK lines, and the others are freed. A fault names the workers that were freed. */
-const freePicks = async (
-  deps: Deps,
-  facts: Facts,
-  picks: readonly Pick[],
-): Promise<CliResult<{ readonly lines: readonly OutLine[]; readonly freed: readonly string[]; readonly stuck: readonly string[] }>> => {
+const freePicks = async (deps: Deps, facts: Facts, picks: readonly Pick[]): Promise<CliResult<PicksDone>> => {
   const lines: OutLine[] = [];
   const freed: string[] = [];
   const stuck: string[] = [];
-  for (const { entry, inspected, lineSession } of picks) {
+  const ignoredBy = new Map<string, readonly string[]>();
+  for (const { entry, inspected, lineSession, ignored } of picks) {
     const { plan, reasons } = inspected;
     if (reasons.length > 0) {
       lines.push(...stuckLines(plan, reasons));
@@ -306,15 +331,25 @@ const freePicks = async (
       const before = freed.length === 0 ? '' : `. Freed before this fault: ${freed.join(', ')}`;
       return err({ ...done.error, message: `${done.error.message}${before}` });
     }
-    lines.push(...freedLines(plan, done.value));
+    lines.push(...freedLines(plan, done.value, ignored));
     freed.push(entry.id);
+    ignoredBy.set(entry.id, ignored.paths);
   }
-  return ok({ lines, freed, stuck });
+  return ok({ lines, freed, stuck, ignored: ignoredBy });
 };
 
-/** What the list step of `dismiss --idle` gives the pick step: the table and the JSON of the list. */
+/** A worker of the list step: the row of the table, and the entry of the JSON. */
+interface ListedWorker {
+  readonly id: string;
+  readonly project: string;
+  readonly state: string;
+  readonly pushed: boolean;
+}
+
+/** What the list step of `dismiss --idle` gives the pick step: the table, the idle workers and the JSON of the list. */
 interface Listed {
   readonly table: readonly OutLine[];
+  readonly workers: readonly ListedWorker[];
   readonly json: JsonDoc;
 }
 
@@ -324,7 +359,7 @@ interface Listed {
  * idle, and its work must be pushed) before the first change. Then each picked worker is freed as `dismiss ID --yes` frees it.
  */
 const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkItemPort, facts: Facts, listed: Listed): Promise<CliResult<CommandOutput>> => {
-  const { table, json } = listed;
+  const { table, workers, json } = listed;
   const { warnings } = facts;
   const answer = await deps.prompt(printable(`Dismiss which ${roles.worker}s? Type their ids with spaces, or press Enter to end nothing: `));
   if (!answer.ok) return answer;
@@ -344,10 +379,14 @@ const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkI
   }
   const done = await freePicks(deps, now.value, picks);
   if (!done.ok) return done;
-  const { lines, freed, stuck } = done.value;
+  const { lines, freed, stuck, ignored } = done.value;
+  const withIgnored = workers.map((worker) => {
+    const paths = ignored.get(worker.id);
+    return paths === undefined ? worker : { ...worker, ignored: paths };
+  });
   return ok({
     lines: [...table, ...lines],
-    json: { ...json, freed: freed.length > 0, picked: ids, stuck },
+    json: { ...json, freed: freed.length > 0, workers: withIgnored, picked: ids, stuck },
     warnings,
     failed: stuck.length > 0,
     ...(stuck.length > 0 ? { exitCode: 1 } : {}),
@@ -378,7 +417,12 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
     idle.length === 0
       ? [text(`No idle ${roles.worker}s.`)]
       : tableLines(Object.values(dismissWords.columns), idle.map((entry) => [entry.id, entry.project, stateText(entry), pushedWord(entry.id)]));
-  const listed = idle.map((entry) => ({ id: entry.id, project: entry.project, state: stateText(entry), pushed: isPushed(checked.get(entry.id)) }));
+  const listed: readonly ListedWorker[] = idle.map((entry) => ({
+    id: entry.id,
+    project: entry.project,
+    state: stateText(entry),
+    pushed: isPushed(checked.get(entry.id)),
+  }));
   const json = { ...base, freed: false, workers: listed, picked: [] };
   if (inFactorySession(deps)) {
     return ok({
@@ -402,7 +446,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
       failed: false,
     });
   }
-  return pickAndFree(deps, options, workItems, facts.value, { table, json });
+  return pickAndFree(deps, options, workItems, facts.value, { table, workers: listed, json });
 };
 
 /**
@@ -410,7 +454,8 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
  * `dismiss --idle` lists the idle workers and lets the owner pick. In both, nothing changes until every check passed: the path of
  * the work copy (exit 4), the state of the session (exit 1 for a busy worker or one that is not known), and the pushed test. Work
  * that is not pushed prints `STUCK:` lines, frees nothing and exits 1. Freeing ends the pane, removes the work copy with the plain
- * git command (no force) and deletes the record with its last-seen line. The branch stays.
+ * git command (no force) and deletes the record with its last-seen line. The removal also deletes the ignored files of the work
+ * copy, so the dry run and each free name them (read before the removal). The branch stays.
  */
 export const runDismiss = async (
   deps: Deps,

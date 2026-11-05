@@ -735,8 +735,8 @@ export const statusWords = {
 
 /**
  * The rules and the words of `dismiss` (design 4.11). The work of a worker is pushed when, after a fetch of `remote`, the head of its
- * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run names at
- * most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
+ * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run and the free
+ * name at most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
  * files. The table of `--idle` has the columns `columns`.
  */
 export const dismissWords = {
