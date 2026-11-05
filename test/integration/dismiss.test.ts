@@ -180,6 +180,25 @@ describe.skipIf(!hasTmux)('factory dismiss frees a work copy only when its work 
     expect(existsSync(copyOf('alpha'))).toBe(true);
     expect(await lab.livePaneOf('alpha')).toBeDefined();
   }, LIFECYCLE_CASE_MS);
+
+  it('stops with exit 4 and runs no program of the work copy when its .git file names another git folder, in the dry run and with --yes (TP-55)', async () => {
+    await lab.node();
+    await push('alpha');
+    const marker = join(lab.box.root, 'ran-in-the-work-copy');
+    const other = join(copyOf('alpha'), 'other-git');
+    await mkdir(join(other, 'objects'), { recursive: true });
+    await writeFile(join(other, 'HEAD'), 'ref: refs/heads/main\n');
+    await writeFile(join(other, 'config'), `[core]\n\trepositoryformatversion = 0\n\tfsmonitor = touch ${marker}\n`);
+    await writeFile(join(copyOf('alpha'), '.git'), `gitdir: ${other}\n`);
+
+    for (const args of [['alpha'], ['alpha', '--yes']]) {
+      const result = await lab.factory('dismiss', args);
+      expect(result.code, result.stderr).toBe(4);
+    }
+    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(copyOf('alpha'))).toBe(true);
+    expect(await lab.livePaneOf('alpha')).toBeDefined();
+  }, LIFECYCLE_CASE_MS);
 });
 
 describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick step stops in a session (built binary, separate tmux server, AC-24, TP-58 to TP-60)', () => {
