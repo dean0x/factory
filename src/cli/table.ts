@@ -3,6 +3,7 @@ import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
 import { runLayout } from '../commands/layout.js';
+import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runStart } from '../commands/start.js';
@@ -202,6 +203,30 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     },
     run: (given, deps) =>
       runStart(deps, { home: given.string(flags.home), dryRun: given.bool(flags.dryRun), yes: given.bool(flags.yes) }, registry),
+  },
+  {
+    name: commands.shutdown,
+    summary: `Stop the ${roles.worker}s and end the tmux session of the ${roles.node}. Nothing else stops.`,
+    usage: `${commandText(commands.shutdown)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runShutdown(deps, { home: given.string(flags.home) }, registry),
+  },
+  {
+    name: commands.restart,
+    summary: `Stop one ${roles.worker} and start it again with its session id. The other ${roles.worker}s keep their panes.`,
+    usage: `${commandText(commands.restart)} ID [${flagText(flags.home)} DIR]`,
+    positionals: true,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runRestart(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
+  },
+  {
+    name: commands.reboot,
+    summary:
+      `Stop every ${roles.worker} and start each one again with its session id. ` +
+      `Outside the ${places.session}, the tmux session of the ${roles.node} ends and starts again too.`,
+    usage: `${commandText(commands.reboot)} [${flagText(flags.home)} DIR]`,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runReboot(deps, { home: given.string(flags.home) }, registry),
   },
   {
     name: commands.node,
