@@ -2,6 +2,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { chmod, mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
@@ -13,7 +14,8 @@ const POLL_STEP_MS = 100;
 const POLL_STEPS = 100;
 const STOP_STEPS = 30;
 const EXCLUDE_ENTRY = '/.claude/settings.local.json';
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'];
+/** The matcher text of the group of the Notification event: the two types of notice that mean a dialog waits. It never lists idle_prompt. */
+const NOTIFICATION_MATCHER = 'permission_prompt|elicitation_dialog';
 /** A fake value for the one setting of the user that the launch keeps among the variables that start with CLAUDE. */
 const FAKE_CONFIG_DIR = '/fake/claude-config';
 
@@ -124,9 +126,14 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
+const ownGroup = (event: string): Record<string, unknown> => ({
+  ...(event === 'Notification' ? { matcher: NOTIFICATION_MATCHER } : {}),
+  hooks: [{ type: 'command', command: `factory hook ${event}` }],
+});
+
 /** The settings of Claude Code that the program writes into a session folder. The command texts are the contract. */
 const ownSettings = (): Record<string, unknown> => ({
-  hooks: Object.fromEntries(HOOK_EVENTS.map((event) => [event, [{ hooks: [{ type: 'command', command: `factory hook ${event}` }] }]])),
+  hooks: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroup(event)]])),
   statusLine: { type: 'command', command: 'factory hook statusline' },
 });
 

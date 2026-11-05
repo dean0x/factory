@@ -110,7 +110,7 @@ describe('factory hook (built binary)', () => {
       expect(await hook(event, JSON.stringify(FIXTURE.hooks[event]))).toEqual({ code: 0, stdout: '', stderr: '' });
     }
     expect(await readdir(join(home, '.factory', 'state', 'heartbeat'))).toEqual([SESSION]);
-    expect(JSON.parse(await readFile(lastSeenFile(), 'utf8'))).toMatchObject({ event: 'PreCompact' });
+    expect(JSON.parse(await readFile(lastSeenFile(), 'utf8'))).toMatchObject({ event: hookNames.events.at(-1) });
   });
 
   it('never stores the path of the transcript', async () => {
@@ -129,7 +129,7 @@ describe('factory hook (built binary)', () => {
   it.each([
     ['a payload that is not JSON', 'Stop', 'not json'],
     ['an empty payload', 'Stop', ''],
-    ['an event off the list', 'Notification', JSON.stringify(FIXTURE.hooks.Stop)],
+    ['an event off the list', 'SubagentStop', JSON.stringify(FIXTURE.hooks.Stop)],
     ['an event that differs from the input', 'SessionStart', JSON.stringify(FIXTURE.hooks.Stop)],
     ['a session id that is not a UUID', 'Stop', JSON.stringify({ ...FIXTURE.hooks.Stop, session_id: '../../escape' })],
   ])('exits 0 with an empty stdout and one line on stderr for %s, and writes nothing (TP-12)', async (_name, event, input) => {

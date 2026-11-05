@@ -124,7 +124,7 @@ describe('factory hook: refusals of the input (TP-8)', () => {
     ['a missing session id', JSON.stringify({ hook_event_name: 'Stop' })],
     ['a missing event name', JSON.stringify({ session_id: SESSION })],
     ['an event name that differs from the argument', payload('Stop', { hook_event_name: 'SessionStart' })],
-    ['an event name off the list', payload('Stop', { hook_event_name: 'Notification' })],
+    ['an event name off the list', payload('Stop', { hook_event_name: 'SubagentStop' })],
     ['an input that is not JSON', 'this is not json'],
     ['an input that is a list', '[]'],
     ['an input that is null', 'null'],
@@ -137,7 +137,7 @@ describe('factory hook: refusals of the input (TP-8)', () => {
   });
 
   it.each([
-    ['an event that is not on the list', ['Notification']],
+    ['an event that is not on the list', ['SubagentStop']],
     ['an event with other letter case', ['stop']],
     ['the status line word, which is not an event', [hookNames.statusline]],
     ['no event', []],
@@ -614,7 +614,7 @@ describe('factory hook through runCli: exit 0 and an empty stdout on every path 
 
   it.each([
     ['a bad payload', ['hook', 'Stop'], () => make({ stdin: 'oops' })],
-    ['an unknown event', ['hook', 'Notification'], () => make({ stdin: stopInput })],
+    ['an unknown event', ['hook', 'SubagentStop'], () => make({ stdin: stopInput })],
     ['a broken config', ['hook', 'Stop'], brokenConfig],
     ['no FACTORY_HOME', ['hook', 'Stop'], () => make({ stdin: stopInput, env: { FACTORY_HOME: undefined } })],
     ['no event', ['hook'], () => make({ stdin: stopInput })],

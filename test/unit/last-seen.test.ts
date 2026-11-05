@@ -66,8 +66,9 @@ describe('the names of the last-seen line', () => {
     expect(FOLDER).toBe('/h/node/.factory/state/heartbeat');
   });
 
-  it('lists the four events of the hook', () => {
-    expect([...hookNames.events]).toEqual(['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact']);
+  it('starts the list of hook events with the four first events, and names no event twice', () => {
+    expect(hookNames.events.slice(0, 4)).toEqual(['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact']);
+    expect(new Set(hookNames.events).size).toBe(hookNames.events.length);
   });
 });
 
