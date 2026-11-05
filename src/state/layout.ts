@@ -53,6 +53,10 @@ export interface Layout {
   readonly heartbeatDir: string;
   /** The pointer to the newest session of the coordinator: the file that names its last-seen line. It is inside the run-time folder. */
   readonly coordinatorLastSessionFile: string;
+  /** The id of this machine. It is inside the run-time folder, so the state repo never holds it. */
+  readonly machineIdFile: string;
+  /** The mark of the active machine. The state repo tracks it. */
+  readonly activeMachineFile: string;
   readonly locksDir: string;
 }
 
@@ -84,6 +88,8 @@ export const layoutOf = (home: string): Layout => {
     runtimeDir,
     heartbeatDir: join(stateDir, stateRel.heartbeat),
     coordinatorLastSessionFile: join(runtimeDir, files.coordinatorLastSession),
+    machineIdFile: join(runtimeDir, files.machineId),
+    activeMachineFile: join(stateDir, files.activeMachine),
     locksDir: join(stateDir, stateRel.locks),
   };
 };

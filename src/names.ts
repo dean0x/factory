@@ -133,6 +133,10 @@ export const files = {
   workerLastSession: 'last-session',
   /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
   coordinatorLastSession: 'coordinator-last-session',
+  /** The id of this machine, in the run-time folder: made once, and never shared. */
+  machineId: 'machine-id',
+  /** The mark of the active machine, in the state folder: the state repo tracks it, so it travels with the state. */
+  activeMachine: 'active-machine.json',
   board: 'board.json',
   waiting: 'waiting.json',
   decisionLog: 'decision-log.json',
@@ -772,6 +776,32 @@ export const workerRecord = {
 } as const;
 
 /**
+ * The mark of the active machine (design 4.3): `active-machine.json` in the state folder holds the id of the machine that
+ * started the factory last, and the time. The state repo tracks it, so another machine that pulls the state can see it.
+ * The id of a machine is a random UUID that `machine-id` in the run-time folder holds. That file is never shared.
+ */
+export const activeMachine = {
+  keys: {
+    schema: 'schema',
+    machine: 'machine',
+    at: 'at',
+  },
+  /** The id of a machine: a UUID with lower case letters. */
+  idPattern: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+  /** The random bytes of an id. */
+  idBytes: 16,
+  /** A reader refuses a file of more bytes than this. A UUID and a new line are 37 bytes. */
+  idMaxBytes: 64,
+  /** A reader refuses a mark of more bytes than this. */
+  maxBytes: 1_024,
+  /** The permission bits of the id file and of its folder when the call makes them. */
+  idFileMode: privateFile.fileMode,
+  folderMode: privateFile.folderMode,
+  /** The commit message of a write of the mark, and of its removal. */
+  commitMessages: { set: 'chore: mark this machine as the active one', clear: 'chore: clear the mark of the active machine' },
+} as const;
+
+/**
  * The exclude file of a project clone (design 4.6): `info/exclude` in the common git folder, which every work copy of the
  * clone shares. It holds one entry that hides the settings file of the work copies from git, so a work copy that has only
  * that file counts as clean. The entry anchors at the top of a work tree.
@@ -947,6 +977,7 @@ export const schemaIds = {
   error: `${program}.error/v1`,
   lastSeen: `${program}.last-seen/v1`,
   workerRecord: `${program}.worker/v1`,
+  activeMachine: `${program}.active-machine/v1`,
 } as const;
 
 /** Placeholders of the prefix that marks input with the authority of the owner. */
