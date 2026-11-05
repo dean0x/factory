@@ -5,6 +5,7 @@ import { commands, commandText, dirs, program, trackedFiles, type CommandName } 
 import type { Deps } from './deps.js';
 import { isInUserClaudeFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
+import { shellWord } from './shell-word.js';
 
 const GIT_TIMEOUT_MS = 15_000;
 const CLONE_TIMEOUT_MS = 300_000;
@@ -672,6 +673,17 @@ export const removeWorkTree = async (deps: Deps, clone: string, folder: string):
   if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
   return result.value.exitCode === 0 ? ok(undefined) : exitFailure(what, result.value.exitCode, result.value.stderr);
 };
+
+/** The command line, for a remedy text, that unlocks the work copy `folder` of the repo of `clone`. */
+export const unlockWorkTreeLine = (clone: string, folder: string): string =>
+  `git -C ${shellWord(clone)} worktree unlock ${shellWord(folder)}`;
+
+/**
+ * The command line, for a remedy text, that removes the work copy `folder` of the repo of `clone` with force. Git needs force for
+ * a work copy that holds submodules.
+ */
+export const forceRemoveWorkTreeLine = (clone: string, folder: string): string =>
+  `git -C ${shellWord(clone)} worktree remove --force ${shellWord(folder)}`;
 
 /** The paths that git ignores in a work tree, and whether git named more paths than the list holds. */
 export interface IgnoredList {

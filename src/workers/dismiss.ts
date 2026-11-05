@@ -6,6 +6,7 @@ import {
   commonDirOf,
   defaultBranchOf,
   fetchBranches,
+  forceRemoveWorkTreeLine,
   GIT_ENTRY,
   headOf,
   ignoredFilesOf,
@@ -15,6 +16,7 @@ import {
   removeWorkTree,
   stashCountOf,
   statusOf,
+  unlockWorkTreeLine,
   type IgnoredList,
 } from '../core/git.js';
 import { err, ok } from '../core/result.js';
@@ -312,13 +314,11 @@ const afterSteps = (error: CliError, id: string, done: readonly string[], leftBy
  * worker again, so the remedy names the paths to delete by hand.
  */
 const removalHint = (home: string, plan: DismissPlan, lineSession: string | null): string => {
-  const clone = shellWord(plan.clone);
-  const copy = shellWord(plan.workCopy);
   const leftByHand = [...(lineSession === null ? [] : [join(layoutOf(home).heartbeatDir, lineSession)]), workerPathsOf(home, plan.id).dir];
   return (
     `Git also refuses a work copy that is locked or that holds submodules. ` +
-    `If it is locked, run "git -C ${clone} worktree unlock ${copy}". Then run "${commandText(dismissLine(plan.id))}" again. ` +
-    `If it holds submodules, run "git -C ${clone} worktree remove --force ${copy}": the checks of ${commands.dismiss} passed, so its work is pushed. ` +
+    `If it is locked, run "${unlockWorkTreeLine(plan.clone, plan.workCopy)}". Then run "${commandText(dismissLine(plan.id))}" again. ` +
+    `If it holds submodules, run "${forceRemoveWorkTreeLine(plan.clone, plan.workCopy)}": the checks of ${commands.dismiss} passed, so its work is pushed. ` +
     `Then delete ${leftByHand.map(shellWord).join(' and ')} by hand.`
   );
 };
