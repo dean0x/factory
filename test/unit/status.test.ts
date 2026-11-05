@@ -555,12 +555,13 @@ describe('status: the panes (TP-50)', () => {
 });
 
 describe('status: the output is short (TP-63, TP-64)', () => {
+  const workers: readonly WorkerSeed[] = [
+    { id: 'alpha', project: 'web', line: { event: 'Stop', percent: 35 } },
+    { id: 'beta', project: 'api', line: { event: 'UserPromptSubmit', percent: 12 } },
+    { id: 'gamma', project: 'web', line: { event: 'Stop', percent: 5 } },
+  ];
   const fleet: Setup = {
-    workers: [
-      { id: 'alpha', project: 'web', line: { event: 'Stop', percent: 35 } },
-      { id: 'beta', project: 'api', line: { event: 'UserPromptSubmit', percent: 12 } },
-      { id: 'gamma', project: 'web', line: { event: 'Stop', percent: 5 } },
-    ],
+    workers,
     panes: [pane('alpha', { id: '%7' }), pane('beta', { id: '%9' }), pane('gamma', { id: '%11' })],
   };
   const items = { alpha: busyWith('W-7'), beta: NONE, gamma: NONE };
@@ -568,7 +569,7 @@ describe('status: the output is short (TP-63, TP-64)', () => {
   it('has a short first line and few lines for three workers, for a run with no session, and for a run with no worker (TP-63)', async () => {
     const shapes: readonly (readonly [Made, WorkItemPort])[] = [
       [await make(fleet), portOf(items).port],
-      [await make({ workers: fleet.workers, tmux: { sessions: {} } }), unknownWorkItems],
+      [await make({ workers, tmux: { sessions: {} } }), unknownWorkItems],
       [await make(), unknownWorkItems],
     ];
     for (const [made, port] of shapes) expectShortOutput(plainText(await statusOf(made, port)));
