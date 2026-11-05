@@ -333,13 +333,14 @@ const RECORD_DIR = '/w/node/.factory/workers/alpha';
 
 /**
  * The remedy of a step that failed after the work copy, the branch and the record exist: nothing is undone, and the hint names the
- * steps that remove the worker by hand, in the order that works. It names no command that does not exist.
+ * command that frees the worker once its branch is pushed, and the steps that remove the worker by hand, in the order that works.
  */
 const expectKeptCopyHint = (error: CliError): void => {
   const hint = error.hint ?? '';
   expect(hint).toContain('Nothing is undone: the work copy, the branch and the record of the worker stay.');
+  expect(hint).toContain('After its branch is pushed, factory can remove it: run "factory dismiss alpha" to see the steps');
+  expect(hint).toContain('then add --yes in a terminal window outside a factory session.');
   expect(hint).toContain(`To remove the worker by hand, run "${REMOVE_COPY}" and then "${DELETE_BRANCH}". Then delete the folder ${RECORD_DIR}.`);
-  expect(hint).not.toContain('dismiss');
 };
 
 describe('worker new: the work, in order (TP-5)', () => {

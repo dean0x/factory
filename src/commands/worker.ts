@@ -25,6 +25,7 @@ import {
   flagText,
   hookSessions,
   lastSeen,
+  places,
   program,
   roles,
   schemaIds,
@@ -34,6 +35,7 @@ import {
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
+import { dismissLine } from '../workers/dismiss.js';
 import { ensureCloneExclude } from '../workers/exclude.js';
 import { launchWorker, requireCleanTrackedSettings, resumeLine, resumeWorker } from '../workers/launch.js';
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
@@ -215,8 +217,13 @@ const removeCopyAndBranch = (plan: NewWorkerPlan): string => {
   return `"${git} worktree remove ${shellWord(plan.workCopy)}" and then "${git} branch -D ${shellWord(plan.branch)}"`;
 };
 
-/** The steps that remove a worker by hand: its work copy and its branch, then the folder of its record. */
+/**
+ * The ways to remove a worker: the command that frees it once its branch is pushed, and the steps by hand, which are the way for a
+ * branch that is not pushed: the work copy and its branch, then the folder of its record.
+ */
 const removeByHand = (plan: NewWorkerPlan, home: string): string =>
+  `After its branch is pushed, ${program} can remove it: run "${commandText(dismissLine(plan.id))}" to see the steps, ` +
+  `then add ${flagText(flags.yes)} in a terminal window outside a ${places.session}. ` +
   `To remove the ${roles.worker} by hand, run ${removeCopyAndBranch(plan)}. ` +
   `Then delete the folder ${shellWord(workerPathsOf(home, plan.id).dir)}.`;
 
