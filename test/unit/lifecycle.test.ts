@@ -4,7 +4,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { activeMachine, schemaIds, tmuxNames, type HookEvent } from '../../src/names.js';
+import { activeMachine, env, schemaIds, tmuxNames, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -13,6 +13,7 @@ import {
   createFakeDeps,
   exited,
   registerRoot,
+  withFailingWrites,
   type FakeDeps,
   type FetchHandler,
   type RunCall,
@@ -37,6 +38,7 @@ const OWN_MACHINE = '00000000-0000-4000-8000-000000000001';
 const OTHER_MACHINE = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const OTHER_HOME = '/w/other-factory';
 const PROXY_URL = 'http://127.0.0.1:8080/secret-path';
+const SECOND_PROXY_URL = 'http://127.0.0.1:8081/second-path';
 
 const IDS = ['alpha', 'beta', 'gamma'] as const;
 type Id = (typeof IDS)[number];
@@ -105,7 +107,10 @@ interface Made {
   readonly tmux: TmuxLog;
   /** The id of the coordinator pane. */
   readonly coordinator: string;
-  /** What happened, in order: `tmux <command>`, `terminate <pid>` and `warn` (a warning printed at once). */
+  /**
+   * What happened, in order: `tmux <command>`, `git <subcommand>`, `terminate <pid>`, `write <path>` (an atomic write, or the
+   * rename that ends a write through a temporary file) and `warn` (a warning printed at once).
+   */
   readonly events: string[];
 }
 
@@ -122,6 +127,12 @@ const gitAnswer = (commitExit: number, identity: boolean) => (call: RunCall) => 
   if (command === 'ls-files -z') return exited(0, '');
   if (call.args[2] === 'check-ignore') return exited(0);
   return exited(128, '', 'fatal: not a git repository\n');
+};
+
+/** The subcommand of a git call: the first word after `-C <folder>` that is neither an option nor the value of `-c`. */
+const subcommandOf = (call: RunCall): string => {
+  const words = call.args.slice(2);
+  return words.find((word, index) => !word.startsWith('-') && words[index - 1] !== '-c') ?? '';
 };
 
 const paneOf = (id: Id, spec: WorkerSpec): readonly PaneFixture[] => {
@@ -180,7 +191,10 @@ const make = async (setup: Setup = {}): Promise<Made> => {
     os: 'darwin',
     env: { PATH: '/bin', XDG_STATE_HOME: '/state', ...from },
     run: (call) => {
-      if (call.command === 'git') return git(call);
+      if (call.command === 'git') {
+        events.push(`git ${subcommandOf(call)}`);
+        return git(call);
+      }
       events.push(`tmux ${call.args[0]}`);
       return handler(call);
     },
@@ -190,6 +204,17 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   const stuckPid = setup.stuck === undefined ? undefined : PID[setup.stuck];
   const deps: FakeDeps = {
     ...base,
+    fs: {
+      ...base.fs,
+      writeTextAtomic: (path, text, within, mode) => {
+        events.push(`write ${path}`);
+        return base.fs.writeTextAtomic(path, text, within, mode);
+      },
+      rename: (from, to) => {
+        events.push(`write ${to}`);
+        return base.fs.rename(from, to);
+      },
+    },
     terminate: (pid) => {
       events.push(`terminate ${pid}`);
       return base.terminate(pid);
@@ -231,6 +256,22 @@ const withProxy = (): FactoryConfig => {
     },
   };
 };
+
+/** The proxy of the session, and a second proxy for the worker beta only. */
+const withWorkerProxy = (): FactoryConfig => {
+  const config = withProxy();
+  return {
+    ...config,
+    core: {
+      ...config.core,
+      proxies: [...config.core.proxies, { id: 'second', base_url: SECOND_PROXY_URL, health: '/health', on_fail: 'stop' }],
+      workers: { beta: { proxy: 'second' } },
+    },
+  };
+};
+
+/** The second proxy does not answer. The proxy of the session does. */
+const secondProxyDown: FetchHandler = (url) => (url.startsWith(SECOND_PROXY_URL) ? failure('no answer') : ok({ status: 200 }));
 
 const shutdown = (made: Made) => runShutdown(made.deps, { home: HOME });
 const restart = (made: Made, id: string) => runRestart(made.deps, { home: HOME, words: [id] });
@@ -281,6 +322,17 @@ const resumesOf = (made: Made): Record<string, string | undefined> =>
       return [pane.options[tmuxNames.optionWorker] ?? '', at < 0 ? undefined : pane.command[at + 1]];
     }),
   );
+
+/** The proxy base URL that the command of each worker pane sets, by worker. A pane with no such word has none. */
+const baseUrlsOf = (made: Made): Record<string, string | undefined> => {
+  const prefix = `${env.proxyBaseUrl}=`;
+  return Object.fromEntries(
+    workerPanes(made).map((pane) => [
+      pane.options[tmuxNames.optionWorker] ?? '',
+      pane.command.find((word) => word.startsWith(prefix))?.slice(prefix.length),
+    ]),
+  );
+};
 
 /** Nothing stopped: no signal, no pane closed, no session ended. */
 const expectNothingStopped = (made: Made): void => {
@@ -469,10 +521,27 @@ describe('shutdown (AC-18)', () => {
       const made = await make({ mark: 'own' });
       const output = await succeeded(shutdown(made));
       expect(made.deps.files.has(MARK_FILE)).toBe(false);
-      expect(made.deps.calls.some((call) => call.command === 'git' && call.args.includes('commit'))).toBe(true);
       expect(textOf(output)).toContain('Cleared the mark of the active machine.');
       expect(output.json).toMatchObject({ mark: 'cleared' });
       expect(countOf(made, 'kill-session')).toBe(1);
+      const commitAt = made.events.indexOf('git commit');
+      expect(commitAt).toBeGreaterThan(made.events.lastIndexOf(`terminate ${PID.gamma}`));
+      expect(commitAt).toBeLessThan(made.events.indexOf('tmux kill-session'));
+    });
+
+    it.each([
+      ['shutdown', shutdown, 'Run "factory shutdown" again.'],
+      ['reboot', reboot, REBOOT_AGAIN],
+    ] as const)('%s: the mark is cleared and committed already when the session does not end, and the remedy names the command', async (_name, run, hint) => {
+      const made = await make({ mark: 'own', failing: 'kill-session' });
+      const error = await failed(run(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('Stopped before this fault: alpha, beta, gamma');
+      expect(error.hint).toBe(hint);
+      expect(made.deps.files.has(MARK_FILE)).toBe(false);
+      const commitAt = made.events.indexOf('git commit');
+      expect(commitAt).toBeGreaterThanOrEqual(0);
+      expect(commitAt).toBeLessThan(made.events.indexOf('tmux kill-session'));
     });
 
     it('keeps a mark that names another machine, and says so', async () => {
@@ -672,6 +741,19 @@ describe('restart (AC-19)', () => {
     const error = await failed(restart(made, 'alpha'));
     expect(error.message).not.toContain('stopped and did not start again');
   });
+
+  it('exits 1, starts nothing and keeps every pane when the process of the worker does not end', async () => {
+    const made = await make({ stuck: 'alpha' });
+    const error = await failed(restart(made, 'alpha'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(`the process ${PID.alpha}`);
+    expect(error.message).not.toContain('did not start again');
+    expect(error.hint).toContain('factory worker stop alpha');
+    expect(made.deps.terminated).toEqual([PID.alpha]);
+    expect(countOf(made, 'kill-pane')).toBe(0);
+    expect(countOf(made, 'split-window')).toBe(0);
+    expect(workerPanes(made)).toHaveLength(3);
+  });
 });
 
 describe('reboot (AC-20)', () => {
@@ -777,8 +859,25 @@ describe('reboot (AC-20)', () => {
       await succeeded(reboot(made));
       expect(made.deps.files.get(CLAUDE_FILE)).not.toBe(setup.claudeFile);
       expect(made.deps.warned).toContain(RENDERED_NOTICE);
+      const renderAt = made.events.indexOf(`write ${CLAUDE_FILE}`);
+      expect(renderAt).toBeGreaterThanOrEqual(0);
+      expect(renderAt).toBeLessThan(made.events.indexOf(`terminate ${PID.alpha}`));
+      expect(renderAt).toBeLessThan(made.events.indexOf('tmux new-session'));
       expect(made.deps.terminated).toHaveLength(3);
       expect(countOf(made, 'new-session')).toBe(1);
+    });
+
+    it('exits 1 and stops nothing when the safety block that is out of date can not be rendered again', async () => {
+      const setup = outOfDate();
+      const made = await make(setup);
+      const faulty: Made = { ...made, deps: withFailingWrites(made.deps, (path, attempt) => path === CLAUDE_FILE && attempt === 1) };
+      const error = await failed(reboot(faulty));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain(`cannot write ${CLAUDE_FILE}`);
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+      expect(made.deps.files.get(CLAUDE_FILE)).toBe(setup.claudeFile);
+      expect(made.deps.warned).not.toContain(RENDERED_NOTICE);
     });
 
     it('renders a safety block that is out of date when no session runs', async () => {
@@ -800,6 +899,9 @@ describe('reboot (AC-20)', () => {
       await succeeded(reboot(made));
       expect(made.deps.prompts).toHaveLength(1);
       expect(made.deps.files.get(SETTINGS_FILE)).toContain('factory hook');
+      const writeAt = made.events.indexOf(`write ${SETTINGS_FILE}`);
+      expect(writeAt).toBeGreaterThanOrEqual(0);
+      expect(writeAt).toBeLessThan(made.events.indexOf(`terminate ${PID.alpha}`));
       expect(made.deps.terminated).toHaveLength(3);
     });
 
@@ -971,6 +1073,30 @@ describe('reboot (AC-20)', () => {
       expect(made.deps.fetched).toHaveLength(1);
     });
   });
+
+  describe('a worker with a proxy of its own is asked too (TP-62, AC-20, AC-25)', () => {
+    it.each<[string, 'coordinator' | undefined]>([
+      ['from outside the session', undefined],
+      ['from inside the session', 'coordinator'],
+    ])('stops nothing and exits 1 when that proxy does not answer, %s: the remedy names the setting of the worker', async (_name, from) => {
+      const made = await make({ config: withWorkerProxy(), fetch: secondProxyDown, ...(from === undefined ? {} : { from }) });
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('second');
+      expect(error.hint).toContain('workers.beta.proxy');
+      expect(error.hint).toContain('factory reboot');
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+      expect(workerPanes(made)).toHaveLength(3);
+    });
+
+    it('asks each proxy once, and starts each worker with the proxy of its own', async () => {
+      const made = await make({ config: withWorkerProxy() });
+      await succeeded(reboot(made));
+      expect(made.deps.fetched).toHaveLength(2);
+      expect(baseUrlsOf(made)).toEqual({ alpha: PROXY_URL, beta: SECOND_PROXY_URL, gamma: PROXY_URL });
+    });
+  });
 });
 
 describe('restart: the proxy of the worker (AC-19)', () => {
@@ -978,6 +1104,32 @@ describe('restart: the proxy of the worker (AC-19)', () => {
     const made = await make({ config: withProxy() });
     await succeeded(restart(made, 'alpha'));
     expect(made.deps.fetched).toHaveLength(1);
+    expect(baseUrlsOf(made).alpha).toBe(PROXY_URL);
+  });
+
+  it('asks the proxy of the worker, and not the proxy of the session, and starts the worker with it', async () => {
+    const made = await make({ config: withWorkerProxy() });
+    await succeeded(restart(made, 'beta'));
+    expect(made.deps.fetched).toHaveLength(1);
+    expect(made.deps.fetched[0]).toContain(SECOND_PROXY_URL);
+    expect(baseUrlsOf(made).beta).toBe(SECOND_PROXY_URL);
+  });
+
+  it('stops nothing and exits 1 when the proxy of the worker does not answer, and the remedy names the setting of the worker', async () => {
+    const made = await make({ config: withWorkerProxy(), fetch: secondProxyDown });
+    const error = await failed(restart(made, 'beta'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.hint).toContain('workers.beta.proxy');
+    expect(error.hint).toContain('factory restart beta');
+    expectNothingStopped(made);
+  });
+
+  it('restarts a worker whose proxy answers when the proxy of another worker does not', async () => {
+    const made = await make({ config: withWorkerProxy(), fetch: secondProxyDown });
+    await succeeded(restart(made, 'alpha'));
+    expect(made.deps.terminated).toEqual([PID.alpha]);
+    expect(made.deps.fetched).toHaveLength(1);
+    expect(made.deps.fetched[0]).toContain(PROXY_URL);
   });
 
   it('stops nothing and exits 1 when the proxy of the worker does not answer', async () => {
