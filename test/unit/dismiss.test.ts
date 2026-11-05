@@ -415,6 +415,18 @@ describe('dismiss ID --yes: the free', () => {
     expect(text).toContain(`Removed the work copy ${copyOf('alpha')}`);
   });
 
+  it('frees a worker whose work copy holds the excluded settings file, because git ignores it and the removal deletes it (TP-53)', async () => {
+    const settings = '.claude/settings.local.json';
+    const made = await make({ workers: [{ id: 'alpha' }], git: { ignoredFiles: { [copyOf('alpha')]: [settings] } } });
+    const dry = await outputOf(made, { words: ['alpha'] });
+    expect(dry.failed).toBe(false);
+    expect(textOf(dry)).toContain(settings);
+    const output = await outputOf(made, { words: ['alpha'], yes: true });
+    expect(output.failed).toBe(false);
+    expect(removals(made)).toEqual([`worktree remove -- ${copyOf('alpha')}`]);
+    expect(await recordState(made, 'alpha')).toBe('absent');
+  });
+
   it('keeps the branch, runs no branch command, and prints the command that deletes it', async () => {
     const made = await make({ workers: [{ id: 'alpha' }] });
     const text = textOf(await outputOf(made, { words: ['alpha'], yes: true }));
