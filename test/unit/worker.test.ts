@@ -862,7 +862,7 @@ describe('worker new: the exclude entry of the clone (TP-14)', () => {
     expect(made.events.filter((event) => event.startsWith(`writeTextExclusive ${EXCLUDE}.tmp-`))).toHaveLength(1);
   });
 
-  it('stops with exit 4 and keeps the copy and the record for an exclude file that is a link', async () => {
+  it('stops with exit 4 and keeps the copy and the record for an exclude file that is a link, and the remedy names factory dismiss (TP-136)', async () => {
     const made = make({ links: { [EXCLUDE]: '/elsewhere/exclude' }, seed: { '/elsewhere/exclude': TEMPLATE } });
     const error = await failed(made);
     expect(exitCodeOf[error.kind]).toBe(4);

@@ -1018,3 +1018,17 @@ describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
     expect(trace.split('\n').flatMap((line) => line.split('|')).filter(marksDesk)).toEqual([]);
   });
 });
+
+describe('docs/roadmap-v2.md: the resource check of worker new (TP-136)', () => {
+  const roadmap = readFileSync(join(ROOT, 'docs', 'roadmap-v2.md'), 'utf8');
+
+  it('says that worker new warns, and still starts, when a resource limit fails or a machine fact is unknown', () => {
+    expect(roadmap).toContain(
+      '`worker new` refuses a work copy that another worker uses, and warns (exit 0, the worker still starts) when a resource limit fails or a machine fact is unknown (fake machine facts).',
+    );
+  });
+
+  it('does not say that worker new refuses when a resource limit fails', () => {
+    expect(roadmap).not.toContain('and refuses when a resource limit fails');
+  });
+});
