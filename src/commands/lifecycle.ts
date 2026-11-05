@@ -21,10 +21,10 @@ import {
   checkTargets,
   clearMark,
   endSession,
+  rebootFault,
   requireProxies,
   runsInside,
   stopWorkers,
-  withStopped,
   type EndedSession,
   type MarkOutcome,
 } from '../workers/lifecycle.js';
@@ -92,10 +92,23 @@ const markLines = (mark: MarkOutcome): readonly OutLine[] => {
 };
 
 /**
+ * Prints the report of a shutdown at once, before the session ends. A command that runs in a pane of the session ends with the
+ * session, so the lines that it returns are lost: the lines of the report go to the warning channel (stderr) instead.
+ */
+const announceEnd = (deps: Deps, session: string, done: EndedSession): void => {
+  const lines = [
+    ...stoppedLines(done.stopped),
+    ...markLines(done.mark),
+    text(`The tmux session ${session} ends next: this command runs in a pane of it.`),
+  ];
+  for (const line of lines) deps.warn(line.text);
+};
+
+/**
  * `shutdown`: ends this factory and nothing else. With no session it says that nothing runs and exits 0. A session of the same
  * name that belongs to another folder, or that has no home option, stays (exit 4). Every worker that has a live pane needs a known
  * case before the first stop (exit 3). Then each worker stops, the mark of the active machine is cleared, and the session ends by
- * its exact name.
+ * its exact name. From a pane of the session, the report is printed before the session ends (`announceEnd`).
  */
 export const runShutdown = async (
   deps: Deps,
@@ -111,7 +124,7 @@ export const runShutdown = async (
   const panes = await readPanes(deps, session, home, commandText(commands.shutdown));
   if (!panes.ok) return panes;
   if (panes.value === null) {
-    const mark = await clearMark(deps, home);
+    const mark = await clearMark(deps, home, commands.shutdown);
     return ok({
       lines: [text(`Nothing runs: the tmux session ${session} does not run.`), ...markLines(mark)],
       json: { schema: schemaIds.shutdown, session, running: false, workers: [], mark },
@@ -119,9 +132,15 @@ export const runShutdown = async (
       failed: false,
     });
   }
-  const checked = await checkTargets(deps, { home, again: commands.shutdown, panes: panes.value, launches: [] });
+  const checked = await checkTargets(deps, { home, session, again: commands.shutdown, panes: panes.value, launches: [] });
   if (!checked.ok) return checked;
-  const ended = await endSession(deps, { home, session, panes: panes.value });
+  const ended = await endSession(deps, {
+    home,
+    session,
+    panes: panes.value,
+    command: commands.shutdown,
+    ...(runsInside(deps, panes.value) ? { beforeEnd: (done: EndedSession) => announceEnd(deps, session, done) } : {}),
+  });
   if (!ended.ok) return ended;
   return ok({
     lines: [
@@ -196,7 +215,7 @@ export const runRestart = async (
   const listed = await listPanes(deps, session);
   if (!listed.ok) return listed;
   const panes = listed.value.filter((row) => row.worker === id);
-  const checked = await checkTargets(deps, { home, again, panes, launches: [record.value] });
+  const checked = await checkTargets(deps, { home, session, again, panes, launches: [record.value] });
   if (!checked.ok) return checked;
   const resumeId = checked.value.get(id);
   if (resumeId === undefined) {
@@ -251,9 +270,9 @@ interface RebootRun {
 const rebootInside = async (deps: Deps, run: RebootRun, panes: readonly PaneRow[]): Promise<CliResult<CommandOutput>> => {
   const { home, session, config, notes, answers } = run;
   const stopped = await stopWorkers(deps, { home, session, panes });
-  if (stopped.fault !== null) return err(withStopped(stopped.fault, stopped.stopped));
+  if (stopped.fault !== null) return err(rebootFault(stopped.fault, stopped.stopped, false));
   const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers });
-  if (!recovered.ok) return err(withStopped(recovered.error, stopped.stopped));
+  if (!recovered.ok) return err(rebootFault(recovered.error, stopped.stopped, false));
   return ok({
     lines: [
       ...stoppedLines(stopped.stopped),
@@ -276,10 +295,10 @@ const rebootOutside = async (
   panes: readonly PaneRow[] | null,
 ): Promise<CliResult<CommandOutput>> => {
   const { home, session, config, notes, answers } = run;
-  const ended = panes === null ? ok(NOTHING_ENDED) : await endSession(deps, { home, session, panes });
+  const ended = panes === null ? ok(NOTHING_ENDED) : await endSession(deps, { home, session, panes, command: commands.reboot });
   if (!ended.ok) return ended;
   const started = await startAgain(deps, home, config, answers);
-  if (!started.ok) return err(withStopped(started.error, ended.value.stopped));
+  if (!started.ok) return err(rebootFault(started.error, ended.value.stopped, true));
   const { proxy, coordinatorResumed, workers, warnings } = started.value;
   return ok({
     lines: [
@@ -312,7 +331,8 @@ const rebootOutside = async (
  * start path recovers the workers as `start` does.
  * Outside the session, the steps of `start` that change a file come first (the safety block rendered again, and the hook
  * settings), before the first stop. Then the session ends as `shutdown` ends it, and it starts again with its recovery. Inside the session (the pane
- * of the caller is a pane of it), only the workers stop and start again, and the coordinator pane stays.
+ * of the caller is a pane of it), only the workers stop and start again, and the coordinator pane stays. A fault after the first
+ * stop names the workers that stopped, and its remedy finishes the reboot (`rebootFault`).
  */
 export const runReboot = async (
   deps: Deps,
@@ -333,6 +353,7 @@ export const runReboot = async (
   if (listed !== null && !listed.ok) return listed;
   const checked = await checkTargets(deps, {
     home,
+    session,
     again: commands.reboot,
     panes: running ?? [],
     launches: listed === null ? [] : listed.value.workers,

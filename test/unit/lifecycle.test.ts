@@ -50,12 +50,19 @@ const PID: Readonly<Record<Id, number>> = { alpha: 4101, beta: 4102, gamma: 4103
 const PANE: Readonly<Record<Id, string>> = { alpha: '%10', beta: '%11', gamma: '%12' };
 const byResume: Readonly<Record<string, string>> = Object.fromEntries(IDS.map((id) => [SESSION[id], id]));
 
+/** The remedy of a reboot that fails after the first stop, before the session ends, and after it ends. */
+const REBOOT_AGAIN = 'Fix the fault. Then run "factory reboot" again: it starts the stopped workers again.';
+const START_AFTER_END = 'The session is ended. Fix the fault, then run "factory start": it starts the session and resumes the workers.';
+
 const BAD_SETTINGS = JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://other.example' } });
 const WARNING_SETTINGS = JSON.stringify({ ...ownSettingsEntries, permissions: { allow: ['Bash'] } });
 
 interface WorkerSpec {
-  /** `live` (default): a pane that runs. `dead`: its program ended. `none`: no pane. `forged`: a pane with the mark that the launch did not make. */
-  readonly pane?: 'live' | 'dead' | 'none' | 'forged';
+  /**
+   * `live` (default): a pane that runs. `dead`: its program ended. `none`: no pane. `forged`: a pane with the mark that the launch
+   * did not make. `view`: a live pane in the view window, where no summon put it.
+   */
+  readonly pane?: 'live' | 'dead' | 'none' | 'forged' | 'view';
   /** The last event of the line. Default: Stop (the session waits at the prompt). Null: no pointer and no line. */
   readonly event?: HookEvent | null;
   /** The session marker of the line. Null: none. Default: the id of the worker. */
@@ -85,6 +92,10 @@ interface Setup {
   readonly stuck?: Id;
   /** The exit code of the commit in the state repo. Default: 0. */
   readonly commitExit?: number;
+  /** False: git has no user.name and user.email. Default: true. */
+  readonly identity?: boolean;
+  /** The first word of a tmux command that fails with exit code 1, for example `kill-session`. */
+  readonly failing?: string;
   /** What the program of a new pane does. Default: each resume starts the session of its worker. */
   readonly program?: Program;
 }
@@ -94,17 +105,17 @@ interface Made {
   readonly tmux: TmuxLog;
   /** The id of the coordinator pane. */
   readonly coordinator: string;
-  /** What happened, in order: `tmux <command>` and `terminate <pid>`. */
+  /** What happened, in order: `tmux <command>`, `terminate <pid>` and `warn` (a warning printed at once). */
   readonly events: string[];
 }
 
 const answers: FetchHandler = () => ok({ status: 200 });
 
-const gitAnswer = (commitExit: number) => (call: RunCall) => {
+const gitAnswer = (commitExit: number, identity: boolean) => (call: RunCall) => {
   const command = call.args.slice(2).join(' ');
   if (call.args[1] === STATE_DIR) {
     if (command === 'status --porcelain -z --untracked-files=all') return exited(0, '');
-    if (command === 'config user.name' || command === 'config user.email') return exited(0, 'Git User\n');
+    if (command === 'config user.name' || command === 'config user.email') return identity ? exited(0, 'Git User\n') : exited(1);
     return exited(command.includes(' commit ') ? commitExit : 0);
   }
   if (command === 'rev-parse --is-inside-work-tree --show-prefix') return exited(0, 'true\n\n');
@@ -116,7 +127,15 @@ const gitAnswer = (commitExit: number) => (call: RunCall) => {
 const paneOf = (id: Id, spec: WorkerSpec): readonly PaneFixture[] => {
   const kind = spec.pane ?? 'live';
   if (kind === 'none') return [];
-  return [workerPane(id, { id: PANE[id], pid: PID[id], dead: kind === 'dead', ...(kind === 'forged' ? { command: [] } : {}) })];
+  return [
+    workerPane(id, {
+      id: PANE[id],
+      pid: PID[id],
+      dead: kind === 'dead',
+      ...(kind === 'forged' ? { command: [] } : {}),
+      ...(kind === 'view' ? { window: tmuxNames.windowView } : {}),
+    }),
+  ];
 };
 
 const must = (result: { readonly ok: boolean; readonly error?: { readonly message: string } }): void => {
@@ -146,11 +165,15 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   const sessions = setup.sessions ?? { [NODE]: HOME };
   const worked = IDS.filter((id) => id in specs);
   const panes = NODE in sessions ? worked.flatMap((id) => paneOf(id, specs[id] ?? {})) : [];
-  const { handler, log } = tmuxHandler({ sessions, panes: [...panes, ...(setup.otherPanes ?? [])] });
+  const { handler, log } = tmuxHandler({
+    sessions,
+    panes: [...panes, ...(setup.otherPanes ?? [])],
+    ...(setup.failing === undefined ? {} : { failing: setup.failing }),
+  });
   // The fixture makes the panes of the session after the panes with an id: the coordinator pane comes first among them.
   const coordinator = `%${Math.max(-1, ...panes.map((pane) => Number((pane.id ?? '%-1').slice(1)))) + 1}`;
   const from = setup.from === undefined ? {} : { TMUX_PANE: setup.from === 'coordinator' ? coordinator : PANE[setup.from] };
-  const git = gitAnswer(setup.commitExit ?? 0);
+  const git = gitAnswer(setup.commitExit ?? 0, setup.identity ?? true);
   const events: string[] = [];
   const base = createFakeDeps({
     cwd: '/w',
@@ -172,6 +195,10 @@ const make = async (setup: Setup = {}): Promise<Made> => {
       return base.terminate(pid);
     },
     isRunning: (pid) => (pid === stuckPid ? ok(true) : base.isRunning(pid)),
+    warn: (message) => {
+      events.push('warn');
+      base.warn(message);
+    },
   };
   for (const tool of ['tmux', 'claude']) deps.seed(`/bin/${tool}`, '');
   deps.seedDir(`${STATE_DIR}/.git`);
@@ -374,13 +401,67 @@ describe('shutdown (AC-18)', () => {
     expect(made.deps.files.has(MARK_FILE)).toBe(true);
   });
 
-  it('exits 4 for a pane that the launch did not make, names the workers that stopped, and sends it no signal', async () => {
+  it('exits 4 and stops nothing for a pane that the launch did not make, also when workers come before it in order', async () => {
     const made = await make({ workers: { alpha: {}, beta: { pane: 'forged' } } });
     const error = await failed(shutdown(made));
     expect(exitCodeOf[error.kind]).toBe(4);
-    expect(error.message).toContain('Stopped before this fault: alpha');
-    expect(made.deps.terminated).toEqual([PID.alpha]);
-    expect(countOf(made, 'kill-session')).toBe(0);
+    expect(error.message).toContain(`the pane ${PANE.beta} carries the mark of the worker beta`);
+    expectNothingStopped(made);
+  });
+
+  it('exits 2 and stops nothing when a worker has two live panes', async () => {
+    const made = await make({ otherPanes: [workerPane('beta', { id: '%20', pid: 4200 })] });
+    const error = await failed(shutdown(made));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('the worker beta has 2 live panes');
+    expect(error.hint).toContain('Then run "factory shutdown" again.');
+    expectNothingStopped(made);
+  });
+
+  it('exits 4 and stops nothing for a worker pane in the view window that no summon put there', async () => {
+    const made = await make({ workers: { alpha: {}, beta: { pane: 'view' } } });
+    const error = await failed(shutdown(made));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(`is in the window ${tmuxNames.windowView}, but no summon put it there`);
+    expectNothingStopped(made);
+  });
+
+  it('names the workers that stopped, and the command to run again, when the session does not end', async () => {
+    const made = await make({ failing: 'kill-session' });
+    const error = await failed(shutdown(made));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('Stopped before this fault: alpha, beta, gamma');
+    expect(error.hint).toBe('Run "factory shutdown" again.');
+  });
+
+  describe('from a pane of its own session', () => {
+    it('prints the report before it ends the session, because the end of the session ends the command', async () => {
+      const made = await make({ from: 'coordinator', mark: 'own' });
+      const output = await succeeded(shutdown(made));
+      const killAt = made.events.indexOf('tmux kill-session');
+      expect(made.events.slice(0, killAt)).toContain('warn');
+      expect(made.events.slice(killAt)).not.toContain('warn');
+      const report = made.deps.warned.join('\n');
+      expect(report).toContain('Stopped the workers: alpha, beta, gamma.');
+      expect(report).toContain('Cleared the mark of the active machine.');
+      expect(report).toContain(`The tmux session ${NODE} ends next`);
+      expect(output.failed).toBe(false);
+      expect(output.json).toMatchObject({ schema: schemaIds.shutdown, running: true, workers: ['alpha', 'beta', 'gamma'], mark: 'cleared' });
+    });
+
+    it('exits 1 with the message of the fault when the session does not end', async () => {
+      const made = await make({ from: 'coordinator', failing: 'kill-session' });
+      const error = await failed(shutdown(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('Stopped before this fault: alpha, beta, gamma');
+    });
+
+    it('prints nothing at once when it runs outside the session', async () => {
+      const made = await make({ mark: 'own' });
+      await succeeded(shutdown(made));
+      expect(made.deps.warned).toEqual([]);
+      expect(made.events).not.toContain('warn');
+    });
   });
 
   describe('the mark of the active machine (TP-39)', () => {
@@ -408,6 +489,14 @@ describe('shutdown (AC-18)', () => {
       expect(made.deps.files.has(MARK_FILE)).toBe(false);
       expect(textOf(output)).toContain('Nothing runs');
       expect(textOf(output)).toContain('Cleared the mark of the active machine.');
+    });
+
+    it('names shutdown in the warning when the mark can not be cleared', async () => {
+      const made = await make({ mark: 'own', identity: false });
+      await succeeded(shutdown(made));
+      expect(made.deps.warned).toHaveLength(1);
+      expect(made.deps.warned[0]).toContain('The mark of the active machine is not cleared');
+      expect(made.deps.warned[0]).toContain('then run "factory shutdown" again.');
     });
 
     it('warns and still ends the session, with exit 0, when the commit of the mark fails', async () => {
@@ -495,6 +584,14 @@ describe('restart (AC-19)', () => {
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.hint).toContain('Run "factory shutdown"');
     expect(error.hint).toContain('Then run "factory restart alpha" again.');
+    expectNothingStopped(made);
+  });
+
+  it('exits 2 and stops nothing when the worker has two live panes', async () => {
+    const made = await make({ otherPanes: [workerPane('beta', { id: '%20', pid: 4200 })] });
+    const error = await failed(restart(made, 'beta'));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.hint).toContain('Then run "factory restart beta" again.');
     expectNothingStopped(made);
   });
 
@@ -655,6 +752,13 @@ describe('reboot (AC-20)', () => {
       expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(2);
       expectNothingStopped(made);
     });
+
+    it('exits 4 and stops nothing when a pane carries a worker mark that the launch did not make', async () => {
+      const made = await make({ workers: { alpha: {}, beta: { pane: 'forged' }, gamma: {} } });
+      expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(4);
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
   });
 
   describe('the steps of start that change a file, outside the session', () => {
@@ -763,8 +867,58 @@ describe('reboot (AC-20)', () => {
     const error = await failed(reboot(made));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('Stopped before this fault: alpha, beta');
+    expect(error.hint).toBe(REBOOT_AGAIN);
     expect(countOf(made, 'new-session')).toBe(0);
     expect(countOf(made, 'kill-session')).toBe(0);
+  });
+
+  it('names factory reboot, not factory shutdown, when the session does not end after the workers stopped', async () => {
+    const made = await make({ failing: 'kill-session' });
+    const error = await failed(reboot(made));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('Stopped before this fault: alpha, beta, gamma');
+    expect(error.hint).toBe(REBOOT_AGAIN);
+    expect(countOf(made, 'new-session')).toBe(0);
+  });
+
+  it('names factory start when the session ended and the new session does not start', async () => {
+    const made = await make({ failing: 'new-session' });
+    const error = await failed(reboot(made));
+    expect(error.message).toContain('Stopped before this fault: alpha, beta, gamma');
+    expect(error.hint).toBe(START_AFTER_END);
+    expect(countOf(made, 'kill-session')).toBe(1);
+  });
+
+  it('names factory reboot when the workers stopped inside the session and the recovery fails', async () => {
+    const made = await make({ from: 'coordinator' });
+    const workersDir = layoutOf(HOME).workersDir;
+    const listing = made.deps.fs.list;
+    // The list of the workers fails once every worker has stopped: the fault comes from the recovery, after the stops.
+    const faulty: Made = {
+      ...made,
+      deps: {
+        ...made.deps,
+        fs: {
+          ...made.deps.fs,
+          list: async (path) =>
+            path === workersDir && made.deps.terminated.length === IDS.length
+              ? failure('cannot list the workers')
+              : listing(path),
+        },
+      },
+    };
+    const error = await failed(reboot(faulty));
+    expect(error.message).toContain('Stopped before this fault: alpha, beta, gamma');
+    expect(error.hint).toBe(REBOOT_AGAIN);
+    expect(countOf(made, 'kill-session')).toBe(0);
+  });
+
+  it('names reboot in the warning when the mark can not be cleared', async () => {
+    const made = await make({ mark: 'own', identity: false });
+    await succeeded(reboot(made));
+    const warning = made.deps.warned.find((message) => message.includes('is not cleared'));
+    expect(warning).toContain('then run "factory reboot" again.');
+    expect(warning).not.toContain('factory shutdown');
   });
 
   describe('the output is short (TP-63, TP-64)', () => {
