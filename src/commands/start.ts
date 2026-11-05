@@ -31,10 +31,12 @@ import {
   values,
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
+import { claimActiveMachine } from '../state/active-machine.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import type { SetupTexts } from '../templates/types.js';
 import { renderSetupText } from '../upgrade/render.js';
-import { chooseProxy, type ProxyChoice } from '../workers/launch.js';
+import { chooseProxy, newProxyAnswers, sessionProxyWish, type ProxyAnswers, type ProxyChoice } from '../workers/launch.js';
+import { coordinatorResumeOf, recoverWorkers, type RecoveryReport } from '../workers/recovery.js';
 import { requireSafetyBlock, toolProblems } from './launch-checks.js';
 import { failsOnlyOnSetup, requireRootClean, rootNotices, scanRoot, withSetupAccepted } from './root-content.js';
 import { acceptReason, settleSetup } from './setup-check.js';
@@ -54,8 +56,10 @@ interface StartPlan {
   readonly steps: readonly TmuxArgs[];
   /** The same steps, with the label of the proxy where the URL is. They are safe to print. */
   readonly shown: readonly TmuxArgs[];
-  /** A project folder that is missing: the session does not get it. */
+  /** A project folder that is missing: the session does not get it. Also the reason that the coordinator does not resume. */
   readonly warnings: readonly string[];
+  /** The id of the earlier session of the coordinator that the start resumes, or null for a new conversation. */
+  readonly resumeId: string | null;
 }
 
 const missingProjectWarning = (path: string): string =>
@@ -107,14 +111,24 @@ const renderAcceptedSetup = async (
   return ok(undefined);
 };
 
-/** The tmux calls that start the session, once with the real proxy URL and once with the label of the proxy. */
-const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<StartPlan>> => {
+/**
+ * The tmux calls that start the session, once with the real proxy URL and once with the label of the proxy. The coordinator
+ * resumes its newest session when the pointer passes the owner check, and else it starts a new conversation (`coordinatorResumeOf`).
+ * `answers` holds the proxy answers of the run: the recovery of the workers uses them, so each proxy is asked once.
+ */
+const planStart = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  answers: ProxyAnswers,
+): Promise<CliResult<StartPlan>> => {
   const { coordinatorDir, stateDir } = layoutOf(home);
-  const proxy = await chooseProxy(deps, config);
+  const proxy = await chooseProxy(deps, config, sessionProxyWish(config), answers);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
   const projects = await presentProjects(deps, home, recipe.projects);
   if (!projects.ok) return projects;
+  const resume = await coordinatorResumeOf(deps, home, core.node.id);
   const path = deps.env[env.path];
   const stepsFor = (proxyBaseUrl: string | null): CliResult<readonly TmuxArgs[]> => {
     const launch = launchArgv({
@@ -128,6 +142,7 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
       path: path === undefined || path === '' ? null : path,
       agent: core.session.agent,
       projects: projects.value.folders,
+      ...(resume.resumeId === null ? {} : { resumeId: resume.resumeId }),
     });
     return launch.ok ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value })) : failure(launch.error);
   };
@@ -135,8 +150,38 @@ const planStart = async (deps: Deps, home: string, config: FactoryConfig): Promi
   if (!steps.ok) return steps;
   const shown = stepsFor(proxy.value.label === null ? null : `<${proxy.value.label}>`);
   if (!shown.ok) return shown;
-  return ok({ proxy: proxy.value, steps: steps.value, shown: shown.value, warnings: projects.value.warnings });
+  return ok({
+    proxy: proxy.value,
+    steps: steps.value,
+    shown: shown.value,
+    warnings: [...projects.value.warnings, ...(resume.warning === null ? [] : [resume.warning])],
+    resumeId: resume.resumeId,
+  });
 };
+
+/** What `start` did after it made the session: the workers that it resumed, skipped and could not start, or null when it could not list them. */
+type Recovery = RecoveryReport | null;
+
+/**
+ * What `start` does after it made the session, and only then: the mark of the active machine, then each recorded worker. The mark
+ * comes first, so the warning about another active machine shows before any worker runs. A fault never stops the start: the
+ * session runs, so every problem here is a warning, and the exit code stays 0.
+ */
+const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers): Promise<Recovery> => {
+  await claimActiveMachine(deps, home);
+  const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers });
+  if (recovered.ok) return recovered.value;
+  deps.warn(`The ${roles.worker}s are not resumed: ${recovered.error.message}. ${recovered.error.hint ?? ''}`.trimEnd());
+  return null;
+};
+
+/** The lines about the recovery: the coordinator that resumes, and the workers that run again. A start that resumes nothing says nothing. */
+const recoveryLines = (plan: StartPlan, recovery: Recovery): readonly OutLine[] => [
+  ...(plan.resumeId === null ? [] : [text(`The ${roles.coordinator} resumes its earlier conversation.`)]),
+  ...(recovery === null || recovery.resumed.length === 0
+    ? []
+    : [text(`Resumed the ${roles.worker}s: ${recovery.resumed.join(', ')}.`)]),
+];
 
 const reachOf = (deps: Deps): Reach => {
   if (!(deps.stdinIsTTY && deps.stdoutIsTTY)) return 'print';
@@ -336,8 +381,9 @@ export const runStart = async (
     const own = await requireOwnSession(deps, id, home);
     if (!own.ok) return own;
   }
-  // A session that runs already starts nothing, so it needs no proxy check and no launch.
-  const plan = exists ? null : await planStart(deps, home, loaded.value);
+  // A session that runs already starts nothing, so it needs no proxy check and no launch. The run asks each proxy once.
+  const answers = newProxyAnswers();
+  const plan = exists ? null : await planStart(deps, home, loaded.value, answers);
   if (plan !== null && !plan.ok) return plan;
   const planned = plan === null ? null : plan.value;
   const how = reachOf(deps);
@@ -352,6 +398,8 @@ export const runStart = async (
     const started = await startSession(deps, id, planned.steps);
     if (!started.ok) return started;
   }
+  // The recovery runs only for a session that this run made, and before the person is in the session.
+  const recovery = planned === null ? null : await recoverSession(deps, home, loaded.value, answers);
   // A session that runs already can hold a coordinator pane that stays after its program ended.
   const ended = planned === null && (await coordinatorEnded(deps, id));
   const attached = await reach(deps, how, id);
@@ -361,7 +409,10 @@ export const runStart = async (
     lines: [
       ...(planned === null
         ? []
-        : [text(`Started the session ${id} in ${home}. The ${roles.coordinator} runs in the window ${tmuxNames.windowView}.`)]),
+        : [
+            text(`Started the session ${id} in ${home}. The ${roles.coordinator} runs in the window ${tmuxNames.windowView}.`),
+            ...recoveryLines(planned, recovery),
+          ]),
       ...(ended ? coordinatorEndedLines(id, home) : []),
       text(arrivalText(how, attached.value, id)),
     ],
@@ -371,6 +422,7 @@ export const runStart = async (
       started: planned !== null,
       attached: attached.value,
       proxy: planned?.proxy.label ?? null,
+      ...(planned === null ? {} : { coordinatorResumed: planned.resumeId !== null, workers: recovery }),
       ...(ended ? { coordinatorEnded: true } : {}),
     },
     warnings: [...notes.value, ...(planned?.warnings ?? []), ...(planned?.proxy.warning === undefined ? [] : [planned.proxy.warning])],

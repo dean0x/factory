@@ -1,9 +1,9 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeSandbox, removeOpenSandboxes, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -540,7 +540,11 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual(ownSettings());
     expect((await stat(settingsFileOf())).mode & 0o777).toBe(0o600);
     const added = (await treeOf(box.node)).filter((path) => !before.includes(path));
-    expect(added).toEqual(['coordinator/.claude', 'coordinator/.claude/settings.local.json']);
+    // The start of a new session also writes the machine id and commits the mark of the active machine in the state folder.
+    const outsideState = added.filter((path) => path !== '.factory' && !path.startsWith('.factory/'));
+    expect(outsideState).toEqual(['coordinator/.claude', 'coordinator/.claude/settings.local.json']);
+    expect(added).toContain('.factory/active-machine.json');
+    expect(added).toContain('.factory/state/machine-id');
     expect(await treeOf(userClaude)).toEqual(userBefore);
     expect(await readFile(join(userClaude, 'settings.json'), 'utf8')).toBe('{"model":"sonnet"}\n');
   });
@@ -589,4 +593,262 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(await treeOf(box.node)).toEqual(before);
     expect(existsSync(socket)).toBe(false);
   });
+});
+
+/** The time limit of a case that makes workers and starts the session again: the setup takes seconds, and a resume waits up to 10 seconds. */
+const RECOVERY_CASE_MS = 180_000;
+const SESSIONS = {
+  alpha: '5d8e2c1a-7f3b-4a96-8c4d-0e1f2a3b4c5d',
+  beta: '7a1b9c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d',
+} as const;
+const COORDINATOR_SESSION = '0b6c1f9e-2d3a-4b5c-8d7e-9f0a1b2c3d4e';
+const OTHER_MACHINE = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const MARK_COMMIT = 'chore: mark this machine as the active one';
+
+/**
+ * A fake claude that tells what the recovery needs to know for each session. The names of its files end with the session marker:
+ * `argv-<marker>` holds the arguments of the last launch, and `launches-<marker>` has one line for each launch that ran on. A launch
+ * with `--resume <id>` acts like the program: the file `no-transcript-<marker>` makes it end at once with an error, the file
+ * `silent-<marker>` makes it run with no SessionStart hook, and else the hook of the new session writes its last-seen line.
+ */
+const recoveringClaude = (dir: string): string =>
+  [
+    '#!/bin/sh',
+    `dir='${dir}'`,
+    'printf \'%s\\n\' "$@" > "$dir/argv-$FACTORY_SESSION"',
+    'resume=""',
+    'prev=""',
+    'for arg in "$@"; do',
+    '  if [ "$prev" = "--resume" ]; then resume="$arg"; fi',
+    '  prev="$arg"',
+    'done',
+    'if [ -n "$resume" ] && [ -e "$dir/no-transcript-$FACTORY_SESSION" ]; then',
+    '  echo "No conversation found with session ID: $resume" >&2',
+    '  exit 1',
+    'fi',
+    'if [ -n "$resume" ] && [ ! -e "$dir/silent-$FACTORY_SESSION" ]; then',
+    `  printf '{"session_id":"%s","hook_event_name":"SessionStart"}' "$resume" | '${process.execPath}' '${DIST}' hook SessionStart`,
+    'fi',
+    'echo launched >> "$dir/launches-$FACTORY_SESSION"',
+    'exec sleep 300',
+    '',
+  ].join('\n');
+
+const stateOf = (): string => join(box.node, '.factory');
+
+/** The SessionStart hook of a session: it writes the pointer and the last-seen line, as the hook of the program does. */
+const sessionStarted = (marker: string, session: string): Promise<RunResult> =>
+  box.run(['hook', 'SessionStart'], {
+    cwd: box.node,
+    env: { FACTORY_HOME: box.node, FACTORY_SESSION: marker },
+    input: JSON.stringify({ session_id: session, hook_event_name: 'SessionStart' }),
+  });
+
+/** The arguments of the last launch of the program with this session marker. */
+const argvOf = async (marker: string): Promise<string[]> => (await readFile(join(outDir, `argv-${marker}`), 'utf8')).trim().split('\n');
+
+/** The session id after `--resume`, or undefined when the launch has no `--resume`. */
+const resumeIdOf = (argv: readonly string[]): string | undefined => {
+  const at = argv.indexOf('--resume');
+  return at < 0 ? undefined : argv[at + 1];
+};
+
+/** The panes of the workers window, as `<pane id> <worker mark>` lines. A pane with no mark has an empty mark. */
+const workerPanes = async (): Promise<string[]> =>
+  (await tmux(['list-panes', '-t', '=demo:workers', '-F', '#{pane_id} #{@worker}'])).stdout.split('\n').filter((line) => line !== '');
+
+const hasWorkerPane = async (id: string): Promise<boolean> => (await workerPanes()).some((line) => line.endsWith(` ${id}`));
+
+const pointerOf = (id: string): string => join(stateOf(), 'workers', id, 'last-session');
+
+const markText = (machine: string): string =>
+  `${JSON.stringify({ schema: 'factory.active-machine/v1', machine, at: '2029-12-31T10:00:00.000Z' })}\n`;
+
+/**
+ * Make the node, start its session, and make the workers alpha and beta. The fake claude is the one that acts on `--resume`.
+ * The programs of the first launches write no line, so the test calls `sessionStarted` for each session that has one.
+ */
+const recoveringNode = async (): Promise<void> => {
+  const source = await box.makeProject('web');
+  expect((await box.git(source, ['commit', '--allow-empty', '-q', '-m', 'first'])).code).toBe(0);
+  const init = await box.run(
+    ['init', '--yes', '--home', box.node, '--name', 'demo', '--owner-name', 'Test Owner', '--project', source],
+    { env: tmuxEnv },
+  );
+  expect(init.code, init.stderr).toBe(0);
+  const claude = join(box.root, 'bin', 'claude');
+  await writeFile(claude, recoveringClaude(outDir));
+  await chmod(claude, 0o755);
+  const started = await startFactory();
+  expect(started.code, started.stderr).toBe(0);
+  await waitForFile('launches-demo');
+  for (const id of ['alpha', 'beta']) {
+    const made = await box.run(['worker', 'new', '--home', box.node, id, '--project', 'web', '--yes'], { env: tmuxEnv });
+    expect(made.code, made.stderr).toBe(0);
+    await waitForFile(`launches-${id}`);
+  }
+};
+
+/** The node of `recoveringNode`, with a session for each worker, and then the tmux server is gone: only `start` can bring the session back. */
+const killedServer = async ({ coordinator = true }: { coordinator?: boolean } = {}): Promise<void> => {
+  await recoveringNode();
+  expect((await sessionStarted('alpha', SESSIONS.alpha)).code).toBe(0);
+  expect((await sessionStarted('beta', SESSIONS.beta)).code).toBe(0);
+  if (coordinator) expect((await sessionStarted('demo', COORDINATOR_SESSION)).code).toBe(0);
+  await stopServer();
+};
+
+describe.skipIf(!hasTmux)(
+  'factory start: the recovery after a kill of the tmux server (built binary, AC-16, AC-17, TP-17, TP-34, TP-35, TP-36, TP-37, TP-134)',
+  () => {
+    it('resumes the coordinator and each worker with its own session id, and exits 0 with no warning (TP-34, TP-37)', async () => {
+      await killedServer();
+      const again = await startFactory();
+      expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+      expect(again.stdout).toContain('The coordinator resumes its earlier conversation.');
+      expect(again.stdout).toContain('Resumed the workers: alpha, beta.');
+      expect(resumeIdOf(await argvOf('demo'))).toBe(COORDINATOR_SESSION);
+      expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      expect(resumeIdOf(await argvOf('beta'))).toBe(SESSIONS.beta);
+      expect(await hasWorkerPane('alpha')).toBe(true);
+      expect(await hasWorkerPane('beta')).toBe(true);
+      expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
+    }, RECOVERY_CASE_MS);
+
+    it('starts a new conversation for the coordinator, with no warning, when it has no pointer (TP-37)', async () => {
+      await killedServer({ coordinator: false });
+      const again = await startFactory();
+      expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+      expect(again.stdout).not.toContain('The coordinator resumes');
+      expect(resumeIdOf(await argvOf('demo'))).toBeUndefined();
+      expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+    }, RECOVERY_CASE_MS);
+
+    it('starts a new conversation for the coordinator, with one warning that names the pointer file, for a pointer that holds no session id (TP-37)', async () => {
+      await killedServer({ coordinator: false });
+      const pointer = join(stateOf(), 'state', 'coordinator-last-session');
+      await writeFile(pointer, 'junk\n', { mode: 0o600 });
+      const again = await startFactory();
+      expect(again.code, again.stderr).toBe(0);
+      const warnings = again.stderr.split('\n').filter((line) => line.includes(pointer));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('NOT resumed');
+      expect(resumeIdOf(await argvOf('demo'))).toBeUndefined();
+      expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
+    }, RECOVERY_CASE_MS);
+
+    it.each([
+      [
+        'a worker that has no pointer (TP-35)',
+        async (): Promise<void> => {
+          await unlink(pointerOf('beta'));
+        },
+      ],
+      [
+        'a worker whose pointer names a session of the coordinator (TP-134)',
+        async (): Promise<void> => {
+          await writeFile(pointerOf('beta'), `${COORDINATOR_SESSION}\n`, { mode: 0o600 });
+        },
+      ],
+    ])('skips %s with one warning, resumes the other worker, keeps the session and exits 0', async (_name, damage) => {
+      await killedServer();
+      await damage();
+      const again = await startFactory();
+      expect(again.code, again.stderr).toBe(0);
+      const warnings = again.stderr.split('\n').filter((line) => line.includes('beta'));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain(pointerOf('beta'));
+      expect(warnings[0]).toContain('factory worker resume beta');
+      expect(again.stdout).toContain('Resumed the workers: alpha.');
+      expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      expect(await hasWorkerPane('alpha')).toBe(true);
+      expect(await hasWorkerPane('beta')).toBe(false);
+      expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
+    }, RECOVERY_CASE_MS);
+
+    it.each([
+      ['a session that can not be loaded', 'no-transcript-beta'],
+      ['a session that writes no line', 'silent-beta'],
+    ])('warns with the worker, does not try again, goes on, keeps the session and exits 0, for %s (TP-36)', async (_name, flag) => {
+      await killedServer();
+      await writeFile(join(outDir, flag), '');
+      const again = await startFactory();
+      expect(again.code, again.stderr).toBe(0);
+      expect(again.stderr.split('\n').filter((line) => line.includes('beta'))).toHaveLength(1);
+      expect(again.stdout).toContain('Resumed the workers: alpha.');
+      expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      expect(await hasWorkerPane('alpha')).toBe(true);
+      expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
+    }, RECOVERY_CASE_MS);
+
+    it('starts no pane for a work copy with a wrong settings file, warns with the file, resumes the other worker and exits 0 (TP-17)', async () => {
+      await killedServer();
+      const settings = join(box.node, 'work-copies', 'web', 'beta', '.claude', 'settings.local.json');
+      await writeFile(settings, JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://other.example' } }));
+      const again = await startFactory();
+      expect(again.code, again.stderr).toBe(0);
+      expect(again.stderr).toContain('work-copies/web/beta/.claude/settings.local.json');
+      expect(again.stdout).toContain('Resumed the workers: alpha.');
+      expect(await hasWorkerPane('alpha')).toBe(true);
+      expect(await hasWorkerPane('beta')).toBe(false);
+    }, RECOVERY_CASE_MS);
+  },
+);
+
+describe.skipIf(!hasTmux)('factory start: the mark of the active machine (built binary, AC-16, TP-38, TP-39)', () => {
+  it('writes the machine id once and commits the mark with the first start, and the same machine does not warn after a kill of the server (TP-39)', async () => {
+    await initNode();
+    const started = await startFactory();
+    expect({ code: started.code, stderr: started.stderr }).toEqual({ code: 0, stderr: '' });
+    await waitForLaunch();
+
+    const idFile = join(stateOf(), 'state', 'machine-id');
+    const markFile = join(stateOf(), 'active-machine.json');
+    const id = (await readFile(idFile, 'utf8')).trim();
+    expect(id).toMatch(UUID);
+    expect((await stat(idFile)).mode & 0o777).toBe(0o600);
+    const mark = JSON.parse(await readFile(markFile, 'utf8')) as Record<string, unknown>;
+    expect(mark).toMatchObject({ schema: 'factory.active-machine/v1', machine: id });
+    expect(Number.isNaN(Date.parse(String(mark['at'])))).toBe(false);
+    expect((await box.git(stateOf(), ['ls-files', '--', 'active-machine.json'])).stdout.trim()).toBe('active-machine.json');
+    expect((await box.git(stateOf(), ['status', '--porcelain', '--', 'active-machine.json'])).stdout).toBe('');
+    expect((await box.git(stateOf(), ['log', '-1', '--format=%s'])).stdout.trim()).toBe(MARK_COMMIT);
+
+    await stopServer();
+    const again = await startFactory();
+    expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+    expect((await readFile(idFile, 'utf8')).trim()).toBe(id);
+    expect(JSON.parse(await readFile(markFile, 'utf8'))).toMatchObject({ machine: id });
+  }, RECOVERY_CASE_MS);
+
+  it('warns once when the mark names another machine, resumes the workers, exits 0 and marks this machine (TP-38)', async () => {
+    await killedServer();
+    await writeFile(join(stateOf(), 'active-machine.json'), markText(OTHER_MACHINE));
+    expect((await box.git(stateOf(), ['add', 'active-machine.json'])).code).toBe(0);
+    expect((await box.git(stateOf(), ['commit', '-q', '-m', 'mark another machine'])).code).toBe(0);
+
+    const again = await startFactory();
+    expect(again.code, again.stderr).toBe(0);
+    expect(again.stderr.split('\n').filter((line) => line.includes(OTHER_MACHINE))).toHaveLength(1);
+    expect(again.stdout).toContain('Resumed the workers: alpha, beta.');
+    const id = (await readFile(join(stateOf(), 'state', 'machine-id'), 'utf8')).trim();
+    const mark = JSON.parse(await readFile(join(stateOf(), 'active-machine.json'), 'utf8')) as Record<string, unknown>;
+    expect(mark['machine']).toBe(id);
+    expect(mark['machine']).not.toBe(OTHER_MACHINE);
+    expect((await box.git(stateOf(), ['status', '--porcelain', '--', 'active-machine.json'])).stdout).toBe('');
+    expect((await box.git(stateOf(), ['log', '-1', '--format=%s'])).stdout.trim()).toBe(MARK_COMMIT);
+  }, RECOVERY_CASE_MS);
+
+  it('writes no machine id and no mark when the session runs already', async () => {
+    await initNode();
+    expect((await startFactory()).code).toBe(0);
+    await waitForLaunch();
+    const before = await treeOf(box.node);
+    const log = (await box.git(stateOf(), ['log', '--format=%H'])).stdout;
+    const again = await startFactory();
+    expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
+    expect(await treeOf(box.node)).toEqual(before);
+    expect((await box.git(stateOf(), ['log', '--format=%H'])).stdout).toBe(log);
+  }, RECOVERY_CASE_MS);
 });
