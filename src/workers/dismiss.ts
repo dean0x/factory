@@ -188,6 +188,12 @@ export const requireEndable = (entry: WorkerStatus, again: string): CliResult<vo
   if (state === workerListWords.states.busy) {
     return failure(`the ${roles.worker} ${id} is busy: its session works now`, `Wait until it waits at its prompt. ${runAgain(again)}`);
   }
+  if (state === workerListWords.states.waits) {
+    return failure(
+      `the ${roles.worker} ${id} waits for an answer: a dialog is open in its session`,
+      `Look at the pane ${pane ?? ''} and answer the dialog. Wait until the session waits at its prompt. ${runAgain(again)}`,
+    );
+  }
   if (state === workerListWords.states.unknown) {
     return failure(
       `cannot tell if the ${roles.worker} ${id} waits at its prompt or works`,

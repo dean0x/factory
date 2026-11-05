@@ -598,6 +598,20 @@ describe('dismiss ID: a worker that must not end', () => {
     expect(hasPane(made, 'alpha')).toBe(true);
   });
 
+  it('TP-5: refuses a worker whose session shows a dialog with exit 1, also in the dry run, names its pane, and ends nothing', async () => {
+    const made = await make({ workers: [{ id: 'alpha', event: 'Notification' }] });
+    const pane = paneOf(made, 'alpha');
+    for (const yes of [false, true]) {
+      const error = await errorOf(made, { words: ['alpha'], yes });
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('dialog');
+      expect(error.hint).toContain(`the pane ${pane.id}`);
+      expect(error.hint).toContain('dismiss alpha');
+    }
+    await expectNothingChanged(made, ['alpha']);
+    expect(hasPane(made, 'alpha')).toBe(true);
+  });
+
   it('refuses a worker that turns busy after the first read of its state, ends nothing, and names the command to run again (TP-59)', async () => {
     const made = await make({ workers: [{ id: 'alpha' }], atFetch: (turned) => turned.turnBusy('alpha') });
     const error = await errorOf(made, { words: ['alpha'], yes: true });
