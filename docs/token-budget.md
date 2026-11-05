@@ -11,8 +11,8 @@ Rules:
 | # | Job (design §3) | Command | Built in | After (design §3) | Budget | Measured |
 |---|---|---|---|---|---|---|
 | 1 | Merge check and merge | `factory check <pr>`, `factory pr merge <pr>` | FAC-M5 | 2 calls, 3–6k | 6000 | - |
-| 2 | Status round | `factory status` | FAC-M4 | 1–2 calls, 3–5k | 5000 | - |
-| 3 | Restart of all workers | `factory reboot` | FAC-M4 | 2 calls, 3–5k | 5000 | - |
+| 2 | Status round | `factory status` | FAC-M4 | 1–2 calls, 3–5k | 5000 | 42 |
+| 3 | Restart of all workers | `factory reboot` | FAC-M4 | 2 calls, 3–5k | 5000 | 37 |
 | 4 | Worker creation | `factory worker new` | FAC-M4 | 1 call, 1–2k | 2000 | 31 |
 | 5 | Board and owner-item updates | `factory item …`, `factory request …` | FAC-M5 | 1–2 calls, 1–3k | 3000 | - |
 | 6 | Reading the answers of the owner | `factory decide read` | FAC-M3 | 1 call, <1k | 1000 | - |

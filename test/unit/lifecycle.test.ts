@@ -19,7 +19,9 @@ import {
 } from '../helpers/fake-deps.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { endsPane, startsSessions, withProgram, type Program } from '../helpers/worker-program.js';
 
@@ -702,6 +704,30 @@ describe('reboot (AC-20)', () => {
     expect(error.message).toContain('Stopped before this fault: alpha, beta');
     expect(countOf(made, 'new-session')).toBe(0);
     expect(countOf(made, 'kill-session')).toBe(0);
+  });
+
+  describe('the output is short (TP-63, TP-64)', () => {
+    it('has a short first line and few lines, from outside the session, from inside it, with no session, and with a worker that did not start', async () => {
+      const silentBeta: Program = async (wait) => {
+        if (wait.resumeId === SESSION.beta) return;
+        await startsSessions(HOME, byResume)(wait);
+      };
+      const shapes = [
+        await make(),
+        await make({ from: 'coordinator' }),
+        await make({ sessions: {}, workers: { alpha: { pane: 'none' }, beta: { pane: 'none', event: null } } }),
+        await make({ program: silentBeta }),
+      ];
+      for (const made of shapes) expectShortOutput(plainText(await succeeded(reboot(made))));
+    });
+
+    it('has the size of its output on the fixture of three workers in the token budget, row 3 (TP-64)', async () => {
+      const text = plainText(await succeeded(reboot(await make())));
+      const row = budgetRow(3);
+      expect(row.command).toBe('`factory reboot`');
+      expect(row.measured).toBe(tokensOf(text));
+      expect(tokensOf(text)).toBeLessThanOrEqual(row.budget);
+    });
   });
 
   describe('the proxy is asked once for each run (TP-62, AC-25)', () => {

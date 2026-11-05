@@ -15,7 +15,9 @@ import { unknownWorkItems, type WorkItem, type WorkItemPort } from '../../src/wo
 import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
@@ -549,6 +551,35 @@ describe('status: the panes (TP-50)', () => {
     const made = await make({ workers: [{ id: 'alpha' }], panes: [pane('alpha')] });
     await statusOf(made);
     expect(made.tmux.commands().filter((command) => !/^(has-session|show-options|list-panes)/.test(command))).toEqual([]);
+  });
+});
+
+describe('status: the output is short (TP-63, TP-64)', () => {
+  const fleet: Setup = {
+    workers: [
+      { id: 'alpha', project: 'web', line: { event: 'Stop', percent: 35 } },
+      { id: 'beta', project: 'api', line: { event: 'UserPromptSubmit', percent: 12 } },
+      { id: 'gamma', project: 'web', line: { event: 'Stop', percent: 5 } },
+    ],
+    panes: [pane('alpha', { id: '%7' }), pane('beta', { id: '%9' }), pane('gamma', { id: '%11' })],
+  };
+  const items = { alpha: busyWith('W-7'), beta: NONE, gamma: NONE };
+
+  it('has a short first line and few lines for three workers, for a run with no session, and for a run with no worker (TP-63)', async () => {
+    const shapes: readonly (readonly [Made, WorkItemPort])[] = [
+      [await make(fleet), portOf(items).port],
+      [await make({ workers: fleet.workers, tmux: { sessions: {} } }), unknownWorkItems],
+      [await make(), unknownWorkItems],
+    ];
+    for (const [made, port] of shapes) expectShortOutput(plainText(await statusOf(made, port)));
+  });
+
+  it('has the size of its output on the fixture of three workers in the token budget, row 2 (TP-64)', async () => {
+    const text = plainText(await statusOf(await make(fleet), portOf(items).port));
+    const row = budgetRow(2);
+    expect(row.command).toBe('`factory status`');
+    expect(row.measured).toBe(tokensOf(text));
+    expect(tokensOf(text)).toBeLessThanOrEqual(row.budget);
   });
 });
 
