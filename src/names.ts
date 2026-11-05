@@ -662,6 +662,9 @@ export const hookNames = {
 /** One event of the fixed list. */
 export type HookEvent = (typeof hookNames.events)[number];
 
+/** What a hook event says about a session: it waits at the prompt, it works, or a dialog in its window waits for an answer. */
+export type HookState = 'prompt' | 'busy' | 'waits';
+
 /**
  * What the last hook event says about a session: it waits at the prompt (a session that started, or a turn that ended), or
  * it works (a turn that began, or a compact that is about to run). Every event has an entry.
@@ -671,7 +674,7 @@ export const eventState = {
   Stop: 'prompt',
   UserPromptSubmit: 'busy',
   PreCompact: 'busy',
-} as const satisfies Readonly<Record<HookEvent, 'prompt' | 'busy'>>;
+} as const satisfies Readonly<Record<HookEvent, HookState>>;
 
 /**
  * The ways that the stop code uses to end a session. Each is a way of the table of docs/session-stop.md that has the verdict
@@ -685,8 +688,8 @@ export type StopWay = (typeof stopWay)[keyof typeof stopWay];
 /** The two cases of the table of ways to stop a session: the session waits at the prompt, or it works. */
 export type StopCase = 'idle' | 'busy';
 
-/** The case of the table for each state of a session that a last-seen line gives. */
-export const stopCaseOfState = { prompt: 'idle', busy: 'busy' } as const satisfies Readonly<Record<'prompt' | 'busy', StopCase>>;
+/** The case of the table for each state of a session that a last-seen line gives. A session that waits at a dialog is the busy case. */
+export const stopCaseOfState = { prompt: 'idle', busy: 'busy', waits: 'busy' } as const satisfies Readonly<Record<HookState, StopCase>>;
 /** The safe way for each case. A case with no safe way has null and uses `stopFallback`. */
 export const stopWays: Readonly<Record<StopCase, StopWay | null>> = { idle: stopWay.term, busy: stopWay.term };
 
@@ -716,8 +719,8 @@ export const workerListWords = {
   columns: { id: 'ID', project: 'PROJECT', pane: 'PANE', state: 'STATE', context: 'CONTEXT', mark: 'MARK' },
   /** The pane column for a worker with no pane, and for a worker whose pane has ended. */
   pane: { none: 'none', dead: 'dead' },
-  /** The state column: the session waits at the prompt, it works, or the last-seen line does not say. */
-  states: { prompt: 'at prompt', busy: 'busy', unknown: 'unknown' },
+  /** The state column: the session waits at the prompt, it works, a dialog waits for an answer, or the last-seen line does not say. */
+  states: { prompt: 'at prompt', busy: 'busy', waits: 'waits', unknown: 'unknown' },
   /** The mark of the context column: the percent is at the prepare limit or above, or above the max limit. */
   marks: { prepare: 'PREPARE', max: 'MAX' },
 } as const;
