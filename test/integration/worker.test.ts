@@ -204,6 +204,16 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(await outOf('config-dir')).toBe(FAKE_CONFIG_DIR);
   });
 
+  it('names the session of a new worker with the id of the node and the id of the worker (TP-12)', async () => {
+    await startedNode();
+    expect((await workerNew('alpha', '--project', 'web', '--yes')).code).toBe(0);
+    await waitForLaunches(2);
+    const argv = (await outOf('argv')).split('\n');
+    expect(argv.filter((arg) => arg === '--name')).toHaveLength(1);
+    expect(argv[argv.indexOf('--name') + 1]).toBe('demo-alpha');
+    expect(argv.indexOf('--name')).toBeLessThan(argv.indexOf('--add-dir'));
+  });
+
   it('makes a second worker of the same project with one exclude entry and its own record', async () => {
     const clone = await startedNode();
     expect((await workerNew('alpha', '--project', 'web', '--yes')).code).toBe(0);
