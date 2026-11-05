@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  capturePaneArgs,
+  chainedArgs,
   isPaneId,
   joinPaneArgs,
   killPaneArgs,
@@ -288,6 +290,33 @@ describe('the tmux call that runs a command in the background', () => {
 
   it.each(['', 'a\nb', 'a\u0000b', 'a\rb', 'x'.repeat(1025)])('refuses the text %j', (text) => {
     expect(runShellBackgroundArgs(text).ok).toBe(false);
+  });
+});
+
+describe('the tmux calls that are joined into one chain', () => {
+  it('puts the separator word between two commands, and not before the first or after the last', () => {
+    expect(chainedArgs([['kill-pane', '-t', '%1'], ['select-pane', '-t', '%2']])).toEqual([
+      'kill-pane', '-t', '%1', ';', 'select-pane', '-t', '%2',
+    ]);
+  });
+
+  it('keeps one command as it is, and an empty list as an empty list', () => {
+    expect(chainedArgs([['kill-pane', '-t', '%1']])).toEqual(['kill-pane', '-t', '%1']);
+    expect(chainedArgs([])).toEqual([]);
+  });
+
+  it('keeps a word that ends in a semicolon as one word, so that only the separator ends a command', () => {
+    expect(chainedArgs([['new-window', '-c', '/w/a;'], ['kill-pane']])).toEqual(['new-window', '-c', '/w/a\\;', ';', 'kill-pane']);
+  });
+});
+
+describe('the tmux call that prints the screen of a pane', () => {
+  it('prints the visible text of the pane, to the standard output', () => {
+    expect(argvOf(capturePaneArgs('%7'))).toEqual(['capture-pane', '-p', '-t', '%7']);
+  });
+
+  it.each(badPaneIds)('refuses the target %j, which is not a pane id', (text) => {
+    expect(capturePaneArgs(text).ok).toBe(false);
   });
 });
 
