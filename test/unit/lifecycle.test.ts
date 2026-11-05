@@ -76,6 +76,8 @@ interface Setup {
   readonly config?: FactoryConfig;
   readonly claudeFile?: string;
   readonly hookSettings?: string;
+  /** A terminal window with this answer to the question about the hook settings. Default: no terminal window. */
+  readonly answer?: string;
   /** The mark of the active machine: of this machine, or of another one. Default: no mark. */
   readonly mark?: 'own' | 'other';
   readonly fetch?: FetchHandler;
@@ -160,6 +162,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
       return handler(call);
     },
     fetch: setup.fetch ?? answers,
+    ...(setup.answer === undefined ? {} : { stdinIsTTY: true, stdoutIsTTY: true, prompt: () => ok(setup.answer ?? '') }),
   });
   const stuckPid = setup.stuck === undefined ? undefined : PID[setup.stuck];
   const deps: FakeDeps = {
@@ -651,6 +654,64 @@ describe('reboot (AC-20)', () => {
       const made = await make({ from: 'gamma' });
       expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(2);
       expectNothingStopped(made);
+    });
+  });
+
+  describe('the steps of start that change a file, outside the session', () => {
+    const CLAUDE_FILE = `${COORDINATOR}/CLAUDE.md`;
+    const RENDERED_NOTICE =
+      'Rendered the block safety in coordinator/CLAUDE.md again, because the package or a setting changed its text.';
+    const outOfDate = (): Setup => {
+      const config = sampleConfig();
+      const changed = { ...config, core: { ...config.core, owner: { ...config.core.owner, prefix: '[From {owner}, sent by {node}, {date}]' } } };
+      return { config: changed, claudeFile: claudeFileText(config) };
+    };
+
+    it('renders a safety block that is out of date, before the first stop and before the session starts again', async () => {
+      const setup = outOfDate();
+      const made = await make(setup);
+      await succeeded(reboot(made));
+      expect(made.deps.files.get(CLAUDE_FILE)).not.toBe(setup.claudeFile);
+      expect(made.deps.warned).toContain(RENDERED_NOTICE);
+      expect(made.deps.terminated).toHaveLength(3);
+      expect(countOf(made, 'new-session')).toBe(1);
+    });
+
+    it('renders a safety block that is out of date when no session runs', async () => {
+      const made = await make({ ...outOfDate(), sessions: {}, workers: {} });
+      await succeeded(reboot(made));
+      expect(made.deps.warned).toContain(RENDERED_NOTICE);
+      expect(countOf(made, 'new-session')).toBe(1);
+    });
+
+    it('leaves a safety block that is out of date as it is when it runs in a pane of the session', async () => {
+      const setup = outOfDate();
+      const made = await make({ ...setup, from: 'coordinator' });
+      await succeeded(reboot(made));
+      expect(made.deps.files.get(CLAUDE_FILE)).toBe(setup.claudeFile);
+    });
+
+    it('writes the hook settings after a yes on a terminal window, before the first stop', async () => {
+      const made = await make({ hookSettings: '{}\n', answer: 'y' });
+      await succeeded(reboot(made));
+      expect(made.deps.prompts).toHaveLength(1);
+      expect(made.deps.files.get(SETTINGS_FILE)).toContain('factory hook');
+      expect(made.deps.terminated).toHaveLength(3);
+    });
+
+    it('goes on without the hook settings after a no, and says so', async () => {
+      const made = await make({ hookSettings: '{}\n', answer: 'n' });
+      await succeeded(reboot(made));
+      expect(made.deps.files.get(SETTINGS_FILE)).toBe('{}\n');
+      expect(made.deps.warned.join(' ')).toContain('"factory reboot" again and answer yes');
+    });
+
+    it('exits 2 and stops nothing when the hook settings are not in place and no terminal window can ask', async () => {
+      const made = await make({ hookSettings: '{}\n' });
+      expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(2);
+      expect(made.deps.files.get(SETTINGS_FILE)).toBe('{}\n');
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
     });
   });
 

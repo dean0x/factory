@@ -33,7 +33,7 @@ import { recoverWorkers, type RecoveryReport } from '../workers/recovery.js';
 import { listWorkerRecords } from '../workers/registry.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { prepareLaunch, prepareRoot } from './launch-checks.js';
-import { startAgain } from './start.js';
+import { renderStartFiles, startAgain } from './start.js';
 import { requireRecord } from './worker.js';
 
 /**
@@ -310,7 +310,8 @@ const rebootOutside = async (
  * then the checks of every worker before the first stop (`checkTargets`), which need a session id that passed the owner check
  * for each recorded worker (exit 3), and the proxy of each launch after the stop (exit 1). With no session, nothing stops and the
  * start path recovers the workers as `start` does.
- * Outside the session, the session ends as `shutdown` ends it, and it starts again with its recovery. Inside the session (the pane
+ * Outside the session, the steps of `start` that change a file come first (the safety block rendered again, and the hook
+ * settings), before the first stop. Then the session ends as `shutdown` ends it, and it starts again with its recovery. Inside the session (the pane
  * of the caller is a pane of it), only the workers stop and start again, and the coordinator pane stays.
  */
 export const runReboot = async (
@@ -348,5 +349,9 @@ export const runReboot = async (
     const proxies = await requireProxies(deps, config, wishes, run.answers);
     if (!proxies.ok) return proxies;
   }
-  return running !== null && inside ? rebootInside(deps, run, running) : rebootOutside(deps, run, running);
+  if (running !== null && inside) return rebootInside(deps, run, running);
+  // Outside the session, the coordinator starts as `start` starts it, so the steps of `start` that change a file come first.
+  const rendered = await renderStartFiles(deps, home, config, commands.reboot);
+  if (!rendered.ok) return rendered;
+  return rebootOutside(deps, run, running);
 };

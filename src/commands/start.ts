@@ -29,6 +29,7 @@ import {
   setupFileOf,
   tmuxNames,
   values,
+  type CommandName,
 } from '../names.js';
 import { layoutOf } from '../state/layout.js';
 import { claimActiveMachine } from '../state/active-machine.js';
@@ -281,6 +282,42 @@ const startSession = async (deps: Deps, id: string, steps: readonly TmuxArgs[]):
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
 
+/**
+ * Makes sure that the hook settings of the coordinator are in place, with the consent rules of `start`. A no on a terminal
+ * window goes on without the hook and prints the notice. `command` is the command that asks, and the remedy of a stop names it.
+ */
+const settleHook = async (
+  deps: Deps,
+  home: string,
+  request: { readonly yes: boolean; readonly dryRun: boolean; readonly command: CommandName },
+): Promise<CliResult<HookSettingsOutcome>> => {
+  const hook = await ensureHookSettings(deps, {
+    folder: layoutOf(home).coordinatorDir,
+    session: hookSessions.coordinator,
+    ...request,
+  });
+  if (hook.ok && hook.value.kind === 'declined') deps.warn(declinedHookText(hook.value.file, request.command));
+  return hook;
+};
+
+/**
+ * The steps of `start` that change a file before it launches the coordinator: the safety block rendered again when it is out of
+ * date (design 4.8), and the hook settings of the coordinator. A command that starts the coordinator itself without `start`
+ * (`reboot` outside the session) runs them before its first stop, so a stop in these steps leaves the session as it is. The
+ * command has no yes flag, so the hook settings need an answer on a terminal window when they are not in place.
+ */
+export const renderStartFiles = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  command: CommandName,
+): Promise<CliResult<void>> => {
+  const safety = await requireSafetyBlock(deps, home, config, false);
+  if (!safety.ok) return safety;
+  const hook = await settleHook(deps, home, { yes: false, dryRun: false, command });
+  return hook.ok ? ok(undefined) : hook;
+};
+
 /** The lines of a dry run about the hook settings: the change that a real run makes, or none when the entries are in place. */
 const hookLines = (hook: HookSettingsOutcome, yes: boolean): readonly OutLine[] =>
   hook.kind === 'would-write'
@@ -402,15 +439,8 @@ export const runStart = async (
 
   // The hook settings of the coordinator come after the root checks and the tool check, and before the session lookup and any
   // launch. A no on a terminal window goes on without the hook. Any error of the writer is a stop with its own exit code.
-  const hook = await ensureHookSettings(deps, {
-    folder: layoutOf(home).coordinatorDir,
-    session: hookSessions.coordinator,
-    yes: options.yes,
-    dryRun,
-    command: commands.start,
-  });
+  const hook = await settleHook(deps, home, { yes: options.yes, dryRun, command: commands.start });
   if (!hook.ok) return hook;
-  if (hook.value.kind === 'declined') deps.warn(declinedHookText(hook.value.file, commands.start));
 
   const exists = await sessionExists(deps, id);
   if (exists && !dryRun) {

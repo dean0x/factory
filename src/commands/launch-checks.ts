@@ -22,6 +22,7 @@ import {
   flagText,
   overwriteCommand,
   program,
+  roles,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
@@ -114,14 +115,19 @@ export const requireSafetyBlock = async (
   }
 };
 
-/** The end of the warning for a safety block that is out of date: a command that starts a worker does not render it, and the next `start` does. */
-const RENDERED_BY_START = `This command does not render it again: the next "${commandText(commands.start)}" does.`;
+/**
+ * The end of the warning for a safety block that is out of date: a command that starts a worker does not render it. `start` does,
+ * and so does `reboot` outside the session, because it starts the coordinator with the steps of `start`.
+ */
+const RENDERED_BY_START =
+  `A command that starts a ${roles.worker} does not render it again. "${commandText(commands.start)}" does, ` +
+  `and so does "${commandText(commands.reboot)}" outside the session.`;
 
 /**
  * The checks of the root and of the tools, as `start` makes them. A failing root check is a stop (exit 4) with one remedy
  * line, a warning is printed, and nothing changes. The owner accepts a change of the setup text with `start` or `upgrade`:
  * this command asks nothing about it. The safety block is checked and never rendered again here: a block that is out of
- * date gives a warning, and the next `start` renders it.
+ * date gives a warning, and `start` or a `reboot` outside the session renders it.
  */
 export const requireLaunchReady = async (deps: Deps, home: string, config: FactoryConfig): Promise<CliResult<void>> => {
   const scan = await scanRoot(deps, home, config);

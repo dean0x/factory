@@ -287,9 +287,10 @@ const olderClaudeFile = (): string => {
   return older;
 };
 
-/** The warning for a safety block that is out of date: this command renders nothing, and the next start does. */
+/** The warning for a safety block that is out of date: this command renders nothing, and start or reboot outside the session does. */
 const OUT_OF_DATE_NOTE =
-  'The block safety in coordinator/CLAUDE.md is out of date. This command does not render it again: the next "factory start" does.';
+  'The block safety in coordinator/CLAUDE.md is out of date. A command that starts a worker does not render it again. ' +
+  '"factory start" does, and so does "factory reboot" outside the session.';
 
 const options = (change: Partial<WorkerOptions> = {}): WorkerOptions => ({
   home: HOME,
