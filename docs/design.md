@@ -374,6 +374,7 @@ The factory folder is a git repo of its own, the config repo. It holds the confi
     roles/worker.md                 # the worker role text that every worker reads; rendered on each machine from the package and from setup/roles/worker.md
     decision-log.json               # decisions read from the board, with the answer and its author
     queue.json                      # the queue
+    active-machine.json             # the machine that runs the session now: its id and the time; tracked, and written and committed by `factory start` (§4.11)
     board.json  waiting.json        # the items, only with the `local` board (§4.10)
     decision-profile/               # format, index, principles, decisions
     roadmaps/  orders/  resume/
@@ -382,6 +383,7 @@ The factory folder is a git repo of its own, the config repo. It holds the confi
     workers/<id>/inbox/             # assignments and records for each worker; ignored
     inbox/  outbox/                 # messages from the parent, reports to the parent (§5)
     state/coordinator-last-session  # the id of the newest session of the coordinator, written by its hook (§4.6); ignored with state/
+    state/machine-id                # the random id of this machine, made once; ignored with state/, so a copy of the folder does not carry it
     state/  locks/                  # ignored: last-seen files, board cache, pane map, locks
     .gitignore                      # ignores state/, locks/, backups/ and workers/
 ```
