@@ -550,7 +550,7 @@ export const statusOf = async (deps: Deps, dir: string): Promise<CliResult<reado
   const result = await deps.run('git', ['-C', dir, 'status', '--porcelain', '-z', '--untracked-files=all'], {
     timeoutMs: GIT_TIMEOUT_MS,
   });
-  const what = 'cannot read the changes of the state repository';
+  const what = `cannot read the changes of ${dir}`;
   if (!result.ok) return failure(`${what}: ${result.error.message}`);
   if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
   return ok(parseStatus(result.value.stdout));

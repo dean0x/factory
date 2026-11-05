@@ -511,7 +511,7 @@ describe('git: the status of a repo', () => {
   it('is an error when git exits with a code or cannot run', async () => {
     expect(await status(() => exited(128))).toMatchObject({
       ok: false,
-      error: { message: 'cannot read the changes of the state repository: git exited with 128' },
+      error: { message: 'cannot read the changes of /w/node/.factory: git exited with 128' },
     });
     expect(await status(() => failure('cannot run git: SIGTERM'))).toMatchObject({ ok: false });
   });
