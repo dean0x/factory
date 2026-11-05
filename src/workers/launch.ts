@@ -291,7 +291,7 @@ const markPane = async (deps: Deps, request: PaneFailureRequest): Promise<CliRes
  *    settings files (a failure is exit 4, and nothing starts);
  * 2. the instruction files above the work copy (a warning);
  * 3. the proxy of the worker, with its health check;
- * 4. the argument list, with auto mode and the resume id when there is one;
+ * 4. the argument list, with auto mode, the resume id when there is one, and the name of the session;
  * 5. the pane, and the worker mark on the pane id;
  * 6. the tile of the workers window, so that the next launch finds room (a failed tile is a warning);
  * 7. the wait for the pane to prove itself (`confirmLaunch`): the pane must still run the launch after the first wait, and a launch
@@ -313,6 +313,7 @@ export const launchWorker = async (deps: Deps, request: WorkerLaunchRequest): Pr
   const path = deps.env[env.path];
   const argv = workerLaunchArgv({
     home,
+    nodeId: config.core.node.id,
     workerId,
     effort: config.core.session.effort,
     model: config.core.session.model,

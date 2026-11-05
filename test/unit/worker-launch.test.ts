@@ -150,7 +150,7 @@ const panesOf = (made: Made): number => made.tmux.panes().length;
 const START_PANES = 3;
 
 describe('the launch of a worker: the pane and the argument list', () => {
-  it('makes one pane in the workers window, in the work copy, marks it, and gives the argument list of a worker', async () => {
+  it('makes one pane in the workers window, in the work copy, marks it, and gives the argument list of a worker with its session name (TP-9)', async () => {
     const made = make();
     const outcome = await launched(made, { proxy: null });
     expect(outcome).toEqual({ paneId: FIRST_NEW_PANE, proxy: null, warnings: [] });
@@ -171,6 +171,8 @@ describe('the launch of a worker: the pane and the argument list', () => {
       'auto',
       '--effort',
       'high',
+      '--name',
+      'demo-alpha',
       '--add-dir',
       INBOX,
     ]);
@@ -213,6 +215,8 @@ describe('the launch of a worker: the pane and the argument list', () => {
       'max',
       '--model',
       'opus',
+      '--name',
+      'demo-alpha',
       '--add-dir',
       INBOX,
     ]);
@@ -673,6 +677,16 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     expect(words.indexOf('--resume')).toBeLessThan(words.indexOf('--add-dir'));
     expect(made.events).toEqual(['tmux split-window', 'tmux set-option', 'tmux select-layout', 'tmux display-message']);
     expect(readPanes(made)).toEqual([FIRST_NEW_PANE]);
+  });
+
+  it('names the session of a launch with a resume id once, after the id and before the folder (TP-9)', async () => {
+    const made = make();
+    await launched(made, { proxy: null }, { resumeId: UUID });
+    const words = wordsOf(made.tmux);
+    expect(words.filter((word) => word === '--name')).toHaveLength(1);
+    expect(words[words.indexOf('--name') + 1]).toBe('demo-alpha');
+    expect(words.indexOf('--name')).toBeGreaterThan(words.indexOf('--resume') + 1);
+    expect(words.indexOf('--name')).toBeLessThan(words.indexOf('--add-dir'));
   });
 
   it('checks the proxy before the pane for a resume, too', async () => {

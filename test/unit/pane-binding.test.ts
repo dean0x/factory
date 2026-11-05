@@ -10,7 +10,7 @@ const session = { effort: 'high', model: 'default', proxyBaseUrl: null, path: '/
 
 /** The start command that tmux shows for the launch of a worker: the argument list of the launch, as tmux renders it. */
 const startCommandOf = (workerId: string, home = HOME): string => {
-  const argv = workerLaunchArgv({ ...session, home, workerId });
+  const argv = workerLaunchArgv({ ...session, home, nodeId: 'node', workerId });
   if (!argv.ok) throw new Error(argv.error);
   return startCommandText(argv.value);
 };

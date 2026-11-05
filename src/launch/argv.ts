@@ -1,7 +1,7 @@
 import { isSlug } from '../config/primitives.js';
 import { isSameOrInside } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
-import { claudeEnvStrip, env, lastSeen, places, roles, values } from '../names.js';
+import { claudeEnvStrip, env, lastSeen, places, roles, sessionNames, values } from '../names.js';
 import { workerPathsOf } from '../state/layout.js';
 
 /** What the start of a coordinator and the start of a worker share. */
@@ -29,13 +29,15 @@ export interface LaunchInput extends SessionInput {
   readonly coordinatorDir: string;
   /** The state folder: an absolute path inside the home. The session gets it with `--add-dir`. */
   readonly stateDir: string;
-  /** The id of the session: the node id for the coordinator. */
+  /** The id of the session: the node id for the coordinator. It must be a slug, because the name of the session is made from it. */
   readonly sessionId: string;
   /** The project folders to add to the session: absolute paths. */
   readonly projects: readonly string[];
 }
 
 export interface WorkerLaunchInput extends SessionInput {
+  /** The id of the node: a slug. The name of the session of the worker starts with it. */
+  readonly nodeId: string;
   /**
    * The id of the worker: a slug. It is `FACTORY_SESSION`, and it names the folder of the worker in the state folder. The
    * caller starts the session in the work copy of the worker, because the working folder is not part of the argument list.
@@ -105,9 +107,15 @@ export const stripScript = `s=$(awk '${STRIP_PROGRAM}' 2>/dev/null) || exit 1; e
  * in auto mode, and no input adds a flag that skips the permission checks: each flag comes from this function, and each
  * input is one value of one flag. The values are checked before they come here, because a value that starts with a dash
  * could read as a flag. The program is the agent of the input, and the start of a coordinator and the start of a worker are
- * the only callers, so no other name of a program is in an argument list.
+ * the only callers, so no other name of a program is in an argument list. The name of the session comes after the resume part
+ * and before the folders.
  */
-const startArgv = (input: SessionInput, variables: readonly string[], folders: readonly string[]): readonly string[] => [
+const startArgv = (
+  input: SessionInput,
+  variables: readonly string[],
+  name: string,
+  folders: readonly string[],
+): readonly string[] => [
   claudeEnvStrip.shell,
   '-c',
   stripScript,
@@ -125,6 +133,8 @@ const startArgv = (input: SessionInput, variables: readonly string[], folders: r
   input.effort,
   ...(input.model === DEFAULT_MODEL ? [] : ['--model', input.model]),
   ...(input.resumeId === undefined ? [] : ['--resume', input.resumeId]),
+  sessionNames.flag,
+  name,
   ...folders.flatMap((folder) => [ADD_DIR_FLAG, folder]),
 ];
 
@@ -132,6 +142,8 @@ const startArgv = (input: SessionInput, variables: readonly string[], folders: r
 export const launchArgv = (input: LaunchInput): Result<readonly string[], string> => {
   const session = checkSession(input);
   if (!session.ok) return session;
+  const name = sessionNames.coordinator(input.sessionId);
+  if (!name.ok) return name;
   if (!isAbsolute(input.coordinatorDir) || input.coordinatorDir === input.home || !isSameOrInside(input.home, input.coordinatorDir)) {
     return refuse(`a ${roles.coordinator} folder that is not a folder inside the ${places.folder}`);
   }
@@ -144,7 +156,12 @@ export const launchArgv = (input: LaunchInput): Result<readonly string[], string
     return refuse(`a project folder that is the ${places.folder} or holds it`);
   }
   return ok(
-    startArgv(input, [`${env.home}=${input.home}`, `${env.session}=${input.sessionId}`], [input.stateDir, ...input.projects]),
+    startArgv(
+      input,
+      [`${env.home}=${input.home}`, `${env.session}=${input.sessionId}`],
+      name.value,
+      [input.stateDir, ...input.projects],
+    ),
   );
 };
 
@@ -168,12 +185,14 @@ export const workerLaunchMarks = (
 /**
  * The argument list that starts a worker session. The only folder that it adds is the inbox of the worker: the worker
  * reads its assignments there, and it gets no project folder, no state folder and no home. `FACTORY_INBOX` names the
- * same folder.
+ * same folder. The name of the session is not one of the marks of the launch: a pane start command without it still binds.
  */
 export const workerLaunchArgv = (input: WorkerLaunchInput): Result<readonly string[], string> => {
   const session = checkSession(input);
   if (!session.ok) return session;
   if (!isSlug(input.workerId)) return refuse(`a ${roles.worker} id that is not a slug`);
+  const name = sessionNames.worker(input.nodeId, input.workerId);
+  if (!name.ok) return name;
   const marks = workerLaunchMarks(input.home, input.workerId);
-  return ok(startArgv(input, marks.variables, [marks.folder]));
+  return ok(startArgv(input, marks.variables, name.value, [marks.folder]));
 };

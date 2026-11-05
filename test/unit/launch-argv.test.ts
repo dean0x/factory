@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { launchArgv, stripScript, workerLaunchArgv, type LaunchInput, type WorkerLaunchInput } from '../../src/launch/argv.js';
+import { launchArgv, stripScript, workerLaunchArgv, workerLaunchMarks, type LaunchInput, type WorkerLaunchInput } from '../../src/launch/argv.js';
 import { startSteps } from '../../src/launch/tmux.js';
 import { env } from '../../src/names.js';
 import { chainOf } from '../helpers/tmux-fake.js';
@@ -50,6 +50,7 @@ const argvOf = (change: Partial<LaunchInput> = {}): readonly string[] => {
 
 const workerInput = (change: Partial<WorkerLaunchInput> = {}): WorkerLaunchInput => ({
   home: '/w/demo-factory',
+  nodeId: 'demo',
   workerId: 'web-search',
   effort: 'high',
   model: 'default',
@@ -69,7 +70,7 @@ const addDirsOf = (argv: readonly string[]): readonly (string | undefined)[] =>
   argv.flatMap((arg, index) => (arg === '--add-dir' ? [argv[index + 1]] : []));
 
 describe('launch argument list', () => {
-  it('strips the variables of a parent session, clears the proxy variable, sets the two variables, and starts claude in auto mode', () => {
+  it('strips the variables of a parent session, clears the proxy variable, sets the two variables, and starts claude in auto mode with the name of the session (TP-9)', () => {
     expect(argvOf()).toEqual([
       ...HEAD,
       'FACTORY_HOME=/w/demo-factory',
@@ -79,6 +80,8 @@ describe('launch argument list', () => {
       'auto',
       '--effort',
       'high',
+      '--name',
+      'demo',
       '--add-dir',
       '/w/demo-factory/.factory',
       '--add-dir',
@@ -178,11 +181,20 @@ describe('launch argument list', () => {
     expect(launchArgv(input(change)).ok).toBe(false);
   });
 
-  it('never holds a flag other than the five of the launch, whatever the input is', () => {
-    const known = ['--permission-mode', '--effort', '--model', '--resume', '--add-dir'];
+  it('never holds a flag other than the six of the launch, whatever the input is (TP-9)', () => {
+    const known = ['--permission-mode', '--effort', '--model', '--resume', '--name', '--add-dir'];
     const hostile = ['--dangerously-skip-permissions', '--permission-mode=bypassPermissions', 'bypassPermissions'];
     for (const value of hostile) {
-      const changes = [{ model: value }, { effort: value }, { projects: [value] }, { home: value }, { path: value }, { agent: value }, { resumeId: value }];
+      const changes = [
+        { model: value },
+        { effort: value },
+        { projects: [value] },
+        { home: value },
+        { path: value },
+        { agent: value },
+        { resumeId: value },
+        { sessionId: value },
+      ];
       for (const change of changes) {
         const result = launchArgv(input(change));
         if (result.ok) {
@@ -295,6 +307,8 @@ describe('the worker launch argument list (TP-10)', () => {
       'auto',
       '--effort',
       'high',
+      '--name',
+      'demo-web-search',
       '--add-dir',
       INBOX,
     ]);
@@ -377,6 +391,70 @@ describe('the worker launch argument list (TP-10)', () => {
   it('does not repeat a refused value in the error', () => {
     for (const change of [{ resumeId: 'secret-id-value' }, { workerId: 'Secret/Worker' }, { model: '--secret-flag-value' }]) {
       const result = workerLaunchArgv(workerInput(change));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).not.toMatch(/secret/i);
+    }
+  });
+});
+
+describe('the name of the session (TP-9)', () => {
+  const flagAt = (argv: readonly string[]): number[] => argv.flatMap((arg, index) => (arg === '--name' ? [index] : []));
+
+  it('gives the coordinator the id of the node as its name, once, after --resume and before the first --add-dir', () => {
+    const argv = argvOf({ model: 'opus', resumeId: SESSION_ID, sessionId: 'node-7' });
+    const [at] = flagAt(argv);
+    expect(flagAt(argv)).toHaveLength(1);
+    expect(argv[(at ?? -1) + 1]).toBe('node-7');
+    expect(at).toBeGreaterThan(argv.indexOf('--resume') + 1);
+    expect(at).toBeGreaterThan(argv.indexOf('--model'));
+    expect(at).toBeLessThan(argv.indexOf('--add-dir'));
+  });
+
+  it('gives a worker the id of the node, a hyphen and the id of the worker as its name, once, after --resume and before the --add-dir', () => {
+    const argv = workerArgvOf({ model: 'opus', resumeId: SESSION_ID, nodeId: 'node-7', workerId: 'api-fix' });
+    const [at] = flagAt(argv);
+    expect(flagAt(argv)).toHaveLength(1);
+    expect(argv[(at ?? -1) + 1]).toBe('node-7-api-fix');
+    expect(at).toBeGreaterThan(argv.indexOf('--resume') + 1);
+    expect(at).toBeGreaterThan(argv.indexOf('--model'));
+    expect(at).toBeLessThan(argv.indexOf('--add-dir'));
+  });
+
+  it('puts the name in a launch with no model and no resume id directly after the effort', () => {
+    const after = (argv: readonly string[]): readonly string[] => argv.slice(argv.indexOf('--effort'), argv.indexOf('--effort') + 4);
+    expect(after(argvOf())).toEqual(['--effort', 'high', '--name', 'demo']);
+    expect(after(workerArgvOf())).toEqual(['--effort', 'high', '--name', 'demo-web-search']);
+  });
+
+  it('keeps the name out of the words that bind a pane to its worker', () => {
+    const marks = workerLaunchMarks('/w/demo-factory', 'web-search');
+    expect([...marks.variables, marks.folder].filter((word) => word.includes('--name') || word.includes('demo-web-search'))).toEqual([]);
+  });
+
+  it.each([
+    ['a node id that is not a slug', { sessionId: 'Demo' }],
+    ['a node id with a space', { sessionId: 'demo --x' }],
+    ['a node id that starts with a dash', { sessionId: '-demo' }],
+    ['an empty node id', { sessionId: '' }],
+    ['a node id of more than 40 characters', { sessionId: 'a'.repeat(41) }],
+  ])('refuses the coordinator launch with %s, and does not throw', (_name, change) => {
+    expect(launchArgv(input(change)).ok).toBe(false);
+  });
+
+  it.each([
+    ['a node id that is not a slug', { nodeId: 'Demo' }],
+    ['a node id with a space', { nodeId: 'demo --x' }],
+    ['a node id that starts with a dash', { nodeId: '-demo' }],
+    ['an empty node id', { nodeId: '' }],
+    ['a node id of more than 40 characters', { nodeId: 'a'.repeat(41) }],
+  ])('refuses the worker launch with %s, and does not throw', (_name, change) => {
+    expect(workerLaunchArgv(workerInput(change)).ok).toBe(false);
+  });
+
+  it('does not repeat a refused node id in the error', () => {
+    const coordinator = launchArgv(input({ sessionId: 'Secret/Node' }));
+    const worker = workerLaunchArgv(workerInput({ nodeId: 'Secret/Node' }));
+    for (const result of [coordinator, worker]) {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error).not.toMatch(/secret/i);
     }
