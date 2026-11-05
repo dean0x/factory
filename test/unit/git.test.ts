@@ -768,6 +768,29 @@ describe('git: the checks before a work copy is freed', () => {
     return { deps, calls };
   };
 
+  describe('the reads of a work copy with the git folder that its clone keeps for it', () => {
+    const GIT_DIR = '/w/node/web/.git/worktrees/alpha';
+    const named = ['-C', COPY, '-c', 'core.fsmonitor=false', '--git-dir', GIT_DIR, '--work-tree', COPY];
+
+    it('reads the last commit from that git folder, with the file monitor off', async () => {
+      const { deps, calls } = asked(exited(0, `${HEAD}\n`));
+      expect(await headOf(deps, COPY, GIT_DIR)).toEqual({ ok: true, value: HEAD });
+      expect(calls).toEqual([[...named, 'rev-parse', '--verify', 'HEAD']]);
+    });
+
+    it('reads the changes from that git folder, with the file monitor off', async () => {
+      const { deps, calls } = asked(exited(0, ' M a.ts\0'));
+      expect(await statusOf(deps, COPY, GIT_DIR)).toEqual({ ok: true, value: [{ index: ' ', tree: 'M', path: 'a.ts' }] });
+      expect(calls).toEqual([[...named, 'status', '--porcelain', '-z', '--untracked-files=all']]);
+    });
+
+    it('reads the ignored files from that git folder, with the file monitor off', async () => {
+      const { deps, calls } = asked(exited(0, '!! cache/\0'));
+      expect(await ignoredFilesOf(deps, COPY, 10, GIT_DIR)).toEqual({ ok: true, value: { paths: ['cache/'], reachedCap: false } });
+      expect(calls).toEqual([[...named, 'status', '--porcelain', '-z', '--ignored']]);
+    });
+  });
+
   describe('the fetch of the branches of one remote', () => {
     it('fetches the branches under one prefix from one remote, drops the ones that the remote lost, and fetches no tag', async () => {
       const { deps, calls } = asked(exited(0));

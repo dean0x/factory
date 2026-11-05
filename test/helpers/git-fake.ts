@@ -81,6 +81,18 @@ export interface GitLog {
   clones(): (readonly string[])[];
 }
 
+/** The words that a read of a work copy puts after `-C <folder>`: the file monitor off, the git folder and the work tree. */
+const PIN_WORDS = 6;
+
+/**
+ * The argument list of a git call without the words of a pinned read (`-c core.fsmonitor=false --git-dir X --work-tree Y`), so a read
+ * of a work copy gets the same answer as the same read without them. Any other list stays as it is.
+ */
+const unpinned = (args: readonly string[]): readonly string[] =>
+  args[2] === '-c' && args[3] === 'core.fsmonitor=false' && args[4] === '--git-dir' && args[6] === '--work-tree'
+    ? [...args.slice(0, 2), ...args.slice(2 + PIN_WORDS)]
+    : args;
+
 /**
  * The top folder of the work tree that holds `dir`: the nearest folder above `dir`, or `dir` itself, that is a work tree.
  * A fixture repo with `topLevel: false` is a folder inside a work tree, so its top is its parent folder.
@@ -124,11 +136,13 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       return exited(0);
     }
     if (call.command !== 'git' || call.args[0] !== '-C') return missingProgram(call.command);
-    const dir = call.args[1] ?? '';
-    const rest = call.args.slice(2).join(' ');
+    // A read of a work copy names its git folder and turns the file monitor off: the answer is the same as without these words.
+    const args = unpinned(call.args);
+    const dir = args[1] ?? '';
+    const rest = args.slice(2).join(' ');
     const repo = repoAt(dir);
     // As real git does: `git init` makes the folder the top of a work tree.
-    if (call.args[2] === 'init') {
+    if (args[2] === 'init') {
       if (fixture.noWorkTree?.includes(dir) !== true) cloned.set(dir, {});
       return exited(0);
     }
@@ -138,10 +152,10 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       if (fixture.lsFilesOverflow === true) return failure('cannot run git: ERR_CHILD_PROCESS_STDIO_MAXBUFFER');
       return exited(0, (fixture.tracked?.[dir] ?? []).map((path) => `${path}\0`).join(''));
     }
-    if (call.args[2] === 'check-ignore') {
+    if (args[2] === 'check-ignore') {
       if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
       if (fixture.checkIgnoreExit !== undefined) return exited(fixture.checkIgnoreExit, '', 'fatal: check-ignore failed');
-      const asked = call.args.slice(call.args.indexOf('--') + 1);
+      const asked = args.slice(args.indexOf('--') + 1);
       if (asked.some((path) => fixture.checkIgnoreFailsFor?.includes(path) === true)) {
         return exited(128, '', 'fatal: check-ignore failed');
       }
@@ -149,7 +163,7 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       const found = rules === undefined ? asked : asked.filter((path) => rules.includes(path));
       return found.length === 0 ? exited(1) : exited(0);
     }
-    if (call.args[2] === 'fetch') {
+    if (args[2] === 'fetch') {
       const remote = fixture.remotes?.[dir];
       if (remote?.fetchExit !== undefined && remote.fetchExit !== 0) {
         return exited(remote.fetchExit, '', 'fatal: unable to access the remote');
@@ -163,8 +177,8 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       const copy = remote === undefined ? undefined : copiesOf(dir, remote).find(([name]) => name === branch);
       return copy === undefined ? exited(1) : exited(0, `${copy[1]}\n`);
     }
-    if (call.args[2] === 'rev-list' && call.args[3] === '--count') {
-      const [descendant = '', ancestor = ''] = (call.args[4] ?? '').split('..');
+    if (args[2] === 'rev-list' && args[3] === '--count') {
+      const [descendant = '', ancestor = ''] = (args[4] ?? '').split('..');
       return ancestor === descendant || fixture.ancestors?.[descendant]?.includes(ancestor) === true ? exited(0, '0\n') : exited(0, '1\n');
     }
     if (rest === 'stash list --format=%gd') {
@@ -175,7 +189,7 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       const ignored = (fixture.ignoredFiles?.[dir] ?? []).map((path) => `!! ${path}\0`).join('');
       return exited(0, `${fixture.status?.[dir] ?? ''}${ignored}`);
     }
-    if (call.args[2] === 'worktree' && call.args[3] === 'remove') {
+    if (args[2] === 'worktree' && args[3] === 'remove') {
       const failed = fixture.worktreeRemoveFails?.[dir];
       return failed === undefined ? exited(0) : exited(128, '', `${failed}\n`);
     }

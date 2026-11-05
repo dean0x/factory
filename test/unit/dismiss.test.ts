@@ -10,7 +10,7 @@ import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { readWorkerRecord, writeWorkerRecord } from '../../src/workers/registry.js';
 import { unknownWorkItems, type WorkItem, type WorkItemPort } from '../../src/workers/work-items.js';
-import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture, type GitLog } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
@@ -25,6 +25,8 @@ const busyWith = (item: string): WorkItem => ({ state: 'known', item });
 
 const cloneOf = (project: string): string => `${HOME}/${project}`;
 const copyOf = (id: string, project = 'web'): string => `${HOME}/work-copies/${project}/${id}`;
+/** The git folder that the clone keeps for a work copy, as `git worktree add` makes it. */
+const adminOf = (id: string, project = 'web'): string => `${cloneOf(project)}/.git/worktrees/${id}`;
 
 interface Seed {
   readonly id: string;
@@ -131,8 +133,10 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   };
   for (const [index, seed] of seeds.entries()) {
     const project = seed.project ?? 'web';
-    deps.seedDir(copyOf(seed.id, project));
     deps.seedDir(cloneOf(project));
+    // As `git worktree add` makes them: the file `.git` of the work copy names the git folder of the clone, and that folder names the file back.
+    deps.seed(`${copyOf(seed.id, project)}/.git`, `gitdir: ${adminOf(seed.id, project)}\n`);
+    deps.seed(`${adminOf(seed.id, project)}/gitdir`, `${copyOf(seed.id, project)}/.git\n`);
     const written = await writeWorkerRecord(deps, HOME, { id: seed.id, project, workCopy: copyOf(seed.id, project), branch: `worker/${seed.id}` });
     if (!written.ok) throw new Error(written.error.message);
     if (seed.recent !== true) await write(seed, index);
@@ -275,7 +279,7 @@ describe('dismiss ID: the work must be pushed', () => {
   const cases: readonly (readonly [string, GitFixture, string])[] = [
     ['a worker with no commit of its own has an untracked file', { ...onDefault, status: { [alpha]: '?? notes/new.md\0' } }, 'notes/new.md'],
     ['a worker with no commit of its own has a changed file', { ...onDefault, status: { [alpha]: ' M src/changed.ts\0' } }, 'src/changed.ts'],
-    ['a worker with no commit of its own sees an entry in the stash', { ...onDefault, stashes: { [alpha]: 1 } }, 'stash'],
+    ['a worker with no commit of its own sees an entry in the stash', { ...onDefault, stashes: { [cloneOf('web')]: 1 } }, 'stash'],
     ['the head is on no remote branch of the clone', offDefault, 'is not on the remote'],
     [
       'the remote dropped the branch, and the head is not on the default branch',
@@ -291,7 +295,7 @@ describe('dismiss ID: the work must be pushed', () => {
     ['the head has commits that the remote branch lacks', { remotes: { [cloneOf('web')]: { copies: { 'worker/alpha': OLDER } } } }, 'commits that'],
     ['a tracked file changed', { status: { [alpha]: ' M src/changed.ts\0' } }, 'src/changed.ts'],
     ['an untracked file exists', { status: { [alpha]: '?? notes/new.md\0' } }, 'notes/new.md'],
-    ['the stash holds an entry', { stashes: { [alpha]: 1 } }, 'stash'],
+    ['the stash holds an entry', { stashes: { [cloneOf('web')]: 1 } }, 'stash'],
     [
       'the remote ref is stale: the remote dropped the branch, and the fetch prunes the copy',
       { remotes: { [cloneOf('web')]: { copies: { 'worker/alpha': HEAD }, now: {} } } },
@@ -317,7 +321,7 @@ describe('dismiss ID: the work must be pushed', () => {
   });
 
   it('prints one STUCK line for each reason (TP-54)', async () => {
-    const made = await make({ workers: [{ id: 'alpha' }], git: { status: { [alpha]: ' M a.ts\0' }, stashes: { [alpha]: 2 } } });
+    const made = await make({ workers: [{ id: 'alpha' }], git: { status: { [alpha]: ' M a.ts\0' }, stashes: { [cloneOf('web')]: 2 } } });
     const output = await outputOf(made, { words: ['alpha'] });
     expect(output.lines.filter((line) => line.text.startsWith(dismissWords.stuck))).toHaveLength(2);
   });
@@ -595,14 +599,17 @@ describe('dismiss ID: the path of the work copy', () => {
     // The folder of the node is a link: every real path lies below another folder than the path of the record rule.
     const real = (path: string): string => (path.startsWith(HOME) ? `/real/node${path.slice(HOME.length)}` : path);
     const made = await make({ workers: [{ id: 'alpha' }], git: { heads: { [real(copyOf('alpha'))]: HEAD } } });
+    const back = (path: string): string => (path.startsWith('/real/node') ? `${HOME}${path.slice('/real/node'.length)}` : path);
     const linked: FakeDeps = {
       ...made.deps,
       fs: {
         ...made.deps.fs,
         realpath: async (path) => {
-          const resolved = await made.deps.fs.realpath(path);
+          const resolved = await made.deps.fs.realpath(back(path));
           return resolved.ok ? ok(real(resolved.value)) : resolved;
         },
+        lstat: (path) => made.deps.fs.lstat(back(path)),
+        readTextLimited: (path, maxBytes) => made.deps.fs.readTextLimited(back(path), maxBytes),
       },
     };
     const result = await runDismiss(linked, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownWorkItems);
@@ -625,6 +632,116 @@ describe('dismiss ID: the path of the work copy', () => {
     const made = await make({ workers: [{ id: 'alpha', project: 'api' }] });
     const error = await errorOf(made, { words: ['alpha'], yes: true });
     expect(error.kind).toBe('failure');
+    await expectNothingChanged(made, ['alpha']);
+  });
+});
+
+describe('dismiss ID: the git link of the work copy', () => {
+  const alpha = copyOf('alpha');
+  const link = `${alpha}/.git`;
+  /** The git calls that run in the work copy. */
+  const readsOf = (made: Made): readonly RunCall[] => made.git.calls.filter((call) => call.args[0] === '-C' && call.args[1] === alpha);
+
+  it('reads the work copy from the git folder that the clone keeps for it, with the file monitor off, and reads the stash and the commits in the clone (TP-55)', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const output = await outputOf(made, { words: ['alpha'] });
+    expect(output.failed).toBe(false);
+    const reads = readsOf(made);
+    expect(reads.map((call) => call.args[8])).toEqual(['rev-parse', 'status', 'status']);
+    for (const call of reads) {
+      expect(call.args.slice(2, 8)).toEqual(['-c', 'core.fsmonitor=false', '--git-dir', adminOf('alpha'), '--work-tree', alpha]);
+    }
+  });
+
+  it.each<[string, (made: Made) => void]>([
+    [
+      'names a folder inside the work copy that holds a matching back link',
+      (made) => {
+        made.deps.seed(link, `gitdir: ${alpha}/x\n`);
+        made.deps.seed(`${alpha}/x/gitdir`, `${link}\n`);
+      },
+    ],
+    [
+      'names a relative folder inside the work copy that holds a matching back link',
+      (made) => {
+        made.deps.seed(link, 'gitdir: ./x\n');
+        made.deps.seed(`${alpha}/x/gitdir`, `${link}\n`);
+      },
+    ],
+    [
+      'names the git folder of the clone itself',
+      (made) => {
+        made.deps.seed(link, `gitdir: ${cloneOf('web')}/.git\n`);
+        made.deps.seed(`${cloneOf('web')}/.git/gitdir`, `${link}\n`);
+      },
+    ],
+    [
+      'names a folder that the clone keeps for another work copy',
+      (made) => {
+        made.deps.seed(link, `gitdir: ${adminOf('beta')}\n`);
+      },
+    ],
+    [
+      'names a folder of the clone whose back link names another file',
+      (made) => {
+        made.deps.seed(`${adminOf('alpha')}/gitdir`, `${copyOf('beta')}/.git\n`);
+      },
+    ],
+    [
+      'names a folder that does not exist',
+      (made) => {
+        made.deps.seed(link, `gitdir: ${cloneOf('web')}/.git/worktrees/ghost\n`);
+      },
+    ],
+    [
+      'holds no gitdir line',
+      (made) => {
+        made.deps.seed(link, 'not a link to a git folder\n');
+      },
+    ],
+    [
+      'is a folder',
+      (made) => {
+        made.deps.files.delete(link);
+        made.deps.seedDir(link);
+      },
+    ],
+    [
+      'is missing',
+      (made) => {
+        made.deps.files.delete(link);
+      },
+    ],
+  ])('is a security stop, with no git read of the work copy and no change, when the .git entry of the work copy %s (TP-55)', async (_name, change) => {
+    const made = await make({ workers: [{ id: 'alpha' }, { id: 'beta' }] });
+    change(made);
+    for (const yes of [false, true]) {
+      const error = await errorOf(made, { words: ['alpha'], yes });
+      expect(error.kind).toBe('safety');
+      expect(exitCodeOf[error.kind]).toBe(4);
+      expect(error.hint).toContain('dismiss alpha');
+    }
+    expect(readsOf(made)).toEqual([]);
+    expect(made.git.commands().some((command) => command.startsWith('fetch'))).toBe(false);
+    await expectNothingChanged(made, ['alpha', 'beta']);
+    expect(hasPane(made, 'alpha')).toBe(true);
+  });
+
+  it('is a security stop when the .git entry of the work copy is a link', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], links: { [link]: `${adminOf('alpha')}/../../.git` } });
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(error.kind).toBe('safety');
+    expect(readsOf(made)).toEqual([]);
+    await expectNothingChanged(made, ['alpha']);
+  });
+
+  it('stops with exit 4 and runs no git read in the work copy when the owner picks a worker with a bad git link, so nothing ends', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], terminal: { answer: 'alpha' } });
+    made.deps.seed(link, `gitdir: ${alpha}/x\n`);
+    made.deps.seed(`${alpha}/x/gitdir`, `${link}\n`);
+    const error = await errorOf(made, { idle: true }, portOf({ alpha: NONE }));
+    expect(error.kind).toBe('safety');
+    expect(readsOf(made)).toEqual([]);
     await expectNothingChanged(made, ['alpha']);
   });
 });
@@ -706,7 +823,7 @@ describe('dismiss --idle', () => {
   });
 
   it('keeps the pane of a picked worker whose work is not pushed, prints STUCK, and still frees the others', async () => {
-    const made = await idleFleet({ terminal: { answer: 'alpha beta' }, git: { stashes: { [copyOf('beta')]: 1 } } });
+    const made = await idleFleet({ terminal: { answer: 'alpha beta' }, git: { status: { [copyOf('beta')]: ' M b.ts\0' } } });
     const output = await outputOf(made, { idle: true }, portOf(items));
     expect(output.failed).toBe(true);
     expect(output.exitCode).toBe(1);

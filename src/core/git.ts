@@ -32,6 +32,17 @@ export const parseGithubRepo = (url: string): string | null => {
   return match === null ? null : `${match[1]}/${match[2]}`;
 };
 
+/** The setting that turns off the program that git runs to find the changed files. */
+const FILE_MONITOR_OFF = 'core.fsmonitor=false';
+
+/**
+ * The first words of a git command in the folder `dir`. With `gitDir`, git takes the repo from that folder and the files from
+ * `dir`, so the `.git` entry of `dir` is not read, and the file monitor is off. Use `gitDir` for a folder whose content a worker
+ * can change.
+ */
+const gitIn = (dir: string, gitDir?: string): readonly string[] =>
+  gitDir === undefined ? ['-C', dir] : ['-C', dir, '-c', FILE_MONITOR_OFF, '--git-dir', gitDir, '--work-tree', dir];
+
 /** Trimmed stdout of a git command, or null when it fails or git is absent. */
 const gitOutput = async (deps: Deps, dir: string, args: readonly string[]): Promise<string | null> => {
   const result = await deps.run('git', ['-C', dir, ...args], { timeoutMs: GIT_TIMEOUT_MS });
@@ -447,9 +458,12 @@ export const requireWorkTreeTop = async (deps: Deps, dir: string, what: string):
         `Move ${dir} away, then run "${commandText(commands.init)}" again.`,
       );
 
-/** The id of the commit that HEAD names, or null when the repo has no commit. It is an error when git cannot run. */
-export const headOf = async (deps: Deps, dir: string): Promise<CliResult<string | null>> => {
-  const result = await deps.run('git', ['-C', dir, 'rev-parse', '--verify', 'HEAD'], { timeoutMs: GIT_TIMEOUT_MS });
+/**
+ * The id of the commit that HEAD names, or null when the repo has no commit. It is an error when git cannot run. `gitDir` is the git
+ * folder that the repo of `dir` has; see `gitIn`.
+ */
+export const headOf = async (deps: Deps, dir: string, gitDir?: string): Promise<CliResult<string | null>> => {
+  const result = await deps.run('git', [...gitIn(dir, gitDir), 'rev-parse', '--verify', 'HEAD'], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`cannot read the last commit of ${dir}: ${result.error.message}`);
   return ok(result.value.exitCode === 0 ? result.value.stdout.trim() : null);
 };
@@ -545,9 +559,12 @@ export const requireStateRepoCommit = async (
   return requireStateRepoReady(deps, stateDir, touched, changing, command);
 };
 
-/** The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. */
-export const statusOf = async (deps: Deps, dir: string): Promise<CliResult<readonly StatusEntry[]>> => {
-  const result = await deps.run('git', ['-C', dir, 'status', '--porcelain', '-z', '--untracked-files=all'], {
+/**
+ * The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. `gitDir` is the git
+ * folder that the repo of `dir` has; see `gitIn`.
+ */
+export const statusOf = async (deps: Deps, dir: string, gitDir?: string): Promise<CliResult<readonly StatusEntry[]>> => {
+  const result = await deps.run('git', [...gitIn(dir, gitDir), 'status', '--porcelain', '-z', '--untracked-files=all'], {
     timeoutMs: GIT_TIMEOUT_MS,
   });
   const what = `cannot read the changes of ${dir}`;
@@ -666,11 +683,12 @@ export interface IgnoredList {
 
 /**
  * The files that git ignores in the work tree at `dir` (`git status --ignored`): the files that the removal of a work copy deletes
- * and that no commit holds. A folder that is ignored whole is one entry.
+ * and that no commit holds. A folder that is ignored whole is one entry. `gitDir` is the git folder that the repo of `dir` has; see
+ * `gitIn`.
  */
-export const ignoredFilesOf = async (deps: Deps, dir: string, maxCount: number): Promise<CliResult<IgnoredList>> => {
+export const ignoredFilesOf = async (deps: Deps, dir: string, maxCount: number, gitDir?: string): Promise<CliResult<IgnoredList>> => {
   const what = `read the ignored files of ${dir}`;
-  const result = await deps.run('git', ['-C', dir, 'status', '--porcelain', '-z', '--ignored'], { timeoutMs: GIT_TIMEOUT_MS });
+  const result = await deps.run('git', [...gitIn(dir, gitDir), 'status', '--porcelain', '-z', '--ignored'], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) {
     return result.error.message.endsWith(OUTPUT_TOO_LARGE) ? ok({ paths: [], reachedCap: true }) : failure(`cannot ${what}: ${result.error.message}`);
   }

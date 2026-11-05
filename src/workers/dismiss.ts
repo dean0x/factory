@@ -1,10 +1,12 @@
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import {
+  commonDirOf,
   defaultBranchOf,
   fetchBranches,
+  GIT_ENTRY,
   headOf,
   ignoredFilesOf,
   isAncestor,
@@ -19,7 +21,7 @@ import { err, ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
 import { shellWord } from '../core/shell-word.js';
 import type { PaneRow } from '../launch/tmux.js';
-import { commands, commandText, dirs, dismissWords, roles, workerListWords } from '../names.js';
+import { commands, commandText, dirs, dismissWords, roles, workCopyGit, workerListWords } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { removeLastSeen } from './last-seen.js';
 import { branchOf, removeWorkerRecord, workCopyOf } from './registry.js';
@@ -44,6 +46,8 @@ export interface DismissPlan extends DismissTarget {
   readonly clone: string;
   /** The real path of the work copy, as the checks of the path proved it. Every read and the removal use this path. */
   readonly workCopy: string;
+  /** The git folder that the clone keeps for the work copy. Every git read of the work copy takes the repo from this folder. */
+  readonly gitDir: string;
   readonly branch: string;
   /** The default branch of the clone (`defaultBranchOf`), or null when the clone names none. */
   readonly defaultBranch: string | null;
@@ -81,10 +85,52 @@ const requireBelowWorkCopies = async (deps: Deps, home: string, target: DismissT
   return ok(real.value);
 };
 
+/** The folder that the `gitdir:` line of the file `.git` names, as it is written, or null when the text has no such line. */
+const linkedFolderOf = (text: string): string | null => {
+  const [line = ''] = text.split('\n');
+  if (!line.startsWith(workCopyGit.linkPrefix)) return null;
+  const folder = line.slice(workCopyGit.linkPrefix.length).trim();
+  return folder === '' ? null : folder;
+};
+
+/**
+ * The git folder that the clone keeps for the work copy: a folder directly below `<git folder of the clone>/worktrees/`. The file
+ * `.git` of the work copy must be a plain file, and its `gitdir:` line must name such a folder, and that folder must name the file
+ * `.git` of this work copy back. Git takes the repo of a work copy from the folder that the file names, and a worker can write the
+ * file, so every other link is a stop (exit 4), and no git command runs in the work copy. `workCopy` is the real path.
+ */
+const requireOwnGitDir = async (deps: Deps, target: DismissTarget, clone: string, workCopy: string): Promise<CliResult<string>> => {
+  const refused = (): CliResult<never> =>
+    safetyRefusal(
+      `the file ${GIT_ENTRY} of the work copy ${workCopy} of the ${roles.worker} ${target.id} does not name the folder that the clone ${clone} keeps for it, so ${commands.dismiss} runs no git command there`,
+      `Check the file ${GIT_ENTRY} in the work copy. ${runAgain(dismissLine(target.id))}`,
+    );
+  const entry = join(workCopy, GIT_ENTRY);
+  const kind = await deps.fs.lstat(entry);
+  if (!kind.ok) return kind;
+  if (kind.value !== 'file') return refused();
+  const text = await deps.fs.readTextLimited(entry, workCopyGit.maxBytes);
+  const named = text.ok ? linkedFolderOf(text.value) : null;
+  if (named === null) return refused();
+  const common = await commonDirOf(deps, clone);
+  if (common === null) {
+    return failure(`cannot find the git folder of the clone ${clone} of the project ${target.project}`, `Check the clone. ${runAgain(dismissLine(target.id))}`);
+  }
+  const realCommon = await deps.fs.realpath(common);
+  if (!realCommon.ok) return realCommon;
+  const admin = await deps.fs.realpath(resolve(workCopy, named));
+  if (!admin.ok || dirname(admin.value) !== join(realCommon.value, workCopyGit.adminFolder)) return refused();
+  const back = await deps.fs.readTextLimited(join(admin.value, workCopyGit.backPointer), workCopyGit.maxBytes);
+  if (!back.ok) return refused();
+  const pointed = await deps.fs.realpath(resolve(admin.value, back.value.trim()));
+  return pointed.ok && pointed.value === entry ? ok(admin.value) : refused();
+};
+
 /**
  * The checks of the path, before anything is read from git or changed. The work copy must be the folder that the record rule gives,
  * with no link in its path (exit 4), a folder, and below the real folder of the work copies (exit 4). The project must be in the
- * config, and its clone must be a git work tree that is not inside the work copy (exit 4): the clone is never freed.
+ * config, and its clone must be a git work tree that is not inside the work copy (exit 4): the clone is never freed. The file `.git`
+ * of the work copy must name the git folder that the clone keeps for it (exit 4).
  */
 export const planDismiss = async (deps: Deps, home: string, config: FactoryConfig, target: DismissTarget): Promise<CliResult<DismissPlan>> => {
   const { id, project: projectId } = target;
@@ -114,7 +160,17 @@ export const planDismiss = async (deps: Deps, home: string, config: FactoryConfi
       `Check the path of the project in the config. ${again}`,
     );
   }
-  return ok({ id, project: projectId, clone, workCopy: real.value, branch: branchOf(id), defaultBranch: await defaultBranchOf(deps, clone) });
+  const gitDir = await requireOwnGitDir(deps, target, clone, real.value);
+  if (!gitDir.ok) return gitDir;
+  return ok({
+    id,
+    project: projectId,
+    clone,
+    workCopy: real.value,
+    gitDir: gitDir.value,
+    branch: branchOf(id),
+    defaultBranch: await defaultBranchOf(deps, clone),
+  });
 };
 
 /** The reason that a worker may not end now, or ok. The caller gives the command that a person runs again. */
@@ -151,9 +207,12 @@ const namedFiles = (paths: readonly string[]): string => {
   return paths.length > dismissWords.maxFilesNamed ? `${shown} and ${paths.length - dismissWords.maxFilesNamed} more` : shown;
 };
 
-/** True when the commit `head` is the commit of the remote copy `copy` or lies below it. A missing copy holds no commit. */
-const isBelowCopy = async (deps: Deps, workCopy: string, head: string, copy: string | null): Promise<CliResult<boolean>> =>
-  copy === null ? ok(false) : isAncestor(deps, workCopy, head, copy);
+/**
+ * True when the commit `head` is the commit of the remote copy `copy` or lies below it. A missing copy holds no commit. The clone
+ * answers, because every work copy of a repo shares its commits.
+ */
+const isBelowCopy = async (deps: Deps, clone: string, head: string, copy: string | null): Promise<CliResult<boolean>> =>
+  copy === null ? ok(false) : isAncestor(deps, clone, head, copy);
 
 /**
  * The reason that the commits of the branch are not on the remote, or null when they are. The head must be on the remote copy of
@@ -161,16 +220,16 @@ const isBelowCopy = async (deps: Deps, workCopy: string, head: string, copy: str
  * head on the default branch, so it holds nothing that the remote lacks. The default branch is read only when the own branch fails.
  */
 const missingCommits = async (deps: Deps, plan: DismissPlan, head: string): Promise<CliResult<string | null>> => {
-  const { clone, workCopy, branch, defaultBranch } = plan;
+  const { clone, branch, defaultBranch } = plan;
   const remote = dismissWords.remote;
   const own = await remoteBranchHeadOf(deps, clone, remote, branch);
   if (!own.ok) return own;
-  const onOwn = await isBelowCopy(deps, workCopy, head, own.value);
+  const onOwn = await isBelowCopy(deps, clone, head, own.value);
   if (!onOwn.ok) return onOwn;
   if (onOwn.value) return ok(null);
   const main = defaultBranch === null ? ok(null) : await remoteBranchHeadOf(deps, clone, remote, defaultBranch);
   if (!main.ok) return main;
-  const onMain = await isBelowCopy(deps, workCopy, head, main.value);
+  const onMain = await isBelowCopy(deps, clone, head, main.value);
   if (!onMain.ok) return onMain;
   if (onMain.value) return ok(null);
   if (own.value === null) {
@@ -188,9 +247,9 @@ const missingCommits = async (deps: Deps, plan: DismissPlan, head: string): Prom
  * command that fails is a failure, never a reason.
  */
 export const unpushedReasons = async (deps: Deps, plan: DismissPlan): Promise<CliResult<readonly string[]>> => {
-  const { workCopy } = plan;
+  const { workCopy, gitDir } = plan;
   const reasons: string[] = [];
-  const head = await headOf(deps, workCopy);
+  const head = await headOf(deps, workCopy, gitDir);
   if (!head.ok) return head;
   if (head.value === null) {
     reasons.push('the work copy has no commit');
@@ -199,13 +258,13 @@ export const unpushedReasons = async (deps: Deps, plan: DismissPlan): Promise<Cl
     if (!missing.ok) return missing;
     if (missing.value !== null) reasons.push(missing.value);
   }
-  const status = await statusOf(deps, workCopy);
+  const status = await statusOf(deps, workCopy, gitDir);
   if (!status.ok) return status;
   if (status.value.length > 0) {
     const count = status.value.length;
     reasons.push(`the work copy has ${count} changed or untracked ${count === 1 ? 'file' : 'files'}: ${namedFiles(status.value.map((entry) => entry.path))}`);
   }
-  const stash = await stashCountOf(deps, workCopy);
+  const stash = await stashCountOf(deps, plan.clone);
   if (!stash.ok) return stash;
   if (stash.value > 0) {
     reasons.push(`the stash of the repo holds ${stash.value} ${stash.value === 1 ? 'entry' : 'entries'}, and every work copy of the project shares it`);
@@ -215,7 +274,7 @@ export const unpushedReasons = async (deps: Deps, plan: DismissPlan): Promise<Cl
 
 /** The files that git ignores in the work copy: the files that the removal deletes and that no commit holds. */
 export const ignoredIn = (deps: Deps, plan: DismissPlan): Promise<CliResult<IgnoredList>> =>
-  ignoredFilesOf(deps, plan.workCopy, dismissWords.maxIgnoredShown);
+  ignoredFilesOf(deps, plan.workCopy, dismissWords.maxIgnoredShown, plan.gitDir);
 
 export interface FreeRequest {
   readonly home: string;

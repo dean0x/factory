@@ -745,6 +745,13 @@ export const dismissWords = {
   pushed: { yes: 'yes', no: 'no' },
 } as const;
 
+/**
+ * How git links a work copy to its clone (the files that `git worktree add` makes). The file `.git` in the work copy has a line that
+ * starts with `linkPrefix` and names a folder `<git folder of the clone>/<adminFolder>/<name>`. The file `backPointer` in that folder
+ * names the `.git` file of the work copy. Both files are at most `maxBytes` long.
+ */
+export const workCopyGit = { linkPrefix: 'gitdir:', adminFolder: 'worktrees', backPointer: 'gitdir', maxBytes: 4096 } as const;
+
 /** The session folders that get the hook settings: the folder of the coordinator, and the work copy of a worker. */
 export const hookSessions = { coordinator: roles.coordinator, workCopy: 'work-copy' } as const;
 
