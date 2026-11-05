@@ -7,6 +7,7 @@ import {
   declinedHookText,
   ensureHookSettings,
   isOwnSettingsText,
+  missingHookEvents,
   ownSettingsEntries,
   requireHookConsent,
   type HookSettingsOutcome,
@@ -30,8 +31,19 @@ const EXPECTED_ENTRIES = {
     UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'factory hook UserPromptSubmit' }] }],
     Stop: [{ hooks: [{ type: 'command', command: 'factory hook Stop' }] }],
     PreCompact: [{ hooks: [{ type: 'command', command: 'factory hook PreCompact' }] }],
+    Notification: [{ matcher: 'permission_prompt|elicitation_dialog', hooks: [{ type: 'command', command: 'factory hook Notification' }] }],
+    PreToolUse: [{ hooks: [{ type: 'command', command: 'factory hook PreToolUse' }] }],
   },
   statusLine: { type: 'command', command: 'factory hook statusline' },
+};
+
+/** The two events that a settings file of the first release lacks. */
+const NEW_EVENTS = ['Notification', 'PreToolUse'];
+
+/** The expected entries without the two new events: the hook settings that an earlier version wrote. */
+const FOUR_EVENT_ENTRIES = {
+  ...EXPECTED_ENTRIES,
+  hooks: Object.fromEntries(Object.entries(EXPECTED_ENTRIES.hooks).filter(([event]) => !NEW_EVENTS.includes(event))),
 };
 
 const WRITE_CALLS = ['writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'mkdir', 'chmod', 'copyTree', 'removeEmptyDir'];
@@ -108,8 +120,16 @@ const groupsOf = (settings: Record<string, unknown>, event: string): unknown[] =
   ((settings['hooks'] as Record<string, unknown[]>)[event] ?? []);
 
 describe('the own entries', () => {
-  it('are the four hooks and the status line, with the command text written out', () => {
+  it('are the six hooks and the status line, with the command text written out', () => {
     expect(ownSettingsEntries).toEqual(EXPECTED_ENTRIES);
+  });
+
+  it('TP-1: hold 6 events, and only the Notification group has a matcher: the two dialog types, never idle_prompt', () => {
+    expect(Object.keys(ownSettingsEntries.hooks).sort()).toEqual([...hookNames.events].sort());
+    expect(hookNames.events).toHaveLength(6);
+    const matchers = Object.entries(ownSettingsEntries.hooks).flatMap(([event, groups]) => groups.map((group) => [event, group.matcher] as const));
+    expect(matchers.filter(([, matcher]) => matcher !== undefined)).toEqual([['Notification', 'permission_prompt|elicitation_dialog']]);
+    expect(ownSettingsEntries.hooks['Notification']?.[0]?.matcher).not.toContain('idle_prompt');
   });
 
   it('use a command that the checks of the root know as the own command', () => {
@@ -119,6 +139,45 @@ describe('the own entries', () => {
     ];
     expect(commandsOfEntries).toHaveLength(hookNames.events.length + 1);
     for (const command of commandsOfEntries) expect(ownHookCommand.test(command ?? '')).toBe(true);
+  });
+});
+
+describe('the events that a settings object lacks (TP-2)', () => {
+  const withNotification = (group: unknown): unknown => ({ ...EXPECTED_ENTRIES, hooks: { ...EXPECTED_ENTRIES.hooks, Notification: [group] } });
+  const ownNotification = { matcher: 'permission_prompt|elicitation_dialog', hooks: [{ type: 'command', command: 'factory hook Notification' }] };
+
+  it('TP-2: names the 2 new events for a file with the 4 first events', () => {
+    expect(missingHookEvents(FOUR_EVENT_ENTRIES)).toEqual(NEW_EVENTS);
+  });
+
+  it('TP-2: names no event for a current file, also when it holds other keys and other groups', () => {
+    expect(missingHookEvents(EXPECTED_ENTRIES)).toEqual([]);
+    const other = { model: 'opus', hooks: { ...EXPECTED_ENTRIES.hooks, Stop: [{ hooks: [{ type: 'command', command: 'echo a' }] }, ...EXPECTED_ENTRIES.hooks.Stop] } };
+    expect(missingHookEvents(other)).toEqual([]);
+  });
+
+  it('TP-2: counts a Notification group with another matcher, or with no matcher, as missing', () => {
+    expect(missingHookEvents(withNotification(ownNotification))).toEqual([]);
+    expect(missingHookEvents(withNotification({ ...ownNotification, matcher: 'idle_prompt' }))).toEqual(['Notification']);
+    expect(missingHookEvents(withNotification({ ...ownNotification, matcher: 'permission_prompt|elicitation_dialog|idle_prompt' }))).toEqual(['Notification']);
+    expect(missingHookEvents(withNotification({ hooks: ownNotification.hooks }))).toEqual(['Notification']);
+  });
+
+  it('TP-2: a matcher on another own event does not make it missing', () => {
+    const stop = { matcher: 'x', hooks: EXPECTED_ENTRIES.hooks.Stop[0]?.hooks };
+    expect(missingHookEvents({ ...EXPECTED_ENTRIES, hooks: { ...EXPECTED_ENTRIES.hooks, Stop: [stop] } })).toEqual([]);
+  });
+
+  it.each([
+    ['no value', undefined],
+    ['null', null],
+    ['a list', []],
+    ['text', 'hooks'],
+    ['an object with no hooks', { statusLine: EXPECTED_ENTRIES.statusLine }],
+    ['hooks that is not an object', { hooks: [] }],
+    ['an event whose value is not a list', { hooks: { ...EXPECTED_ENTRIES.hooks, Stop: 'x' } }],
+  ])('TP-2: fails closed for %s: every event is missing', (_name, settings) => {
+    expect(missingHookEvents(settings)).toEqual(hookNames.events);
   });
 });
 
@@ -178,7 +237,7 @@ describe('hook settings: the change and the consent', () => {
     expect(Object.keys(result).slice(0, 3)).toEqual(['model', 'permissions', 'hooks']);
     expect(result['model']).toBe('opus');
     expect(result['permissions']).toEqual({ allow: ['Read'] });
-    expect(groupsOf(result, 'Notification')).toEqual([{ hooks: [{ type: 'command', command: 'notify' }] }]);
+    expect(groupsOf(result, 'Notification')).toEqual([{ hooks: [{ type: 'command', command: 'notify' }] }, EXPECTED_ENTRIES.hooks.Notification[0]]);
     expect(groupsOf(result, 'Stop')).toEqual([mine, EXPECTED_ENTRIES.hooks.Stop[0]]);
     expect(groupsOf(result, 'SessionStart')).toEqual(EXPECTED_ENTRIES.hooks.SessionStart);
     expect(result['statusLine']).toEqual(EXPECTED_ENTRIES.statusLine);
@@ -208,6 +267,24 @@ describe('hook settings: the change and the consent', () => {
     const question = deps.prompts[0] ?? '';
     expect(question).toContain('"type":"static"');
     expect(question).not.toContain('x'.repeat(200));
+  });
+
+  it('TP-1: a file with the 4 first events gets exactly 2 new lines, for Notification with its matcher and for PreToolUse', async () => {
+    const deps = makeDeps();
+    deps.seed(FILE, JSON.stringify(FOUR_EVENT_ENTRIES));
+    const outcome = outcomeOf(await ensureHookSettings(deps, request({ dryRun: true })));
+    if (outcome.kind !== 'would-write') throw new Error(`the kind is ${outcome.kind}`);
+    expect(outcome.change.split('\n').slice(1)).toEqual([
+      '  hooks.Notification: add the command "factory hook Notification" for the matcher "permission_prompt|elicitation_dialog"',
+      '  hooks.PreToolUse: add the command "factory hook PreToolUse"',
+    ]);
+  });
+
+  it('TP-1: writes the 2 new groups after the 4 that are in place, and changes no other byte of the groups', async () => {
+    const deps = makeDeps({ tty: true });
+    deps.seed(FILE, JSON.stringify({ model: 'opus', ...FOUR_EVENT_ENTRIES }));
+    expect(outcomeOf(await ensureHookSettings(deps, request())).kind).toBe('written');
+    expect(stored(deps)).toEqual({ model: 'opus', ...EXPECTED_ENTRIES });
   });
 
   it('lists only the entries that are missing, and keeps the groups that hold an own command (TP-18)', async () => {

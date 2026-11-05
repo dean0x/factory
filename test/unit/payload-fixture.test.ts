@@ -189,6 +189,7 @@ describe('payloads.json', () => {
   const payloadsFile = z.looseObject({
     claude_code_version: z.string().regex(/^\d+\.\d+\.\d+$/),
     hooks: z.record(z.string(), hookPayload),
+    hook_sources: z.record(z.string(), z.strictObject({ captured: z.boolean(), source: z.string() })),
     statusline: z.looseObject({ captured: z.boolean(), source: z.string(), payload: statusLinePayload }),
   });
 
@@ -201,6 +202,20 @@ describe('payloads.json', () => {
     const parsed = payloadsFile.parse(fixture);
     expect(Object.keys(parsed.hooks).sort()).toEqual([...hookNames.events].sort());
     for (const [event, payload] of Object.entries(parsed.hooks)) expect(payload.hook_event_name).toBe(event);
+  });
+
+  it('TP-3: holds 6 payloads; the 2 new ones are not captured and name a docs source, and the Notification payload carries a type of the list', () => {
+    const parsed = payloadsFile.parse(fixture);
+    expect(Object.keys(parsed.hooks)).toHaveLength(6);
+    expect(Object.keys(parsed.hook_sources).sort()).toEqual(['Notification', 'PreToolUse']);
+    for (const source of Object.values(parsed.hook_sources)) {
+      expect(source.captured).toBe(false);
+      expect(source.source).toContain('https://code.claude.com/docs/en/hooks');
+    }
+    const type = parsed.hooks['Notification']?.['notification_type'];
+    expect(typeof type === 'string' && (hookNames.notificationTypes as readonly string[]).includes(type)).toBe(true);
+    expect(hookNames.notificationTypes).not.toContain('idle_prompt');
+    expect(parsed.hooks['PreToolUse']).not.toHaveProperty('notification_type');
   });
 
   it('says that the status line payload is not captured and names its source', () => {

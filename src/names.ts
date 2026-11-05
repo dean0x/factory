@@ -609,6 +609,12 @@ export const stateKeys = {
 } as const;
 
 /**
+ * The types of the `Notification` event that mean a dialog waits for an answer. The hook records the event for these types and
+ * for no other: the type `idle_prompt` says that the session waits for a prompt, which is the state `prompt`.
+ */
+const notificationTypes = ['permission_prompt', 'elicitation_dialog'] as const;
+
+/**
  * The hook of Claude Code that records the last-seen line of a session (design 4.6): the word after the program name,
  * the fixed list of events and the bounds. The settings of a session folder call `<program> hook <event>` for each event,
  * and `<program> hook statusline` for the status line. Claude Code names the events on its hooks page
@@ -618,9 +624,12 @@ export const hookNames = {
   command: commands.hook,
   /** The word of the status line call. It is also the config key of the command of the owner. */
   statusline: keys.session.statusline,
-  events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'],
+  events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact', 'Notification', 'PreToolUse'],
   /** The only keys that the hook reads from the input of Claude Code. Every other key of the input is dropped unread. */
-  inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name' },
+  inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name', notificationType: 'notification_type' },
+  notificationTypes,
+  /** The events whose own group in the settings has a matcher, with that matcher. The `Notification` matcher lists `notificationTypes`, parted by `|`. */
+  matchers: { Notification: notificationTypes.join('|') },
   /** The most bytes of hook input that the program reads. A larger input is refused and nothing is written. */
   maxStdinBytes: maxFileBytes,
   /** The hook reads its input for at most this many milliseconds. An input that is not whole by then is an error. */
@@ -666,14 +675,17 @@ export type HookEvent = (typeof hookNames.events)[number];
 export type HookState = 'prompt' | 'busy' | 'waits';
 
 /**
- * What the last hook event says about a session: it waits at the prompt (a session that started, or a turn that ended), or
- * it works (a turn that began, or a compact that is about to run). Every event has an entry.
+ * What the last hook event says about a session: it waits at the prompt (a session that started, or a turn that ended), it
+ * works (a turn that began, a compact that is about to run, or a tool that is about to run), or a dialog waits for an answer (a
+ * notice of one of the types of `hookNames.notificationTypes`). Every event has an entry.
  */
 export const eventState = {
   SessionStart: 'prompt',
   Stop: 'prompt',
   UserPromptSubmit: 'busy',
   PreCompact: 'busy',
+  Notification: 'waits',
+  PreToolUse: 'busy',
 } as const satisfies Readonly<Record<HookEvent, HookState>>;
 
 /**

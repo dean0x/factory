@@ -1,7 +1,7 @@
 {
   "claude_code_version": "2.1.318",
   "captured_on": "2026-11-04",
-  "capture": "The four hook payloads were captured from the installed program in print mode (claude -p --model haiku), with a project-level hook in .claude/settings.local.json that copied its stdin to a file. Every session id, prompt id, path and cwd is a placeholder. The real transcript_path names a file under the user Claude folder; the placeholder does not repeat that folder, and no code opens the file.",
+  "capture": "The first four hook payloads (SessionStart, UserPromptSubmit, Stop, PreCompact) were captured from the installed program in print mode (claude -p --model haiku), with a project-level hook in .claude/settings.local.json that copied its stdin to a file. Every session id, prompt id, path and cwd is a placeholder. The real transcript_path names a file under the user Claude folder; the placeholder does not repeat that folder, and no code opens the file.",
   "hooks": {
     "SessionStart": {
       "session_id": "00000000-0000-4000-8000-000000000001",
@@ -40,6 +40,34 @@
       "hook_event_name": "PreCompact",
       "trigger": "manual",
       "custom_instructions": null
+    },
+    "Notification": {
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "transcript_path": "/placeholder/home/transcripts/00000000-0000-4000-8000-000000000001.jsonl",
+      "cwd": "/placeholder/home/coordinator",
+      "hook_event_name": "Notification",
+      "message": "Claude needs your permission to use Bash",
+      "notification_type": "permission_prompt"
+    },
+    "PreToolUse": {
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "transcript_path": "/placeholder/home/transcripts/00000000-0000-4000-8000-000000000001.jsonl",
+      "cwd": "/placeholder/home/coordinator",
+      "permission_mode": "default",
+      "hook_event_name": "PreToolUse",
+      "tool_name": "Bash",
+      "tool_input": { "command": "echo ok" },
+      "tool_use_id": "00000000-0000-4000-8000-000000000003"
+    }
+  },
+  "hook_sources": {
+    "Notification": {
+      "captured": false,
+      "source": "field names and the notification types from the Claude Code hooks docs (https://code.claude.com/docs/en/hooks); the values are made up. An interactive capture replaces it."
+    },
+    "PreToolUse": {
+      "captured": false,
+      "source": "field names from the Claude Code hooks docs (https://code.claude.com/docs/en/hooks); the values are made up. An interactive capture replaces it."
     }
   },
   "hook_notes": [

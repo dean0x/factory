@@ -23,6 +23,7 @@ import {
   settingsCommandType,
   statuslineKeyPath,
   type CommandText,
+  type HookEvent,
   type HookSession,
 } from '../names.js';
 import { parseJsonText } from '../state/load.js';
@@ -44,8 +45,9 @@ export interface CommandEntry {
   readonly command: string;
 }
 
-/** A group of hook handlers, as Claude Code reads it under an event. */
+/** A group of hook handlers, as Claude Code reads it under an event. The matcher is set only for an event of `hookNames.matchers`. */
 export interface HookGroup {
+  readonly matcher?: string;
   readonly hooks: readonly CommandEntry[];
 }
 
@@ -57,7 +59,15 @@ export interface OwnSettings {
 
 const commandEntryOf = (command: string): CommandEntry => ({ type: settingsCommandType, command });
 
-const ownGroupOf = (event: string): HookGroup => ({ hooks: [commandEntryOf(hookCommandOf(event))] });
+const matchers: Readonly<Record<string, string>> = hookNames.matchers;
+
+/** The matcher that the own group of the event must have, or undefined for an event whose own group has none. */
+const matcherOf = (event: string): string | undefined => (Object.hasOwn(matchers, event) ? matchers[event] : undefined);
+
+const ownGroupOf = (event: string): HookGroup => {
+  const matcher = matcherOf(event);
+  return { ...(matcher === undefined ? {} : { matcher }), hooks: [commandEntryOf(hookCommandOf(event))] };
+};
 
 /**
  * The exact entries of the program: one group with one own command for each event of the fixed list, and the status line
@@ -204,10 +214,19 @@ const readSettings = async (deps: Deps, file: string, command: CommandText): Pro
   return text.ok ? parseSettings(text.value, file, command) : text;
 };
 
-const hasCommand = (group: unknown, command: string): boolean =>
-  isRecord(group) &&
-  Array.isArray(group['hooks']) &&
-  group['hooks'].some((handler) => isRecord(handler) && handler['type'] === settingsCommandType && handler['command'] === command);
+/**
+ * True when the group holds the own command of the event. For an event whose own group has a matcher, the group must have that
+ * matcher too: the same command under another matcher is not called for the notices that the own group names.
+ */
+const hasOwnCommand = (group: unknown, event: string): boolean => {
+  const matcher = matcherOf(event);
+  return (
+    isRecord(group) &&
+    (matcher === undefined || group['matcher'] === matcher) &&
+    Array.isArray(group['hooks']) &&
+    group['hooks'].some((handler) => isRecord(handler) && handler['type'] === settingsCommandType && handler['command'] === hookCommandOf(event))
+  );
+};
 
 interface Change {
   /** The settings after the change. */
@@ -221,21 +240,55 @@ interface HooksChange {
   readonly lines: readonly string[];
 }
 
+/** The groups of an event in a hooks object: none when the event is absent, and null when the value is not a list. */
+const groupsOfEvent = (hooks: Settings, event: string): readonly unknown[] | null => {
+  const groups: unknown = Object.hasOwn(hooks, event) ? hooks[event] : [];
+  return Array.isArray(groups) ? groups : null;
+};
+
+/**
+ * The events of the fixed list that no group of the hooks object covers with the own command, in the order of the list, or the
+ * first event whose value is not a list. `addHooks` and `missingHookEvents` both use this rule.
+ */
+const missingEventsIn = (hooks: Settings): { readonly missing: readonly HookEvent[] } | { readonly notList: HookEvent } => {
+  const missing: HookEvent[] = [];
+  for (const event of hookNames.events) {
+    const groups = groupsOfEvent(hooks, event);
+    if (groups === null) return { notList: event };
+    if (!groups.some((group) => hasOwnCommand(group, event))) missing.push(event);
+  }
+  return { missing };
+};
+
+/** The line of the shown change for an event that gets its own group. An event with a matcher names it. */
+const addLineOf = (event: string): string => {
+  const matcher = matcherOf(event);
+  const added = `${claudeSettingKeys.hooks}.${event}: add the command "${hookCommandOf(event)}"`;
+  return matcher === undefined ? added : `${added} for the matcher "${matcher}"`;
+};
+
 /** The hooks object with the own group added for each event that has no own command. A shape that is not known is a failure. */
 const addHooks = (current: unknown, file: string, command: CommandText): CliResult<HooksChange> => {
   const hint = `Fix the file, or move it away. ${again(command)}`;
   const base = current === undefined ? NO_SETTINGS : current;
   if (!isRecord(base)) return failure(`${file} holds ${claudeSettingKeys.hooks} that is not an object`, hint);
+  const found = missingEventsIn(base);
+  if ('notList' in found) return failure(`${file} holds ${claudeSettingKeys.hooks}.${found.notList} that is not a list`, hint);
   const hooks: Record<string, unknown> = { ...base };
-  const lines: string[] = [];
-  for (const event of hookNames.events) {
-    const groups: unknown = Object.hasOwn(hooks, event) ? hooks[event] : [];
-    if (!Array.isArray(groups)) return failure(`${file} holds ${claudeSettingKeys.hooks}.${event} that is not a list`, hint);
-    if (groups.some((group) => hasCommand(group, hookCommandOf(event)))) continue;
-    hooks[event] = [...groups, ownGroupOf(event)];
-    lines.push(`${claudeSettingKeys.hooks}.${event}: add the command "${hookCommandOf(event)}"`);
-  }
-  return ok({ hooks, lines });
+  for (const event of found.missing) hooks[event] = [...(groupsOfEvent(base, event) ?? []), ownGroupOf(event)];
+  return ok({ hooks, lines: found.missing.map(addLineOf) });
+};
+
+/**
+ * The events of the fixed list that the settings object does not cover with the own command, in the order of the list. For
+ * `Notification` the own group must have the own matcher. A shape that is not known (no object, no hooks object, or an event whose
+ * value is not a list) counts every event as missing, so a check that needs the events fails closed.
+ */
+export const missingHookEvents = (settings: unknown): readonly HookEvent[] => {
+  const hooks = isRecord(settings) ? settings[claudeSettingKeys.hooks] : undefined;
+  if (!isRecord(hooks)) return hookNames.events;
+  const found = missingEventsIn(hooks);
+  return 'notList' in found ? hookNames.events : found.missing;
 };
 
 const shownStatusLine = (value: unknown): string =>
