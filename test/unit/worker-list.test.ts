@@ -243,9 +243,16 @@ describe('worker list: the state from the last event', () => {
     ['Stop', 'at prompt'],
     ['UserPromptSubmit', 'busy'],
     ['PreCompact', 'busy'],
-  ] as const)('shows %s as %s', async (event, state) => {
+    ['PreToolUse', 'busy'],
+    ['Notification', 'waits'],
+  ] as const)('TP-5: shows %s as %s', async (event, state) => {
     const made = await make({ workers: [{ id: 'alpha', line: { event, percent: 10 } }] });
     expect(rowsOf(await listed(made))[0]?.state).toBe(state);
+  });
+
+  it('TP-5: puts the state waits in the JSON for a worker that waits at a dialog', async () => {
+    const made = await make({ workers: [{ id: 'alpha', line: { event: 'Notification', percent: 10 } }] });
+    expect(jsonOf(await listed(made)).workers[0]).toMatchObject({ id: 'alpha', state: 'waits' });
   });
 
   it('shows unknown for a worker that has no last-seen line', async () => {

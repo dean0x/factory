@@ -13,8 +13,9 @@ import { readWorkerRecord } from '../workers/registry.js';
 
 /**
  * The hook of Claude Code (design 4.6): Claude Code runs `<program> hook <event>` at the events of the fixed list and passes
- * the event as JSON on stdin. The hook records the last-seen line of the session. It reads two fields of the input and no
+ * the event as JSON on stdin. The hook records the last-seen line of the session. It reads three fields of the input and no
  * other: the schema has no field for the path of the transcript, so that path is dropped unread and nothing opens the file.
+ * The third field is the type of a `Notification`: the hook records that event only for a type that means a dialog waits.
  * Every refusal writes nothing. A person never runs it, and it never fails the session that runs it: the caller turns every
  * result into exit 0.
  */
@@ -24,12 +25,22 @@ const keys = hookNames.inputKeys;
 const inputSchema = z.object({
   [keys.sessionId]: z.string().regex(lastSeen.sessionIdPattern, 'must be a UUID with lower case letters'),
   [keys.eventName]: z.enum(hookNames.events),
+  [keys.notificationType]: z.string().optional(),
 });
 
 const isHookEvent = (word: string | undefined): word is HookEvent => hookNames.events.some((event) => event === word);
 
-/** The session id from the stdin of the hook. The input must name the event that the command line names. */
-const sessionIdOfInput = async (deps: Deps, event: HookEvent): Promise<CliResult<string>> => {
+/** The event that carries a type in its input. */
+const typedEvent: HookEvent = 'Notification';
+
+/** What the hook reads from its input: the session id, and the type of a notice (absent for an input with no type). */
+interface HookInput {
+  readonly sessionId: string;
+  readonly notificationType: string | undefined;
+}
+
+/** The fields of the stdin of the hook. The input must name the event that the command line names. */
+const readInput = async (deps: Deps, event: HookEvent): Promise<CliResult<HookInput>> => {
   const text = await deps.readStdin(hookNames.maxStdinBytes);
   if (!text.ok) return text;
   const json = parseJsonText(text.value);
@@ -39,8 +50,15 @@ const sessionIdOfInput = async (deps: Deps, event: HookEvent): Promise<CliResult
   if (parsed.data[keys.eventName] !== event) {
     return failure(`the event of the input is not the event of the command line (${event})`);
   }
-  return ok(parsed.data[keys.sessionId]);
+  return ok({ sessionId: parsed.data[keys.sessionId], notificationType: parsed.data[keys.notificationType] });
 };
+
+/**
+ * True when the event is a record of the state of the session. A `Notification` counts only for a type of
+ * `hookNames.notificationTypes`; a notice of another type, or with no type, says nothing about a dialog.
+ */
+const recordsState = (event: HookEvent, input: HookInput): boolean =>
+  event !== typedEvent || hookNames.notificationTypes.some((type) => type === input.notificationType);
 
 /**
  * True when the environment names a factory folder, so the program started this session. Outside such a session a hook does
@@ -98,7 +116,9 @@ export const sessionIdentityOf = async (deps: Deps, registry: RecipeRegistry): P
  * owner, the worker or the coordinator, after the line is written, so a reader finds the line from the id of the worker or
  * from the id of the node. The line records the id of the session marker, and a session with one marker never rewrites the
  * line of a session with another.
- * The value is nothing; an error is the reason that the hook wrote nothing, or that it did not write the pointer.
+ * A `Notification` of a type that does not mean a dialog is a valid input that records nothing: the value is nothing, and the
+ * hook reads no file of the factory. The value is nothing; an error is the reason that the hook wrote nothing, or that it did
+ * not write the pointer.
  */
 export const runHook = async (deps: Deps, args: readonly string[], registry: RecipeRegistry): Promise<CliResult<void>> => {
   if (!hasFactoryHome(deps)) return ok(undefined);
@@ -106,16 +126,16 @@ export const runHook = async (deps: Deps, args: readonly string[], registry: Rec
   const [event, ...extra] = args;
   if (!isHookEvent(event) || extra.length > 0) return failure(`the command takes one event of: ${hookNames.events.join(', ')}`);
 
-  const sessionId = await sessionIdOfInput(deps, event);
-  if (!sessionId.ok) return sessionId;
+  const input = await readInput(deps, event);
+  if (!input.ok) return input;
+  if (!recordsState(event, input.value)) return ok(undefined);
+  const { sessionId } = input.value;
 
   const identity = await sessionIdentityOf(deps, registry);
   if (!identity.ok) return identity;
   const { home, worker, marker } = identity.value;
 
-  const written = await writeLastSeen(deps, home, sessionId.value, { kind: 'event', event }, marker);
+  const written = await writeLastSeen(deps, home, sessionId, { kind: 'event', event }, marker);
   if (!written.ok) return written;
-  return worker === null
-    ? writeCoordinatorSession(deps, home, sessionId.value)
-    : writeWorkerSession(deps, home, worker, sessionId.value);
+  return worker === null ? writeCoordinatorSession(deps, home, sessionId) : writeWorkerSession(deps, home, worker, sessionId);
 };
