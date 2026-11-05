@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, expect } from 'vitest';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
 
 /**
- * The setup that the files of `shutdown`, `restart` and `reboot` share: a throw-away node, a separate tmux server, a fake program
+ * The setup that the files of `shutdown`, `restart`, `reboot` and `status` share: a throw-away node, a separate tmux server, a fake program
  * for `claude`, and a node with a session, two workers and a session line for each of them.
  */
 
