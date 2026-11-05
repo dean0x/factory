@@ -325,8 +325,7 @@ describe('the launch of a worker: the window workers stays tiled', () => {
     // Three splits fit in a window that is never tiled. Each launch tiles the window again.
     const made = make({ tmux: { splitsBeforeTile: 3 }, work: IDS.map(copyOf) });
     for (const id of IDS) {
-      const result = await launchWorker(made.deps, request({ workerId: id, workCopy: copyOf(id) }));
-      expect(result.ok, `${id}: ${result.ok ? '' : result.error.message}`).toBe(true);
+      await launched(made, { proxy: null }, { workerId: id, workCopy: copyOf(id) });
     }
     expect(made.tmux.panes().filter((pane) => pane.window === 'workers')).toHaveLength(1 + IDS.length);
     expect(made.tmux.layouts()).toEqual({ 'demo:workers': 'tiled' });
