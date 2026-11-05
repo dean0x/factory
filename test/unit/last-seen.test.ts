@@ -10,6 +10,7 @@ import {
   readOwnCoordinatorSession,
   readOwnLastSeen,
   readWorkerLastSeen,
+  removeLastSeen,
   writeCoordinatorSession,
   writeLastSeen,
   writeWorkerSession,
@@ -610,6 +611,50 @@ describe('readLastSeen', () => {
     };
     await readValue(watched);
     expect(reads).toEqual([FILE]);
+  });
+});
+
+describe('removeLastSeen (the free of a worker)', () => {
+  const OTHER = 'b4a2d3e5-2c3d-4e6f-9a01-23456789abcd';
+
+  it('removes the file of the session and no other file of the heartbeat folder', async () => {
+    const deps = createFakeDeps();
+    seedLine(deps);
+    deps.seed(`${FOLDER}/${OTHER}`, `${JSON.stringify(line({ session_id: OTHER }))}\n`);
+    expect(await removeLastSeen(deps, HOME, ID)).toEqual({ ok: true, value: undefined });
+    expect(deps.files.has(FILE)).toBe(false);
+    expect(deps.files.has(`${FOLDER}/${OTHER}`)).toBe(true);
+  });
+
+  it('is done already when the file or the folder is not there', async () => {
+    const deps = createFakeDeps();
+    expect(await removeLastSeen(deps, HOME, ID)).toEqual({ ok: true, value: undefined });
+    deps.seedDir(FOLDER);
+    expect(await removeLastSeen(deps, HOME, ID)).toEqual({ ok: true, value: undefined });
+  });
+
+  it('removes nothing when the file is a link', async () => {
+    const deps = createFakeDeps({ links: { [FILE]: '/elsewhere' } });
+    seedLine(deps);
+    const before = snapshot(deps);
+    expect(errorOf(await removeLastSeen(deps, HOME, ID)).kind).toBe('failure');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('removes nothing when the heartbeat folder is a link', async () => {
+    const deps = createFakeDeps({ links: { [FOLDER]: '/elsewhere' } });
+    seedLine(deps);
+    const before = snapshot(deps);
+    expect(errorOf(await removeLastSeen(deps, HOME, ID)).kind).toBe('failure');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('refuses a session id that is not a UUID, before any path is touched', async () => {
+    const deps = createFakeDeps();
+    seedLine(deps);
+    const result = await removeLastSeen(deps, HOME, '../node.json');
+    expect(errorOf(result).kind).toBe('failure');
+    expect(deps.files.has(FILE)).toBe(true);
   });
 });
 

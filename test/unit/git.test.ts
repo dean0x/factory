@@ -6,17 +6,23 @@ import {
   branchExists,
   commitAll,
   commitPaths,
+  fetchBranches,
   gitClone,
   headEntriesAt,
   headOf,
+  ignoredFilesOf,
   ignoredPathsOf,
   initRootRepo,
+  isAncestor,
   isFileMode,
   LINK_MODE,
   listRepoChildren,
   MAX_IGNORE_PATHS,
   MAX_SCAN_ENTRIES,
+  remoteBranchHeadOf,
+  removeWorkTree,
   requireWorkTreeTop,
+  stashCountOf,
   statusOf,
   trackedFilesOf,
   unstagePaths,
@@ -416,6 +422,23 @@ describe('git: the commit of chosen paths', () => {
     expect(log.commands().map((command) => command.split(' ')[0])).toEqual(['add', '-c']);
   });
 
+  it('refuses an empty path list, stages nothing and commits nothing: git add with no path would stage the whole tree', async () => {
+    const { handler, log } = gitHandler();
+    const result = await commitPaths(createFakeDeps({ cwd: WS, run: handler }), DIR, { present: [], gone: [] }, 'm');
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: 'cannot commit the state files: no path was named' } });
+    expect(log.commands()).toEqual([]);
+  });
+
+  it('records only the removal when the list names no present path, and never runs git add with no path', async () => {
+    const { handler, log } = gitHandler();
+    const result = await commitPaths(createFakeDeps({ cwd: WS, run: handler }), DIR, { present: [], gone: ['protocol.md'] }, 'm');
+    expect(result.ok).toBe(true);
+    expect(log.commands()).toEqual([
+      'rm -r -q --cached --ignore-unmatch -- protocol.md',
+      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m m',
+    ]);
+  });
+
   it('does not commit when the staging fails', async () => {
     const { handler, log } = gitHandler();
     const deps = createFakeDeps({ cwd: WS, run: (call) => (call.args.includes('add') ? exited(128) : handler(call)) });
@@ -725,6 +748,164 @@ describe('git: the entries of the last commit (the settings folder of a new work
   it('is a failure when git can not give the file', async () => {
     const { deps } = askedWith(exited(128, '', 'fatal: Not a valid object name\n'));
     expect(await blobTextOf(deps, '/r/web', OTHER)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+  });
+});
+
+describe('git: the checks before a work copy is freed', () => {
+  const COPY = '/w/node/work-copies/web/alpha';
+  const CLONE = '/w/node/web';
+  const HEAD = '3b9f379c935c5c919fc9b946a5103110cdeed1f3';
+  const REMOTE_HEAD = 'edb1527b23ccdb7ac7d3ae02584b377b406514fe';
+
+  const asked = (answer: ReturnType<RunHandler>) => {
+    const calls: string[][] = [];
+    const deps = createFakeDeps({
+      run: (call) => {
+        calls.push([...call.args]);
+        return answer;
+      },
+    });
+    return { deps, calls };
+  };
+
+  describe('the fetch of the branches of one remote', () => {
+    it('fetches the branches under one prefix from one remote, drops the ones that the remote lost, and fetches no tag', async () => {
+      const { deps, calls } = asked(exited(0));
+      expect(await fetchBranches(deps, COPY, 'origin', 'worker')).toEqual({ ok: true, value: undefined });
+      expect(calls).toEqual([['-C', COPY, 'fetch', '--prune', '--no-tags', 'origin', '+refs/heads/worker/*:refs/remotes/origin/worker/*']]);
+    });
+
+    it('is a failure that names the remote and the exit code when git can not fetch', async () => {
+      const { deps } = asked(exited(128, '', 'fatal: unable to access the remote\n'));
+      expect(await fetchBranches(deps, COPY, 'origin', 'worker')).toMatchObject({
+        ok: false,
+        error: { kind: 'failure', message: 'cannot fetch origin: git exited with 128 (fatal: unable to access the remote)' },
+      });
+    });
+
+    it('is a failure when git can not run', async () => {
+      const { deps } = asked(failure('cannot run git: ENOENT'));
+      expect(await fetchBranches(deps, COPY, 'origin', 'worker')).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    });
+
+    it.each([['-x', 'worker'], ['origin', '--upload-pack=x'], ['', 'worker'], ['origin', '']])(
+      'refuses the remote %j and the prefix %j before any call',
+      async (remote, prefix) => {
+        const { deps, calls } = asked(exited(0));
+        expect(await fetchBranches(deps, COPY, remote, prefix)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+        expect(calls).toEqual([]);
+      },
+    );
+  });
+
+  describe('the head of a branch of the remote', () => {
+    it('is the commit id that the remote branch names after the fetch', async () => {
+      const { deps, calls } = asked(exited(0, `${REMOTE_HEAD}\n`));
+      expect(await remoteBranchHeadOf(deps, COPY, 'origin', 'worker/alpha')).toEqual({ ok: true, value: REMOTE_HEAD });
+      expect(calls).toEqual([['-C', COPY, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/worker/alpha']]);
+    });
+
+    it('is null when the remote has no such branch', async () => {
+      expect(await remoteBranchHeadOf(asked(exited(1)).deps, COPY, 'origin', 'worker/alpha')).toEqual({ ok: true, value: null });
+    });
+
+    it('is a failure for any other exit code, and for a name that is not a branch name', async () => {
+      expect(await remoteBranchHeadOf(asked(exited(128)).deps, COPY, 'origin', 'worker/alpha')).toMatchObject({ ok: false });
+      const { deps, calls } = asked(exited(0, `${REMOTE_HEAD}\n`));
+      expect(await remoteBranchHeadOf(deps, COPY, 'origin', '--all')).toMatchObject({ ok: false });
+      expect(calls).toEqual([]);
+    });
+  });
+
+  describe('the ancestor test', () => {
+    it('is true when git exits with 0: the commit is on the other commit', async () => {
+      const { deps, calls } = asked(exited(0));
+      expect(await isAncestor(deps, COPY, HEAD, REMOTE_HEAD)).toEqual({ ok: true, value: true });
+      expect(calls).toEqual([['-C', COPY, 'merge-base', '--is-ancestor', HEAD, REMOTE_HEAD]]);
+    });
+
+    it('is false when git exits with 1', async () => {
+      expect(await isAncestor(asked(exited(1)).deps, COPY, HEAD, REMOTE_HEAD)).toEqual({ ok: true, value: false });
+    });
+
+    it('is a failure for any other exit code: an error is never read as "not an ancestor", and never as "an ancestor"', async () => {
+      expect(await isAncestor(asked(exited(128, '', 'fatal: Not a valid commit name\n')).deps, COPY, HEAD, REMOTE_HEAD)).toMatchObject({
+        ok: false,
+        error: { kind: 'failure' },
+      });
+    });
+
+    it('refuses a word that is not a commit id, before any call', async () => {
+      const { deps, calls } = asked(exited(0));
+      expect(await isAncestor(deps, COPY, '--help', REMOTE_HEAD)).toMatchObject({ ok: false });
+      expect(await isAncestor(deps, COPY, HEAD, 'origin/main')).toMatchObject({ ok: false });
+      expect(calls).toEqual([]);
+    });
+  });
+
+  describe('the stash', () => {
+    it('counts the entries of the stash list', async () => {
+      const { deps, calls } = asked(exited(0, 'stash@{0}\nstash@{1}\n'));
+      expect(await stashCountOf(deps, COPY)).toEqual({ ok: true, value: 2 });
+      expect(calls).toEqual([['-C', COPY, 'stash', 'list', '--format=%gd']]);
+    });
+
+    it('is 0 for an empty stash list', async () => {
+      expect(await stashCountOf(asked(exited(0, '')).deps, COPY)).toEqual({ ok: true, value: 0 });
+    });
+
+    it('is a failure when git fails: an error is never read as "no stash"', async () => {
+      expect(await stashCountOf(asked(exited(128)).deps, COPY)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(await stashCountOf(asked(failure('cannot run git: ERR_CHILD_PROCESS_STDIO_MAXBUFFER')).deps, COPY)).toMatchObject({ ok: false });
+    });
+  });
+
+  describe('the removal of a work copy', () => {
+    it('runs the plain git command from the clone, with no force', async () => {
+      const { deps, calls } = asked(exited(0));
+      expect(await removeWorkTree(deps, CLONE, COPY)).toEqual({ ok: true, value: undefined });
+      expect(calls).toEqual([['-C', CLONE, 'worktree', 'remove', '--', COPY]]);
+      expect(calls.flat()).not.toContain('--force');
+      expect(calls.flat()).not.toContain('-f');
+    });
+
+    it('is a failure that holds the last line of git when git refuses, for example for an untracked file', async () => {
+      const { deps } = asked(exited(128, '', "fatal: '/w/node/work-copies/web/alpha' contains modified or untracked files, use --force to delete it\n"));
+      const result = await removeWorkTree(deps, CLONE, COPY);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(!result.ok && result.error.message).toContain('contains modified or untracked files');
+    });
+
+    it('refuses a folder that is not an absolute path, before any call', async () => {
+      const { deps, calls } = asked(exited(0));
+      expect(await removeWorkTree(deps, CLONE, 'work-copies/web/alpha')).toMatchObject({ ok: false });
+      expect(calls).toEqual([]);
+    });
+  });
+
+  describe('the ignored files', () => {
+    it('lists the paths that git ignores, and not the other entries', async () => {
+      const { deps, calls } = asked(exited(0, '?? new.txt\0 M a.ts\0!! .claude/settings.local.json\0!! node_modules/\0'));
+      expect(await ignoredFilesOf(deps, COPY, 10)).toEqual({
+        ok: true,
+        value: { paths: ['.claude/settings.local.json', 'node_modules/'], reachedCap: false },
+      });
+      expect(calls).toEqual([['-C', COPY, 'status', '--porcelain', '-z', '--ignored']]);
+    });
+
+    it('stops at the cap and says that it did', async () => {
+      const { deps } = asked(exited(0, '!! a\0!! b\0!! c\0'));
+      expect(await ignoredFilesOf(deps, COPY, 2)).toEqual({ ok: true, value: { paths: ['a', 'b'], reachedCap: true } });
+    });
+
+    it('counts output that is larger than the program reads as a list that reached its cap', async () => {
+      const { deps } = asked(failure('cannot run git: ERR_CHILD_PROCESS_STDIO_MAXBUFFER'));
+      expect(await ignoredFilesOf(deps, COPY, 2)).toEqual({ ok: true, value: { paths: [], reachedCap: true } });
+    });
+
+    it('is a failure when git fails', async () => {
+      expect(await ignoredFilesOf(asked(exited(128)).deps, COPY, 2)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    });
   });
 });
 

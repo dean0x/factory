@@ -6,6 +6,7 @@ import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import {
   listWorkerRecords,
   readWorkerRecord,
+  removeWorkerRecord,
   writeWorkerRecord,
   type NewWorker,
   type WorkerList,
@@ -419,6 +420,52 @@ describe('readWorkerRecord', () => {
     const before = snapshot(deps);
     await readOf(deps);
     expect(snapshot(deps)).toBe(before);
+  });
+});
+
+describe('removeWorkerRecord (the free of a worker)', () => {
+  it('removes the folder of the worker with its record, its pointer and its inbox, and keeps the folders of the other workers', async () => {
+    const deps = make();
+    seedRecord(deps, 'web-search');
+    seedRecord(deps, 'api-fix', { project: 'api' });
+    deps.seed(`${WORKERS}/web-search/last-session`, 'a3f1c2d4-1b2c-4d5e-8f90-123456789abc\n');
+    deps.seed(`${WORKERS}/web-search/inbox/0001.md`, 'hello\n');
+    expect(valueOf(await removeWorkerRecord(deps, HOME, 'web-search'))).toBeUndefined();
+    expect([...deps.files.keys()].filter((path) => path.startsWith(`${WORKERS}/web-search`))).toEqual([]);
+    expect(deps.dirs.has(`${WORKERS}/web-search`)).toBe(false);
+    expect(deps.files.has(recordPath('api-fix'))).toBe(true);
+  });
+
+  it('is done already for a folder that is not there', async () => {
+    const deps = make();
+    deps.seedDir(WORKERS);
+    expect(valueOf(await removeWorkerRecord(deps, HOME, 'web-search'))).toBeUndefined();
+  });
+
+  it('stops with exit 4 and removes nothing when the folder of the worker is a link', async () => {
+    const deps = make({ links: { [`${WORKERS}/web-search`]: '/elsewhere' } });
+    seedRecord(deps, 'web-search');
+    const before = snapshot(deps);
+    expect(errorOf(await removeWorkerRecord(deps, HOME, 'web-search')).kind).toBe('safety');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('stops with exit 4 and removes nothing when the workers folder is a link', async () => {
+    const deps = make({ links: { [WORKERS]: '/elsewhere' } });
+    seedRecord(deps, 'web-search');
+    const before = snapshot(deps);
+    expect(errorOf(await removeWorkerRecord(deps, HOME, 'web-search')).kind).toBe('safety');
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('removes nothing for an id that is not a slug, and touches no path', async () => {
+    const deps = make();
+    seedRecord(deps, 'web-search');
+    const seen: string[] = [];
+    const result = await removeWorkerRecord(withFsWatch(deps, (_method, path) => seen.push(path)), HOME, '../node');
+    expect(errorOf(result).kind).toBe('failure');
+    expect(seen).toEqual([]);
+    expect(deps.files.has(recordPath('web-search'))).toBe(true);
   });
 });
 

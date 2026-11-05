@@ -116,6 +116,27 @@ export const readLastSeen = async (deps: Deps, home: string, sessionId: string):
   return text.ok ? lineOf(text.value, sessionId) : text;
 };
 
+/**
+ * Remove the last-seen file of one session. A session id that is not a UUID is a failure, and no path is touched. A file or a folder
+ * that is not there is removed already. A heartbeat folder or a file that is a link, or a file of another kind, is a failure, and
+ * nothing is removed.
+ */
+export const removeLastSeen = async (deps: Deps, home: string, sessionId: string): Promise<CliResult<void>> => {
+  if (!isSessionId(sessionId)) return failure('cannot remove a last-seen line: the session id is not a UUID');
+  const folder = layoutOf(home).heartbeatDir;
+  const file = join(folder, sessionId);
+  for (const [path, kind, article] of [[folder, 'dir', 'a folder'], [file, 'file', 'a file']] as const) {
+    const found = await deps.fs.lstat(path);
+    if (!found.ok) return found;
+    if (found.value === null) return ok(undefined);
+    if (found.value !== kind) {
+      const reason = found.value === 'link' ? 'is a link' : `is not ${article}`;
+      return failure(`cannot remove ${file}: ${path} ${reason}`);
+    }
+  }
+  return deps.fs.remove(file);
+};
+
 const lineWith = (
   sessionId: string,
   event: HookEvent | null,

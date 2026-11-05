@@ -1,7 +1,7 @@
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
-import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
+import { commands, commandText, dirs, gitAncestorWords, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps } from './deps.js';
 import { isInUserClaudeFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
@@ -152,6 +152,12 @@ export const defaultBranchOf = async (deps: Deps, dir: string): Promise<string |
   return isBranchName(current) ? current : null;
 };
 
+/** `cannot <what>: git exited with <code>` and the last line that git printed, with no userinfo and cut short. */
+const exitFailure = (what: string, exitCode: number, stderr: string): CliResult<never> => {
+  const detail = withoutUserinfo(stderr.trim().split('\n').at(-1) ?? '').slice(0, MAX_STDERR_CHARS);
+  return failure(`cannot ${what}: git exited with ${exitCode}${detail === '' ? '' : ` (${detail})`}`);
+};
+
 const gitStep = async (deps: Deps, dir: string, args: readonly string[], what: string): Promise<CliResult<void>> => {
   const result = await deps.run('git', ['-C', dir, ...args], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
@@ -172,9 +178,7 @@ export const gitClone = async (deps: Deps, url: string, target: string): Promise
     );
   }
   if (!result.ok) return failure(`cannot clone ${shown}: ${withoutUserinfo(result.error.message)}`);
-  if (result.value.exitCode === 0) return ok(undefined);
-  const detail = withoutUserinfo(result.value.stderr.trim().split('\n').at(-1) ?? '').slice(0, MAX_STDERR_CHARS);
-  return failure(`cannot clone ${shown}: git exited with ${result.value.exitCode}${detail === '' ? '' : ` (${detail})`}`);
+  return result.value.exitCode === 0 ? ok(undefined) : exitFailure(`clone ${shown}`, result.value.exitCode, result.value.stderr);
 };
 
 /**
@@ -206,9 +210,7 @@ export const addWorkTree = async (deps: Deps, clone: string, branch: string, fol
     return failure(`cannot ${what}: git took longer than ${WORKTREE_TIMEOUT_MS / 1000} seconds`);
   }
   if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
-  if (result.value.exitCode === 0) return ok(undefined);
-  const detail = withoutUserinfo(result.value.stderr.trim().split('\n').at(-1) ?? '').slice(0, MAX_STDERR_CHARS);
-  return failure(`cannot ${what}: git exited with ${result.value.exitCode}${detail === '' ? '' : ` (${detail})`}`);
+  return result.value.exitCode === 0 ? ok(undefined) : exitFailure(what, result.value.exitCode, result.value.stderr);
 };
 
 export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>
@@ -271,7 +273,9 @@ export interface RepoPaths {
 
 /**
  * Stage `paths` and commit them, with the hooks off. Nothing else of the working tree is staged.
- * The caller checks the identity first, and that the index holds no other staged change.
+ * The caller checks the identity first, and that the index holds no other staged change. A list with no path is a failure
+ * that runs no git command: `git add -A` with no path would stage the whole work tree. A list with only removals stages no
+ * present path.
  */
 export const commitPaths = async (
   deps: Deps,
@@ -279,6 +283,7 @@ export const commitPaths = async (
   paths: RepoPaths,
   message: string,
 ): Promise<CliResult<void>> => {
+  if (paths.present.length === 0 && paths.gone.length === 0) return failure(`cannot ${COMMIT_STATE}: no path was named`);
   if (paths.gone.length > 0) {
     // `--ignore-unmatch`: a path that git never tracked has no removal to record.
     const removed = await gitStep(
@@ -289,7 +294,8 @@ export const commitPaths = async (
     );
     if (!removed.ok) return removed;
   }
-  const added = await gitStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
+  const added =
+    paths.present.length === 0 ? ok(undefined) : await gitStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
   return added.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : added;
 };
 
@@ -548,4 +554,118 @@ export const statusOf = async (deps: Deps, dir: string): Promise<CliResult<reado
   if (!result.ok) return failure(`${what}: ${result.error.message}`);
   if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
   return ok(parseStatus(result.value.stdout));
+};
+
+/** The longest wait for a fetch: it reads the network. */
+const FETCH_TIMEOUT_MS = 60_000;
+
+/** The glob of a refspec: every branch below a prefix. */
+const ALL_BELOW = '*';
+
+/**
+ * Fetch the branches under `<prefix>/` of one remote into `refs/remotes/<remote>/<prefix>/`, in one call. A branch that the remote
+ * no longer has is dropped from the local copies (`--prune`, limited to this prefix), so after a fetch that worked, a local copy
+ * is the state of the remote now: it is never an older answer. A failed fetch leaves the copies as they were, and the caller must
+ * not use them. No tag is fetched. The remote and the prefix must be names, so no word acts as an option.
+ */
+export const fetchBranches = async (deps: Deps, dir: string, remote: string, prefix: string): Promise<CliResult<void>> => {
+  if (!isBranchName(remote) || !isBranchName(prefix)) return failure('cannot fetch: the remote and the branch prefix must be names');
+  const what = `fetch ${remote}`;
+  const result = await deps.run(
+    'git',
+    ['-C', dir, 'fetch', '--prune', '--no-tags', remote, `+refs/heads/${prefix}/${ALL_BELOW}:refs/remotes/${remote}/${prefix}/${ALL_BELOW}`],
+    { timeoutMs: FETCH_TIMEOUT_MS },
+  );
+  if (!result.ok && result.error.message.endsWith(`: ${TIME_LIMIT_SIGNAL}`)) {
+    return failure(`cannot ${what}: git took longer than ${FETCH_TIMEOUT_MS / 1000} seconds`);
+  }
+  if (!result.ok) return failure(`cannot ${what}: ${withoutUserinfo(result.error.message)}`);
+  return result.value.exitCode === 0 ? ok(undefined) : exitFailure(what, result.value.exitCode, result.value.stderr);
+};
+
+/**
+ * The commit id that the branch of a remote has in the local copies (`refs/remotes/<remote>/<branch>`), or null when there is no
+ * such copy. The caller fetches first (`fetchBranches`), because a copy that no fetch updated is an old answer.
+ */
+export const remoteBranchHeadOf = async (
+  deps: Deps,
+  dir: string,
+  remote: string,
+  branch: string,
+): Promise<CliResult<string | null>> => {
+  if (!isBranchName(remote) || !isBranchName(branch)) return failure('cannot look for a remote branch: the names must be branch names');
+  const what = `look for the branch ${branch} of ${remote}`;
+  const result = await deps.run('git', ['-C', dir, 'rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/${branch}`], {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode === 1) return ok(null);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  const id = result.value.stdout.trim();
+  return OBJECT_ID.test(id) ? ok(id) : failure(`cannot ${what}: git printed text that is not a commit id`);
+};
+
+/**
+ * True when the commit `ancestor` is the commit `descendant` or lies below it (the ancestor test of git). Git answers with
+ * exit code 1 for a commit that is not below the other. Any other answer is a failure, so an error is never read as either answer.
+ * Both words must be commit ids.
+ */
+export const isAncestor = async (deps: Deps, dir: string, ancestor: string, descendant: string): Promise<CliResult<boolean>> => {
+  if (!OBJECT_ID.test(ancestor) || !OBJECT_ID.test(descendant)) return failure('cannot compare commits: a commit id is not valid');
+  const what = 'compare two commits';
+  const result = await deps.run('git', ['-C', dir, ...gitAncestorWords, ancestor, descendant], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode === 0) return ok(true);
+  if (result.value.exitCode === 1) return ok(false);
+  return exitFailure(what, result.value.exitCode, result.value.stderr);
+};
+
+/**
+ * The count of entries in the stash of the repo of `dir`. Every work tree of one repo shares one stash. A failure is never a count:
+ * the caller must not read "no stash" from an error.
+ */
+export const stashCountOf = async (deps: Deps, dir: string): Promise<CliResult<number>> => {
+  const what = `read the stash of ${dir}`;
+  const result = await deps.run('git', ['-C', dir, 'stash', 'list', '--format=%gd'], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  return ok(result.value.stdout.split('\n').filter((line) => line !== '').length);
+};
+
+/**
+ * Remove the work copy `folder` of the repo of `clone` with the plain git command: it never uses force, so git refuses a work copy
+ * that holds a changed file or an untracked file. Git deletes the files that it ignores. The branch of the work copy stays.
+ */
+export const removeWorkTree = async (deps: Deps, clone: string, folder: string): Promise<CliResult<void>> => {
+  if (!isAbsolute(folder)) return failure('cannot remove the work copy: the folder is not an absolute path');
+  const what = `remove the work copy ${folder}`;
+  const result = await deps.run('git', ['-C', clone, 'worktree', 'remove', '--', folder], { timeoutMs: WORKTREE_TIMEOUT_MS });
+  if (!result.ok && result.error.message.endsWith(`: ${TIME_LIMIT_SIGNAL}`)) {
+    return failure(`cannot ${what}: git took longer than ${WORKTREE_TIMEOUT_MS / 1000} seconds`);
+  }
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  return result.value.exitCode === 0 ? ok(undefined) : exitFailure(what, result.value.exitCode, result.value.stderr);
+};
+
+/** The paths that git ignores in a work tree, and whether git named more paths than the list holds. */
+export interface IgnoredList {
+  /** At most `maxCount` paths, relative to the top folder, as git prints them: a folder that git ignores whole has a trailing slash. */
+  readonly paths: readonly string[];
+  /** True when git names more paths than the list holds. Output that is larger than the program reads counts the same way. */
+  readonly reachedCap: boolean;
+}
+
+/**
+ * The files that git ignores in the work tree at `dir` (`git status --ignored`): the files that the removal of a work copy deletes
+ * and that no commit holds. A folder that is ignored whole is one entry.
+ */
+export const ignoredFilesOf = async (deps: Deps, dir: string, maxCount: number): Promise<CliResult<IgnoredList>> => {
+  const what = `read the ignored files of ${dir}`;
+  const result = await deps.run('git', ['-C', dir, 'status', '--porcelain', '-z', '--ignored'], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) {
+    return result.error.message.endsWith(OUTPUT_TOO_LARGE) ? ok({ paths: [], reachedCap: true }) : failure(`cannot ${what}: ${result.error.message}`);
+  }
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  const ignored = parseStatus(result.value.stdout).filter((entry) => entry.index === '!' && entry.tree === '!');
+  return ok({ paths: ignored.slice(0, maxCount).map((entry) => entry.path), reachedCap: ignored.length > maxCount });
 };

@@ -229,6 +229,24 @@ export const writeWorkerRecord = async (deps: Deps, home: string, worker: NewWor
   return inbox.ok ? ok(record) : inbox;
 };
 
+/**
+ * Remove the folder of a worker with everything in it: its record, its pointer and its inbox. A workers folder or a folder of the
+ * worker that is a link is a security stop (exit 4), and nothing is removed. A folder that is not there is removed already. An id
+ * that is not a slug is a failure, and no path is touched.
+ */
+export const removeWorkerRecord = async (deps: Deps, home: string, id: string): Promise<CliResult<void>> => {
+  if (!isSlug(id)) return failure(`cannot remove the ${roles.worker}: the id is not a slug`);
+  const folder = workerPathsOf(home, id).dir;
+  for (const path of [layoutOf(home).workersDir, folder]) {
+    const found = await deps.fs.lstat(path);
+    if (!found.ok) return found;
+    if (found.value === null) return ok(undefined);
+    if (found.value === 'link') return safetyRefusal(`cannot remove ${folder}: ${path} is a link`, LINK_REMEDY);
+    if (found.value !== 'dir') return failure(`cannot remove ${folder}: ${path} is not a folder`);
+  }
+  return deps.fs.remove(folder);
+};
+
 /** A name from the file system as text for a person: a slug as it is, any other name as an escaped and cut text. */
 const shownName = (name: string): string => (isSlug(name) ? name : JSON.stringify(name.slice(0, 40)));
 

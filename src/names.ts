@@ -42,6 +42,7 @@ export const commands = {
   restart: 'restart',
   reboot: 'reboot',
   status: 'status',
+  dismiss: 'dismiss',
   node: 'node',
   doctor: 'doctor',
   machine: 'machine',
@@ -110,6 +111,7 @@ export const flags = {
   layer: 'layer',
   approval: 'approval',
   yes: 'yes',
+  idle: 'idle',
   for: 'for',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
@@ -683,6 +685,12 @@ export type StopWay = (typeof stopWay)[keyof typeof stopWay];
 /** The two cases of the table of ways to stop a session: the session waits at the prompt, or it works. */
 export type StopCase = 'idle' | 'busy';
 
+/** The case of the table for each state of a session that a last-seen line gives. */
+export const stopCaseOfState = { prompt: 'idle', busy: 'busy' } as const satisfies Readonly<Record<'prompt' | 'busy', StopCase>>;
+
+/** The git words that test if one commit lies below another. The core of the program keeps the word of the first one out of its text. */
+export const gitAncestorWords = ['merge-base', '--is-ancestor'] as const;
+
 /** The safe way for each case. A case with no safe way has null and uses `stopFallback`. */
 export const stopWays: Readonly<Record<StopCase, StopWay | null>> = { idle: stopWay.term, busy: stopWay.term };
 
@@ -724,6 +732,21 @@ export const statusWords = {
   stopped: 'stopped',
   workItem: { unknown: 'unknown', none: 'none' },
   idle: { yes: 'yes', no: 'no' },
+} as const;
+
+/**
+ * The rules and the words of `dismiss` (design 4.11). The work of a worker is pushed when, after a fetch of `remote`, the head of its
+ * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run names at
+ * most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
+ * files. The table of `--idle` has the columns `columns`.
+ */
+export const dismissWords = {
+  remote: 'origin',
+  stuck: 'STUCK:',
+  maxIgnoredShown: 20,
+  maxFilesNamed: 5,
+  columns: { id: 'ID', project: 'PROJECT', state: 'STATE', pushed: 'PUSHED' },
+  pushed: { yes: 'yes', no: 'no' },
 } as const;
 
 /** The session folders that get the hook settings: the folder of the coordinator, and the work copy of a worker. */
@@ -980,6 +1003,7 @@ export const schemaIds = {
   restart: `${program}.restart/v1`,
   reboot: `${program}.reboot/v1`,
   status: `${program}.status/v1`,
+  dismiss: `${program}.dismiss/v1`,
   nodeChildren: `${program}.node-children/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,

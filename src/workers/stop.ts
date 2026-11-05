@@ -7,6 +7,7 @@ import {
   commandText,
   env,
   roles,
+  stopCaseOfState,
   stopFallback,
   stopPoll,
   stopWay,
@@ -55,8 +56,6 @@ export type StopOutcome =
       readonly pane: 'closed' | 'gone';
     };
 
-const CASE_OF_STATE = { prompt: 'idle', busy: 'busy' } as const satisfies Readonly<Record<'prompt' | 'busy', StopCase>>;
-
 /**
  * The case of the session for the table of ways to stop: `idle` for a session that waits at the prompt and `busy` for a session
  * that works. A session whose state is not known, a line with no event, and a line that does not belong to the worker give null:
@@ -65,7 +64,7 @@ const CASE_OF_STATE = { prompt: 'idle', busy: 'busy' } as const satisfies Readon
 export const stopCaseOf = (read: OwnSessionRead): StopCase | null => {
   if (read.state !== 'valid') return null;
   const state = promptStateOf(read.line);
-  return state === null ? null : CASE_OF_STATE[state];
+  return state === null ? null : stopCaseOfState[state];
 };
 
 /** The way to stop a session of this case: the safe way of the table, else the fallback of the table. */
