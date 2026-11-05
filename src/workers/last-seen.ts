@@ -413,9 +413,9 @@ export type CoordinatorSessionRead =
   | { readonly state: 'not-owned'; readonly reason: string };
 
 /**
- * The newest session of the coordinator, for a command that resumes it. The pointer in the run-time folder is a hint that a
- * program in a worker pane may be able to write, so the id counts only when the line that it names records the id of the node
- * (`nodeId`) as its session marker. A session of a worker, of another node, and a line with no session marker are not owned.
+ * The newest session of the coordinator, for a command that resumes it. The pointer in the run-time folder is a hint, so the id
+ * counts only when the line that it names records the id of the node (`nodeId`) as its session marker. A session of a worker, of
+ * another node, and a line with no session marker are not owned. The check does not prove who wrote the line.
  * No pointer is absent: the caller starts a new conversation. The failure is a fault of the file system only.
  */
 export const readOwnCoordinatorSession = async (
