@@ -284,7 +284,7 @@ factory dismiss --idle         # lists the idle workers; in a terminal window yo
 2. A worker with open work, a worker whose session works now, and a worker with a live pane whose state is not known are refused with exit code 1 and a remedy line.
 3. The work must be pushed. `dismiss` fetches the `worker/` branches and the default branch of `origin` first, in one call, so a remote reference that the fetch did not update never counts (a branch that the remote dropped is pruned). The head of the branch must be on `origin/worker/ID` or on the default branch of `origin`. So a new worker with no commit of its own is not stuck, also when its branch was never pushed. The work copy must have no changed file and no untracked file, and the stash of the repo must be empty. Each reason that is not met prints one failed line (marked `[FAIL]`) that starts with `STUCK:`. Nothing is freed, and the exit code is 1.
 
-Then the pane ends (`kill -TERM`, the way of `worker stop`), the work copy is removed with the plain `git worktree remove` (never with force), and the record folder and its last-seen line are deleted together. The branch `worker/ID` stays, and the command prints the `git branch -D` line that deletes it. If a step fails, the message names the steps that were done, and `dismiss` run again does the steps that are left.
+Then the pane ends (`kill -TERM`, the way of `worker stop`), the work copy is removed with the plain `git worktree remove` (never with force), and the record folder and its last-seen line are deleted together. The branch `worker/ID` stays, and the command prints the `git branch -D` line that deletes it. If a step fails, the message names the steps that were done. Up to the removal of the work copy, `dismiss` run again does the steps that are left. After the removal, `dismiss` can not check the worker again, so the message names the last-seen file and the record folder to delete by hand.
 
 `--yes` is the consent. It needs no terminal window, and inside a factory session it gives no consent: the command stops with exit code 4. The dry run works in a session.
 
@@ -332,6 +332,7 @@ These commands stop only the panes that factory made for this factory folder. A 
 
 - Each worker needs a session id that passed the ownership check of `worker resume`, and a known state of its session. Else the command exits with code 3 and stops nothing.
 - A worker that starts again needs a work copy with settings files that pass the check of `worker new`. `restart` and `reboot` also run the root checks of `start`. A failed check exits with code 4.
+- `restart` and `reboot` ask the proxy of each launch that comes after the stop, once for the run. A proxy that does not answer, when the config does not let the session go direct, exits with code 1.
 - The command never ends the pane that runs it: that is exit code 2.
 
 After these checks, a stop can still fail: a process that does not end gives exit code 1, and a pane that the launch did not make gives exit code 4. The message then names the workers that stopped before the fault.

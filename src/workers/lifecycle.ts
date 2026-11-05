@@ -1,12 +1,13 @@
 import { err, ok } from '../core/result.js';
 import { failure, notReady, usageError, type CliError, type CliResult } from '../cli/errors.js';
+import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { killSessionArgs, type PaneRow } from '../launch/tmux.js';
 import { tmuxStep } from '../launch/tmux-run.js';
 import { commandLines, commands, commandText, env, lastSeen, roles } from '../names.js';
 import { clearActiveMark, type ClearOutcome } from '../state/active-machine.js';
 import { readOwnLastSeen, type OwnSessionRead } from './last-seen.js';
-import { requireCleanSettings, requireWorkCopy } from './launch.js';
+import { chooseProxy, requireCleanSettings, requireWorkCopy, type ProxyAnswers, type ProxyWish } from './launch.js';
 import type { WorkerRecord } from './registry.js';
 import { requireStopCase, stopWorker } from './stop.js';
 
@@ -120,6 +121,24 @@ export const checkTargets = async (deps: Deps, request: TargetCheck): Promise<Cl
     if (checked.value !== null) resumeIds.set(id, checked.value);
   }
   return ok(resumeIds);
+};
+
+/**
+ * Asks the proxy of each launch that comes after the stop, before the first stop. A proxy that does not answer, and that the config
+ * does not let go direct, would stop the launch after the stop: the check fails first (exit 1), and nothing stops. The answers go
+ * into `answers`, so each proxy is asked once for the run, and the launches use the same answer.
+ */
+export const requireProxies = async (
+  deps: Deps,
+  config: FactoryConfig,
+  wishes: readonly ProxyWish[],
+  answers: ProxyAnswers,
+): Promise<CliResult<void>> => {
+  for (const wish of wishes) {
+    const chosen = await chooseProxy(deps, config, wish, answers);
+    if (!chosen.ok) return chosen;
+  }
+  return ok(undefined);
 };
 
 export interface StopAllRequest {

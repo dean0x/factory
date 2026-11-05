@@ -8,11 +8,20 @@ import { locateHomeFolder } from '../core/home.js';
 import { attachHint, type PaneRow } from '../launch/tmux.js';
 import { commands, commandText, flags, flagText, roles, schemaIds, tmuxNames, type CommandName } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { newProxyAnswers, resumeLine, resumeWorker, type ProxyAnswers, type WorkerLaunch } from '../workers/launch.js';
+import {
+  newProxyAnswers,
+  resumeLine,
+  resumeWorker,
+  sessionProxyWish,
+  workerProxyWish,
+  type ProxyAnswers,
+  type WorkerLaunch,
+} from '../workers/launch.js';
 import {
   checkTargets,
   clearMark,
   endSession,
+  requireProxies,
   runsInside,
   stopWorkers,
   withStopped,
@@ -159,8 +168,8 @@ const restartOutput = (input: {
  * `restart ID`: stops one worker and starts it again with its session id. The other workers keep their panes. In order: the checks
  * of `start` for the root and the tools (exit 4) and the session (exit 3, which names `start`, or exit 4 for a session of another
  * folder); the record of the worker (exit 2); one list of the panes; then the checks of this worker before the stop: a session id
- * that passed the owner check, a known case, and a work copy with clean settings files (exit 3 or exit 4). After these checks the
- * worker stops (`stopWorker`) and starts again (`resumeWorker`).
+ * that passed the owner check, a known case, a work copy with clean settings files (exit 3 or exit 4), and the proxy of the worker
+ * (exit 1). After these checks the worker stops (`stopWorker`) and starts again (`resumeWorker`), with the answer of the proxy check.
  */
 export const runRestart = async (
   deps: Deps,
@@ -193,6 +202,9 @@ export const runRestart = async (
   if (resumeId === undefined) {
     return failure(`no session id was checked for the ${roles.worker} ${id}`, `Run "${commandText(again)}" again.`);
   }
+  const proxyAnswers = newProxyAnswers();
+  const proxy = await requireProxies(deps, config, [workerProxyWish(config, id, again)], proxyAnswers);
+  if (!proxy.ok) return proxy;
 
   const stopped = await stopWorker(deps, { home, session, workerId: id, panes });
   if (!stopped.ok) return stopped;
@@ -203,6 +215,7 @@ export const runRestart = async (
     workCopy: record.value.workCopy,
     retry: resumeLine(id),
     resumeId,
+    proxyAnswers,
   });
   if (!launched.ok) return err(notStarted(launched.error, id, stopped.value));
   return ok(restartOutput({ id, resumeId, stopped: stopped.value, launch: launched.value, notes }));
@@ -295,7 +308,8 @@ const rebootOutside = async (
  * `reboot`: every recorded worker stops and starts again with its session id. In order: the checks of `start` for the root and the
  * tools (exit 4); the session of the node, which must be the session of this folder when it runs (exit 4); one list of the panes;
  * then the checks of every worker before the first stop (`checkTargets`), which need a session id that passed the owner check
- * for each recorded worker (exit 3). With no session, nothing stops and the start path recovers the workers as `start` does.
+ * for each recorded worker (exit 3), and the proxy of each launch after the stop (exit 1). With no session, nothing stops and the
+ * start path recovers the workers as `start` does.
  * Outside the session, the session ends as `shutdown` ends it, and it starts again with its recovery. Inside the session (the pane
  * of the caller is a pane of it), only the workers stop and start again, and the coordinator pane stays.
  */
@@ -323,6 +337,16 @@ export const runReboot = async (
     launches: listed === null ? [] : listed.value.workers,
   });
   if (!checked.ok) return checked;
+  const inside = running !== null && runsInside(deps, running);
   const run: RebootRun = { home, session, config, notes, answers: newProxyAnswers() };
-  return running !== null && runsInside(deps, running) ? rebootInside(deps, run, running) : rebootOutside(deps, run, running);
+  if (running !== null) {
+    // The launches come after the stop, so their proxies are asked first: a proxy that does not answer stops nothing.
+    const wishes = [
+      ...(inside ? [] : [sessionProxyWish(config, commands.reboot)]),
+      ...[...checked.value.keys()].map((id) => workerProxyWish(config, id, commands.reboot)),
+    ];
+    const proxies = await requireProxies(deps, config, wishes, run.answers);
+    if (!proxies.ok) return proxies;
+  }
+  return running !== null && inside ? rebootInside(deps, run, running) : rebootOutside(deps, run, running);
 };

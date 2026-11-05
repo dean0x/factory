@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exitCodeOf, type CliError } from '../../src/cli/errors.js';
+import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runDismiss, type DismissOptions } from '../../src/commands/dismiss.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
@@ -476,6 +476,34 @@ describe('dismiss ID --yes: the free', () => {
     expect(error.hint).toContain('dismiss alpha');
     expect(await recordState(made, 'alpha')).toBe('valid');
     expect(lineExists(made, 'alpha')).toBe(true);
+  });
+
+  it.each<[string, 'line' | 'record']>([
+    ['the last-seen line', 'line'],
+    ['the record folder', 'record'],
+  ])('names the paths to delete by hand, not a run of dismiss, when %s can not be deleted after the work copy is gone', async (_name, fails) => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const recordDir = workerPathsOf(HOME, 'alpha').dir;
+    const lineFile = `${layoutOf(HOME).heartbeatDir}/${made.sessions.get('alpha') ?? ''}`;
+    const failing = fails === 'line' ? lineFile : recordDir;
+    const broken: FakeDeps = {
+      ...made.deps,
+      fs: { ...made.deps.fs, remove: async (path) => (path === failing ? failure('cannot remove it: EACCES') : made.deps.fs.remove(path)) },
+    };
+    const result = await runDismiss(broken, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownWorkItems);
+    if (result.ok) throw new Error('the free did not fail');
+    const { message, hint } = result.error;
+    expect(removals(made)).toEqual([`worktree remove -- ${copyOf('alpha')}`]);
+    expect(message).toContain(`removed the work copy ${copyOf('alpha')}`);
+    expect(hint).toContain('by hand');
+    expect(hint).toContain(recordDir);
+    expect(hint).not.toContain('again.');
+    if (fails === 'line') {
+      expect(hint).toContain(lineFile);
+    } else {
+      expect(message).toContain('deleted the last-seen line');
+      expect(hint).not.toContain(lineFile);
+    }
   });
 });
 

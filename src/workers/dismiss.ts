@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
@@ -17,9 +17,10 @@ import {
 } from '../core/git.js';
 import { err, ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
+import { shellWord } from '../core/shell-word.js';
 import type { PaneRow } from '../launch/tmux.js';
 import { commands, commandText, dirs, dismissWords, roles, workerListWords } from '../names.js';
-import { layoutOf } from '../state/layout.js';
+import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { removeLastSeen } from './last-seen.js';
 import { branchOf, removeWorkerRecord, workCopyOf } from './registry.js';
 import type { WorkerStatus } from './status.js';
@@ -230,12 +231,19 @@ export interface FreedWorker {
   readonly stopped: StopOutcome;
 }
 
-/** The same error with what was done before it, and a remedy line when it has none. */
-const afterSteps = (error: CliError, id: string, done: readonly string[]): CliError => ({
-  ...error,
-  message: `${error.message}. ${done.length === 0 ? 'Nothing was freed' : `Done before this fault: ${done.join(', ')}`}`,
-  hint: error.hint ?? runAgain(dismissLine(id)),
-});
+/**
+ * The same error with what was done before it. Before the removal of the work copy, `dismiss` run again does the steps that are
+ * left, so that is the remedy when the error has none. After the removal, `dismiss` can not run for the worker again, because its
+ * checks need the work copy: the remedy names the paths that are left, to delete by hand, after the remedy of the error.
+ */
+const afterSteps = (error: CliError, id: string, done: readonly string[], leftByHand: readonly string[] = []): CliError => {
+  const message = `${error.message}. ${done.length === 0 ? 'Nothing was freed' : `Done before this fault: ${done.join(', ')}`}`;
+  if (leftByHand.length === 0) return { ...error, message, hint: error.hint ?? runAgain(dismissLine(id)) };
+  const byHand =
+    `The work copy is gone, so "${commandText(dismissLine(id))}" does not run again for this ${roles.worker}. ` +
+    `Delete ${leftByHand.map(shellWord).join(' and ')} by hand.`;
+  return { ...error, message, hint: error.hint === undefined ? byHand : `${error.hint} ${byHand}` };
+};
 
 const stoppedStep = (stopped: StopOutcome): readonly string[] => {
   switch (stopped.kind) {
@@ -255,8 +263,8 @@ const stoppedStep = (stopped: StopOutcome): readonly string[] => {
 /**
  * Frees a worker after every check passed. In order: the pane ends (`stopWorker`, which sends TERM and never KILL); the work copy
  * is removed with the plain git command, which refuses a changed or untracked file and has no force; the last-seen line and the
- * record folder are deleted together. The branch stays. A fault names what was done before it, and `dismiss` run again finishes
- * the steps that are left, except the removal of a work copy that is gone already.
+ * record folder are deleted together. The branch stays. A fault names what was done before it. Up to the removal of the work
+ * copy, `dismiss` run again does the steps that are left. A fault after it names the paths to delete by hand (`afterSteps`).
  */
 export const freeWorker = async (deps: Deps, request: FreeRequest): Promise<CliResult<FreedWorker>> => {
   const { home, session, plan, panes, lineSession } = request;
@@ -268,11 +276,13 @@ export const freeWorker = async (deps: Deps, request: FreeRequest): Promise<CliR
   const removed = await removeWorkTree(deps, plan.clone, plan.workCopy);
   if (!removed.ok) return err(afterSteps(removed.error, plan.id, done));
   done.push(`removed the work copy ${plan.workCopy}`);
+  const recordDir = workerPathsOf(home, plan.id).dir;
   if (lineSession !== null) {
     const line = await removeLastSeen(deps, home, lineSession);
-    if (!line.ok) return err(afterSteps(line.error, plan.id, done));
+    if (!line.ok) return err(afterSteps(line.error, plan.id, done, [join(layoutOf(home).heartbeatDir, lineSession), recordDir]));
+    done.push('deleted the last-seen line');
   }
   const record = await removeWorkerRecord(deps, home, plan.id);
-  if (!record.ok) return err(afterSteps(record.error, plan.id, done));
+  if (!record.ok) return err(afterSteps(record.error, plan.id, done, [recordDir]));
   return ok({ stopped: stopped.value });
 };

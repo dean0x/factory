@@ -743,11 +743,34 @@ describe('reboot (AC-20)', () => {
       expect(made.deps.fetched).toHaveLength(1);
     });
 
-    it('stops nothing and exits 1 when the proxy of the session does not answer, after the checks', async () => {
-      const made = await make({ config: withProxy(), fetch: () => failure('no answer') });
+    it.each<[string, 'coordinator' | undefined]>([
+      ['from outside the session', undefined],
+      ['from inside the session', 'coordinator'],
+    ])('stops nothing and exits 1 when the proxy does not answer, %s: the proxy check comes before the first stop', async (_name, from) => {
+      const made = await make({ config: withProxy(), fetch: () => failure('no answer'), ...(from === undefined ? {} : { from }) });
       const error = await failed(reboot(made));
-      expect(exitCodeOf[error.kind]).toBeGreaterThanOrEqual(1);
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.hint).toContain('factory reboot');
+      expectNothingStopped(made);
+      expect(workerPanes(made)).toHaveLength(3);
       expect(made.deps.fetched).toHaveLength(1);
     });
+  });
+});
+
+describe('restart: the proxy of the worker (AC-19)', () => {
+  it('asks the proxy once, before the stop, and the launch uses that answer', async () => {
+    const made = await make({ config: withProxy() });
+    await succeeded(restart(made, 'alpha'));
+    expect(made.deps.fetched).toHaveLength(1);
+  });
+
+  it('stops nothing and exits 1 when the proxy of the worker does not answer', async () => {
+    const made = await make({ config: withProxy(), fetch: () => failure('no answer') });
+    const error = await failed(restart(made, 'alpha'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.hint).toContain('factory restart alpha');
+    expectNothingStopped(made);
+    expect(made.deps.fetched).toHaveLength(1);
   });
 });
