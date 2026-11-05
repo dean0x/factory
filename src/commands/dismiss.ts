@@ -1,6 +1,6 @@
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { err, ok } from '../core/result.js';
-import { printable, tableLines, type CommandOutput, type OutLine } from '../cli/output.js';
+import { printable, tableLines, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
@@ -319,6 +319,45 @@ const freePicks = async (
   return ok({ lines, freed, stuck });
 };
 
+/** What the list step of `dismiss --idle` gives the pick step: the idle workers, their checks, and the table and JSON of the list. */
+interface Listed {
+  readonly idle: readonly WorkerStatus[];
+  readonly checked: ReadonlyMap<string, CliResult<Inspected>>;
+  readonly table: readonly OutLine[];
+  readonly json: JsonDoc;
+}
+
+/**
+ * The pick step of `dismiss --idle`, in a terminal window outside a factory session: the owner types the ids, every id is checked
+ * before the first change, and then each picked worker is freed as `dismiss ID --yes` frees it.
+ */
+const pickAndFree = async (deps: Deps, facts: Facts, listed: Listed): Promise<CliResult<CommandOutput>> => {
+  const { idle, checked, table, json } = listed;
+  const { warnings } = facts;
+  const answer = await deps.prompt(printable(`Dismiss which ${roles.worker}s? Type their ids with spaces, or press Enter to end nothing: `));
+  if (!answer.ok) return answer;
+  const ids = idsOf(answer.value);
+  if (ids.length === 0) return ok({ lines: [...table, text('Nothing picked. Nothing changed.')], json, warnings, failed: false });
+  const picks: Pick[] = [];
+  for (const id of ids) {
+    const entry = requirePick(deps, id, idle, facts.panes ?? []);
+    if (!entry.ok) return entry;
+    const pick = await prepare(deps, facts.home, entry.value, checked);
+    if (!pick.ok) return pick;
+    picks.push(pick.value);
+  }
+  const done = await freePicks(deps, facts, picks);
+  if (!done.ok) return done;
+  const { lines, freed, stuck } = done.value;
+  return ok({
+    lines: [...table, ...lines],
+    json: { ...json, freed: freed.length > 0, picked: ids, stuck },
+    warnings,
+    failed: stuck.length > 0,
+    ...(stuck.length > 0 ? { exitCode: 1 } : {}),
+  });
+};
+
 /**
  * `dismiss --idle`: lists the idle workers with their state and whether their work is pushed, and changes nothing. Inside a factory
  * session the pick step stops (exit 4). With no terminal window the list is all. In a terminal window the owner types the ids to
@@ -367,28 +406,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
       failed: false,
     });
   }
-  const answer = await deps.prompt(printable(`Dismiss which ${roles.worker}s? Type their ids with spaces, or press Enter to end nothing: `));
-  if (!answer.ok) return answer;
-  const ids = idsOf(answer.value);
-  if (ids.length === 0) return ok({ lines: [...table, text('Nothing picked. Nothing changed.')], json, warnings, failed: false });
-  const picks: Pick[] = [];
-  for (const id of ids) {
-    const entry = requirePick(deps, id, idle, facts.value.panes ?? []);
-    if (!entry.ok) return entry;
-    const pick = await prepare(deps, home, entry.value, checked);
-    if (!pick.ok) return pick;
-    picks.push(pick.value);
-  }
-  const done = await freePicks(deps, facts.value, picks);
-  if (!done.ok) return done;
-  const { lines, freed, stuck } = done.value;
-  return ok({
-    lines: [...table, ...lines],
-    json: { ...json, freed: freed.length > 0, picked: ids, stuck },
-    warnings,
-    failed: stuck.length > 0,
-    ...(stuck.length > 0 ? { exitCode: 1 } : {}),
-  });
+  return pickAndFree(deps, facts.value, { idle, checked, table, json });
 };
 
 /**
