@@ -386,12 +386,18 @@ interface Plan {
   readonly change: Change;
 }
 
+/** The target and the content of its settings file, or null when there is no file. */
+interface TargetRead {
+  readonly target: Target;
+  readonly content: FileContent | null;
+}
+
 /**
- * The checks of the target, then the change. A path in the user settings folder, a link, a real path outside the session
- * folder or a file that is no object stops it. The first check compares the written path of the file and makes no call of the
- * file system, so it comes before any call on the target.
+ * The checks of the target, then the read of the file. A path in the user settings folder, a link, a real path outside the
+ * session folder or a file that is no object stops it. The first check compares the written path of the file and makes no call
+ * of the file system, so it comes before any call on the target.
  */
-const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<Plan>> => {
+const readTarget = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<TargetRead>> => {
   const target = targetOf(request.folder);
   const written = requireOutsideUserFolder(deps, target, request.command, target.file);
   if (!written.ok) return written;
@@ -402,9 +408,32 @@ const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliR
   const resolved = requireOutsideUserFolder(deps, target, request.command, real.value);
   if (!resolved.ok) return resolved;
   const content = parts.value.exists ? await readSettings(deps, target.file, request.command) : ok(null);
-  if (!content.ok) return content;
-  const change = addOwnEntries(content.value === null ? NO_SETTINGS : content.value.settings, target.file, request.command);
-  return change.ok ? ok({ target, text: content.value === null ? null : content.value.text, change: change.value }) : change;
+  return content.ok ? ok({ target, content: content.value }) : content;
+};
+
+/** The checks of the target, then the change that the own entries make. */
+const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<Plan>> => {
+  const read = await readTarget(deps, request);
+  if (!read.ok) return read;
+  const { target, content } = read.value;
+  const change = addOwnEntries(content === null ? NO_SETTINGS : content.settings, target.file, request.command);
+  return change.ok ? ok({ target, text: content === null ? null : content.text, change: change.value }) : change;
+};
+
+/**
+ * True when the settings file of the session folder holds the own command of at least one event of the fixed list. A session
+ * folder that is not there, a settings file that is not there and a file with no own command give false: no hook of the program
+ * is there to bring up to date. The checks of the target are those of `ensureHookSettings`, so a link is a stop (exit 4) and a
+ * file that is not a JSON object is a failure (exit 1). The call writes nothing and asks nothing.
+ */
+export const holdsOwnHook = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<boolean>> => {
+  const folder = await deps.fs.lstat(request.folder);
+  if (!folder.ok) return folder;
+  if (folder.value === null) return ok(false);
+  const read = await readTarget(deps, request);
+  if (!read.ok) return read;
+  const { content } = read.value;
+  return ok(content !== null && missingHookEvents(content.settings).length < hookNames.events.length);
 };
 
 /**

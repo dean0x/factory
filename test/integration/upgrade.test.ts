@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { setupAcceptance } from '../../src/names.js';
+import { hookNames, setupAcceptance } from '../../src/names.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
 
@@ -751,5 +751,74 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect((await box.run(['upgrade', '--home', box.node, '--yes'])).code).toBe(0);
     const doctor = await box.run(['doctor'], { cwd: box.node });
     expect(doctor.code).toBe(0);
+  });
+});
+
+describe('factory upgrade of the hook settings (built binary)', () => {
+  const WORKER_ID = 'alpha';
+
+  /** The settings of a factory that wrote the first four events only. */
+  const withFourEvents = (settings: Record<string, unknown>): Record<string, unknown> => {
+    const hooks = settings['hooks'] as Record<string, unknown>;
+    return { ...settings, hooks: Object.fromEntries(hookNames.events.slice(0, 4).map((event) => [event, hooks[event]])) };
+  };
+
+  const jsonText = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
+
+  /** The record of a worker as the file on disk holds it. The key names are written out: they are the file format. */
+  const writeRecord = async (): Promise<void> => {
+    const folder = join(box.node, '.factory', 'workers', WORKER_ID);
+    await mkdir(join(folder, 'inbox'), { recursive: true });
+    const record = {
+      schema: 'factory.worker/v1',
+      id: WORKER_ID,
+      project: 'web',
+      work_copy: join(box.node, 'work-copies', 'web', WORKER_ID),
+      branch: `worker/${WORKER_ID}`,
+      created_at: new Date().toISOString(),
+    };
+    await writeFile(join(folder, 'worker.json'), jsonText(record));
+  };
+
+  it('TP-8: with --yes, a work copy settings file and the coordinator settings file get the two new events, and a second run has nothing to do', async () => {
+    await initNode();
+    const coordinatorFile = join(box.node, 'coordinator', '.claude', 'settings.local.json');
+    const current = JSON.parse(await box.read(coordinatorFile)) as Record<string, unknown>;
+    expect(Object.keys(current['hooks'] as object)).toEqual(hookNames.events);
+    const older = jsonText(withFourEvents(current));
+    const copyFile = join(box.node, 'work-copies', 'web', WORKER_ID, '.claude', 'settings.local.json');
+    await mkdir(join(box.node, 'work-copies', 'web', WORKER_ID, '.claude'), { recursive: true });
+    await writeFile(coordinatorFile, older);
+    await writeFile(copyFile, older);
+    await writeRecord();
+
+    const dry = await box.run(['upgrade', '--home', box.node, '--dry-run']);
+    expect(dry.code).toBe(0);
+    expect(dry.stdout).toContain(`This changes the settings of Claude Code in ${copyFile}:`);
+    expect(dry.stdout).toContain('hooks.Notification: add the command "factory hook Notification"');
+    expect(await box.read(copyFile)).toBe(older);
+    expect(await box.read(coordinatorFile)).toBe(older);
+
+    const result = await box.run(['upgrade', '--home', box.node, '--yes']);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain(`Changed the hook settings in ${copyFile}.`);
+    expect(JSON.parse(await box.read(copyFile))).toEqual(current);
+    expect(JSON.parse(await box.read(coordinatorFile))).toEqual(current);
+
+    const again = await box.run(['upgrade', '--home', box.node, '--yes']);
+    expect(again.code).toBe(0);
+    expect(again.stdout).toContain('Nothing to upgrade.');
+  });
+
+  it('TP-6: with no terminal and no --yes, it writes no hook settings, warns with the remedy and exits 0', async () => {
+    await initNode();
+    const coordinatorFile = join(box.node, 'coordinator', '.claude', 'settings.local.json');
+    const older = jsonText(withFourEvents(JSON.parse(await box.read(coordinatorFile)) as Record<string, unknown>));
+    await writeFile(coordinatorFile, older);
+    const result = await box.run(['upgrade', '--home', box.node]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain('no consent');
+    expect(result.stderr).toContain('--yes');
+    expect(await box.read(coordinatorFile)).toBe(older);
   });
 });

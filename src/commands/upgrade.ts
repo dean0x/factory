@@ -73,6 +73,7 @@ import {
   settleSetupBlocks,
   type FilesPlan,
 } from '../upgrade/plan.js';
+import { applyHookSettings, hookPlanLines, planHookSettings } from '../upgrade/hook-settings.js';
 import { specFor, type UpgradeSpec } from '../upgrade/spec.js';
 import { acceptReason, checkRootSetup, settleSetup } from './setup-check.js';
 
@@ -265,8 +266,12 @@ export const runUpgrade = async (
   const refused = refusalOf(blocks);
   if (!refused.ok) return refused;
 
+  // The hook settings are planned with no write, so a stop of a check comes before the first write of the run.
+  const hooks = await planHookSettings(deps, home, options.yes);
+  if (!hooks.ok) return hooks;
+
   const changes = blocks.filter(isChange);
-  const changed =
+  const stateChanges =
     config.value.kind === 'migrate' ||
     local.value.kind !== 'current' ||
     state.value.kind === 'migrate' ||
@@ -275,6 +280,7 @@ export const runUpgrade = async (
     root.value.gitignore.action !== 'current' ||
     root.value.repo ||
     changes.length > 0;
+  const changed = stateChanges || hooks.value.length > 0;
 
   // The new texts come from pure functions. The dry run makes them too, so that it reports what the real run refuses.
   const stateText = stateFileText(state.value, upgrade, changes);
@@ -314,6 +320,7 @@ export const runUpgrade = async (
     backupPath: string | null,
     committed: boolean,
     blockBackups: readonly BlockBackup[] = [],
+    hookSettings: readonly string[] = [],
   ): CliResult<CommandOutput> =>
     ok({
       lines: [...lines, ...extra],
@@ -326,13 +333,22 @@ export const runUpgrade = async (
         backup: backupPath,
         blockBackups: blockBackups.map((saved) => saved.path),
         committed,
+        hookSettings,
       },
       warnings: [...warnings, ...extra.filter((line) => line.level === 'warn').map((line) => line.text)],
       failed: false,
     });
 
   if (!changed) return done([{ level: 'text', text: 'Nothing to upgrade.' }], null, false);
-  if (options.dryRun) return done([{ level: 'text', text: 'Dry run: no file was changed.' }], null, false);
+  if (options.dryRun) {
+    const dryLines = [...hookPlanLines(hooks.value, options.yes), { level: 'text' as const, text: 'Dry run: no file was changed.' }];
+    return done(dryLines, null, false, [], hooks.value.map((change) => change.file));
+  }
+  if (!stateChanges) {
+    // Only the hook settings change: the run makes no backup and no commit.
+    const applied = await applyHookSettings(deps, hooks.value, options.yes);
+    return applied.ok ? done(applied.value.lines, null, false, [], applied.value.changed) : applied;
+  }
 
   const replacements = files.replaces.filter((replace) => replace.action === 'replace');
   const touchesState = state.value.kind === 'migrate' || changes.length > 0 || stateGitignore.value.text !== null;
@@ -453,6 +469,9 @@ export const runUpgrade = async (
   const count = written.length + moved.length;
   const pruned = [...(await pruneBackups(deps, home, backupDir.value)), ...(await pruneBlockBackups(deps, home))];
   const indexed = await indexUpgraded(deps, home, origin, registry);
+  // The hook settings come last: the state is upgraded and registered by now, and a stop here names what is left to do.
+  const hookApplied = await applyHookSettings(deps, hooks.value, options.yes);
+  if (!hookApplied.ok) return hookApplied;
   return done(
     [
       ...savedBlocks.value.map((saved): OutLine => ({
@@ -465,9 +484,11 @@ export const runUpgrade = async (
         ? []
         : [{ level: 'warn' as const, text: `Old ${dirs.backups} could not be removed: ${pruned.join('; ')}.` }]),
       ...indexed,
+      ...hookApplied.value.lines,
     ],
     backupPath,
     stateChanged,
     savedBlocks.value,
+    hookApplied.value.changed,
   );
 };
