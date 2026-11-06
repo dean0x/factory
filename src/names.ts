@@ -261,10 +261,23 @@ export const claudeSettingKeys = {
   statusLine: 'statusLine',
   approveAllMcp: 'enableAllProjectMcpServers',
   approveMcpList: 'enabledMcpjsonServers',
+  /** The setting that tells a session what to do with the input of other sessions: accept it, hold it for approval, or refuse it. */
+  crossSessionInbound: 'crossSessionInbound',
 } as const;
 
 /** The permission mode that accepts file edits with no prompt. A settings file with it gives a warning, not a stop. */
 export const acceptEditsMode = 'acceptEdits';
+
+/** The permission mode that plans first. A session in it holds the input of other sessions for approval. A settings file with it gives a warning. */
+export const planMode = 'plan';
+
+/** The values of `crossSessionInbound` that keep the input of other sessions from reaching a session at once. Any other value gives no warning. */
+export const crossSessionHeldValues = ['hold', 'refuse'] as const;
+
+export type CrossSessionHeldValue = (typeof crossSessionHeldValues)[number];
+
+/** What a warning about a setting says about the reach of the check: user-level settings and a mode set in a pane stay unseen. */
+export const settingsSeenNote = 'This check reads project and local settings only, not user-level settings or a mode set in a pane.';
 
 /** One item of the permission-skip list: a setting at a path with a value, or a text that stands anywhere in the file. */
 export type PermissionSkip =

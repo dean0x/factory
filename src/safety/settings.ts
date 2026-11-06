@@ -2,11 +2,14 @@ import {
   acceptEditsMode,
   claudeSettingKeys,
   commandSettingKeys,
+  crossSessionHeldValues,
   env,
   ownHookCommand,
   permissionSkipList,
+  planMode,
   settingsCommandType,
   trafficEnvNames,
+  type CrossSessionHeldValue,
   type PermissionSkip,
 } from '../names.js';
 import { parseJsonText } from '../state/load.js';
@@ -38,6 +41,10 @@ export interface SettingsFacts {
   readonly narrowRules: readonly string[];
   /** True when the default mode is `acceptEdits`. */
   readonly acceptEdits: boolean;
+  /** True when the default mode is `plan`. */
+  readonly planMode: boolean;
+  /** The value of `crossSessionInbound` when it holds or refuses the input of other sessions. Null for any other value, and when it is not set. */
+  readonly crossSessionInbound: CrossSessionHeldValue | null;
   /** The names of the settings that approve the MCP servers of a project: all of them, or a list. */
   readonly approvesMcp: readonly string[];
 }
@@ -153,6 +160,11 @@ const approvesMcp = (parsed: unknown): readonly string[] => {
   ];
 };
 
+const heldCrossSession = (parsed: unknown): CrossSessionHeldValue | null => {
+  const value = valueAt(parsed, [claudeSettingKeys.crossSessionInbound]);
+  return crossSessionHeldValues.find((held) => held === value) ?? null;
+};
+
 export const analyzeSettings = (text: string): SettingsFacts => {
   const json = parseJsonText(text);
   const parsed = json.ok ? json.value : undefined;
@@ -166,6 +178,8 @@ export const analyzeSettings = (text: string): SettingsFacts => {
     wholeToolRules: rules.filter(isWholeToolRule).slice(0, MAX_LISTED_RULES).map(shown),
     narrowRules: rules.filter((rule) => !isWholeToolRule(rule)).slice(0, MAX_LISTED_RULES).map(shown),
     acceptEdits: valueAt(parsed, [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode]) === acceptEditsMode,
+    planMode: valueAt(parsed, [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode]) === planMode,
+    crossSessionInbound: heldCrossSession(parsed),
     approvesMcp: approvesMcp(parsed),
   };
 };

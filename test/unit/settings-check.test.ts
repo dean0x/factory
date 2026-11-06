@@ -265,6 +265,27 @@ describe('the permission mode acceptEdits', () => {
   });
 });
 
+describe('the settings that hold or refuse the input of other sessions (TP-36)', () => {
+  it.each([['hold'], ['refuse']])('finds crossSessionInbound %s', (value) => {
+    expect(analyzeSettings(JSON.stringify({ [claudeSettingKeys.crossSessionInbound]: value })).crossSessionInbound).toBe(value);
+  });
+
+  it.each([
+    ['accept', { [claudeSettingKeys.crossSessionInbound]: 'accept' }],
+    ['another text', { [claudeSettingKeys.crossSessionInbound]: 'Hold' }],
+    ['a value that is no text', { [claudeSettingKeys.crossSessionInbound]: ['hold'] }],
+    ['no setting', {}],
+  ])('finds no crossSessionInbound for %s', (_name, value) => {
+    expect(analyzeSettings(JSON.stringify(value)).crossSessionInbound).toBeNull();
+  });
+
+  it('finds the default mode plan, and no other mode', () => {
+    expect(analyzeSettings(JSON.stringify({ permissions: { defaultMode: 'plan' } })).planMode).toBe(true);
+    expect(analyzeSettings(JSON.stringify({ permissions: { defaultMode: acceptEditsMode } })).planMode).toBe(false);
+    expect(analyzeSettings('{}').planMode).toBe(false);
+  });
+});
+
 describe('the approval of project MCP servers (TP-180)', () => {
   it('finds the setting that approves all of them', () => {
     expect(analyzeSettings(JSON.stringify({ [claudeSettingKeys.approveAllMcp]: true })).approvesMcp).toEqual([
@@ -319,6 +340,8 @@ describe('a text that is not a settings object', () => {
       wholeToolRules: [],
       narrowRules: [],
       acceptEdits: false,
+      planMode: false,
+      crossSessionInbound: null,
       approvesMcp: [],
     });
   });
