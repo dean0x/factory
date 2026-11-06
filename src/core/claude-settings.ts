@@ -134,6 +134,12 @@ const targetOf = (folder: string): Target => {
   return { folder: root, claudeFolder, file: join(claudeFolder, localSettingsFile) };
 };
 
+/** The folder `.claude` and the hook settings file in it, for a session folder: the file that this module reads and writes. */
+export const hookSettingsPlaceOf = (folder: string): { readonly claudeFolder: string; readonly file: string } => {
+  const { claudeFolder, file } = targetOf(folder);
+  return { claudeFolder, file };
+};
+
 const clipped = (text: string): string => (text.length > MAX_SHOWN_CHARS ? `${text.slice(0, MAX_SHOWN_CHARS)}...` : text);
 
 const again = (command: CommandText): string => `Then run "${commandText(command)}" again.`;

@@ -140,6 +140,8 @@ export const files = {
   workerRecord: 'worker.json',
   /** The pointer of one worker to its newest session: `workers/<id>/last-session` holds a session id. */
   workerLastSession: 'last-session',
+  /** The notes of a worker for its next turn, in its inbox folder: a reset needs them before it clears or compacts the session. */
+  resume: 'resume.md',
   /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
   coordinatorLastSession: 'coordinator-last-session',
   /** The id of this machine, in the run-time folder: made once, and never shared. */
@@ -175,6 +177,8 @@ export const dirs = {
   workers: 'workers',
   /** The folder of the messages for a worker, inside its folder. The session of the worker gets it with `--add-dir`. */
   inbox: 'inbox',
+  /** The folder of the resume notes of the coordinator in the state folder: one file for each node, named by the node id. */
+  resume: 'resume',
   backups: 'backups',
   runtime: 'state',
   /** The folder of the last-seen files, inside the run-time folder: one file for each session. */
@@ -750,6 +754,17 @@ export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
  * written after the start, with the session marker of the worker. Any other launch checks the pane once, after one wait.
  */
 export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionStart' } as const;
+
+/**
+ * The start time of the process of a pane. The macOS `ps` has no `etimes`, and tmux has no format for the start time of a pane, so
+ * the check asks `ps` for the elapsed time of the pane process. `timeoutMs` bounds the call. `etime` is the one form of the answer
+ * that the check accepts: spaces at the ends and one new line at the end, then optional days and a dash (days need hours), optional
+ * hours, and minutes and seconds with 2 digits each. The groups are the days, the hours, the minutes and the seconds.
+ */
+export const paneElapsed = {
+  timeoutMs: 5_000,
+  etime: /^ *(?:(?:([0-9]{1,5})-)?([0-9]{2}):)?([0-9]{2}):([0-9]{2}) *\n?$/,
+} as const;
 
 /** The words of `worker list`: the titles of the columns, the pane column, the state of a worker and the mark of its context. */
 export const workerListWords = {
