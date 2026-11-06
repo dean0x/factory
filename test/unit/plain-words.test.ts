@@ -366,8 +366,15 @@ describe('the allow list', () => {
 });
 
 describe('the docs that the docs change reads', () => {
-  it('reads the five docs of the docs change, the intent trace included', () => {
-    expect([...SCANNED_DOCS]).toEqual(['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md']);
+  it('reads the six docs of the docs change, the intent trace and the quick-start guide included', () => {
+    expect([...SCANNED_DOCS]).toEqual([
+      'design.md',
+      'roadmap-v2.md',
+      'token-budget.md',
+      'intent-trace.md',
+      'glossary.md',
+      'quick-start.md',
+    ]);
   });
 
   it.each(SCANNED_DOCS)('%s holds no old word and no scanned jargon word outside code spans and the mapping tables', (name) => {

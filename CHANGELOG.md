@@ -157,6 +157,14 @@ Platforms and help
 - New command `factory machine`. It reads the free memory, the free disk space of the factory folder, the load and the count of processors, on macOS and on Linux, and judges them against `limits.memory_free_min_pct`, `limits.disk_free_min_gb` and `limits.load_max`. Each fact has a value, a limit and a verdict: `ok`, `fail` or `unknown`. A program that fails or is too slow, and an output that does not parse, give `unknown`. The exit code is 0 for every verdict. `--json` prints the facts.
 - Error messages, hints, the text of an internal error and the question of `init` show a control character as `?`, as the other text output does.
 
+Install
+
+- A developer with read access installs factory from a private early-access tag `v0.2.0-ea.N` of the git repo. The install has two steps. `npm pack "git+ssh://git@github.com/dean0x/factory.git#<sha>"` builds a package file with the new script `prepare`, and `npm install --global ./dean0x-factory-0.2.0.tgz` installs it. `<sha>` is the full 40-character commit SHA of the hand-over. The guide first checks with `git ls-remote` that the tag points to `<sha>`, so the build is the commit that was checked and not the tag name. npm can not build the program in a one-step global install from git.
+- `package.json` now has `"private": true` and keeps `publishConfig`. FAC-M10 removes `private` after the owner writes the decision id.
+- The package now holds the guide `docs/quick-start.md`. It lists the prerequisites with their checks, the install, the update, the tmux keys and the known limits.
+- A private `v0.2.0-ea.N` tag is no release. There is no GitHub Release and no npm publish. `factory version` prints `0.2.0` for every build, so the tag and the commit SHA name the build.
+- CI proves the install from git on Linux and on macOS with `npm run install-check`.
+
 Security
 
 - `start` and `doctor` find a Claude settings file that skips the permission prompts, that sets or clears an `env` variable whose name starts with `FACTORY_`, or that sets the proxy or the credential of the session in `env`, in `coordinator/`, in a project folder or at a tracked path. `doctor` fails and `start` exits with code 4. A settings file in `coordinator/` or in a project folder that runs a command (a hook, a status line or a key helper) stops them too. The hook and the status line that `factory` writes itself do not count.

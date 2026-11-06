@@ -11,7 +11,7 @@ const VERSION_TIMEOUT_MS = 5000;
 /** The oldest tmux that runs a program from an argument list with no shell (`new-session -- command args`). */
 export const MIN_TMUX = { major: 3, minor: 0 } as const;
 
-/** The oldest agent that takes text from another session in its inbox. */
+/** The oldest agent that has the messages between sessions. */
 export const MIN_AGENT_VERSION = { major: 2, minor: 1, patch: 224 } as const;
 
 /** The most characters of the output of `<agent> --version` that are read. A longer output is not a version. */

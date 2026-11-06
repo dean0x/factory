@@ -6,11 +6,14 @@ A node is a folder with a config file, a layer and an owner. A node on layer 1 o
 
 ## Install
 
-Not published yet.
+factory is in early access. It is not on the npm registry. A developer with read access to the private repo installs it from a private tag `v0.2.0-ea.N`. The owner gives you the number `N` and the commit SHA. `<sha>` is the full 40-character commit SHA of the tag. First check with `git ls-remote` that the tag points to `<sha>`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run this pair of commands in a new empty folder:
 
 ```sh
-npm install --global @dean0x/factory
+npm pack "git+ssh://git@github.com/dean0x/factory.git#<sha>"
+npm install --global ./dean0x-factory-0.2.0.tgz
 ```
+
+The first command builds the program from source at the commit `<sha>`, not at the tag name, and makes a package file. The second command installs that file. The guide has the checks, the update steps and the known limits.
 
 You need:
 
@@ -158,7 +161,7 @@ git remote add origin <url>
 git push -u origin main
 ```
 
-The one command for a received factory is `factory init`. You need the `factory` program on the machine first. Another developer can not install it before the package is published.
+The one command for a received factory is `factory init`. You need the `factory` program on the machine first: see "Install".
 
 ```sh
 git clone <url> <folder>
@@ -568,9 +571,12 @@ npm run test:unit
 npm run build
 npm run test:integration
 npm run exit-check
+npm run install-check
 ```
 
-The integration tests and the exit check use `dist/factory.js`, so run `npm run build` first. Some integration tests need tmux 3.0 or newer, and skip with a note when tmux is missing. The exit check makes the tarball of the package and installs it in a throw-away `HOME`. Then it runs `init` in a repo whose https origin a local bare repo serves. It runs `start --dry-run` and `doctor` from the factory folder, from the coordinator folder and from the clone. Last, it searches the generated files and the help text for names that must not be there. It never writes the real `HOME`, the real state folder or the real tmux server.
+The integration tests, the exit check and the install check use `dist/factory.js`, so run `npm run build` first. Some integration tests need tmux 3.0 or newer, and skip with a note when tmux is missing. The exit check makes the tarball of the package and installs it in a throw-away `HOME`. Then it runs `init` in a repo whose https origin a local bare repo serves. It runs `start --dry-run` and `doctor` from the factory folder, from the coordinator folder and from the clone. Last, it searches the generated files and the help text for names that must not be there. It never writes the real `HOME`, the real state folder or the real tmux server.
+
+The install check pushes the commit of this checkout into a throw-away bare repo. Then `npm pack` builds that commit with `prepare`, and `npm install --global` installs the tarball in a throw-away prefix. The check compares the installed `dist/factory.js` with the build. It runs the install scripts of the packages, and it needs the npm registry. It never writes the real `HOME`, the real npm prefix or this repo.
 
 `npm run check:docs` checks that the design documents agree with each other.
 

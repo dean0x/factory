@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -51,6 +52,7 @@ const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
 const GLOSSARY_FILE = join(SRC, 'glossary.ts');
 const EXIT_CHECK = join(__dirname, '..', '..', 'scripts', 'exit-check.sh');
+const INSTALL_CHECK = join(__dirname, '..', '..', 'scripts', 'install-check.sh');
 
 /** An import path is no text for a user. */
 const IMPORT_PATH = /^(node:|\.{1,2}\/)/;
@@ -344,6 +346,16 @@ describe('words of the old names', () => {
     expect(oldWordsIn(text)).toEqual([]);
   });
 
+  it('keeps the package private, so that npm publish refuses it, and builds the program on a git install', () => {
+    const manifest: unknown = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8'));
+    expect(manifest).toMatchObject({ private: true, scripts: { prepare: 'npm run build' } });
+  });
+
+  it('puts the quick-start guide in the files of the package, so that the link of the README resolves after an install', () => {
+    const manifest: unknown = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8'));
+    expect(manifest).toMatchObject({ files: expect.arrayContaining(['docs/quick-start.md']) });
+  });
+
   it('keeps the old words and the jargon words out of every template', () => {
     const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
     expect(texts.flatMap(plainWordsIn)).toEqual([]);
@@ -464,6 +476,191 @@ describe('the flow and the clean-up of the exit check', () => {
   });
 });
 
+describe('the install check', () => {
+  const codeOf = (text: string): string[] => text.split('\n').filter((line) => !line.trimStart().startsWith('#'));
+  const exitCode = codeOf(readFileSync(EXIT_CHECK, 'utf8'));
+  const installText = readFileSync(INSTALL_CHECK, 'utf8');
+  const code = codeOf(installText);
+  /** The code lines without indentation and without the && that joins the steps of a function. */
+  const lines = code.map((line) => line.trim().replace(/ &&$/, ''));
+  const exportNames = (all: string[]): string[] =>
+    all.flatMap((line) => /^export ([A-Za-z_]+)=/.exec(line.trim())?.[1] ?? []).sort();
+  const unsetLines = (all: string[]): string[] => all.filter((line) => /^unset\s/.test(line.trim()));
+  const unsetNames = (all: string[]): string[] =>
+    unsetLines(all).flatMap((line) => line.trim().slice('unset '.length).split(' '));
+
+  it('removes one folder only: the one that its own mktemp made, behind a guard that tests the variable', () => {
+    const removals = code.map((line, index) => ({ line: line.trim(), index })).filter(({ line }) => /\brm\b/.test(line));
+    expect(removals.map(({ line }) => line)).toEqual(['rm -rf "$tmp"']);
+    const removal = removals[0]?.index ?? -1;
+    expect(code[removal - 1]?.trim()).toBe('if [ -n "$tmp" ] && [ -d "$tmp" ]; then');
+    const assignments = lines.filter((line) => /^tmp=/.test(line));
+    expect(assignments).toEqual(['tmp=""', 'tmp="$(mktemp -d "${base%/}/factory-install-check.XXXXXX")"']);
+  });
+
+  it('stops on the first failure, and sets the clean-up trap before its mktemp', () => {
+    expect(lines).toContain('set -euo pipefail');
+    const trap = lines.indexOf('trap cleanup EXIT');
+    expect(trap).toBeGreaterThan(-1);
+    expect(lines.findIndex((line) => line.startsWith('tmp="$(mktemp '))).toBeGreaterThan(trap);
+  });
+
+  it('isolates HOME, the npm prefix, the npm cache and the npm configs before it runs the first git or npm command', () => {
+    const isolation = [
+      'export HOME="$tmp/home"',
+      'export npm_config_prefix="$tmp/prefix"',
+      'export npm_config_cache="$tmp/npm-cache"',
+      'export npm_config_userconfig="$tmp/npmrc"',
+      'export npm_config_globalconfig="$tmp/npmrc-global"',
+    ].map((line) => lines.indexOf(line));
+    expect(isolation.filter((index) => index < 0)).toEqual([]);
+    const unset = lines.findIndex((line) => /^unset\s/.test(line));
+    expect(unset).toBeGreaterThan(-1);
+    const isolated = Math.max(...isolation, unset);
+    /** The lines that run git or npm, outside the quoted text and outside the checks that look for the program. */
+    const runs = lines
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => !line.startsWith('command -v ') && /\b(git|npm)\s/.test(line.replace(/"[^"]*"/g, '')));
+    expect(runs.length).toBeGreaterThan(5);
+    expect(runs.filter(({ index }) => index <= isolated)).toEqual([]);
+  });
+
+  it('stops before its first git command when a git hook exports the names of a repo, or git settings come from the environment, so that npm can not write the source repo or read a setting of the caller', () => {
+    const guard = lines.findIndex((line) => line.startsWith('for name in GIT_DIR '));
+    expect(lines[guard]).toBe(
+      'for name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT; do',
+    );
+    expect(lines[guard + 1]).toMatch(/^\[ -z "\$\{!name\+set\}" \] \|\| fail /);
+    const firstGit = lines.findIndex((line) => /\bgit (-C|-c|init|config|--git-dir)\b/.test(line));
+    expect(firstGit).toBeGreaterThan(guard);
+  });
+
+  it('takes the base of its temp folder from FACTORY_TMP or TMPDIR, as the exit check does', () => {
+    expect(shellValue(installText, 'base')).toBe('${FACTORY_TMP:-${TMPDIR:-/tmp}}');
+  });
+
+  it('exports the same names as the exit check', () => {
+    expect(exportNames(exitCode)).toContain('HOME');
+    expect(exportNames(exitCode)).toContain('npm_config_prefix');
+    expect(exportNames(code)).toEqual(exportNames(exitCode));
+  });
+
+  it('unsets the names of the exit check, and the ssh agent socket, the two Claude credentials and the two npm token names', () => {
+    expect(unsetLines(code)).toHaveLength(1);
+    expect(unsetNames(exitCode).length).toBeGreaterThan(5);
+    expect(unsetNames(code).sort()).toEqual(
+      [
+        ...unsetNames(exitCode),
+        'SSH_AUTH_SOCK',
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_AUTH_TOKEN',
+        'NPM_TOKEN',
+        'NODE_AUTH_TOKEN',
+      ].sort(),
+    );
+  });
+
+  describe('the removal of the inherited npm settings', () => {
+    const start = lines.indexOf('shopt -s nocasematch');
+    const end = lines.indexOf('shopt -u nocasematch');
+    const block = lines.slice(start, end + 1);
+    /** Run the removal block alone, in the shell that runs the check, with only the given environment. */
+    const runBlock = (env: Record<string, string>): { status: number | null; stdout: string; stderr: string } => {
+      const script = [
+        'set -euo pipefail',
+        'fail() { printf "FAIL: %s\\n" "$*" >&2; exit 1; }',
+        ...block,
+        'env',
+      ].join('\n');
+      const result = spawnSync('bash', ['-c', script], { env: { PATH: process.env.PATH ?? '', ...env }, encoding: 'utf8' });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    };
+
+    it('sits before the scratch exports, and switches the case-blind match off again before the commit check', () => {
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      expect(lines.indexOf('export HOME="$tmp/home"')).toBeGreaterThan(end);
+      expect(lines.findIndex((line) => line.startsWith('sha="$(git '))).toBeGreaterThan(end);
+    });
+
+    it('removes every npm_config name in any letter case, and keeps the other names', () => {
+      const result = runBlock({
+        npm_config_registry: 'https://example.invalid/',
+        NPM_CONFIG_OFFLINE: 'true',
+        Npm_Config_Dry_Run: 'true',
+        npm_config_cache: '/nowhere',
+        npm_configuration: 'kept',
+        NPMRC: 'kept',
+        KEEP_ME: 'yes',
+      });
+      expect(result.status).toBe(0);
+      const names = result.stdout.split('\n').map((line) => line.split('=')[0]);
+      expect(names.filter((name) => /^npm_config_/i.test(name ?? ''))).toEqual([]);
+      expect(names).toEqual(expect.arrayContaining(['npm_configuration', 'NPMRC', 'KEEP_ME']));
+    });
+
+    it('never passes on an npm_config name that is not a shell name, because bash can not unset it, and never prints its value', () => {
+      const result = runBlock({ 'npm_config_//registry.npmjs.org/:_authToken': 'secret' });
+      expect(result.status === 0 && result.stdout.includes('_authToken')).toBe(false);
+      expect(result.stdout + result.stderr).not.toContain('secret');
+    });
+  });
+
+  it('takes the commit id from HEAD of this checkout, accepts 40 lower-case hex characters only, and quotes every use', () => {
+    expect(lines.filter((line) => /^sha=/.test(line))).toEqual(['sha="$(git -C "$root" rev-parse HEAD)"']);
+    expect(lines.some((line) => /^\[\[ "\$sha" =~ \^\[0-9a-f\]\{40\}\$ \]\] \|\| fail /.test(line))).toBe(true);
+    expect(code.join('\n')).toContain('^[0-9a-f]{40}$');
+    expect(lines.filter((line) => line.replace(/"[^"]*"/g, '').includes('$sha'))).toEqual([]);
+    expect(installText).not.toContain('${{');
+  });
+
+  it('writes nothing to the source repo: it only reads HEAD and pushes that commit with hooks off into the scratch bare repo', () => {
+    const gitOnSource = lines.filter((line) => /\bgit\b/.test(line) && /\$\{?root\}?/.test(line));
+    expect(gitOnSource).toEqual([
+      'sha="$(git -C "$root" rev-parse HEAD)"',
+      'git -c core.hooksPath=/dev/null -C "$root" push -q "$tmp/source.git" "$sha:refs/heads/install-proof"',
+    ]);
+    expect(lines.filter((line) => /\bbranch\s+-f\b|\bcheckout\b/.test(line))).toEqual([]);
+    expect(lines).toContain('git --git-dir="$tmp/source.git" symbolic-ref HEAD refs/heads/install-proof');
+  });
+
+  it('packs the commit from the scratch bare repo, then installs that tarball, with the install scripts and the registry on', () => {
+    expect(lines.filter((line) => /\bnpm pack\b/.test(line))).toEqual([
+      'logged pack npm pack --no-audit --no-fund --pack-destination "$tmp/pack" "git+file://$tmp/source.git#$sha"',
+    ]);
+    const installs = lines.filter((line) => /\bnpm install\b/.test(line));
+    expect(installs).toEqual(['logged install npm install --global --no-audit --no-fund "$tarball"']);
+    expect(installs.filter((line) => line.includes('://'))).toEqual([]);
+    expect(lines.filter((line) => /--ignore-scripts|--offline/.test(line))).toEqual([]);
+  });
+
+  it('installs only when the pack folder holds exactly one tarball, and fails closed on none or many', () => {
+    expect(lines).toContain('shopt -s nullglob');
+    expect(lines).toContain('files=("$tmp/pack"/*.tgz)');
+    expect(lines).toContain('[ "${#files[@]}" -eq 1 ] || return 1');
+    expect(lines.some((line) => /^tarball="\$\(pick_tarball\)" \|\| fail /.test(line))).toBe(true);
+    const pick = lines.findIndex((line) => line.startsWith('tarball='));
+    const install = lines.findIndex((line) => /\bnpm install\b/.test(line));
+    expect(pick).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(pick);
+  });
+
+  it('finds factory in the scratch prefix, and fails unless the installed program is a file that runs and equals the build', () => {
+    expect(lines).toContain('found="$(command -v factory || true)"');
+    expect(lines.some((line) => /^\[ "\$found" = "\$npm_config_prefix\/bin\/factory" \] \|\| fail /.test(line))).toBe(true);
+    expect(lines.some((line) => /^\[ -f "\$installed_js" \] \|\| fail /.test(line))).toBe(true);
+    expect(lines.some((line) => /^\[ -x "\$installed_js" \] \|\| fail /.test(line))).toBe(true);
+    const compares = lines.filter((line) => /\bcmp\b/.test(line));
+    expect(compares).toHaveLength(1);
+    expect(compares[0]).toMatch(/^cmp -s "\$installed_js" "\$root\/dist\/factory\.js" \|\| fail /);
+    expect(lines).toContain(`printf 'registry=https://registry.npmjs.org/\\n' >"$npm_config_userconfig"`);
+  });
+
+  it('names the exit check in its header', () => {
+    expect(installText).toMatch(/^#.*scripts\/exit-check\.sh/m);
+  });
+});
+
 describe('the old words and the jargon words in the text of the source (TP-60)', () => {
   /** The folders that print text, and the top files of src. */
   const TEXT_FOLDERS = [
@@ -524,14 +721,15 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
 
   /**
    * In user text, "request" means only the item that waits on the owner (the glossary entry, and the name of its term),
-   * and "message" means only the record from another owner. The tmux command `display-message` and the recipe word
-   * "pull request" are other names. A "checkout" of a project is a work copy, or a work tree of git.
+   * and "message" means only the record from another owner. The tmux command `display-message`, the recipe word
+   * "pull request" and the phrase "messages between sessions" (the name of the agent feature that sends text from one
+   * session to another) are other names. A "checkout" of a project is a work copy, or a work tree of git.
    */
   const wordRuleHits = (source: string, path: string): string[] =>
     literalsOf(source)
       .filter((literal) => !IMPORT_PATH.test(literal))
       .filter((literal) => literal !== 'display-message' && !(path === NAMES_FILE && literal === 'request'))
-      .map((literal) => literal.replace(/pull requests?/gi, ' '))
+      .map((literal) => literal.replace(/pull requests?/gi, ' ').replace(/messages between sessions/gi, ' '))
       .filter((literal) => path !== GLOSSARY_FILE && /(?<![A-Za-z0-9_])(?:requests?|messages?|checkouts?)(?![A-Za-z0-9_])/i.test(literal))
       .map((literal) => `${relative(SRC, path)}: "${literal}"`);
 
@@ -547,6 +745,8 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
     expect(wordRuleHits("const a = 'in its own checkout';", path)).toHaveLength(1);
     expect(wordRuleHits("const a = 'open a pull request';", path)).toEqual([]);
     expect(wordRuleHits("const a = 'display-message';", path)).toEqual([]);
+    expect(wordRuleHits("const a = 'the messages between sessions need 2.1.224';", path)).toEqual([]);
+    expect(wordRuleHits("const a = 'a message between sessions waits';", path)).toHaveLength(1);
     expect(wordRuleHits("const a = 'request';", NAMES_FILE)).toEqual([]);
     expect(wordRuleHits("const a = 'request';", path)).toHaveLength(1);
     expect(wordRuleHits("const a = 'a request waits';", GLOSSARY_FILE)).toEqual([]);
@@ -618,7 +818,7 @@ describe('the name of the worker window in the docs that a user reads (TP-138)',
    * The README and the docs that explain the tool name the window `workers`. The old name `bench` stays only where the
    * design and the glossary quote it as an old word: `docs/design.md` (its history rows) and `docs/glossary.md`.
    */
-  const USER_DOCS = ['README.md', 'docs/roadmap-v2.md', 'docs/token-budget.md'];
+  const USER_DOCS = ['README.md', 'docs/roadmap-v2.md', 'docs/token-budget.md', 'docs/quick-start.md'];
   const textOf = (name: string): string => readFileSync(join(__dirname, '..', '..', name), 'utf8');
 
   it.each(USER_DOCS)('does not name the old window bench in %s', (name) => {
@@ -627,6 +827,34 @@ describe('the name of the worker window in the docs that a user reads (TP-138)',
 
   it('names the window workers in the README', () => {
     expect(textOf('README.md')).toContain(`window \`${tmuxNames.windowWorkers}\``);
+  });
+});
+
+describe('the install command builds the commit of the hand-over, not the tag name', () => {
+  /**
+   * A tag can move. So the command that builds the package takes the full commit SHA of the hand-over, which step 1 of the
+   * guide proved is the commit of the tag. The tag stays the name of the hand-over and the target of that check.
+   */
+  const INSTALL_DOCS = ['README.md', 'docs/quick-start.md', 'CHANGELOG.md'];
+  const SHA_DOCS = ['README.md', 'docs/quick-start.md'];
+  const textOf = (name: string): string => readFileSync(join(__dirname, '..', '..', name), 'utf8');
+  const gitUrlsOf = (text: string): string[] => text.match(/git\+(?:ssh|https):\/\/[^\s"'`]+/g) ?? [];
+
+  it.each(INSTALL_DOCS)('ends every git URL of an install command with #<sha> in %s', (name) => {
+    const urls = gitUrlsOf(textOf(name));
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.filter((url) => !url.endsWith('#<sha>'))).toEqual([]);
+  });
+
+  it.each(SHA_DOCS)('says once what <sha> is in %s', (name) => {
+    const definitions = textOf(name).match(/`<sha>` is the full 40-character commit SHA/g) ?? [];
+    expect(definitions).toHaveLength(1);
+  });
+
+  it('keeps the check of the tag with git ls-remote in the guide, for both paths', () => {
+    const guide = textOf('docs/quick-start.md');
+    expect(guide).toContain("git ls-remote git@github.com:dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'");
+    expect(guide).toContain('`https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`');
   });
 });
 

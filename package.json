@@ -1,8 +1,9 @@
 {
   "name": "@dean0x/factory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Set up and run a node of Claude Code sessions with safe defaults.",
   "license": "MIT",
+  "private": true,
   "type": "module",
   "bin": {
     "factory": "dist/factory.js"
@@ -11,7 +12,8 @@
     "dist/factory.js",
     "LICENSE",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/quick-start.md"
   ],
   "engines": {
     "node": ">=22"
@@ -21,13 +23,15 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build",
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
     "check:docs": "sh scripts/check-intent-docs.sh",
-    "exit-check": "bash scripts/exit-check.sh"
+    "exit-check": "bash scripts/exit-check.sh",
+    "install-check": "bash scripts/install-check.sh"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

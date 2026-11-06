@@ -574,7 +574,7 @@ export const checkAgentVersion = async (deps: Deps, state: DocState<FactoryConfi
   return check(
     checkIds.agentVersion,
     'warn',
-    `${agent} ${shown} is older than ${needed} (the inbox of a ${roles.worker} needs ${needed} or newer)`,
+    `${agent} ${shown} is older than ${needed} (the messages between sessions need ${needed} or newer)`,
   );
 };
 

@@ -74,7 +74,7 @@ const tmuxDirOf = (root: string): string => join(root, 'tmux');
 /** The socket of the tmux server of a sandbox. A tmux that gets TMUX_TMPDIR puts its socket below `tmux-<uid>`. */
 export const tmuxSocketOf = (root: string): string => join(tmuxDirOf(root), `tmux-${process.getuid?.() ?? 0}`, 'default');
 
-/** What the fake agent prints for `--version` in every sandbox: the oldest version that the inbox of a worker needs. */
+/** What the fake agent prints for `--version` in every sandbox: the oldest version that has the messages between sessions. */
 export const FAKE_AGENT_VERSION = '2.1.224 (Claude Code)';
 
 /**
