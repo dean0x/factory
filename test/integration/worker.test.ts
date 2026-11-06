@@ -5,6 +5,7 @@ import { join, resolve, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
+import { expectLaunchRule } from './lifecycle-lab.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -19,6 +20,8 @@ const EXCLUDE_ENTRY = '/.claude/settings.local.json';
 const NOTIFICATION_MATCHER = 'permission_prompt|elicitation_dialog';
 /** A fake value for the one setting of the user that the launch keeps among the variables that start with CLAUDE. */
 const FAKE_CONFIG_DIR = '/fake/claude-config';
+/** A proxy in the environment of the tmux server. A launch must remove it, so that the program never sees it. */
+const LAUNCH_PROXY_URL = 'http://127.0.0.1:9';
 
 let box: Sandbox;
 let tmuxEnv: Record<string, string>;
@@ -26,7 +29,9 @@ let socket: string;
 let outDir: string;
 
 /**
- * The fake claude writes what the test needs to know, then sleeps. It writes the file `launches` last.
+ * The fake claude writes what the test needs to know, then sleeps. It writes the file `launches` last. The file `proxy` says `yes`
+ * when the environment of the last launch holds the proxy variable and `no` when it does not. It comes before the file `argv`, so
+ * a read of `argv` that shows the last launch also covers it.
  * A launch with `--resume <id>` acts like the program: when the file `no-transcript` is in the folder, the session can not be
  * loaded, and the program ends at once with an error. Else the hook of the new session writes its SessionStart line.
  */
@@ -34,6 +39,7 @@ const fakeClaude = (dir: string): string =>
   [
     '#!/bin/sh',
     `dir='${dir}'`,
+    'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/proxy"; else echo no > "$dir/proxy"; fi',
     'printf \'%s\\n\' "$@" > "$dir/argv"',
     'printf \'%s\' "$FACTORY_HOME" > "$dir/home"',
     'printf \'%s\' "$FACTORY_SESSION" > "$dir/session"',
@@ -89,8 +95,8 @@ const workerPanes = async (): Promise<string[]> =>
 const treeOf = async (folder: string): Promise<string[]> => (await readdir(folder, { recursive: true })).sort();
 
 /**
- * One line for a path and one for each entry below it: the relative path, the mode with its type bits, and the sha256 of a
- * file. A link is read as a link and never followed.
+ * One line for a path and one for each entry below it: the relative path, the mode with its type bits, the time of the last
+ * change, and the sha256 of a file. A rewrite with the same bytes changes the time. A link is read as a link and never followed.
  */
 const snapshotOf = async (path: string): Promise<string[]> => {
   const below = (await lstat(path)).isDirectory() ? await readdir(path, { recursive: true }) : [];
@@ -99,7 +105,7 @@ const snapshotOf = async (path: string): Promise<string[]> => {
       const entry = join(path, name);
       const info = await lstat(entry);
       const digest = info.isFile() ? createHash('sha256').update(await readFile(entry)).digest('hex') : '-';
-      return `${name} ${info.mode.toString(8)} ${digest}`;
+      return `${name} ${info.mode.toString(8)} ${info.mtimeMs} ${digest}`;
     }),
   );
 };
@@ -127,6 +133,7 @@ beforeEach(async () => {
     ...box.env,
     SHELL: '/bin/sh',
     PATH: `${bin}:${box.env['PATH'] ?? ''}`,
+    ANTHROPIC_BASE_URL: LAUNCH_PROXY_URL,
     CLAUDE_FAKE_PARENT: '1',
     CLAUDECODE: '1',
     CLAUDE_CONFIG_DIR: FAKE_CONFIG_DIR,
@@ -538,6 +545,9 @@ describe.skipIf(!hasTmux)('factory worker stop and factory worker resume (built 
     expect(resumed.stdout).toContain('Resumed the worker alpha');
     const argv = (await outOf('argv')).split('\n');
     expect(argv[argv.indexOf('--resume') + 1]).toBe(SESSION);
+    // The server holds the proxy, so the `no` of the rule comes from the launch and not from an empty environment.
+    expect((await tmux(['show-environment', '-g', 'ANTHROPIC_BASE_URL'])).stdout.trim()).toBe(`ANTHROPIC_BASE_URL=${LAUNCH_PROXY_URL}`);
+    expectLaunchRule(argv, await outOf('proxy'));
     const line = JSON.parse(await readFile(join(box.node, '.factory', 'state', 'heartbeat', SESSION), 'utf8')) as Record<string, unknown>;
     expect(line).toMatchObject({ event: 'SessionStart', session_marker: 'alpha' });
     expect(await livePanes('alpha')).toHaveLength(1);
