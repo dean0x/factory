@@ -206,10 +206,15 @@ const expectNothingTyped = (world: World): void => {
   expect(world.tmux.commands().filter((command) => command.includes('send-keys'))).toEqual([]);
 };
 
-/** The reset is refused before any key. */
-const refused = async (world: World, kind: ResetKind = 'clear'): Promise<CliError> => {
+/**
+ * The reset is refused before any key, and the refusal gives its remedy: the text that the remedy holds.
+ * `null` is for the one refusal that has no remedy line (the fetch that fails); its reason is in the message.
+ */
+const refused = async (world: World, remedy: string | null, kind: ResetKind = 'clear'): Promise<CliError> => {
   const error = errorOf(await world.reset(kind));
   expectNothingTyped(world);
+  if (remedy === null) expect(error.hint).toBeUndefined();
+  else expect(error.hint).toContain(remedy);
   return error;
 };
 
@@ -260,34 +265,34 @@ describe('TP-22: the caller rule refuses before the worker is read (refusals 2 t
   ])('TP-22: a caller with %s is exit 2, and no tmux call runs', async (_name, env) => {
     const world = await make({ env });
     const before = world.deps.calls.length;
-    expect(codeOf(await refused(world))).toBe(2);
+    expect(codeOf(await refused(world, 'in the pane of the coordinator'))).toBe(2);
     expect(world.deps.calls).toHaveLength(before);
   });
 
   it('TP-22: a tmux session that does not run is exit 3, and the remedy is the start command', async () => {
     const world = await make({ tmux: { sessions: {} }, panes: [] });
-    const error = await refused(world);
+    const error = await refused(world, 'factory start');
     expect(codeOf(error)).toBe(3);
-    expect(error.hint).toContain('factory start');
   });
 
-  it('TP-22: a tmux session of another factory folder is exit 4', async () => {
+  it('TP-22: a tmux session of another factory folder is exit 4, and the remedy names the shutdown command', async () => {
     const world = await make({ tmux: { sessions: { [NODE]: '/other/node' } }, panes: [] });
-    expect(codeOf(await refused(world))).toBe(4);
+    expect(codeOf(await refused(world, 'factory shutdown'))).toBe(4);
   });
 
   it('TP-22: a coordinator pane that ended is exit 3, and the remedy is the start command', async () => {
-    const error = await refused(await make({ tmux: { endedCoordinators: [NODE] } }));
+    const error = await refused(await make({ tmux: { endedCoordinators: [NODE] } }), 'factory start');
     expect(codeOf(error)).toBe(3);
-    expect(error.hint).toContain('factory start');
   });
 
-  it('TP-22: a coordinator pane with a start command that is not the launch of the coordinator is exit 4', async () => {
-    expect(codeOf(await refused(await make({ tmux: { coordinatorCommands: { [NODE]: ['sleep', '3000'] } } })))).toBe(4);
+  it('TP-22: a coordinator pane with a start command that is not the launch of the coordinator is exit 4, and the remedy is to look at the pane', async () => {
+    expect(
+      codeOf(await refused(await make({ tmux: { coordinatorCommands: { [NODE]: ['sleep', '3000'] } } }), 'Look at the pane in tmux')),
+    ).toBe(4);
   });
 
-  it('TP-22: a caller in another pane of the session is exit 2', async () => {
-    expect(codeOf(await refused(await make({ env: { TMUX_PANE: '%1' } })))).toBe(2);
+  it('TP-22: a caller in another pane of the session is exit 2, and the remedy names the pane of the coordinator', async () => {
+    expect(codeOf(await refused(await make({ env: { TMUX_PANE: '%1' } }), 'in the pane %0'))).toBe(2);
   });
 });
 
@@ -297,39 +302,37 @@ describe('TP-22: the worker, its record and its pane (refusals 5 to 8)', () => {
     const error = errorOf(await resetWorker(world.deps, { home: HOME, config: sampleConfig(), workerId: 'beta', kind: 'clear' }));
     expect(codeOf(error)).toBe(2);
     expectNothingTyped(world);
+    expect(error.hint).toContain('factory worker list');
   });
 
   it('TP-22: a record that names another work copy is exit 4', async () => {
     const world = await make();
     const file = workerPathsOf(HOME, WORKER).recordFile;
     world.deps.seed(file, (world.deps.files.get(file) ?? '').replace(COPY, '/elsewhere/copy'));
-    expect(codeOf(await refused(world))).toBe(4);
+    expect(codeOf(await refused(world, 'Check who changed the file'))).toBe(4);
   });
 
-  it('TP-22: two live panes of the worker are exit 2', async () => {
+  it('TP-22: two live panes of the worker are exit 2, and the remedy is to close all but one', async () => {
     const world = await make({ panes: [workerPane(WORKER), workerPane(WORKER)] });
-    expect(codeOf(await refused(world))).toBe(2);
+    expect(codeOf(await refused(world, 'Close all but one of these panes'))).toBe(2);
   });
 
   it('TP-22: a worker with no pane is exit 3, and the remedy is the resume command', async () => {
-    const error = await refused(await make({ panes: [] }));
+    const error = await refused(await make({ panes: [] }), 'factory worker resume alpha');
     expect(codeOf(error)).toBe(3);
-    expect(error.hint).toContain('factory worker resume alpha');
   });
 
   it('TP-22: a worker whose pane ended is exit 3, and the remedy is the resume command', async () => {
-    const error = await refused(await make({ panes: [workerPane(WORKER, { dead: true })] }));
+    const error = await refused(await make({ panes: [workerPane(WORKER, { dead: true })] }), 'factory worker resume alpha');
     expect(codeOf(error)).toBe(3);
     expect(error.message).toContain('ended');
-    expect(error.hint).toContain('factory worker resume alpha');
   });
 
   it('TP-22: a pane that a summon shows in the view window is exit 3, and the remedy names the layout command', async () => {
     const world = await make();
     valueOf(await summonWorker(world.deps, { home: HOME, session: NODE, workerId: WORKER, minutes: 15 }));
-    const error = await refused(world);
+    const error = await refused(world, 'factory layout');
     expect(codeOf(error)).toBe(3);
-    expect(error.hint).toContain('factory layout');
   });
 });
 
@@ -341,7 +344,7 @@ describe('TP-22: the process, the settings and the push (refusals 9 to 12)', () 
   ])('TP-22: when %s, the start of the pane process is not readable: exit 3', async (_name, answer) => {
     const world = await make();
     world.setPs(answer);
-    const error = await refused(world);
+    const error = await refused(world, 'Look at the pane in tmux');
     expect(codeOf(error)).toBe(3);
     expect(error.message).toContain('process of the pane started');
   });
@@ -351,47 +354,45 @@ describe('TP-22: the process, the settings and the push (refusals 9 to 12)', () 
     const hooks = Object.fromEntries(Object.entries(ownSettingsEntries.hooks).filter(([name]) => name !== 'Notification'));
     world.deps.seed(SETTINGS_FILE, JSON.stringify({ hooks }));
     world.deps.mtimes.set(SETTINGS_FILE, NOW - HOUR);
-    const error = await refused(world);
+    const error = await refused(world, 'factory upgrade');
     expect(codeOf(error)).toBe(3);
     expect(error.message).toContain('Notification');
-    expect(error.hint).toContain('factory upgrade');
     expect(error.hint).toContain('factory restart alpha');
   });
 
   it('TP-24: a settings file newer than the pane process is exit 3, and the remedy is the restart command', async () => {
     const world = await make();
     world.deps.mtimes.set(SETTINGS_FILE, START + SECOND);
-    const error = await refused(world);
+    const error = await refused(world, 'factory restart alpha');
     expect(codeOf(error)).toBe(3);
-    expect(error.hint).toContain('factory restart alpha');
     expect(error.hint).toContain('permission rule');
   });
 
   it('TP-24: a settings file that changed at the very start of the pane process is refused too: it must be strictly earlier', async () => {
     const world = await make();
     world.deps.mtimes.set(SETTINGS_FILE, START);
-    expect(codeOf(await refused(world))).toBe(3);
+    expect(codeOf(await refused(world, 'factory restart alpha'))).toBe(3);
   });
 
   it('TP-22: work that is not pushed is exit 1, and the refusal gives the reason', async () => {
     const world = await make({ git: { remotes: { [CLONE]: { copies: { [`worker/${WORKER}`]: 'b'.repeat(40) } } } } });
-    const error = await refused(world);
+    const error = await refused(world, 'Push the work of the worker alpha');
     expect(codeOf(error)).toBe(1);
     expect(error.message).toContain('is not pushed');
     expect(error.message).toContain(`worker/${WORKER}`);
     expect(error.hint).toContain(AGAIN_CLEAR);
   });
 
-  it('TP-22: a changed file in the work copy is exit 1', async () => {
+  it('TP-22: a changed file in the work copy is exit 1, and the remedy is to push the work', async () => {
     const world = await make({ git: { status: { [COPY]: ' M src/index.ts\0' } } });
-    const error = await refused(world);
+    const error = await refused(world, 'Push the work of the worker alpha');
     expect(codeOf(error)).toBe(1);
     expect(error.message).toContain('src/index.ts');
   });
 
-  it('TP-22: a fetch that fails is exit 1', async () => {
+  it('TP-22: a fetch that fails is exit 1, and the refusal has no remedy line', async () => {
     const world = await make({ git: { remotes: { [CLONE]: { copies: { [`worker/${WORKER}`]: HEAD }, fetchExit: 128 } } } });
-    expect(codeOf(await refused(world))).toBe(1);
+    expect(codeOf(await refused(world, null))).toBe(1);
   });
 });
 
@@ -407,7 +408,7 @@ describe('TP-22: the refusals of the path checks speak the words of reset', () =
   it('TP-22: a .git entry that does not name the folder of the clone is exit 4, and says worker reset', async () => {
     const world = await make();
     world.deps.seed(`${COPY}/.git`, 'not a link to a git folder\n');
-    const error = await refused(world);
+    const error = await refused(world, 'Check the file .git in the work copy');
     expect(codeOf(error)).toBe(4);
     expect(error.message).toContain('so worker reset runs no git command there');
     expect(error.hint).toBe(`Check the file .git in the work copy. ${AGAIN}`);
@@ -416,7 +417,7 @@ describe('TP-22: the refusals of the path checks speak the words of reset', () =
 
   it('TP-22: a clone that lies inside the work copy is exit 4, and says worker reset', async () => {
     const world = await make({ links: { [CLONE]: COPY } });
-    const error = await refused(world);
+    const error = await refused(world, 'Check the path of the project in the config');
     expect(codeOf(error)).toBe(4);
     expect(error.message).toContain('so worker reset does not use it');
     expect(error.hint).toBe(`Check the path of the project in the config. ${AGAIN}`);
@@ -450,7 +451,7 @@ describe('TP-22: the refusals of the path checks speak the words of reset', () =
 
   it('TP-22: a clone that is not a git work tree is exit 1, and says worker reset', async () => {
     const world = await make({ git: { repos: {} } });
-    const error = await refused(world);
+    const error = await refused(world, 'Clone the repo of the project into that folder');
     expect(codeOf(error)).toBe(1);
     expect(error.hint).toBe(`Clone the repo of the project into that folder. ${AGAIN}`);
     expectResetWords(error);
@@ -461,21 +462,21 @@ describe('TP-22: the resume file (refusal 13)', () => {
   it('TP-22: a missing resume file is exit 3, and the refusal names the file', async () => {
     const world = await make();
     world.deps.files.delete(RESUME_FILE);
-    const error = await refused(world);
+    const error = await refused(world, RESUME_FILE);
     expect(codeOf(error)).toBe(3);
     expect(textOf(error)).toContain(RESUME_FILE);
   });
 
-  it('TP-22: a resume file that is a link is exit 4', async () => {
+  it('TP-22: a resume file that is a link is exit 4, and the remedy is to replace the link', async () => {
     const world = await make({ links: { [RESUME_FILE]: '/elsewhere/notes.md' } });
     world.deps.seed('/elsewhere/notes.md', 'notes');
-    expect(codeOf(await refused(world))).toBe(4);
+    expect(codeOf(await refused(world, 'Replace the link'))).toBe(4);
   });
 
-  it('TP-22: an inbox folder that is a link is exit 4', async () => {
+  it('TP-22: an inbox folder that is a link is exit 4, and the remedy is to replace the link', async () => {
     const world = await make({ links: { [INBOX]: '/elsewhere' } });
     world.deps.seed('/elsewhere/resume.md', 'notes');
-    expect(codeOf(await refused(world))).toBe(4);
+    expect(codeOf(await refused(world, 'Replace the link'))).toBe(4);
   });
 
   it.each([
@@ -485,26 +486,30 @@ describe('TP-22: the resume file (refusal 13)', () => {
   ])('TP-22: a resume file that is %s is exit 3, and the refusal names the file', async (_name, text) => {
     const world = await make();
     world.deps.seed(RESUME_FILE, text);
-    const error = await refused(world);
+    const error = await refused(world, RESUME_FILE);
     expect(codeOf(error)).toBe(3);
     expect(textOf(error)).toContain(RESUME_FILE);
   });
 });
 
 describe('TP-22: the bind right before the keys, and the line of the session (refusals 14 to 17)', () => {
-  it('TP-22: a pane that loses the mark of the worker after the checks is exit 4', async () => {
+  const BIND_REMEDY = `run "tmux set-option -p -u -t ${PANE} @worker" to clear its mark`;
+  const LOOK_AT_PANE = `Look at the pane ${PANE} in tmux`;
+  const WAIT_FOR_LINE = 'Wait until the session reports';
+
+  it('TP-22: a pane that loses the mark of the worker after the checks is exit 4, and the remedy clears the mark', async () => {
     const world = await make({ atPs: (made) => made.serverCall(['set-option', '-p', '-u', '-t', PANE, '@worker']) });
-    expect(codeOf(await refused(world))).toBe(4);
+    expect(codeOf(await refused(world, BIND_REMEDY))).toBe(4);
   });
 
-  it('TP-22: a pane whose start command changes after the checks is exit 4', async () => {
+  it('TP-22: a pane whose start command changes after the checks is exit 4, and the remedy clears the mark', async () => {
     const world = await make({ rewriteBind: (nth, stdout) => (nth === 1 ? stdout : withStartCommand(stdout, 'sleep 300')) });
-    expect(codeOf(await refused(world))).toBe(4);
+    expect(codeOf(await refused(world, BIND_REMEDY))).toBe(4);
   });
 
   it('TP-22: a pane whose process id changes after the checks is exit 3', async () => {
     const world = await make({ rewriteBind: (nth, stdout) => (nth === 1 ? stdout : withPid(stdout, 4778)) });
-    const error = await refused(world);
+    const error = await refused(world, LOOK_AT_PANE);
     expect(codeOf(error)).toBe(3);
     expect(error.message).toContain('process');
   });
@@ -512,33 +517,33 @@ describe('TP-22: the bind right before the keys, and the line of the session (re
   it('TP-22: the bind comes before the read of the line: a bad bind wins over a busy session', async () => {
     const world = await make({ rewriteBind: (nth, stdout) => (nth === 1 ? stdout : withPid(stdout, 4778)) });
     world.deps.seed(lineFile(SESSION), lineText('UserPromptSubmit', NOW));
-    expect(codeOf(await refused(world))).toBe(3);
+    expect(codeOf(await refused(world, LOOK_AT_PANE))).toBe(3);
   });
 
-  it('TP-22: a line of another session marker is not owned: exit 3', async () => {
+  it('TP-22: a line of another session marker is not owned: exit 3, and the remedy is to wait for the session', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText('Stop', NOW - MINUTE, SESSION, 'beta'));
-    const error = await refused(world);
+    const error = await refused(world, WAIT_FOR_LINE);
     expect(codeOf(error)).toBe(3);
     expect(error.message).toContain('last-seen line');
   });
 
-  it('TP-22: a line with no session marker is not owned: exit 3', async () => {
+  it('TP-22: a line with no session marker is not owned: exit 3, and the remedy is to wait for the session', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText('Stop', NOW - MINUTE, SESSION, null));
-    expect(codeOf(await refused(world))).toBe(3);
+    expect(codeOf(await refused(world, WAIT_FOR_LINE))).toBe(3);
   });
 
-  it('TP-22: a worker with no pointer has no line: exit 3', async () => {
+  it('TP-22: a worker with no pointer has no line: exit 3, and the remedy is to wait for the session', async () => {
     const world = await make();
     world.deps.files.delete(workerPathsOf(HOME, WORKER).lastSessionFile);
-    expect(codeOf(await refused(world))).toBe(3);
+    expect(codeOf(await refused(world, WAIT_FOR_LINE))).toBe(3);
   });
 
-  it('TP-22: a line with a percent and no event says nothing: exit 3', async () => {
+  it('TP-22: a line with a percent and no event says nothing: exit 3, and the remedy is to wait for the session', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText(null, NOW - MINUTE));
-    expect(codeOf(await refused(world))).toBe(3);
+    expect(codeOf(await refused(world, WAIT_FOR_LINE))).toBe(3);
   });
 
   it.each([
@@ -548,7 +553,7 @@ describe('TP-22: the bind right before the keys, and the line of the session (re
   ] as const)('TP-22: a session whose last event is %s is exit 1', async (event, word) => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText(event, NOW - MINUTE));
-    const error = await refused(world);
+    const error = await refused(world, 'Wait until it waits at its prompt');
     expect(codeOf(error)).toBe(1);
     expect(error.message).toContain(word);
     expect(error.hint).toContain(AGAIN_CLEAR);
@@ -557,10 +562,9 @@ describe('TP-22: the bind right before the keys, and the line of the session (re
   it('TP-22: a session that waits at a dialog is exit 1, and the remedy says to answer the dialog', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText('Notification', NOW - MINUTE));
-    const error = await refused(world);
+    const error = await refused(world, 'answer the dialog');
     expect(codeOf(error)).toBe(1);
     expect(error.message).toContain('waits for an answer');
-    expect(error.hint).toContain('answer the dialog');
   });
 
   it('TP-23: a session that turns busy after the push check and before the line read is exit 1, with no key', async () => {
@@ -568,7 +572,7 @@ describe('TP-22: the bind right before the keys, and the line of the session (re
       if (call.args.includes('stash')) made.deps.seed(lineFile(SESSION), lineText('UserPromptSubmit', NOW));
     };
     const world = await make({ atGit: turnsBusy });
-    const error = await refused(world);
+    const error = await refused(world, 'Wait until it waits at its prompt');
     expect(codeOf(error)).toBe(1);
     expect(error.message).toContain('busy');
   });
@@ -576,7 +580,7 @@ describe('TP-22: the bind right before the keys, and the line of the session (re
   it('TP-22: a line at the start of the pane process is refused: it must be strictly later', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText('Stop', START));
-    const error = await refused(world);
+    const error = await refused(world, 'Wait until the session reports');
     expect(codeOf(error)).toBe(3);
     expect(error.message).toContain('not later than the start');
   });
@@ -584,14 +588,14 @@ describe('TP-22: the bind right before the keys, and the line of the session (re
   it('TP-22: a line 500 ms before the start of the pane process is refused', async () => {
     const world = await make();
     world.deps.seed(lineFile(SESSION), lineText('Stop', START - 500));
-    expect(codeOf(await refused(world))).toBe(3);
+    expect(codeOf(await refused(world, 'Wait until the session reports'))).toBe(3);
   });
 });
 
 describe('TP-22: the capture (refusal 18)', () => {
   it('TP-22: a numbered list of choices on the screen is exit 3, after one capture and with no key', async () => {
     const world = await make({ screen: DIALOG_SCREEN });
-    const error = await refused(world);
+    const error = await refused(world, `Look at pane ${PANE} and answer the dialog there`);
     expect(codeOf(error)).toBe(3);
     expect(world.tmux.commands().filter((command) => command.startsWith('capture-pane'))).toHaveLength(1);
   });
