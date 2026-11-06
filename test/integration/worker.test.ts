@@ -318,7 +318,8 @@ const startedWorker = async (): Promise<void> => {
   await waitForLaunches(2);
 };
 
-describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binary, separate tmux server)', () => {
+// Each case launches several processes: 5 to 10 s alone, 14 to 24 s under load, so the 30 s global limit is too tight.
+describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binary, separate tmux server)', { timeout: 60_000 }, () => {
   it('shows the worker in the slot, and layout puts the board back (TP-31)', async () => {
     await startedWorker();
     expect(await marksOf('view')).toContain('|board|');
