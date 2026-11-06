@@ -17,7 +17,7 @@ import { locateHomeFolder, type NodeIdReader } from '../core/home.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { indexPathOf, originOfHome, recordNode, type Origin } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
-import { ok } from '../core/result.js';
+import { err, ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
 import { blockRenamesOf } from '../migrate/files.js';
 import {
@@ -469,15 +469,23 @@ export const runUpgrade = async (
   const count = written.length + moved.length;
   const pruned = [...(await pruneBackups(deps, home, backupDir.value)), ...(await pruneBlockBackups(deps, home))];
   const indexed = await indexUpgraded(deps, home, origin, registry);
+  const keptLines = savedBlocks.value.map((saved): OutLine => ({
+    level: 'ok',
+    text: `Kept the old text of block ${saved.block} in ${saved.path}.`,
+  }));
   // The hook settings come last: the state is upgraded and registered by now, and a stop here names what is left to do.
   const hookApplied = await applyHookSettings(deps, hooks.value, options.yes);
-  if (!hookApplied.ok) return hookApplied;
+  if (!hookApplied.ok) {
+    // The error keeps its kind, so its exit code stays. The facts of the state upgrade would be lost without this text.
+    const facts = [
+      `The state upgrade is done${stateChanged ? ' and committed' : ''}. The backup is in ${backupPath}.`,
+      ...keptLines.map((line) => line.text),
+    ];
+    return err({ ...hookApplied.error, message: `${hookApplied.error.message} ${facts.join(' ')}` });
+  }
   return done(
     [
-      ...savedBlocks.value.map((saved): OutLine => ({
-        level: 'ok',
-        text: `Kept the old text of block ${saved.block} in ${saved.path}.`,
-      })),
+      ...keptLines,
       ...(rootMade === null ? [] : [rootRepoLine(rootMade)]),
       { level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` },
       ...(pruned.length === 0

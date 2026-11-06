@@ -3795,6 +3795,18 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     expect(snapshot(deps)).toEqual(before);
   });
 
+  it('TP-6: stops with exit 1 for a settings file with an event that is not a list, before any write', async () => {
+    const { deps } = await olderFactory();
+    deps.seed(copySettings('beta'), settingsText({ hooks: { SessionStart: ownSettingsEntries.hooks['SessionStart'], Stop: 'x' } }));
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(copySettings('beta'));
+    expect(error.message).toContain('hooks.Stop');
+    expect(error.hint).toContain('Fix the file, or move it away');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
   const renameFailing = (deps: FakeDeps, target: string): FakeDeps => ({
     ...deps,
     fs: { ...deps.fs, rename: async (from, to) => (to === target ? failure('disk full') : deps.fs.rename(from, to)) },
@@ -3818,5 +3830,49 @@ describe('upgrade: the hook settings of the work copies and of the coordinator (
     const error = refusal(await upgrade(renameFailing(deps, COORDINATOR_SETTINGS), currentSpec, { yes: true }));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('changed before the stop: none');
+  });
+
+  const STATE_BACKUP = '.factory/backups/2030-01-02T03-04-05-678Z';
+
+  it('TP-7: a write failure after the state upgrade names the backup, the kept block text and the commit', async () => {
+    const { deps } = await olderFactory();
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    const spec = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+    const error = refusal(await upgrade(renameFailing(deps, copySettings('alpha')), spec, { yes: true, overwrite: ['coordinator'] }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('disk full');
+    expect(error.message).toContain(`The state upgrade is done and committed. The backup is in ${STATE_BACKUP}.`);
+    expect(error.message).toContain(`Kept the old text of block coordinator in ${STATE_BACKUP}-block-coordinator.md.`);
+    expect(error.hint).toContain('Run "factory upgrade" again');
+    expect(text(deps, CLAUDE)).toContain('New coordinator text.');
+  });
+
+  it('TP-7: a write failure after a state upgrade with no commit does not say that a commit was made', async () => {
+    const { deps } = await olderFactory();
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    const error = refusal(
+      await upgrade(renameFailing(deps, copySettings('alpha')), currentSpec, { yes: true, overwrite: ['coordinator'] }),
+    );
+    expect(error.message).toContain(`The state upgrade is done. The backup is in ${STATE_BACKUP}.`);
+    expect(error.message).not.toContain('committed');
+  });
+
+  it('TP-7: a stop for safety after the state upgrade is still exit 4, and names the backup', async () => {
+    const { deps } = await olderFactory();
+    const linkedAfterBackup: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        lstat: async (path) =>
+          path === copySettings('alpha') && [...deps.files.keys()].some((file) => file.startsWith(`${BACKUP}/`))
+            ? ok('link')
+            : deps.fs.lstat(path),
+      },
+    };
+    const error = refusal(await upgrade(linkedAfterBackup, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(copySettings('alpha'));
+    expect(error.message).toContain(`The state upgrade is done and committed. The backup is in ${STATE_BACKUP}.`);
+    expect(error.hint).toContain('factory upgrade');
   });
 });
