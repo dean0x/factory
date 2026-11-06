@@ -176,7 +176,7 @@ const requirePushed = async (
   );
   if (!plan.ok) return plan;
   const fetched = await fetchClone(deps, plan.value);
-  if (!fetched.ok) return fetched;
+  if (!fetched.ok) return failure(fetched.error.message, `Check the network and the remote of the clone. Then ${runAgain(again)}`);
   const reasons = await unpushedReasons(deps, plan.value);
   if (!reasons.ok) return reasons;
   if (reasons.value.length === 0) return ok(undefined);
@@ -279,8 +279,8 @@ interface Checked {
 
 /** The checks from the record of the worker to the line of its session. Nothing is typed. */
 const checkWorker = async (deps: Deps, request: ResetRequest, again: string): Promise<CliResult<Checked>> => {
-  const { home, config, workerId } = request;
-  const record = await requireRecord(deps, home, workerId, commandText(commandLines.workerReset));
+  const { home, config, workerId, kind } = request;
+  const record = await requireRecord(deps, home, workerId, commandText(commandLines.workerReset), flagText(resetKinds[kind].flag));
   if (!record.ok) return record;
   const name = sessionNames.worker(config.core.node.id, workerId);
   if (!name.ok) return failure(name.error);

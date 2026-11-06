@@ -199,19 +199,27 @@ export const readWorkerRecord = async (deps: Deps, home: string, id: string): Pr
 /**
  * The record of the worker. A worker with no record, or with a record that is not valid, is a wrong id (exit 2). A record that names
  * a work copy or a branch that is not the one of its worker is a security stop (exit 4): a command that starts or ends a session
- * must not act on it. The message names the record file and what differs.
+ * must not act on it. The message names the record file and what differs. The remedy runs `again` with the id; `tail` is the words that
+ * a command needs after the id (for example a flag), and a remedy without it would give a usage error.
  */
-export const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
+export const requireRecord = async (
+  deps: Deps,
+  home: string,
+  id: string,
+  again: string,
+  tail?: string,
+): Promise<CliResult<WorkerRecord>> => {
   const read = await readWorkerRecord(deps, home, id);
   if (!read.ok) return read;
   if (read.value.state === 'valid') return ok(read.value.record);
+  const commandFor = (word: string): string => (tail === undefined ? `${again} ${word}` : `${again} ${word} ${tail}`);
   if (read.value.state === 'invalid' && read.value.mismatch === true) {
     return safetyRefusal(
       `the record ${workerPathsOf(home, id).recordFile} of the ${roles.worker} ${id} is not the record that ${program} wrote: ${read.value.reason}`,
-      `Check who changed the file, and restore it from a copy that you trust. Then run "${again} ${id}" again.`,
+      `Check who changed the file, and restore it from a copy that you trust. Then run "${commandFor(id)}" again.`,
     );
   }
-  const listed = `Run "${commandText(commandLines.workerList)}" to see the ${roles.worker}s. Then run "${again} ID" with the id of one of them.`;
+  const listed = `Run "${commandText(commandLines.workerList)}" to see the ${roles.worker}s. Then run "${commandFor('ID')}" with the id of one of them.`;
   return usageError(
     read.value.state === 'invalid'
       ? `the record of the ${roles.worker} ${id} is not valid: ${read.value.reason}`

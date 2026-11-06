@@ -10,6 +10,7 @@ import {
   readWorkerFile,
   readWorkerRecord,
   removeWorkerRecord,
+  requireRecord,
   writeWorkerRecord,
   type NewWorker,
   type WorkerList,
@@ -423,6 +424,41 @@ describe('readWorkerRecord', () => {
     const before = snapshot(deps);
     await readOf(deps);
     expect(snapshot(deps)).toBe(before);
+  });
+});
+
+describe('requireRecord: the command in the remedy', () => {
+  const AGAIN = 'factory worker reset';
+
+  const hintOf = <T>(result: CliResult<T>): string => {
+    if (result.ok) throw new Error('the call should have failed');
+    return result.error.hint ?? '';
+  };
+
+  it('puts the tail after the id in the remedy of a worker with no record', async () => {
+    const hint = hintOf(await requireRecord(make(), HOME, 'web-search', AGAIN, '--clear'));
+    expect(hint).toContain('Then run "factory worker reset ID --clear" with the id of one of them.');
+  });
+
+  it('puts the tail after the id in the remedy of a record that is not valid', async () => {
+    const deps = make();
+    deps.seed(recordPath('web-search'), 'not a record');
+    const hint = hintOf(await requireRecord(deps, HOME, 'web-search', AGAIN, '--clear'));
+    expect(hint).toContain('Then run "factory worker reset ID --clear" with the id of one of them.');
+  });
+
+  it('puts the tail after the id in the remedy of a record of another work copy', async () => {
+    const deps = make();
+    seedRecord(deps, 'web-search', { work_copy: '/elsewhere/copy' });
+    const hint = hintOf(await requireRecord(deps, HOME, 'web-search', AGAIN, '--clear'));
+    expect(hint).toContain('Then run "factory worker reset web-search --clear" again.');
+  });
+
+  it('keeps the remedy with the id only when it has no tail', async () => {
+    const deps = make();
+    seedRecord(deps, 'web-search', { work_copy: '/elsewhere/copy' });
+    expect(hintOf(await requireRecord(deps, HOME, 'web-search', AGAIN))).toContain('Then run "factory worker reset web-search" again.');
+    expect(hintOf(await requireRecord(make(), HOME, 'web-search', AGAIN))).toContain('Then run "factory worker reset ID" with the id of one of them.');
   });
 });
 

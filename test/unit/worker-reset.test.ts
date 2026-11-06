@@ -206,15 +206,11 @@ const expectNothingTyped = (world: World): void => {
   expect(world.tmux.commands().filter((command) => command.includes('send-keys'))).toEqual([]);
 };
 
-/**
- * The reset is refused before any key, and the refusal gives its remedy: the text that the remedy holds.
- * `null` is for the one refusal that has no remedy line (the fetch that fails); its reason is in the message.
- */
-const refused = async (world: World, remedy: string | null, kind: ResetKind = 'clear'): Promise<CliError> => {
+/** The reset is refused before any key, and the refusal gives its remedy: the text that the remedy holds. */
+const refused = async (world: World, remedy: string, kind: ResetKind = 'clear'): Promise<CliError> => {
   const error = errorOf(await world.reset(kind));
   expectNothingTyped(world);
-  if (remedy === null) expect(error.hint).toBeUndefined();
-  else expect(error.hint).toContain(remedy);
+  expect(error.hint).toContain(remedy);
   return error;
 };
 
@@ -315,21 +311,32 @@ describe('TP-22: the worker, its record and its pane (refusals 5 to 8)', () => {
     expect(codeOf(error)).toBe(2);
     expectNothingTyped(world);
     expect(error.hint).toContain('factory worker list');
+    expect(error.hint).toContain('run "factory worker reset ID --clear" with the id');
   });
 
-  it('TP-22: a record that is not valid is exit 2, and the remedy is the list command', async () => {
+  it('TP-22: a record that is not valid is exit 2, and the remedy is the list command and the full reset command', async () => {
     const world = await make();
     world.deps.seed(workerPathsOf(HOME, WORKER).recordFile, 'not a record');
     const error = await refused(world, 'factory worker list');
     expect(codeOf(error)).toBe(2);
     expect(error.message).toContain('is not valid');
+    expect(error.hint).toContain('factory worker reset ID --clear');
   });
 
-  it('TP-22: a record that names another work copy is exit 4', async () => {
+  it('TP-22: a record that names another work copy is exit 4, and the remedy runs the reset again with its flag', async () => {
     const world = await make();
     const file = workerPathsOf(HOME, WORKER).recordFile;
     world.deps.seed(file, (world.deps.files.get(file) ?? '').replace(COPY, '/elsewhere/copy'));
-    expect(codeOf(await refused(world, 'Check who changed the file'))).toBe(4);
+    const error = await refused(world, 'Check who changed the file');
+    expect(codeOf(error)).toBe(4);
+    expect(error.hint).toContain(`run "${AGAIN_CLEAR}" again.`);
+  });
+
+  it('TP-22: a record that is not valid gives the flag of a compact reset when the kind is compact', async () => {
+    const world = await make();
+    world.deps.seed(workerPathsOf(HOME, WORKER).recordFile, 'not a record');
+    const error = await refused(world, 'factory worker reset ID --compact', 'compact');
+    expect(codeOf(error)).toBe(2);
   });
 
   it('TP-22: two live panes of the worker are exit 2, and the remedy is to close all but one', async () => {
@@ -413,11 +420,12 @@ describe('TP-22: the process, the settings and the push (refusals 9 to 12)', () 
     expect(error.message).toContain('src/index.ts');
   });
 
-  it('TP-22: a fetch that fails is exit 1, and the refusal has no remedy line', async () => {
+  it('TP-22: a fetch that fails is exit 1, and the remedy is to check the network and the remote, then run the reset again', async () => {
     const world = await make({ git: { remotes: { [CLONE]: { copies: { [`worker/${WORKER}`]: HEAD }, fetchExit: 128 } } } });
-    const error = await refused(world, null);
+    const error = await refused(world, 'Check the network and the remote of the clone');
     expect(codeOf(error)).toBe(1);
     expect(error.message).toContain('cannot fetch');
+    expect(error.hint).toContain(`Then run "${AGAIN_CLEAR}" again.`);
   });
 });
 
