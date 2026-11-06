@@ -4,6 +4,7 @@ import { renderBlock } from '../../src/blocks/managed.js';
 import { inspectBlocks } from '../../src/blocks/status.js';
 import { failure } from '../../src/cli/errors.js';
 import {
+  checkAgentVersion,
   checkBlocks,
   checkConfig,
   checkConfigVersion,
@@ -58,15 +59,23 @@ interface Setup {
   readonly cwd?: string;
   readonly os?: string;
   readonly links?: Record<string, string>;
+  /** What `claude --version` prints, or null when the program ends with a failure. */
+  readonly agentVersion?: string | null;
 }
+
+const AGENT_VERSION_TEXT = '2.1.224 (Claude Code)\n';
 
 const makeDeps = (setup: Setup = {}): FakeDeps => {
   const git = gitHandler(setup.git ?? {});
   const tmux = tmuxHandler(setup.tmux);
+  const agentVersion = setup.agentVersion === undefined ? AGENT_VERSION_TEXT : setup.agentVersion;
   const deps = createFakeDeps({
     cwd: setup.cwd ?? '/w',
     env: { PATH: '/bin', XDG_STATE_HOME: '/state', ...setup.env },
-    run: (call) => (call.command === 'tmux' ? tmux.handler(call) : git.handler(call)),
+    run: (call) => {
+      if (call.command === 'claude') return agentVersion === null ? exited(1, '', 'broken') : exited(0, agentVersion);
+      return call.command === 'tmux' ? tmux.handler(call) : git.handler(call);
+    },
     nodeVersion: setup.nodeVersion ?? 'v22.5.0',
     ...(setup.fetch === undefined ? {} : { fetch: setup.fetch }),
     ...(setup.os === undefined ? {} : { os: setup.os }),
@@ -937,6 +946,63 @@ describe('doctor: tools', () => {
   });
 });
 
+describe('doctor: the version of the agent (TP-35)', () => {
+  const agentCheck = async (setup: Setup = {}) => {
+    const deps = await initialized(setup);
+    return { deps, result: await checkAgentVersion(deps, await inspectConfig(deps, HOME)) };
+  };
+
+  it.each([['2.1.224'], ['2.1.224 (Claude Code)\n'], ['2.2.0 (Claude Code)'], ['3.0.1']])('passes for %j', async (agentVersion) => {
+    const { result } = await agentCheck({ agentVersion });
+    expect(result).toMatchObject({ id: 'agent-version', level: 'ok' });
+    expect(result.text).toContain('claude');
+  });
+
+  it.each([['2.1.223 (Claude Code)', '2.1.223'], ['2.0.999', '2.0.999'], ['1.0.0', '1.0.0']])(
+    'warns for %j and names both versions',
+    async (agentVersion, shown) => {
+      const { result } = await agentCheck({ agentVersion });
+      expect(result.level).toBe('warn');
+      expect(result.text).toContain(`claude ${shown} is older than 2.1.224`);
+    },
+  );
+
+  it.each([
+    ['text with no version', 'unknown\n'],
+    ['an empty output', ''],
+    ['a version with more text', '2.1.224 (Claude Code) and more'],
+    ['a version in a long output', `2.1.224${' '.repeat(300)}`],
+    ['a failure of the program', null],
+  ])('warns for %s', async (_name, agentVersion) => {
+    const { result } = await agentCheck({ agentVersion });
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('cannot read the version of claude');
+  });
+
+  it('runs the agent program of the config with its version flag', async () => {
+    const { deps } = await agentCheck();
+    const config = await inspectConfig(deps, HOME);
+    const agent = config.kind === 'valid' ? config.value.core.session.agent : '';
+    expect(agent).not.toBe('');
+    expect(deps.calls.filter((call) => call.command === agent).map((call) => call.args)).toEqual([['--version']]);
+  });
+
+  it('is not checked, and runs no program, when the config is not valid', async () => {
+    const deps = await initialized();
+    deps.files.set(`${HOME}/factory.yaml`, 'schema: 2\n');
+    const before = deps.calls.length;
+    const result = await checkAgentVersion(deps, await inspectConfig(deps, HOME));
+    expect(result).toEqual({ id: 'agent-version', level: 'warn', text: 'not checked: factory.yaml is not valid' });
+    expect(deps.calls.length).toBe(before);
+  });
+
+  it('is not checked, and runs no program, when the agent is not on PATH', async () => {
+    const { deps, result } = await agentCheck({ tools: ['git', 'tmux', 'gh'] });
+    expect(result).toEqual({ id: 'agent-version', level: 'warn', text: 'not checked: claude is missing' });
+    expect(deps.calls.filter((call) => call.command === 'claude')).toEqual([]);
+  });
+});
+
 describe('doctor: the root', () => {
   const GITIGNORE = `${HOME}/.gitignore`;
 
@@ -1555,11 +1621,12 @@ describe('doctor: the command', () => {
       'proxy-env',
       'proxy',
       'tools',
+      'agent-version',
       'state-repo',
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('25 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('26 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1582,7 +1649,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(25);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(26);
   });
 
   it('finds the node by walking up from the current folder', async () => {

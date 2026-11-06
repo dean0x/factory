@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, rename, rm, stat, symlink, writeFile } from 'node:
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
+import { makeSandbox, removeOpenSandboxes, writeFakeAgent, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 
@@ -223,6 +223,37 @@ describe('factory doctor (built binary)', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('ANTHROPIC_BASE_URL');
     expect(result.stdout).not.toContain('topsecret');
+  });
+});
+
+describe('the agent version check of factory doctor (built binary, TP-35)', () => {
+  /** The `agent-version` check of a doctor run in which `version` is the output of `claude --version`. */
+  const agentCheckFor = async (version: string | null): Promise<{ code: number; level: string | undefined; text: string }> => {
+    await initNode();
+    const env =
+      version === null
+        ? {}
+        : { PATH: `${await writeFakeAgent(box.root, 'other-agent', version)}:${box.env['PATH'] ?? ''}` };
+    const result = await box.run(['doctor', '--home', box.node, '--json'], { env });
+    const document = JSON.parse(result.stdout) as { checks: { id: string; level: string; text: string }[] };
+    const found = document.checks.find((item) => item.id === 'agent-version');
+    return { code: result.code, level: found?.level, text: found?.text ?? '' };
+  };
+
+  it('passes for the fake agent of the sandbox, which prints a new enough version', async () => {
+    expect(await agentCheckFor(null)).toMatchObject({ code: 0, level: 'ok' });
+  });
+
+  it('warns, and still exits 0, for a version below 2.1.224', async () => {
+    const found = await agentCheckFor('2.1.223 (Claude Code)');
+    expect(found).toMatchObject({ code: 0, level: 'warn' });
+    expect(found.text).toContain('claude 2.1.223 is older than 2.1.224');
+  });
+
+  it('warns, and still exits 0, for an output that is no version', async () => {
+    const found = await agentCheckFor('not a version');
+    expect(found).toMatchObject({ code: 0, level: 'warn' });
+    expect(found.text).toContain('cannot read the version of claude');
   });
 });
 

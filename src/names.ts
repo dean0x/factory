@@ -1128,6 +1128,8 @@ export const checkIds = {
   proxyEnv: 'proxy-env',
   proxy: 'proxy',
   tools: 'tools',
+  /** The version of the agent program: a session needs 2.1.224 or newer for the inbox of a worker. */
+  agentVersion: 'agent-version',
   stateRepo: 'state-repo',
   projects: 'projects',
   projectUrls: 'project-urls',

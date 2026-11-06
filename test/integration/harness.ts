@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -74,6 +74,21 @@ const tmuxDirOf = (root: string): string => join(root, 'tmux');
 /** The socket of the tmux server of a sandbox. A tmux that gets TMUX_TMPDIR puts its socket below `tmux-<uid>`. */
 export const tmuxSocketOf = (root: string): string => join(tmuxDirOf(root), `tmux-${process.getuid?.() ?? 0}`, 'default');
 
+/** What the fake agent prints for `--version` in every sandbox: the oldest version that the inbox of a worker needs. */
+export const FAKE_AGENT_VERSION = '2.1.224 (Claude Code)';
+
+/**
+ * Write a program `claude` that prints `version` and ends, in a new folder `name` of the sandbox, and return the folder. A
+ * test puts the folder at the start of PATH to run `--version` against another version. No test runs the real program.
+ */
+export const writeFakeAgent = async (root: string, name: string, version: string): Promise<string> => {
+  const folder = join(root, name);
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, 'claude'), `#!/bin/sh\necho '${version}'\n`);
+  await chmod(join(folder, 'claude'), 0o755);
+  return folder;
+};
+
 /** The notice that the yes flag prints: the change of the hook settings, with its target. */
 const HOOK_NOTICE = /warning: This changes the settings of Claude Code in [^\n]*:\n(?: {2}[^\n]*\n)+/;
 
@@ -145,8 +160,9 @@ const buildSandbox = async (root: string): Promise<Sandbox> => {
     join(home, '.gitconfig'),
     '[user]\n\tname = Test Owner\n\temail = test.owner@example.com\n[init]\n\tdefaultBranch = main\n',
   );
+  const agentFolder = await writeFakeAgent(root, 'agent-bin', FAKE_AGENT_VERSION);
   const env: Record<string, string> = {
-    PATH: process.env['PATH'] ?? '',
+    PATH: `${agentFolder}:${process.env['PATH'] ?? ''}`,
     HOME: home,
     XDG_CONFIG_HOME: join(home, '.config'),
     GIT_CONFIG_GLOBAL: join(home, '.gitconfig'),
