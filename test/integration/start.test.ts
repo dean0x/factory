@@ -874,6 +874,8 @@ describe.skipIf(!hasTmux)(
       expect(again.code, again.stderr).toBe(0);
       expect(again.stderr).toContain('work-copies/web/beta/.claude/settings.local.json');
       expect(again.stdout).toContain('Resumed the workers: alpha.');
+      expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      await expectRule('alpha');
       expect(await hasWorkerPane('alpha')).toBe(true);
       expect(await hasWorkerPane('beta')).toBe(false);
     }, RECOVERY_CASE_MS);
