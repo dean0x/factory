@@ -221,18 +221,41 @@ const readSettings = async (deps: Deps, file: string, command: CommandText): Pro
 };
 
 /**
- * True when the group holds the own command of the event. For an event whose own group has a matcher, the group must have that
- * matcher too: the same command under another matcher is not called for the notices that the own group names.
+ * Whether Claude Code calls the groups of an event only when the matcher of the group fits the notice. The other events call every
+ * group, and they ignore the matcher.
  */
-const hasOwnCommand = (group: unknown, event: string): boolean => {
-  const matcher = matcherOf(event);
-  return (
-    isRecord(group) &&
-    (matcher === undefined || group['matcher'] === matcher) &&
-    Array.isArray(group['hooks']) &&
-    group['hooks'].some((handler) => isRecord(handler) && handler['type'] === settingsCommandType && handler['command'] === hookCommandOf(event))
-  );
+const filteredByMatcher: Readonly<Record<HookEvent, boolean>> = {
+  SessionStart: true,
+  UserPromptSubmit: false,
+  Stop: false,
+  PreCompact: true,
+  Notification: true,
+  PreToolUse: true,
 };
+
+/** The matchers that fit every notice of an event: no matcher, the empty text and `*`. */
+const fitsEveryNotice = (matcher: unknown): boolean => matcher === undefined || matcher === '' || matcher === '*';
+
+/**
+ * True when the matcher of a group makes Claude Code call the own command for every notice that the own group covers. For an event
+ * whose own group has a matcher, the group must have that matcher. For another event that Claude Code filters by matcher, the group
+ * must have a matcher that fits every notice: the same command under a narrower matcher is not called for the other notices.
+ */
+const matcherCovers = (event: HookEvent, matcher: unknown): boolean => {
+  const own = matcherOf(event);
+  if (own !== undefined) return matcher === own;
+  return !filteredByMatcher[event] || fitsEveryNotice(matcher);
+};
+
+/** True when the group holds the own command of the event, under any matcher. */
+const holdsOwnCommand = (group: unknown, event: HookEvent): boolean =>
+  isRecord(group) &&
+  Array.isArray(group['hooks']) &&
+  group['hooks'].some((handler) => isRecord(handler) && handler['type'] === settingsCommandType && handler['command'] === hookCommandOf(event));
+
+/** True when the group holds the own command of the event and its matcher covers the notices of the own group. */
+const hasOwnCommand = (group: unknown, event: HookEvent): boolean =>
+  isRecord(group) && holdsOwnCommand(group, event) && matcherCovers(event, group['matcher']);
 
 interface Change {
   /** The settings after the change. */
@@ -287,7 +310,8 @@ const addHooks = (current: unknown, file: string, command: CommandText): CliResu
 
 /**
  * The events of the fixed list that the settings object does not cover with the own command, in the order of the list. For
- * `Notification` the own group must have the own matcher. A shape that is not known (no object, no hooks object, or an event whose
+ * `Notification` the own group must have the own matcher. For `SessionStart`, `PreCompact` and `PreToolUse` the matcher of the own
+ * group must be absent, empty or `*`. A shape that is not known (no object, no hooks object, or an event whose
  * value is not a list) counts every event as missing, so a check that needs the events fails closed.
  */
 export const missingHookEvents = (settings: unknown): readonly HookEvent[] => {
@@ -427,10 +451,21 @@ const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliR
 };
 
 /**
- * True when the settings file of the session folder holds the own command of at least one event of the fixed list. A session
- * folder that is not there, a settings file that is not there and a file with no own command give false: no hook of the program
- * is there to bring up to date. The checks of the target are those of `ensureHookSettings`, so a link is a stop (exit 4) and a
- * file that is not a JSON object is a failure (exit 1). The call writes nothing and asks nothing.
+ * True when a list of an event of the fixed list holds the own command of that event, under any matcher. An event whose value is
+ * not a list holds nothing and does not hide the other events.
+ */
+const holdsAnyOwnCommand = (settings: Settings): boolean => {
+  const hooks = settings[claudeSettingKeys.hooks];
+  return isRecord(hooks) && hookNames.events.some((event) => (groupsOfEvent(hooks, event) ?? []).some((group) => holdsOwnCommand(group, event)));
+};
+
+/**
+ * True when the settings file of the session folder holds the own command of at least one event of the fixed list, under any
+ * matcher, in a list. A session folder that is not there, a settings file that is not there and a file with no own command give
+ * false: no hook of the program is there to bring up to date. An event whose value is not a list does not hide the own command of
+ * another event: the file gives true, and `ensureHookSettings` then names that event. The checks of the target are those of
+ * `ensureHookSettings`, so a link is a stop (exit 4) and a file that is not a JSON object is a failure (exit 1). The call writes
+ * nothing and asks nothing.
  */
 export const holdsOwnHook = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<boolean>> => {
   const folder = await deps.fs.lstat(request.folder);
@@ -439,7 +474,7 @@ export const holdsOwnHook = async (deps: Deps, request: HookConsentRequest): Pro
   const read = await readTarget(deps, request);
   if (!read.ok) return read;
   const { content } = read.value;
-  return ok(content !== null && missingHookEvents(content.settings).length < hookNames.events.length);
+  return ok(content !== null && holdsAnyOwnCommand(content.settings));
 };
 
 /**

@@ -6,6 +6,7 @@ import { failure, type CliResult } from '../../src/cli/errors.js';
 import {
   declinedHookText,
   ensureHookSettings,
+  holdsOwnHook,
   isOwnSettingsText,
   missingHookEvents,
   ownSettingsEntries,
@@ -168,6 +169,33 @@ describe('the events that a settings object lacks (TP-2)', () => {
     expect(missingHookEvents({ ...EXPECTED_ENTRIES, hooks: { ...EXPECTED_ENTRIES.hooks, Stop: [stop] } })).toEqual([]);
   });
 
+  const withOwnGroup = (event: string, matcher: string | undefined): unknown => ({
+    ...EXPECTED_ENTRIES,
+    hooks: {
+      ...EXPECTED_ENTRIES.hooks,
+      [event]: [{ ...(matcher === undefined ? {} : { matcher }), hooks: [{ type: 'command', command: `factory hook ${event}` }] }],
+    },
+  });
+
+  it.each([
+    ['PreToolUse', 'Bash'],
+    ['SessionStart', 'startup'],
+    ['PreCompact', 'manual'],
+  ])('TP-2: a %s group with the matcher %j is missing, because Claude Code calls it for some notices only', (event, matcher) => {
+    expect(missingHookEvents(withOwnGroup(event, matcher))).toEqual([event]);
+  });
+
+  it.each(['PreToolUse', 'SessionStart', 'PreCompact'].flatMap((event) => [[event, ''], [event, '*']] as const))(
+    'TP-2: a %s group with the matcher %j covers every notice, so the event is not missing',
+    (event, matcher) => {
+      expect(missingHookEvents(withOwnGroup(event, matcher))).toEqual([]);
+    },
+  );
+
+  it('TP-2: a matcher on UserPromptSubmit, which Claude Code does not filter by matcher, does not make it missing', () => {
+    expect(missingHookEvents(withOwnGroup('UserPromptSubmit', 'x'))).toEqual([]);
+  });
+
   it.each([
     ['no value', undefined],
     ['null', null],
@@ -306,6 +334,41 @@ describe('hook settings: the change and the consent', () => {
     expect(question).not.toContain('factory hook statusline');
     expect(groupsOf(stored(deps), 'Stop')).toEqual([stop]);
     expect(groupsOf(stored(deps), 'PreCompact')).toEqual(EXPECTED_ENTRIES.hooks.PreCompact);
+  });
+});
+
+describe('hook settings: a group of the own command with a narrow matcher', () => {
+  it('adds the own full group beside it, and keeps it', async () => {
+    const deps = makeDeps({ tty: true });
+    const narrow = { matcher: 'Bash', hooks: [{ type: 'command', command: 'factory hook PreToolUse' }] };
+    deps.seed(FILE, JSON.stringify({ ...EXPECTED_ENTRIES, hooks: { ...EXPECTED_ENTRIES.hooks, PreToolUse: [narrow] } }));
+    expect(outcomeOf(await ensureHookSettings(deps, request())).kind).toBe('written');
+    expect(deps.prompts[0]).toContain('hooks.PreToolUse: add the command "factory hook PreToolUse"');
+    expect(groupsOf(stored(deps), 'PreToolUse')).toEqual([narrow, EXPECTED_ENTRIES.hooks.PreToolUse[0]]);
+  });
+});
+
+describe('hook settings: the file holds a hook of the program (holdsOwnHook)', () => {
+  const holds = async (settings: unknown): Promise<boolean> => {
+    const deps = makeDeps();
+    deps.seed(FILE, JSON.stringify(settings));
+    const result = await holdsOwnHook(deps, consentRequest());
+    if (!result.ok) throw new Error(`the call failed: ${result.error.message}`);
+    return result.value;
+  };
+
+  it('is true when a list holds the own command, also when another event is not a list', async () => {
+    expect(await holds({ hooks: { SessionStart: EXPECTED_ENTRIES.hooks.SessionStart, Stop: 'x' } })).toBe(true);
+  });
+
+  it('is true when the only own command is in a group with a narrow matcher', async () => {
+    const narrow = { matcher: 'Bash', hooks: [{ type: 'command', command: 'factory hook PreToolUse' }] };
+    expect(await holds({ hooks: { PreToolUse: [narrow] } })).toBe(true);
+  });
+
+  it('is false when no group holds the own command, also when an event is not a list', async () => {
+    const other = [{ hooks: [{ type: 'command', command: 'other-tool' }] }];
+    expect(await holds({ hooks: { SessionStart: other, Stop: 'x' } })).toBe(false);
   });
 });
 
