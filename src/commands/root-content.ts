@@ -53,6 +53,7 @@ import {
   reservedRootNames,
   roles,
   settingsSeenNote,
+  statuslineKeyPath,
   trackedFiles,
   values,
 } from '../names.js';
@@ -113,6 +114,10 @@ const NUL = '\u0000';
 const USER_FOLDER_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^\s/\\]+|\/home\/[^\s/\\]+|[A-Za-z]:\\Users\\[^\s\\]+)/;
 
 const doctorAgain = `run "${commandText(commands.doctor)}"`;
+
+/** The sentence that goes before the remedy for a status line that the program did not write. It names the way to keep the command. */
+const KEEP_STATUS_LINE = `To keep the status line command, set ${statuslineKeyPath} in ${files.localConfig} to it; ${program} runs it and shows its output. `;
+
 const NOT_VALID = `${files.config} is not valid`;
 
 /** The remedy for a security check that git could not finish: git must work in the factory folder again. */
@@ -579,12 +584,14 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
       : [`sets the proxy or the credential of the session in its env values (${facts.movesTraffic.join(', ')})`]),
     ...(source.presence !== null && facts.runsCommands.length > 0 ? [`runs a command through ${commandNames}`] : []),
   ];
+  const keepStatusLine =
+    source.presence !== null && facts.runsCommands.includes(claudeSettingKeys.statusLine) ? KEEP_STATUS_LINE : '';
   const wholeTool = facts.wholeToolRules.map(shownPath);
   const narrow = facts.narrowRules.map(shownPath);
   return [
     ...(reasons.length === 0
       ? []
-      : [finding(id, 'fail', `${shown} ${reasons.join(' and ')}`, `Remove the setting from ${shown}, then ${doctorAgain}.`)]),
+      : [finding(id, 'fail', `${shown} ${reasons.join(' and ')}`, `${keepStatusLine}Remove the setting from ${shown}, then ${doctorAgain}.`)]),
     ...(facts.valid ? [] : [finding(id, 'warn', `${shown} is not valid JSON, so Claude Code does not read it`, `Fix or remove ${shown}.`)]),
     ...(source.presence === null || isOwnSettingsText(text)
       ? []
