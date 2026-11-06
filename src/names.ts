@@ -159,6 +159,8 @@ export const files = {
   workerLastSession: 'last-session',
   /** The notes of a worker for its next turn, in its inbox folder: a reset needs them before it clears or compacts the session. */
   resume: 'resume.md',
+  /** The assignment of a worker, in its inbox folder: `worker new --assignment FILE` copies the text of FILE to this file. */
+  assignment: 'assignment.md',
   /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
   coordinatorLastSession: 'coordinator-last-session',
   /** The id of this machine, in the run-time folder: made once, and never shared. */
@@ -406,6 +408,18 @@ export const trafficEnvNames = [
 
 /** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
 export const maxFileBytes = 1_048_576;
+
+/**
+ * The rules for the source file of an assignment (`worker new --assignment`). The file is read only from the factory folder or from the
+ * git work tree of the working folder. No path part below that top starts with `dotMark`, except the orders folder below the factory
+ * folder (`ordersParts`, shown as `ordersShown`). The local config of the factory folder is never read. The bytes limit is `maxFileBytes`.
+ */
+export const assignmentSource = {
+  dotMark: '.',
+  ordersParts: [dirs.state, dirs.orders],
+  ordersShown: `${dirs.state}/${dirs.orders}/`,
+  maxBytes: maxFileBytes,
+} as const;
 
 /**
  * The per-user files (design 4.3): the factory list, the approval records and the setup acceptances. Each one is in the
