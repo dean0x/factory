@@ -498,6 +498,27 @@ describe('the reset, watch and self commands in the command line', () => {
   });
 
   it.each([
+    ['worker stop', ['worker', 'stop', 'alpha']],
+    ['worker resume', ['worker', 'resume', 'alpha']],
+    ['worker summon', ['worker', 'summon', 'alpha']],
+    ['worker reset', ['worker', 'reset', 'alpha', '--clear']],
+    ['worker watch', ['worker', 'watch']],
+    ['worker list', ['worker', 'list']],
+  ])('exits 2 for %s with --assignment, names new, and runs no program', async (_name, argv) => {
+    const { deps } = made();
+    const result = await runOn(deps, [...argv, '--assignment', 'task.md', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--assignment belongs to new only');
+    expect(deps.calls).toEqual([]);
+  });
+
+  it('keeps the message for an unknown subcommand that gets --assignment', async () => {
+    const result = await runOn(made().deps, ['worker', 'nope', '--assignment', 'task.md', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('unknown subcommand "nope"');
+  });
+
+  it.each([
     ['worker reset with --clear', ['worker', 'reset', 'alpha', '--clear']],
     ['worker reset with --compact', ['worker', 'reset', 'alpha', '--compact']],
     ['self reset', ['self', 'reset']],

@@ -676,7 +676,18 @@ const requireNoResetFlags = (options: WorkerOptions): CliResult<void> => {
   return needsUsage(`${given.map(flagText).join(' and ')} ${given.length === 1 ? 'belongs' : 'belong'} to ${workerCommands.reset} only`);
 };
 
-const isSubcommand = (word: string | undefined): boolean => Object.values<string>(workerCommands).includes(word ?? '');
+/** The flag `--assignment` belongs to `new`. Another subcommand refuses it (exit 2), so no flag is taken and then ignored. */
+const requireNoAssignment = (options: WorkerOptions): CliResult<void> =>
+  options.assignment === undefined ? ok(undefined) : needsUsage(`${flagText(flags.assignment)} belongs to ${workerCommands.new} only`);
+
+/** The flags that belong to one subcommand only. Every other subcommand refuses them. */
+const requireOwnFlags = (subcommand: string, options: WorkerOptions): CliResult<void> => {
+  const stray = subcommand === workerCommands.reset ? ok(undefined) : requireNoResetFlags(options);
+  if (!stray.ok) return stray;
+  return subcommand === workerCommands.new ? ok(undefined) : requireNoAssignment(options);
+};
+
+const isSubcommand = (word: string | undefined): word is string => Object.values<string>(workerCommands).includes(word ?? '');
 
 /** `worker <subcommand>`: the commands of the workers of a node. */
 export const runWorker = async (
@@ -685,8 +696,8 @@ export const runWorker = async (
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
   const [subcommand, ...args] = options.words;
-  if (isSubcommand(subcommand) && subcommand !== workerCommands.reset) {
-    const stray = requireNoResetFlags(options);
+  if (isSubcommand(subcommand)) {
+    const stray = requireOwnFlags(subcommand, options);
     if (!stray.ok) return stray;
   }
   switch (subcommand) {
