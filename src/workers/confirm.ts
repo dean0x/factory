@@ -205,8 +205,8 @@ const resetNotConfirmed = (request: ResetConfirmRequest, reason: string): CliRes
  * Waits for the session of a worker to show that a reset line took effect. Each check comes after a wait of
  * `resetConfirm.intervalMs`, and there are at most `resetConfirm.attempts` checks. At each check the pane must still run the launch of
  * the worker: a pane that ended, is gone, or is another program is a failure (exit 1). A clear is confirmed by a `SessionStart` line of
- * a new session, and a compact by a `PreCompact` or `SessionStart` line of the session, each with a time after the typing. No such line
- * within the checks is "not confirmed" (exit 3). Nothing is typed, closed or undone.
+ * a new session. A compact is confirmed by a `PreCompact` or `SessionStart` line with a time after the typing, and the session id is not
+ * compared. No such line within the checks is "not confirmed" (exit 3). Nothing is typed, closed or undone.
  */
 export const confirmReset = async (deps: Deps, request: ResetConfirmRequest): Promise<CliResult<void>> => {
   const { home, paneId, workerId, kind, typedAt, sessionBefore } = request;
