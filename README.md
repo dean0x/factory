@@ -6,14 +6,14 @@ A node is a folder with a config file, a layer and an owner. A node on layer 1 o
 
 ## Install
 
-factory is in early access. It is not on the npm registry. A developer with read access to the private repo installs it from a private tag `v0.2.0-ea.N`. The owner gives you the number `N` and the full commit SHA of the tag. First check the tag with `git ls-remote`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run this pair of commands in a new empty folder:
+factory is in early access. It is not on the npm registry. A developer with read access to the private repo installs it from a private tag `v0.2.0-ea.N`. The owner gives you the number `N` and the commit SHA. `<sha>` is the full 40-character commit SHA of the tag. First check with `git ls-remote` that the tag points to `<sha>`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run this pair of commands in a new empty folder:
 
 ```sh
-npm pack "git+ssh://git@github.com/dean0x/factory.git#v0.2.0-ea.N"
+npm pack "git+ssh://git@github.com/dean0x/factory.git#<sha>"
 npm install --global ./dean0x-factory-0.2.0.tgz
 ```
 
-The first command builds the program from source and makes a package file. The second command installs that file. The guide has the checks, the update steps and the known limits.
+The first command builds the program from source at the commit `<sha>`, not at the tag name, and makes a package file. The second command installs that file. The guide has the checks, the update steps and the known limits.
 
 You need:
 

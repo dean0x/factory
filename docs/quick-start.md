@@ -8,7 +8,7 @@ Each step names its place:
 - **The factory folder.** Make it the current folder, then run the command.
 - **Ask the coordinator.** Type the request in the pane of the coordinator.
 
-In the examples, `~/work/web` is your own project repo. `~/work/web-factory` is your own factory folder. `v0.2.0-ea.N` is the tag of your hand-over, and N is a number.
+In the examples, `~/work/web` is your own project repo. `~/work/web-factory` is your own factory folder. `v0.2.0-ea.N` is the tag of your hand-over, and N is a number. `<sha>` is the full 40-character commit SHA of your hand-over.
 
 ## 1. What early access is
 
@@ -87,7 +87,7 @@ In the last row, replace `<url>` with the URL of your project repo.
 
 ## 4. Install
 
-Use the tag and the full commit SHA of your hand-over.
+Use the tag and the full commit SHA of your hand-over. In each command, replace `N` and `<sha>` with your values.
 
 **Step 1. Check the tag.** Place: a terminal window, in any folder.
 
@@ -95,9 +95,11 @@ Use the tag and the full commit SHA of your hand-over.
 git ls-remote git@github.com:dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'
 ```
 
-The command must print one line. The `^{}` makes git show the commit that the tag points to. The SHA at the start of the line must equal the full commit SHA of the hand-over. Compare all 40 characters.
+The command must print one line. The `^{}` makes git show the commit that the tag points to. The SHA at the start of the line must equal `<sha>`. Compare all 40 characters.
 
 If the command prints no line, or prints a different SHA, stop. Do not install. Tell the owner.
+
+Step 3 builds from `<sha>`, not from the tag name. A tag can move, but a commit SHA does not change. So the build is the commit that you checked.
 
 On Path B, use `https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`.
 
@@ -118,15 +120,15 @@ cd "$(mktemp -d)"
 Then run this pair of commands in that folder:
 
 ```sh
-npm pack "git+ssh://git@github.com/dean0x/factory.git#v0.2.0-ea.N"
+npm pack "git+ssh://git@github.com/dean0x/factory.git#<sha>"
 npm install --global ./dean0x-factory-0.2.0.tgz
 ```
 
 npm can not build the program in a one-step global install from git. So this guide builds a package file first, and then installs that file.
 
-On Path B, use `"git+https://github.com/dean0x/factory.git#v0.2.0-ea.N"` in the first command.
+On Path B, use `"git+https://github.com/dean0x/factory.git#<sha>"` in the first command.
 
-The first command builds the program from source. It takes some seconds, and a minute or more on a slow network. If the build fails, the command stops with an error. Never install from a branch.
+The first command builds the program from source, at the commit `<sha>`. It takes some seconds, and a minute or more on a slow network. If the build fails, the command stops with an error. Never install from a branch.
 
 **Step 4. Check the result.** Place: the terminal window of Step 3.
 
@@ -164,6 +166,8 @@ npm link
 ```
 
 The `npm ci` command also runs the build script and the install scripts of the build tools. The clone path gives you the time to read the code first.
+
+The script `prepare` is the build, so `npm run build` builds a second time. Keep this command. If you set `ignore-scripts=true`, `npm ci` does not run `prepare`, but the named command `npm run build` still runs.
 
 ### The installed commit
 
@@ -303,7 +307,7 @@ git fetch --tags
 git log <old-tag>..<new-tag>
 ```
 
-**Step 3. Install the new tag.** Do Step 1 to Step 4 of part 4 again, with the new tag. Start with the `git ls-remote` check. Use a new empty folder. If you used `npm link` before, run `npm rm -g @dean0x/factory` first.
+**Step 3. Install the new build.** Do Step 1 to Step 4 of part 4 again, with the new tag and the new `<sha>`. Start with the `git ls-remote` check. Use a new empty folder. If you used `npm link` before, run `npm rm -g @dean0x/factory` first.
 
 On the clone path, run these commands in the clone instead. The command `git rev-parse HEAD` must print the full commit SHA of the hand-over. The link to the clone stays, so you need no new `npm link`.
 
@@ -314,6 +318,8 @@ git rev-parse HEAD
 npm ci
 npm run build
 ```
+
+Here too, `npm ci` runs `prepare`, so `npm run build` builds a second time. Keep this command, because `npm run build` still runs when `ignore-scripts=true` makes `npm ci` skip `prepare`.
 
 Claude Code runs `factory hook` from the settings of each session. After the install, the live sessions use the new program for the hook at once.
 

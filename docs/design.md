@@ -1293,7 +1293,7 @@ Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the
 
 | Id | Decision |
 |---|---|
-| D-49 | The code goes to the private repo `dean0x/factory`. No public visibility, no npm publish, no tag. **Changed (2026-11-06):** private annotated early-access tags (`git tag -a`) `v0.2.0-ea.N` only, each pushed after the owner's go. The hand-over gives the full commit SHA that the tag points to. A pushed tag is never moved, deleted or used again (a fix gets the next N). No GitHub Release and no npm publish. The release workflow skips these tags (§4.7). |
+| D-49 | The code goes to the private repo `dean0x/factory`. No public visibility, no npm publish, no tag. **Changed (2026-11-06):** private annotated early-access tags (`git tag -a`) `v0.2.0-ea.N` only, each pushed after the owner's go. The hand-over gives the full commit SHA that the tag points to. The install checks that the tag points to this SHA, and then builds from the SHA, not from the tag name. A pushed tag is never moved, deleted or used again (a fix gets the next N). No GitHub Release and no npm publish. The release workflow skips these tags (§4.7). |
 | D-51 A | No second review of FAC-M1 now. The review of the v2 code covers the setup and upgrade code. The review of the FAC-M2 PR names `init`, `upgrade` and `doctor`, and its summary lists those files (roadmap, FAC-M2). |
 | D-52 | This workspace: approved and assigned work merges when the checks pass. Releases are not part of it. factory offers the rule as an owner choice, the value `delegated` of the approval point `merge`. §6.1 lists the proofs. |
 | D-53 | Dean accepted the proposals F-1 to F-10 as a set ("Changes from v1" above). |

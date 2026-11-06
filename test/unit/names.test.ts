@@ -776,6 +776,34 @@ describe('the name of the worker window in the docs that a user reads (TP-138)',
   });
 });
 
+describe('the install command builds the commit of the hand-over, not the tag name', () => {
+  /**
+   * A tag can move. So the command that builds the package takes the full commit SHA of the hand-over, which step 1 of the
+   * guide proved is the commit of the tag. The tag stays the name of the hand-over and the target of that check.
+   */
+  const INSTALL_DOCS = ['README.md', 'docs/quick-start.md', 'CHANGELOG.md'];
+  const SHA_DOCS = ['README.md', 'docs/quick-start.md'];
+  const textOf = (name: string): string => readFileSync(join(__dirname, '..', '..', name), 'utf8');
+  const gitUrlsOf = (text: string): string[] => text.match(/git\+(?:ssh|https):\/\/[^\s"'`]+/g) ?? [];
+
+  it.each(INSTALL_DOCS)('ends every git URL of an install command with #<sha> in %s', (name) => {
+    const urls = gitUrlsOf(textOf(name));
+    expect(urls.length).toBeGreaterThan(0);
+    expect(urls.filter((url) => !url.endsWith('#<sha>'))).toEqual([]);
+  });
+
+  it.each(SHA_DOCS)('says once what <sha> is in %s', (name) => {
+    const definitions = textOf(name).match(/`<sha>` is the full 40-character commit SHA/g) ?? [];
+    expect(definitions).toHaveLength(1);
+  });
+
+  it('keeps the check of the tag with git ls-remote in the guide, for both paths', () => {
+    const guide = textOf('docs/quick-start.md');
+    expect(guide).toContain("git ls-remote git@github.com:dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'");
+    expect(guide).toContain('`https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`');
+  });
+});
+
 describe('the pane options of tmux', () => {
   /** The pane option of FAC-M1 for a work track, and the pane option of the first schema 2 draft. */
   const OLD_PANE_OPTIONS = ['@lane', '@cell'];
