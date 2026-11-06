@@ -5,7 +5,7 @@ import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { launchConfirm } from '../../src/names.js';
+import { launchConfirm, statuslineKeyPath } from '../../src/names.js';
 import {
   launchWorker,
   newProxyAnswers,
@@ -29,6 +29,9 @@ const OTHER_URL = 'http://127.0.0.1:9090';
 const UUID = '0b9f3c1e-5d2a-4e7b-9c10-a1b2c3d4e5f6';
 const FIRST_NEW_PANE = '%3';
 const POINTER = '/h/node/.factory/workers/alpha/last-session';
+/** The proxy of the environment of the process. No launch may use it. */
+const ENV_PROXY = 'http://evil.example:1';
+const AGENT = 'claude';
 
 interface Setup {
   readonly tmux?: TmuxFixture;
@@ -76,7 +79,7 @@ const make = (setup: Setup = {}): Made => {
   const { handler, log } = tmuxHandler({ sessions: { demo: HOME }, ...setup.tmux });
   const events: string[] = [];
   const base = createFakeDeps({
-    env: { PATH: '/bin', ANTHROPIC_BASE_URL: 'http://evil.example:1', ...setup.env },
+    env: { PATH: '/bin', ANTHROPIC_BASE_URL: ENV_PROXY, ...setup.env },
     run: (call) => {
       events.push(`tmux ${call.args[0]}`);
       return setup.answer?.(call) ?? handler(call);
@@ -121,30 +124,41 @@ const wordsOf = (tmux: TmuxLog): readonly string[] => {
 };
 
 /**
- * One launch that must work. Every launch test goes through this function (TP-61), so each one asserts three facts: the
- * program starts in auto mode with no flag that skips the checks; the proxy of the argument list is the proxy of the config
- * and never the proxy of the environment; and the health check of a proxy happens before the pane.
+ * One launch that must work: `start` makes it, and every launch and resume test goes through this function (TP-61). Each test
+ * asserts four facts: the program starts in auto mode with no flag that skips the checks; the proxy variable is removed
+ * before the program word; the proxy of the argument list is the proxy of the config and never the proxy of the environment;
+ * and the health check of a proxy happens before the pane.
  */
-const launched = async (
+const launchedBy = async (
   made: Made,
   expected: { readonly proxy: string | null },
-  change: Partial<WorkerLaunchRequest> = {},
+  start: () => Promise<CliResult<WorkerLaunch>>,
 ): Promise<WorkerLaunch> => {
-  const result = await launchWorker(made.deps, request(change));
+  const result = await start();
   if (!result.ok) throw new Error(result.error.message);
   const words = wordsOf(made.tmux);
   const mode = words.indexOf('--permission-mode');
   expect(words[mode + 1]).toBe('auto');
   expect(words.filter((word) => /dangerously|bypass|skip/i.test(word))).toEqual([]);
+  const unset = words.indexOf('-u');
+  expect(words.slice(unset, unset + 2)).toEqual(['-u', 'ANTHROPIC_BASE_URL']);
+  expect(unset).toBeLessThan(words.indexOf(AGENT));
   expect(words.filter((word) => word.startsWith('ANTHROPIC_BASE_URL='))).toEqual(
     expected.proxy === null ? [] : [`ANTHROPIC_BASE_URL=${expected.proxy}`],
   );
+  expect(words.join(' ')).not.toContain(ENV_PROXY);
   if (expected.proxy !== null) {
     expect(made.events.indexOf('fetch')).toBeGreaterThanOrEqual(0);
     expect(made.events.indexOf('fetch')).toBeLessThan(made.events.indexOf('tmux split-window'));
   }
   return result.value;
 };
+
+const launched = (
+  made: Made,
+  expected: { readonly proxy: string | null },
+  change: Partial<WorkerLaunchRequest> = {},
+): Promise<WorkerLaunch> => launchedBy(made, expected, () => launchWorker(made.deps, request(change)));
 
 const panesOf = (made: Made): number => made.tmux.panes().length;
 const START_PANES = 3;
@@ -522,6 +536,20 @@ describe('the launch of a worker: the settings of the work copy (TP-15, TP-16)',
     expect(error.message).toContain('work-copies/web/alpha/.claude/settings.local.json');
     expect(error.message).toContain(reason);
     expect(error.hint).toContain('Remove the setting');
+    expect(error.hint).not.toContain(statuslineKeyPath);
+    expect(made.events).toEqual([]);
+    expect(made.deps.fetched).toEqual([]);
+    expect(panesOf(made)).toBe(START_PANES);
+  });
+
+  it('stops with exit 4 for a status line that the program did not write, names the way to keep it, and starts nothing', async () => {
+    const made = make();
+    put(made, JSON.stringify({ statusLine: { type: 'command', command: 'echo kept' } }));
+    const error = await failed(made, { config: configWith({ session: 'local' }) });
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('work-copies/web/alpha/.claude/settings.local.json');
+    expect(error.hint).toContain('Remove the setting');
+    expect(error.hint).toContain(statuslineKeyPath);
     expect(made.events).toEqual([]);
     expect(made.deps.fetched).toEqual([]);
     expect(panesOf(made)).toBe(START_PANES);
@@ -848,24 +876,33 @@ describe('the resume of a worker: the shared launch of a stopped worker', () => 
   const withDeadPane = (): Made => make({ tmux: { panes: [{ id: DEAD_PANE, session: 'demo', options: { '@worker': 'alpha' }, dead: true }] } });
 
   const resumed = async (made: Made, change: Partial<WorkerResumeRequest> = {}) => resumeWorker(made.deps, { ...request(), ...change });
+  const resumedWell = (made: Made, expected: { readonly proxy: string | null }, change: Partial<WorkerResumeRequest> = {}) =>
+    launchedBy(made, expected, () => resumed(made, change));
 
   it('launches with the checked id after --resume', async () => {
     const made = make();
-    const result = await resumed(made, { resumeId: UUID });
-    expect(result).toMatchObject({ ok: true, value: { paneId: FIRST_NEW_PANE } });
+    expect(await resumedWell(made, { proxy: null }, { resumeId: UUID })).toMatchObject({ paneId: FIRST_NEW_PANE });
     const words = wordsOf(made.tmux);
     expect(words[words.indexOf('--resume') + 1]).toBe(UUID);
   });
 
   it('starts a new conversation, with no --resume, when the caller gives no id', async () => {
     const made = make({ program: () => undefined });
-    expect(await resumed(made)).toMatchObject({ ok: true, value: { paneId: FIRST_NEW_PANE } });
+    expect(await resumedWell(made, { proxy: null })).toMatchObject({ paneId: FIRST_NEW_PANE });
     expect(wordsOf(made.tmux)).not.toContain('--resume');
+  });
+
+  it('puts the proxy of the config in the argument list of a resume, after the health check and before the pane', async () => {
+    const made = make();
+    const config = configWith({ session: 'local' });
+    expect(await resumedWell(made, { proxy: LOCAL_URL }, { resumeId: UUID, config })).toMatchObject({ paneId: FIRST_NEW_PANE });
+    expect(made.deps.fetched).toEqual([`${LOCAL_URL}/health`]);
+    expect(wordsOf(made.tmux)).toContain(`ANTHROPIC_BASE_URL=${LOCAL_URL}`);
   });
 
   it('closes each dead pane of the worker by its id before the launch', async () => {
     const made = withDeadPane();
-    expect(await resumed(made, { resumeId: UUID, deadPanes: [deadPane] })).toMatchObject({ ok: true });
+    await resumedWell(made, { proxy: null }, { resumeId: UUID, deadPanes: [deadPane] });
     expect(made.tmux.panes().map((pane) => pane.id)).not.toContain(DEAD_PANE);
     expect(made.events.indexOf('tmux kill-pane')).toBeGreaterThanOrEqual(0);
     expect(made.events.indexOf('tmux kill-pane')).toBeLessThan(made.events.indexOf('tmux split-window'));
