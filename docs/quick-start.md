@@ -35,9 +35,8 @@ Run each check in a terminal window. Each check must show the result in the last
 | Claude Code 2.1.224 or newer | `claude --version` | `2.1.224` or a higher number |
 | An npm prefix that your user owns | `npm prefix --global` | a folder that your user owns |
 | The GitHub CLI, logged in | `gh auth status` | that you are logged in to github.com |
-| SSH access to GitHub | `ssh -T git@github.com` | a message with your GitHub user name |
-| Read access to the factory repo | `git ls-remote git@github.com:dean0x/factory.git HEAD` | one line |
-| Read access to each project repo | `git ls-remote <url> HEAD` | one line |
+
+The checks of your access to GitHub are in part 3. Do them after you set up your credentials.
 
 Native Windows does not work. Every command exits with code 1 and says to use WSL.
 
@@ -51,13 +50,17 @@ Never use `sudo` for a command in this guide. Use a Node install that your user 
 
 Choose one path to GitHub.
 
-**Path A: an SSH key.** Run this once, in a terminal window:
+**Path A: an SSH key.** Place: a terminal window. Read this rule first. Run the command below before any other command that uses an SSH URL.
+
+The first time, ssh shows the host key fingerprint of github.com and asks if you trust it. Compare the fingerprint with the list "GitHub's SSH key fingerprints" on docs.github.com. Answer `yes` only if the fingerprint is on that list. If it is not on the list, answer `no` and tell the owner.
+
+Then run this once:
 
 ```sh
 ssh -T git@github.com
 ```
 
-The first time, ssh shows the host key fingerprint of github.com and asks if you trust it. Compare the fingerprint with the list "GitHub's SSH key fingerprints" on docs.github.com. Answer `yes` only if the fingerprint is on that list. If it is not on the list, answer `no` and tell the owner.
+The command must show a message with your GitHub user name. This is your check of SSH access to GitHub.
 
 **Path B: no SSH key.** Use HTTPS with the GitHub CLI, in a terminal window:
 
@@ -69,6 +72,18 @@ gh auth setup-git
 `gh auth login` asks you to log in. Keep the default place where gh stores the token. `gh auth setup-git` makes git use gh for the credentials of github.com. Then use the `git+https` URL in part 4.
 
 Never put a token in a URL. Never write a token in a command or in a file.
+
+### Check your access
+
+Place: a terminal window. Do these checks after you finish your path. Each check must show the result in the last column.
+
+| You need | Check | The check shows |
+| --- | --- | --- |
+| Path A: read access to the factory repo | `git ls-remote git@github.com:dean0x/factory.git HEAD` | one line |
+| Path B: read access to the factory repo | `git ls-remote https://github.com/dean0x/factory.git HEAD` | one line |
+| Read access to each project repo | `git ls-remote <url> HEAD` | one line |
+
+In the last row, replace `<url>` with the URL of your project repo.
 
 ## 4. Install
 
@@ -113,9 +128,9 @@ On Path B, use `"git+https://github.com/dean0x/factory.git#v0.2.0-ea.N"` in the 
 
 The first command builds the program from source. It takes some seconds, and a minute or more on a slow network. If the build fails, the command stops with an error. Never install from a branch.
 
-**Step 4. Check the result.** Place: a terminal window, in any folder.
+**Step 4. Check the result.** Place: the terminal window of Step 3.
 
-First, look at the list under `Tarball Contents` that `npm pack` printed. It must hold `dist/factory.js`. Second, run this command:
+First, look at the list under `Tarball Contents` that `npm pack` printed in that window. It must hold `dist/factory.js`. Second, run this command:
 
 ```sh
 factory version
@@ -138,7 +153,9 @@ git checkout v0.2.0-ea.N
 git rev-parse HEAD
 ```
 
-The last command must print the full commit SHA of the hand-over. If it does not, stop and tell the owner. Read the code. Then run these commands in the clone:
+On Path B, use `https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`.
+
+The command `git rev-parse HEAD` must print the full commit SHA of the hand-over. If it does not, stop and tell the owner. Read the code. Then run these commands in the clone:
 
 ```sh
 npm ci
@@ -172,7 +189,7 @@ cd ~/work/web-factory
 factory doctor
 ```
 
-`factory doctor` checks the factory, its config and its state. It exits with code 1 when a check fails. Fix each failure before you go on.
+`factory doctor` checks the factory, its config and its state. It exits with a code other than 0 when a check fails. Fix each failure before you go on.
 
 To give your factory to another person, see [Share a factory](../README.md#share-a-factory).
 
@@ -276,6 +293,8 @@ The flag `--yes` works only in a terminal window outside the factory session.
 ```sh
 git ls-remote --tags git@github.com:dean0x/factory.git
 ```
+
+On Path B, use `https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`.
 
 To compare two tags, use the compare view on GitHub. Or use a clone of the factory repo, and run these commands in it:
 
