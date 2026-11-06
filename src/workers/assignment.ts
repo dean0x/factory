@@ -149,6 +149,8 @@ export const readAssignment = async (deps: Deps, request: AssignmentRequest): Pr
   }
   const real = await deps.fs.realpath(source);
   if (!real.ok) return real;
+  // The place rule guards against a mistake of the caller. It checks the file by its path, and the caller can write the inbox folder
+  // directly, so the rule is not a limit on what the caller can do.
   const place = await placeOf(deps, request, source, real.value);
   if (!place.ok) return place;
 
@@ -168,7 +170,11 @@ export const readAssignment = async (deps: Deps, request: AssignmentRequest): Pr
     );
   }
 
-  const [after, afterReal] = [await deps.fs.lstat(source), await deps.fs.realpath(source)];
-  if (!after.ok || !afterReal.ok || after.value !== 'file' || afterReal.value !== real.value) return changed(source, again);
+  const after = await deps.fs.lstat(source);
+  if (!after.ok) return after;
+  if (after.value !== 'file') return changed(source, again);
+  const afterReal = await deps.fs.realpath(source);
+  if (!afterReal.ok) return afterReal;
+  if (afterReal.value !== real.value) return changed(source, again);
   return ok(text);
 };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, LinkKind } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { maxFileBytes } from '../../src/names.js';
@@ -269,5 +269,59 @@ describe('TP-33: a source that changes during the read is refused (exit 4)', () 
     const made = make({ files: { [`${TREE}/task.md`]: TEXT } });
     const deps = changingAfterRead(made.deps, () => undefined);
     expect(valueOf(await read(deps, `${TREE}/task.md`))).toBe(TEXT);
+  });
+});
+
+describe('TP-33: a fault of the file system in the check after the read is exit 1, and not a change of the file', () => {
+  const FAULT = 'EIO: input/output error';
+
+  /** The deps whose `lstat` of one path fails with a fault, from the moment the read of the file has returned its text. */
+  const lstatFailingAfterRead = (deps: FakeDeps, path: string): Deps => {
+    let readDone = false;
+    return {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        readTextLimited: async (asked, maxBytes) => {
+          const text = await deps.fs.readTextLimited(asked, maxBytes);
+          readDone = true;
+          return text;
+        },
+        lstat: async (asked) => (readDone && asked === path ? failure(FAULT) : deps.fs.lstat(asked)),
+      },
+    };
+  };
+
+  /** The same for `realpath`. */
+  const realpathFailingAfterRead = (deps: FakeDeps, path: string): Deps => {
+    let readDone = false;
+    return {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        readTextLimited: async (asked, maxBytes) => {
+          const text = await deps.fs.readTextLimited(asked, maxBytes);
+          readDone = true;
+          return text;
+        },
+        realpath: async (asked) => (readDone && asked === path ? failure(FAULT) : deps.fs.realpath(asked)),
+      },
+    };
+  };
+
+  it('TP-33: the second lstat of the file fails: the fault is exit 1, and the message does not say that the file changed', async () => {
+    const made = make({ files: { [`${TREE}/task.md`]: TEXT } });
+    const result = await read(lstatFailingAfterRead(made.deps, `${TREE}/task.md`), `${TREE}/task.md`);
+    expect(codeOf(result)).toBe(1);
+    expect(errorOf(result).message).toContain(FAULT);
+    expect(errorOf(result).message).not.toContain('changed while it was read');
+  });
+
+  it('TP-33: the second realpath of the file fails: the fault is exit 1, and the message does not say that the file changed', async () => {
+    const made = make({ files: { [`${TREE}/task.md`]: TEXT } });
+    const result = await read(realpathFailingAfterRead(made.deps, `${TREE}/task.md`), `${TREE}/task.md`);
+    expect(codeOf(result)).toBe(1);
+    expect(errorOf(result).message).toContain(FAULT);
+    expect(errorOf(result).message).not.toContain('changed while it was read');
   });
 });
