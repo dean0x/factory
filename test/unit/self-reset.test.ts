@@ -218,6 +218,16 @@ describe('TP-27: self reset types the compact line into its own pane', () => {
     const error = await refused(world);
     expect(codeOf(error)).toBe(3);
     expect(world.tmux.commands().some((command) => command.startsWith('capture-pane'))).toBe(true);
+    expect(error.hint).toBe(`Look at pane ${COORDINATOR_PANE} and answer the dialog there. Then run "factory self reset" again.`);
+  });
+
+  it('TP-27: a coordinator pane in a mode of tmux is exit 3, nothing is typed, and the remedy names the command to run again', async () => {
+    const world = await make({ tmux: { panesInMode: [COORDINATOR_PANE] } });
+    const error = await refused(world);
+    expect(codeOf(error)).toBe(3);
+    expect(error.message).toBe(`the pane ${COORDINATOR_PANE} is in a mode of tmux, so the keys would not reach the session`);
+    expect(error.hint).toBe(`Press q in pane ${COORDINATOR_PANE} to leave the mode. Then run "factory self reset" again.`);
+    expect(world.tmux.commands().some((command) => command.startsWith('capture-pane'))).toBe(false);
   });
 
   it('TP-27: a capture that fails is exit 1, and nothing is typed', async () => {

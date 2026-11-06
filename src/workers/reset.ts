@@ -54,9 +54,10 @@ import { requireOneLivePane } from './stop.js';
  *  8. the pane is read and bound again, and it has the same process (exit 4, exit 3);
  *  9. the last-seen line of the worker, read after the bind: it is owned and has an event (exit 3), the session waits at its prompt
  *     (exit 1), and the line is later than the start of the pane process (exit 3);
- * 10. `typeLine`, whose capture of the screen is the last read before the keys (exit 3 for a numbered list of choices);
+ * 10. `typeLine`: the mode of the pane is read (exit 1 for a failed read, exit 3 for a pane in a mode of tmux), then the capture of the
+ *     screen, which is the last read before the keys (exit 3 for a numbered list of choices);
  * 11. the confirm (`confirmReset`).
- * A dialog that opens after the capture and before the keys is not seen.
+ * A mode or a dialog that opens after its read and before the keys is not seen.
  */
 
 const KINDS = Object.keys(resetKinds) as readonly ResetKind[];
@@ -314,7 +315,7 @@ export const resetWorker = async (deps: Deps, request: ResetRequest): Promise<Cl
   if (!checked.ok) return checked;
   const { pane, sessionId, resumeAgeMs, name } = checked.value;
   const typedAt = deps.now();
-  const typed = await typeLine(deps, pane.paneId, resetKinds[kind].line);
+  const typed = await typeLine(deps, pane.paneId, resetKinds[kind].line, `Then ${runAgain(again)}`);
   if (!typed.ok) return typed;
   const confirmed = await confirmReset(deps, { home, paneId: pane.paneId, workerId, kind, typedAt, sessionBefore: sessionId, again });
   if (!confirmed.ok) return confirmed;

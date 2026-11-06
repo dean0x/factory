@@ -10,10 +10,12 @@ import {
   paneAbsent,
   paneBindArgs,
   paneListArgs,
+  paneModeArgs,
   paneReadArgs,
   parseCoordinatorPane,
   parsePaneBind,
   parsePaneList,
+  parsePaneMode,
   parsePaneListSoft,
   parseSlotList,
   parseSummonMark,
@@ -402,6 +404,26 @@ describe('the tmux call that prints the screen of a pane', () => {
 
   it.each(badPaneIds)('refuses the target %j, which is not a pane id', (text) => {
     expect(capturePaneArgs(text).ok).toBe(false);
+  });
+});
+
+describe('the tmux call that asks if a pane is in a mode', () => {
+  it('prints the mode flag of the pane, to the standard output', () => {
+    expect(argvOf(paneModeArgs('%7'))).toEqual(['display-message', '-p', '-t', '%7', '#{pane_in_mode}']);
+  });
+
+  it.each(badPaneIds)('refuses the target %j, which is not a pane id', (text) => {
+    expect(paneModeArgs(text).ok).toBe(false);
+  });
+
+  it.each([
+    ['0\n', 'none'],
+    ['1\n', 'active'],
+    ['2\n', 'active'],
+    ['\n', 'absent'],
+    ['', 'absent'],
+  ] as const)('reads the answer %j as %s', (text, mode) => {
+    expect(parsePaneMode(text)).toBe(mode);
   });
 });
 

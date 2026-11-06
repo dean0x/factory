@@ -67,6 +67,11 @@ export interface TmuxFixture {
    * Default: no limit.
    */
   readonly splitsBeforeTile?: number;
+  /**
+   * Panes that show a mode screen from the start, for example the copy mode, by pane id. The pane must exist in the fixture. A mode pane
+   * prints `1` for the format `pane_in_mode`, and every other pane prints `0`. Default: none.
+   */
+  readonly panesInMode?: readonly string[];
 }
 
 /** The state of one pane, as the log shows it. */
@@ -440,6 +445,10 @@ export const tmuxHandler = (
   for (const { session, window, ...more } of fixture.panes ?? []) {
     if (!sessions.has(session)) throw new Error(`the pane fixture names the session ${session}, which is not in the fixture`);
     addPane(session, window ?? tmuxNames.windowWorkers, more);
+  }
+  for (const id of fixture.panesInMode ?? []) {
+    if (!panes.some((pane) => pane.id === id)) throw new Error(`the pane fixture puts the pane ${id} in a mode, but it has no such pane`);
+    modeScreens.set(id, 'copy mode');
   }
 
   const targetOf = (command: readonly string[]): string => after(command, '-t');

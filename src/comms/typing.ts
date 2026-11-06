@@ -1,16 +1,22 @@
 import { failure, notReady, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { capturePaneArgs, chainedArgs, isPaneId, type TmuxArgs } from '../launch/tmux.js';
+import { capturePaneArgs, chainedArgs, isPaneId, paneModeArgs, parsePaneMode, type TmuxArgs } from '../launch/tmux.js';
 import { tmuxCall, tmuxStep } from '../launch/tmux-run.js';
 import { typing } from '../names.js';
 
 /**
  * The tmux input verb. This module is the one place in the source that holds an input verb, and a unit test keeps the verbs out
- * of every other module. A caller passes one of the lines `typing.lines`. The module refuses any text that `lineProblem` does
- * not allow, so a wrong call can type nothing else.
+ * of every other module. A caller passes one of the lines `typing.lines`, and the module types no other text: a line that is not
+ * one of them is refused before any tmux call. `lineProblem` is a second check on the line, so a change of the fixed lines can
+ * never allow a line with a control sign, a new line or a final semicolon.
  */
 const SEND_KEYS = 'send-keys';
+
+/** One of the fixed lines that the module types. */
+export type TypedLine = (typeof typing.lines)[keyof typeof typing.lines];
+
+const FIXED_LINES: readonly string[] = Object.values(typing.lines);
 
 /** The signs from space to tilde: the printable ASCII signs, with no control sign and no new line. */
 const PRINTABLE = /^[ -~]+$/;
@@ -65,17 +71,50 @@ const showsChoiceList = (screen: string): boolean => {
 };
 
 /**
- * Types one line into a pane and ends it with Enter. The checks run in this order, and a refusal types nothing:
- * the line (printable ASCII, at most `typing.maxChars` signs, no final semicolon) and the pane id, which are exit 1;
- * one capture of the screen, which is the last read before the keys, and it is exit 1 when it fails (also for a pane that
- * does not exist); a screen that shows a list of choices, which is exit 3, because a dialog may take the keys.
- * The keys go in one tmux run. If the run fails, exactly one clean-up call clears the input line, and the result is exit 1.
- * A dialog that opens after the capture and before the keys is not seen.
+ * Reads whether the pane is in a mode of tmux, for example the copy mode. The keys of a pane in a mode go to the mode, not to the
+ * session. A failed read, and an answer with no text (tmux has no such pane), are exit 1. Only the answer `0` passes, and any other
+ * answer is exit 3.
  */
-export const typeLine = async (deps: Deps, pane: string, line: string): Promise<CliResult<void>> => {
+const requireNoMode = async (deps: Deps, pane: string, thenAgain: string): Promise<CliResult<void>> => {
+  const read = paneModeArgs(pane);
+  if (!read.ok) return failure(read.error);
+  const answer = await tmuxStep(deps, read.value);
+  if (!answer.ok) return answer;
+  const mode = parsePaneMode(answer.value);
+  switch (mode) {
+    case 'none':
+      return ok(undefined);
+    case 'absent':
+      return failure(`the mode of the pane ${pane} cannot be read: tmux has no such pane`);
+    case 'active':
+      return notReady(
+        `the pane ${pane} is in a mode of tmux, so the keys would not reach the session`,
+        `Press q in pane ${pane} to leave the mode. ${thenAgain}`,
+      );
+    default: {
+      const unreachable: never = mode;
+      return unreachable;
+    }
+  }
+};
+
+/**
+ * Types one of the fixed lines into a pane and ends it with Enter. `thenAgain` is the clause that ends each remedy of an exit 3,
+ * and it names the command that the caller runs again. The checks run in this order, and a refusal types nothing:
+ * the line (one of `typing.lines`, then printable ASCII, at most `typing.maxChars` signs, no final semicolon) and the pane id, which
+ * are exit 1; one read of the mode of the pane, which is exit 1 when it fails and exit 3 for a pane in a mode of tmux, because the
+ * keys would not reach the session; one capture of the screen, which is the last read before the keys, and it is exit 1 when it
+ * fails (also for a pane that does not exist); a screen that shows a list of choices, which is exit 3, because a dialog may take the
+ * keys. The keys go in one tmux run. If the run fails, exactly one clean-up call clears the input line, and the result is exit 1.
+ * A mode or a dialog that opens after its read and before the keys is not seen.
+ */
+export const typeLine = async (deps: Deps, pane: string, line: TypedLine, thenAgain: string): Promise<CliResult<void>> => {
+  if (!FIXED_LINES.includes(line)) return failure('the line to type is refused: it is not one of the fixed lines');
   const problem = lineProblem(line);
   if (problem !== null) return failure(`the line to type is refused: it ${problem}`);
   if (!isPaneId(pane)) return failure('the target of the typed line is not a pane id');
+  const noMode = await requireNoMode(deps, pane, thenAgain);
+  if (!noMode.ok) return noMode;
   const capture = capturePaneArgs(pane);
   if (!capture.ok) return failure(capture.error);
 
@@ -84,7 +123,7 @@ export const typeLine = async (deps: Deps, pane: string, line: string): Promise<
   if (showsChoiceList(screen.value)) {
     return notReady(
       `the pane ${pane} shows a numbered list of choices, so a dialog may wait there`,
-      `Look at pane ${pane} and answer the dialog there. Then type the line again.`,
+      `Look at pane ${pane} and answer the dialog there. ${thenAgain}`,
     );
   }
 

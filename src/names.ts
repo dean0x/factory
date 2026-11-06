@@ -598,8 +598,8 @@ const dialogPointers = ['❯', '>'] as const;
  * The typed input of one line into a pane (design 4.12). `lines` are the only lines that a command types. `keys` are the only
  * key names: one clears the input line before the text, one ends the line. A text longer than `maxChars` is refused. The check
  * of the screen reads the bottom `captureLines` lines of a capture. It sees a dialog list when one line starts with a pointer
- * from `pointers`, then digits and a dot, and a second line starts with digits and a dot. Both patterns allow spaces only before
- * the first sign.
+ * from `pointers`, then digits and a dot, and a second line starts with digits and a dot. Both patterns allow spaces and the
+ * box-drawing signs (U+2500 to U+257F) before the first sign, so a dialog inside a side border is seen too.
  */
 export const typing = {
   lines: { clear: '/clear', compact: '/compact' },
@@ -608,8 +608,8 @@ export const typing = {
   captureLines: 20,
   pointers: dialogPointers,
   optionList: {
-    pointerLine: new RegExp(`^ *(?:${dialogPointers.join('|')}) *[0-9]+\\.`, 'u'),
-    numberedLine: /^ *[0-9]+\./u,
+    pointerLine: new RegExp(`^[ ─-╿]*(?:${dialogPointers.join('|')}) *[0-9]+\\.`, 'u'),
+    numberedLine: /^[ ─-╿]*[0-9]+\./u,
   },
 } as const;
 

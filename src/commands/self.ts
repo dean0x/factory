@@ -39,8 +39,9 @@ import { requireOwnHooks, requireResumeFile } from '../workers/session-checks.js
  *  4. the last-seen line of the coordinator is its own and holds an event, and no dialog waits (exit 3);
  *  5. the resume notes of the node: the folder and the file are plain, and the file has text (exit 3, exit 4);
  *  6. the pane is read again by the caller rule, and it has the same process (exit 3, exit 4, exit 2);
- *  7. `typeLine`, whose capture of the screen is the last read before the keys (exit 3 for a numbered list of choices).
- * A dialog that opens after the capture and before the keys is not seen. The command does not wait for the compact: the output says
+ *  7. `typeLine`: the mode of the pane is read (exit 1 for a failed read, exit 3 for a pane in a mode of tmux), then the capture of the
+ *     screen, which is the last read before the keys (exit 3 for a numbered list of choices).
+ * A mode or a dialog that opens after its read and before the keys is not seen. The command does not wait for the compact: the output says
  * that the line is queued.
  */
 
@@ -155,7 +156,7 @@ export const selfReset = async (deps: Deps, request: SelfResetRequest): Promise<
   if (!notes.ok) return notes;
   const pane = await requireSamePane(deps, request, caller.value);
   if (!pane.ok) return pane;
-  const typed = await typeLine(deps, pane.value.paneId, typing.lines.compact);
+  const typed = await typeLine(deps, pane.value.paneId, typing.lines.compact, THEN_AGAIN);
   if (!typed.ok) return typed;
   return ok({ paneId: pane.value.paneId });
 };

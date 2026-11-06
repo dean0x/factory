@@ -393,6 +393,17 @@ describe('the tmux fake: the shell of a run-shell text', () => {
     expect(run(['display-message', '-p', '-t', '%0', '#{pane_in_mode}']).stdout).toBe('0\n');
   });
 
+  it('puts a pane of the fixture in a mode from the start, and no other pane', () => {
+    const { log, run } = fakeTmux({ sessions: { demo: null }, panesInMode: ['%1'] });
+    expect(log.modes()).toEqual({ '%1': 'copy mode' });
+    expect(run(['display-message', '-p', '-t', '%1', '#{pane_in_mode}']).stdout).toBe('1\n');
+    expect(run(['display-message', '-p', '-t', '%0', '#{pane_in_mode}']).stdout).toBe('0\n');
+  });
+
+  it('refuses a fixture that puts a pane in a mode when the pane does not exist', () => {
+    expect(() => fakeTmux({ sessions: { demo: null }, panesInMode: ['%99'] })).toThrow('%99');
+  });
+
   it('gives exit 0 and shows no screen when the failed call is followed by `; true`', () => {
     const { log, runShell } = fakeTmux({ sessions: { demo: null } });
     expect(runShell(`${failing}; true`, '%0')).toBe(0);

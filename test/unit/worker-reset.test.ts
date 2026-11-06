@@ -622,11 +622,25 @@ describe('TP-22: the bind right before the keys, and the line of the session (re
 });
 
 describe('TP-22: the capture (refusal 18)', () => {
-  it('TP-22: a numbered list of choices on the screen is exit 3, after one capture and with no key', async () => {
+  it('TP-22: a numbered list of choices on the screen is exit 3, after one capture and with no key, and the remedy ends with the command to run again', async () => {
     const world = await make({ screen: DIALOG_SCREEN });
-    const error = await refused(world, `Look at pane ${PANE} and answer the dialog there`);
+    const error = await refused(world, `Look at pane ${PANE} and answer the dialog there. Then run "${AGAIN_CLEAR}" again.`);
     expect(codeOf(error)).toBe(3);
     expect(world.tmux.commands().filter((command) => command.startsWith('capture-pane'))).toHaveLength(1);
+  });
+
+  it('TP-22: a numbered list of choices inside a side border is exit 3, with no key', async () => {
+    const world = await make({ screen: '╭──────────────╮\n│ ❯ 1. Yes     │\n│   2. No      │\n╰──────────────╯\n' });
+    const error = await refused(world, `Look at pane ${PANE} and answer the dialog there`);
+    expect(codeOf(error)).toBe(3);
+  });
+
+  it('TP-22: a pane in a mode of tmux is exit 3, with no key and no capture, and the remedy ends with the command to run again', async () => {
+    const world = await make({ tmux: { panesInMode: [PANE] } });
+    const error = await refused(world, `Press q in pane ${PANE} to leave the mode. Then run "${AGAIN_CLEAR}" again.`);
+    expect(codeOf(error)).toBe(3);
+    expect(error.message).toContain(`the pane ${PANE} is in a mode of tmux`);
+    expect(world.tmux.commands().filter((command) => command.startsWith('capture-pane'))).toEqual([]);
   });
 
   it('TP-22: a numbered list with no pointer line does not stop the reset', async () => {
@@ -694,12 +708,12 @@ describe('the keys of a reset that passed every check', () => {
     typedLine(world, '/compact');
   });
 
-  it('TP-22: the capture is the last read before the keys, and the line is read after the bind', async () => {
+  it('TP-22: the mode read and the capture are the last reads before the keys, and the line is read after the bind', async () => {
     const events: string[] = [];
     const world = await make({ watch: (event) => events.push(event) });
     valueOf(await world.reset('compact', withProgram(world.deps, world.tmux, atWait(1, writesLine('PreCompact')))));
-    const tail = events.slice(events.indexOf('send-keys') - 3);
-    expect(tail.slice(0, 4)).toEqual(['display-message', 'line', 'capture-pane', 'send-keys']);
+    const tail = events.slice(events.indexOf('send-keys') - 4);
+    expect(tail.slice(0, 5)).toEqual(['display-message', 'line', 'display-message', 'capture-pane', 'send-keys']);
   });
 });
 
@@ -766,7 +780,7 @@ describe('TP-25: the confirm', () => {
   });
 
   it('TP-25: a pane whose program ended during the confirm is exit 1, and the wait stops at the first check that sees it', async () => {
-    const world = await make({ rewriteBind: (nth, stdout) => (nth <= 4 ? stdout : withEndedFlag(stdout)) });
+    const world = await make({ rewriteBind: (nth, stdout) => (nth <= 5 ? stdout : withEndedFlag(stdout)) });
     const error = errorOf(await world.reset('clear', withProgram(world.deps, world.tmux, () => undefined)));
     expect(codeOf(error)).toBe(1);
     expect(error.message).toContain('ended during the reset');
@@ -774,7 +788,7 @@ describe('TP-25: the confirm', () => {
   });
 
   it('TP-25: a pane that no longer runs the launch of the worker is exit 1', async () => {
-    const world = await make({ rewriteBind: (nth, stdout) => (nth <= 2 ? stdout : withStartCommand(stdout, 'sleep 300')) });
+    const world = await make({ rewriteBind: (nth, stdout) => (nth <= 3 ? stdout : withStartCommand(stdout, 'sleep 300')) });
     const error = errorOf(await world.reset('clear', withProgram(world.deps, world.tmux, () => undefined)));
     expect(codeOf(error)).toBe(1);
   });

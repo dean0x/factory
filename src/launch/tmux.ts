@@ -113,6 +113,26 @@ export const capturePaneArgs = (pane: string): Result<TmuxArgs, string> => {
 };
 
 /**
+ * Prints the mode flag of one pane, for the pane id only: `1` for a pane that shows a mode of tmux (the copy mode, for example) and `0`
+ * for any other pane. A pane in a mode takes the keys itself, so they never reach the program of the pane. The read of a pane id that
+ * does not exist exits 0 and prints nothing (the target of the read may fail). `parsePaneMode` reads the output.
+ */
+export const paneModeArgs = (pane: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  return target.ok ? ok(call('display-message', '-p', '-t', target.value, '#{pane_in_mode}')) : target;
+};
+
+/** What the answer of the mode read says: no mode, a mode, or no answer at all (tmux has no such pane). */
+export type PaneMode = 'none' | 'active' | 'absent';
+
+/** Reads the output of `paneModeArgs`. Only the text `0` means no mode: any other text fails closed as a mode. */
+export const parsePaneMode = (text: string): PaneMode => {
+  const value = text.trim();
+  if (value === '') return 'absent';
+  return value === '0' ? 'none' : 'active';
+};
+
+/**
  * True when the answer of a pane read, in a format of fields with the separator, says that tmux has no such pane. The read of a
  * pane id that does not exist exits 0, and tmux prints the format with every field empty (the target of the read may fail), so
  * the exit code does not tell: the first field, the pane id, is empty. Text with no field at all is not this answer.
