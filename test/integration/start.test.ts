@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
+import { expectLaunchRule } from './lifecycle-lab.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -669,14 +670,17 @@ const MARK_COMMIT = 'chore: mark this machine as the active one';
 
 /**
  * A fake claude that tells what the recovery needs to know for each session. The names of its files end with the session marker:
+ * `proxy-<marker>` says `yes` when the environment of the last launch holds the proxy variable and `no` when it does not,
  * `argv-<marker>` holds the arguments of the last launch, and `launches-<marker>` has one line for each launch that ran on. A launch
  * with `--resume <id>` acts like the program: the file `no-transcript-<marker>` makes it end at once with an error, the file
  * `silent-<marker>` makes it run with no SessionStart hook, and else the hook of the new session writes its last-seen line.
+ * The file `proxy-<marker>` comes first, so a wait for any other file of the launch also covers it.
  */
 const recoveringClaude = (dir: string): string =>
   [
     '#!/bin/sh',
     `dir='${dir}'`,
+    'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/proxy-$FACTORY_SESSION"; else echo no > "$dir/proxy-$FACTORY_SESSION"; fi',
     'printf \'%s\\n\' "$@" > "$dir/argv-$FACTORY_SESSION"',
     'resume=""',
     'prev=""',
@@ -708,6 +712,10 @@ const sessionStarted = (marker: string, session: string): Promise<RunResult> =>
 
 /** The arguments of the last launch of the program with this session marker. */
 const argvOf = async (marker: string): Promise<string[]> => (await readFile(join(outDir, `argv-${marker}`), 'utf8')).trim().split('\n');
+
+/** The last launch with this session marker obeys the rule of every launch, though the tmux server holds a proxy (`LAUNCH_PROXY_URL`). */
+const expectRule = async (marker: string): Promise<void> =>
+  expectLaunchRule(await argvOf(marker), (await waitForFile(`proxy-${marker}`)).trim());
 
 /** The session id after `--resume`, or undefined when the launch has no `--resume`. */
 const resumeIdOf = (argv: readonly string[]): string | undefined => {
@@ -772,6 +780,7 @@ describe.skipIf(!hasTmux)(
       expect(resumeIdOf(await argvOf('demo'))).toBe(COORDINATOR_SESSION);
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
       expect(resumeIdOf(await argvOf('beta'))).toBe(SESSIONS.beta);
+      for (const marker of ['demo', 'alpha', 'beta']) await expectRule(marker);
       expect(await hasWorkerPane('alpha')).toBe(true);
       expect(await hasWorkerPane('beta')).toBe(true);
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
@@ -784,6 +793,7 @@ describe.skipIf(!hasTmux)(
       expect(again.stdout).not.toContain('The coordinator resumes');
       expect(resumeIdOf(await argvOf('demo'))).toBeUndefined();
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      for (const marker of ['demo', 'alpha']) await expectRule(marker);
     }, RECOVERY_CASE_MS);
 
     it('starts a new conversation for the coordinator, with one warning that names the pointer file, for a pointer that holds no session id (TP-37)', async () => {
@@ -796,6 +806,7 @@ describe.skipIf(!hasTmux)(
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('NOT resumed');
       expect(resumeIdOf(await argvOf('demo'))).toBeUndefined();
+      await expectRule('demo');
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     }, RECOVERY_CASE_MS);
 
@@ -833,6 +844,7 @@ describe.skipIf(!hasTmux)(
       expect(warnings[0]).toContain('factory worker resume beta');
       expect(again.stdout).toContain('Resumed the workers: alpha.');
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      await expectRule('alpha');
       expect(await hasWorkerPane('alpha')).toBe(true);
       expect(await hasWorkerPane('beta')).toBe(false);
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
@@ -849,6 +861,7 @@ describe.skipIf(!hasTmux)(
       expect(again.stderr.split('\n').filter((line) => line.includes('beta'))).toHaveLength(1);
       expect(again.stdout).toContain('Resumed the workers: alpha.');
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      await expectRule('alpha');
       expect(await hasWorkerPane('alpha')).toBe(true);
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     }, RECOVERY_CASE_MS);

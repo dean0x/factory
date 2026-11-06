@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded } from './lifecycle-lab.js';
+import { expectLaunchRule, hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded } from './lifecycle-lab.js';
 
 if (!hasTmux) console.warn('restart.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
@@ -30,6 +30,7 @@ describe.skipIf(!hasTmux)('factory restart (built binary, separate tmux server, 
     expect(after).toBeDefined();
     expect(after?.pane).not.toBe(alpha?.pane);
     expect(resumeIdOf(await lab.argvOf('alpha'))).toBe(SESSIONS.alpha);
+    expectLaunchRule(await lab.argvOf('alpha'), await lab.proxyOf('alpha'));
     expect(await lab.launchCount('alpha')).toBe(2);
 
     expect(await lab.livePaneOf('beta')).toEqual(beta);
