@@ -9,8 +9,10 @@ import { layoutOf } from '../../src/state/layout.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { COORDINATOR_PANE, HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 
 const SESSION = 'a3f1c2d4-1b2c-4d5e-8f90-123456789abc';
 const WORKER = 'alpha';
@@ -259,6 +261,22 @@ describe('TP-28: self reset refuses a session that waits and a coordinator witho
     expect(output.lines.map((line) => line.text)).toEqual(['QUEUED: the compact runs after the current turn']);
     expect(output.json).toEqual({ schema: schemaIds.selfReset, pane: COORDINATOR_PANE, queued: true });
     expect(schemaIds.selfReset).toBe('factory.self-reset/v1');
+  });
+});
+
+describe('TP-39: the output of a self reset is short, and its size is in the token budget (row 17)', () => {
+  it('TP-39: the output passes the short-output check', async () => {
+    const world = await make();
+    expectShortOutput(plainText(selfResetOutput(valueOf(await world.run()))));
+  });
+
+  it('TP-39: the size of the output on this fixture is the value of the row 17', async () => {
+    const world = await make();
+    const text = plainText(selfResetOutput(valueOf(await world.run())));
+    const row = budgetRow(17);
+    expect(row.command).toBe('`factory self reset`');
+    expect(row.measured).toBe(tokensOf(text));
+    expect(tokensOf(text)).toBeLessThanOrEqual(row.budget);
   });
 });
 

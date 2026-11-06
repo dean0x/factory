@@ -7,8 +7,10 @@ import { branchOf, workCopyOf, writeWorkerRecord } from '../../src/workers/regis
 import { watchOutput, watchWorkers, type WatchOutcome } from '../../src/workers/watch.js';
 import { createFakeDeps, exited, missingProgram, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type TmuxLog } from '../helpers/tmux-fake.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { atWait, withProgram, type Program } from '../helpers/worker-program.js';
 
 const ALPHA = 'alpha';
@@ -390,5 +392,32 @@ describe('TP-31: the output of the watch', () => {
   it.each(Object.entries(watchWords.kinds))('TP-31: the kind %s has its own fixed words', (kind, words) => {
     const output = watchOutput({ kind: 'changed', checks: 1, changes: [{ workerId: ALPHA, kind: kind as WatchKind }] });
     expect(output.lines).toEqual([{ level: 'warn', text: `CHANGED: ${ALPHA} ${words}` }]);
+  });
+});
+
+describe('TP-39: the output of the watch is short, and its size is in the token budget (row 14)', () => {
+  const changed: WatchOutcome = {
+    kind: 'changed',
+    checks: 3,
+    changes: [
+      { workerId: ALPHA, kind: 'waits' },
+      { workerId: BETA, kind: 'stalled' },
+    ],
+  };
+
+  it.each<[string, WatchOutcome]>([
+    ['a change', changed],
+    ['no change', { kind: 'no-change', workerIds: [ALPHA, BETA], checks: 40 }],
+    ['no worker', { kind: 'no-worker' }],
+  ])('TP-39: the output of %s passes the short-output check', (_name, outcome) => {
+    expectShortOutput(plainText(watchOutput(outcome)));
+  });
+
+  it('TP-39: the size of the output of two changes on this fixture is the value of the row 14', () => {
+    const text = plainText(watchOutput(changed));
+    const row = budgetRow(14);
+    expect(row.command).toContain('`factory worker watch`');
+    expect(row.measured).toBe(tokensOf(text));
+    expect(tokensOf(text)).toBeLessThanOrEqual(row.budget);
   });
 });

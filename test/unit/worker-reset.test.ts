@@ -14,8 +14,10 @@ import { summonWorker } from '../../src/workers/slot.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { atWait, endsPane, withProgram, type Program } from '../helpers/worker-program.js';
 
 const WORKER = 'alpha';
@@ -793,6 +795,22 @@ describe('TP-26: the output of a reset', () => {
     const done = valueOf(await world.reset('clear', withProgram(world.deps, world.tmux, atWait(1, writesLine('SessionStart', NEW_SESSION, true)))));
     expect(done).toEqual({ workerId: WORKER, kind: 'clear', paneId: PANE, name: 'demo-alpha', resumeAgeMs: 5 * MINUTE });
     expect(resetOutput(done).failed).toBe(false);
+  });
+});
+
+describe('TP-39: the output of a reset is short, and its size is in the token budget (row 7)', () => {
+  const outcome: ResetOutcome = { workerId: WORKER, kind: 'clear', paneId: PANE, name: 'demo-alpha', resumeAgeMs: 5 * MINUTE };
+
+  it.each<ResetKind>(['clear', 'compact'])('TP-39: the output of a %s passes the short-output check', (kind) => {
+    expectShortOutput(plainText(resetOutput({ ...outcome, kind })));
+  });
+
+  it('TP-39: the size of the output of a clear on this fixture is the value of the row 7', () => {
+    const text = plainText(resetOutput(outcome));
+    const row = budgetRow(7);
+    expect(row.command).toBe('`factory worker reset`');
+    expect(row.measured).toBe(tokensOf(text));
+    expect(tokensOf(text)).toBeLessThanOrEqual(row.budget);
   });
 });
 
