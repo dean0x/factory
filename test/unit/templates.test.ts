@@ -137,10 +137,10 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 90],
+    ['coordinator', 40, 75],
     ['manager', 20, 40],
     ['safety', 12, 25],
-    ['worker', 40, 70],
+    ['worker', 40, 59],
   ])('keeps the %s block short (%i to %i lines)', (name, min, max) => {
     const template = allBlocks.find((candidate) => candidate.name === name);
     const lines = template?.body.split('\n').length ?? 0;
