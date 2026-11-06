@@ -115,8 +115,8 @@ const USER_FOLDER_PATH = /(?:^|[^A-Za-z0-9_.-])(?:\/Users\/[^\s/\\]+|\/home\/[^\
 
 const doctorAgain = `run "${commandText(commands.doctor)}"`;
 
-/** The sentence that goes before the remedy for a status line that the program did not write. It names the way to keep the command. */
-const KEEP_STATUS_LINE = `To keep the status line command, set ${statuslineKeyPath} in ${files.localConfig} to it; ${program} runs it and shows its output. `;
+/** The sentence that goes before the remedy for a status line that the program did not write. It tells the owner to check the command first, then names the way to keep it. */
+const KEEP_STATUS_LINE = `Check the status line command first. If you trust it, set ${statuslineKeyPath} in ${files.localConfig} to it; ${program} runs it and shows its output. `;
 
 const NOT_VALID = `${files.config} is not valid`;
 

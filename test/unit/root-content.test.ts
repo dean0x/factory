@@ -1242,14 +1242,14 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
     it.each([
       ['the coordinator folder', 'coordinator', 'coordinator/.claude/settings.local.json'],
       ['a project folder', 'web', 'web/.claude/settings.local.json'],
-    ] as const)('fails in %s for a status line that the program did not write, and names the key that keeps it', async (_name, folder, shown) => {
+    ] as const)('fails in %s for a status line that the program did not write, and tells the owner to check the command before the key that keeps it', async (_name, folder, shown) => {
       const deps = make();
       put(deps, folder, JSON.stringify({ statusLine: { type: 'command', command: 'echo kept' } }));
       const found = await scan(deps);
       const stop = of(found, checkIds.permissionMode).find((entry) => entry.level === 'fail');
       expect(stop?.text).toContain(shown);
       expect(stop?.remedy).toContain(`Remove the setting from ${shown}`);
-      expect(stop?.remedy).toContain(statuslineKeyPath);
+      expect(stop?.remedy).toContain(`Check the status line command first. If you trust it, set ${statuslineKeyPath}`);
       expect(stop?.remedy).toContain(files.localConfig);
       expect(stop?.remedy.split('\n')).toHaveLength(1);
       expect(requireRootClean(found).ok).toBe(false);
