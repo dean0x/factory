@@ -1,8 +1,9 @@
 {
   "name": "@dean0x/factory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Set up and run a node of Claude Code sessions with safe defaults.",
   "license": "MIT",
+  "private": true,
   "type": "module",
   "bin": {
     "factory": "dist/factory.js"
@@ -21,6 +22,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "pretest": "npm run build",
     "test": "vitest run",

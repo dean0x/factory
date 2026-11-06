@@ -344,6 +344,11 @@ describe('words of the old names', () => {
     expect(oldWordsIn(text)).toEqual([]);
   });
 
+  it('keeps the package private, so that npm publish refuses it, and builds the program on a git install', () => {
+    const manifest: unknown = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8'));
+    expect(manifest).toMatchObject({ private: true, scripts: { prepare: 'npm run build' } });
+  });
+
   it('keeps the old words and the jargon words out of every template', () => {
     const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
     expect(texts.flatMap(plainWordsIn)).toEqual([]);
