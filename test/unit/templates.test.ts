@@ -4,6 +4,7 @@ import { effectiveModes, recordDelegation } from '../../src/core/owner-record.js
 import { dirs, templateValues, values } from '../../src/names.js';
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates, roleBlockRenames } from '../../src/templates/index.js';
+import { coordinatorValuesFor, fillTemplate, workerValuesFor } from '../../src/templates/fill.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import {
   allBlocks,
@@ -573,6 +574,7 @@ describe('what the blocks depend on, from the config (blockInputOf)', () => {
     );
     expect(input).toEqual({
       layer: 2,
+      nodeId: config.core.node.id,
       modes: softwareOwnerModes,
       ownerPrefix: config.core.owner.prefix,
       limits: { contextPreparePct: 20, contextMaxPct: 35 },
@@ -585,6 +587,27 @@ describe('what the blocks depend on, from the config (blockInputOf)', () => {
     const config = sampleConfig();
     const given: ApprovalModes = { ...softwareOwnerModes, publish: delegated };
     expect(blockInputOf(config, { coordinator: null, worker: null }, given).modes).toEqual(given);
+  });
+});
+
+describe('the node id in the values of the role texts (TP-37)', () => {
+  const input = blockInput(1, { nodeId: 'acme' });
+
+  it('gives the text of a worker the node id, and keeps its paths as they are written from the factory folder', () => {
+    const values = workerValuesFor(input);
+    expect(values.nodeId).toBe('acme');
+    expect(values.ordersDir).toBe(templateValues.ordersDir);
+  });
+
+  it('gives the text of the coordinator the node id, and its paths with the step out of the coordinator folder', () => {
+    const values = coordinatorValuesFor(input);
+    expect(values.nodeId).toBe('acme');
+    expect(values.ordersDir).toBe(`../${templateValues.ordersDir}`);
+  });
+
+  it('puts the node id into a text in place of its placeholder', () => {
+    expect(fillTemplate(['The name is `{{nodeId}}-<id>`.'], workerValuesFor(input))).toBe('The name is `acme-<id>`.');
+    expect(fillTemplate(['The name is `{{nodeId}}`.'], coordinatorValuesFor(input))).toBe('The name is `acme`.');
   });
 });
 

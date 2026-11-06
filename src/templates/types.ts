@@ -24,12 +24,14 @@ export interface ContextLimits {
 }
 
 /**
- * What the text of the managed blocks of a node depends on: the recipe, the layer, the mode of each approval point, the
- * owner prefix of the local file, the context limits of the shared file and the setup texts.
+ * What the text of the managed blocks of a node depends on: the recipe, the layer, the id of the node, the mode of each
+ * approval point, the owner prefix of the local file, the context limits of the shared file and the setup texts.
  */
 export interface BlockInput {
   readonly recipe: RecipeEntry;
   readonly layer: number;
+  /** The id of the node. The session of the coordinator has this name, and the session of a worker has `<node id>-<worker id>`. */
+  readonly nodeId: string;
   readonly modes: ApprovalModes;
   readonly ownerPrefix: string;
   readonly limits: ContextLimits;

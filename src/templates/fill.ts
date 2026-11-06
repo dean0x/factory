@@ -20,12 +20,22 @@ export const fillTemplate = (
   });
 
 /**
- * The values for the texts in the coordinator folder: the paths are written from that folder, and the owner prefix of the
- * local file and the context limits of the shared file are filled in. A value is put in the text as it is, and it is not
- * read again for placeholders.
+ * The values for the text of a worker: the paths are written from the factory folder, and the id of the node is filled in.
+ * A value is put in the text as it is, and it is not read again for placeholders.
+ */
+export const workerValuesFor = (input: BlockInput): Readonly<Record<string, string>> => ({
+  ...templateValues,
+  nodeId: input.nodeId,
+});
+
+/**
+ * The values for the texts in the coordinator folder: the paths are written from that folder, and the id of the node, the
+ * owner prefix of the local file and the context limits of the shared file are filled in. A value is put in the text as
+ * it is, and it is not read again for placeholders.
  */
 export const coordinatorValuesFor = (input: BlockInput): Readonly<Record<string, string>> => ({
   ...coordinatorTemplateValues,
+  nodeId: input.nodeId,
   ownerPrefix: input.ownerPrefix,
   preparePct: String(input.limits.contextPreparePct),
   maxPct: String(input.limits.contextMaxPct),

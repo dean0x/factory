@@ -30,6 +30,7 @@ export const initSetupTexts: SetupTexts = {
 export const blockInput = (layer: number, overrides: Partial<Omit<BlockInput, 'layer'>> = {}): BlockInput => ({
   recipe: softwareRecipe,
   layer,
+  nodeId: 'demo',
   modes: softwareOwnerModes,
   ownerPrefix: plainOwnerPrefix,
   limits: { contextPreparePct: 30, contextMaxPct: 40 },
