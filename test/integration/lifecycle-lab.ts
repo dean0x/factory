@@ -38,10 +38,12 @@ export type Marker = keyof typeof SESSIONS;
 
 /**
  * The rule of every launch, new or resumed: the program starts in auto mode, no flag skips the permission checks, and the proxy
- * variable of the tmux server did not reach it (`proxy` is the text of its `proxy-<marker>` file). A path is not a flag, so a word
- * that starts with a slash is not read for a skip word.
+ * variable of the tmux server did not reach it (`proxy` is the text of its `proxy-<marker>` file). The flag of the mode comes once,
+ * in the form with a separate value, so a later flag can not change the mode. A path is not a flag, so a word that starts with a
+ * slash is not read for a skip word.
  */
 export const expectLaunchRule = (argv: readonly string[], proxy: string): void => {
+  expect(argv.filter((word) => word === '--permission-mode' || word.startsWith('--permission-mode='))).toHaveLength(1);
   const mode = argv.indexOf('--permission-mode');
   expect(mode).toBeGreaterThanOrEqual(0);
   expect(argv[mode + 1]).toBe('auto');

@@ -137,6 +137,7 @@ const launchedBy = async (
   const result = await start();
   if (!result.ok) throw new Error(result.error.message);
   const words = wordsOf(made.tmux);
+  expect(words.filter((word) => word === '--permission-mode' || word.startsWith('--permission-mode='))).toHaveLength(1);
   const mode = words.indexOf('--permission-mode');
   expect(words[mode + 1]).toBe('auto');
   expect(words.filter((word) => /dangerously|bypass|skip/i.test(word))).toEqual([]);
