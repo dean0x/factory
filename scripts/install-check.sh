@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Install check: install the program from the git commit of this checkout, as a developer does, and check the installed program.
-# The flow: push the commit of HEAD into a throw-away bare repo, run npm install --global on its git+file URL (the prepare
-# script builds dist/factory.js), then compare the installed dist/factory.js with the build of this checkout.
+# The flow: push the commit of HEAD into a throw-away bare repo, run npm pack on its git+file URL (the prepare script
+# builds dist/factory.js), run npm install --global on the tarball, then compare the installed dist/factory.js with the build.
+# It packs first because npm install --global of a git URL prepares the clone in global mode with no node_modules (npm 10 and 11).
 # It runs the install scripts of the packages from the npm registry, so it needs the network.
 # The real HOME, the real XDG state folder, the real tmux server, the real npm prefix and the real npm cache are never written.
 # The source repo is never written. A local tree that differs from HEAD fails the compare by intent.
@@ -92,8 +93,23 @@ make_source() {
 }
 logged source make_source
 
-step "install from git"
-logged install npm install --global --no-audit --no-fund "git+file://$tmp/source.git#$sha"
+step "pack from git"
+mkdir "$tmp/pack"
+logged pack npm pack --no-audit --no-fund --pack-destination "$tmp/pack" "git+file://$tmp/source.git#$sha"
+
+# Print the path of the one tarball in the pack folder. With none or many, return 1. A glob with no match must not become a file name.
+pick_tarball() {
+  local files
+  shopt -s nullglob
+  files=("$tmp/pack"/*.tgz)
+  [ "${#files[@]}" -eq 1 ] || return 1
+  printf '%s\n' "${files[0]}"
+}
+tarball="$(pick_tarball)" || fail "the pack folder does not hold exactly one .tgz file"
+[ -f "$tarball" ] || fail "the tarball is not a file: $tarball"
+
+step "install the tarball"
+logged install npm install --global --no-audit --no-fund "$tarball"
 
 step "installed program"
 found="$(command -v factory || true)"

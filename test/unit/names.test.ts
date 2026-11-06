@@ -528,11 +528,25 @@ describe('the install check', () => {
     expect(lines).toContain('git --git-dir="$tmp/source.git" symbolic-ref HEAD refs/heads/install-proof');
   });
 
-  it('installs the commit from the scratch bare repo, with the install scripts and the registry on', () => {
-    expect(lines.filter((line) => /\bnpm install\b/.test(line))).toEqual([
-      'logged install npm install --global --no-audit --no-fund "git+file://$tmp/source.git#$sha"',
+  it('packs the commit from the scratch bare repo, then installs that tarball, with the install scripts and the registry on', () => {
+    expect(lines.filter((line) => /\bnpm pack\b/.test(line))).toEqual([
+      'logged pack npm pack --no-audit --no-fund --pack-destination "$tmp/pack" "git+file://$tmp/source.git#$sha"',
     ]);
+    const installs = lines.filter((line) => /\bnpm install\b/.test(line));
+    expect(installs).toEqual(['logged install npm install --global --no-audit --no-fund "$tarball"']);
+    expect(installs.filter((line) => line.includes('://'))).toEqual([]);
     expect(lines.filter((line) => /--ignore-scripts|--offline/.test(line))).toEqual([]);
+  });
+
+  it('installs only when the pack folder holds exactly one tarball, and fails closed on none or many', () => {
+    expect(lines).toContain('shopt -s nullglob');
+    expect(lines).toContain('files=("$tmp/pack"/*.tgz)');
+    expect(lines).toContain('[ "${#files[@]}" -eq 1 ] || return 1');
+    expect(lines.some((line) => /^tarball="\$\(pick_tarball\)" \|\| fail /.test(line))).toBe(true);
+    const pick = lines.findIndex((line) => line.startsWith('tarball='));
+    const install = lines.findIndex((line) => /\bnpm install\b/.test(line));
+    expect(pick).toBeGreaterThan(-1);
+    expect(install).toBeGreaterThan(pick);
   });
 
   it('finds factory in the scratch prefix, and fails unless the installed program is a file that runs and equals the build', () => {
