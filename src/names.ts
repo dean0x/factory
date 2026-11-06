@@ -50,6 +50,7 @@ export const commands = {
   doctor: 'doctor',
   machine: 'machine',
   worker: 'worker',
+  self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
   hook: 'hook',
@@ -92,6 +93,9 @@ export const nodeCommands = { children: 'children', addChild: 'add-child', remov
 /** The subcommands of `worker`. */
 export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume', summon: 'summon', reset: 'reset' } as const;
 
+/** The subcommands of `self`. */
+export const selfCommands = { reset: 'reset' } as const;
+
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
   workerNew: `${commands.worker} ${workerCommands.new}`,
@@ -100,6 +104,7 @@ export const commandLines = {
   workerResume: `${commands.worker} ${workerCommands.resume}`,
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
   workerReset: `${commands.worker} ${workerCommands.reset}`,
+  selfReset: `${commands.self} ${selfCommands.reset}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -788,6 +793,15 @@ export type ResetKind = keyof typeof resetKinds;
 export const resetConfirm = { attempts: 10, intervalMs: 1_000 } as const;
 
 /**
+ * The words of the output of `self reset`. The command types `/compact` into the pane of the coordinator itself, and the session runs
+ * the line after its current turn, so the output says that the line is queued and never that the compact is done.
+ */
+export const selfResetWords = { queued: 'QUEUED:', after: 'the compact runs after the current turn' } as const;
+
+/** The name of the file with the resume notes of the coordinator of a node, in the folder `dirs.resume` of the state folder. */
+export const coordinatorResumeFile = (nodeId: string): string => `${nodeId}.md`;
+
+/**
  * The start time of the process of a pane. The macOS `ps` has no `etimes`, and tmux has no format for the start time of a pane, so
  * the check asks `ps` for the elapsed time of the pane process. `timeoutMs` bounds the call. `etime` is the one form of the answer
  * that the check accepts: spaces at the ends and one new line at the end, then optional days and a dash (days need hours), optional
@@ -1126,6 +1140,7 @@ export const schemaIds = {
   workerResume: `${program}.worker-resume/v1`,
   workerSummon: `${program}.worker-summon/v1`,
   workerReset: `${program}.worker-reset/v1`,
+  selfReset: `${program}.self-reset/v1`,
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
