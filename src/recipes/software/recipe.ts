@@ -1,5 +1,5 @@
 import { blockNames, layers } from '../../names.js';
-import { coordinatorValuesFor, fillTemplate } from '../../templates/fill.js';
+import { coordinatorValuesFor, fillTemplate, workerValuesFor } from '../../templates/fill.js';
 import type { BlockInput, BlockTemplate } from '../../templates/types.js';
 import { approvalLines, type RecipeRoles } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
@@ -9,12 +9,13 @@ import { WORKER_LINES } from './roles/worker.js';
 
 type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeof blockNames.manager;
 
-const worker: BlockTemplate = {
+/** The worker block lives in the worker file in the state folder, so its paths are written from the factory folder. It names the session of the coordinator by the id of the node. */
+const workerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.worker,
-  version: 1,
+  version: 2,
   target: 'workerFile',
-  body: fillTemplate(WORKER_LINES),
-};
+  body: fillTemplate(WORKER_LINES, workerValuesFor(input)),
+});
 
 /** The manager block lives in the coordinator folder, so its paths are written from that folder. */
 const managerFor = (input: BlockInput): BlockTemplate => ({
@@ -52,7 +53,7 @@ const roleForLayer = (input: BlockInput): BlockTemplate | null => {
     case null:
       return null;
     case blockNames.worker:
-      return worker;
+      return workerFor(input);
     case blockNames.coordinator:
       return coordinatorFor(input);
     case blockNames.manager:
