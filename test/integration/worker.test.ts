@@ -1,6 +1,7 @@
 import { execFile, spawnSync } from 'node:child_process';
-import { chmod, mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { chmod, lstat, mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
@@ -86,6 +87,22 @@ const workerPanes = async (): Promise<string[]> =>
 
 /** Every path below a folder, as relative paths. */
 const treeOf = async (folder: string): Promise<string[]> => (await readdir(folder, { recursive: true })).sort();
+
+/**
+ * One line for a path and one for each entry below it: the relative path, the mode with its type bits, and the sha256 of a
+ * file. A link is read as a link and never followed.
+ */
+const snapshotOf = async (path: string): Promise<string[]> => {
+  const below = (await lstat(path)).isDirectory() ? await readdir(path, { recursive: true }) : [];
+  return Promise.all(
+    ['', ...below].sort().map(async (name) => {
+      const entry = join(path, name);
+      const info = await lstat(entry);
+      const digest = info.isFile() ? createHash('sha256').update(await readFile(entry)).digest('hex') : '-';
+      return `${name} ${info.mode.toString(8)} ${digest}`;
+    }),
+  );
+};
 
 const stopServer = async (): Promise<void> => {
   await tmux(['-S', socket, 'kill-server']);
@@ -202,6 +219,30 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(await outOf('parent-var')).toBe('unset');
     expect(await outOf('claudecode-var')).toBe('unset');
     expect(await outOf('config-dir')).toBe(FAKE_CONFIG_DIR);
+  });
+
+  it('keeps every entry of the Claude folder and of the Claude file of the test home as it was, and the status line of the user out of the config (AC-3)', async () => {
+    const home = box.env['HOME'] ?? '';
+    expect(home.startsWith(`${box.root}${sep}`)).toBe(true);
+    const userSettings = {
+      statusLine: { type: 'command', command: 'echo user-line' },
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: 'echo user-hook' }] }] },
+    };
+    await mkdir(join(home, '.claude'), { recursive: true });
+    await writeFile(join(home, '.claude', 'settings.json'), `${JSON.stringify(userSettings)}\n`, { mode: 0o600 });
+    await writeFile(join(home, '.claude.json'), '{"numStartups":3}\n', { mode: 0o600 });
+    await startedNode();
+    const before = [...(await snapshotOf(join(home, '.claude'))), ...(await snapshotOf(join(home, '.claude.json')))];
+    expect(before).toHaveLength(3);
+
+    const result = await workerNew('alpha', '--project', 'web', '--yes');
+    expect(result.code).toBe(0);
+    await waitForLaunches(2);
+
+    expect([...(await snapshotOf(join(home, '.claude'))), ...(await snapshotOf(join(home, '.claude.json')))]).toEqual(before);
+    expect(await readFile(join(box.node, 'factory.local.yaml'), 'utf8')).not.toContain('user-line');
+    const copy = join(box.node, 'work-copies', 'web', 'alpha');
+    expect(JSON.parse(await readFile(join(copy, '.claude', 'settings.local.json'), 'utf8'))).toEqual(ownSettings());
   });
 
   it('names the session of a new worker with the id of the node and the id of the worker (TP-12)', async () => {
