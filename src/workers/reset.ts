@@ -166,7 +166,13 @@ const requirePushed = async (
   again: string,
 ): Promise<CliResult<void>> => {
   const { home, config, workerId } = request;
-  const plan = await planDismiss(deps, home, config, { id: workerId, project: record.project });
+  const plan = await planDismiss(
+    deps,
+    home,
+    config,
+    { id: workerId, project: record.project },
+    { again, command: commandLines.workerReset, verb: 'use' },
+  );
   if (!plan.ok) return plan;
   const fetched = await fetchClone(deps, plan.value);
   if (!fetched.ok) return fetched;

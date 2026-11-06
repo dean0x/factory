@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { hookSettingsPlaceOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
+import { ok } from '../../src/core/result.js';
 import { launchArgv } from '../../src/launch/argv.js';
 import { maxFileBytes, resetConfirm, schemaIds, type HookEvent, type ResetKind } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
@@ -389,6 +390,68 @@ describe('TP-22: the process, the settings and the push (refusals 9 to 12)', () 
   it('TP-22: a fetch that fails is exit 1', async () => {
     const world = await make({ git: { remotes: { [CLONE]: { copies: { [`worker/${WORKER}`]: HEAD }, fetchExit: 128 } } } });
     expect(codeOf(await refused(world))).toBe(1);
+  });
+});
+
+describe('TP-22: the refusals of the path checks speak the words of reset', () => {
+  const AGAIN = `Run "${AGAIN_CLEAR}" again.`;
+
+  /** The refusal names the reset command, and no word of the dismiss command. */
+  const expectResetWords = (error: CliError): void => {
+    expect(textOf(error)).not.toContain('dismiss');
+    expect(error.hint).toContain(AGAIN);
+  };
+
+  it('TP-22: a .git entry that does not name the folder of the clone is exit 4, and says worker reset', async () => {
+    const world = await make();
+    world.deps.seed(`${COPY}/.git`, 'not a link to a git folder\n');
+    const error = await refused(world);
+    expect(codeOf(error)).toBe(4);
+    expect(error.message).toContain('so worker reset runs no git command there');
+    expect(error.hint).toBe(`Check the file .git in the work copy. ${AGAIN}`);
+    expectResetWords(error);
+  });
+
+  it('TP-22: a clone that lies inside the work copy is exit 4, and says worker reset', async () => {
+    const world = await make({ links: { [CLONE]: COPY } });
+    const error = await refused(world);
+    expect(codeOf(error)).toBe(4);
+    expect(error.message).toContain('so worker reset does not use it');
+    expect(error.hint).toBe(`Check the path of the project in the config. ${AGAIN}`);
+    expectResetWords(error);
+  });
+
+  it('TP-22: a work copy whose real path leaves work-copies/ is exit 4, and says worker reset', async () => {
+    const world = await make({ links: { [`${HOME}/work-copies/web`]: '/elsewhere/web' } });
+    world.deps.seedDir('/elsewhere/web/alpha');
+    const hidden: FakeDeps = {
+      ...world.deps,
+      fs: { ...world.deps.fs, lstat: async (path) => (path === `${HOME}/work-copies/web` ? ok('dir' as const) : world.deps.fs.lstat(path)) },
+    };
+    const error = errorOf(await world.reset('clear', hidden));
+    expect(codeOf(error)).toBe(4);
+    expect(error.message).toContain('so worker reset does not use it');
+    expect(error.hint).toBe(`Check the folder and the links in its path. ${AGAIN}`);
+    expectResetWords(error);
+  });
+
+  it('TP-22: a project that the config does not list is exit 1, and says worker reset', async () => {
+    const world = await make();
+    const config = sampleConfig();
+    const error = errorOf(
+      await resetWorker(world.deps, { home: HOME, config: { ...config, recipe: { ...config.recipe, projects: [] } }, workerId: WORKER, kind: 'clear' }),
+    );
+    expect(codeOf(error)).toBe(1);
+    expect(error.hint).toBe(`Add the project to the config. ${AGAIN}`);
+    expectResetWords(error);
+  });
+
+  it('TP-22: a clone that is not a git work tree is exit 1, and says worker reset', async () => {
+    const world = await make({ git: { repos: {} } });
+    const error = await refused(world);
+    expect(codeOf(error)).toBe(1);
+    expect(error.hint).toBe(`Clone the repo of the project into that folder. ${AGAIN}`);
+    expectResetWords(error);
   });
 });
 

@@ -58,6 +58,19 @@ export interface DismissPlan extends DismissTarget {
 /** The command that a person runs again, without the program name: `dismiss ID`, or the words that the caller gives. */
 export const dismissLine = (id: string): string => `${commands.dismiss} ${id}`;
 
+/**
+ * How a command names itself in the refusals of `planDismiss`: the command to run again (without the program name), the command as a
+ * message names it, and the verb for what the command does not do with a folder that failed a check.
+ */
+export interface PlanWords {
+  readonly again: string;
+  readonly command: string;
+  readonly verb: string;
+}
+
+/** The words of `dismiss` for the worker with this id. */
+export const dismissPlanWords = (id: string): PlanWords => ({ again: dismissLine(id), command: commands.dismiss, verb: 'free' });
+
 const runAgain = (again: string): string => `Run "${commandText(again)}" again.`;
 
 /** True when `path` is `root` or lies below it. Both are real paths. */
@@ -71,7 +84,13 @@ const isInside = (root: string, path: string): boolean => {
  * with `path.relative`, so a link anywhere in the path that leads outside is a security stop (exit 4), whatever the link rule said
  * before.
  */
-const requireBelowWorkCopies = async (deps: Deps, home: string, target: DismissTarget, workCopy: string): Promise<CliResult<string>> => {
+const requireBelowWorkCopies = async (
+  deps: Deps,
+  home: string,
+  target: DismissTarget,
+  workCopy: string,
+  words: PlanWords,
+): Promise<CliResult<string>> => {
   const copies = await deps.fs.realpath(layoutOf(home).workCopiesDir);
   if (!copies.ok) return copies;
   const real = await deps.fs.realpath(workCopy);
@@ -80,8 +99,8 @@ const requireBelowWorkCopies = async (deps: Deps, home: string, target: DismissT
   const parts = rest.split(sep);
   if (isAbsolute(rest) || parts.length !== 2 || parts[0] === '..' || parts[0] === '' || parts[1] !== target.id) {
     return safetyRefusal(
-      `the work copy ${workCopy} of the ${roles.worker} ${target.id} is not a folder of ${dirs.workCopies}/<project>/${target.id}, so ${commands.dismiss} does not free it`,
-      `Check the folder and the links in its path. ${runAgain(dismissLine(target.id))}`,
+      `the work copy ${workCopy} of the ${roles.worker} ${target.id} is not a folder of ${dirs.workCopies}/<project>/${target.id}, so ${words.command} does not ${words.verb} it`,
+      `Check the folder and the links in its path. ${runAgain(words.again)}`,
     );
   }
   return ok(real.value);
@@ -101,11 +120,17 @@ const linkedFolderOf = (text: string): string | null => {
  * `.git` of this work copy back. Git takes the repo of a work copy from the folder that the file names, and a worker can write the
  * file, so every other link is a stop (exit 4), and no git command runs in the work copy. `workCopy` is the real path.
  */
-const requireOwnGitDir = async (deps: Deps, target: DismissTarget, clone: string, workCopy: string): Promise<CliResult<string>> => {
+const requireOwnGitDir = async (
+  deps: Deps,
+  target: DismissTarget,
+  clone: string,
+  workCopy: string,
+  words: PlanWords,
+): Promise<CliResult<string>> => {
   const refused = (): CliResult<never> =>
     safetyRefusal(
-      `the file ${GIT_ENTRY} of the work copy ${workCopy} of the ${roles.worker} ${target.id} does not name the folder that the clone ${clone} keeps for it, so ${commands.dismiss} runs no git command there`,
-      `Check the file ${GIT_ENTRY} in the work copy. ${runAgain(dismissLine(target.id))}`,
+      `the file ${GIT_ENTRY} of the work copy ${workCopy} of the ${roles.worker} ${target.id} does not name the folder that the clone ${clone} keeps for it, so ${words.command} runs no git command there`,
+      `Check the file ${GIT_ENTRY} in the work copy. ${runAgain(words.again)}`,
     );
   const entry = join(workCopy, GIT_ENTRY);
   const kind = await deps.fs.lstat(entry);
@@ -116,7 +141,7 @@ const requireOwnGitDir = async (deps: Deps, target: DismissTarget, clone: string
   if (named === null) return refused();
   const common = await commonDirOf(deps, clone);
   if (common === null) {
-    return failure(`cannot find the git folder of the clone ${clone} of the project ${target.project}`, `Check the clone. ${runAgain(dismissLine(target.id))}`);
+    return failure(`cannot find the git folder of the clone ${clone} of the project ${target.project}`, `Check the clone. ${runAgain(words.again)}`);
   }
   const realCommon = await deps.fs.realpath(common);
   if (!realCommon.ok) return realCommon;
@@ -132,11 +157,18 @@ const requireOwnGitDir = async (deps: Deps, target: DismissTarget, clone: string
  * The checks of the path, before anything is read from git or changed. The work copy must be the folder that the record rule gives,
  * with no link in its path (exit 4), a folder, and below the real folder of the work copies (exit 4). The project must be in the
  * config, and its clone must be a git work tree that is not inside the work copy (exit 4): the clone is never freed. The file `.git`
- * of the work copy must name the git folder that the clone keeps for it (exit 4).
+ * of the work copy must name the git folder that the clone keeps for it (exit 4). The refusals speak the words of the caller (`words`);
+ * the default is `dismiss`.
  */
-export const planDismiss = async (deps: Deps, home: string, config: FactoryConfig, target: DismissTarget): Promise<CliResult<DismissPlan>> => {
+export const planDismiss = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  target: DismissTarget,
+  words: PlanWords = dismissPlanWords(target.id),
+): Promise<CliResult<DismissPlan>> => {
   const { id, project: projectId } = target;
-  const again = runAgain(dismissLine(id));
+  const again = runAgain(words.again);
   const workCopy = workCopyOf(home, projectId, id);
   const linked = await requireNoLinks(deps, home, [workCopy]);
   if (!linked.ok) return linked;
@@ -145,7 +177,7 @@ export const planDismiss = async (deps: Deps, home: string, config: FactoryConfi
   if (kind.value !== 'dir') {
     return failure(`the work copy ${workCopy} of the ${roles.worker} ${id} is not a folder`, `Restore the folder. ${again}`);
   }
-  const real = await requireBelowWorkCopies(deps, home, target, workCopy);
+  const real = await requireBelowWorkCopies(deps, home, target, workCopy, words);
   if (!real.ok) return real;
   const project = config.recipe.projects.find((candidate) => candidate.id === projectId);
   if (project === undefined) {
@@ -158,11 +190,11 @@ export const planDismiss = async (deps: Deps, home: string, config: FactoryConfi
   }
   if (isInside(real.value, realClone.value)) {
     return safetyRefusal(
-      `the clone ${clone} of the project ${projectId} lies inside the work copy of the ${roles.worker} ${id}, so ${commands.dismiss} does not free it`,
+      `the clone ${clone} of the project ${projectId} lies inside the work copy of the ${roles.worker} ${id}, so ${words.command} does not ${words.verb} it`,
       `Check the path of the project in the config. ${again}`,
     );
   }
-  const gitDir = await requireOwnGitDir(deps, target, clone, real.value);
+  const gitDir = await requireOwnGitDir(deps, target, clone, real.value, words);
   if (!gitDir.ok) return gitDir;
   return ok({
     id,

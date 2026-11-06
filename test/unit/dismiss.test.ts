@@ -843,6 +843,57 @@ describe('dismiss ID: the git link of the work copy', () => {
   });
 });
 
+describe('dismiss ID: the refusals of the path checks speak the words of dismiss', () => {
+  const alpha = copyOf('alpha');
+  const AGAIN = 'Run "factory dismiss alpha" again.';
+
+  it('says dismiss in the failure for a work copy that is not a folder', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    made.deps.dirs.delete(alpha);
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(error.message).toBe(`the work copy ${alpha} of the worker alpha is not a folder`);
+    expect(error.hint).toBe(`Restore the folder. ${AGAIN}`);
+  });
+
+  it('says dismiss in the failure for a project that the config does not list', async () => {
+    const made = await make({ workers: [{ id: 'alpha', project: 'api' }] });
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(error.message).toBe('the project api of the worker alpha is not in the config of this node');
+    expect(error.hint).toBe(`Add the project to the config. ${AGAIN}`);
+  });
+
+  it('says dismiss in the stop for a .git entry that does not name the folder of the clone', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    made.deps.seed(`${alpha}/.git`, 'not a link to a git folder\n');
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(error.message).toBe(
+      `the file .git of the work copy ${alpha} of the worker alpha does not name the folder that the clone ${cloneOf('web')} keeps for it, so dismiss runs no git command there`,
+    );
+    expect(error.hint).toBe(`Check the file .git in the work copy. ${AGAIN}`);
+  });
+
+  it('says dismiss in the stop for a clone that lies inside the work copy', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], links: { [cloneOf('web')]: alpha } });
+    const error = await errorOf(made, { words: ['alpha'], yes: true });
+    expect(error.message).toBe(
+      `the clone ${cloneOf('web')} of the project web lies inside the work copy of the worker alpha, so dismiss does not free it`,
+    );
+    expect(error.hint).toBe(`Check the path of the project in the config. ${AGAIN}`);
+  });
+
+  it('says dismiss in the stop for a work copy whose real path leaves work-copies/', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], links: { [`${HOME}/work-copies/web`]: '/elsewhere/web' } });
+    const hidden: FakeDeps = { ...made.deps, fs: { ...made.deps.fs, lstat: async (path) => (path === `${HOME}/work-copies/web` ? ok('dir' as const) : made.deps.fs.lstat(path)) } };
+    made.deps.seedDir('/elsewhere/web/alpha');
+    const result = await runDismiss(hidden, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownWorkItems);
+    if (result.ok) throw new Error('the command did not fail');
+    expect(result.error.message).toBe(
+      `the work copy ${alpha} of the worker alpha is not a folder of work-copies/<project>/alpha, so dismiss does not free it`,
+    );
+    expect(result.error.hint).toBe(`Check the folder and the links in its path. ${AGAIN}`);
+  });
+});
+
 describe('dismiss --idle', () => {
   const fleet: readonly Seed[] = [
     { id: 'alpha' },
