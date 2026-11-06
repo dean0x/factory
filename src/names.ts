@@ -1238,6 +1238,9 @@ export const flagText = (name: string): string => `--${name}`;
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
 
+/** A subcommand of `worker` as a person types it, for example `factory worker watch`. */
+const workerCommandText = (subcommand: string): string => commandText(`${commands.worker} ${subcommand}`);
+
 /** The command that replaces or adds one managed block, for example `factory upgrade --overwrite coordinator`. */
 export const overwriteCommand = (block: string): string =>
   `${commandText(commands.upgrade)} ${flagText(flags.overwrite)} ${block}`;
@@ -1264,6 +1267,8 @@ const pathValues: Readonly<Record<string, string>> = {
   profileDir: `${inState(dirs.profile)}/`,
   roadmapsDir: `${inState(dirs.roadmaps)}/`,
   ordersDir: `${inState(dirs.orders)}/`,
+  workersDir: `${inState(dirs.workers)}/`,
+  resumeDir: `${inState(dirs.resume)}/`,
 };
 
 /** The values for the placeholders of the templates, for example {{worker}} and {{Worker}}. */
@@ -1291,6 +1296,12 @@ export const templateValues: Readonly<Record<string, string>> = {
   heavyTestKey: keys.project.heavyTest,
   inboxEnv: env.inbox,
   resumeFile: files.resume,
+  workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
+  workerWatchCommand: workerCommandText(workerCommands.watch),
+  workerResetCommand: workerCommandText(workerCommands.reset),
+  selfResetCommand: commandText(`${commands.self} ${selfCommands.reset}`),
+  clearFlag: flagText(flags.clear),
+  compactFlag: flagText(flags.compact),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,
