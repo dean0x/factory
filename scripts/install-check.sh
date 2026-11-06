@@ -6,8 +6,10 @@
 # It runs the install scripts of the packages from the npm registry, so it needs the network.
 # The real HOME, the real XDG state folder, the real tmux server, the real npm prefix and the real npm cache are never written.
 # The source repo is never written. A local tree that differs from HEAD fails the compare by intent.
-# Keep the isolation block equal to scripts/exit-check.sh. It adds only the unset of SSH_AUTH_SOCK and of the two Claude
-# credentials, and the registry in the scratch npm user config. A unit test keeps the names equal.
+# Keep the isolation block equal to scripts/exit-check.sh. It adds only these: it removes SSH_AUTH_SOCK, the two Claude
+# credentials, the two npm token names (NPM_TOKEN and NODE_AUTH_TOKEN) and every npm_config name in any letter case, so
+# that no setting of the caller reaches the install scripts of the packages; it sets the registry in the scratch npm user
+# config; and it stops when GIT_CONFIG_PARAMETERS or GIT_CONFIG_COUNT is set. A unit test keeps the names equal.
 # It needs a build first: npm run build
 set -euo pipefail
 
@@ -45,10 +47,11 @@ command -v node >/dev/null 2>&1 || fail "node is not on PATH"
 command -v npm >/dev/null 2>&1 || fail "npm is not on PATH"
 command -v git >/dev/null 2>&1 || fail "git is not on PATH"
 
-# A git hook exports these names. With them, a git command in another folder (the clone of npm too) writes the repo of
-# the hook, so the check stops before its first git command.
-for name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR; do
-  [ -z "${!name+set}" ] || fail "$name is set, so the git commands of npm can write the repo that it names. Run the check outside a git hook."
+# A git hook exports the first six names. With them, a git command in another folder (the clone of npm too) writes the
+# repo of the hook. The last two carry git settings (core.worktree or url.*.insteadOf, for example) that rank above the
+# scratch global config. The check stops before its first git command.
+for name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT; do
+  [ -z "${!name+set}" ] || fail "$name is set, so the git commands of npm can use the repo or the setting that it names. Run the check outside a git hook."
 done
 
 version="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$root/package.json")"
@@ -58,6 +61,24 @@ tmp="$(mktemp -d "${base%/}/factory-install-check.XXXXXX")"
 marker="$tmp/marker"
 : >"$marker"
 real_prefix="$(dirname "$(dirname "$(command -v node)")")"
+
+# npm reads every npm_config name, in any letter case, as a setting. One of them can replace the registry of the scratch
+# npm user config, make the check fail with an unclear message (offline, dry_run), or carry a token. So remove them all
+# before the scratch values below are set. A name that is not a shell name (npm_config_//registry.npmjs.org/:_authToken,
+# for example) can not be unset in bash, so the check stops and does not print the value.
+shopt -s nocasematch
+while IFS= read -r entry; do
+  case "$entry" in
+    npm_config_*=*)
+      name="${entry%%=*}"
+      case "$name" in
+        *[!A-Za-z0-9_]*) fail "$name is set, and bash can not unset it, so npm reads it as a setting. Unset it, then run the check again." ;;
+        *) unset "$name" ;;
+      esac
+      ;;
+  esac
+done < <(env)
+shopt -u nocasematch
 
 # Everything below runs in the throw-away folder.
 export HOME="$tmp/home"
@@ -75,7 +96,7 @@ export npm_config_update_notifier=false
 export npm_config_audit=false
 export npm_config_fund=false
 export NO_COLOR=1
-unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN ANTHROPIC_BASE_URL TMUX FACTORY_HOME FACTORY_SESSION SSH_AUTH_SOCK ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN
+unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN ANTHROPIC_BASE_URL TMUX FACTORY_HOME FACTORY_SESSION SSH_AUTH_SOCK ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN NPM_TOKEN NODE_AUTH_TOKEN
 mkdir -p "$HOME" "$XDG_STATE_HOME" "$TMUX_TMPDIR" "$npm_config_prefix"
 printf 'registry=https://registry.npmjs.org/\n' >"$npm_config_userconfig"
 : >"$npm_config_globalconfig"

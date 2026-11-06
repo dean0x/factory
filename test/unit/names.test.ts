@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -524,10 +525,10 @@ describe('the install check', () => {
     expect(runs.filter(({ index }) => index <= isolated)).toEqual([]);
   });
 
-  it('stops before its first git command when a git hook exports the names of a repo, so that npm can not write the source repo', () => {
+  it('stops before its first git command when a git hook exports the names of a repo, or git settings come from the environment, so that npm can not write the source repo or read a setting of the caller', () => {
     const guard = lines.findIndex((line) => line.startsWith('for name in GIT_DIR '));
     expect(lines[guard]).toBe(
-      'for name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR; do',
+      'for name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT; do',
     );
     expect(lines[guard + 1]).toMatch(/^\[ -z "\$\{!name\+set\}" \] \|\| fail /);
     const firstGit = lines.findIndex((line) => /\bgit (-C|-c|init|config|--git-dir)\b/.test(line));
@@ -544,12 +545,65 @@ describe('the install check', () => {
     expect(exportNames(code)).toEqual(exportNames(exitCode));
   });
 
-  it('unsets the names of the exit check, and the ssh agent socket and the two Claude credentials', () => {
+  it('unsets the names of the exit check, and the ssh agent socket, the two Claude credentials and the two npm token names', () => {
     expect(unsetLines(code)).toHaveLength(1);
     expect(unsetNames(exitCode).length).toBeGreaterThan(5);
     expect(unsetNames(code).sort()).toEqual(
-      [...unsetNames(exitCode), 'SSH_AUTH_SOCK', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].sort(),
+      [
+        ...unsetNames(exitCode),
+        'SSH_AUTH_SOCK',
+        'ANTHROPIC_API_KEY',
+        'ANTHROPIC_AUTH_TOKEN',
+        'NPM_TOKEN',
+        'NODE_AUTH_TOKEN',
+      ].sort(),
     );
+  });
+
+  describe('the removal of the inherited npm settings', () => {
+    const start = lines.indexOf('shopt -s nocasematch');
+    const end = lines.indexOf('shopt -u nocasematch');
+    const block = lines.slice(start, end + 1);
+    /** Run the removal block alone, in the shell that runs the check, with only the given environment. */
+    const runBlock = (env: Record<string, string>): { status: number | null; stdout: string; stderr: string } => {
+      const script = [
+        'set -euo pipefail',
+        'fail() { printf "FAIL: %s\\n" "$*" >&2; exit 1; }',
+        ...block,
+        'env',
+      ].join('\n');
+      const result = spawnSync('bash', ['-c', script], { env: { PATH: process.env.PATH ?? '', ...env }, encoding: 'utf8' });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    };
+
+    it('sits before the scratch exports, and switches the case-blind match off again before the commit check', () => {
+      expect(start).toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      expect(lines.indexOf('export HOME="$tmp/home"')).toBeGreaterThan(end);
+      expect(lines.findIndex((line) => line.startsWith('sha="$(git '))).toBeGreaterThan(end);
+    });
+
+    it('removes every npm_config name in any letter case, and keeps the other names', () => {
+      const result = runBlock({
+        npm_config_registry: 'https://example.invalid/',
+        NPM_CONFIG_OFFLINE: 'true',
+        Npm_Config_Dry_Run: 'true',
+        npm_config_cache: '/nowhere',
+        npm_configuration: 'kept',
+        NPMRC: 'kept',
+        KEEP_ME: 'yes',
+      });
+      expect(result.status).toBe(0);
+      const names = result.stdout.split('\n').map((line) => line.split('=')[0]);
+      expect(names.filter((name) => /^npm_config_/i.test(name ?? ''))).toEqual([]);
+      expect(names).toEqual(expect.arrayContaining(['npm_configuration', 'NPMRC', 'KEEP_ME']));
+    });
+
+    it('never passes on an npm_config name that is not a shell name, because bash can not unset it, and never prints its value', () => {
+      const result = runBlock({ 'npm_config_//registry.npmjs.org/:_authToken': 'secret' });
+      expect(result.status === 0 && result.stdout.includes('_authToken')).toBe(false);
+      expect(result.stdout + result.stderr).not.toContain('secret');
+    });
   });
 
   it('takes the commit id from HEAD of this checkout, accepts 40 lower-case hex characters only, and quotes every use', () => {
