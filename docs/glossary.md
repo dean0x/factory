@@ -12,13 +12,13 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **owner**: The owner is the person whose decisions a node carries. Only the owner can approve work or answer a decision.
 - **project**: A project is one unit of work that a node manages.
 - **layer**: A layer is the level of a node, counted from the bottom. Layer 0 is the workers. Each layer has its own role.
-- **worker** (was: cell): A worker is a session in one work copy. It does all the steps for one track of one project. Not built yet.
+- **worker** (was: cell): A worker is a session in one work copy. It does all the steps for one track of one project.
 - **coordinator**: A coordinator is a node on layer 1. It runs the factory for its owner and gives assignments to workers.
 - **recipe**: A recipe is the kind of work that a factory does, such as software or marketing. It sets the approval points.
 - **setup** (was: variant): A setup is one named way to run a recipe. It adds text and scripts to the fixed rules. The config key stays `recipe.variant`.
 - **request** (was: andon): A request is an item that waits for the owner. It can be a question to answer or an action to do. Not built yet.
-- **assignment** (was: work order): An assignment is a written task for a worker or a child node. It is a file in `.factory/orders/`.
-- **session reset** (was: changeover): A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state. Not built yet.
+- **assignment** (was: work order): An assignment is a written task for a worker or a child node. A worker gets it as a file in its assignment folder.
+- **session reset** (was: changeover): A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state.
 - **queue** (was: staging): A queue is the order of the finished work that waits for an approval point, first item first. Not built yet.
 - **check** (was: inspect): A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.
 - **work item**: A work item is one unit of work on the board.
@@ -47,8 +47,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **last seen** (was: heartbeat): Last seen is a file for each session. It shows the last activity, the session id and the context percent.
 - **worker window** (was: bench window): The worker window is the screen window that holds the worker sessions. Its name is `workers`.
 - **event file** (was: outbox): The event file is the digest of a node, in `.factory/outbox/`. A script writes it, and a reader follows it.
-- **inbox**: An inbox is a file of messages for one session. The session reads each message and marks it as read.
-- **doorbell**: A doorbell is a one-line note that factory types into a session. It says that a new message waits in the inbox.
+- **inbox**: The inbox is the assignment folder of a worker. It holds the assignment files and the resume notes of that worker.
 - **digest**: A digest is a short summary of a node: its workers, their work items and the requests that wait for the owner.
 - **proxy**: A proxy is a server that passes the model calls on. Factory uses one only when the config names it and it answers.
 

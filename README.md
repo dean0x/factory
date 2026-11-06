@@ -29,16 +29,19 @@ You need:
 | `factory reboot` | Stop every worker and start each recorded worker again with its session id. Outside the session it also ends the session and starts it again. See "Shut down, restart and reboot". |
 | `factory status` | List each worker with its state, its work item and its idle state. It changes nothing. See "Show the status". |
 | `factory dismiss ID` | End a worker and free its work copy, when its work is pushed. It is a dry run until `--yes`. `factory dismiss --idle` lists the idle workers, and you pick which to dismiss. See "Dismiss a worker". |
-| `factory worker new ID --project PROJECT` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. See "Make a worker". |
-| `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
+| `factory worker new ID --project PROJECT [--assignment FILE]` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. `--assignment` copies a task file to the assignment folder of the worker. See "Make a worker" and "Give work to a worker". |
+| `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy`, `waits` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
+| `factory worker reset ID --clear` or `--compact` | Type `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and check that it happened. See "Give work to a worker". |
+| `factory worker watch [ID]...` | Check the workers every 30 seconds, at most 40 times. It exits at the first change: a pane that ended, a dialog that waits, a worker that looks stalled. It changes nothing. See "Give work to a worker". |
+| `factory self reset` | Queue a `/compact` for the coordinator itself, after it wrote its resume notes. See "Give work to a worker". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
 | `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker, and it says "Resumed" only after the new session wrote its SessionStart line. See "Resume a worker". |
 | `factory worker summon ID [--for TIME]` | Show the pane of the worker in the slot of the window `view` for `TIME` (default 15m, from 1m to 2h). The board comes back by itself. See "Summon a worker". |
 | `factory layout` | Make the window `workers` if it is missing, tile its panes, and put the board back in the slot of the window `view` after a summon. See "Make the windows again". |
-| `factory doctor` | Run 25 checks. See "Doctor". |
+| `factory doctor` | Run 26 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
-| `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop` and `PreCompact`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
+| `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `PreToolUse` and `Notification`. It records `Notification` only for the types `permission_prompt` and `elicitation_dialog`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
 | `factory hook statusline` | For Claude Code, not for people. It is the status line of the coordinator. It records the context percent of the session in the last-seen record, then prints the output of the command in `session.statusline` of `factory.local.yaml` as it is (the command gets the same input, and has 2 seconds; at the limit, every process that it started stops, and a SIGTERM, SIGHUP or SIGINT of the wrapper stops them too; a SIGKILL of the wrapper leaves them running). With no command, or with a command that fails or takes too long, it prints `context N%`. When the input gives no percent, or is not whole after 2 seconds, it prints `context ?%`. It exits with code 0 on every path and prints at most one line on stderr. The field names of the input come from the devflow HUD, which reads the live payload; checked against the Claude Code status line docs. |
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
@@ -229,7 +232,7 @@ Then it does these steps in order:
 3. It adds the line `/.claude/settings.local.json` to `info/exclude` in the git folder of the clone, once. Git then shows the work copy as clean when it holds only the hook settings.
 4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
-6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its inbox folder. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
+6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its assignment folder (`.factory/workers/<id>/inbox/`), and the session name `<node id>-<id>`. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
 
 If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. After the branch is pushed, `factory dismiss ID` frees the worker (see "Dismiss a worker"). A branch with a commit that no remote branch holds stops `dismiss`, so the steps by hand are the way for it.
 
@@ -246,7 +249,7 @@ factory worker list --json
 | --- | --- |
 | `ID`, `PROJECT` | The id of the worker and its project. |
 | `PANE` | The id of the pane of the worker in the window `workers`. `dead` means that the program of the pane has ended. `none` means that the worker has no pane, also when no tmux session of the node runs. |
-| `STATE` | `at prompt` after the hook events `SessionStart` and `Stop`. `busy` after `UserPromptSubmit` and `PreCompact`. `unknown` when the worker has no valid last-seen line that belongs to it. |
+| `STATE` | `at prompt` after the hook events `SessionStart` and `Stop`. `busy` after `UserPromptSubmit`, `PreCompact` and `PreToolUse`. `waits` after `Notification`: a dialog waits for an answer. `unknown` when the worker has no valid last-seen line that belongs to it. |
 | `CONTEXT` | The context percent of the last-seen line, or `?` when it is not known. |
 | `MARK` | `PREPARE` from `limits.context_prepare_pct` up to `limits.context_max_pct`, and `MAX` above `limits.context_max_pct`. With the limits 30 and 40: 29 has no mark, 30 and 40 give `PREPARE`, and 41 gives `MAX`. |
 
@@ -264,7 +267,7 @@ factory status --json
 | Column | Meaning |
 | --- | --- |
 | `ID`, `PROJECT` | The id of the worker and its project. |
-| `STATE` | `stopped` when the worker has no live pane, also when no tmux session of the node runs. Else `at prompt`, `busy` or `unknown`, as in `worker list`. |
+| `STATE` | `stopped` when the worker has no live pane, also when no tmux session of the node runs. Else `at prompt`, `busy`, `waits` or `unknown`, as in `worker list`. |
 | `WORK ITEM` | The work item of the worker, `none` when it has no open work, or `unknown` when the board does not give it. |
 | `IDLE` | `yes` when the last activity of the worker is older than `limits.idle_after` and the worker has no open work. Else `no`. |
 
@@ -288,7 +291,7 @@ Then the pane ends (`kill -TERM`, the way of `worker stop`), the work copy is re
 
 `--yes` is the consent. It needs no terminal window, and inside a factory session it gives no consent: the command stops with exit code 4. The dry run works in a session.
 
-`dismiss --idle` lists the idle workers (see "Show the status") with their state and whether their work is pushed (`PUSHED`). It fetches once for each clone. It changes nothing by itself. In a terminal window outside a factory session it asks which workers to dismiss: type their ids with spaces. An empty answer ends nothing. After the answer, the state of the workers is read a second time. Every id is checked before the first change: an id that is not in the list, a worker with no live pane, a busy worker and a worker whose state is not known are refused with exit code 1. Only the panes of the picked workers end, and each free names the ignored files that it deletes. A picked worker whose work is not pushed prints `STUCK:` and keeps its pane. With no terminal window the command only lists. Inside a factory session it lists and stops with exit code 4. A tmux session of the same name that belongs to another factory folder also stops it with exit code 4, and nothing ends.
+`dismiss --idle` lists the idle workers (see "Show the status") with their state and whether their work is pushed (`PUSHED`). It fetches once for each clone. It changes nothing by itself. In a terminal window outside a factory session it asks which workers to dismiss: type their ids with spaces. An empty answer ends nothing. After the answer, the state of the workers is read a second time. Every id is checked before the first change: an id that is not in the list, a worker with no live pane, a busy worker, a worker that waits in a dialog and a worker whose state is not known are refused with exit code 1. Only the panes of the picked workers end, and each free names the ignored files that it deletes. A picked worker whose work is not pushed prints `STUCK:` and keeps its pane. With no terminal window the command only lists. Inside a factory session it lists and stops with exit code 4. A tmux session of the same name that belongs to another factory folder also stops it with exit code 4, and nothing ends.
 
 ### Stop a worker
 
@@ -361,6 +364,34 @@ The checks, in order:
 
 The command writes a new random token into the pane option `@slot_summon` of the board pane, with the id of the summoned pane. It starts one `run-shell -b` timer. The timer swaps the panes back only while the token in `@slot_summon` is still the token of that timer. A newer summon replaces the token, so the timer of the older summon does nothing. A summon of a worker that holds the slot already only gives a new token and a new timer. A summon of another worker while a worker holds the slot puts the first worker back in its place, and shows the second. The text of a timer holds fixed words, digits, the token and pane ids, and nothing else. No swap moves the focus: the pane that is active in the window `view` stays the active pane, so your keys never go to a worker or to the board by a swap. If tmux does not set the option, the command swaps the panes back. If the timer does not start, the worker stays in the slot, and the message names `factory layout`.
 
+### Give work to a worker
+
+```sh
+factory worker new alpha --project web --assignment .factory/orders/task.md
+factory worker watch
+factory worker reset alpha --clear
+factory self reset
+```
+
+The sessions of one factory talk with the cross-session messages of Claude Code (`SendMessage` and `ListAgents`, version 2.1.224 or newer). factory has no inbox of its own. It adds these parts:
+
+- **Session names.** `start` and `worker new` start each session with `--name`. The coordinator gets the node id. A worker gets `NODE_ID-ID`. A name is an address, not a proof, because any session can take any name. So the coordinator checks with `ListAgents` that exactly one session has the name of a worker, before its first send and after each resume of that worker. The name is not a word of the pane binding, so a pane that an older version started without a name still binds.
+- **Assignment files.** The assignment folder of a worker is `.factory/workers/ID/inbox/`, and the variable `FACTORY_INBOX` names it. A long task is a file in that folder, and the message names the file. The worker acts on a task file only when its real path is in that folder and it is not a link. The file is the durable copy of the task, because a message has no read receipt and no store.
+- **`--assignment FILE`.** `worker new` copies the file to `assignment.md` in the assignment folder before the worker starts. Before it writes anything, it checks the file. The real path must be inside the factory folder or inside the git work tree of the folder where you run the command, else the exit code is 4. A link in the path, a path part below that root that starts with a dot (except `.factory/orders/` in the factory folder), the file `factory.local.yaml` and a file that changes during the check also exit with code 4. A file that is not a regular file, is larger than 1 MiB, is not UTF-8 or holds a NUL byte exits with code 2. If the copy fails, the command exits with code 1, keeps the worker and does not start it. The message names the copy by hand to `.factory/workers/ID/inbox/assignment.md`, then `factory worker resume ID`. The output has one more line, and `--json` has the field `assignment`. The flags `--assignment`, `--clear` and `--compact` exit with code 2 on the other `worker` commands.
+- **`worker watch [ID]...`.** It watches every recorded worker, or the workers that you name. A worker with no pane at the start is not checked, and when no worker has a pane the command prints `NO WORKER: no worker has a pane to watch` and exits. Else it checks every 30 seconds, at most 40 times (20 minutes), and exits at the first change: a pane that ended, is gone or is not the launch of the worker; a last-seen line that is not valid or does not belong to the worker; the state `waits`; or `stalled?` (the state is `busy` and the last event or percent is older than 15 minutes). A change from `busy` to `at prompt` is not a change. The output is `CHANGED: ID what`, `NO CHANGE: IDs` or `NO WORKER: ...`, and the exit code is 0 for all three. No tmux session is exit code 3, a session of another factory folder is 4, a read fault is 1, an unknown worker id is 2, and a record that factory did not write is 4. It never types, signals or writes. `--json` prints `factory.worker-watch/v1`. Run it as a background task of the coordinator.
+- **`worker reset ID --clear` or `--compact`.** It types `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and checks that it happened. It exits with code 2 for neither or both flags and for a caller that is not the coordinator pane, with code 3 when no session runs or the coordinator pane is missing, and with code 4 for a start command that does not match. It refuses before it types any key, in these cases: the worker has no live pane (3, `factory worker resume ID`) or two (2); the pane is in the slot of the window `view` (3); the hook settings of the work copy lack an event (3, `factory upgrade`, then `factory restart ID`); the settings file is newer than the pane process (3, `factory restart ID`); the work is not pushed (1); `.factory/workers/ID/inbox/resume.md` is missing (3), is a link (4) or is empty or over 1 MiB (3); the state is `busy` or `waits` (1); the last-seen line is older than the pane process (3); the bottom of the pane shows a numbered option list (3). Then it types `C-u`, the command and `Enter` in one tmux run, and checks up to 10 times, one second apart. After `--clear` the pointer must name a new session with `SessionStart`. After `--compact` the line must show `PreCompact` or `SessionStart`. No confirmation is exit code 3 (look at the pane, then run it again), and a pane that ends during the check is exit code 1. The output has a verdict line, the age of the resume file and the next step: send the next task with `SendMessage`, or `factory restart ID` first when the worker has no name after a clear. `--json` prints `factory.worker-reset/v1`. The files `assignment.md` and `resume.md` stay in the assignment folder.
+- **`self reset`.** It queues a `/compact` for the coordinator itself, from the coordinator pane only. Write the resume notes to `.factory/resume/NODE_ID.md` first. The command exits with code 3 and names the file when it is missing, with code 4 for a link, and with code 3 when the coordinator settings lack one of the 6 hook events (`factory upgrade`, then `factory reboot`) or when a dialog waits in the coordinator pane. It then prints `QUEUED: the compact runs after the current turn` and exits with code 0. `--json` prints `factory.self-reset/v1`.
+
+The limits of native messages:
+
+- There is no read receipt. A refused send shows `Not sent` to the sender.
+- A receiver in `bypassPermissions` or `plan` mode holds the messages for approval, and they expire after 5 minutes. The setting `crossSessionInbound` (`accept`, `hold`, `refuse`) changes this. factory starts every session in auto mode.
+- A receiver queues at most 50 messages and holds at most 100.
+- A message does not survive the end, a clear or a compact of the receiver. Use an assignment file for a task that must survive.
+- A message from another session carries no authority of the owner, also when the sender has the name of the coordinator. Authority of the owner enters a session only as typed input that starts with the owner prefix.
+- `factory doctor` warns about a version of Claude Code below 2.1.224, about `crossSessionInbound` `hold` or `refuse`, and about the default mode `plan`. It reads project and local settings only. It cannot see user-level settings or a mode that you set in a pane.
+- The hook state is a hint. A turn that a message starts may not fire `UserPromptSubmit`, so the line can say `at prompt` while the session works.
+
 ### Make the windows again
 
 ```sh
@@ -389,7 +420,7 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 
 ### Doctor
 
-`factory doctor` runs 25 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 14 checks are new:
+`factory doctor` runs 26 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 15 checks are new:
 
 - `local-file`: the mode, the owner and the type of `factory.local.yaml`.
 - `root`: the factory folder is the top folder of its own git work tree and holds an intact share list. This is a warning.
@@ -405,6 +436,9 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 - `delegations`: the mode of each approval point, and the points with the mode `delegated`.
 - `instruction-files`: the instruction files of agents in the factory folder and above it.
 - `project-urls`: a project with no URL that you can share is a warning.
+- `agent-version`: the version of the agent program (`claude --version`, 5 seconds). A version below 2.1.224, or a version that `doctor` cannot read, is a warning, because the messages between sessions need 2.1.224 or newer. It is not checked when the config is not valid.
+
+The check of the Claude Code settings warns about `crossSessionInbound` set to `hold` or `refuse` (an unset value is no warning) and about the default mode `plan`, because a receiver in these cases holds or refuses the messages of other sessions. The warning text says that it reads project and local settings only. `doctor` cannot see user-level settings or a mode that you set in a pane.
 
 `doctor` warns about each temp folder that a stopped `init` left. It removes nothing.
 
@@ -440,6 +474,8 @@ factory upgrade
 `upgrade` writes the share list into the `.gitignore` of the factory folder. It writes the part between the two marker lines again, and it keeps every line that you added outside the part. A `.gitignore` with no marker lines gets the part at its top, and its old lines stay below it. A marker line with no pair stops `upgrade` with exit code 1 and changes nothing, also in a dry run. When the factory folder holds no `.git`, `upgrade` also makes it a git repo, the config repo, with one commit of the shared files: `.gitignore`, `factory.yaml`, and `setup/` when it exists. If git has no identity, `upgrade` makes the repo and no commit, and it prints a warning. A factory folder that holds a `.git` keeps its repo, and `upgrade` makes no commit there. If a step fails, `upgrade` removes the repo that it made. `upgrade` writes no file in `setup/`: a node of version 0.1.0 has no setup text, so it needs no acceptance. To add setup text, write `setup/coordinator.md` or `setup/roles/worker.md` yourself, then run `factory init` in a terminal window to accept it.
 
 `upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports.
+
+`upgrade` also adds the hook events that are missing (`Notification` and `PreToolUse`) to the hook settings of each recorded work copy whose settings file holds a hook entry of factory, and to the settings of the coordinator. It prints the change and asks first, with the same consent rule as `start`: a yes in a terminal window, or `--yes` outside a factory session. A dry run lists the change and writes nothing. A settings file with no hook entry of factory is skipped. A write that fails exits with code 1 and names the files that changed. `--json` lists the files in the field `hookSettings`. After this step, run `factory reboot`, so that each session gets its name and the new events.
 
 `upgrade` renders a block again when its text differs from the text that the package and your settings give. The owner prefix of `factory.local.yaml` is in the `safety` block. The context limits of `factory.yaml` are in the `coordinator` block. A block that you edited stays as it is, with a warning that names `factory upgrade --overwrite <block>`. `doctor` names the same command. The block `setup` is the exception: its text comes from the setup file, so `doctor` warns and names the setup file, and `upgrade` puts back the text of that file and keeps the edited text in a backup file (see below). A block that an earlier `upgrade` kept under its old name, for example `protocol`, stays under that name until you name it. `upgrade` and `doctor` find it under that name and name the flag.
 
