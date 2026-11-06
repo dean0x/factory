@@ -109,7 +109,7 @@ npm install --global ./dean0x-factory-0.2.0.tgz
 
 npm can not build the program in a one-step global install from git. So this guide builds a package file first, and then installs that file.
 
-On Path B, use `git+https://github.com/dean0x/factory.git#v0.2.0-ea.N` in the first command.
+On Path B, use `"git+https://github.com/dean0x/factory.git#v0.2.0-ea.N"` in the first command.
 
 The first command builds the program from source. It takes some seconds, and a minute or more on a slow network. If the build fails, the command stops with an error. Never install from a branch.
 
@@ -269,7 +269,7 @@ The flag `--yes` works only in a terminal window outside the factory session.
 
 ## 11. Update
 
-**Step 1. Push the work.** The reboot in Step 5 stops every worker. Ask each worker to push its work. A dry run of `factory dismiss ID` prints a line that starts with `STUCK:` when the work is not pushed.
+**Step 1. Push the work.** Place: the pane of each worker, or ask the coordinator. The reboot in Step 5 stops every worker. Ask each worker to push its work. A dry run of `factory dismiss ID` prints a line that starts with `STUCK:` when the work is not pushed.
 
 **Step 2. Find the new tag.** The owner gives you the new tag and its full commit SHA. To list the tags, run this command in a terminal window:
 
@@ -330,7 +330,7 @@ Tell the owner:
 
 - The tag and the full commit SHA of your hand-over.
 - The command that you ran, and the text that it printed.
-- The output of `factory version` and `factory doctor`.
+- The output of `factory version` and `factory doctor`. Place: a terminal window, in the factory folder.
 - The output of `node --version`, `npm --version`, `claude --version` and `tmux -V`.
 
 Remove each token and each key from the text before you send it.
