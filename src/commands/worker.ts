@@ -42,8 +42,10 @@ import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import type { BoundPane } from '../workers/panes.js';
 import { branchOf, readWorkerRecord, requireRecord, workCopyOf, writeWorkerRecord } from '../workers/registry.js';
+import { parseReset, resetOutput, resetWorker } from '../workers/reset.js';
 import { readWorkerPanes, summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
+import { watchOutput, watchWorkers } from '../workers/watch.js';
 import { prepareLaunch } from './launch-checks.js';
 import { runWorkerList } from './worker-list.js';
 
@@ -57,6 +59,10 @@ export interface WorkerOptions {
   readonly yes: boolean;
   /** The text of the time flag of a summon, `<n>m` or `<n>h`. Undefined: the default time. */
   readonly duration: string | undefined;
+  /** True when the person gave the clear flag. Only a reset reads it. Absent: false. */
+  readonly clear?: boolean;
+  /** True when the person gave the compact flag. Only a reset reads it. Absent: false. */
+  readonly compact?: boolean;
 }
 
 const SUBCOMMANDS = Object.values(workerCommands).join(', ');
@@ -580,6 +586,47 @@ const runSummon = async (
   });
 };
 
+/**
+ * `worker reset ID --clear|--compact`: the words of the command line (exit 2), then the factory folder and its config, then
+ * `resetWorker`, which does the caller rule and every other check before it types.
+ */
+const runReset = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const parsed = parseReset({ words: args, clear: options.clear === true, compact: options.compact === true });
+  if (!parsed.ok) return parsed;
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const { workerId, kind } = parsed.value;
+  const reset = await resetWorker(deps, { home, config: loaded.value, workerId, kind });
+  return reset.ok ? ok(resetOutput(reset.value)) : reset;
+};
+
+/**
+ * `worker watch [ID]...`: reports the first change of the named workers, or of every recorded worker. The ids are checked by the
+ * watch (`requireRecord`). The watch never types, signals or writes.
+ */
+const runWatch = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const watched = await watchWorkers(deps, { home, config: loaded.value, workerIds: args });
+  return watched.ok ? ok(watchOutput(watched.value)) : watched;
+};
+
 /** `worker <subcommand>`: the commands of the workers of a node. */
 export const runWorker = async (
   deps: Deps,
@@ -598,6 +645,10 @@ export const runWorker = async (
       return runResume(deps, options, args, registry);
     case workerCommands.summon:
       return runSummon(deps, options, args, registry);
+    case workerCommands.reset:
+      return runReset(deps, options, args, registry);
+    case workerCommands.watch:
+      return runWatch(deps, options, args, registry);
     case workerCommands.list:
       return args.length === 0
         ? runWorkerList(deps, { home: options.home }, registry)

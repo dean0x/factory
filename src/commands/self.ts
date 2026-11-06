@@ -2,8 +2,10 @@ import { join } from 'node:path';
 import { notReady, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput } from '../cli/output.js';
 import { typeLine } from '../comms/typing.js';
+import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
 import type { CoordinatorPane } from '../launch/tmux.js';
 import {
@@ -12,11 +14,15 @@ import {
   commandText,
   coordinatorResumeFile,
   dirs,
+  flags,
+  flagText,
   roles,
   schemaIds,
+  selfCommands,
   selfResetWords,
   typing,
 } from '../names.js';
+import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { promptStateOf, readOwnCoordinatorSession } from '../workers/last-seen.js';
 import { requireCoordinatorCaller } from '../workers/panes.js';
@@ -161,3 +167,50 @@ export const selfResetOutput = (outcome: SelfResetOutcome): CommandOutput => ({
   warnings: [],
   failed: false,
 });
+
+export interface SelfOptions {
+  /** The words after the command: the subcommand, then its arguments. */
+  readonly words: readonly string[];
+  readonly home: string | undefined;
+}
+
+const SUBCOMMANDS = Object.values(selfCommands).join(', ');
+
+const needsUsage = (what: string): CliResult<never> =>
+  usageError(what, `Run "${commandText(commands.self)} ${flagText(flags.help)}".`);
+
+/** `self reset`: the words of the command line, then the factory folder and its config, then the reset. */
+const runSelfReset = async (
+  deps: Deps,
+  options: SelfOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const parsed = parseSelfReset(args);
+  if (!parsed.ok) return parsed;
+  const located = await locateHomeFolder(
+    deps,
+    options.home,
+    (readDeps, folder) => readNodeIdentity(readDeps, folder, registry),
+    commands.self,
+  );
+  if (!located.ok) return located;
+  const { home } = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const reset = await selfReset(deps, { home, config: loaded.value });
+  return reset.ok ? ok(selfResetOutput(reset.value)) : reset;
+};
+
+/** `self <subcommand>`: the commands that the coordinator runs on its own session. */
+export const runSelf = async (deps: Deps, options: SelfOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
+  const [subcommand, ...args] = options.words;
+  switch (subcommand) {
+    case undefined:
+      return needsUsage(`${commandText(commands.self)} needs a subcommand: ${SUBCOMMANDS}`);
+    case selfCommands.reset:
+      return runSelfReset(deps, options, args, registry);
+    default:
+      return needsUsage(`unknown subcommand ${JSON.stringify(subcommand)}. The subcommands are: ${SUBCOMMANDS}`);
+  }
+};
