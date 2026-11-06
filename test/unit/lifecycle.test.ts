@@ -704,6 +704,16 @@ describe('restart (AC-19)', () => {
     expect(output.json).toMatchObject({ stopped: false });
   });
 
+  it('keeps assignment.md and resume.md in the folder of the worker (TP-42)', async () => {
+    const made = await make();
+    const { inboxDir } = workerPathsOf(HOME, 'beta');
+    made.deps.seed(`${inboxDir}/assignment.md`, 'the task');
+    made.deps.seed(`${inboxDir}/resume.md`, 'the notes');
+    await succeeded(restart(made, 'beta'));
+    expect(made.deps.files.get(`${inboxDir}/assignment.md`)).toBe('the task');
+    expect(made.deps.files.get(`${inboxDir}/resume.md`)).toBe('the notes');
+  });
+
   it('does one session check and one list of the panes', async () => {
     const made = await make();
     await succeeded(restart(made, 'alpha'));

@@ -90,7 +90,7 @@ export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as cons
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
 /** The subcommands of `worker`. */
-export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume', summon: 'summon' } as const;
+export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume', summon: 'summon', reset: 'reset' } as const;
 
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
@@ -99,6 +99,7 @@ export const commandLines = {
   workerStop: `${commands.worker} ${workerCommands.stop}`,
   workerResume: `${commands.worker} ${workerCommands.resume}`,
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
+  workerReset: `${commands.worker} ${workerCommands.reset}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -116,6 +117,8 @@ export const flags = {
   yes: 'yes',
   idle: 'idle',
   for: 'for',
+  clear: 'clear',
+  compact: 'compact',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -755,6 +758,35 @@ export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
  */
 export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionStart' } as const;
 
+/** What a session reset of a worker needs to name for one kind: the flag, the typed line, the events that confirm it, and the verb of the verdict. */
+interface ResetKindWords {
+  readonly flag: string;
+  readonly line: string;
+  /** The hook events of which the first one after the typing confirms the reset. */
+  readonly events: readonly HookEvent[];
+  /** True when the reset starts a new session: the pointer of the worker must name another session than before. */
+  readonly newSession: boolean;
+  readonly done: string;
+}
+
+/**
+ * The two kinds of session reset (design 4.12). A clear types `/clear` and is confirmed by the `SessionStart` line of a new
+ * session. A compact types `/compact` and is confirmed by a `PreCompact` or a `SessionStart` line of the same session.
+ */
+export const resetKinds = {
+  clear: { flag: flags.clear, line: typing.lines.clear, events: ['SessionStart'], newSession: true, done: 'cleared' },
+  compact: { flag: flags.compact, line: typing.lines.compact, events: ['PreCompact', 'SessionStart'], newSession: false, done: 'compacted' },
+} as const satisfies Readonly<Record<string, ResetKindWords>>;
+
+/** A kind of session reset: a key of `resetKinds`. */
+export type ResetKind = keyof typeof resetKinds;
+
+/**
+ * The wait after a reset line was typed into a worker pane: the check runs at most `attempts` times, and waits `intervalMs` before
+ * each check. So the wait is at most `attempts` times `intervalMs`. At each check the pane must still run the launch of the worker.
+ */
+export const resetConfirm = { attempts: 10, intervalMs: 1_000 } as const;
+
 /**
  * The start time of the process of a pane. The macOS `ps` has no `etimes`, and tmux has no format for the start time of a pane, so
  * the check asks `ps` for the elapsed time of the pane process. `timeoutMs` bounds the call. `etime` is the one form of the answer
@@ -1093,6 +1125,7 @@ export const schemaIds = {
   workerStop: `${program}.worker-stop/v1`,
   workerResume: `${program}.worker-resume/v1`,
   workerSummon: `${program}.worker-summon/v1`,
+  workerReset: `${program}.worker-reset/v1`,
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
