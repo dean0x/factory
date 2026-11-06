@@ -497,6 +497,43 @@ describe('the install check', () => {
     expect(assignments).toEqual(['tmp=""', 'tmp="$(mktemp -d "${base%/}/factory-install-check.XXXXXX")"']);
   });
 
+  it('stops on the first failure, and sets the clean-up trap before its mktemp', () => {
+    expect(lines).toContain('set -euo pipefail');
+    const trap = lines.indexOf('trap cleanup EXIT');
+    expect(trap).toBeGreaterThan(-1);
+    expect(lines.findIndex((line) => line.startsWith('tmp="$(mktemp '))).toBeGreaterThan(trap);
+  });
+
+  it('isolates HOME, the npm prefix, the npm cache and the npm configs before it runs the first git or npm command', () => {
+    const isolation = [
+      'export HOME="$tmp/home"',
+      'export npm_config_prefix="$tmp/prefix"',
+      'export npm_config_cache="$tmp/npm-cache"',
+      'export npm_config_userconfig="$tmp/npmrc"',
+      'export npm_config_globalconfig="$tmp/npmrc-global"',
+    ].map((line) => lines.indexOf(line));
+    expect(isolation.filter((index) => index < 0)).toEqual([]);
+    const unset = lines.findIndex((line) => /^unset\s/.test(line));
+    expect(unset).toBeGreaterThan(-1);
+    const isolated = Math.max(...isolation, unset);
+    /** The lines that run git or npm, outside the quoted text and outside the checks that look for the program. */
+    const runs = lines
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => !line.startsWith('command -v ') && /\b(git|npm)\s/.test(line.replace(/"[^"]*"/g, '')));
+    expect(runs.length).toBeGreaterThan(5);
+    expect(runs.filter(({ index }) => index <= isolated)).toEqual([]);
+  });
+
+  it('stops before its first git command when a git hook exports the names of a repo, so that npm can not write the source repo', () => {
+    const guard = lines.findIndex((line) => line.startsWith('for name in GIT_DIR '));
+    expect(lines[guard]).toBe(
+      'for name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR; do',
+    );
+    expect(lines[guard + 1]).toMatch(/^\[ -z "\$\{!name\+set\}" \] \|\| fail /);
+    const firstGit = lines.findIndex((line) => /\bgit (-C|-c|init|config|--git-dir)\b/.test(line));
+    expect(firstGit).toBeGreaterThan(guard);
+  });
+
   it('takes the base of its temp folder from FACTORY_TMP or TMPDIR, as the exit check does', () => {
     expect(shellValue(installText, 'base')).toBe('${FACTORY_TMP:-${TMPDIR:-/tmp}}');
   });

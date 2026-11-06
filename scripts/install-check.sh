@@ -6,7 +6,8 @@
 # It runs the install scripts of the packages from the npm registry, so it needs the network.
 # The real HOME, the real XDG state folder, the real tmux server, the real npm prefix and the real npm cache are never written.
 # The source repo is never written. A local tree that differs from HEAD fails the compare by intent.
-# Keep the isolation block equal to scripts/exit-check.sh. A unit test keeps them equal.
+# Keep the isolation block equal to scripts/exit-check.sh. It adds only the unset of SSH_AUTH_SOCK and of the two Claude
+# credentials, and the registry in the scratch npm user config. A unit test keeps the names equal.
 # It needs a build first: npm run build
 set -euo pipefail
 
@@ -43,6 +44,12 @@ logged() {
 command -v node >/dev/null 2>&1 || fail "node is not on PATH"
 command -v npm >/dev/null 2>&1 || fail "npm is not on PATH"
 command -v git >/dev/null 2>&1 || fail "git is not on PATH"
+
+# A git hook exports these names. With them, a git command in another folder (the clone of npm too) writes the repo of
+# the hook, so the check stops before its first git command.
+for name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR; do
+  [ -z "${!name+set}" ] || fail "$name is set, so the git commands of npm can write the repo that it names. Run the check outside a git hook."
+done
 
 version="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$root/package.json")"
 [ -n "$version" ] || fail "cannot read the version from package.json"
