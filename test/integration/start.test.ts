@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -144,6 +144,13 @@ const ownSettings = (): Record<string, unknown> => ({
 });
 
 const settingsFileOf = (): string => join(box.node, 'coordinator', '.claude', 'settings.local.json');
+
+/** The status line input of the fixture (built from the field names of the status line docs; the values are made up). */
+const STATUS_PAYLOAD = (
+  JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'claude', 'payloads.json'), 'utf8')) as {
+    readonly statusline: { readonly payload: Readonly<Record<string, unknown>> };
+  }
+).statusline.payload;
 
 /**
  * Make the node with the clones of two work trees. The result is the folders of the clones in the root. `init --yes`
@@ -600,6 +607,52 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(result.stdout).toContain('A real run asks before it writes this change.');
     expect(await treeOf(box.node)).toEqual(before);
     expect(existsSync(socket)).toBe(false);
+  });
+
+  /** Set the status line command of the owner in the private config of the node. The file keeps its mode. */
+  const setOwnerStatusline = async (command: string): Promise<void> => {
+    const path = join(box.node, 'factory.local.yaml');
+    const text = await readFile(path, 'utf8');
+    expect(text).toContain('statusline: null');
+    // A function gives the text as it is: a string would read `$$` and `$&` in the command as patterns.
+    await writeFile(path, text.replace('statusline: null', () => `statusline: ${JSON.stringify(command)}`));
+  };
+
+  it('writes only the own entries with --yes when the owner names a status line command, and the wrapper then prints its output (AC-2)', async () => {
+    await initNode({ hookSettings: false });
+    await setOwnerStatusline('echo owner-line');
+
+    const result = await startFactory('--yes');
+    expect(result.code).toBe(0);
+    expect(await waitForLaunch()).toEqual(['launched']);
+
+    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual(ownSettings());
+    expect((await stat(settingsFileOf())).mode & 0o777).toBe(0o600);
+    expect(await readFile(join(box.node, 'factory.local.yaml'), 'utf8')).toContain('statusline: "echo owner-line"');
+
+    const printed = await box.run(['hook', hookNames.statusline], {
+      cwd: box.node,
+      env: { FACTORY_HOME: box.node, FACTORY_SESSION: 'demo' },
+      input: JSON.stringify(STATUS_PAYLOAD),
+    });
+    expect(printed).toEqual({ code: 0, stdout: 'owner-line\n', stderr: '' });
+  });
+
+  it('stops with exit 4 for a status line that the program did not write, names the key that keeps it, and changes nothing (AC-1)', async () => {
+    await initNode({ hookSettings: false });
+    await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
+    const foreign = '{"statusLine":{"type":"command","command":"echo kept"}}\n';
+    await writeFile(settingsFileOf(), foreign, { mode: 0o600 });
+    const before = await treeOf(box.node);
+
+    const result = await startFactory('--yes');
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('session.statusline');
+    expect(result.stderr).toContain('Remove the setting from coordinator/.claude/settings.local.json');
+    expect(await readFile(settingsFileOf(), 'utf8')).toBe(foreign);
+    expect((await stat(settingsFileOf())).mode & 0o777).toBe(0o600);
+    expect(await treeOf(box.node)).toEqual(before);
+    await noSession();
   });
 });
 
