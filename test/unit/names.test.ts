@@ -51,6 +51,7 @@ const SRC = join(__dirname, '..', '..', 'src');
 const NAMES_FILE = join(SRC, 'names.ts');
 const GLOSSARY_FILE = join(SRC, 'glossary.ts');
 const EXIT_CHECK = join(__dirname, '..', '..', 'scripts', 'exit-check.sh');
+const INSTALL_CHECK = join(__dirname, '..', '..', 'scripts', 'install-check.sh');
 
 /** An import path is no text for a user. */
 const IMPORT_PATH = /^(node:|\.{1,2}\/)/;
@@ -466,6 +467,87 @@ describe('the flow and the clean-up of the exit check', () => {
     const doctor = text.indexOf('run_in "$place" factory doctor');
     expect(doctor).toBeGreaterThan(0);
     expect(text.indexOf('step "deny list"')).toBeGreaterThan(doctor);
+  });
+});
+
+describe('the install check', () => {
+  const codeOf = (text: string): string[] => text.split('\n').filter((line) => !line.trimStart().startsWith('#'));
+  const exitCode = codeOf(readFileSync(EXIT_CHECK, 'utf8'));
+  const installText = readFileSync(INSTALL_CHECK, 'utf8');
+  const code = codeOf(installText);
+  /** The code lines without indentation and without the && that joins the steps of a function. */
+  const lines = code.map((line) => line.trim().replace(/ &&$/, ''));
+  const exportNames = (all: string[]): string[] =>
+    all.flatMap((line) => /^export ([A-Za-z_]+)=/.exec(line.trim())?.[1] ?? []).sort();
+  const unsetLines = (all: string[]): string[] => all.filter((line) => /^unset\s/.test(line.trim()));
+  const unsetNames = (all: string[]): string[] =>
+    unsetLines(all).flatMap((line) => line.trim().slice('unset '.length).split(' '));
+
+  it('removes one folder only: the one that its own mktemp made, behind a guard that tests the variable', () => {
+    const removals = code.map((line, index) => ({ line: line.trim(), index })).filter(({ line }) => /\brm\b/.test(line));
+    expect(removals.map(({ line }) => line)).toEqual(['rm -rf "$tmp"']);
+    const removal = removals[0]?.index ?? -1;
+    expect(code[removal - 1]?.trim()).toBe('if [ -n "$tmp" ] && [ -d "$tmp" ]; then');
+    const assignments = lines.filter((line) => /^tmp=/.test(line));
+    expect(assignments).toEqual(['tmp=""', 'tmp="$(mktemp -d "${base%/}/factory-install-check.XXXXXX")"']);
+  });
+
+  it('takes the base of its temp folder from FACTORY_TMP or TMPDIR, as the exit check does', () => {
+    expect(shellValue(installText, 'base')).toBe('${FACTORY_TMP:-${TMPDIR:-/tmp}}');
+  });
+
+  it('exports the same names as the exit check', () => {
+    expect(exportNames(exitCode)).toContain('HOME');
+    expect(exportNames(exitCode)).toContain('npm_config_prefix');
+    expect(exportNames(code)).toEqual(exportNames(exitCode));
+  });
+
+  it('unsets the names of the exit check, and the ssh agent socket and the two Claude credentials', () => {
+    expect(unsetLines(code)).toHaveLength(1);
+    expect(unsetNames(exitCode).length).toBeGreaterThan(5);
+    expect(unsetNames(code).sort()).toEqual(
+      [...unsetNames(exitCode), 'SSH_AUTH_SOCK', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].sort(),
+    );
+  });
+
+  it('takes the commit id from HEAD of this checkout, accepts 40 lower-case hex characters only, and quotes every use', () => {
+    expect(lines.filter((line) => /^sha=/.test(line))).toEqual(['sha="$(git -C "$root" rev-parse HEAD)"']);
+    expect(lines.some((line) => /^\[\[ "\$sha" =~ \^\[0-9a-f\]\{40\}\$ \]\] \|\| fail /.test(line))).toBe(true);
+    expect(code.join('\n')).toContain('^[0-9a-f]{40}$');
+    expect(lines.filter((line) => line.replace(/"[^"]*"/g, '').includes('$sha'))).toEqual([]);
+    expect(installText).not.toContain('${{');
+  });
+
+  it('writes nothing to the source repo: it only reads HEAD and pushes that commit with hooks off into the scratch bare repo', () => {
+    const gitOnSource = lines.filter((line) => /\bgit\b/.test(line) && /\$\{?root\}?/.test(line));
+    expect(gitOnSource).toEqual([
+      'sha="$(git -C "$root" rev-parse HEAD)"',
+      'git -c core.hooksPath=/dev/null -C "$root" push -q "$tmp/source.git" "$sha:refs/heads/install-proof"',
+    ]);
+    expect(lines.filter((line) => /\bbranch\s+-f\b|\bcheckout\b/.test(line))).toEqual([]);
+    expect(lines).toContain('git --git-dir="$tmp/source.git" symbolic-ref HEAD refs/heads/install-proof');
+  });
+
+  it('installs the commit from the scratch bare repo, with the install scripts and the registry on', () => {
+    expect(lines.filter((line) => /\bnpm install\b/.test(line))).toEqual([
+      'logged install npm install --global --no-audit --no-fund "git+file://$tmp/source.git#$sha"',
+    ]);
+    expect(lines.filter((line) => /--ignore-scripts|--offline/.test(line))).toEqual([]);
+  });
+
+  it('finds factory in the scratch prefix, and fails unless the installed program is a file that runs and equals the build', () => {
+    expect(lines).toContain('found="$(command -v factory || true)"');
+    expect(lines.some((line) => /^\[ "\$found" = "\$npm_config_prefix\/bin\/factory" \] \|\| fail /.test(line))).toBe(true);
+    expect(lines.some((line) => /^\[ -f "\$installed_js" \] \|\| fail /.test(line))).toBe(true);
+    expect(lines.some((line) => /^\[ -x "\$installed_js" \] \|\| fail /.test(line))).toBe(true);
+    const compares = lines.filter((line) => /\bcmp\b/.test(line));
+    expect(compares).toHaveLength(1);
+    expect(compares[0]).toMatch(/^cmp -s "\$installed_js" "\$root\/dist\/factory\.js" \|\| fail /);
+    expect(lines).toContain(`printf 'registry=https://registry.npmjs.org/\\n' >"$npm_config_userconfig"`);
+  });
+
+  it('names the exit check in its header', () => {
+    expect(installText).toMatch(/^#.*scripts\/exit-check\.sh/m);
   });
 });
 
