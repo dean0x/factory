@@ -713,6 +713,20 @@ const sessionStarted = (marker: string, session: string): Promise<RunResult> =>
 /** The arguments of the last launch of the program with this session marker. */
 const argvOf = async (marker: string): Promise<string[]> => (await readFile(join(outDir, `argv-${marker}`), 'utf8')).trim().split('\n');
 
+/**
+ * Wait until the program has run this many times with this session marker. The program writes `launches-<marker>` after its
+ * `proxy-<marker>` and `argv-<marker>` files, so the files of the last launch are in place when the count is reached. The wait
+ * has an upper bound.
+ */
+const waitForLaunches = async (marker: string, count: number): Promise<void> => {
+  for (let step = 0; step < POLL_STEPS; step += 1) {
+    const text = await readFile(join(outDir, `launches-${marker}`), 'utf8').catch(() => '');
+    if (text.split('\n').filter((line) => line !== '').length >= count) return;
+    await sleep(POLL_STEP_MS);
+  }
+  throw new Error(`the program did not run ${count} times with the marker ${marker}`);
+};
+
 /** The last launch with this session marker obeys the rule of every launch, though the tmux server holds a proxy (`LAUNCH_PROXY_URL`). */
 const expectRule = async (marker: string): Promise<void> =>
   expectLaunchRule(await argvOf(marker), (await waitForFile(`proxy-${marker}`)).trim());
@@ -791,6 +805,8 @@ describe.skipIf(!hasTmux)(
       const again = await startFactory();
       expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
       expect(again.stdout).not.toContain('The coordinator resumes');
+      // The first launch of the setup also wrote files with no `--resume` and no proxy: only the second launch can pass the checks.
+      await waitForLaunches('demo', 2);
       expect(resumeIdOf(await argvOf('demo'))).toBeUndefined();
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
       for (const marker of ['demo', 'alpha']) await expectRule(marker);
@@ -805,6 +821,8 @@ describe.skipIf(!hasTmux)(
       const warnings = again.stderr.split('\n').filter((line) => line.includes(pointer));
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('NOT resumed');
+      // The first launch of the setup also wrote files with no `--resume` and no proxy: only the second launch can pass the checks.
+      await waitForLaunches('demo', 2);
       expect(resumeIdOf(await argvOf('demo'))).toBeUndefined();
       await expectRule('demo');
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
