@@ -91,7 +91,15 @@ export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as cons
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
 /** The subcommands of `worker`. */
-export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume', summon: 'summon', reset: 'reset' } as const;
+export const workerCommands = {
+  new: 'new',
+  list: 'list',
+  stop: 'stop',
+  resume: 'resume',
+  summon: 'summon',
+  reset: 'reset',
+  watch: 'watch',
+} as const;
 
 /** The subcommands of `self`. */
 export const selfCommands = { reset: 'reset' } as const;
@@ -104,6 +112,7 @@ export const commandLines = {
   workerResume: `${commands.worker} ${workerCommands.resume}`,
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
   workerReset: `${commands.worker} ${workerCommands.reset}`,
+  workerWatch: `${commands.worker} ${workerCommands.watch}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
 } as const;
 
@@ -756,6 +765,13 @@ export const dismissStopCases: readonly StopCase[] = ['idle'];
 export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
 
 /**
+ * The checks of `worker watch`: at most `attempts` checks, each after a wait of `intervalMs`. So a watch lasts at most `attempts` times
+ * `intervalMs`, which is 20 minutes. A session that works is stalled when the newer of its event time and its percent time is more than
+ * `stalledAfterMs` old.
+ */
+export const watchPoll = { attempts: 40, intervalMs: 30_000, stalledAfterMs: 900_000 } as const;
+
+/**
  * The wait after the pane of a worker starts (design 4.11): the launch checks at most `attempts` times, and waits `intervalMs`
  * before each check. So the wait is at most `attempts` times `intervalMs`. A launch with a session to resume checks the pane and
  * the last-seen line of the worker at each check, and it is confirmed when the pane runs and the line holds the hook event `event`,
@@ -822,6 +838,31 @@ export const workerListWords = {
   /** The mark of the context column: the percent is at the prepare limit or above, or above the max limit. */
   marks: { prepare: 'PREPARE', max: 'MAX' },
 } as const;
+
+/**
+ * The words of the output of `worker watch`. The output holds these words and the ids of workers, and no other text of the pane or of
+ * a file. `kinds` names what changed for a worker: the pane ended, the pane is gone, the pane is not the launch of the worker any more,
+ * the last-seen line is not valid or does not belong to the worker, a dialog waits for an answer, or the session works and was silent
+ * too long.
+ */
+export const watchWords = {
+  changed: 'CHANGED:',
+  noChange: 'NO CHANGE:',
+  noWorker: 'NO WORKER:',
+  noPane: 'no worker has a pane to watch',
+  kinds: {
+    ended: 'pane ended',
+    gone: 'pane gone',
+    other: 'pane is not its launch',
+    lineNotValid: 'line not valid',
+    lineNotOwned: 'line not owned',
+    waits: workerListWords.states.waits,
+    stalled: 'stalled?',
+  },
+} as const;
+
+/** What changed for a worker: a key of `watchWords.kinds`. */
+export type WatchKind = keyof typeof watchWords.kinds;
 
 /**
  * The words of `status`: the titles of the columns, the state of a worker that has no live pane, the work item column for a work item
@@ -1140,6 +1181,7 @@ export const schemaIds = {
   workerResume: `${program}.worker-resume/v1`,
   workerSummon: `${program}.worker-summon/v1`,
   workerReset: `${program}.worker-reset/v1`,
+  workerWatch: `${program}.worker-watch/v1`,
   selfReset: `${program}.self-reset/v1`,
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
