@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { inspectBlocks } from '../../src/blocks/status.js';
-import { renderBlock } from '../../src/blocks/managed.js';
+import { parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
@@ -3506,6 +3506,49 @@ describe('upgrade: render a changed block again (TP-76)', () => {
     success(await upgrade(deps));
     await deps.fs.remove(`${HOME}/.factory/backups`);
     expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+  });
+});
+
+describe('upgrade: the role texts of worker version 2 and coordinator version 3 (TP-38)', () => {
+  /** Put an earlier version of the block `name` into the file, with a text of its own, and record that version. */
+  const makeOlder = (deps: FakeDeps, path: string, name: string, version: number): void => {
+    const parsed = parseBlocks(text(deps, path));
+    const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === name) : undefined;
+    const rendered = renderBlock({ name, version, body: `The ${name} text of an earlier version.` });
+    expect(block).toBeDefined();
+    expect(rendered.ok).toBe(true);
+    if (block === undefined || !rendered.ok) return;
+    deps.files.set(path, replaceBlock(text(deps, path), block, rendered.value));
+    edit(deps, NODE_JSON, `"${name}": ${versionOf(name)}`, `"${name}": ${version}`);
+  };
+
+  it('writes the new blocks over the earlier versions, and then shows them as current', async () => {
+    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([2, 3]);
+    const { deps } = await makeNode();
+    makeOlder(deps, WORKER, 'worker', 1);
+    makeOlder(deps, CLAUDE, 'coordinator', 2);
+
+    const output = success(await upgrade(deps));
+
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 1 to 2', 'block coordinator: version 2 to 3']));
+    expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v2 sha256=');
+    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v3 sha256=');
+    expect(text(deps, CLAUDE)).not.toContain('The coordinator text of an earlier version.');
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
+    const state = parseJsonText(text(deps, NODE_JSON));
+    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 3, worker: 2 } });
+    await deps.fs.remove(`${HOME}/.factory/backups`);
+    expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+  });
+
+  it('shows the earlier versions as older in a dry run, and changes no file', async () => {
+    const { deps } = await makeNode();
+    makeOlder(deps, WORKER, 'worker', 1);
+    makeOlder(deps, CLAUDE, 'coordinator', 2);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 1 to 2', 'block coordinator: version 2 to 3']));
+    expect(snapshot(deps)).toEqual(before);
   });
 });
 

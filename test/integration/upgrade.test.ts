@@ -365,6 +365,8 @@ describe('factory upgrade (built binary)', () => {
 
 describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
   const FIXTURE = join(__dirname, '..', 'fixtures', 'node-0.1.0');
+  /** The id of the node in `factory.yaml` of the fixture. */
+  const FIXTURE_NODE_ID = 'demo';
 
   /** Commit every change of the state repository, as the owner would. */
   const commitAll = async (state: string, message: string): Promise<void> => {
@@ -406,10 +408,13 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     return state;
   };
 
-  /** A new node of the current version: its files are the oracle for the text of an upgraded node. */
+  /**
+   * A new node of the current version: its files are the oracle for the text of an upgraded node. It has the id of the node
+   * of the fixture, because the worker text names the session of the coordinator by that id.
+   */
   const freshNode = async (): Promise<string> => {
     const home = join(box.root, 'fresh');
-    const result = await box.run(['init', '--yes', '--home', home, '--name', 'fresh', '--owner-name', 'Test Owner']);
+    const result = await box.run(['init', '--yes', '--home', home, '--name', FIXTURE_NODE_ID, '--owner-name', 'Test Owner']);
     expect(result.code).toBe(0);
     return join(home, '.factory');
   };
@@ -469,7 +474,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(names).toContain('orders');
     expect(await readdir(join(state, 'roles'))).toEqual(['worker.md']);
     const node = JSON.parse(await box.read(join(state, 'node.json'))) as Record<string, unknown>;
-    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 2, safety: 2, worker: 2 } });
+    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 3, safety: 2, worker: 2 } });
 
     const changes = await box.git(state, ['diff', '--name-status', '-M', 'HEAD~1', 'HEAD']);
     expect(changes.stdout).toContain('protocol.md');
@@ -551,7 +556,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     // A node from before the setup folder has no setup text, so only the worker block is the same.
     const workerBlockOf = (text: string): string => text.slice(0, text.indexOf('<!-- factory:end worker -->'));
     const upgradedWorker = workerBlockOf(await box.read(join(state, 'roles', 'worker.md')));
-    expect(upgradedWorker).toContain('<!-- factory:begin worker v1 sha256=');
+    expect(upgradedWorker).toContain('<!-- factory:begin worker v2 sha256=');
     expect(upgradedWorker).toBe(workerBlockOf(await box.read(join(fresh, 'roles', 'worker.md'))));
     expect(await box.read(join(state, 'roadmaps', 'README.md'))).toBe(
       await box.read(join(fresh, 'roadmaps', 'README.md')),
