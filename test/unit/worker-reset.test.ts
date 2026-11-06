@@ -1,11 +1,11 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { hookSettingsPlaceOf, ownSettingsEntries } from '../../src/core/claude-settings.js';
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { launchArgv } from '../../src/launch/argv.js';
-import { maxFileBytes, resetConfirm, schemaIds, type HookEvent, type ResetKind } from '../../src/names.js';
+import { maxFileBytes, resetConfirm, schemaIds, tmuxNames, type HookEvent, type ResetKind } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { parseReset, resetOutput, resetWorker, type ResetOutcome } from '../../src/workers/reset.js';
@@ -245,10 +245,14 @@ describe('TP-22: the words of the command line (refusal 1)', () => {
     ['both flags', { words: [WORKER], clear: true, compact: true }],
     ['no worker id', { words: [], clear: true, compact: false }],
     ['two worker ids', { words: [WORKER, 'beta'], clear: true, compact: false }],
-  ])('TP-22: %s is exit 2, and the remedy names the command', (_name, input) => {
+  ])('TP-22: %s is exit 2, the remedy names the command, and no tmux call runs', async (_name, input) => {
+    const world = await make();
+    const before = world.deps.calls.length;
     const error = errorOf(parseReset(input));
     expect(codeOf(error)).toBe(2);
     expect(error.hint).toContain('factory worker reset');
+    expectNothingTyped(world);
+    expect(world.deps.calls).toHaveLength(before);
   });
 
   it('TP-22: reads one worker id with one flag', () => {
@@ -280,6 +284,14 @@ describe('TP-22: the caller rule refuses before the worker is read (refusals 2 t
     expect(codeOf(await refused(world, 'factory shutdown'))).toBe(4);
   });
 
+  it('TP-22: a tmux session with no pane of the coordinator is exit 3, and the remedy is the start command', async () => {
+    const world = await make();
+    world.serverCall(['set-option', '-p', '-u', '-t', COORDINATOR_PANE, tmuxNames.optionNode]);
+    const error = await refused(world, 'factory start');
+    expect(codeOf(error)).toBe(3);
+    expect(error.message).toContain('has no pane of the coordinator');
+  });
+
   it('TP-22: a coordinator pane that ended is exit 3, and the remedy is the start command', async () => {
     const error = await refused(await make({ tmux: { endedCoordinators: [NODE] } }), 'factory start');
     expect(codeOf(error)).toBe(3);
@@ -303,6 +315,14 @@ describe('TP-22: the worker, its record and its pane (refusals 5 to 8)', () => {
     expect(codeOf(error)).toBe(2);
     expectNothingTyped(world);
     expect(error.hint).toContain('factory worker list');
+  });
+
+  it('TP-22: a record that is not valid is exit 2, and the remedy is the list command', async () => {
+    const world = await make();
+    world.deps.seed(workerPathsOf(HOME, WORKER).recordFile, 'not a record');
+    const error = await refused(world, 'factory worker list');
+    expect(codeOf(error)).toBe(2);
+    expect(error.message).toContain('is not valid');
   });
 
   it('TP-22: a record that names another work copy is exit 4', async () => {
@@ -337,11 +357,14 @@ describe('TP-22: the worker, its record and its pane (refusals 5 to 8)', () => {
 });
 
 describe('TP-22: the process, the settings and the push (refusals 9 to 12)', () => {
-  it.each([
+  const unreadable: ReadonlyArray<readonly [string, CliResult<RunOutput>]> = [
     ['ps fails', exited(1, '', 'no such process\n')],
+    ['ps runs past its time limit', failure('ps ran too long: SIGTERM')],
     ['ps prints nothing', exited(0, '')],
     ['ps prints text that is no time', exited(0, 'elapsed\n')],
-  ])('TP-22: when %s, the start of the pane process is not readable: exit 3', async (_name, answer) => {
+  ];
+
+  it.each(unreadable)('TP-22: when %s, the start of the pane process is not readable: exit 3', async (_name, answer) => {
     const world = await make();
     world.setPs(answer);
     const error = await refused(world, 'Look at the pane in tmux');
@@ -392,7 +415,9 @@ describe('TP-22: the process, the settings and the push (refusals 9 to 12)', () 
 
   it('TP-22: a fetch that fails is exit 1, and the refusal has no remedy line', async () => {
     const world = await make({ git: { remotes: { [CLONE]: { copies: { [`worker/${WORKER}`]: HEAD }, fetchExit: 128 } } } });
-    expect(codeOf(await refused(world, null))).toBe(1);
+    const error = await refused(world, null);
+    expect(codeOf(error)).toBe(1);
+    expect(error.message).toContain('cannot fetch');
   });
 });
 
@@ -470,13 +495,17 @@ describe('TP-22: the resume file (refusal 13)', () => {
   it('TP-22: a resume file that is a link is exit 4, and the remedy is to replace the link', async () => {
     const world = await make({ links: { [RESUME_FILE]: '/elsewhere/notes.md' } });
     world.deps.seed('/elsewhere/notes.md', 'notes');
-    expect(codeOf(await refused(world, 'Replace the link'))).toBe(4);
+    const error = await refused(world, 'Replace the link');
+    expect(codeOf(error)).toBe(4);
+    expect(textOf(error)).toContain(RESUME_FILE);
   });
 
   it('TP-22: an inbox folder that is a link is exit 4, and the remedy is to replace the link', async () => {
     const world = await make({ links: { [INBOX]: '/elsewhere' } });
     world.deps.seed('/elsewhere/resume.md', 'notes');
-    expect(codeOf(await refused(world, 'Replace the link'))).toBe(4);
+    const error = await refused(world, 'Replace the link');
+    expect(codeOf(error)).toBe(4);
+    expect(textOf(error)).toContain(INBOX);
   });
 
   it.each([
