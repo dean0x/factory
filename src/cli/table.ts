@@ -16,6 +16,7 @@ import { runWorker } from '../commands/worker.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import {
+  assignmentSource,
   commandLines,
   commands,
   commandText,
@@ -284,7 +285,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     name: commands.worker,
     summary: `Make, run, reset and watch the ${roles.worker}s of the ${roles.node}.`,
     usage: [
-      `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+      `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.assignment)} FILE] [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
       `${commandText(commandLines.workerList)} [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerStop)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
@@ -299,6 +300,14 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'string',
         placeholder: 'PROJECT',
         description: `The id of the project that the ${roles.worker} works on. The ${roles.node} lists it in its config.`,
+      },
+      [flags.assignment]: {
+        type: 'string',
+        placeholder: 'FILE',
+        description:
+          `With ${workerCommands.new}: copy the text of FILE into the inbox folder of the new ${roles.worker}, as its assignment. ` +
+          `FILE is in ${assignmentSource.ordersShown} of the ${places.folder}, or in the git work tree of the working folder. ` +
+          `It is a plain text file of at most 1 MiB, and no part of its path starts with a dot.`,
       },
       [flags.for]: {
         type: 'string',
@@ -337,6 +346,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           duration: given.string(flags.for),
           clear: given.bool(flags.clear),
           compact: given.bool(flags.compact),
+          assignment: given.string(flags.assignment),
         },
         registry,
       ),

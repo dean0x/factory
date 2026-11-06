@@ -441,6 +441,14 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(result.out).toMatch(/--compact\s+With reset: compact the session of the worker/);
   });
 
+  it('TP-32: shows the assignment flag in the usage of worker new and in the flag list of worker', async () => {
+    const result = await run(['worker', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory worker new ID --project PROJECT [--assignment FILE] [--home DIR] [--yes]');
+    expect(result.out).toMatch(/--assignment FILE\s+With new: copy the text of FILE/);
+    expect(result.out).toContain('.factory/orders/');
+  });
+
   it('TP-27: lists self in the help, and shows the usage of self reset', async () => {
     const listed = await run(['help']);
     expect(listed.out).toMatch(/\n {2}self {6}\S/);

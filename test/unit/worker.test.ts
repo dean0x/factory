@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
+import { runCli } from '../../src/cli/run.js';
 import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
@@ -25,6 +26,7 @@ import {
 import { runWorker } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { captureSink } from '../helpers/sink.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { launchWordsOf } from '../helpers/worker-launch-words.js';
@@ -123,6 +125,8 @@ interface Setup {
   readonly termEndsAfterChecks?: number;
   /** What the program of a new pane does while the launch waits. Default: nothing, the pane stays alive and writes nothing. */
   readonly program?: Program;
+  /** The top folder of the git work tree of the working folder, as `git rev-parse --show-toplevel` prints it. Default: no work tree. */
+  readonly tree?: string;
 }
 
 interface Made {
@@ -170,6 +174,9 @@ const gitAnswer = (setup: Setup, made: () => FakeDeps) => (call: RunCall) => {
   }
   if (command.startsWith('rev-parse --verify --quiet refs/heads/')) {
     return (setup.branches ?? []).includes(command.slice('rev-parse --verify --quiet refs/heads/'.length)) ? exited(0, 'abc123\n') : exited(1);
+  }
+  if (command === 'rev-parse --show-toplevel') {
+    return setup.tree === undefined ? exited(128, '', 'fatal: not a git repository\n') : exited(0, `${setup.tree}\n`);
   }
   if (command === 'rev-parse --git-common-dir') return exited(0, '.git\n');
   if (command === 'rev-parse --is-inside-work-tree --show-prefix') {
@@ -434,6 +441,7 @@ describe('worker new: the work, in order (TP-5)', () => {
       branch: BRANCH,
       pane: FIRST_NEW_PANE,
       proxy: null,
+      assignment: null,
     });
     expect(output.failed).toBe(false);
   });
@@ -452,6 +460,104 @@ describe('worker new: the output is short (TP-63)', () => {
     expect(row.command).toBe('`factory worker new`');
     expect(row.measured).toBe(tokensOf(text));
     expect(tokensOf(text)).toBeLessThanOrEqual(row.budget);
+  });
+});
+
+describe('worker new --assignment: the source check and the copy (TP-32, TP-33, TP-34)', () => {
+  const TASK = '# Task\n\nFix the build.\n';
+  const TREE = '/w/tree';
+  const ASSIGNMENT = `${INBOX}/assignment.md`;
+  const SOURCE = `${TREE}/docs/task.md`;
+  const WITH_SOURCE = { tree: TREE, seed: { [SOURCE]: TASK } } as const;
+
+  it('TP-33: copies a file of the git work tree of the working folder to the inbox, after the record and before the exclude entry and the launch', async () => {
+    const made = make(WITH_SOURCE);
+    await succeeded(made, { assignment: SOURCE });
+    expect(made.deps.files.get(ASSIGNMENT)).toBe(TASK);
+    const order = [
+      indexOf(made, `writeTextExclusive ${RECORD}`),
+      indexOf(made, `writeTextExclusive ${ASSIGNMENT}.tmp-`),
+      indexOf(made, `writeTextExclusive ${EXCLUDE}.tmp-`),
+      indexOf(made, 'tmux split-window'),
+    ];
+    expect(order.every((position) => position >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it('TP-33: reads a path that starts at the working folder', async () => {
+    const made = make(WITH_SOURCE);
+    await succeeded(made, { assignment: 'tree/docs/task.md' });
+    expect(made.deps.files.get(ASSIGNMENT)).toBe(TASK);
+  });
+
+  it('TP-33: copies a file of the orders folder of the factory folder', async () => {
+    const orders = '/w/node/.factory/orders/task.md';
+    const made = make({ seed: { [orders]: TASK } });
+    await succeeded(made, { assignment: orders });
+    expect(made.deps.files.get(ASSIGNMENT)).toBe(TASK);
+  });
+
+  it('TP-33: names the copy in one more line of the output and in the JSON document, and makes no assignment file without the flag', async () => {
+    const withFile = await succeeded(make(WITH_SOURCE), { assignment: SOURCE });
+    expect(plainText(withFile)).toBe(
+      'Made the worker alpha in work-copies/web/alpha on the branch worker/alpha.\n' +
+        'It runs in the pane %3 of the window workers.\n' +
+        'Copied the assignment to .factory/workers/alpha/inbox/assignment.md.\n',
+    );
+    expect(withFile.json).toMatchObject({ assignment: ASSIGNMENT });
+    const without = make(WITH_SOURCE);
+    const plain = await succeeded(without);
+    expect(plain.json).toMatchObject({ assignment: null });
+    expect(without.deps.files.has(ASSIGNMENT)).toBe(false);
+  });
+
+  it('TP-33: the flag --assignment reaches the command through the command line', async () => {
+    const made = make(WITH_SOURCE);
+    const sink = captureSink();
+    const code = await runCli(
+      ['worker', 'new', 'alpha', '--project', 'web', '--home', HOME, '--yes', '--assignment', SOURCE, '--json'],
+      made.deps,
+      sink,
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(sink.out.join(''))).toMatchObject({ assignment: ASSIGNMENT });
+    expect(made.deps.files.get(ASSIGNMENT)).toBe(TASK);
+  });
+
+  it.each([
+    ['a file outside both tops', '/w/other/task.md', 4],
+    ['a path with a dot part', `${TREE}/.secret/task.md`, 4],
+    ['the local config of the factory folder', '/w/node/factory.local.yaml', 4],
+    ['a file that does not exist', `${TREE}/none.md`, 2],
+  ])('TP-32: refuses %s before any write', async (_name, path, code) => {
+    const made = make({ tree: TREE, seed: { '/w/other/task.md': TASK, [`${TREE}/.secret/task.md`]: TASK } });
+    const error = await failed(made, { assignment: path });
+    expect(exitCodeOf[error.kind], error.message).toBe(code);
+    expectNothingChanged(made);
+  });
+
+  it('TP-32: runs the source check before the question for the consent', async () => {
+    const made = make({ tree: TREE, tty: true, prompt: () => ok('y'), seed: { '/w/other/task.md': TASK, [TREE]: null } });
+    const error = await failed(made, { assignment: '/w/other/task.md', yes: false });
+    expect(exitCodeOf[error.kind], error.message).toBe(4);
+    expect(made.events).not.toContain('prompt');
+    expectNothingChanged(made);
+  });
+
+  it('TP-34: a copy that fails is exit 1, keeps the worker, does not launch it, and names the copy by hand and then worker resume', async () => {
+    const made = make({ ...WITH_SOURCE, failWrite: `${ASSIGNMENT}.tmp-4242-0` });
+    const error = await failed(made, { assignment: SOURCE });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('disk full');
+    expect(error.hint).toContain(`Copy the assignment file by hand to ${ASSIGNMENT}.`);
+    expect(error.hint).toContain(`To start the worker, run ${RESUME}.`);
+    expect((error.hint ?? '').indexOf('Copy the assignment file by hand')).toBeLessThan((error.hint ?? '').indexOf(RESUME));
+    expectKeptCopyHint(error);
+    expect(made.deps.files.has(RECORD)).toBe(true);
+    expect(made.deps.dirs.has(COPY)).toBe(true);
+    expect(made.deps.files.has(ASSIGNMENT)).toBe(false);
+    expect(indexOf(made, 'tmux split-window')).toBe(-1);
+    expect(indexOf(made, `writeTextExclusive ${EXCLUDE}.tmp-`)).toBe(-1);
   });
 });
 

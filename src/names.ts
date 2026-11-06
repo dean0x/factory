@@ -133,6 +133,7 @@ export const flags = {
   for: 'for',
   clear: 'clear',
   compact: 'compact',
+  assignment: 'assignment',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
