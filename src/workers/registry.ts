@@ -112,11 +112,20 @@ const readOfText = (text: string, id: string, home: string): CliResult<WorkerRea
   return ok({ state: 'valid', record });
 };
 
-/** What a read of one file in the folder of a worker finds: the text, a file that can not be read and the reason, or no file. */
-export type WorkerFileRead =
+/** Why `readCheckedFile` finds a file invalid: a part of the chain is a link, a part is of the wrong kind, or the file is above the limit. */
+export type FileFault = 'link' | 'wrong-kind' | 'size';
+
+/** What `readCheckedFile` finds: the text, a file that can not be used with the reason and the cause, or no file. */
+export type CheckedFileRead =
   | { readonly state: 'text'; readonly text: string }
-  | { readonly state: 'invalid'; readonly reason: string }
+  | { readonly state: 'invalid'; readonly reason: string; readonly cause: FileFault }
   | { readonly state: 'absent' };
+
+/**
+ * What a read of one file in the folder of a worker finds: the text, a file that can not be read and the reason, or no file. A reader
+ * that builds the invalid value from another check (an id that is not a slug) gives no cause.
+ */
+export type WorkerFileRead = CheckedFileRead | { readonly state: 'invalid'; readonly reason: string };
 
 /** A path that `readCheckedFile` checks, and what it is, for the reason: for example `the pointer`. */
 export interface NamedPath {
@@ -127,14 +136,15 @@ export interface NamedPath {
 /**
  * Read a file below a chain of folders. The folders are checked from the top down, then the file: a part that is a link or of
  * the wrong kind is invalid, and a part that is missing is absent. The read never follows a link and caps the bytes. The reason
- * never holds a part of the file. The failure is a fault of the file system only.
+ * never holds a part of the file. An invalid value has a cause (`link`, `kind` or `size`), so a caller can give a link another exit code
+ * than a file of the wrong kind. The failure is a fault of the file system only.
  */
 export const readCheckedFile = async (
   deps: Deps,
   folders: readonly NamedPath[],
   file: NamedPath,
   maxBytes: number,
-): Promise<CliResult<WorkerFileRead>> => {
+): Promise<CliResult<CheckedFileRead>> => {
   const parts = [
     ...folders.map((folder) => ({ ...folder, kind: 'dir' as const })),
     { ...file, kind: 'file' as const },
@@ -143,13 +153,15 @@ export const readCheckedFile = async (
     const found = await deps.fs.lstat(path);
     if (!found.ok) return found;
     if (found.value === null) return ok({ state: 'absent' });
-    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link` });
-    if (found.value !== kind) return ok({ state: 'invalid', reason: `${what} is not a ${kind === 'dir' ? 'folder' : 'file'}` });
+    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link`, cause: 'link' });
+    if (found.value !== kind) {
+      return ok({ state: 'invalid', reason: `${what} is not a ${kind === 'dir' ? 'folder' : 'file'}`, cause: 'wrong-kind' });
+    }
   }
   const info = await deps.fs.statInfo(file.path);
   if (!info.ok) return info;
   if (info.value === null) return ok({ state: 'absent' });
-  if (info.value.size > maxBytes) return ok({ state: 'invalid', reason: `larger than ${maxBytes} bytes` });
+  if (info.value.size > maxBytes) return ok({ state: 'invalid', reason: `larger than ${maxBytes} bytes`, cause: 'size' });
   const text = await deps.fs.readTextLimited(file.path, maxBytes);
   return text.ok ? ok({ state: 'text', text: text.value }) : text;
 };

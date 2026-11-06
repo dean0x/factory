@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { isTmuxNewEnough, onPath, parseTmuxVersion, tmuxVersionOf } from '../../src/core/tools.js';
+import { isTmuxNewEnough, onPath, parseTmuxVersion, tmuxVersionOf, toolNames } from '../../src/core/tools.js';
 import { createFakeDeps, exited } from '../helpers/fake-deps.js';
+
+describe('the programs that factory starts', () => {
+  it('TP-20: names git, tmux, gh, claude and ps, each by its program name', () => {
+    expect(toolNames).toEqual({ git: 'git', tmux: 'tmux', gh: 'gh', claude: 'claude', ps: 'ps' });
+  });
+});
 
 describe('tmux version', () => {
   it.each([
