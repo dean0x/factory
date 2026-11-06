@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { schemaIds, watchPoll, watchWords, type HookEvent, type WatchKind } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
@@ -55,6 +55,8 @@ interface World {
   readonly kill: (paneId: string) => void;
   /** From now on, the read of a pane fails: tmux does not answer. */
   readonly breakReads: () => void;
+  /** From now on, the read of a last-seen line file fails: the file system does not answer. */
+  readonly breakLineReads: () => void;
   readonly watch: (ids?: readonly string[], program?: Program) => Promise<CliResult<WatchOutcome>>;
 }
 
@@ -131,6 +133,16 @@ const make = async (setup: Setup = {}): Promise<World> => {
     const event = setup.events === undefined || !(id in setup.events) ? 'Stop' : setup.events[id];
     if (event !== null && event !== undefined) await writesEvent(deps, id, event);
   }
+  let lineReadsBroken = false;
+  const heartbeatDir = layoutOf(HOME).heartbeatDir;
+  const watchDeps: FakeDeps = {
+    ...deps,
+    fs: {
+      ...deps.fs,
+      readTextLimited: async (path, maxBytes) =>
+        lineReadsBroken && path.startsWith(`${heartbeatDir}/`) ? failure(`cannot read ${path}: EIO`) : deps.fs.readTextLimited(path, maxBytes),
+    },
+  };
   return {
     deps,
     tmux: tmux.log,
@@ -140,8 +152,15 @@ const make = async (setup: Setup = {}): Promise<World> => {
     breakReads: () => {
       readsBroken = true;
     },
+    breakLineReads: () => {
+      lineReadsBroken = true;
+    },
     watch: (workerIds = [], program) =>
-      watchWorkers(program === undefined ? deps : withProgram(deps, tmux.log, program), { home: HOME, config: sampleConfig(), workerIds }),
+      watchWorkers(program === undefined ? watchDeps : withProgram(watchDeps, tmux.log, program), {
+        home: HOME,
+        config: sampleConfig(),
+        workerIds,
+      }),
   };
 };
 
@@ -251,13 +270,45 @@ describe('TP-30: the baseline of the watch', () => {
     ['a dialog waits', { events: { [ALPHA]: 'Notification' } }, 'waits'],
     ['the pane ended', { dead: [ALPHA] }, 'ended'],
     ['the pane runs another program', { commands: { [ALPHA]: ['zsh'] } }, 'other'],
-    ['the worker has no line', { events: { [ALPHA]: null } }, 'lineNotValid'],
   ])('TP-30: when %s at the baseline, the watch ends with 0 sleeps', async (_name, setup, kind) => {
     const world = await make(setup);
     const outcome = changedOf(valueOf(await world.watch()));
     expect(outcome.changes).toEqual([{ workerId: ALPHA, kind }]);
     expect(outcome.checks).toBe(0);
     expect(world.deps.sleeps).toEqual([]);
+  });
+
+  it('TP-30: a line of another session at the baseline is a change at once, with no grace', async () => {
+    const world = await make();
+    world.deps.seed(lineFile(SESSION_OF[ALPHA] ?? ''), foreignLineText(world.deps));
+    const outcome = changedOf(valueOf(await world.watch()));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'lineNotOwned' }]);
+    expect(outcome.checks).toBe(0);
+    expect(world.deps.sleeps).toEqual([]);
+  });
+
+  it('TP-30: a worker with no line yet is not a change at the baseline, and it is a change at check 2 when no line comes', async () => {
+    const world = await make({ events: { [ALPHA]: null } });
+    const outcome = changedOf(valueOf(await world.watch()));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'lineNotValid' }]);
+    expect(outcome.checks).toBe(2);
+    expect(world.deps.sleeps).toEqual([30_000, 30_000]);
+    expect(watchPoll.lineGraceChecks).toBe(2);
+  });
+
+  it('TP-30: a worker with no line at the baseline and a valid line from check 1 stays quiet for all 40 checks', async () => {
+    const world = await make({ events: { [ALPHA]: null } });
+    const outcome = valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, ALPHA, 'Stop'))));
+    expect(outcome).toEqual({ kind: 'no-change', workerIds: [ALPHA], checks: 40 });
+    expect(world.deps.sleeps).toHaveLength(40);
+  });
+
+  it.each([1, 3])('TP-30: a line that was valid at the baseline and is missing at check %i is a change at that check', async (count) => {
+    const world = await make();
+    const outcome = changedOf(valueOf(await world.watch([], atWait(count, () => void world.deps.files.delete(lineFile(SESSION_OF[ALPHA] ?? ''))))));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'lineNotValid' }]);
+    expect(outcome.checks).toBe(count);
+    expect(world.deps.sleeps).toHaveLength(count);
   });
 
   it('TP-30: a worker with no pane at the baseline is not checked, and it does not end the watch', async () => {
@@ -319,6 +370,14 @@ describe('TP-31: the exits of the watch', () => {
     const error = errorOf(await world.watch([], atWait(2, () => world.breakReads())));
     expect(codeOf(error)).toBe(1);
     expect(world.deps.sleeps).toHaveLength(2);
+  });
+
+  it('TP-31: a read of the line file that fails in a check is exit 1, and the watch makes no more waits', async () => {
+    const world = await make();
+    const error = errorOf(await world.watch([], atWait(1, () => world.breakLineReads())));
+    expect(codeOf(error)).toBe(1);
+    expect(textOf(error)).toContain('EIO');
+    expect(world.deps.sleeps).toEqual([30_000]);
   });
 
   it.each([['a worker with no record', 'ghost'], ['an id that is not a slug', '../alpha']])('TP-31: %s is exit 2 and names the worker list', async (_name, id) => {

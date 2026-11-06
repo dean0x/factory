@@ -26,6 +26,9 @@ import { listWorkerRecords, requireRecord } from './registry.js';
  * first of: a pane that ended, is gone or runs another program than the launch of the worker; a last-seen line that is not valid or
  * does not belong to the worker; a dialog that waits for an answer; a session that works and was silent for more than
  * `watchPoll.stalledAfterMs`. A change from busy to prompt, and back, is not a change.
+ * A worker that is new has no line yet, so a missing line is not a change in the first `watchPoll.lineGraceChecks` checks, the
+ * baseline included. A missing line is a change from that check on, and at once for a worker whose valid line was seen at an
+ * earlier check. A line that does not belong to the worker is a change at once.
  */
 
 /** The command that a person runs again after a fix, with the program name. */
@@ -80,11 +83,15 @@ const newestWriteMs = (line: LastSeen): number =>
 const isStalled = (line: LastSeen, nowMs: number): boolean => nowMs - newestWriteMs(line) > watchPoll.stalledAfterMs;
 
 /**
- * What the last-seen line says. A line that is absent, not valid or not owned is a change: the watch can not tell what the session
- * does. A line with no event, which holds only a percent, says nothing, as does a session that waits at its prompt.
+ * What the last-seen line says. A line that is not owned is a change: the watch can not tell what the session does. So is a line that
+ * is absent or not valid, unless `missingIsChange` is false: a new worker may have no line yet. A line with no event, which holds only
+ * a percent, says nothing, as does a session that waits at its prompt.
  */
-const lineChange = (read: OwnSessionRead, nowMs: number): WatchKind | null => {
-  if (read.state === 'unknown') return read.why === 'not-owned' ? 'lineNotOwned' : 'lineNotValid';
+const lineChange = (read: OwnSessionRead, nowMs: number, missingIsChange: boolean): WatchKind | null => {
+  if (read.state === 'unknown') {
+    if (read.why === 'not-owned') return 'lineNotOwned';
+    return missingIsChange ? 'lineNotValid' : null;
+  }
   const state = promptStateOf(read.line);
   switch (state) {
     case 'waits':
@@ -101,8 +108,17 @@ const lineChange = (read: OwnSessionRead, nowMs: number): WatchKind | null => {
   }
 };
 
-/** The change of one worker, or null. The panes come first: a worker whose pane changed is reported without a read of its line. */
-const changeOf = async (deps: Deps, home: string, target: Target): Promise<CliResult<WatchKind | null>> => {
+/** What a check found for one worker: its change, or null, and whether the check read a valid line of the worker. */
+interface Finding {
+  readonly change: WatchKind | null;
+  readonly lineSeen: boolean;
+}
+
+/**
+ * The finding for one worker. The panes come first: a worker whose pane changed is reported without a read of its line, and the
+ * finding then says that no line was seen.
+ */
+const changeOf = async (deps: Deps, home: string, target: Target, missingIsChange: boolean): Promise<CliResult<Finding>> => {
   const lives: PaneLife[] = [];
   for (const paneId of target.paneIds) {
     const life = await readPaneLife(deps, { home, paneId, workerId: target.workerId });
@@ -110,21 +126,40 @@ const changeOf = async (deps: Deps, home: string, target: Target): Promise<CliRe
     lives.push(life.value);
   }
   const pane = paneChange(lives);
-  if (pane !== null) return ok(pane);
+  if (pane !== null) return ok({ change: pane, lineSeen: false });
   const line = await readOwnLastSeen(deps, home, target.workerId);
   if (!line.ok) return line;
-  return ok(lineChange(line.value, deps.now().getTime()));
+  return ok({ change: lineChange(line.value, deps.now().getTime(), missingIsChange), lineSeen: line.value.state === 'valid' });
 };
 
-/** One check of every target, in order. The value holds the change of each worker that changed. */
-const check = async (deps: Deps, home: string, targets: readonly Target[]): Promise<CliResult<readonly WatchChange[]>> => {
+/** What one check of every target found: the change of each worker that changed, and the workers whose valid line has been seen so far. */
+interface Checked {
+  readonly changes: readonly WatchChange[];
+  readonly seen: ReadonlySet<string>;
+}
+
+/**
+ * One check of every target, in order. `index` is the count of waits before this check (0: the baseline), and `seen` holds the workers
+ * whose valid line an earlier check read. A missing line is a change for a worker in `seen`, and for every worker from the check with
+ * the index `watchPoll.lineGraceChecks` on.
+ */
+const check = async (
+  deps: Deps,
+  home: string,
+  targets: readonly Target[],
+  index: number,
+  seen: ReadonlySet<string>,
+): Promise<CliResult<Checked>> => {
   const changes: WatchChange[] = [];
+  const seenNow = new Set(seen);
   for (const target of targets) {
-    const change = await changeOf(deps, home, target);
-    if (!change.ok) return change;
-    if (change.value !== null) changes.push({ workerId: target.workerId, kind: change.value });
+    const missingIsChange = index >= watchPoll.lineGraceChecks || seen.has(target.workerId);
+    const found = await changeOf(deps, home, target, missingIsChange);
+    if (!found.ok) return found;
+    if (found.value.change !== null) changes.push({ workerId: target.workerId, kind: found.value.change });
+    if (found.value.lineSeen) seenNow.add(target.workerId);
   }
-  return ok(changes);
+  return ok({ changes, seen: seenNow });
 };
 
 /** The ids to watch: the ids of the command line, each once and each with a record that the program wrote, or every recorded worker. */
@@ -164,11 +199,13 @@ export const watchWorkers = async (deps: Deps, request: WatchRequest): Promise<C
   const targets = targetsOf(ids.value, rows.value);
   if (targets.length === 0) return ok({ kind: 'no-worker' });
 
+  let seen: ReadonlySet<string> = new Set();
   for (let checks = 0; checks <= watchPoll.attempts; checks += 1) {
     if (checks > 0) await deps.sleep(watchPoll.intervalMs);
-    const changes = await check(deps, home, targets);
-    if (!changes.ok) return changes;
-    if (changes.value.length > 0) return ok({ kind: 'changed', changes: changes.value, checks });
+    const found = await check(deps, home, targets, checks, seen);
+    if (!found.ok) return found;
+    if (found.value.changes.length > 0) return ok({ kind: 'changed', changes: found.value.changes, checks });
+    seen = found.value.seen;
   }
   return ok({ kind: 'no-change', workerIds: targets.map((target) => target.workerId), checks: watchPoll.attempts });
 };

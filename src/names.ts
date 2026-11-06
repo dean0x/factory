@@ -795,9 +795,10 @@ export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
 /**
  * The checks of `worker watch`: at most `attempts` checks, each after a wait of `intervalMs`. So a watch lasts at most `attempts` times
  * `intervalMs`, which is 20 minutes. A session that works is stalled when the newer of its event time and its percent time is more than
- * `stalledAfterMs` old.
+ * `stalledAfterMs` old. A worker that is new has no last-seen line yet, so a missing line is not a change in the first `lineGraceChecks`
+ * checks (the baseline counts as the first). From the check with this index on, or once a valid line was seen, a missing line is a change.
  */
-export const watchPoll = { attempts: 40, intervalMs: 30_000, stalledAfterMs: 900_000 } as const;
+export const watchPoll = { attempts: 40, intervalMs: 30_000, stalledAfterMs: 900_000, lineGraceChecks: 2 } as const;
 
 /**
  * The wait after the pane of a worker starts (design 4.11): the launch checks at most `attempts` times, and waits `intervalMs`
