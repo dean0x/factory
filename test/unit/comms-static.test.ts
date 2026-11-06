@@ -117,11 +117,11 @@ const TABLE: readonly TmuxCommand[] = TMUX_COMMANDS.trim()
   });
 
 /**
- * The commands that put input into a pane, or into the buffer that a paste takes: the keys of a pane, the prefix key, and the
- * three commands of the paste buffer. `run-shell` and `if-shell` are not input commands. A shell text that they run can hold
- * one, and the scan reads such a text.
+ * The commands that put input into a pane, or into the buffer that a paste takes: the keys of a pane, the prefix key, the
+ * three commands of the paste buffer, and the pipe of a pane (its `-I` flag writes the output of a command into the pane as
+ * input). `run-shell` and `if-shell` are not input commands. A shell text that they run can hold one, and the scan reads such a text.
  */
-const INPUT_VERBS = ['send-keys', 'send-prefix', 'paste-buffer', 'set-buffer', 'load-buffer'] as const;
+const INPUT_VERBS = ['send-keys', 'send-prefix', 'paste-buffer', 'set-buffer', 'load-buffer', 'pipe-pane'] as const;
 
 /**
  * The command that tmux runs for a word, or null. This is the rule of the command table of tmux: an alias that equals the word
@@ -182,6 +182,7 @@ const hitsIn = (source: string, file: string): Hit[] =>
  */
 const NOT_TMUX_WORDS: readonly { readonly file: string; readonly literal: string; readonly reason: string }[] = [
   { file: 'names.ts', literal: 'load', reason: 'the key of the load of the machine in the facts of the machine check' },
+  { file: 'core/node-deps.ts', literal: 'pipe', reason: 'the stdio mode of the output of a child process' },
 ];
 
 /** The hits that the rule refuses: all of them, except in the typing module and the literals of the list above. */
@@ -191,7 +192,7 @@ const refusedHits = (source: string, file: string): Hit[] =>
     : hitsIn(source, file).filter((hit) => !NOT_TMUX_WORDS.some((kept) => kept.file === hit.file && kept.literal === hit.literal));
 
 describe('TP-16: the words that tmux reads as an input command', () => {
-  it('knows the aliases and the unique starts of the five input commands', () => {
+  it('knows the aliases and the unique starts of the six input commands', () => {
     expect(formsOf('send-keys').sort()).toEqual(['send', 'send-k', 'send-ke', 'send-key', 'send-keys']);
     expect(formsOf('send-prefix').sort()).toEqual(['send-p', 'send-pr', 'send-pre', 'send-pref', 'send-prefi', 'send-prefix']);
     expect(formsOf('paste-buffer').sort()).toEqual(
@@ -200,6 +201,9 @@ describe('TP-16: the words that tmux reads as an input command', () => {
     expect(formsOf('set-buffer').sort()).toEqual(['set-b', 'set-bu', 'set-buf', 'set-buff', 'set-buffe', 'set-buffer', 'setb']);
     expect(formsOf('load-buffer').sort()).toEqual(
       ['loa', 'load', 'load-', 'load-b', 'load-bu', 'load-buf', 'load-buff', 'load-buffe', 'load-buffer', 'loadb'].sort(),
+    );
+    expect(formsOf('pipe-pane').sort()).toEqual(
+      ['pi', 'pip', 'pipe', 'pipe-', 'pipe-p', 'pipe-pa', 'pipe-pan', 'pipe-pane', 'pipep'].sort(),
     );
   });
 
@@ -234,6 +238,8 @@ describe('TP-16: the scan of the source texts', () => {
     ["const verb = 'send-p';", ['send-p']],
     ["const verb = 'paste-buffer';", ['paste-buffer']],
     ["const verb = 'load-buffer';", ['load-buffer']],
+    ["const verb = 'pipe-pane';", ['pipe-pane']],
+    ["const verb = 'pipep';", ['pipep']],
     ['const text = `${toolNames.tmux} send-keys -t ${pane} x`;', ['send-keys']],
     ['const text = `${toolNames.tmux} send -t ${pane} x`;', ['send']],
     ['const text = `${toolNames.tmux} paste -t ${pane}`;', ['paste']],
