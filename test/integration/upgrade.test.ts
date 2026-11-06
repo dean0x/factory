@@ -469,7 +469,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(names).toContain('orders');
     expect(await readdir(join(state, 'roles'))).toEqual(['worker.md']);
     const node = JSON.parse(await box.read(join(state, 'node.json'))) as Record<string, unknown>;
-    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 2, safety: 2, worker: 1 } });
+    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 2, safety: 2, worker: 2 } });
 
     const changes = await box.git(state, ['diff', '--name-status', '-M', 'HEAD~1', 'HEAD']);
     expect(changes.stdout).toContain('protocol.md');
