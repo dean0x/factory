@@ -138,6 +138,23 @@ const startArgv = (
   ...folders.flatMap((folder) => [ADD_DIR_FLAG, folder]),
 ];
 
+/** The words of a launch that show which launch made a pane: the variables, and the one folder that follows `--add-dir`. */
+export interface LaunchMarks {
+  readonly variables: readonly string[];
+  readonly folder: string;
+}
+
+/**
+ * The words that the launch of the coordinator puts in its argument list to name that coordinator: the variables of the home and of
+ * the session (the node id), and the state folder as the first added folder. tmux fixes the start command of a pane when it makes
+ * the pane, and no program in the pane can change it, so these words in the start command of a pane show that the launch of this
+ * coordinator made the pane. The launch and the check of the pane (`startsCoordinator`) both read the words from here.
+ */
+export const coordinatorLaunchMarks = (home: string, nodeId: string, stateDir: string): LaunchMarks => ({
+  variables: [`${env.home}=${home}`, `${env.session}=${nodeId}`],
+  folder: stateDir,
+});
+
 /** The argument list that starts the coordinator session. It has the state folder and each project folder. */
 export const launchArgv = (input: LaunchInput): Result<readonly string[], string> => {
   const session = checkSession(input);
@@ -155,14 +172,8 @@ export const launchArgv = (input: LaunchInput): Result<readonly string[], string
   if (input.projects.some((project) => isSameOrInside(project, input.home))) {
     return refuse(`a project folder that is the ${places.folder} or holds it`);
   }
-  return ok(
-    startArgv(
-      input,
-      [`${env.home}=${input.home}`, `${env.session}=${input.sessionId}`],
-      name.value,
-      [input.stateDir, ...input.projects],
-    ),
-  );
+  const marks = coordinatorLaunchMarks(input.home, input.sessionId, input.stateDir);
+  return ok(startArgv(input, marks.variables, name.value, [marks.folder, ...input.projects]));
 };
 
 /**
@@ -171,10 +182,7 @@ export const launchArgv = (input: LaunchInput): Result<readonly string[], string
  * program in the pane can change it, so these words in the start command of a pane show that the launch of this worker made the
  * pane. The launch and the check of the pane (`startsWorker`) both read the words from here.
  */
-export const workerLaunchMarks = (
-  home: string,
-  workerId: string,
-): { readonly variables: readonly string[]; readonly folder: string } => {
+export const workerLaunchMarks = (home: string, workerId: string): LaunchMarks => {
   const { inboxDir } = workerPathsOf(home, workerId);
   return {
     variables: [`${env.home}=${home}`, `${env.session}=${workerId}`, `${env.inbox}=${inboxDir}`],

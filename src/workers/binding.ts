@@ -1,4 +1,4 @@
-import { ADD_DIR_FLAG, workerLaunchMarks } from '../launch/argv.js';
+import { ADD_DIR_FLAG, coordinatorLaunchMarks, workerLaunchMarks, type LaunchMarks } from '../launch/argv.js';
 import { paneBinding } from '../names.js';
 
 /**
@@ -99,11 +99,22 @@ export const wordsOfStartCommand = (text: string): readonly string[] | null => {
   return words.length > paneBinding.maxWords ? null : words;
 };
 
-/** True when the start command of a pane shows that the launch of this worker, in this factory folder, made the pane. */
-export const startsWorker = (startCommand: string, home: string, workerId: string): boolean => {
+/** True when the start command holds every variable of the marks as a whole word, and the folder of the marks right after the add-dir flag. */
+const holdsMarks = (startCommand: string, { variables, folder }: LaunchMarks): boolean => {
   const words = wordsOfStartCommand(startCommand);
   if (words === null) return false;
-  const { variables, folder } = workerLaunchMarks(home, workerId);
   const hasFolder = words.some((word, index) => word === ADD_DIR_FLAG && words[index + 1] === folder);
   return hasFolder && variables.every((variable) => words.includes(variable));
 };
+
+/** True when the start command of a pane shows that the launch of this worker, in this factory folder, made the pane. */
+export const startsWorker = (startCommand: string, home: string, workerId: string): boolean =>
+  holdsMarks(startCommand, workerLaunchMarks(home, workerId));
+
+/**
+ * True when the start command of a pane shows that the launch of the coordinator of this node, in this factory folder, made the
+ * pane: the home and the node id as variables, and the state folder as an added folder. The name of the session and the project
+ * folders are not marks, so a start command without them still binds.
+ */
+export const startsCoordinator = (startCommand: string, home: string, nodeId: string, stateDir: string): boolean =>
+  holdsMarks(startCommand, coordinatorLaunchMarks(home, nodeId, stateDir));

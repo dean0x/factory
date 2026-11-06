@@ -1,12 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { launchArgv, stripScript, workerLaunchArgv } from '../../src/launch/argv.js';
+import { coordinatorLaunchMarks, launchArgv, stripScript, workerLaunchArgv } from '../../src/launch/argv.js';
 import { paneBinding } from '../../src/names.js';
-import { startsWorker, wordsOfStartCommand } from '../../src/workers/binding.js';
+import { startsCoordinator, startsWorker, wordsOfStartCommand } from '../../src/workers/binding.js';
 import { startCommandText } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
+const NODE = 'demo';
+const STATE = `${HOME}/.factory/state`;
 
 const session = { effort: 'high', model: 'default', proxyBaseUrl: null, path: '/bin', agent: 'claude' } as const;
+
+/** The input of the launch of the coordinator of the node `NODE` in `HOME`, with the changes of a test. */
+const coordinatorInput = (more: Partial<Parameters<typeof launchArgv>[0]> = {}): Parameters<typeof launchArgv>[0] => {
+  const home = more.home ?? HOME;
+  return { ...session, home, coordinatorDir: `${home}/coordinator`, stateDir: STATE, sessionId: NODE, projects: [], ...more };
+};
+
+/** The start command that tmux shows for the launch of a coordinator: the argument list of the launch, as tmux renders it. */
+const coordinatorStartOf = (more: Partial<Parameters<typeof launchArgv>[0]> = {}): string => {
+  const argv = launchArgv(coordinatorInput(more));
+  if (!argv.ok) throw new Error(argv.error);
+  return startCommandText(argv.value);
+};
 
 /** The start command that tmux shows for the launch of a worker: the argument list of the launch, as tmux renders it. */
 const startCommandOf = (workerId: string, home = HOME): string => {
@@ -146,6 +161,109 @@ describe('startsWorker: the start command shows that the launch of this worker m
   it('does not take the words of the launch from inside one quoted word', () => {
     const words = wordsOfStartCommand(startCommandOf('alpha')) ?? [];
     expect(startsWorker(startCommandText(['env', words.join(' ')]), HOME, 'alpha')).toBe(false);
+  });
+});
+
+describe('TP-11: the name of the session is not a mark of the pane binding', () => {
+  const withoutName = (startCommand: string): string => {
+    const words = wordsOfStartCommand(startCommand) ?? [];
+    const at = words.indexOf('--name');
+    return startCommandText(words.filter((_word, index) => index !== at && index !== at + 1));
+  };
+
+  it('TP-11: the start command of a worker binds with --name and binds without it', () => {
+    const named = startCommandOf('alpha');
+    expect(wordsOfStartCommand(named)).toContain('--name');
+    expect(wordsOfStartCommand(withoutName(named))).not.toContain('--name');
+    expect(startsWorker(named, HOME, 'alpha')).toBe(true);
+    expect(startsWorker(withoutName(named), HOME, 'alpha')).toBe(true);
+  });
+
+  it('TP-11: the start command of the coordinator binds with --name and binds without it', () => {
+    const named = coordinatorStartOf();
+    expect(wordsOfStartCommand(named)).toContain('--name');
+    expect(startsCoordinator(named, HOME, NODE, STATE)).toBe(true);
+    expect(startsCoordinator(withoutName(named), HOME, NODE, STATE)).toBe(true);
+  });
+});
+
+describe('startsCoordinator: the start command shows that the launch of the coordinator made the pane', () => {
+  it('is true for the start command of the launch of the coordinator', () => {
+    expect(startsCoordinator(coordinatorStartOf(), HOME, NODE, STATE)).toBe(true);
+  });
+
+  it('is true when the factory folder has a space in its path, which tmux puts in quotes', () => {
+    const home = '/w/my node';
+    const start = coordinatorStartOf({ home, stateDir: `${home}/.factory/state` });
+    expect(start).toContain('"FACTORY_HOME=/w/my node"');
+    expect(startsCoordinator(start, home, NODE, `${home}/.factory/state`)).toBe(true);
+  });
+
+  it('is true when the launch adds project folders after the state folder', () => {
+    const start = coordinatorStartOf({ projects: ['/w/projects/web'] });
+    expect(startsCoordinator(start, HOME, NODE, STATE)).toBe(true);
+  });
+
+  it('is false for the start command of the launch of a coordinator of another node', () => {
+    expect(startsCoordinator(coordinatorStartOf({ sessionId: 'other' }), HOME, NODE, STATE)).toBe(false);
+  });
+
+  it('is false for the start command of the launch of a coordinator in another factory folder', () => {
+    const start = coordinatorStartOf({ home: '/other/node', stateDir: '/other/node/.factory/state' });
+    expect(startsCoordinator(start, HOME, NODE, STATE)).toBe(false);
+  });
+
+  it('is false for the start command of the launch of a worker, also when the id of the worker is the id of the node', () => {
+    expect(startsCoordinator(startCommandOf(NODE), HOME, NODE, STATE)).toBe(false);
+  });
+
+  it('is false for the start command of the launch of a coordinator when the state folder is another folder', () => {
+    expect(startsCoordinator(coordinatorStartOf(), HOME, NODE, `${HOME}/.factory/other`)).toBe(false);
+  });
+
+  it.each([
+    ['no command: a pane that runs the shell', ''],
+    ['a program that is not the launch', 'sleep 3000'],
+    ['the session word only', 'env FACTORY_SESSION=demo claude'],
+    ['a text that is not a start command', '"env FACTORY_SESSION=demo'],
+  ])('is false for %s', (_name, startCommand) => {
+    expect(startsCoordinator(startCommand, HOME, NODE, STATE)).toBe(false);
+  });
+
+  it('is false when one of the words of the launch is gone', () => {
+    const words = wordsOfStartCommand(coordinatorStartOf()) ?? [];
+    const without = (drop: (word: string) => boolean): string => startCommandText(words.filter((word) => !drop(word)));
+    expect(startsCoordinator(without((word) => word.startsWith('FACTORY_HOME=')), HOME, NODE, STATE)).toBe(false);
+    expect(startsCoordinator(without((word) => word.startsWith('FACTORY_SESSION=')), HOME, NODE, STATE)).toBe(false);
+    expect(startsCoordinator(without((word) => word === '--add-dir'), HOME, NODE, STATE)).toBe(false);
+  });
+
+  it('is false when the folder after the flag is not the state folder', () => {
+    const words = wordsOfStartCommand(coordinatorStartOf()) ?? [];
+    const swapped = words.map((word, index) => (words[index - 1] === '--add-dir' ? '/w/elsewhere' : word));
+    expect(startsCoordinator(startCommandText(swapped), HOME, NODE, STATE)).toBe(false);
+  });
+
+  it('does not take the words of the launch from inside one quoted word', () => {
+    const words = wordsOfStartCommand(coordinatorStartOf()) ?? [];
+    expect(startsCoordinator(startCommandText(['env', words.join(' ')]), HOME, NODE, STATE)).toBe(false);
+  });
+});
+
+describe('coordinatorLaunchMarks: the words that the launch and the check of the coordinator pane share', () => {
+  it('names the variables of the factory folder and of the node, and the state folder as the one folder to bind', () => {
+    expect(coordinatorLaunchMarks(HOME, NODE, STATE)).toEqual({
+      variables: [`FACTORY_HOME=${HOME}`, `FACTORY_SESSION=${NODE}`],
+      folder: STATE,
+    });
+  });
+
+  it('is what the launch puts in its argument list: every variable is a word and the folder follows the flag', () => {
+    const argv = launchArgv(coordinatorInput());
+    if (!argv.ok) throw new Error(argv.error);
+    const marks = coordinatorLaunchMarks(HOME, NODE, STATE);
+    for (const variable of marks.variables) expect(argv.value).toContain(variable);
+    expect(argv.value[argv.value.indexOf('--add-dir') + 1]).toBe(marks.folder);
   });
 });
 
