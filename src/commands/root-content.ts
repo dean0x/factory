@@ -38,6 +38,7 @@ import {
   acceptEditsMode,
   address,
   checkIds,
+  claudeSettingKeys,
   claudeSettings,
   commands,
   commandText,
@@ -47,9 +48,11 @@ import {
   homeIndex,
   localSettingsFile,
   places,
+  planMode,
   program,
   reservedRootNames,
   roles,
+  settingsSeenNote,
   trackedFiles,
   values,
 } from '../names.js';
@@ -608,6 +611,26 @@ const judgeSettings = (source: SettingsSource, text: string): readonly RootFindi
     ...(facts.approvesMcp.length === 0
       ? []
       : [finding(id, 'warn', `${shown} approves the MCP servers of a project (${facts.approvesMcp.join(', ')})`, `Remove the setting from ${shown}, or keep it on purpose.`)]),
+    ...(facts.crossSessionInbound === null
+      ? []
+      : [
+          finding(
+            id,
+            'warn',
+            `${shown} sets ${claudeSettingKeys.crossSessionInbound} to ${facts.crossSessionInbound}, so a session that reads it does not take the input of other sessions at once`,
+            `Remove the setting from ${shown}, or keep it on purpose. ${settingsSeenNote}`,
+          ),
+        ]),
+    ...(facts.planMode
+      ? [
+          finding(
+            id,
+            'warn',
+            `${shown} sets the default mode ${planMode}, so a session that reads it holds the input of other sessions for approval`,
+            `Remove the setting from ${shown}, or keep it on purpose. ${settingsSeenNote}`,
+          ),
+        ]
+      : []),
   ];
 };
 

@@ -4,12 +4,13 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { inspectBlocks } from '../../src/blocks/status.js';
-import { renderBlock } from '../../src/blocks/managed.js';
+import { parseBlocks, renderBlock, replaceBlock } from '../../src/blocks/managed.js';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
-import { commands, env, setupBlockNames } from '../../src/names.js';
+import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { commands, env, hookNames, setupBlockNames } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -23,6 +24,7 @@ import { fileTemplates } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, registerRoot, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
+import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
@@ -3507,6 +3509,49 @@ describe('upgrade: render a changed block again (TP-76)', () => {
   });
 });
 
+describe('upgrade: the role texts of worker version 2 and coordinator version 3 (TP-38)', () => {
+  /** Put an earlier version of the block `name` into the file, with a text of its own, and record that version. */
+  const makeOlder = (deps: FakeDeps, path: string, name: string, version: number): void => {
+    const parsed = parseBlocks(text(deps, path));
+    const block = parsed.ok ? parsed.value.find((candidate) => candidate.name === name) : undefined;
+    const rendered = renderBlock({ name, version, body: `The ${name} text of an earlier version.` });
+    expect(block).toBeDefined();
+    expect(rendered.ok).toBe(true);
+    if (block === undefined || !rendered.ok) return;
+    deps.files.set(path, replaceBlock(text(deps, path), block, rendered.value));
+    edit(deps, NODE_JSON, `"${name}": ${versionOf(name)}`, `"${name}": ${version}`);
+  };
+
+  it('writes the new blocks over the earlier versions, and then shows them as current', async () => {
+    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([2, 3]);
+    const { deps } = await makeNode();
+    makeOlder(deps, WORKER, 'worker', 1);
+    makeOlder(deps, CLAUDE, 'coordinator', 2);
+
+    const output = success(await upgrade(deps));
+
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 1 to 2', 'block coordinator: version 2 to 3']));
+    expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v2 sha256=');
+    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v3 sha256=');
+    expect(text(deps, CLAUDE)).not.toContain('The coordinator text of an earlier version.');
+    expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
+    const state = parseJsonText(text(deps, NODE_JSON));
+    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 3, worker: 2 } });
+    await deps.fs.remove(`${HOME}/.factory/backups`);
+    expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
+  });
+
+  it('shows the earlier versions as older in a dry run, and changes no file', async () => {
+    const { deps } = await makeNode();
+    makeOlder(deps, WORKER, 'worker', 1);
+    makeOlder(deps, CLAUDE, 'coordinator', 2);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 1 to 2', 'block coordinator: version 2 to 3']));
+    expect(snapshot(deps)).toEqual(before);
+  });
+});
+
 describe('upgrade: the blocks follow the effective modes (TP-40, TP-67)', () => {
   const STORE = '/state/factory/owner-records.json';
   const DELEGATED_TEXT = 'delegated this point';
@@ -3563,5 +3608,271 @@ describe('upgrade: the blocks follow the effective modes (TP-40, TP-67)', () => 
     seedRecord(deps, 'owner');
     success(await upgrade(deps));
     expect(text(deps, CLAUDE)).not.toContain(DELEGATED_TEXT);
+  });
+});
+
+describe('upgrade: the hook settings of the work copies and of the coordinator (TP-6, TP-7)', () => {
+  const COORDINATOR_SETTINGS = `${HOME}/coordinator/.claude/settings.local.json`;
+  const COPIES = `${HOME}/work-copies/web`;
+  const copySettings = (id: string): string => `${COPIES}/${id}/.claude/settings.local.json`;
+  const ALL_FILES = [COORDINATOR_SETTINGS, copySettings('alpha'), copySettings('beta')];
+
+  const settingsText = (settings: unknown): string => `${JSON.stringify(settings, null, 2)}\n`;
+  const settingsAt = (deps: FakeDeps, path: string): unknown => JSON.parse(text(deps, path));
+
+  /** The entries of a factory that wrote the first four events only. */
+  const FOUR_EVENTS = {
+    ...ownSettingsEntries,
+    hooks: Object.fromEntries(hookNames.events.slice(0, 4).map((event) => [event, ownSettingsEntries.hooks[event]])),
+  };
+  const OLD_TEXT = settingsText(FOUR_EVENTS);
+
+  const seedWorker = async (deps: FakeDeps, id: string, settings: string | null, workCopy = `${COPIES}/${id}`): Promise<void> => {
+    const written = await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy, branch: `worker/${id}` });
+    if (!written.ok) throw new Error(written.error.message);
+    deps.seedDir(workCopy);
+    if (settings !== null) deps.seed(`${workCopy}/.claude/settings.local.json`, settings);
+  };
+
+  /** A node whose coordinator and two work copies have the settings of a factory from before the two new events. */
+  const olderFactory = async (options: { links?: Record<string, string> } = {}): Promise<Node> => {
+    const node = await makeNode(options);
+    node.deps.seed(COORDINATOR_SETTINGS, OLD_TEXT);
+    await seedWorker(node.deps, 'alpha', OLD_TEXT);
+    await seedWorker(node.deps, 'beta', OLD_TEXT);
+    return node;
+  };
+
+  const onTerminal = (deps: FakeDeps, answers: readonly string[]): { readonly deps: FakeDeps; readonly asked: string[] } => {
+    const asked: string[] = [];
+    const replies = [...answers];
+    return {
+      asked,
+      deps: {
+        ...deps,
+        stdinIsTTY: true,
+        stdoutIsTTY: true,
+        prompt: async (question: string) => {
+          asked.push(question);
+          return ok(replies.shift() ?? 'n');
+        },
+      },
+    };
+  };
+
+  it('adds the two new events to the list of a factory that wrote four', () => {
+    expect(hookNames.events.slice(4)).toEqual(['Notification', 'PreToolUse']);
+    expect(Object.keys(FOUR_EVENTS.hooks)).toEqual(hookNames.events.slice(0, 4));
+  });
+
+  it('TP-6: a dry run lists the two new events for the coordinator settings and each work copy, and writes nothing', async () => {
+    const { deps } = await olderFactory();
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true, yes: false }));
+    const lines = lineTexts(output);
+    for (const file of ALL_FILES) expect(lines).toContain(`This changes the settings of Claude Code in ${file}:`);
+    expect(lines.filter((line) => line.includes('hooks.Notification: add the command'))).toHaveLength(3);
+    expect(lines.filter((line) => line.includes('hooks.PreToolUse: add the command'))).toHaveLength(3);
+    expect(lines.at(-1)).toBe('Dry run: no file was changed.');
+    expect(output.json).toMatchObject({ changed: true, dryRun: true, hookSettings: ALL_FILES });
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('TP-6: with the yes flag it adds the events to the coordinator settings and each work copy, and a second run has nothing to do', async () => {
+    const { deps } = await olderFactory();
+    const output = success(await upgrade(deps, currentSpec, { yes: true }));
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
+    expect(output.json).toMatchObject({ changed: true, hookSettings: ALL_FILES, backup: null, committed: false });
+    expect(output.failed).toBe(false);
+    const again = success(await upgrade(deps));
+    expect(again.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(again.json).toMatchObject({ changed: false, hookSettings: [] });
+  });
+
+  it('TP-6: keeps every other key of a settings file', async () => {
+    const { deps } = await olderFactory();
+    const permissions = { allow: ['Bash(ls)'] };
+    deps.seed(copySettings('alpha'), settingsText({ ...FOUR_EVENTS, permissions }));
+    success(await upgrade(deps, currentSpec, { yes: true }));
+    expect(settingsAt(deps, copySettings('alpha'))).toEqual({ ...ownSettingsEntries, permissions });
+  });
+
+  it('TP-6: adds the hook settings in the same run as a change of the state, after the state is written', async () => {
+    const { deps } = await olderFactory();
+    const output = success(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
+    expect(text(deps, CLAUDE)).toContain('New coordinator text.');
+    for (const file of ALL_FILES) expect(settingsAt(deps, file)).toEqual(ownSettingsEntries);
+    expect(output.json).toMatchObject({ committed: true, hookSettings: ALL_FILES });
+    expect(output.json['backup']).not.toBeNull();
+  });
+
+  it('TP-6: with no terminal and no yes flag it writes no hook settings, and warns with the remedy', async () => {
+    const { deps } = await olderFactory();
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { yes: false }));
+    expect(snapshot(deps)).toEqual(before);
+    expect(output.json).toMatchObject({ changed: true, hookSettings: [] });
+    const warning = output.warnings.join('\n');
+    for (const file of ALL_FILES) expect(warning).toContain(file);
+    expect(warning).toContain('no consent');
+    expect(warning).toContain('--yes');
+    expect(success(await upgrade(deps, currentSpec, { yes: false })).lines.at(-1)?.text).not.toBe('Nothing to upgrade.');
+  });
+
+  it('TP-6: inside a factory session the yes flag gives no consent: nothing is written, and the warning names the rule', async () => {
+    const { deps } = await olderFactory();
+    const before = snapshot(deps);
+    const inSession: FakeDeps = { ...deps, env: { ...deps.env, [env.session]: 'demo' } };
+    const output = success(await upgrade(inSession, currentSpec, { yes: true }));
+    expect(snapshot(deps)).toEqual(before);
+    expect(output.json).toMatchObject({ hookSettings: [] });
+    expect(output.warnings.join('\n')).toContain('gives no consent inside a');
+  });
+
+  it('TP-6: on a terminal, a yes writes the file, and a no leaves the file and warns with the remedy', async () => {
+    const { deps } = await olderFactory();
+    const terminal = onTerminal(deps, ['y', 'n', 'y']);
+    const output = success(await upgrade(terminal.deps, currentSpec, { yes: false }));
+    expect(terminal.asked).toHaveLength(3);
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsEntries);
+    expect(settingsAt(deps, copySettings('alpha'))).toEqual(FOUR_EVENTS);
+    expect(settingsAt(deps, copySettings('beta'))).toEqual(ownSettingsEntries);
+    expect(output.json).toMatchObject({ hookSettings: [COORDINATOR_SETTINGS, copySettings('beta')] });
+    const warning = output.warnings.join('\n');
+    expect(warning).toContain(copySettings('alpha'));
+    expect(warning).toContain('answered no');
+    expect(warning).toContain('Run "factory upgrade" again');
+  });
+
+  it('TP-6: skips a settings file with no factory hook entry, a work copy with no settings file and a work copy that is gone', async () => {
+    const { deps } = await makeNode();
+    await seedWorker(deps, 'alpha', settingsText({ model: 'opus', hooks: { Stop: [{ hooks: [{ type: 'command', command: 'other-tool' }] }] } }));
+    await seedWorker(deps, 'beta', null);
+    await seedWorker(deps, 'gamma', null);
+    await deps.fs.remove(`${COPIES}/gamma`);
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { yes: true }));
+    expect(output.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(output.json).toMatchObject({ changed: false, hookSettings: [] });
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('TP-6: skips the coordinator when it has no settings file', async () => {
+    const { deps } = await makeNode();
+    deps.files.delete(COORDINATOR_SETTINGS);
+    const output = success(await upgrade(deps, currentSpec, { yes: true }));
+    expect(output.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(deps.files.has(COORDINATOR_SETTINGS)).toBe(false);
+  });
+
+  it('TP-6: touches no folder that a record does not own: a record with another work copy path is not followed', async () => {
+    const { deps } = await makeNode();
+    await seedWorker(deps, 'alpha', OLD_TEXT, '/elsewhere/alpha');
+    const outside = '/elsewhere/alpha/.claude/settings.local.json';
+    const output = success(await upgrade(deps, currentSpec, { yes: true }));
+    expect(text(deps, outside)).toBe(OLD_TEXT);
+    expect(output.json).toMatchObject({ hookSettings: [] });
+  });
+
+  it('TP-6: stops with exit 4 for a settings file that is a link, before any write', async () => {
+    const links: Record<string, string> = {};
+    const { deps } = await olderFactory({ links });
+    links[copySettings('beta')] = '/outside/settings.json';
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
+    expect(error.kind).toBe('safety');
+    expect(error.message).toContain(copySettings('beta'));
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('TP-6: stops with exit 1 for a settings file that is not a JSON object, before any write', async () => {
+    const { deps } = await olderFactory();
+    deps.seed(copySettings('beta'), '["not", "an", "object"]\n');
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, currentSpec, { yes: true }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(copySettings('beta'));
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  it('TP-6: stops with exit 1 for a settings file with an event that is not a list, before any write', async () => {
+    const { deps } = await olderFactory();
+    deps.seed(copySettings('beta'), settingsText({ hooks: { SessionStart: ownSettingsEntries.hooks['SessionStart'], Stop: 'x' } }));
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(copySettings('beta'));
+    expect(error.message).toContain('hooks.Stop');
+    expect(error.hint).toContain('Fix the file, or move it away');
+    expect(snapshot(deps)).toEqual(before);
+  });
+
+  const renameFailing = (deps: FakeDeps, target: string): FakeDeps => ({
+    ...deps,
+    fs: { ...deps.fs, rename: async (from, to) => (to === target ? failure('disk full') : deps.fs.rename(from, to)) },
+  });
+
+  it('TP-7: a write failure is exit 1 and names the files that changed', async () => {
+    const { deps } = await olderFactory();
+    const error = refusal(await upgrade(renameFailing(deps, copySettings('alpha')), currentSpec, { yes: true }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('disk full');
+    expect(error.message).toContain(COORDINATOR_SETTINGS);
+    expect(error.message).not.toContain(copySettings('beta'));
+    expect(error.hint).toContain('factory upgrade');
+    expect(settingsAt(deps, COORDINATOR_SETTINGS)).toEqual(ownSettingsEntries);
+    expect(settingsAt(deps, copySettings('alpha'))).toEqual(FOUR_EVENTS);
+    expect(settingsAt(deps, copySettings('beta'))).toEqual(FOUR_EVENTS);
+  });
+
+  it('TP-7: a write failure at the first file says that no file changed', async () => {
+    const { deps } = await olderFactory();
+    const error = refusal(await upgrade(renameFailing(deps, COORDINATOR_SETTINGS), currentSpec, { yes: true }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('changed before the stop: none');
+  });
+
+  const STATE_BACKUP = '.factory/backups/2030-01-02T03-04-05-678Z';
+
+  it('TP-7: a write failure after the state upgrade names the backup, the kept block text and the commit', async () => {
+    const { deps } = await olderFactory();
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    const spec = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+    const error = refusal(await upgrade(renameFailing(deps, copySettings('alpha')), spec, { yes: true, overwrite: ['coordinator'] }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('disk full');
+    expect(error.message).toContain(`The state upgrade is done and committed. The backup is in ${STATE_BACKUP}.`);
+    expect(error.message).toContain(`Kept the old text of block coordinator in ${STATE_BACKUP}-block-coordinator.md.`);
+    expect(error.hint).toContain('Run "factory upgrade" again');
+    expect(text(deps, CLAUDE)).toContain('New coordinator text.');
+  });
+
+  it('TP-7: a write failure after a state upgrade with no commit does not say that a commit was made', async () => {
+    const { deps } = await olderFactory();
+    edit(deps, CLAUDE, COORDINATOR_LINE, 'Do as you like.');
+    const error = refusal(
+      await upgrade(renameFailing(deps, copySettings('alpha')), currentSpec, { yes: true, overwrite: ['coordinator'] }),
+    );
+    expect(error.message).toContain(`The state upgrade is done. The backup is in ${STATE_BACKUP}.`);
+    expect(error.message).not.toContain('committed');
+  });
+
+  it('TP-7: a stop for safety after the state upgrade is still exit 4, and names the backup', async () => {
+    const { deps } = await olderFactory();
+    const linkedAfterBackup: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        lstat: async (path) =>
+          path === copySettings('alpha') && [...deps.files.keys()].some((file) => file.startsWith(`${BACKUP}/`))
+            ? ok('link')
+            : deps.fs.lstat(path),
+      },
+    };
+    const error = refusal(await upgrade(linkedAfterBackup, blocksSpec(withBlock('coordinator', 'New coordinator text.')), { yes: true }));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(copySettings('alpha'));
+    expect(error.message).toContain(`The state upgrade is done and committed. The backup is in ${STATE_BACKUP}.`);
+    expect(error.hint).toContain('factory upgrade');
   });
 });

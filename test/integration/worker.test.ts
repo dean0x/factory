@@ -2,6 +2,7 @@ import { execFile, spawnSync } from 'node:child_process';
 import { chmod, mkdir, readdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, type RunResult, type Sandbox } from './harness.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
@@ -13,7 +14,8 @@ const POLL_STEP_MS = 100;
 const POLL_STEPS = 100;
 const STOP_STEPS = 30;
 const EXCLUDE_ENTRY = '/.claude/settings.local.json';
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'];
+/** The matcher text of the group of the Notification event: the two types of notice that mean a dialog waits. It never lists idle_prompt. */
+const NOTIFICATION_MATCHER = 'permission_prompt|elicitation_dialog';
 /** A fake value for the one setting of the user that the launch keeps among the variables that start with CLAUDE. */
 const FAKE_CONFIG_DIR = '/fake/claude-config';
 
@@ -124,9 +126,14 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
+const ownGroup = (event: string): Record<string, unknown> => ({
+  ...(event === 'Notification' ? { matcher: NOTIFICATION_MATCHER } : {}),
+  hooks: [{ type: 'command', command: `factory hook ${event}` }],
+});
+
 /** The settings of Claude Code that the program writes into a session folder. The command texts are the contract. */
 const ownSettings = (): Record<string, unknown> => ({
-  hooks: Object.fromEntries(HOOK_EVENTS.map((event) => [event, [{ hooks: [{ type: 'command', command: `factory hook ${event}` }] }]])),
+  hooks: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroup(event)]])),
   statusLine: { type: 'command', command: 'factory hook statusline' },
 });
 
@@ -195,6 +202,16 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     expect(await outOf('parent-var')).toBe('unset');
     expect(await outOf('claudecode-var')).toBe('unset');
     expect(await outOf('config-dir')).toBe(FAKE_CONFIG_DIR);
+  });
+
+  it('names the session of a new worker with the id of the node and the id of the worker (TP-12)', async () => {
+    await startedNode();
+    expect((await workerNew('alpha', '--project', 'web', '--yes')).code).toBe(0);
+    await waitForLaunches(2);
+    const argv = (await outOf('argv')).split('\n');
+    expect(argv.filter((arg) => arg === '--name')).toHaveLength(1);
+    expect(argv[argv.indexOf('--name') + 1]).toBe('demo-alpha');
+    expect(argv.indexOf('--name')).toBeLessThan(argv.indexOf('--add-dir'));
   });
 
   it('makes a second worker of the same project with one exclude entry and its own record', async () => {
@@ -301,7 +318,8 @@ const startedWorker = async (): Promise<void> => {
   await waitForLaunches(2);
 };
 
-describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binary, separate tmux server)', () => {
+// Each case launches several processes: 5 to 10 s alone, 14 to 24 s under load, so the 30 s global limit is too tight.
+describe.skipIf(!hasTmux)('factory worker summon and factory layout (built binary, separate tmux server)', { timeout: 60_000 }, () => {
   it('shows the worker in the slot, and layout puts the board back (TP-31)', async () => {
     await startedWorker();
     expect(await marksOf('view')).toContain('|board|');

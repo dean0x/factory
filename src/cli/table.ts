@@ -7,6 +7,7 @@ import { runLayout } from '../commands/layout.js';
 import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
+import { runSelf } from '../commands/self.js';
 import { runStart } from '../commands/start.js';
 import { runStatus } from '../commands/status.js';
 import { runUpgrade } from '../commands/upgrade.js';
@@ -15,6 +16,7 @@ import { runWorker } from '../commands/worker.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import {
+  assignmentSource,
   commandLines,
   commands,
   commandText,
@@ -31,7 +33,9 @@ import {
   roles,
   schemaIds,
   summonLimits,
+  typing,
   values,
+  workerCommands,
 } from '../names.js';
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_VERSION } from '../version.js';
@@ -279,13 +283,15 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.worker,
-    summary: `Make and run the ${roles.worker}s of the ${roles.node}.`,
+    summary: `Make, run, reset and watch the ${roles.worker}s of the ${roles.node}.`,
     usage: [
-      `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+      `${commandText(commandLines.workerNew)} ID ${flagText(flags.project)} PROJECT [${flagText(flags.assignment)} FILE] [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
       `${commandText(commandLines.workerList)} [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerStop)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerReset)} ID ${flagText(flags.clear)}|${flagText(flags.compact)} [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -294,6 +300,14 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'string',
         placeholder: 'PROJECT',
         description: `The id of the project that the ${roles.worker} works on. The ${roles.node} lists it in its config.`,
+      },
+      [flags.assignment]: {
+        type: 'string',
+        placeholder: 'FILE',
+        description:
+          `With ${workerCommands.new}: copy the text of FILE into the inbox folder of the new ${roles.worker}, as its assignment. ` +
+          `FILE is in ${assignmentSource.ordersShown} of the ${places.folder}, or in the git work tree of the working folder. ` +
+          `It is a plain text file of at most 1 MiB, and no part of its path starts with a dot.`,
       },
       [flags.for]: {
         type: 'string',
@@ -308,6 +322,18 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           `Agree to the change of the Claude Code settings of the work copy (the hook and the status line), with no question. ` +
           `Not allowed inside a ${places.session}, unless the work copy has no settings file.`,
       },
+      [flags.clear]: {
+        type: 'boolean',
+        description:
+          `With ${workerCommands.reset}: clear the session of the ${roles.worker} (types ${typing.lines.clear} in its pane). ` +
+          `The ${roles.worker} starts a new session.`,
+      },
+      [flags.compact]: {
+        type: 'boolean',
+        description:
+          `With ${workerCommands.reset}: compact the session of the ${roles.worker} (types ${typing.lines.compact} in its pane). ` +
+          `The session continues with a short summary.`,
+      },
     },
     run: (given, deps) =>
       runWorker(
@@ -318,9 +344,22 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           project: given.string(flags.project),
           yes: given.bool(flags.yes),
           duration: given.string(flags.for),
+          clear: given.bool(flags.clear),
+          compact: given.bool(flags.compact),
+          assignment: given.string(flags.assignment),
         },
         registry,
       ),
+  },
+  {
+    name: commands.self,
+    summary:
+      `Queue ${typing.lines.compact} in the pane of the ${roles.coordinator}. Only the ${roles.coordinator} runs it, ` +
+      `from inside its own pane, after it wrote its resume notes.`,
+    usage: `${commandText(commandLines.selfReset)} [${flagText(flags.home)} DIR]`,
+    positionals: true,
+    options: { [flags.home]: foundHomeOption },
+    run: (given, deps) => runSelf(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
   },
   {
     name: commands.layout,
@@ -361,8 +400,9 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       [flags.yes]: {
         type: 'boolean',
         description:
-          `Register a ${places.folder} that the ${places.list} does not list, with no question. ` +
-          `Needs ${flagText(flags.home)} DIR and a ${files.config} with schema 1. Not allowed inside a ${places.session}.`,
+          `Agree with no question to two changes: the registration of a ${places.folder} that the ${places.list} does not list ` +
+          `(needs ${flagText(flags.home)} DIR and a ${files.config} with schema 1), and the new hook events in the Claude Code settings ` +
+          `of the work copies and of the ${roles.coordinator}. Not allowed inside a ${places.session}.`,
       },
     },
     run: (given, deps) =>

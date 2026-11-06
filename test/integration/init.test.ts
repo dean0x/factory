@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
@@ -16,6 +16,13 @@ afterEach(async () => {
 });
 
 afterAll(removeOpenSandboxes);
+
+/** A lock file that another command holds. Its time is one hour ahead, so host latency under load never makes it stale during the test. */
+const writeHeldLock = async (lock: string): Promise<void> => {
+  await writeFile(lock, '1\n');
+  const ahead = new Date(Date.now() + 3_600_000);
+  await utimes(lock, ahead, ahead);
+};
 
 /** The built binary has no terminal window, so a run that writes the hook settings needs the yes flag. */
 const initArgs = (extra: readonly string[] = []): string[] => [
@@ -326,7 +333,7 @@ describe('factory init (built binary)', () => {
     const lock = join(listFolder, 'homes.json.lock');
     // Another command holds the lock of the list. The write of the list is the last step of init, and it fails.
     await mkdir(listFolder, { recursive: true, mode: 0o700 });
-    await writeFile(lock, '1\n');
+    await writeHeldLock(lock);
     const failed = await box.run(initArgs(), { env: { XDG_STATE_HOME: stateHome } });
     expect(failed.code).toBe(1);
     expect(failed.stdout).not.toContain('Created the node');
@@ -871,7 +878,7 @@ describe('factory init: a folder that holds both config files (built binary)', (
     const place = await moved();
     const stateHome = join(box.root, 'state-locked');
     await mkdir(join(stateHome, 'factory'), { recursive: true, mode: 0o700 });
-    await writeFile(join(stateHome, 'factory', 'homes.json.lock'), '1\n');
+    await writeHeldLock(join(stateHome, 'factory', 'homes.json.lock'));
     const local = await box.read(join(place, 'factory.local.yaml'));
     const marker = await box.read(join(place, '.factory', 'node.json'));
     const result = await box.run(['init', '--yes'], { cwd: place, env: { XDG_STATE_HOME: stateHome } });

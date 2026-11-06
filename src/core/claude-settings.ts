@@ -23,6 +23,7 @@ import {
   settingsCommandType,
   statuslineKeyPath,
   type CommandText,
+  type HookEvent,
   type HookSession,
 } from '../names.js';
 import { parseJsonText } from '../state/load.js';
@@ -44,8 +45,9 @@ export interface CommandEntry {
   readonly command: string;
 }
 
-/** A group of hook handlers, as Claude Code reads it under an event. */
+/** A group of hook handlers, as Claude Code reads it under an event. The matcher is set only for an event of `hookNames.matchers`. */
 export interface HookGroup {
+  readonly matcher?: string;
   readonly hooks: readonly CommandEntry[];
 }
 
@@ -57,7 +59,15 @@ export interface OwnSettings {
 
 const commandEntryOf = (command: string): CommandEntry => ({ type: settingsCommandType, command });
 
-const ownGroupOf = (event: string): HookGroup => ({ hooks: [commandEntryOf(hookCommandOf(event))] });
+const matchers: Readonly<Record<string, string>> = hookNames.matchers;
+
+/** The matcher that the own group of the event must have, or undefined for an event whose own group has none. */
+const matcherOf = (event: string): string | undefined => (Object.hasOwn(matchers, event) ? matchers[event] : undefined);
+
+const ownGroupOf = (event: string): HookGroup => {
+  const matcher = matcherOf(event);
+  return { ...(matcher === undefined ? {} : { matcher }), hooks: [commandEntryOf(hookCommandOf(event))] };
+};
 
 /**
  * The exact entries of the program: one group with one own command for each event of the fixed list, and the status line
@@ -122,6 +132,12 @@ const targetOf = (folder: string): Target => {
   const root = resolve(folder);
   const claudeFolder = join(root, dirs.claude);
   return { folder: root, claudeFolder, file: join(claudeFolder, localSettingsFile) };
+};
+
+/** The folder `.claude` and the hook settings file in it, for a session folder: the file that this module reads and writes. */
+export const hookSettingsPlaceOf = (folder: string): { readonly claudeFolder: string; readonly file: string } => {
+  const { claudeFolder, file } = targetOf(folder);
+  return { claudeFolder, file };
 };
 
 const clipped = (text: string): string => (text.length > MAX_SHOWN_CHARS ? `${text.slice(0, MAX_SHOWN_CHARS)}...` : text);
@@ -204,10 +220,42 @@ const readSettings = async (deps: Deps, file: string, command: CommandText): Pro
   return text.ok ? parseSettings(text.value, file, command) : text;
 };
 
-const hasCommand = (group: unknown, command: string): boolean =>
+/**
+ * Whether Claude Code calls the groups of an event only when the matcher of the group fits the notice. The other events call every
+ * group, and they ignore the matcher.
+ */
+const filteredByMatcher: Readonly<Record<HookEvent, boolean>> = {
+  SessionStart: true,
+  UserPromptSubmit: false,
+  Stop: false,
+  PreCompact: true,
+  Notification: true,
+  PreToolUse: true,
+};
+
+/** The matchers that fit every notice of an event: no matcher, the empty text and `*`. */
+const fitsEveryNotice = (matcher: unknown): boolean => matcher === undefined || matcher === '' || matcher === '*';
+
+/**
+ * True when the matcher of a group makes Claude Code call the own command for every notice that the own group covers. For an event
+ * whose own group has a matcher, the group must have that matcher. For another event that Claude Code filters by matcher, the group
+ * must have a matcher that fits every notice: the same command under a narrower matcher is not called for the other notices.
+ */
+const matcherCovers = (event: HookEvent, matcher: unknown): boolean => {
+  const own = matcherOf(event);
+  if (own !== undefined) return matcher === own;
+  return !filteredByMatcher[event] || fitsEveryNotice(matcher);
+};
+
+/** True when the group holds the own command of the event, under any matcher. */
+const holdsOwnCommand = (group: unknown, event: HookEvent): boolean =>
   isRecord(group) &&
   Array.isArray(group['hooks']) &&
-  group['hooks'].some((handler) => isRecord(handler) && handler['type'] === settingsCommandType && handler['command'] === command);
+  group['hooks'].some((handler) => isRecord(handler) && handler['type'] === settingsCommandType && handler['command'] === hookCommandOf(event));
+
+/** True when the group holds the own command of the event and its matcher covers the notices of the own group. */
+const hasOwnCommand = (group: unknown, event: HookEvent): boolean =>
+  isRecord(group) && holdsOwnCommand(group, event) && matcherCovers(event, group['matcher']);
 
 interface Change {
   /** The settings after the change. */
@@ -221,21 +269,56 @@ interface HooksChange {
   readonly lines: readonly string[];
 }
 
+/** The groups of an event in a hooks object: none when the event is absent, and null when the value is not a list. */
+const groupsOfEvent = (hooks: Settings, event: string): readonly unknown[] | null => {
+  const groups: unknown = Object.hasOwn(hooks, event) ? hooks[event] : [];
+  return Array.isArray(groups) ? groups : null;
+};
+
+/**
+ * The events of the fixed list that no group of the hooks object covers with the own command, in the order of the list, or the
+ * first event whose value is not a list. `addHooks` and `missingHookEvents` both use this rule.
+ */
+const missingEventsIn = (hooks: Settings): { readonly missing: readonly HookEvent[] } | { readonly notList: HookEvent } => {
+  const missing: HookEvent[] = [];
+  for (const event of hookNames.events) {
+    const groups = groupsOfEvent(hooks, event);
+    if (groups === null) return { notList: event };
+    if (!groups.some((group) => hasOwnCommand(group, event))) missing.push(event);
+  }
+  return { missing };
+};
+
+/** The line of the shown change for an event that gets its own group. An event with a matcher names it. */
+const addLineOf = (event: string): string => {
+  const matcher = matcherOf(event);
+  const added = `${claudeSettingKeys.hooks}.${event}: add the command "${hookCommandOf(event)}"`;
+  return matcher === undefined ? added : `${added} for the matcher "${matcher}"`;
+};
+
 /** The hooks object with the own group added for each event that has no own command. A shape that is not known is a failure. */
 const addHooks = (current: unknown, file: string, command: CommandText): CliResult<HooksChange> => {
   const hint = `Fix the file, or move it away. ${again(command)}`;
   const base = current === undefined ? NO_SETTINGS : current;
   if (!isRecord(base)) return failure(`${file} holds ${claudeSettingKeys.hooks} that is not an object`, hint);
+  const found = missingEventsIn(base);
+  if ('notList' in found) return failure(`${file} holds ${claudeSettingKeys.hooks}.${found.notList} that is not a list`, hint);
   const hooks: Record<string, unknown> = { ...base };
-  const lines: string[] = [];
-  for (const event of hookNames.events) {
-    const groups: unknown = Object.hasOwn(hooks, event) ? hooks[event] : [];
-    if (!Array.isArray(groups)) return failure(`${file} holds ${claudeSettingKeys.hooks}.${event} that is not a list`, hint);
-    if (groups.some((group) => hasCommand(group, hookCommandOf(event)))) continue;
-    hooks[event] = [...groups, ownGroupOf(event)];
-    lines.push(`${claudeSettingKeys.hooks}.${event}: add the command "${hookCommandOf(event)}"`);
-  }
-  return ok({ hooks, lines });
+  for (const event of found.missing) hooks[event] = [...(groupsOfEvent(base, event) ?? []), ownGroupOf(event)];
+  return ok({ hooks, lines: found.missing.map(addLineOf) });
+};
+
+/**
+ * The events of the fixed list that the settings object does not cover with the own command, in the order of the list. For
+ * `Notification` the own group must have the own matcher. For `SessionStart`, `PreCompact` and `PreToolUse` the matcher of the own
+ * group must be absent, empty or `*`. A shape that is not known (no object, no hooks object, or an event whose
+ * value is not a list) counts every event as missing, so a check that needs the events fails closed.
+ */
+export const missingHookEvents = (settings: unknown): readonly HookEvent[] => {
+  const hooks = isRecord(settings) ? settings[claudeSettingKeys.hooks] : undefined;
+  if (!isRecord(hooks)) return hookNames.events;
+  const found = missingEventsIn(hooks);
+  return 'notList' in found ? hookNames.events : found.missing;
 };
 
 const shownStatusLine = (value: unknown): string =>
@@ -333,12 +416,18 @@ interface Plan {
   readonly change: Change;
 }
 
+/** The target and the content of its settings file, or null when there is no file. */
+interface TargetRead {
+  readonly target: Target;
+  readonly content: FileContent | null;
+}
+
 /**
- * The checks of the target, then the change. A path in the user settings folder, a link, a real path outside the session
- * folder or a file that is no object stops it. The first check compares the written path of the file and makes no call of the
- * file system, so it comes before any call on the target.
+ * The checks of the target, then the read of the file. A path in the user settings folder, a link, a real path outside the
+ * session folder or a file that is no object stops it. The first check compares the written path of the file and makes no call
+ * of the file system, so it comes before any call on the target.
  */
-const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<Plan>> => {
+const readTarget = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<TargetRead>> => {
   const target = targetOf(request.folder);
   const written = requireOutsideUserFolder(deps, target, request.command, target.file);
   if (!written.ok) return written;
@@ -349,9 +438,43 @@ const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliR
   const resolved = requireOutsideUserFolder(deps, target, request.command, real.value);
   if (!resolved.ok) return resolved;
   const content = parts.value.exists ? await readSettings(deps, target.file, request.command) : ok(null);
-  if (!content.ok) return content;
-  const change = addOwnEntries(content.value === null ? NO_SETTINGS : content.value.settings, target.file, request.command);
-  return change.ok ? ok({ target, text: content.value === null ? null : content.value.text, change: change.value }) : change;
+  return content.ok ? ok({ target, content: content.value }) : content;
+};
+
+/** The checks of the target, then the change that the own entries make. */
+const planChange = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<Plan>> => {
+  const read = await readTarget(deps, request);
+  if (!read.ok) return read;
+  const { target, content } = read.value;
+  const change = addOwnEntries(content === null ? NO_SETTINGS : content.settings, target.file, request.command);
+  return change.ok ? ok({ target, text: content === null ? null : content.text, change: change.value }) : change;
+};
+
+/**
+ * True when a list of an event of the fixed list holds the own command of that event, under any matcher. An event whose value is
+ * not a list holds nothing and does not hide the other events.
+ */
+const holdsAnyOwnCommand = (settings: Settings): boolean => {
+  const hooks = settings[claudeSettingKeys.hooks];
+  return isRecord(hooks) && hookNames.events.some((event) => (groupsOfEvent(hooks, event) ?? []).some((group) => holdsOwnCommand(group, event)));
+};
+
+/**
+ * True when the settings file of the session folder holds the own command of at least one event of the fixed list, under any
+ * matcher, in a list. A session folder that is not there, a settings file that is not there and a file with no own command give
+ * false: no hook of the program is there to bring up to date. An event whose value is not a list does not hide the own command of
+ * another event: the file gives true, and `ensureHookSettings` then names that event. The checks of the target are those of
+ * `ensureHookSettings`, so a link is a stop (exit 4) and a file that is not a JSON object is a failure (exit 1). The call writes
+ * nothing and asks nothing.
+ */
+export const holdsOwnHook = async (deps: Deps, request: HookConsentRequest): Promise<CliResult<boolean>> => {
+  const folder = await deps.fs.lstat(request.folder);
+  if (!folder.ok) return folder;
+  if (folder.value === null) return ok(false);
+  const read = await readTarget(deps, request);
+  if (!read.ok) return read;
+  const { content } = read.value;
+  return ok(content !== null && holdsAnyOwnCommand(content.settings));
 };
 
 /**

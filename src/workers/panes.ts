@@ -1,9 +1,11 @@
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
 import {
   coordinatorReadArgs,
+  isPaneId,
   killPaneArgs,
   paneBindArgs,
   paneAbsent,
@@ -15,9 +17,10 @@ import {
   type CoordinatorPane,
   type PaneRow,
 } from '../launch/tmux.js';
-import { requireOwnSession, sessionExists, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
-import { commandText, program, roles, tmuxNames } from '../names.js';
-import { startsWorker } from './binding.js';
+import { requireOwnSession, requireSession, sessionExists, tmuxCall, tmuxStep } from '../launch/tmux-run.js';
+import { commands, commandText, env, program, roles, tmuxNames } from '../names.js';
+import { layoutOf } from '../state/layout.js';
+import { startsCoordinator, startsWorker } from './binding.js';
 
 /**
  * The panes of the tmux session, from one list call, for a caller that has checked already that the session runs and belongs to
@@ -148,6 +151,61 @@ export const readCoordinatorPane = async (deps: Deps, session: string): Promise<
   const parsed = parseCoordinatorPane(read.value.stdout);
   if (!parsed.ok) return failure(`cannot read the pane of the ${roles.coordinator} of the session ${session}: ${parsed.error}`);
   return ok(parsed.value.node ? parsed.value : null);
+};
+
+/** The remedy line for a command that ran in the wrong place: run it again in the place that the text names. */
+const runAgainIn = (again: string, place: string): string => `Run "${commandText(again)}" in ${place}.`;
+
+/**
+ * The caller rule of `worker reset` and `self reset`: the command runs only from the coordinator pane of this factory. It guards
+ * against a mistake, and it is no security boundary, because the env values are values that the caller sets. The checks run in this
+ * order, and the first that fails ends the rule:
+ * 1. the env part, with no tmux call: `TMUX_PANE` is a pane id and `FACTORY_SESSION` is the node id (exit 2);
+ * 2. the session of the node runs (exit 3) and belongs to this factory folder (exit 4);
+ * 3. the coordinator pane is read: no such pane, or a pane that ended, is exit 3. A start command that does not hold the launch of the
+ *    coordinator is a security stop (exit 4). A caller pane that is not that pane is exit 2.
+ * `again` is the command that a person runs again after the fix, without the program name (`commandText` adds it). The value is the
+ * coordinator pane as this read found it, with its pid.
+ */
+export const requireCoordinatorCaller = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  again: string,
+): Promise<CliResult<CoordinatorPane>> => {
+  const nodeId = config.core.node.id;
+  const callerPane = deps.env[env.tmuxPane];
+  const coordinatorPlace = `the pane of the ${roles.coordinator}`;
+  if (callerPane === undefined || !isPaneId(callerPane)) {
+    return usageError(`the pane of the caller is not known: ${env.tmuxPane} holds no pane id`, runAgainIn(again, coordinatorPlace));
+  }
+  if (deps.env[env.session] !== nodeId) {
+    return usageError(
+      `the caller is not the ${roles.coordinator} of the ${roles.node} ${nodeId}: ${env.session} is not ${nodeId}`,
+      runAgainIn(again, coordinatorPlace),
+    );
+  }
+  const session = await requireSession(deps, nodeId, home, commandText(again));
+  if (!session.ok) return session;
+  const read = await readCoordinatorPane(deps, nodeId);
+  if (!read.ok) return read;
+  const pane = read.value;
+  const startIt = `Run "${commandText(commands.start)}". Then run "${commandText(again)}" again.`;
+  if (pane === null) return notReady(`the tmux session ${nodeId} has no pane of the ${roles.coordinator}`, startIt);
+  if (pane.dead) return notReady(`the pane ${pane.paneId} of the ${roles.coordinator} ended`, startIt);
+  if (!startsCoordinator(pane.startCommand, home, nodeId, layoutOf(home).stateDir)) {
+    return safetyRefusal(
+      `the pane ${pane.paneId} is at the place of the ${roles.coordinator}, but ${program} did not start it: its start command does not hold the launch of the ${roles.coordinator}`,
+      `Look at the pane in tmux. Run "${commandText(commands.shutdown)}", then "${commandText(commands.start)}". Then run "${commandText(again)}" again.`,
+    );
+  }
+  if (pane.paneId !== callerPane) {
+    return usageError(
+      `the caller is in the pane ${callerPane}, but the pane of the ${roles.coordinator} is ${pane.paneId}`,
+      runAgainIn(again, `the pane ${pane.paneId}`),
+    );
+  }
+  return ok(pane);
 };
 
 /**

@@ -839,6 +839,35 @@ describe('scripts/check-intent-docs.sh, check 10: the lines of the core parts', 
   });
 });
 
+describe('TP-40: the docs of FAC-M4 PR 3 keep the rules of the docs script', () => {
+  const docsText = (name: string): string => readFileSync(join(ROOT, 'docs', name), 'utf8');
+
+  it('TP-40: keeps the word self in a row of the Command map, and factory self reset in the core commands of design 4.2', () => {
+    const map = docsText('roadmap-v2.md').split('### Command map')[1]?.split('\n### ')[0] ?? '';
+    expect(map).toMatch(/^\| .*`self`.* \| FAC-M4 \|$/m);
+    const core = docsText('design.md').split('**Core commands**')[1]?.split('**Software recipe commands**')[0] ?? '';
+    expect(core).toMatch(/^factory self reset\b/m);
+  });
+
+  it('TP-40: has no command of the removed inbox in the Command map or in design 4.2', () => {
+    const map = docsText('roadmap-v2.md').split('### Command map')[1]?.split('\n### ')[0] ?? '';
+    const commands = docsText('design.md').split('### 4.2 Commands')[1]?.split('### 4.3 ')[0] ?? '';
+    expect(map).not.toMatch(/`inbox`|worker send/);
+    expect(commands).not.toMatch(/^factory (?:inbox|worker send)\b/m);
+  });
+
+  it('TP-40: holds no tmux and no git word in the part "Words of every factory" of the glossary', () => {
+    const text = docsText('glossary.md');
+    const core = text.slice(text.indexOf('## Words of every factory'), text.indexOf('## Words of the software recipe'));
+    expect(core.length).toBeGreaterThan(0);
+    expect(core).not.toMatch(/\b(?:tmux|git)\b/i);
+  });
+
+  it('TP-40: passes the docs script on the docs of the repo', () => {
+    expect(check(join(ROOT, 'docs')).code).toBe(0);
+  });
+});
+
 const LABEL = 'Design v3 PR';
 const LABEL_HEADING = '## Design v3 PR (after FAC-M2)';
 

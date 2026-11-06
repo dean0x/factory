@@ -11,6 +11,9 @@
  * from `templateValues` below.
  */
 
+import { isSlug } from './config/primitives.js';
+import { err, ok, type Result } from './core/result.js';
+
 export const program = 'factory';
 
 /** The role words of help and template text. */
@@ -47,6 +50,7 @@ export const commands = {
   doctor: 'doctor',
   machine: 'machine',
   worker: 'worker',
+  self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
   hook: 'hook',
@@ -87,7 +91,18 @@ export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as cons
 export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
 
 /** The subcommands of `worker`. */
-export const workerCommands = { new: 'new', list: 'list', stop: 'stop', resume: 'resume', summon: 'summon' } as const;
+export const workerCommands = {
+  new: 'new',
+  list: 'list',
+  stop: 'stop',
+  resume: 'resume',
+  summon: 'summon',
+  reset: 'reset',
+  watch: 'watch',
+} as const;
+
+/** The subcommands of `self`. */
+export const selfCommands = { reset: 'reset' } as const;
 
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
@@ -96,6 +111,9 @@ export const commandLines = {
   workerStop: `${commands.worker} ${workerCommands.stop}`,
   workerResume: `${commands.worker} ${workerCommands.resume}`,
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
+  workerReset: `${commands.worker} ${workerCommands.reset}`,
+  workerWatch: `${commands.worker} ${workerCommands.watch}`,
+  selfReset: `${commands.self} ${selfCommands.reset}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -113,6 +131,9 @@ export const flags = {
   yes: 'yes',
   idle: 'idle',
   for: 'for',
+  clear: 'clear',
+  compact: 'compact',
+  assignment: 'assignment',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -137,6 +158,10 @@ export const files = {
   workerRecord: 'worker.json',
   /** The pointer of one worker to its newest session: `workers/<id>/last-session` holds a session id. */
   workerLastSession: 'last-session',
+  /** The notes of a worker for its next turn, in its inbox folder: a reset needs them before it clears or compacts the session. */
+  resume: 'resume.md',
+  /** The assignment of a worker, in its inbox folder: `worker new --assignment FILE` copies the text of FILE to this file. */
+  assignment: 'assignment.md',
   /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
   coordinatorLastSession: 'coordinator-last-session',
   /** The id of this machine, in the run-time folder: made once, and never shared. */
@@ -172,6 +197,8 @@ export const dirs = {
   workers: 'workers',
   /** The folder of the messages for a worker, inside its folder. The session of the worker gets it with `--add-dir`. */
   inbox: 'inbox',
+  /** The folder of the resume notes of the coordinator in the state folder: one file for each node, named by the node id. */
+  resume: 'resume',
   backups: 'backups',
   runtime: 'state',
   /** The folder of the last-seen files, inside the run-time folder: one file for each session. */
@@ -234,10 +261,23 @@ export const claudeSettingKeys = {
   statusLine: 'statusLine',
   approveAllMcp: 'enableAllProjectMcpServers',
   approveMcpList: 'enabledMcpjsonServers',
+  /** The setting that tells a session what to do with the input of other sessions: accept it, hold it for approval, or refuse it. */
+  crossSessionInbound: 'crossSessionInbound',
 } as const;
 
 /** The permission mode that accepts file edits with no prompt. A settings file with it gives a warning, not a stop. */
 export const acceptEditsMode = 'acceptEdits';
+
+/** The permission mode that plans first. A session in it holds the input of other sessions for approval. A settings file with it gives a warning. */
+export const planMode = 'plan';
+
+/** The values of `crossSessionInbound` that keep the input of other sessions from reaching a session at once. Any other value gives no warning. */
+export const crossSessionHeldValues = ['hold', 'refuse'] as const;
+
+export type CrossSessionHeldValue = (typeof crossSessionHeldValues)[number];
+
+/** What a warning about a setting says about the reach of the check: user-level settings and a mode set in a pane stay unseen. */
+export const settingsSeenNote = 'This check reads project and local settings only, not user-level settings or a mode set in a pane.';
 
 /** One item of the permission-skip list: a setting at a path with a value, or a text that stands anywhere in the file. */
 export type PermissionSkip =
@@ -382,6 +422,18 @@ export const trafficEnvNames = [
 
 /** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
 export const maxFileBytes = 1_048_576;
+
+/**
+ * The rules for the source file of an assignment (`worker new --assignment`). The file is read only from the factory folder or from the
+ * git work tree of the working folder. No path part below that top starts with `dotMark`, except the orders folder below the factory
+ * folder (`ordersParts`, shown as `ordersShown`). The local config of the factory folder is never read. The bytes limit is `maxFileBytes`.
+ */
+export const assignmentSource = {
+  dotMark: '.',
+  ordersParts: [dirs.state, dirs.orders],
+  ordersShown: `${dirs.state}/${dirs.orders}/`,
+  maxBytes: maxFileBytes,
+} as const;
 
 /**
  * The per-user files (design 4.3): the factory list, the approval records and the setup acceptances. Each one is in the
@@ -539,6 +591,28 @@ export const paneBinding = { maxStartCommandChars: 32_768, maxWords: 1_024 } as 
  */
 export const summonLimits = { defaultFor: '15m', minMinutes: 1, maxMinutes: 120, tokenBytes: 16 } as const;
 
+/** The signs that mark the chosen entry of a dialog list in a screen of the agent program. */
+const dialogPointers = ['❯', '>'] as const;
+
+/**
+ * The typed input of one line into a pane (design 4.12). `lines` are the only lines that a command types. `keys` are the only
+ * key names: one clears the input line before the text, one ends the line. A text longer than `maxChars` is refused. The check
+ * of the screen reads the bottom `captureLines` lines of a capture. It sees a dialog list when one line starts with a pointer
+ * from `pointers`, then digits and a dot, and a second line starts with digits and a dot. Both patterns allow spaces and the
+ * box-drawing signs (U+2500 to U+257F) before the first sign, so a dialog inside a side border is seen too.
+ */
+export const typing = {
+  lines: { clear: '/clear', compact: '/compact' },
+  keys: { clearLine: 'C-u', enter: 'Enter' },
+  maxChars: 300,
+  captureLines: 20,
+  pointers: dialogPointers,
+  optionList: {
+    pointerLine: new RegExp(`^[ ─-╿]*(?:${dialogPointers.join('|')}) *[0-9]+\\.`, 'u'),
+    numberedLine: /^[ ─-╿]*[0-9]+\./u,
+  },
+} as const;
+
 /**
  * The permission bits of the local config file (design 4.4). The file has mode 600. A group or other read bit gets
  * fixed with a notice. A group or other write bit, or another owner, stops the command.
@@ -609,6 +683,12 @@ export const stateKeys = {
 } as const;
 
 /**
+ * The types of the `Notification` event that mean a dialog waits for an answer. The hook records the event for these types and
+ * for no other: the type `idle_prompt` says that the session waits for a prompt, which is the state `prompt`.
+ */
+const notificationTypes = ['permission_prompt', 'elicitation_dialog'] as const;
+
+/**
  * The hook of Claude Code that records the last-seen line of a session (design 4.6): the word after the program name,
  * the fixed list of events and the bounds. The settings of a session folder call `<program> hook <event>` for each event,
  * and `<program> hook statusline` for the status line. Claude Code names the events on its hooks page
@@ -618,9 +698,12 @@ export const hookNames = {
   command: commands.hook,
   /** The word of the status line call. It is also the config key of the command of the owner. */
   statusline: keys.session.statusline,
-  events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'],
+  events: ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact', 'Notification', 'PreToolUse'],
   /** The only keys that the hook reads from the input of Claude Code. Every other key of the input is dropped unread. */
-  inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name' },
+  inputKeys: { sessionId: 'session_id', eventName: 'hook_event_name', notificationType: 'notification_type' },
+  notificationTypes,
+  /** The events whose own group in the settings has a matcher, with that matcher. The `Notification` matcher lists `notificationTypes`, parted by `|`. */
+  matchers: { Notification: notificationTypes.join('|') },
   /** The most bytes of hook input that the program reads. A larger input is refused and nothing is written. */
   maxStdinBytes: maxFileBytes,
   /** The hook reads its input for at most this many milliseconds. An input that is not whole by then is an error. */
@@ -662,16 +745,22 @@ export const hookNames = {
 /** One event of the fixed list. */
 export type HookEvent = (typeof hookNames.events)[number];
 
+/** What a hook event says about a session: it waits at the prompt, it works, or a dialog in its window waits for an answer. */
+export type HookState = 'prompt' | 'busy' | 'waits';
+
 /**
- * What the last hook event says about a session: it waits at the prompt (a session that started, or a turn that ended), or
- * it works (a turn that began, or a compact that is about to run). Every event has an entry.
+ * What the last hook event says about a session: it waits at the prompt (a session that started, or a turn that ended), it
+ * works (a turn that began, a compact that is about to run, or a tool that is about to run), or a dialog waits for an answer (a
+ * notice of one of the types of `hookNames.notificationTypes`). Every event has an entry.
  */
 export const eventState = {
   SessionStart: 'prompt',
   Stop: 'prompt',
   UserPromptSubmit: 'busy',
   PreCompact: 'busy',
-} as const satisfies Readonly<Record<HookEvent, 'prompt' | 'busy'>>;
+  Notification: 'waits',
+  PreToolUse: 'busy',
+} as const satisfies Readonly<Record<HookEvent, HookState>>;
 
 /**
  * The ways that the stop code uses to end a session. Each is a way of the table of docs/session-stop.md that has the verdict
@@ -685,8 +774,8 @@ export type StopWay = (typeof stopWay)[keyof typeof stopWay];
 /** The two cases of the table of ways to stop a session: the session waits at the prompt, or it works. */
 export type StopCase = 'idle' | 'busy';
 
-/** The case of the table for each state of a session that a last-seen line gives. */
-export const stopCaseOfState = { prompt: 'idle', busy: 'busy' } as const satisfies Readonly<Record<'prompt' | 'busy', StopCase>>;
+/** The case of the table for each state of a session that a last-seen line gives. A session that waits at a dialog is the busy case. */
+export const stopCaseOfState = { prompt: 'idle', busy: 'busy', waits: 'busy' } as const satisfies Readonly<Record<HookState, StopCase>>;
 /** The safe way for each case. A case with no safe way has null and uses `stopFallback`. */
 export const stopWays: Readonly<Record<StopCase, StopWay | null>> = { idle: stopWay.term, busy: stopWay.term };
 
@@ -704,6 +793,14 @@ export const dismissStopCases: readonly StopCase[] = ['idle'];
 export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
 
 /**
+ * The checks of `worker watch`: at most `attempts` checks, each after a wait of `intervalMs`. So a watch lasts at most `attempts` times
+ * `intervalMs`, which is 20 minutes. A session that works is stalled when the newer of its event time and its percent time is more than
+ * `stalledAfterMs` old. A worker that is new has no last-seen line yet, so a missing line is not a change in the first `lineGraceChecks`
+ * checks (the baseline counts as the first). From the check with this index on, or once a valid line was seen, a missing line is a change.
+ */
+export const watchPoll = { attempts: 40, intervalMs: 30_000, stalledAfterMs: 900_000, lineGraceChecks: 2 } as const;
+
+/**
  * The wait after the pane of a worker starts (design 4.11): the launch checks at most `attempts` times, and waits `intervalMs`
  * before each check. So the wait is at most `attempts` times `intervalMs`. A launch with a session to resume checks the pane and
  * the last-seen line of the worker at each check, and it is confirmed when the pane runs and the line holds the hook event `event`,
@@ -711,16 +808,90 @@ export const stopPoll = { attempts: 30, intervalMs: 1_000 } as const;
  */
 export const launchConfirm = { attempts: 10, intervalMs: 1_000, event: 'SessionStart' } as const;
 
+/** What a session reset of a worker needs to name for one kind: the flag, the typed line, the events that confirm it, and the verb of the verdict. */
+interface ResetKindWords {
+  readonly flag: string;
+  readonly line: string;
+  /** The hook events of which the first one after the typing confirms the reset. */
+  readonly events: readonly HookEvent[];
+  /** True when the reset starts a new session: the pointer of the worker must name another session than before. */
+  readonly newSession: boolean;
+  readonly done: string;
+}
+
+/**
+ * The two kinds of session reset (design 4.12). A clear types `/clear` and is confirmed by the `SessionStart` line of a new
+ * session. A compact types `/compact` and is confirmed by a `PreCompact` or a `SessionStart` line of the same session.
+ */
+export const resetKinds = {
+  clear: { flag: flags.clear, line: typing.lines.clear, events: ['SessionStart'], newSession: true, done: 'cleared' },
+  compact: { flag: flags.compact, line: typing.lines.compact, events: ['PreCompact', 'SessionStart'], newSession: false, done: 'compacted' },
+} as const satisfies Readonly<Record<string, ResetKindWords>>;
+
+/** A kind of session reset: a key of `resetKinds`. */
+export type ResetKind = keyof typeof resetKinds;
+
+/**
+ * The wait after a reset line was typed into a worker pane: the check runs at most `attempts` times, and waits `intervalMs` before
+ * each check. So the wait is at most `attempts` times `intervalMs`. At each check the pane must still run the launch of the worker.
+ */
+export const resetConfirm = { attempts: 10, intervalMs: 1_000 } as const;
+
+/**
+ * The words of the output of `self reset`. The command types `/compact` into the pane of the coordinator itself, and the session runs
+ * the line after its current turn, so the output says that the line is queued and never that the compact is done.
+ */
+export const selfResetWords = { queued: 'QUEUED:', after: 'the compact runs after the current turn' } as const;
+
+/** The name of the file with the resume notes of the coordinator of a node, in the folder `dirs.resume` of the state folder. */
+export const coordinatorResumeFile = (nodeId: string): string => `${nodeId}.md`;
+
+/**
+ * The start time of the process of a pane. The macOS `ps` has no `etimes`, and tmux has no format for the start time of a pane, so
+ * the check asks `ps` for the elapsed time of the pane process. `timeoutMs` bounds the call. `etime` is the one form of the answer
+ * that the check accepts: spaces at the ends and one new line at the end, then optional days and a dash (days need hours), optional
+ * hours, and minutes and seconds with 2 digits each. The groups are the days, the hours, the minutes and the seconds.
+ */
+export const paneElapsed = {
+  timeoutMs: 5_000,
+  etime: /^ *(?:(?:([0-9]{1,5})-)?([0-9]{2}):)?([0-9]{2}):([0-9]{2}) *\n?$/,
+} as const;
+
 /** The words of `worker list`: the titles of the columns, the pane column, the state of a worker and the mark of its context. */
 export const workerListWords = {
   columns: { id: 'ID', project: 'PROJECT', pane: 'PANE', state: 'STATE', context: 'CONTEXT', mark: 'MARK' },
   /** The pane column for a worker with no pane, and for a worker whose pane has ended. */
   pane: { none: 'none', dead: 'dead' },
-  /** The state column: the session waits at the prompt, it works, or the last-seen line does not say. */
-  states: { prompt: 'at prompt', busy: 'busy', unknown: 'unknown' },
+  /** The state column: the session waits at the prompt, it works, a dialog waits for an answer, or the last-seen line does not say. */
+  states: { prompt: 'at prompt', busy: 'busy', waits: 'waits', unknown: 'unknown' },
   /** The mark of the context column: the percent is at the prepare limit or above, or above the max limit. */
   marks: { prepare: 'PREPARE', max: 'MAX' },
 } as const;
+
+/**
+ * The words of the output of `worker watch`. The output holds these words and the ids of workers, and no other text of the pane or of
+ * a file. `kinds` names what changed for a worker: the pane ended, the pane is gone, the pane is not the launch of the worker any more,
+ * the last-seen line is not valid or does not belong to the worker, a dialog waits for an answer, or the session works and was silent
+ * too long.
+ */
+export const watchWords = {
+  changed: 'CHANGED:',
+  noChange: 'NO CHANGE:',
+  noWorker: 'NO WORKER:',
+  noPane: 'no worker has a pane to watch',
+  kinds: {
+    ended: 'pane ended',
+    gone: 'pane gone',
+    other: 'pane is not its launch',
+    lineNotValid: 'line not valid',
+    lineNotOwned: 'line not owned',
+    waits: workerListWords.states.waits,
+    stalled: 'stalled?',
+  },
+} as const;
+
+/** What changed for a worker: a key of `watchWords.kinds`. */
+export type WatchKind = keyof typeof watchWords.kinds;
 
 /**
  * The words of `status`: the titles of the columns, the state of a worker that has no live pane, the work item column for a work item
@@ -769,6 +940,25 @@ export const hookCommandOf = (event: string): string => commandText(`${hookNames
  * `context N%`. When the input gives no context percent, the number is a mark: `context ?%`.
  */
 export const statuslineTextOf = (percent: number | null): string => `context ${percent ?? hookNames.unknownPercent}%`;
+
+const refuseSessionId = (what: string): Result<never, string> => err(`the session name refuses ${what} that is not a slug`);
+
+/**
+ * The names of the sessions. The launch gives a name to the agent program with `flag`, so the session has a name in the session
+ * list of the program. The coordinator is named with the id of the node. A worker is named with the id of the node, a hyphen and
+ * the id of the worker. Each id must be a slug, so a name is one plain word for the flag: no space, no control character and no
+ * leading hyphen. A call returns a `Result` and never throws. An error does not repeat the id that it refuses.
+ */
+export const sessionNames = {
+  /** The flag of the agent program that sets the name of a session. */
+  flag: '--name',
+  coordinator: (node: string): Result<string, string> => (isSlug(node) ? ok(node) : refuseSessionId('a node id')),
+  worker: (node: string, worker: string): Result<string, string> => {
+    if (!isSlug(node)) return refuseSessionId('a node id');
+    if (!isSlug(worker)) return refuseSessionId('a worker id');
+    return ok(`${node}-${worker}`);
+  },
+} as const;
 
 /**
  * The last-seen line (design 4.6): one JSON text for each session, in the heartbeat folder of the run-time folder. It
@@ -952,6 +1142,8 @@ export const checkIds = {
   proxyEnv: 'proxy-env',
   proxy: 'proxy',
   tools: 'tools',
+  /** The version of the agent program: a session needs 2.1.224 or newer for the inbox of a worker. */
+  agentVersion: 'agent-version',
   stateRepo: 'state-repo',
   projects: 'projects',
   projectUrls: 'project-urls',
@@ -1019,6 +1211,9 @@ export const schemaIds = {
   workerStop: `${program}.worker-stop/v1`,
   workerResume: `${program}.worker-resume/v1`,
   workerSummon: `${program}.worker-summon/v1`,
+  workerReset: `${program}.worker-reset/v1`,
+  workerWatch: `${program}.worker-watch/v1`,
+  selfReset: `${program}.self-reset/v1`,
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
@@ -1043,6 +1238,9 @@ export const flagText = (name: string): string => `--${name}`;
 
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
+
+/** A subcommand of `worker` as a person types it, for example `factory worker watch`. */
+const workerCommandText = (subcommand: string): string => commandText(`${commands.worker} ${subcommand}`);
 
 /** The command that replaces or adds one managed block, for example `factory upgrade --overwrite coordinator`. */
 export const overwriteCommand = (block: string): string =>
@@ -1070,6 +1268,8 @@ const pathValues: Readonly<Record<string, string>> = {
   profileDir: `${inState(dirs.profile)}/`,
   roadmapsDir: `${inState(dirs.roadmaps)}/`,
   ordersDir: `${inState(dirs.orders)}/`,
+  workersDir: `${inState(dirs.workers)}/`,
+  resumeDir: `${inState(dirs.resume)}/`,
 };
 
 /** The values for the placeholders of the templates, for example {{worker}} and {{Worker}}. */
@@ -1095,6 +1295,14 @@ export const templateValues: Readonly<Record<string, string>> = {
   preparePctKey: keyPath(keys.root.limits, keys.limits.contextPreparePct),
   maxPctKey: keyPath(keys.root.limits, keys.limits.contextMaxPct),
   heavyTestKey: keys.project.heavyTest,
+  inboxEnv: env.inbox,
+  resumeFile: files.resume,
+  workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
+  workerWatchCommand: workerCommandText(workerCommands.watch),
+  workerResetCommand: workerCommandText(workerCommands.reset),
+  selfResetCommand: commandText(`${commands.self} ${selfCommands.reset}`),
+  clearFlag: flagText(flags.clear),
+  compactFlag: flagText(flags.compact),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,

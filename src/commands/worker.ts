@@ -15,12 +15,14 @@ import { addWorkTree, branchExists, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
+import { writeInFolder } from '../core/safe-write.js';
 import { shellWord } from '../core/shell-word.js';
 import {
   commandLines,
   commands,
   commandText,
   dirs,
+  files,
   flags,
   flagText,
   hookSessions,
@@ -32,18 +34,22 @@ import {
   summonLimits,
   tmuxNames,
   workerCommands,
+  workerRecord,
 } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { dismissLine } from '../workers/dismiss.js';
+import { readAssignment } from '../workers/assignment.js';
 import { ensureCloneExclude } from '../workers/exclude.js';
 import { launchWorker, requireCleanTrackedSettings, resumeLine, resumeWorker } from '../workers/launch.js';
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import type { BoundPane } from '../workers/panes.js';
-import { branchOf, readWorkerRecord, workCopyOf, writeWorkerRecord, type WorkerRecord } from '../workers/registry.js';
+import { branchOf, readWorkerRecord, requireRecord, workCopyOf, writeWorkerRecord } from '../workers/registry.js';
+import { parseReset, resetOutput, resetWorker } from '../workers/reset.js';
 import { readWorkerPanes, summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
+import { watchOutput, watchWorkers } from '../workers/watch.js';
 import { prepareLaunch } from './launch-checks.js';
 import { runWorkerList } from './worker-list.js';
 
@@ -57,6 +63,12 @@ export interface WorkerOptions {
   readonly yes: boolean;
   /** The text of the time flag of a summon, `<n>m` or `<n>h`. Undefined: the default time. */
   readonly duration: string | undefined;
+  /** True when the person gave the clear flag. Only a reset reads it. Absent: false. */
+  readonly clear?: boolean;
+  /** True when the person gave the compact flag. Only a reset reads it. Absent: false. */
+  readonly compact?: boolean;
+  /** The path of the assignment file of a new worker. Only `new` reads it. Absent: the worker has no assignment. */
+  readonly assignment?: string | undefined;
 }
 
 const SUBCOMMANDS = Object.values(workerCommands).join(', ');
@@ -100,30 +112,6 @@ const locateNode = async (deps: Deps, options: WorkerOptions, registry: RecipeRe
     commands.worker,
   );
   return located.ok ? ok(located.value.home) : located;
-};
-
-/**
- * The record of the worker. A worker with no record, or with a record that is not valid, is a wrong id (exit 2). A record that names
- * a work copy or a branch that is not the one of its worker is a security stop (exit 4): a command that starts or ends a session
- * must not act on it. The message names the record file and what differs.
- */
-export const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
-  const read = await readWorkerRecord(deps, home, id);
-  if (!read.ok) return read;
-  if (read.value.state === 'valid') return ok(read.value.record);
-  if (read.value.state === 'invalid' && read.value.mismatch === true) {
-    return safetyRefusal(
-      `the record ${workerPathsOf(home, id).recordFile} of the ${roles.worker} ${id} is not the record that ${program} wrote: ${read.value.reason}`,
-      `Check who changed the file, and restore it from a copy that you trust. Then run "${again} ${id}" again.`,
-    );
-  }
-  const listed = `Run "${commandText(commandLines.workerList)}" to see the ${roles.worker}s. Then run "${again} ID" with the id of one of them.`;
-  return usageError(
-    read.value.state === 'invalid'
-      ? `the record of the ${roles.worker} ${id} is not valid: ${read.value.reason}`
-      : `the ${roles.worker} ${id} has no record`,
-    listed,
-  );
 };
 
 /** A folder of the work copies that exists must be a folder. A link is a stop of the link rule before this check. */
@@ -244,6 +232,23 @@ const keptCopy = (error: CliError, plan: NewWorkerPlan, home: string, skipsSetup
     removeByHand(plan, home),
   ]);
 
+/** The file of the assignment in the inbox folder of a worker. */
+const assignmentFileOf = (home: string, id: string): string => join(workerPathsOf(home, id).inboxDir, files.assignment);
+
+/** Copy the text of the assignment into the inbox folder of the worker, which the write of the record made. */
+const copyAssignment = (deps: Deps, home: string, id: string, text: string): Promise<CliResult<void>> => {
+  const paths = workerPathsOf(home, id);
+  return writeInFolder(
+    deps,
+    { parent: paths.dir, folder: paths.inboxDir, name: files.assignment, mode: workerRecord.fileMode, folderMode: workerRecord.folderMode },
+    text,
+  );
+};
+
+/** The command to run again for a new worker with an assignment file, without the program name. The words in capitals are the person's. */
+const assignmentAgain = (id: string, project: string): string =>
+  `${commandLines.workerNew} ${id} ${flagText(flags.project)} ${project} ${flagText(flags.assignment)} FILE`;
+
 /** The error of a failed record write: the work copy and the branch exist and have no record, so the remedy is the git commands. */
 const keptBareCopy = (error: CliError, plan: NewWorkerPlan): CliError =>
   withHintParts(error, [
@@ -274,10 +279,12 @@ const gitKeptHint = (error: CliError, plan: NewWorkerPlan): CliError =>
  * The steps that write, in order, after every check and the consent of the hook settings:
  * 1. the work copy, a new work tree of the clone on a new branch;
  * 2. the record of the worker, before the launch, so the hook of the session can write its last-seen line;
- * 3. the exclude entry of the clone for the settings file of the work copy;
- * 4. the settings file of the work copy, with the question for the consent when a terminal window can ask;
- * 5. the warning about the machine, which never stops the command;
- * 6. the launch, which checks the settings files of the work copy before it starts the pane.
+ * 3. the copy of the assignment text into the inbox folder of the worker, when the person gave a file (`assignment` is the text that the
+ *    source check read);
+ * 4. the exclude entry of the clone for the settings file of the work copy;
+ * 5. the settings file of the work copy, with the question for the consent when a terminal window can ask;
+ * 6. the warning about the machine, which never stops the command;
+ * 7. the launch, which checks the settings files of the work copy before it starts the pane.
  * A failure after step 1 keeps what exists and names the steps that remove the worker by hand.
  */
 const makeWorker = async (
@@ -286,12 +293,20 @@ const makeWorker = async (
   config: FactoryConfig,
   plan: NewWorkerPlan,
   yes: boolean,
+  assignment: string | null,
 ): Promise<CliResult<{ readonly paneId: string; readonly proxy: string | null; readonly warnings: readonly string[] }>> => {
   const { id, project, clone, workCopy, branch } = plan;
   const made = await addWorkTree(deps, clone, branch, workCopy);
   if (!made.ok) return { ...made, error: gitKeptHint(made.error, plan) };
   const record = await writeWorkerRecord(deps, home, { id, project, workCopy, branch });
   if (!record.ok) return { ...record, error: await recordWriteError(deps, home, record.error, plan) };
+  if (assignment !== null) {
+    const copied = await copyAssignment(deps, home, id, assignment);
+    if (!copied.ok) {
+      const byHand = `Copy the assignment file by hand to ${shellWord(assignmentFileOf(home, id))}.`;
+      return { ...copied, error: keptCopy(withHintParts(copied.error, [byHand]), plan, home, true) };
+    }
+  }
   const exclude = await ensureCloneExclude(deps, clone);
   if (!exclude.ok) return { ...exclude, error: keptCopy(exclude.error, plan, home, true) };
   const hook = await ensureHookSettings(deps, { ...hookRequestOf(workCopy, yes), dryRun: false });
@@ -331,6 +346,12 @@ const runNew = async (
 
   const plan = await planNew(deps, home, config, id, options.project);
   if (!plan.ok) return plan;
+  // The source check reads the file once, before the first write, and the copy uses that text.
+  const assignment =
+    options.assignment === undefined
+      ? ok(null)
+      : await readAssignment(deps, { home, path: options.assignment, again: assignmentAgain(id, options.project) });
+  if (!assignment.ok) return assignment;
   // Every refusal about the settings comes before the first write. The new branch starts at the last commit of the clone, so the
   // files that git puts into the work copy are known now: the settings checks and the consent run on them.
   // The question itself comes after the work copy exists, when a terminal can ask.
@@ -339,13 +360,15 @@ const runNew = async (
   const consent = await requireHookConsent(deps, hookRequestOf(plan.value.workCopy, options.yes), tracked.value.localText);
   if (!consent.ok) return consent;
 
-  const made = await makeWorker(deps, home, config, plan.value, options.yes);
+  const made = await makeWorker(deps, home, config, plan.value, options.yes, assignment.value);
   if (!made.ok) return made;
   const { workCopy, branch, project } = plan.value;
+  const copy = assignment.value === null ? null : assignmentFileOf(home, id);
   return ok({
     lines: [
       text(`Made the ${roles.worker} ${id} in ${relative(home, workCopy)} on the branch ${branch}.`),
       text(`It runs in the pane ${made.value.paneId} of the window ${tmuxNames.windowWorkers}.`),
+      ...(copy === null ? [] : [text(`Copied the assignment to ${relative(home, copy)}.`)]),
     ],
     json: {
       schema: schemaIds.workerNew,
@@ -355,6 +378,7 @@ const runNew = async (
       branch,
       pane: made.value.paneId,
       proxy: made.value.proxy,
+      assignment: copy,
     },
     warnings: [...notes, ...made.value.warnings],
     failed: false,
@@ -604,6 +628,67 @@ const runSummon = async (
   });
 };
 
+/**
+ * `worker reset ID --clear|--compact`: the words of the command line (exit 2), then the factory folder and its config, then
+ * `resetWorker`, which does the caller rule and every other check before it types.
+ */
+const runReset = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const parsed = parseReset({ words: args, clear: options.clear === true, compact: options.compact === true });
+  if (!parsed.ok) return parsed;
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const { workerId, kind } = parsed.value;
+  const reset = await resetWorker(deps, { home, config: loaded.value, workerId, kind });
+  return reset.ok ? ok(resetOutput(reset.value)) : reset;
+};
+
+/**
+ * `worker watch [ID]...`: reports the first change of the named workers, or of every recorded worker. The ids are checked by the
+ * watch (`requireRecord`). The watch never types, signals or writes.
+ */
+const runWatch = async (
+  deps: Deps,
+  options: WorkerOptions,
+  args: readonly string[],
+  registry: RecipeRegistry,
+): Promise<CliResult<CommandOutput>> => {
+  const located = await locateNode(deps, options, registry);
+  if (!located.ok) return located;
+  const home = located.value;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const watched = await watchWorkers(deps, { home, config: loaded.value, workerIds: args });
+  return watched.ok ? ok(watchOutput(watched.value)) : watched;
+};
+
+/** The flags `--clear` and `--compact` belong to `reset`. Another subcommand refuses them (exit 2), so no flag is taken and then ignored. */
+const requireNoResetFlags = (options: WorkerOptions): CliResult<void> => {
+  const given = [...(options.clear === true ? [flags.clear] : []), ...(options.compact === true ? [flags.compact] : [])];
+  if (given.length === 0) return ok(undefined);
+  return needsUsage(`${given.map(flagText).join(' and ')} ${given.length === 1 ? 'belongs' : 'belong'} to ${workerCommands.reset} only`);
+};
+
+/** The flag `--assignment` belongs to `new`. Another subcommand refuses it (exit 2), so no flag is taken and then ignored. */
+const requireNoAssignment = (options: WorkerOptions): CliResult<void> =>
+  options.assignment === undefined ? ok(undefined) : needsUsage(`${flagText(flags.assignment)} belongs to ${workerCommands.new} only`);
+
+/** The flags that belong to one subcommand only. Every other subcommand refuses them. */
+const requireOwnFlags = (subcommand: string, options: WorkerOptions): CliResult<void> => {
+  const stray = subcommand === workerCommands.reset ? ok(undefined) : requireNoResetFlags(options);
+  if (!stray.ok) return stray;
+  return subcommand === workerCommands.new ? ok(undefined) : requireNoAssignment(options);
+};
+
+const isSubcommand = (word: string | undefined): word is string => Object.values<string>(workerCommands).includes(word ?? '');
+
 /** `worker <subcommand>`: the commands of the workers of a node. */
 export const runWorker = async (
   deps: Deps,
@@ -611,6 +696,10 @@ export const runWorker = async (
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
   const [subcommand, ...args] = options.words;
+  if (isSubcommand(subcommand)) {
+    const stray = requireOwnFlags(subcommand, options);
+    if (!stray.ok) return stray;
+  }
   switch (subcommand) {
     case undefined:
       return needsUsage(`${commandText(commands.worker)} needs a subcommand: ${SUBCOMMANDS}`);
@@ -622,6 +711,10 @@ export const runWorker = async (
       return runResume(deps, options, args, registry);
     case workerCommands.summon:
       return runSummon(deps, options, args, registry);
+    case workerCommands.reset:
+      return runReset(deps, options, args, registry);
+    case workerCommands.watch:
+      return runWatch(deps, options, args, registry);
     case workerCommands.list:
       return args.length === 0
         ? runWorkerList(deps, { home: options.home }, registry)

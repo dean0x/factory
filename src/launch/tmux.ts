@@ -27,6 +27,14 @@ const literalWord = (word: string): string =>
 /** One tmux command as an argument list. No word of it ends the command. */
 const call = (...words: readonly string[]): TmuxArgs => words.map(literalWord);
 
+/**
+ * Joins tmux commands, each a list of words, into one argument list that tmux runs as a chain in one call. Every word goes
+ * through `call`, so a word that ends in a semicolon stays one word, and only the joiner between two commands ends a command.
+ * tmux stops the chain at the first command that fails.
+ */
+export const chainedArgs = (commands: readonly (readonly string[])[]): TmuxArgs =>
+  commands.flatMap((words, index) => (index === 0 ? call(...words) : [NEXT_COMMAND, ...call(...words)]));
+
 /** The left pane of the view window is the coordinator, the right pane is the slot. */
 const LEFT_PANE = '{left}';
 const RIGHT_PANE = '{right}';
@@ -93,6 +101,35 @@ export const paneListArgs = (id: string): TmuxArgs =>
 export const paneReadArgs = (pane: string): Result<TmuxArgs, string> => {
   const target = paneTarget(pane);
   return target.ok ? ok(call('display-message', '-p', '-t', target.value, PANE_LIST_FORMAT)) : target;
+};
+
+/**
+ * Prints the text on the screen of one pane, for the pane id only: the visible lines, with no escape sequences and no scroll-back.
+ * The call fails for a pane that does not exist. The caller reads the bottom lines of the output.
+ */
+export const capturePaneArgs = (pane: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  return target.ok ? ok(call('capture-pane', '-p', '-t', target.value)) : target;
+};
+
+/**
+ * Prints the mode flag of one pane, for the pane id only: `1` for a pane that shows a mode of tmux (the copy mode, for example) and `0`
+ * for any other pane. A pane in a mode takes the keys itself, so they never reach the program of the pane. The read of a pane id that
+ * does not exist exits 0 and prints nothing (the target of the read may fail). `parsePaneMode` reads the output.
+ */
+export const paneModeArgs = (pane: string): Result<TmuxArgs, string> => {
+  const target = paneTarget(pane);
+  return target.ok ? ok(call('display-message', '-p', '-t', target.value, '#{pane_in_mode}')) : target;
+};
+
+/** What the answer of the mode read says: no mode, a mode, or no answer at all (tmux has no such pane). */
+export type PaneMode = 'none' | 'active' | 'absent';
+
+/** Reads the output of `paneModeArgs`. Only the text `0` means no mode: any other text fails closed as a mode. */
+export const parsePaneMode = (text: string): PaneMode => {
+  const value = text.trim();
+  if (value === '') return 'absent';
+  return value === '0' ? 'none' : 'active';
 };
 
 /**
@@ -191,9 +228,10 @@ export const parsePaneBind = (text: string): Result<PaneBind, string> => {
 };
 
 /**
- * Prints the facts that a stop needs about the coordinator pane, the left pane of the window `view`: the id, the pid, the end flag,
- * and one flag that tmux computes itself (the pane carries the node mark of this session). A program can set the mark to any text,
- * so the call never prints it: tmux compares it, and the flag is `0` or `1`. `parseCoordinatorPane` reads the output.
+ * Prints the facts that a command needs about the coordinator pane, the left pane of the window `view`: the id, the pid, the end
+ * flag, and one flag that tmux computes itself (the pane carries the node mark of this session); then the start command of the
+ * pane, last. A program can set the mark to any text, so the call never prints it: tmux compares it, and the flag is `0` or `1`.
+ * The start command is the fact that no program in the pane can set. `parseCoordinatorPane` reads the output.
  */
 export const coordinatorReadArgs = (id: string): TmuxArgs =>
   call(
@@ -201,7 +239,7 @@ export const coordinatorReadArgs = (id: string): TmuxArgs =>
     '-p',
     '-t',
     coordinatorPane(id),
-    [PANE_ID_FORMAT, '#{pane_pid}', '#{pane_dead}', optionIs(tmuxNames.optionNode, id)].join(FIELD_SEPARATOR),
+    [PANE_ID_FORMAT, '#{pane_pid}', '#{pane_dead}', optionIs(tmuxNames.optionNode, id), '#{pane_start_command}'].join(FIELD_SEPARATOR),
   );
 
 /** What the read of `coordinatorReadArgs` finds. */
@@ -212,22 +250,39 @@ export interface CoordinatorPane {
   readonly dead: boolean;
   /** True when the pane carries the node mark of the session: it is the pane that `start` made for the coordinator. */
   readonly node: boolean;
+  /** The command that made the pane, as tmux shows it. Empty for a pane that runs the shell. */
+  readonly startCommand: string;
 }
 
-/** The count of fields of the read of the coordinator pane. */
-const COORDINATOR_FIELDS = 4;
+/** The count of fields before the start command in the read of the coordinator pane: the id, the pid, the end flag and the node flag. */
+const COORDINATOR_FIELDS_BEFORE_START = 4;
 
-/** Reads the output of the call from `coordinatorReadArgs`: one line, with four fields that have a fixed form. The error names no text of the output. */
+/**
+ * Reads the output of the call from `coordinatorReadArgs`: one line, with four fields that have a fixed form and the start command
+ * after the fourth separator. The start command is the rest of the line, as in `parsePaneBind`. The error names no text of the output.
+ */
 export const parseCoordinatorPane = (text: string): Result<CoordinatorPane, string> => {
   const line = text.endsWith('\n') ? text.slice(0, -1) : text;
   const fields = line.split(FIELD_SEPARATOR);
   const [paneId = '', pid = ''] = fields;
-  const flags = flagsOf(fields.slice(2));
-  if (fields.length !== COORDINATOR_FIELDS || !isPaneId(paneId) || !PID_PATTERN.test(pid) || flags === null) {
+  const flags = flagsOf(fields.slice(2, COORDINATOR_FIELDS_BEFORE_START));
+  if (
+    line.includes('\n') ||
+    fields.length <= COORDINATOR_FIELDS_BEFORE_START ||
+    !isPaneId(paneId) ||
+    !PID_PATTERN.test(pid) ||
+    flags === null
+  ) {
     return err('the read gives text that is not the line of one pane');
   }
   const [dead = false, node = false] = flags;
-  return ok({ paneId, pid: Number(pid), dead, node });
+  return ok({
+    paneId,
+    pid: Number(pid),
+    dead,
+    node,
+    startCommand: fields.slice(COORDINATOR_FIELDS_BEFORE_START).join(FIELD_SEPARATOR),
+  });
 };
 
 export interface PaneRow {
@@ -508,11 +563,10 @@ export const startSteps = (input: {
   const { id, home, coordinatorDir, launch } = input;
   const view = windowTarget(id, tmuxNames.windowView);
   return [
-    [
-      ...call('new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', coordinatorDir, '--', ...launch),
-      NEXT_COMMAND,
-      ...call('set-option', '-w', '-t', view, 'remain-on-exit', 'on'),
-    ],
+    chainedArgs([
+      ['new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', coordinatorDir, '--', ...launch],
+      ['set-option', '-w', '-t', view, 'remain-on-exit', 'on'],
+    ]),
     call('set-environment', '-t', sessionTarget(id), '-r', env.proxyBaseUrl),
     call('set-environment', '-t', sessionTarget(id), env.session, id),
     call('set-option', '-p', '-t', coordinatorPane(id), tmuxNames.optionNode, id),

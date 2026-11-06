@@ -223,7 +223,9 @@ describe('stopCaseOf', () => {
     ['Stop', 'idle'],
     ['UserPromptSubmit', 'busy'],
     ['PreCompact', 'busy'],
-  ] as const)('reads %s as the case %s', (event, expected) => {
+    ['PreToolUse', 'busy'],
+    ['Notification', 'busy'],
+  ] as const)('TP-5: reads %s as the case %s', (event, expected) => {
     expect(stopCaseOf({ state: 'valid', line: line(event) })).toBe(expected);
   });
 
@@ -283,6 +285,13 @@ describe('worker stop: a session at the prompt (TP-26)', () => {
   });
 
   it.each(['UserPromptSubmit', 'PreCompact'] as const)('sends TERM to a busy session too (the last event is %s)', async (event) => {
+    const made = make();
+    await seed(made.deps, { event });
+    expect(await succeeded(made)).toMatchObject({ kind: 'stopped', way: stopWay.term, state: 'busy' });
+    expect(made.deps.terminated).toEqual([PID]);
+  });
+
+  it.each(['Notification', 'PreToolUse'] as const)('TP-5: sends TERM to a session as the busy case (the last event is %s)', async (event) => {
     const made = make();
     await seed(made.deps, { event });
     expect(await succeeded(made)).toMatchObject({ kind: 'stopped', way: stopWay.term, state: 'busy' });
@@ -375,6 +384,17 @@ describe('worker stop: only the cases that the caller allows', () => {
       expect(killed(made)).toEqual([]);
     },
   );
+
+  it('TP-5: refuses a session that waits at a dialog when only the idle case is allowed: exit 1, and nothing is sent or closed', async () => {
+    const made = make();
+    await seed(made.deps, { event: 'Notification' });
+    const result = await runOnly(made, ['idle']);
+    if (result.ok) throw new Error(`the stop should have failed, it gave ${JSON.stringify(result.value)}`);
+    expect(exitCodeOf[result.error.kind]).toBe(1);
+    expect(result.error.message).toContain('busy');
+    expect(made.deps.terminated).toEqual([]);
+    expect(killed(made)).toEqual([]);
+  });
 
   it('stops an idle session when only the idle case is allowed', async () => {
     const made = make();

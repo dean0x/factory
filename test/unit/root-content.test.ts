@@ -1120,6 +1120,55 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       expect(requireRootClean(found).ok).toBe(true);
     });
 
+    describe('the settings that hold or refuse the input of other sessions (TP-36)', () => {
+      const SEEN = 'project and local settings only';
+
+      it.each([['hold'], ['refuse']])('warns for crossSessionInbound %s, names the file and the value, and does not stop', async (value) => {
+        const deps = make();
+        put(deps, 'web', JSON.stringify({ [claudeSettingKeys.crossSessionInbound]: value }));
+        const found = await scan(deps);
+        expect(levelsOf(found, checkIds.permissionMode)).not.toContain('fail');
+        const text = textOf(found, checkIds.permissionMode);
+        expect(text).toContain('web/.claude/settings.local.json');
+        expect(text).toContain(`${claudeSettingKeys.crossSessionInbound} to ${value}`);
+        expect(text).toContain(SEEN);
+        expect(requireRootClean(found).ok).toBe(true);
+      });
+
+      it.each([
+        ['accept', { [claudeSettingKeys.crossSessionInbound]: 'accept' }],
+        ['a value that is no mode', { [claudeSettingKeys.crossSessionInbound]: 'other' }],
+        ['a value that is no text', { [claudeSettingKeys.crossSessionInbound]: true }],
+        ['no setting', {}],
+      ])('gives no warning for %s', async (_name, settings) => {
+        const deps = make();
+        put(deps, 'web', JSON.stringify(settings));
+        const text = textOf(await scan(deps), checkIds.permissionMode);
+        expect(text).not.toContain(claudeSettingKeys.crossSessionInbound);
+        expect(text).not.toContain(SEEN);
+      });
+
+      it('warns for the default mode plan, names the file, and does not stop', async () => {
+        const deps = make();
+        put(deps, 'coordinator', JSON.stringify({ permissions: { defaultMode: 'plan' } }));
+        const found = await scan(deps);
+        expect(levelsOf(found, checkIds.permissionMode)).not.toContain('fail');
+        const text = textOf(found, checkIds.permissionMode);
+        expect(text).toContain('coordinator/.claude/settings.local.json');
+        expect(text).toContain('default mode plan');
+        expect(text).toContain(SEEN);
+        expect(requireRootClean(found).ok).toBe(true);
+      });
+
+      it('gives no warning for the default mode default', async () => {
+        const deps = make();
+        put(deps, 'coordinator', JSON.stringify({ permissions: { defaultMode: 'default' } }));
+        const text = textOf(await scan(deps), checkIds.permissionMode);
+        expect(text).not.toContain('default mode');
+        expect(text).not.toContain(SEEN);
+      });
+    });
+
     it.each([
       [claudeSettingKeys.approveAllMcp, true],
       [claudeSettingKeys.approveMcpList, ['db']],

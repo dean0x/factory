@@ -7,7 +7,13 @@ import type { Deps } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { hookNames, schemaIds, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
-import { readOwnCoordinatorSession, readWorkerLastSeen, writeLastSeen } from '../../src/workers/last-seen.js';
+import {
+  promptStateOf,
+  readOwnCoordinatorSession,
+  readWorkerLastSeen,
+  writeLastSeen,
+  type LastSeen,
+} from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { runHook } from '../helpers/package-registry.js';
@@ -115,6 +121,79 @@ describe('factory hook: the last-seen line of each captured payload (TP-5)', () 
   });
 });
 
+describe('factory hook: the dialog states of the Notification and PreToolUse events (TP-4)', () => {
+  const stateOfLine = (deps: FakeDeps): unknown => {
+    const line = lineOf(deps) as LastSeen | null;
+    return line === null ? null : promptStateOf(line);
+  };
+
+  it.each(hookNames.notificationTypes)('TP-4: writes the state waits for the Notification type %s', async (type) => {
+    const deps = make({ stdin: payload('Notification', { [hookNames.inputKeys.notificationType]: type }) });
+    expect(await runHook(deps, ['Notification'])).toEqual({ ok: true, value: undefined });
+    expect(lineOf(deps)).toMatchObject({ event: 'Notification', session_id: SESSION });
+    expect(stateOfLine(deps)).toBe('waits');
+  });
+
+  it('TP-4: writes the state busy for PreToolUse', async () => {
+    const deps = make({ stdin: payload('PreToolUse') });
+    expect(await runHook(deps, ['PreToolUse'])).toEqual({ ok: true, value: undefined });
+    expect(stateOfLine(deps)).toBe('busy');
+  });
+
+  it.each([
+    ['the type idle_prompt', { [hookNames.inputKeys.notificationType]: 'idle_prompt' }],
+    ['a type that is not on the list', { [hookNames.inputKeys.notificationType]: 'auth_success' }],
+    ['an empty type', { [hookNames.inputKeys.notificationType]: '' }],
+    ['a type with other letter case', { [hookNames.inputKeys.notificationType]: 'Permission_Prompt' }],
+    ['a type that holds a listed type as a part', { [hookNames.inputKeys.notificationType]: 'permission_prompt_x' }],
+  ])('TP-4: writes no line for a Notification with %s, and reports no fault', async (_name, fields) => {
+    const deps = make({ stdin: payload('Notification', fields) });
+    const before = snapshot(deps);
+    expect(await runHook(deps, ['Notification'])).toEqual({ ok: true, value: undefined });
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('TP-4: writes no line for a Notification with no type', async () => {
+    const { [hookNames.inputKeys.notificationType]: _type, ...withoutType } = FIXTURE.hooks.Notification;
+    const deps = make({ stdin: JSON.stringify(withoutType) });
+    const before = snapshot(deps);
+    expect(await runHook(deps, ['Notification'])).toEqual({ ok: true, value: undefined });
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('TP-4: keeps the line of an earlier event when an idle_prompt notice arrives', async () => {
+    const deps = make({ stdin: payload('Notification', { [hookNames.inputKeys.notificationType]: 'idle_prompt' }) });
+    const stored = { schema: schemaIds.lastSeen, session_id: SESSION, event: 'Stop', event_at: NOW, context_pct: null, pct_at: null, session_marker: NODE_ID };
+    deps.seed(FILE, `${JSON.stringify(stored)}\n`);
+    expect((await runHook(deps, ['Notification'])).ok).toBe(true);
+    expect(lineOf(deps)).toEqual(stored);
+  });
+
+  it('TP-4: refuses a type that is not text, and writes nothing', async () => {
+    const deps = make({ stdin: payload('Notification', { [hookNames.inputKeys.notificationType]: 7 }) });
+    const before = snapshot(deps);
+    expect(errorOf(await runHook(deps, ['Notification'])).length).toBeGreaterThan(0);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it.each(hookNames.events)('TP-4: exits 0 with an empty stdout and empty stderr for %s with a listed input', async (event) => {
+    const deps = make({ stdin: JSON.stringify(FIXTURE.hooks[event]) });
+    expect(await runLine(['hook', event], deps)).toEqual({ code: 0, out: '', err: '' });
+  });
+
+  it.each([
+    ['idle_prompt', 'idle_prompt'],
+    ['a missing type', undefined],
+  ])('TP-4: exits 0 with an empty stdout and empty stderr for a Notification with %s', async (_name, type) => {
+    const fields = type === undefined ? {} : { [hookNames.inputKeys.notificationType]: type };
+    const { [hookNames.inputKeys.notificationType]: _type, ...withoutType } = FIXTURE.hooks.Notification;
+    const deps = make({ stdin: JSON.stringify({ ...withoutType, ...fields }) });
+    const before = snapshot(deps);
+    expect(await runLine(['hook', 'Notification'], deps)).toEqual({ code: 0, out: '', err: '' });
+    expect(snapshot(deps)).toBe(before);
+  });
+});
+
 describe('factory hook: refusals of the input (TP-8)', () => {
   it.each([
     ['a session id that is not a UUID', payload('Stop', { session_id: 'not-a-uuid' })],
@@ -124,7 +203,7 @@ describe('factory hook: refusals of the input (TP-8)', () => {
     ['a missing session id', JSON.stringify({ hook_event_name: 'Stop' })],
     ['a missing event name', JSON.stringify({ session_id: SESSION })],
     ['an event name that differs from the argument', payload('Stop', { hook_event_name: 'SessionStart' })],
-    ['an event name off the list', payload('Stop', { hook_event_name: 'Notification' })],
+    ['an event name off the list', payload('Stop', { hook_event_name: 'SubagentStop' })],
     ['an input that is not JSON', 'this is not json'],
     ['an input that is a list', '[]'],
     ['an input that is null', 'null'],
@@ -137,7 +216,7 @@ describe('factory hook: refusals of the input (TP-8)', () => {
   });
 
   it.each([
-    ['an event that is not on the list', ['Notification']],
+    ['an event that is not on the list', ['SubagentStop']],
     ['an event with other letter case', ['stop']],
     ['the status line word, which is not an event', [hookNames.statusline]],
     ['no event', []],
@@ -614,7 +693,7 @@ describe('factory hook through runCli: exit 0 and an empty stdout on every path 
 
   it.each([
     ['a bad payload', ['hook', 'Stop'], () => make({ stdin: 'oops' })],
-    ['an unknown event', ['hook', 'Notification'], () => make({ stdin: stopInput })],
+    ['an unknown event', ['hook', 'SubagentStop'], () => make({ stdin: stopInput })],
     ['a broken config', ['hook', 'Stop'], brokenConfig],
     ['no FACTORY_HOME', ['hook', 'Stop'], () => make({ stdin: stopInput, env: { FACTORY_HOME: undefined } })],
     ['no event', ['hook'], () => make({ stdin: stopInput })],

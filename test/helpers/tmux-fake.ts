@@ -22,6 +22,11 @@ export interface PaneFixture {
    * runs the shell. tmux shows these words as the start command of the pane, and no program in the pane can change them.
    */
   readonly command?: readonly string[];
+  /**
+   * The text that `capture-pane -p` prints for the pane: fixed text, not a screen model. A new line ends the text if it has none.
+   * Default: empty, as for a pane with nothing on it.
+   */
+  readonly screen?: string;
 }
 
 export interface TmuxFixture {
@@ -38,6 +43,11 @@ export interface TmuxFixture {
   readonly failing?: string;
   /** Sessions whose coordinator program has ended. The pane stays, because of remain-on-exit. */
   readonly endedCoordinators?: readonly string[];
+  /**
+   * The program of the coordinator pane of a session of the fixture, as an argument list (see `PaneFixture.command`), by session
+   * name. Default: none, as for a pane that runs the shell.
+   */
+  readonly coordinatorCommands?: Readonly<Record<string, readonly string[]>>;
   /**
    * The program of a new session ends at once. Like tmux, the fake then ends the session too, unless the same call sets
    * remain-on-exit for the window. With remain-on-exit the session stays, and its coordinator counts as ended.
@@ -57,6 +67,11 @@ export interface TmuxFixture {
    * Default: no limit.
    */
   readonly splitsBeforeTile?: number;
+  /**
+   * Panes that show a mode screen from the start, for example the copy mode, by pane id. The pane must exist in the fixture. A mode pane
+   * prints `1` for the format `pane_in_mode`, and every other pane prints `0`. Default: none.
+   */
+  readonly panesInMode?: readonly string[];
 }
 
 /** The state of one pane, as the log shows it. */
@@ -88,6 +103,16 @@ export interface TmuxLog {
   modes(): Readonly<Record<string, string>>;
   /** Every run of a shell text by `runShell`, with the exit code of the shell, in order. */
   shellRuns(): readonly ShellRun[];
+  /** The input that `send-keys` calls typed into panes, in order: one item for each key name or each text. A call that fails types nothing. */
+  typed(): readonly TypedInput[];
+}
+
+/** One item of the input that a `send-keys` call typed into a pane. */
+export interface TypedInput {
+  readonly pane: string;
+  /** True for the text of a call with `-l`, and false for a key name. */
+  readonly literal: boolean;
+  readonly text: string;
 }
 
 /** One run of the shell text of a `run-shell` call. */
@@ -148,6 +173,7 @@ interface FakePane {
   dead: boolean;
   readonly cwd: string | null;
   readonly command: readonly string[];
+  readonly screen: string;
 }
 
 /** The word after a flag, or an empty text. */
@@ -343,6 +369,7 @@ export const tmuxHandler = (
   /** The mode screens: the pane id and the text of the screen. */
   const modeScreens = new Map<string, string>();
   const runs: ShellRun[] = [];
+  const typedInput: TypedInput[] = [];
   /** The splits of each window since its last `select-layout`, by `session:window`. */
   const splitsSinceTile = new Map<string, number>();
 
@@ -379,6 +406,7 @@ export const tmuxHandler = (
       dead: more.dead ?? false,
       cwd: more.cwd || null,
       command: more.command ?? [],
+      screen: more.screen ?? '',
     };
     panes.push(pane);
     return pane;
@@ -406,7 +434,10 @@ export const tmuxHandler = (
   for (const [name, home] of Object.entries(fixture.sessions ?? {})) {
     sessions.set(name, home);
     // The marks that `start` sets: the node on the coordinator pane, and the board on the slot pane.
-    addPane(name, tmuxNames.windowView, { options: { [tmuxNames.optionNode]: name } });
+    addPane(name, tmuxNames.windowView, {
+      options: { [tmuxNames.optionNode]: name },
+      command: fixture.coordinatorCommands?.[name] ?? [],
+    });
     addPane(name, tmuxNames.windowView, { options: { [tmuxNames.optionSlot]: tmuxNames.slotBoard } });
     addPane(name, tmuxNames.windowWorkers);
     if (endedCoordinators.has(name)) markCoordinatorEnded(name);
@@ -414,6 +445,10 @@ export const tmuxHandler = (
   for (const { session, window, ...more } of fixture.panes ?? []) {
     if (!sessions.has(session)) throw new Error(`the pane fixture names the session ${session}, which is not in the fixture`);
     addPane(session, window ?? tmuxNames.windowWorkers, more);
+  }
+  for (const id of fixture.panesInMode ?? []) {
+    if (!panes.some((pane) => pane.id === id)) throw new Error(`the pane fixture puts the pane ${id} in a mode, but it has no such pane`);
+    modeScreens.set(id, 'copy mode');
   }
 
   const targetOf = (command: readonly string[]): string => after(command, '-t');
@@ -632,6 +667,33 @@ export const tmuxHandler = (
       case 'kill-session':
         dropSession(targetSession(command));
         return exited(0);
+      case 'send-keys': {
+        const pane = resolvePane(targetOf(command));
+        if (pane === undefined) return cantFindPane(targetOf(command));
+        // The flags come first. The first word that is no flag, and every word after it, is a key name or text.
+        let literal = false;
+        let inFlags = true;
+        const items: string[] = [];
+        for (let index = 0; index < rest.length; index += 1) {
+          const word = rest[index] ?? '';
+          if (inFlags && word === '-t') index += 1;
+          else if (inFlags && word === '-l') literal = true;
+          else if (inFlags && word === '--') inFlags = false;
+          else if (inFlags && word.startsWith('-')) return exited(1, '', `the fake does not know the flag ${word}\n`);
+          else {
+            inFlags = false;
+            items.push(word);
+          }
+        }
+        for (const text of items) typedInput.push({ pane: pane.id, literal, text });
+        return exited(0);
+      }
+      case 'capture-pane': {
+        const pane = resolvePane(targetOf(command));
+        if (pane === undefined) return cantFindPane(targetOf(command));
+        if (!command.includes('-p')) return exited(1, '', 'the fake captures only with -p\n');
+        return exited(0, pane.screen === '' || pane.screen.endsWith('\n') ? pane.screen : `${pane.screen}\n`);
+      }
       default:
         return exited(0);
     }
@@ -684,6 +746,7 @@ export const tmuxHandler = (
       activePane: (session, window) => activeIn(session, window)?.id,
       modes: () => Object.fromEntries([...modeScreens].filter(([id]) => panes.some((pane) => pane.id === id))),
       shellRuns: () => runs,
+      typed: () => typedInput,
       panes: () =>
         panes.map((pane) => ({
           id: pane.id,

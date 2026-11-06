@@ -187,6 +187,14 @@ describe('status: the builder', () => {
       expect(entry).toMatchObject({ state: 'busy', contextPct: 41, mark: 'MAX' });
     });
 
+    it.each([
+      ['Notification', 'waits'],
+      ['PreToolUse', 'busy'],
+    ] as const)('TP-5: reads the state of a %s line as %s', (event, state) => {
+      const { entry } = firstOf(inputOf({ lines: new Map([['alpha', lineOf({ event: [event, 1] })]]) }));
+      expect(entry.state).toBe(state);
+    });
+
     it('says unknown for a worker with no line, and for a line that the worker does not own', () => {
       for (const read of [undefined, { kind: 'none' }] as const) {
         const lines = read === undefined ? new Map<string, LineRead>() : new Map<string, LineRead>([['alpha', read]]);
@@ -537,6 +545,13 @@ describe('status: the panes (TP-50)', () => {
       ['gamma', 'busy'],
     ]);
     expect(jsonOf(output).workers[1]).toMatchObject({ pane: '%8', dead: true, state: 'stopped' });
+  });
+
+  it('TP-5: shows a worker that waits at a dialog as waits, in the table and in the JSON', async () => {
+    const made = await make({ workers: [{ id: 'alpha', line: { event: 'Notification' } }], panes: [pane('alpha', { id: '%7' })] });
+    const output = await statusOf(made);
+    expect(rowsOf(output).map((row) => [row.id, row.state])).toEqual([['alpha', 'waits']]);
+    expect(jsonOf(output).workers[0]).toMatchObject({ id: 'alpha', pane: '%7', state: 'waits' });
   });
 
   it('refuses a session of the same name that belongs to another factory folder, and lists no pane', async () => {

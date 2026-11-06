@@ -10,10 +10,14 @@ import {
 } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags } from '../../src/cli/table.js';
+import { commands, selfCommands, workerCommands } from '../../src/names.js';
 import { FACTORY_VERSION } from '../../src/version.js';
-import { createFakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
+import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
+import { HOME, NODE } from '../helpers/slot-fixture.js';
+import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const run = async (argv: string[]) => {
   const sink = captureSink();
@@ -394,5 +398,157 @@ describe('control characters in error text', () => {
     expect(result.code).toBe(2);
     expect(result.err).toContain('unknown command "?[2Jx"');
     expect(result.err).not.toContain('\u001b');
+  });
+});
+
+describe('the reset, watch and self commands in the command line', () => {
+  /** A node in the factory list, with a tmux session of the node unless `session` is false, and no worker. */
+  const made = (session = true) => {
+    const { handler, log } = tmuxHandler({ sessions: session ? { [NODE]: HOME } : {}, panes: [] });
+    const deps = createFakeDeps({ cwd: '/w', os: 'darwin', env: { PATH: '/bin', XDG_STATE_HOME: '/state' }, run: handler });
+    seedConfig(deps, HOME, sampleConfig());
+    registerRoot(deps, HOME, NODE);
+    return { deps, log };
+  };
+
+  const runOn = async (deps: FakeDeps, argv: readonly string[]) => {
+    const sink = captureSink();
+    const code = await runCli([...argv], deps, sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  it('has one entry in the command table for each command name, except help', () => {
+    const names = commandTable.map((command) => command.name).sort();
+    expect(names).toEqual(Object.values(commands).filter((name) => name !== commands.help).sort());
+  });
+
+  it('shows one usage line for each subcommand of worker and of self', () => {
+    const usageOf = (name: string): string => commandTable.find((command) => command.name === name)?.usage ?? '';
+    for (const subcommand of Object.values(workerCommands)) {
+      expect(usageOf(commands.worker), subcommand).toContain(`factory ${commands.worker} ${subcommand} `);
+    }
+    for (const subcommand of Object.values(selfCommands)) {
+      expect(usageOf(commands.self), subcommand).toContain(`factory ${commands.self} ${subcommand} `);
+    }
+  });
+
+  it('TP-22: shows the usage of worker reset and worker watch, and the two flags of reset, in the help of worker', async () => {
+    const result = await run(['worker', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory worker reset ID --clear|--compact [--home DIR]');
+    expect(result.out).toContain('factory worker watch [ID]... [--home DIR]');
+    expect(result.out).toMatch(/--clear\s+With reset: clear the session of the worker/);
+    expect(result.out).toMatch(/--compact\s+With reset: compact the session of the worker/);
+  });
+
+  it('TP-32: shows the assignment flag in the usage of worker new and in the flag list of worker', async () => {
+    const result = await run(['worker', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory worker new ID --project PROJECT [--assignment FILE] [--home DIR] [--yes]');
+    expect(result.out).toMatch(/--assignment FILE\s+With new: copy the text of FILE/);
+    expect(result.out).toContain('.factory/orders/');
+  });
+
+  it('TP-27: lists self in the help, and shows the usage of self reset', async () => {
+    const listed = await run(['help']);
+    expect(listed.out).toMatch(/\n {2}self {6}\S/);
+    const result = await run(['self', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Usage: factory self reset [--home DIR]');
+  });
+
+  it('says in the help of upgrade that the yes flag agrees to the new hook events of the work copies and of the coordinator', async () => {
+    const result = await run(['upgrade', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toMatch(/--yes\s+Agree with no question to two changes: the registration of a factory folder/);
+    expect(result.out).toContain('the new hook events in the Claude Code settings of the work copies and of the coordinator');
+  });
+
+  it.each([
+    ['worker reset with no flag', ['worker', 'reset', 'alpha'], 'needs one of --clear and --compact'],
+    ['worker reset with both flags', ['worker', 'reset', 'alpha', '--clear', '--compact'], 'and not both'],
+    ['worker reset with no id', ['worker', 'reset', '--clear'], 'takes one argument'],
+    ['worker reset with two ids', ['worker', 'reset', 'alpha', 'beta', '--clear'], 'takes one argument'],
+    ['self with no subcommand', ['self'], 'needs a subcommand: reset'],
+    ['self with an unknown subcommand', ['self', 'nope'], 'unknown subcommand "nope"'],
+    ['self reset with a word', ['self', 'reset', 'now'], 'takes no argument'],
+  ])('TP-22, TP-27: exits 2 for %s, and runs no program', async (_name, argv, message) => {
+    const { deps } = made();
+    const result = await runOn(deps, [...argv, '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain(message);
+    expect(deps.calls).toEqual([]);
+  });
+
+  it.each([
+    ['worker stop with --clear', ['worker', 'stop', 'alpha', '--clear'], '--clear belongs to reset only'],
+    ['worker stop with --compact', ['worker', 'stop', 'alpha', '--compact'], '--compact belongs to reset only'],
+    ['worker new with --clear', ['worker', 'new', 'alpha', '--project', 'web', '--clear'], '--clear belongs to reset only'],
+    ['worker resume with --compact', ['worker', 'resume', 'alpha', '--compact'], '--compact belongs to reset only'],
+    ['worker summon with --clear', ['worker', 'summon', 'alpha', '--clear'], '--clear belongs to reset only'],
+    ['worker watch with --compact', ['worker', 'watch', '--compact'], '--compact belongs to reset only'],
+    ['worker list with --clear', ['worker', 'list', '--clear'], '--clear belongs to reset only'],
+    ['worker stop with both flags', ['worker', 'stop', 'alpha', '--clear', '--compact'], '--clear and --compact belong to reset only'],
+  ])('exits 2 for %s, names reset, and runs no program', async (_name, argv, message) => {
+    const { deps } = made();
+    const result = await runOn(deps, [...argv, '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain(message);
+    expect(deps.calls).toEqual([]);
+  });
+
+  it.each([
+    ['worker stop', ['worker', 'stop', 'alpha']],
+    ['worker resume', ['worker', 'resume', 'alpha']],
+    ['worker summon', ['worker', 'summon', 'alpha']],
+    ['worker reset', ['worker', 'reset', 'alpha', '--clear']],
+    ['worker watch', ['worker', 'watch']],
+    ['worker list', ['worker', 'list']],
+  ])('exits 2 for %s with --assignment, names new, and runs no program', async (_name, argv) => {
+    const { deps } = made();
+    const result = await runOn(deps, [...argv, '--assignment', 'task.md', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--assignment belongs to new only');
+    expect(deps.calls).toEqual([]);
+  });
+
+  it('keeps the message for an unknown subcommand that gets --assignment', async () => {
+    const result = await runOn(made().deps, ['worker', 'nope', '--assignment', 'task.md', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('unknown subcommand "nope"');
+  });
+
+  it.each([
+    ['worker reset with --clear', ['worker', 'reset', 'alpha', '--clear']],
+    ['worker reset with --compact', ['worker', 'reset', 'alpha', '--compact']],
+    ['self reset', ['self', 'reset']],
+  ])('TP-22, TP-27: reads the config, then exits 2 for %s outside the pane of the coordinator, with no tmux call', async (_name, argv) => {
+    const { deps, log } = made();
+    const result = await runOn(deps, [...argv, '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('TMUX_PANE holds no pane id');
+    expect(deps.calls).toEqual([]);
+    expect(log.calls).toEqual([]);
+  });
+
+  it('TP-31: exits 3 for worker watch when no session of the node runs, and names factory start', async () => {
+    const result = await runOn(made(false).deps, ['worker', 'watch', '--home', HOME]);
+    expect(result.code).toBe(3);
+    expect(result.err).toContain('"factory start"');
+  });
+
+  it('TP-31: exits 2 for worker watch with an id that has no record', async () => {
+    const result = await runOn(made().deps, ['worker', 'watch', 'ghost', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('ghost');
+  });
+
+  it('TP-31: exits 0 for worker watch when no worker has a pane, in one line, and in JSON with the schema of the watch', async () => {
+    const text = await runOn(made().deps, ['worker', 'watch', '--home', HOME]);
+    expect(text.code).toBe(0);
+    expect(text.out).toContain('NO WORKER');
+    const json = await runOn(made().deps, ['worker', 'watch', '--home', HOME, '--json']);
+    expect(json.code).toBe(0);
+    expect(JSON.parse(json.out)).toMatchObject({ schema: 'factory.worker-watch/v1' });
   });
 });

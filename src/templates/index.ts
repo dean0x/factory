@@ -63,6 +63,7 @@ export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] =
 export const blockInputOf = (config: FactoryConfig, setup: SetupTexts, modes: ApprovalModes): BlockInput => ({
   recipe: config.entry,
   layer: config.core.node.layer,
+  nodeId: config.core.node.id,
   modes,
   ownerPrefix: config.core.owner.prefix,
   limits: {

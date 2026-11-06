@@ -66,6 +66,8 @@ const LAUNCH_BASE = [
   'auto',
   '--effort',
   'high',
+  '--name',
+  'demo',
 ];
 /** The folders that the launch adds: the state folder first, then each project. */
 const LAUNCH_DIRS = ['--add-dir', '/w/node/.factory', '--add-dir', '/w/node/web'];

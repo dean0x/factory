@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  capturePaneArgs,
+  chainedArgs,
+  coordinatorReadArgs,
   isPaneId,
   joinPaneArgs,
   killPaneArgs,
@@ -7,9 +10,12 @@ import {
   paneAbsent,
   paneBindArgs,
   paneListArgs,
+  paneModeArgs,
   paneReadArgs,
+  parseCoordinatorPane,
   parsePaneBind,
   parsePaneList,
+  parsePaneMode,
   parsePaneListSoft,
   parseSlotList,
   parseSummonMark,
@@ -26,6 +32,7 @@ import {
   type TmuxArgs,
 } from '../../src/launch/tmux.js';
 import type { Result } from '../../src/core/result.js';
+import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const argvOf = (result: Result<TmuxArgs, string>): TmuxArgs => {
   if (!result.ok) throw new Error(result.error);
@@ -168,6 +175,88 @@ describe('the pane that the read for the binding gives', () => {
   });
 });
 
+describe('the tmux call that reads the coordinator pane', () => {
+  it('TP-19: prints the id, the pid, the end flag, the node flag that tmux computes, and the start command last', () => {
+    expect(coordinatorReadArgs('demo')).toEqual([
+      'display-message',
+      '-p',
+      '-t',
+      '=demo:view.{left}',
+      '#{pane_id}|#{pane_pid}|#{pane_dead}|#{==:#{@node},demo}|#{pane_start_command}',
+    ]);
+  });
+
+  it('TP-19: never reads the text of the node mark that a program in a pane can set: tmux compares it', () => {
+    const format = coordinatorReadArgs('demo').at(-1) ?? '';
+    expect(format).not.toMatch(/(^|\|)#\{@node\}(\||$)/);
+  });
+
+  it('TP-19: the fake tmux answers with the start command of the coordinator pane of the fixture', () => {
+    const { handler } = tmuxHandler({
+      sessions: { demo: '/w/node' },
+      coordinatorCommands: { demo: ['env', 'FACTORY_SESSION=demo', 'claude', '--add-dir', '/w/node/state dir'] },
+    });
+    const read = handler({ command: 'tmux', args: coordinatorReadArgs('demo'), cwd: undefined });
+    if (!read.ok) throw new Error(read.error.message);
+    expect(parseCoordinatorPane(read.value.stdout)).toMatchObject({
+      ok: true,
+      value: { node: true, dead: false, startCommand: 'env FACTORY_SESSION=demo claude --add-dir "/w/node/state dir"' },
+    });
+  });
+
+  it('TP-19: the coordinator pane of a fixture with no command has an empty start command', () => {
+    const { handler } = tmuxHandler({ sessions: { demo: '/w/node' } });
+    const read = handler({ command: 'tmux', args: coordinatorReadArgs('demo'), cwd: undefined });
+    if (!read.ok) throw new Error(read.error.message);
+    expect(parseCoordinatorPane(read.value.stdout)).toMatchObject({ ok: true, value: { startCommand: '' } });
+  });
+});
+
+describe('the coordinator pane that the read gives', () => {
+  const START = 'env FACTORY_HOME=/w/node FACTORY_SESSION=demo claude --add-dir /w/node/.factory/state';
+  const line = (flags = '0|1', start = START, head = '%3|4777'): string => `${head}|${flags}|${start}\n`;
+
+  it('TP-19: gives the pane with its flags and its start command', () => {
+    expect(parseCoordinatorPane(line())).toEqual({
+      ok: true,
+      value: { paneId: '%3', pid: 4777, dead: false, node: true, startCommand: START },
+    });
+  });
+
+  it('TP-19: reads the end flag and the node flag from their own places', () => {
+    expect(parseCoordinatorPane(line('1|0'))).toMatchObject({ ok: true, value: { dead: true, node: false } });
+  });
+
+  it('TP-19: keeps the separator inside the start command: the start command is all that comes after the fourth separator', () => {
+    expect(parseCoordinatorPane(line('0|1', 'a|b|c'))).toMatchObject({ ok: true, value: { startCommand: 'a|b|c' } });
+  });
+
+  it('TP-19: gives an empty start command for a pane that runs the shell', () => {
+    expect(parseCoordinatorPane(line('0|1', ''))).toMatchObject({ ok: true, value: { startCommand: '' } });
+  });
+
+  it.each([
+    ['no text', ''],
+    ['a pane id that is not one', 'x3|4777|0|1|a\n'],
+    ['a pid of 0', '%3|0|0|1|a\n'],
+    ['a pid with a leading zero', '%3|0477|0|1|a\n'],
+    ['an end flag that is not 0 or 1', '%3|4777|2|1|a\n'],
+    ['a node flag that is not 0 or 1', '%3|4777|0|x|a\n'],
+    ['the old line with no start command field', '%3|4777|0|1\n'],
+    ['two lines', `${line()}${line()}`],
+    ['text after an empty line', `${line()}\n`],
+    ['text that is not a pane line', 'no such pane\n'],
+  ])('TP-19: refuses %s', (_name, text) => {
+    expect(parseCoordinatorPane(text).ok).toBe(false);
+  });
+
+  it('TP-19: does not repeat the text of the read in the reason', () => {
+    const result = parseCoordinatorPane('%3|4777|0|1|a\nSECRET-TEXT\n');
+    if (result.ok) throw new Error('the read should have been refused');
+    expect(result.error).not.toContain('SECRET-TEXT');
+  });
+});
+
 describe('the tmux call that ends a pane', () => {
   it('names the pane by its id', () => {
     expect(argvOf(killPaneArgs('%12'))).toEqual(['kill-pane', '-t', '%12']);
@@ -288,6 +377,53 @@ describe('the tmux call that runs a command in the background', () => {
 
   it.each(['', 'a\nb', 'a\u0000b', 'a\rb', 'x'.repeat(1025)])('refuses the text %j', (text) => {
     expect(runShellBackgroundArgs(text).ok).toBe(false);
+  });
+});
+
+describe('the tmux calls that are joined into one chain', () => {
+  it('puts the separator word between two commands, and not before the first or after the last', () => {
+    expect(chainedArgs([['kill-pane', '-t', '%1'], ['select-pane', '-t', '%2']])).toEqual([
+      'kill-pane', '-t', '%1', ';', 'select-pane', '-t', '%2',
+    ]);
+  });
+
+  it('keeps one command as it is, and an empty list as an empty list', () => {
+    expect(chainedArgs([['kill-pane', '-t', '%1']])).toEqual(['kill-pane', '-t', '%1']);
+    expect(chainedArgs([])).toEqual([]);
+  });
+
+  it('keeps a word that ends in a semicolon as one word, so that only the separator ends a command', () => {
+    expect(chainedArgs([['new-window', '-c', '/w/a;'], ['kill-pane']])).toEqual(['new-window', '-c', '/w/a\\;', ';', 'kill-pane']);
+  });
+});
+
+describe('the tmux call that prints the screen of a pane', () => {
+  it('prints the visible text of the pane, to the standard output', () => {
+    expect(argvOf(capturePaneArgs('%7'))).toEqual(['capture-pane', '-p', '-t', '%7']);
+  });
+
+  it.each(badPaneIds)('refuses the target %j, which is not a pane id', (text) => {
+    expect(capturePaneArgs(text).ok).toBe(false);
+  });
+});
+
+describe('the tmux call that asks if a pane is in a mode', () => {
+  it('prints the mode flag of the pane, to the standard output', () => {
+    expect(argvOf(paneModeArgs('%7'))).toEqual(['display-message', '-p', '-t', '%7', '#{pane_in_mode}']);
+  });
+
+  it.each(badPaneIds)('refuses the target %j, which is not a pane id', (text) => {
+    expect(paneModeArgs(text).ok).toBe(false);
+  });
+
+  it.each([
+    ['0\n', 'none'],
+    ['1\n', 'active'],
+    ['2\n', 'active'],
+    ['\n', 'absent'],
+    ['', 'absent'],
+  ] as const)('reads the answer %j as %s', (text, mode) => {
+    expect(parsePaneMode(text)).toBe(mode);
   });
 });
 

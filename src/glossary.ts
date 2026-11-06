@@ -17,8 +17,7 @@ const SENTENCES: Readonly<Record<(typeof terms)[number], string>> = {
   project: 'A project is one unit of work that a {{node}} manages.',
   layer:
     'A layer is the level of a {{node}}, counted from the bottom. Layer 0 is the {{worker}}s. Each layer has its own role.',
-  worker:
-    'A {{worker}} is a session in one work copy. It does all the steps for one track of one project. Not built yet.',
+  worker: 'A {{worker}} is a session in one work copy. It does all the steps for one track of one project.',
   coordinator:
     'A {{coordinator}} is a {{node}} on layer 1. ' +
     'It runs the {{program}} for its {{owner}} and gives assignments to {{worker}}s.',
@@ -32,10 +31,10 @@ const SENTENCES: Readonly<Record<(typeof terms)[number], string>> = {
     'A request is an item that waits for the {{owner}}. It can be a question to answer or an action to do. ' +
     'Not built yet.',
   assignment:
-    'An assignment is a written task for a {{worker}} or a child {{node}}. It is a file in `{{ordersDir}}`.',
+    'An assignment is a written task for a {{worker}} or a child {{node}}. ' +
+    'A {{worker}} gets it as a file in its assignment folder.',
   'session reset':
-    'A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state. ' +
-    'Not built yet.',
+    'A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state.',
   queue:
     'A queue is the order of the finished work that waits for an approval point, first item first. Not built yet.',
   check:

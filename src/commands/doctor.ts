@@ -16,7 +16,16 @@ import { instructionFileWarnings, scanInstructionFiles } from '../core/instructi
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import { requireNoRootLinks } from '../core/root-paths.js';
-import { isTmuxNewEnough, MIN_TMUX, onPath, tmuxVersionOf, toolNames } from '../core/tools.js';
+import {
+  agentVersionOf,
+  isAgentNewEnough,
+  isTmuxNewEnough,
+  MIN_AGENT_VERSION,
+  MIN_TMUX,
+  onPath,
+  tmuxVersionOf,
+  toolNames,
+} from '../core/tools.js';
 import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
@@ -548,6 +557,27 @@ export const checkTools = async (deps: Deps): Promise<CheckResult> => {
     : check(checkIds.tools, 'warn', problems.join('; '));
 };
 
+/**
+ * The version of the agent program of the config. A version below `MIN_AGENT_VERSION`, and an output that is no version, are
+ * warnings. The agent program comes from the config, so a config that is not valid gives no check, and a program that is not
+ * on PATH is named once by the tools check.
+ */
+export const checkAgentVersion = async (deps: Deps, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+  if (state.kind !== 'valid') return notChecked(checkIds.agentVersion, `${files.config} is not valid`);
+  const agent = state.value.core.session.agent;
+  if (!(await onPath(deps, agent))) return notChecked(checkIds.agentVersion, `${agent} is missing`);
+  const version = await agentVersionOf(deps, agent);
+  if (version === null) return check(checkIds.agentVersion, 'warn', `cannot read the version of ${agent}`);
+  const shown = `${version.major}.${version.minor}.${version.patch}`;
+  if (isAgentNewEnough(version)) return check(checkIds.agentVersion, 'ok', `${agent} ${shown} is new enough`);
+  const needed = `${MIN_AGENT_VERSION.major}.${MIN_AGENT_VERSION.minor}.${MIN_AGENT_VERSION.patch}`;
+  return check(
+    checkIds.agentVersion,
+    'warn',
+    `${agent} ${shown} is older than ${needed} (the inbox of a ${roles.worker} needs ${needed} or newer)`,
+  );
+};
+
 export const checkStateRepo = async (deps: Deps, home: string): Promise<CheckResult> => {
   const stateDir = layoutOf(home).stateDir;
   const repo = await deps.fs.stat(join(stateDir, '.git'));
@@ -632,6 +662,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     instructionFileCheck,
     proxies,
     tools,
+    agentVersion,
     stateRepo,
     projects,
     localFile,
@@ -645,6 +676,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkInstructionFiles(deps, home),
     hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config),
     checkTools(deps),
+    checkAgentVersion(deps, config),
     checkStateRepo(deps, home),
     checkProjects(deps, home, config),
     checkLocalFile(deps, home),
@@ -668,6 +700,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkProxyEnv(deps),
     ...proxies,
     tools,
+    agentVersion,
     stateRepo,
     projects,
     ...checkProjectUrls(config),

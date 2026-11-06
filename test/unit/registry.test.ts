@@ -3,10 +3,14 @@ import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
 import { files, schemaIds, workerRecord } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
+import { ok } from '../../src/core/result.js';
 import {
   listWorkerRecords,
+  readCheckedFile,
+  readWorkerFile,
   readWorkerRecord,
   removeWorkerRecord,
+  requireRecord,
   writeWorkerRecord,
   type NewWorker,
   type WorkerList,
@@ -423,6 +427,41 @@ describe('readWorkerRecord', () => {
   });
 });
 
+describe('requireRecord: the command in the remedy', () => {
+  const AGAIN = 'factory worker reset';
+
+  const hintOf = <T>(result: CliResult<T>): string => {
+    if (result.ok) throw new Error('the call should have failed');
+    return result.error.hint ?? '';
+  };
+
+  it('puts the tail after the id in the remedy of a worker with no record', async () => {
+    const hint = hintOf(await requireRecord(make(), HOME, 'web-search', AGAIN, '--clear'));
+    expect(hint).toContain('Then run "factory worker reset ID --clear" with the id of one of them.');
+  });
+
+  it('puts the tail after the id in the remedy of a record that is not valid', async () => {
+    const deps = make();
+    deps.seed(recordPath('web-search'), 'not a record');
+    const hint = hintOf(await requireRecord(deps, HOME, 'web-search', AGAIN, '--clear'));
+    expect(hint).toContain('Then run "factory worker reset ID --clear" with the id of one of them.');
+  });
+
+  it('puts the tail after the id in the remedy of a record of another work copy', async () => {
+    const deps = make();
+    seedRecord(deps, 'web-search', { work_copy: '/elsewhere/copy' });
+    const hint = hintOf(await requireRecord(deps, HOME, 'web-search', AGAIN, '--clear'));
+    expect(hint).toContain('Then run "factory worker reset web-search --clear" again.');
+  });
+
+  it('keeps the remedy with the id only when it has no tail', async () => {
+    const deps = make();
+    seedRecord(deps, 'web-search', { work_copy: '/elsewhere/copy' });
+    expect(hintOf(await requireRecord(deps, HOME, 'web-search', AGAIN))).toContain('Then run "factory worker reset web-search" again.');
+    expect(hintOf(await requireRecord(make(), HOME, 'web-search', AGAIN))).toContain('Then run "factory worker reset ID" with the id of one of them.');
+  });
+});
+
 describe('removeWorkerRecord (the free of a worker)', () => {
   it('removes the folder of the worker with its record, its pointer and its inbox, and keeps the folders of the other workers', async () => {
     const deps = make();
@@ -466,6 +505,87 @@ describe('removeWorkerRecord (the free of a worker)', () => {
     expect(errorOf(result).kind).toBe('failure');
     expect(seen).toEqual([]);
     expect(deps.files.has(recordPath('web-search'))).toBe(true);
+  });
+});
+
+describe('readCheckedFile: the cause of a file that is not valid (TP-21)', () => {
+  const FOLDER = '/h/node/.factory/resume';
+  const FILE = `${FOLDER}/demo.md`;
+  const folders = [{ path: FOLDER, what: 'the resume folder' }];
+  const file = { path: FILE, what: 'the resume file' };
+  const MAX = 10;
+
+  const readOfDeps = async (deps: Deps) => valueOf(await readCheckedFile(deps, folders, file, MAX));
+
+  /** The deps with `lstat` of one path answered by the test: for a kind that the fake file system has no way to make. */
+  const withKind = (deps: FakeDeps, path: string, kind: 'other'): Deps => ({
+    ...deps,
+    fs: { ...deps.fs, lstat: async (asked: string) => (asked === path ? ok(kind) : deps.fs.lstat(asked)) },
+  });
+
+  it('TP-21: gives the text of a regular file inside the limit, and no cause', async () => {
+    const deps = make();
+    deps.seed(FILE, 'resume');
+    expect(await readOfDeps(deps)).toEqual({ state: 'text', text: 'resume' });
+  });
+
+  it('TP-21: gives absent for a file that does not exist and for a folder that does not exist', async () => {
+    const noFile = make();
+    noFile.seedDir(FOLDER);
+    expect(await readOfDeps(noFile)).toEqual({ state: 'absent' });
+    expect(await readOfDeps(make())).toEqual({ state: 'absent' });
+  });
+
+  it('TP-21: gives the cause link for a file that is a link', async () => {
+    const deps = make({ links: { [FILE]: '/elsewhere/demo.md' } });
+    deps.seedDir(FOLDER);
+    deps.seed('/elsewhere/demo.md', 'resume');
+    expect(await readOfDeps(deps)).toMatchObject({ state: 'invalid', cause: 'link', reason: 'the resume file is a link' });
+  });
+
+  it('TP-21: gives the cause link for a folder of the chain that is a link, and reads no file below it', async () => {
+    const deps = make({ links: { [FOLDER]: '/elsewhere' } });
+    deps.seed(FILE, 'resume');
+    expect(await readOfDeps(deps)).toMatchObject({ state: 'invalid', cause: 'link', reason: 'the resume folder is a link' });
+  });
+
+  it('TP-21: gives the cause wrong-kind for a file that is a folder', async () => {
+    const deps = make();
+    deps.seedDir(FILE);
+    expect(await readOfDeps(deps)).toMatchObject({ state: 'invalid', cause: 'wrong-kind', reason: 'the resume file is not a file' });
+  });
+
+  it('TP-21: gives the cause wrong-kind for a folder of the chain that is a file', async () => {
+    const deps = make();
+    deps.seed(FOLDER, 'not a folder');
+    expect(await readOfDeps(deps)).toMatchObject({ state: 'invalid', cause: 'wrong-kind', reason: 'the resume folder is not a folder' });
+  });
+
+  it('TP-21: gives the cause wrong-kind for a file that is neither a regular file nor a folder (a FIFO or a device)', async () => {
+    const deps = make();
+    deps.seedDir(FOLDER);
+    expect(await readOfDeps(withKind(deps, FILE, 'other'))).toMatchObject({ state: 'invalid', cause: 'wrong-kind' });
+  });
+
+  it('TP-21: gives the cause size for a file above the limit, and reads none of its text', async () => {
+    const deps = make();
+    deps.seed(FILE, 'x'.repeat(MAX + 1));
+    const read = await readOfDeps(deps);
+    expect(read).toMatchObject({ state: 'invalid', cause: 'size', reason: `larger than ${MAX} bytes` });
+    expect(read).not.toHaveProperty('text');
+  });
+
+  it('TP-21: a file of exactly the limit is valid', async () => {
+    const deps = make();
+    deps.seed(FILE, 'x'.repeat(MAX));
+    expect(await readOfDeps(deps)).toMatchObject({ state: 'text' });
+  });
+
+  it('TP-21: the read of a worker file with an id that is not a slug keeps its reason and has no cause', async () => {
+    const read = valueOf(
+      await readWorkerFile(make(), HOME, '../escape', { of: 'recordFile', what: 'the record', maxBytes: MAX }),
+    );
+    expect(read).toEqual({ state: 'invalid', reason: 'the worker id is not a slug' });
   });
 });
 

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
@@ -128,11 +129,17 @@ afterEach(async () => {
 
 afterAll(removeOpenSandboxes);
 
-const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact'];
+/** The matcher text of the group of the Notification event: the two types of notice that mean a dialog waits. It never lists idle_prompt. */
+const NOTIFICATION_MATCHER = 'permission_prompt|elicitation_dialog';
+
+const ownGroup = (event: string): Record<string, unknown> => ({
+  ...(event === 'Notification' ? { matcher: NOTIFICATION_MATCHER } : {}),
+  hooks: [{ type: 'command', command: `factory hook ${event}` }],
+});
 
 /** The settings of Claude Code that the program writes into the coordinator folder. The command texts are the contract. */
 const ownSettings = (): Record<string, unknown> => ({
-  hooks: Object.fromEntries(HOOK_EVENTS.map((event) => [event, [{ hooks: [{ type: 'command', command: `factory hook ${event}` }] }]])),
+  hooks: Object.fromEntries(hookNames.events.map((event) => [event, [ownGroup(event)]])),
   statusLine: { type: 'command', command: 'factory hook statusline' },
 });
 

@@ -179,7 +179,7 @@ describe('the start argument list and the strip text', () => {
     agent: 'claude',
     projects: ['/w/web'],
   } as const;
-  const WORKER = { home: '/w/demo-factory', workerId: 'web-search', effort: 'high', model: 'default', proxyBaseUrl: null, path: SAFE_PATH, agent: 'claude' } as const;
+  const WORKER = { home: '/w/demo-factory', nodeId: 'demo', workerId: 'web-search', effort: 'high', model: 'default', proxyBaseUrl: null, path: SAFE_PATH, agent: 'claude' } as const;
 
   const must = <T>(result: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: string }): T => {
     if (!result.ok) throw new Error(result.error);
@@ -222,7 +222,7 @@ describe('the start argument list and the strip text', () => {
     });
     expect(result).toEqual({
       code: 0,
-      stdout: `--permission-mode auto --effort high --add-dir /w/demo-factory/.factory --add-dir ${project}\n`,
+      stdout: `--permission-mode auto --effort high --name demo --add-dir /w/demo-factory/.factory --add-dir ${project}\n`,
       stderr: '',
     });
   });

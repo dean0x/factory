@@ -69,7 +69,8 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     expect(fallback.includes(`${join(box.env['HOME'] ?? '', '.claude')}/`)).toBe(false);
   });
 
-  it('lets doctor and start --dry-run find web-factory from the root, the coordinator folder and the clone (TP-14)', async () => {
+  // About 10 process launches take 16 s alone and a launch is 2 to 4.6 times slower under load, so this case needs more than the 30 s global limit.
+  it('lets doctor and start --dry-run find web-factory from the root, the coordinator folder and the clone (TP-14)', { timeout: 120_000 }, async () => {
     await initWeb();
     const clone = cloneOfWeb();
     await mkdir(join(clone, 'src', 'deep'), { recursive: true });
@@ -93,7 +94,8 @@ describe('the home index (built binary, temp HOME and temp XDG_STATE_HOME)', () 
     }
   });
 
-  it('lets doctor and start --dry-run find each of two roots of one HOME from its own folder, and never the other root (TP-31)', async () => {
+  // About 11 process launches take 16 s alone and a launch is 2 to 4.6 times slower under load, so this case needs more than the 30 s global limit.
+  it('lets doctor and start --dry-run find each of two roots of one HOME from its own folder, and never the other root (TP-31)', { timeout: 120_000 }, async () => {
     await initWeb();
     const second = join(box.root, 'second-home');
     expect((await box.run(['init', '--yes', '--home', second, '--name', 'second', ...owner], withState())).code).toBe(0);

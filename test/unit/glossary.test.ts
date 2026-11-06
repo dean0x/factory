@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { runCli } from '../../src/cli/run.js';
 import { glossary, recipeGlossary } from '../../src/glossary.js';
-import { schemaIds, templateValues, terms } from '../../src/names.js';
+import { schemaIds, terms } from '../../src/names.js';
 import { softwareGlossary } from '../../src/recipes/software/words.js';
 import { softwareRecipe } from '../helpers/blocks.js';
 import { denyMatches } from '../helpers/deny-list.js';
@@ -68,9 +68,28 @@ describe('the glossary of the program', () => {
     expect(count).toBeLessThanOrEqual(MAX_WORDS);
   });
 
-  it('names the orders folder in the entry for an assignment', () => {
+  it('TP-41: says in the entry for an assignment that a worker gets it as a file in its assignment folder', () => {
     const text = glossary.find((word) => word.term === 'assignment')?.text ?? '';
-    expect(text).toContain(templateValues.ordersDir);
+    expect(text).toContain('A worker gets it as a file in its assignment folder.');
+  });
+
+  it.each(['worker', 'session reset'])('TP-41: does not call the built word "%s" unbuilt', (term) => {
+    const text = glossary.find((word) => word.term === term)?.text ?? '';
+    expect(text.length, term).toBeGreaterThan(0);
+    expect(text, term).not.toContain('Not built yet');
+  });
+
+  it.each(['worker', 'assignment', 'session reset'])('TP-41: holds the same text as docs/glossary.md for "%s"', (term) => {
+    const program = glossary.find((word) => word.term === term)?.text;
+    const entry = partEntries(CORE_HEADING).find((candidate) => candidate.term === term);
+    expect(entry, term).toBeDefined();
+    expect(entry?.text).toBe(program);
+  });
+
+  it('TP-41: has no entry for the doorbell, and the inbox is the assignment folder of a worker', () => {
+    const entries = partEntries(CORE_HEADING);
+    expect(entries.find((entry) => entry.term === 'doorbell')).toBeUndefined();
+    expect(entries.find((entry) => entry.term === 'inbox')?.text).toContain('assignment folder of a worker');
   });
 
   it('uses the word worker once in the sentence for a worker', () => {

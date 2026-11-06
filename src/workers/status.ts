@@ -1,5 +1,5 @@
 import type { PaneRow } from '../launch/tmux.js';
-import { keys, lastSeen, roles, workerListWords } from '../names.js';
+import { keys, lastSeen, roles, workerListWords, type HookState } from '../names.js';
 import { promptStateOf, type LastSeen } from './last-seen.js';
 import type { MachineLimits } from './machine.js';
 import type { WorkerRecord } from './registry.js';
@@ -71,9 +71,10 @@ const markOf = (percent: number | null, limits: MachineLimits): Mark | null => {
   return percent >= limits[keys.limits.contextPreparePct] ? workerListWords.marks.prepare : null;
 };
 
-const stateWords: Readonly<Record<'prompt' | 'busy', WorkerState>> = {
+const stateWords: Readonly<Record<HookState, WorkerState>> = {
   prompt: workerListWords.states.prompt,
   busy: workerListWords.states.busy,
+  waits: workerListWords.states.waits,
 };
 
 /** The pane of a worker: its first live pane, else its first pane. More than one pane with the mark is named in a warning. */

@@ -8,6 +8,7 @@ import { workerLaunchArgv } from '../../src/launch/argv.js';
 export const launchWordsOf = (home: string, workerId: string): readonly string[] => {
   const argv = workerLaunchArgv({
     home,
+    nodeId: 'demo',
     workerId,
     effort: 'high',
     model: 'default',

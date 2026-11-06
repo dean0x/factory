@@ -1,12 +1,12 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { absolutePath, branchName, isSlug, slug } from '../config/primitives.js';
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { LINK_REMEDY } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { files, roles, schemaIds, workerRecord } from '../names.js';
+import { commandLines, commandText, files, program, roles, schemaIds, workerRecord } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
 
@@ -112,11 +112,20 @@ const readOfText = (text: string, id: string, home: string): CliResult<WorkerRea
   return ok({ state: 'valid', record });
 };
 
-/** What a read of one file in the folder of a worker finds: the text, a file that can not be read and the reason, or no file. */
-export type WorkerFileRead =
+/** Why `readCheckedFile` finds a file invalid: a part of the chain is a link, a part is of the wrong kind, or the file is above the limit. */
+export type FileFault = 'link' | 'wrong-kind' | 'size';
+
+/** What `readCheckedFile` finds: the text, a file that can not be used with the reason and the cause, or no file. */
+export type CheckedFileRead =
   | { readonly state: 'text'; readonly text: string }
-  | { readonly state: 'invalid'; readonly reason: string }
+  | { readonly state: 'invalid'; readonly reason: string; readonly cause: FileFault }
   | { readonly state: 'absent' };
+
+/**
+ * What a read of one file in the folder of a worker finds: the text, a file that can not be read and the reason, or no file. A reader
+ * that builds the invalid value from another check (an id that is not a slug) gives no cause.
+ */
+export type WorkerFileRead = CheckedFileRead | { readonly state: 'invalid'; readonly reason: string };
 
 /** A path that `readCheckedFile` checks, and what it is, for the reason: for example `the pointer`. */
 export interface NamedPath {
@@ -127,14 +136,15 @@ export interface NamedPath {
 /**
  * Read a file below a chain of folders. The folders are checked from the top down, then the file: a part that is a link or of
  * the wrong kind is invalid, and a part that is missing is absent. The read never follows a link and caps the bytes. The reason
- * never holds a part of the file. The failure is a fault of the file system only.
+ * never holds a part of the file. An invalid value has a cause (`link`, `kind` or `size`), so a caller can give a link another exit code
+ * than a file of the wrong kind. The failure is a fault of the file system only.
  */
 export const readCheckedFile = async (
   deps: Deps,
   folders: readonly NamedPath[],
   file: NamedPath,
   maxBytes: number,
-): Promise<CliResult<WorkerFileRead>> => {
+): Promise<CliResult<CheckedFileRead>> => {
   const parts = [
     ...folders.map((folder) => ({ ...folder, kind: 'dir' as const })),
     { ...file, kind: 'file' as const },
@@ -143,13 +153,15 @@ export const readCheckedFile = async (
     const found = await deps.fs.lstat(path);
     if (!found.ok) return found;
     if (found.value === null) return ok({ state: 'absent' });
-    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link` });
-    if (found.value !== kind) return ok({ state: 'invalid', reason: `${what} is not a ${kind === 'dir' ? 'folder' : 'file'}` });
+    if (found.value === 'link') return ok({ state: 'invalid', reason: `${what} is a link`, cause: 'link' });
+    if (found.value !== kind) {
+      return ok({ state: 'invalid', reason: `${what} is not a ${kind === 'dir' ? 'folder' : 'file'}`, cause: 'wrong-kind' });
+    }
   }
   const info = await deps.fs.statInfo(file.path);
   if (!info.ok) return info;
   if (info.value === null) return ok({ state: 'absent' });
-  if (info.value.size > maxBytes) return ok({ state: 'invalid', reason: `larger than ${maxBytes} bytes` });
+  if (info.value.size > maxBytes) return ok({ state: 'invalid', reason: `larger than ${maxBytes} bytes`, cause: 'size' });
   const text = await deps.fs.readTextLimited(file.path, maxBytes);
   return text.ok ? ok({ state: 'text', text: text.value }) : text;
 };
@@ -182,6 +194,38 @@ export const readWorkerRecord = async (deps: Deps, home: string, id: string): Pr
   const found = await readWorkerFile(deps, home, id, { of: 'recordFile', what: 'the record', maxBytes: workerRecord.maxBytes });
   if (!found.ok) return found;
   return found.value.state === 'text' ? readOfText(found.value.text, id, home) : ok(found.value);
+};
+
+/**
+ * The record of the worker. A worker with no record, or with a record that is not valid, is a wrong id (exit 2). A record that names
+ * a work copy or a branch that is not the one of its worker is a security stop (exit 4): a command that starts or ends a session
+ * must not act on it. The message names the record file and what differs. The remedy runs `again` with the id; `tail` is the words that
+ * a command needs after the id (for example a flag), and a remedy without it would give a usage error.
+ */
+export const requireRecord = async (
+  deps: Deps,
+  home: string,
+  id: string,
+  again: string,
+  tail?: string,
+): Promise<CliResult<WorkerRecord>> => {
+  const read = await readWorkerRecord(deps, home, id);
+  if (!read.ok) return read;
+  if (read.value.state === 'valid') return ok(read.value.record);
+  const commandFor = (word: string): string => (tail === undefined ? `${again} ${word}` : `${again} ${word} ${tail}`);
+  if (read.value.state === 'invalid' && read.value.mismatch === true) {
+    return safetyRefusal(
+      `the record ${workerPathsOf(home, id).recordFile} of the ${roles.worker} ${id} is not the record that ${program} wrote: ${read.value.reason}`,
+      `Check who changed the file, and restore it from a copy that you trust. Then run "${commandFor(id)}" again.`,
+    );
+  }
+  const listed = `Run "${commandText(commandLines.workerList)}" to see the ${roles.worker}s. Then run "${commandFor('ID')}" with the id of one of them.`;
+  return usageError(
+    read.value.state === 'invalid'
+      ? `the record of the ${roles.worker} ${id} is not valid: ${read.value.reason}`
+      : `the ${roles.worker} ${id} has no record`,
+    listed,
+  );
 };
 
 /** Whether the folder exists. A link is a security stop (exit 4) and is never followed. A path of another kind is a failure. */

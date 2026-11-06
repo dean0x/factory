@@ -1,5 +1,9 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { budgetRow, parseBudgetRows, tokensOf } from '../helpers/token-budget.js';
+
+const BUDGET_FILE = join(__dirname, '..', '..', 'docs', 'token-budget.md');
 
 const TABLE = [
   '# Token budget',
@@ -38,14 +42,35 @@ describe('parseBudgetRows', () => {
   });
 });
 
-describe('the token budget of this PR (TP-64)', () => {
-  /** The jobs that FAC-M4 builds so far: the status round, the restart of all workers, the worker creation and the resource check. */
-  it.each([
+describe('the token budget of FAC-M4 (TP-64, TP-39)', () => {
+  /**
+   * The jobs that FAC-M4 builds: the status round, the restart of all workers, the worker creation, the session reset, the
+   * watch, the resource check and the self reset. The typed owner input moves to FAC-M5 and the move of an outside session
+   * to FAC-M7.
+   */
+  const FAC_M4_JOBS = [
     [2, 'factory status'],
     [3, 'factory reboot'],
     [4, 'factory worker new'],
+    [7, 'factory worker reset'],
+    [14, 'factory worker watch'],
     [16, 'factory machine'],
-  ])('has a measured size within the budget for the job %i (%s)', (job, command) => {
+    [17, 'factory self reset'],
+  ] as const;
+
+  it.each([
+    [12, 'factory worker relay', 'FAC-M5'],
+    [15, 'factory worker adopt', 'FAC-M7'],
+  ])('TP-39: the job %i (%s) is built in %s and has no measured size yet', (job, command, milestone) => {
+    const line = readFileSync(BUDGET_FILE, 'utf8')
+      .split('\n')
+      .find((candidate) => new RegExp(`^\\|\\s*${job}\\s*\\|`).test(candidate));
+    expect(line).toContain(`| ${milestone} |`);
+    expect(budgetRow(job).command).toContain(command);
+    expect(budgetRow(job).measured).toBeNull();
+  });
+
+  it.each(FAC_M4_JOBS)('has a measured size within the budget for the job %i (%s)', (job, command) => {
     const row = budgetRow(job);
     expect(row.command).toContain(command);
     expect(row.measured, `the row ${job} has no measured size`).not.toBeNull();

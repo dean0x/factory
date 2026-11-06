@@ -66,8 +66,9 @@ describe('the names of the last-seen line', () => {
     expect(FOLDER).toBe('/h/node/.factory/state/heartbeat');
   });
 
-  it('lists the four events of the hook', () => {
-    expect([...hookNames.events]).toEqual(['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact']);
+  it('starts the list of hook events with the four first events, and names no event twice', () => {
+    expect(hookNames.events.slice(0, 4)).toEqual(['SessionStart', 'UserPromptSubmit', 'Stop', 'PreCompact']);
+    expect(new Set(hookNames.events).size).toBe(hookNames.events.length);
   });
 });
 
@@ -501,6 +502,12 @@ describe('readLastSeen', () => {
     });
   });
 
+  it.each(['Notification', 'PreToolUse'] as const)('TP-5: gives the line of a %s event as valid', async (name) => {
+    const deps = createFakeDeps();
+    await writeLastSeen(deps, HOME, ID, event(name));
+    expect(await readValue(deps)).toEqual({ state: 'valid', line: line({ event: name, event_at: T0 }) });
+  });
+
   it('reads a line that a write made', async () => {
     const deps = createFakeDeps();
     await writeLastSeen(deps, HOME, ID, event('PreCompact'));
@@ -673,7 +680,9 @@ describe('promptStateOf', () => {
     ['Stop', 'prompt'],
     ['UserPromptSubmit', 'busy'],
     ['PreCompact', 'busy'],
-  ] as const)('reads %s as %s', (name, state) => {
+    ['PreToolUse', 'busy'],
+    ['Notification', 'waits'],
+  ] as const)('TP-5: reads %s as %s', (name, state) => {
     expect(promptStateOf(typedLine(name))).toBe(state);
   });
 
