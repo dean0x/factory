@@ -350,6 +350,11 @@ describe('words of the old names', () => {
     expect(manifest).toMatchObject({ private: true, scripts: { prepare: 'npm run build' } });
   });
 
+  it('puts the quick-start guide in the files of the package, so that the link of the README resolves after an install', () => {
+    const manifest: unknown = JSON.parse(readFileSync(join(__dirname, '..', '..', 'package.json'), 'utf8'));
+    expect(manifest).toMatchObject({ files: expect.arrayContaining(['docs/quick-start.md']) });
+  });
+
   it('keeps the old words and the jargon words out of every template', () => {
     const texts = [...allBlocks.map((template) => template.body), ...Object.values(fileTemplates)];
     expect(texts.flatMap(plainWordsIn)).toEqual([]);
@@ -722,7 +727,7 @@ describe('the name of the worker window in the docs that a user reads (TP-138)',
    * The README and the docs that explain the tool name the window `workers`. The old name `bench` stays only where the
    * design and the glossary quote it as an old word: `docs/design.md` (its history rows) and `docs/glossary.md`.
    */
-  const USER_DOCS = ['README.md', 'docs/roadmap-v2.md', 'docs/token-budget.md'];
+  const USER_DOCS = ['README.md', 'docs/roadmap-v2.md', 'docs/token-budget.md', 'docs/quick-start.md'];
   const textOf = (name: string): string => readFileSync(join(__dirname, '..', '..', name), 'utf8');
 
   it.each(USER_DOCS)('does not name the old window bench in %s', (name) => {

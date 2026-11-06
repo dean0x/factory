@@ -287,8 +287,15 @@ export const JARGON_ERE: string = JARGON_PATTERNS.map(({ source }) => source.rep
 /** The words of the scanned jargon rows that a text holds, in the order of the table. */
 export const jargonIn = (text: string): string[] => JARGON_PATTERNS.flatMap(({ pattern }) => text.match(pattern) ?? []);
 
-/** The docs that the scan reads in the docs change. */
-export const SCANNED_DOCS = ['design.md', 'roadmap-v2.md', 'token-budget.md', 'intent-trace.md', 'glossary.md'] as const;
+/** The docs that the scan reads in the docs change. The last one is the quick-start guide, which the package holds. */
+export const SCANNED_DOCS = [
+  'design.md',
+  'roadmap-v2.md',
+  'token-budget.md',
+  'intent-trace.md',
+  'glossary.md',
+  'quick-start.md',
+] as const;
 
 /** The files above the docs folder that the scan reads. The CHANGELOG is read for the part of one version only. */
 export const SCANNED_TOP_FILES = ['README.md', 'CHANGELOG.md'] as const;

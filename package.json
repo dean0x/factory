@@ -12,7 +12,8 @@
     "dist/factory.js",
     "LICENSE",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/quick-start.md"
   ],
   "engines": {
     "node": ">=22"
