@@ -481,6 +481,23 @@ describe('the reset, watch and self commands in the command line', () => {
   });
 
   it.each([
+    ['worker stop with --clear', ['worker', 'stop', 'alpha', '--clear'], '--clear belongs to reset only'],
+    ['worker stop with --compact', ['worker', 'stop', 'alpha', '--compact'], '--compact belongs to reset only'],
+    ['worker new with --clear', ['worker', 'new', 'alpha', '--project', 'web', '--clear'], '--clear belongs to reset only'],
+    ['worker resume with --compact', ['worker', 'resume', 'alpha', '--compact'], '--compact belongs to reset only'],
+    ['worker summon with --clear', ['worker', 'summon', 'alpha', '--clear'], '--clear belongs to reset only'],
+    ['worker watch with --compact', ['worker', 'watch', '--compact'], '--compact belongs to reset only'],
+    ['worker list with --clear', ['worker', 'list', '--clear'], '--clear belongs to reset only'],
+    ['worker stop with both flags', ['worker', 'stop', 'alpha', '--clear', '--compact'], '--clear and --compact belong to reset only'],
+  ])('exits 2 for %s, names reset, and runs no program', async (_name, argv, message) => {
+    const { deps } = made();
+    const result = await runOn(deps, [...argv, '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain(message);
+    expect(deps.calls).toEqual([]);
+  });
+
+  it.each([
     ['worker reset with --clear', ['worker', 'reset', 'alpha', '--clear']],
     ['worker reset with --compact', ['worker', 'reset', 'alpha', '--compact']],
     ['self reset', ['self', 'reset']],

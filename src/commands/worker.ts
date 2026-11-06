@@ -669,6 +669,15 @@ const runWatch = async (
   return watched.ok ? ok(watchOutput(watched.value)) : watched;
 };
 
+/** The flags `--clear` and `--compact` belong to `reset`. Another subcommand refuses them (exit 2), so no flag is taken and then ignored. */
+const requireNoResetFlags = (options: WorkerOptions): CliResult<void> => {
+  const given = [...(options.clear === true ? [flags.clear] : []), ...(options.compact === true ? [flags.compact] : [])];
+  if (given.length === 0) return ok(undefined);
+  return needsUsage(`${given.map(flagText).join(' and ')} ${given.length === 1 ? 'belongs' : 'belong'} to ${workerCommands.reset} only`);
+};
+
+const isSubcommand = (word: string | undefined): boolean => Object.values<string>(workerCommands).includes(word ?? '');
+
 /** `worker <subcommand>`: the commands of the workers of a node. */
 export const runWorker = async (
   deps: Deps,
@@ -676,6 +685,10 @@ export const runWorker = async (
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
   const [subcommand, ...args] = options.words;
+  if (isSubcommand(subcommand) && subcommand !== workerCommands.reset) {
+    const stray = requireNoResetFlags(options);
+    if (!stray.ok) return stray;
+  }
   switch (subcommand) {
     case undefined:
       return needsUsage(`${commandText(commands.worker)} needs a subcommand: ${SUBCOMMANDS}`);
