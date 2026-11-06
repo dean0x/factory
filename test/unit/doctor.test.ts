@@ -964,6 +964,7 @@ describe('doctor: the version of the agent (TP-35)', () => {
       const { result } = await agentCheck({ agentVersion });
       expect(result.level).toBe('warn');
       expect(result.text).toContain(`claude ${shown} is older than 2.1.224`);
+      expect(result.text).toContain('messages between sessions');
     },
   );
 

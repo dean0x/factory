@@ -611,14 +611,15 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
 
   /**
    * In user text, "request" means only the item that waits on the owner (the glossary entry, and the name of its term),
-   * and "message" means only the record from another owner. The tmux command `display-message` and the recipe word
-   * "pull request" are other names. A "checkout" of a project is a work copy, or a work tree of git.
+   * and "message" means only the record from another owner. The tmux command `display-message`, the recipe word
+   * "pull request" and the phrase "messages between sessions" (the name of the agent feature that sends text from one
+   * session to another) are other names. A "checkout" of a project is a work copy, or a work tree of git.
    */
   const wordRuleHits = (source: string, path: string): string[] =>
     literalsOf(source)
       .filter((literal) => !IMPORT_PATH.test(literal))
       .filter((literal) => literal !== 'display-message' && !(path === NAMES_FILE && literal === 'request'))
-      .map((literal) => literal.replace(/pull requests?/gi, ' '))
+      .map((literal) => literal.replace(/pull requests?/gi, ' ').replace(/messages between sessions/gi, ' '))
       .filter((literal) => path !== GLOSSARY_FILE && /(?<![A-Za-z0-9_])(?:requests?|messages?|checkouts?)(?![A-Za-z0-9_])/i.test(literal))
       .map((literal) => `${relative(SRC, path)}: "${literal}"`);
 
@@ -634,6 +635,8 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
     expect(wordRuleHits("const a = 'in its own checkout';", path)).toHaveLength(1);
     expect(wordRuleHits("const a = 'open a pull request';", path)).toEqual([]);
     expect(wordRuleHits("const a = 'display-message';", path)).toEqual([]);
+    expect(wordRuleHits("const a = 'the messages between sessions need 2.1.224';", path)).toEqual([]);
+    expect(wordRuleHits("const a = 'a message between sessions waits';", path)).toHaveLength(1);
     expect(wordRuleHits("const a = 'request';", NAMES_FILE)).toEqual([]);
     expect(wordRuleHits("const a = 'request';", path)).toHaveLength(1);
     expect(wordRuleHits("const a = 'a request waits';", GLOSSARY_FILE)).toEqual([]);
