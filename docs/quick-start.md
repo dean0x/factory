@@ -234,8 +234,9 @@ The prefix is `Ctrl-b`. Press it, release it, then press the key:
 | `w` | Show the window tree. Choose a window by its name. |
 | `z` | Zoom the pane to the whole window. Press it again to zoom out. |
 | `[` | Enter copy mode. You can scroll back in the pane. |
-| `q` | Leave copy mode. |
 | `d` | Detach from tmux. The sessions do not stop. |
+
+To leave copy mode, press `q` without the prefix.
 
 After `factory start`, your terminal window is inside tmux. Some commands must run outside the factory session. For these, press `Ctrl-b`, then `d`, or open a second terminal window. To come back, run `factory start` again.
 
