@@ -37,10 +37,10 @@ import {
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import { requireOtherPane } from '../workers/lifecycle.js';
 import { readPanes } from '../workers/panes.js';
+import { requireRecord } from '../workers/registry.js';
 import { readStatus } from '../workers/status-read.js';
 import type { WorkerStatus } from '../workers/status.js';
 import { unknownWorkItems, type WorkItemPort } from '../workers/work-items.js';
-import { requireRecord } from './worker.js';
 
 export interface DismissOptions {
   readonly home: string | undefined;

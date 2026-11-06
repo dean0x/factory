@@ -1,12 +1,12 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { absolutePath, branchName, isSlug, slug } from '../config/primitives.js';
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { LINK_REMEDY } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
-import { files, roles, schemaIds, workerRecord } from '../names.js';
+import { commandLines, commandText, files, program, roles, schemaIds, workerRecord } from '../names.js';
 import { layoutOf, workerPathsOf } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
 
@@ -194,6 +194,30 @@ export const readWorkerRecord = async (deps: Deps, home: string, id: string): Pr
   const found = await readWorkerFile(deps, home, id, { of: 'recordFile', what: 'the record', maxBytes: workerRecord.maxBytes });
   if (!found.ok) return found;
   return found.value.state === 'text' ? readOfText(found.value.text, id, home) : ok(found.value);
+};
+
+/**
+ * The record of the worker. A worker with no record, or with a record that is not valid, is a wrong id (exit 2). A record that names
+ * a work copy or a branch that is not the one of its worker is a security stop (exit 4): a command that starts or ends a session
+ * must not act on it. The message names the record file and what differs.
+ */
+export const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
+  const read = await readWorkerRecord(deps, home, id);
+  if (!read.ok) return read;
+  if (read.value.state === 'valid') return ok(read.value.record);
+  if (read.value.state === 'invalid' && read.value.mismatch === true) {
+    return safetyRefusal(
+      `the record ${workerPathsOf(home, id).recordFile} of the ${roles.worker} ${id} is not the record that ${program} wrote: ${read.value.reason}`,
+      `Check who changed the file, and restore it from a copy that you trust. Then run "${again} ${id}" again.`,
+    );
+  }
+  const listed = `Run "${commandText(commandLines.workerList)}" to see the ${roles.worker}s. Then run "${again} ID" with the id of one of them.`;
+  return usageError(
+    read.value.state === 'invalid'
+      ? `the record of the ${roles.worker} ${id} is not valid: ${read.value.reason}`
+      : `the ${roles.worker} ${id} has no record`,
+    listed,
+  );
 };
 
 /** Whether the folder exists. A link is a security stop (exit 4) and is never followed. A path of another kind is a failure. */

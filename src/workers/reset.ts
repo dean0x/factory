@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 import { failure, notReady, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
-import { requireRecord } from '../commands/worker.js';
 import { typeLine } from '../comms/typing.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
@@ -27,7 +26,7 @@ import { confirmReset } from './confirm.js';
 import { fetchClone, planDismiss, unpushedReasons } from './dismiss.js';
 import { promptStateOf, readOwnLastSeen } from './last-seen.js';
 import { requireBoundPane, requireCoordinatorCaller, type BoundPane } from './panes.js';
-import type { WorkerRecord } from './registry.js';
+import { requireRecord, type WorkerRecord } from './registry.js';
 import {
   paneProcessStart,
   requireLineAfterStart,

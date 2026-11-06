@@ -30,11 +30,10 @@ import {
 } from '../workers/lifecycle.js';
 import { listPanes, readPanes } from '../workers/panes.js';
 import { recoverWorkers, type RecoveryReport } from '../workers/recovery.js';
-import { listWorkerRecords } from '../workers/registry.js';
+import { listWorkerRecords, requireRecord } from '../workers/registry.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { prepareLaunch, prepareRoot } from './launch-checks.js';
 import { renderStartFiles, startAgain } from './start.js';
-import { requireRecord } from './worker.js';
 
 /**
  * The lifecycle verbs (design 4.11): `shutdown` ends this factory, `restart` stops one worker and starts it again with its session

@@ -41,7 +41,7 @@ import { launchWorker, requireCleanTrackedSettings, resumeLine, resumeWorker } f
 import { gatherMachine, machineWarnings } from '../workers/machine.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import type { BoundPane } from '../workers/panes.js';
-import { branchOf, readWorkerRecord, workCopyOf, writeWorkerRecord, type WorkerRecord } from '../workers/registry.js';
+import { branchOf, readWorkerRecord, requireRecord, workCopyOf, writeWorkerRecord } from '../workers/registry.js';
 import { readWorkerPanes, summonWorker } from '../workers/slot.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { prepareLaunch } from './launch-checks.js';
@@ -100,30 +100,6 @@ const locateNode = async (deps: Deps, options: WorkerOptions, registry: RecipeRe
     commands.worker,
   );
   return located.ok ? ok(located.value.home) : located;
-};
-
-/**
- * The record of the worker. A worker with no record, or with a record that is not valid, is a wrong id (exit 2). A record that names
- * a work copy or a branch that is not the one of its worker is a security stop (exit 4): a command that starts or ends a session
- * must not act on it. The message names the record file and what differs.
- */
-export const requireRecord = async (deps: Deps, home: string, id: string, again: string): Promise<CliResult<WorkerRecord>> => {
-  const read = await readWorkerRecord(deps, home, id);
-  if (!read.ok) return read;
-  if (read.value.state === 'valid') return ok(read.value.record);
-  if (read.value.state === 'invalid' && read.value.mismatch === true) {
-    return safetyRefusal(
-      `the record ${workerPathsOf(home, id).recordFile} of the ${roles.worker} ${id} is not the record that ${program} wrote: ${read.value.reason}`,
-      `Check who changed the file, and restore it from a copy that you trust. Then run "${again} ${id}" again.`,
-    );
-  }
-  const listed = `Run "${commandText(commandLines.workerList)}" to see the ${roles.worker}s. Then run "${again} ID" with the id of one of them.`;
-  return usageError(
-    read.value.state === 'invalid'
-      ? `the record of the ${roles.worker} ${id} is not valid: ${read.value.reason}`
-      : `the ${roles.worker} ${id} has no record`,
-    listed,
-  );
 };
 
 /** A folder of the work copies that exists must be a folder. A link is a stop of the link rule before this check. */
