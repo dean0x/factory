@@ -124,18 +124,13 @@ const wordsOf = (tmux: TmuxLog): readonly string[] => {
 };
 
 /**
- * One launch that must work: `start` makes it, and every launch and resume test goes through this function (TP-61). Each test
- * asserts four facts: the program starts in auto mode with no flag that skips the checks; the proxy variable is removed
+ * The launch rule for the last pane that the launch made (TP-11, TP-61). Every launch and resume test that makes a pane asserts
+ * it: a launch that works goes through `launchedBy`, and a launch that fails after the pane starts calls this function itself.
+ * It asserts four facts: the program starts in auto mode with no flag that skips the checks; the proxy variable is removed
  * before the program word; the proxy of the argument list is the proxy of the config and never the proxy of the environment;
- * and the health check of a proxy happens before the pane.
+ * and the health check of a proxy happens before the pane. A test that made no pane fails here, because the words are absent.
  */
-const launchedBy = async (
-  made: Made,
-  expected: { readonly proxy: string | null },
-  start: () => Promise<CliResult<WorkerLaunch>>,
-): Promise<WorkerLaunch> => {
-  const result = await start();
-  if (!result.ok) throw new Error(result.error.message);
+const expectLaunchRule = (made: Made, expected: { readonly proxy: string | null }): void => {
   const words = wordsOf(made.tmux);
   expect(words.filter((word) => word === '--permission-mode' || word.startsWith('--permission-mode='))).toHaveLength(1);
   const mode = words.indexOf('--permission-mode');
@@ -152,6 +147,17 @@ const launchedBy = async (
     expect(made.events.indexOf('fetch')).toBeGreaterThanOrEqual(0);
     expect(made.events.indexOf('fetch')).toBeLessThan(made.events.indexOf('tmux split-window'));
   }
+};
+
+/** One launch that must work: `start` makes it, and the launch rule holds for its pane. */
+const launchedBy = async (
+  made: Made,
+  expected: { readonly proxy: string | null },
+  start: () => Promise<CliResult<WorkerLaunch>>,
+): Promise<WorkerLaunch> => {
+  const result = await start();
+  if (!result.ok) throw new Error(result.error.message);
+  expectLaunchRule(made, expected);
   return result.value;
 };
 
@@ -734,6 +740,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
   it('is not confirmed (exit 3) when no line shows within the bound, and it keeps the pane', async () => {
     const made = make({ program: () => undefined });
     const error = await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(error.kind).toBe('not-ready');
     expect(exitCodeOf[error.kind]).toBe(3);
     expect(error.message).toContain(`resume not confirmed: the pane ${FIRST_NEW_PANE} of the worker alpha runs`);
@@ -764,6 +771,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
   it('reports a pane that is dead at once as a failed resume (exit 1), names the pane, and names the pointer file to delete', async () => {
     const made = make({ tmux: { newPanesEndAtOnce: true } });
     const error = await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(error.kind).toBe('failure');
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`resume failed: the pane ${FIRST_NEW_PANE} of the worker alpha ended after the start`);
@@ -776,6 +784,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
   it('keeps the pane and its mark after a failed launch: nothing is undone', async () => {
     const made = make({ tmux: { newPanesEndAtOnce: true } });
     await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(made.tmux.panes().at(-1)).toMatchObject({ id: FIRST_NEW_PANE, dead: true, options: { '@worker': 'alpha' } });
     expect(made.events).not.toContain('tmux kill-pane');
   });
@@ -783,6 +792,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
   it('reports a pane that tmux removed during the wait as gone, and stops the wait there', async () => {
     const made = make({ program: atWait(3, endsPane) });
     const error = await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`resume failed: the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
     expect(made.deps.sleeps).toHaveLength(3);
@@ -791,6 +801,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
   it('counts a pane that tmux can not read as gone', async () => {
     const made = make({ tmux: { failing: 'display-message' } });
     const error = await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('is gone');
   });
@@ -800,6 +811,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
       answer: (call) => (call.args[0] === 'display-message' ? exited(0, `${FIRST_NEW_PANE}|4000|0|1|0|0|0|sleep 300\n`) : undefined),
     });
     const error = await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`resume failed: the pane ${FIRST_NEW_PANE} of the worker alpha no longer runs the launch of the worker`);
     expect(made.events).not.toContain('tmux kill-pane');
@@ -808,6 +820,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
   it('reports a call of tmux that does not run as a failure, and keeps the pane', async () => {
     const made = make({ answer: (call) => (call.args[0] === 'display-message' ? failure('tmux did not answer in time') : undefined) });
     const error = await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`cannot read the pane ${FIRST_NEW_PANE}: tmux did not answer in time`);
     expect(error.hint).toBe('Run "factory worker list" to see if the worker alpha has a live pane.');
@@ -817,6 +830,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
   it('reports an answer that is not the line of one pane as a failure', async () => {
     const made = make({ answer: (call) => (call.args[0] === 'display-message' ? exited(0, 'zzz-odd-output\n') : undefined) });
     const error = await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(`cannot read the pane ${FIRST_NEW_PANE}`);
     expect(error.message).not.toContain('zzz-odd-output');
@@ -856,6 +870,7 @@ describe('the launch of a worker: a launch with no resume id checks the pane onc
   it('fails when the pane is dead at once, and offers the resume command only', async () => {
     const made = make({ tmux: { newPanesEndAtOnce: true } });
     const error = await failed(made);
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`the pane ${FIRST_NEW_PANE} of the worker alpha ended after the start`);
     expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
@@ -865,6 +880,7 @@ describe('the launch of a worker: a launch with no resume id checks the pane onc
   it('fails when tmux removed the pane during the wait', async () => {
     const made = make({ program: atWait(1, endsPane) });
     const error = await failed(made);
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
     expect(error.hint).not.toContain(POINTER);
@@ -921,6 +937,7 @@ describe('the launch of a worker: a failure after the pane exists', () => {
   it('closes the pane by its id when the mark can not be set, and fails', async () => {
     const made = make({ tmux: { failing: 'set-option' } });
     const error = await failed(made);
+    expectLaunchRule(made, { proxy: null });
     expect(error.kind).toBe('failure');
     expect(error.message).toContain('set-option');
     expect(error.message).toContain(FIRST_NEW_PANE);
@@ -933,6 +950,7 @@ describe('the launch of a worker: a failure after the pane exists', () => {
   it('reports a program that ended before the mark as a failed resume, with the delete of the pointer file, not as a pane that stays open', async () => {
     const made = make({ tmux: { newPanesGoneAtOnce: true } });
     const error = await failed(made, { resumeId: UUID });
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`resume failed: the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
     expect(error.message).not.toContain('stays open');
@@ -944,6 +962,7 @@ describe('the launch of a worker: a failure after the pane exists', () => {
   it('reports a program of a new worker that ended before the mark as an ended pane, with the resume command', async () => {
     const made = make({ tmux: { newPanesGoneAtOnce: true } });
     const error = await failed(made);
+    expectLaunchRule(made, { proxy: null });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe(`the pane ${FIRST_NEW_PANE} of the worker alpha is gone after the start`);
     expect(error.hint).toBe('Run "factory worker resume alpha" to try again.');
@@ -956,6 +975,7 @@ describe('the launch of a worker: a failure after the pane exists', () => {
       answer: (call) => (call.args[0] === 'kill-pane' ? exited(1, '', 'no way\n') : undefined),
     });
     const error = await failed(made);
+    expectLaunchRule(made, { proxy: null });
     expect(error.kind).toBe('failure');
     expect(error.message).toContain(`the pane ${FIRST_NEW_PANE} stays`);
     expect(error.hint).toBe(`Close the pane with "tmux kill-pane -t ${FIRST_NEW_PANE}". Then run "factory worker resume alpha" to try again.`);
