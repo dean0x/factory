@@ -46,14 +46,16 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `init --tracker --items --decisions --state-from`; `start` window `ops`; `upgrade` rule for a dirty state repo | FAC-M3 |
 | `node children`, `node add-child`, `node remove-child` | FAC-M2 |
 | `node tree` | FAC-M8 |
-| `machine`, `project`, `layout`, `inbox`, `self`, `hook` | FAC-M4 |
+| `machine`, `layout`, `self`, `hook` | FAC-M4 |
 | `shutdown`, `restart`, `reboot`, `status` (the worker states, the work item, the idle state), `dismiss` (with `--idle`) | FAC-M4 |
-| `worker` (new, list, send, relay, reset, stop, resume, summon, watch, recover, adopt) | FAC-M4 |
+| `worker` (new, list, reset, stop, resume, summon, watch) | FAC-M4 |
+| `worker relay`, `worker recover` | FAC-M5 |
+| `worker adopt` | FAC-M7 |
 | `item`, `request`, `queue`, `decide <D-n> <option>` | FAC-M5 |
 | `check`, `pr`, `issues`, `release`, `copies`, `lock` | FAC-M5 |
 | `status` (the digest for the owner), `report` (the digest of one node) | FAC-M5 |
 | `report` (the rollup over children) | FAC-M8 |
-| `recipe` (show, variant) | FAC-M6 |
+| `recipe` (show, variant), `project` (add, remove, list) | FAC-M6 |
 | `adopt` | FAC-M7 |
 | `tracker`, `state`, `watch`, `decide ask`, `decide read`, `item import` | FAC-M3 |
 
@@ -109,21 +111,20 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 **Goal.** factory starts, talks to, resets, stops and restores workers, with no read under `~/.claude`. The lifecycle verbs `start`, `shutdown`, `restart`, `reboot`, `status` and `dismiss` work, and each has a named test.
 
-**Scope.** `worker new|list|send|relay|reset|stop|resume|summon|watch|recover|adopt`, `shutdown`, `restart`, `reboot`, `status`, `dismiss`, `layout`, `machine`, `project add|remove|list`, `self reset` and `inbox next|ack`. The workers and view windows (F-8). The last-seen hook and the status line wrapper (F-9). The doorbell inbox (D-55). The recovery after a machine restart in `start`. The idle setting `limits.idle_after`. The agent setting `session.agent`.
+**Scope.** `worker new|list|reset|stop|resume|summon|watch`, `shutdown`, `restart`, `reboot`, `status`, `dismiss`, `layout`, `machine` and `self reset`. The workers and view windows (F-8). The last-seen hook and the status line wrapper (F-9). Messages between sessions (D-101). The recovery after a machine restart in `start`. The idle setting `limits.idle_after`. The agent setting `session.agent`.
 
-**The doorbell inbox (D-55).** It is the only way to send message text to a worker:
-- `worker send` writes one numbered record per message into `.factory/workers/<id>/inbox/`, then rings one constant short line in the worker. The line has no message text.
-- The worker acknowledges a record when it moves the record to `handled/`. `worker watch` rings again for a record that waits too long, with a fixed bound on the rings.
-- `worker relay` keeps owner authority in the typed line. The line names the record number and a short hash of the record. A record alone never carries authority.
-- `worker reset --assignment` and `worker recover` send their text with `worker send`.
-- All of it lives in the comms module (`src/comms/`, design §4.12) with one interface (`send`, `deliver`, `report`, `ping`) and a versioned record format. Only this module types into a pane.
+**Messages between sessions (D-101).** The cross-session messages of Claude Code carry the work:
+- factory starts each session with a name: the coordinator `<node id>`, a worker `<node id>-<worker id>`. The coordinator sends a task with `SendMessage`. A long task is a file in the assignment folder of the worker, and the message names it.
+- factory types only constant lines into a pane (`/clear`, `/compact` for `worker reset` and `self reset`), through `src/comms/` (design §4.12).
+- `worker watch` reports what the idle notices of Claude Code do not show: a pane that ended, a worker that waits in a dialog, and a worker that looks stalled.
+- A message from another session carries no authority. `worker relay` (FAC-M5) keeps owner authority in typed input.
 
 **Tasks.**
 1. **Session-stop test (F-7).** First write the rule for the word "safe" at the top of `docs/session-stop.md` (design §4.11). Then, in a throw-away session, try `/exit`, `/quit` (if it exists), `/restart`, `kill -TERM`, `kill -INT`, and the delete in the agent view. Try each way twice: on an idle session, and on a busy session (a tool runs and a background agent runs). Write one row for each way and each case into the table. Then `factory worker stop` uses the way that the table marks safe for the case of the worker. Until then, the rule is: stop only an idle session, then `kill -TERM`. This task does not run before FAC-M4 starts.
 2. **Fixtures from the real program (F-9).** Capture one payload for each hook event (SessionStart, Stop, PreCompact) and one status line payload from the installed Claude Code. Commit them in `test/fixtures/claude/` with the Claude Code version. If the status line payload has no context percent, name the other source in design §4.6 before the hook is built.
 3. The last-seen hook, the status line wrapper and the last-seen reader.
-4. **Inbox access test.** Before the inbox build, check that a worker in auto mode can read and move files in its inbox under the factory folder with no permission prompt. The worker gets its inbox folder through `--add-dir`. Record the result in `docs/session-stop.md` or a short note next to it.
-5. The doorbell inbox.
+4. Retired: no inbox. The worker reads its assignment folder through `--add-dir`.
+5. Messages between sessions.
 6. The worker commands, the layout and the recovery after a machine restart.
 7. The lifecycle verbs `start` (with the recovery), `shutdown`, `restart`, `reboot`, `status` and `dismiss`, and the setting `limits.idle_after` (shared, default 2h, bound 1m to 24h, read with the interval parser of the config schema).
 
@@ -139,7 +140,6 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] Reboot. Test `reboot stops and starts every worker of this factory` (`test/integration/reboot.test.ts`): after `reboot`, each recorded worker runs again with its session id, through the same resume path as `start`. A session of another factory, a session with the same name and another home option, and a `claude` process outside the factory panes keep running.
 - [ ] Status. Test `status lists each worker with its state, work item and idle state` (`test/unit/status.test.ts`), through the builder that FAC-M5 extends. A worker with no activity for longer than `limits.idle_after` and no open work in progress shows "idle"; a worker with open work does not. The work item column shows the current work, so an old worker name is visible.
 - [ ] Dismiss. Test `dismiss frees a work copy only when its work is pushed` (`test/integration/dismiss.test.ts`): it refuses an unpushed branch, an untracked file and a stale remote ref, keeps the primary clone, refuses a path outside the factory folder, and prints `STUCK:`. Test `dismiss --idle lists the idle workers and refuses a busy worker` (`test/integration/dismiss.test.ts`): the first run lists the idle workers and changes nothing; the owner picks workers on a fake terminal window; only the panes and processes that factory started for those workers end; a session with the same name and another home option keeps running; a busy worker is refused with a remedy line (exit 1); the pick step with `FACTORY_SESSION` set exits 4.
-- [ ] One active machine. Test `start warns when another machine is active` (`test/integration/start.test.ts`): the test reads a `.factory` that came through the FAC-M3 state pull, so this criterion depends on FAC-M3 (`state remote`, `push`, `pull`). Concurrent use is in the FAC-M8 criteria.
 - [ ] A received factory starts after one `init` (F-18f, TP-29 extended). Integration test: a fixture config repo is cloned into a temporary HOME; `init` with a fake terminal accepts the setup text, clones the projects and registers the factory; then `start --dry-run` and `doctor` exit 0. The fake terminal answers each prompt of design §4.3: the personal values, the mode of each approval point, the setup acceptance and the write of the hook. With no terminal window, `init` stops on a received factory that tracks other files, also with `--yes` (test).
 - [ ] Work copy outside the factory folder (OD-7). Integration test: a work copy that sits outside the factory folder finds its factory through the common git folder of the clone of its project, and `status` from there exits 0. A folder that is a work copy of no listed project exits 2 and prints the hint.
 - [ ] Settings in work copies. Before a worker starts in a work copy, the check for a setting that skips permission prompts runs on the settings files of that work copy. A skip setting makes the worker start exit 4 with one remedy line (test).
@@ -149,16 +149,18 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] Settings consent test (fake terminal window and none): `worker new` and `start` print the exact hook and status line change and its target file before any write. With no terminal window and no `--yes`, they write nothing and exit 2. With `--yes`, they write only `.claude/settings.json` or `.claude/settings.local.json` in the factory folder or the work copy. A test HOME shows that no file under `$HOME/.claude` changes. An existing status line command still prints its output through the wrapper.
 - [ ] Integration test: the hook writes the last-seen line on each event (fake hook input).
 - [ ] Static test: no source file opens a path under `~/.claude`, and no template contains such a path.
-- [ ] `worker relay` types the owner prefix only for a decision with `by: owner` in the log; a test covers the refusal. The test uses a fixture decision log, because `factory decide` comes in FAC-M5.
-- [ ] Inbox tests: `worker send` writes a numbered record and types only the constant line (a capture shows no message text); two sends give two records in order; a record moved to `handled/` stops the rings; `worker watch` rings again for a waiting record and stops at its bound; the relay line names the record number and its hash.
-- [ ] `inbox next` prints the oldest unhandled record, and `inbox ack <n>` moves record `n` to `handled/`. Both exit 2 when `FACTORY_INBOX` is not set (tests).
-- [ ] A test with a fake session: after a clear or a restart, the worker finds its waiting records in the inbox.
-- [ ] Static test: no module outside `src/comms/` reads or writes inbox files, and only `src/comms/` calls tmux `send-keys`. A unit test shows that a typed line of more than 300 characters is refused. A test with a fake comms module shows that `worker reset --assignment` and `worker recover` use `worker send`.
+- [ ] Hook state. The managed hook settings hold `Notification` (only for a permission prompt or an input dialog) and `PreToolUse`. The hook writes `Notification` only for the notification types `permission_prompt` and `elicitation_dialog`. `Notification` gives the state `waits`, and `PreToolUse` gives `busy`. `worker list` and `status` show `waits`, and `dismiss` refuses a worker that waits. `factory upgrade` adds the two events to the hook settings of each work copy that holds the hook of factory and to the coordinator settings, with the consent rule of design §4.6 (tests).
+- [ ] Session names. The worker argument list holds `--name <node id>-<worker id>` once, and the coordinator argument list holds `--name <node id>` once. One function in `src/names.ts` makes both names. The name is not a word of the pane binding, so a pane that an older version started without it still binds (unit tests).
+- [ ] `worker new --assignment F` copies F to `assignment.md` in the assignment folder of the worker before the launch. Before any write, it refuses: a file outside the factory folder and outside the git work tree of the caller, a link in the path, a path part below its root that starts with a dot (except `.factory/orders/`), `factory.local.yaml`, or a file that changes during the check (exit 4); a path that is not a regular file, a file over 1 MiB, or a file that is not UTF-8 or holds NUL (exit 2) (tests).
+- [ ] `worker reset <w> --clear|--compact` runs only from the coordinator pane. It refuses each case of design §4.6 "Session reset" with its exit code: a worker that is busy or waits, a state line older than the pane process, hook settings without the new events, a missing `$FACTORY_INBOX/resume.md`, unpushed work, a summoned pane, and a screen that shows a numbered option list. It types `C-u`, the literal command and `Enter` in one tmux run through `src/comms/`. It confirms the reset by `SessionStart` (clear) or `PreCompact` (compact) within 10 checks of 1 s, else exit 3 (fake tmux tests).
+- [ ] `self reset` runs only from the coordinator pane, which it binds by its start command. It exits 3 and names the file when `.factory/resume/<node id>.md` is missing. It exits 3 when its own state line shows `waits`, or when the coordinator settings lack one of the hook events. With the file, it types `/compact` through `src/comms/` and exits 0 with one line that says the compact runs after the current turn (fake tmux tests).
+- [ ] `worker watch` checks every 30 s and stops after 40 checks with `NO CHANGE`. A worker with no pane at the start is not a change. It exits at the first change: a pane that ended, is gone or fails the binding, a state line that is no longer valid or no longer owned, the state `waits`, or a busy worker with no event for 15 minutes (`stalled?`). It never types, signals or writes (fake clock test: 40 sleeps of 30 000 ms).
+- [ ] `doctor` warns on a Claude Code version below 2.1.224 and on a version that it cannot read. It warns on a `crossSessionInbound` value of `hold` or `refuse` and on the default mode `plan`, in the settings files that it reads (project and local only). An unset value is not a warning (tests).
+- [ ] Static test: only `src/comms/` holds a tmux input verb, in an argument list or a shell text. The typed text is a constant of `src/names.ts`. A typed line over 300 characters, or with a character outside printable ASCII, is refused (unit tests).
+- [ ] The assignment file and the resume file stay in the assignment folder after `worker reset --clear` and after `restart` (test).
 - [ ] `worker list` marks a worker at or above `context_prepare_pct` as `PREPARE` and above `context_max_pct` as `MAX`, with fake last-seen values at 29, 30, 40 and 41 percent (no mark, `PREPARE`, `PREPARE`, `MAX`).
 - [ ] `session.agent: claude` loads. Any other value fails and names the key. A static test finds no start of an agent program except through `session.agent`.
 - [ ] `machine` tests: fixture files for macOS (`memory_pressure` and `sysctl` output) and for Linux (`/proc/meminfo`, `/proc/loadavg`) give the same verdict format, with a fake platform for each. `worker new` refuses a work copy that another worker uses, and warns (exit 0, the worker still starts) when a resource limit fails or a machine fact is unknown (fake machine facts).
-- [ ] `project add|remove|list` change only `recipe.projects[]`, keep the comments of `factory.yaml`, and refuse a project path that the folder rules refuse (tests).
-- [ ] `self reset` exits 3 and names the file when the resume file `.factory/resume/<node id>.md` is missing. With the file, it asks `src/comms/` to type `/compact` with a hint that names the file (fake comms).
 - [ ] The job commands of this milestone pass the short-output helper, and `docs/token-budget.md` has a measured size for each of them.
 
 ### FAC-M5: Local board, check and release commands
@@ -176,6 +178,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 8. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
 9. **Acceptance of shared check commands.** A check command from the shared file runs only after the owner accepts it (design §4.4).
 10. **Usage view and token estimate (F-22, F-23).** `factory status --usage` shows the token use, the limits and the work counts of the factory. `factory item estimate <id>` gives a token range for a work item from the closed items. The usage view uses the separate token meter package (`dean0x/tokenmeter`, which has no devflow dependency). It does not build its own count from factory data. Both commands read only data that factory records or that the package gives: the last-seen files, the hook and status line data (design §4.6), the board and the output of the package. They never read a file under `~/.claude`. If the status line data has token, cost or limit fields, the hook records them in the last-seen line. The FAC-M5 plan adds the flag and the subcommand to design §4.2.
+11. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
 
 **`factory copies` (D-55).** The coordinator's repeated git work across work copies becomes four commands. Workers do their own git work on their own branch.
 - `list`: one row per work copy: project, path, worker, branch, short HEAD.
@@ -187,6 +190,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 **Exit criteria.**
 - [ ] Connector contract tests run against `local`. FAC-M3 runs the same set against `github`.
+- [ ] `worker relay` types the owner prefix only for a decision that `factory decide` recorded (test).
+- [ ] `worker recover`: the nudge is a native message (`SendMessage`). The answer to the usage-limit dialog comes after the real-run checks of FAC-M4 PR 3: the pointer sign of each dialog, and how a message from another session shows in the receiver.
 - [ ] With `local`: `changes read` returns nothing, and `factory decide <D-n> <option>` records `by: owner`. `factory decide` refuses (exit 4) with no terminal window, and when `FACTORY_SESSION` is set.
 - [ ] `item`, `request` and `queue` change only the `local` files, and every change is one commit in the state repo (test).
 - [ ] `init` sets `core.hooksPath`. The commit helper refuses when the hook is off. The hook refuses a commit that removes an item id from `board.json` (tests).
@@ -235,10 +240,11 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 **Goal.** A project can use the devflow setup of the `software` recipe. The coordinator knows which project uses which setup. The core works with no `software` recipe. A person can share a setup, and the owner accepts every setup file.
 
-**Scope.** `factory recipe show` and `factory recipe variant devflow --project P` (the key `variant` names the setup), the devflow setup file (design §2.2), the worker addendum, the proxy preset with its real values, the `projects` block of the coordinator template (design §5.2), the assignment of `worker new --project P` with the stage commands of the setup of P only, and a test recipe in the test folder. The shareable setup (design §4.13): the setup files in the tracked `setup/` folder, a priorities rule that a second factory folder shows, and a desk reader as a setup file (design §4.14).
+**Scope.** `factory recipe show` and `factory recipe variant devflow --project P` (the key `variant` names the setup), the devflow setup file (design §2.2), the worker addendum, the proxy preset with its real values, the `projects` block of the coordinator template (design §5.2), the assignment of `worker new --project P` with the stage commands of the setup of P only, `factory project add|remove|list` (moved from FAC-M4), and a test recipe in the test folder. The shareable setup (design §4.13): the setup files in the tracked `setup/` folder, a priorities rule that a second factory folder shows, and a desk reader as a setup file (design §4.14).
 
 **Exit criteria.**
 - [ ] `recipe variant devflow` runs `detect`, offers `install` only after a yes, and writes the setup into the project entry (test with a fake `devflow`).
+- [ ] `project add|remove|list` change only `recipe.projects[]`, keep the comments of `factory.yaml`, and refuse a project path that the folder rules refuse (tests).
 - [ ] `check` finds devflow's review and resolution markers on a recorded real devflow PR.
 - [ ] The core source and the default templates contain no devflow word and none of the three triage words (the deny list test).
 - [ ] Coordinator knowledge, integration test: a node with the project `a` (plain) and the project `b` (devflow). The `projects` block of the coordinator `CLAUDE.md` lists both setups and their stage commands. The assignment of a worker of `b` has the devflow stage commands. The assignment of a worker of `a` passes the deny list. `recipe show` prints the same table as the block.
@@ -259,7 +265,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - the import of the board and the items that wait for the owner into the `local` board files;
 - the approval point `merge` set to `delegated` by the owner, and the devflow setup for the devflow projects;
 - workers in the window `workers`, and `session.statusline` set to the status line command of the owner;
-- one worker run through the real Subswitch.
+- one worker run through the real Subswitch;
+- `factory worker adopt <name>`, which moves an outside session into a tmux pane (moved from FAC-M4).
 
 The import into GitHub issues is not here: it is FAC-M3.
 
@@ -297,14 +304,14 @@ The import into GitHub issues is not here: it is FAC-M3.
 - [ ] `decide read` records an answer `/choose B` or a label `choose:B` from the owner's account. It ignores the same answer from another account. Tests cover both cases.
 - [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
 - [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
-- [ ] Wake test on a separate tmux server with a fake `gh`. An owner comment `/choose B`, a label change, an assignee change and an issue close each cause one record in `.factory/inbox/` and one constant doorbell line in the coordinator pane. The same events from another account cause none. A fake `claude` on PATH records no call during `watch`.
+- [ ] Wake test on a separate tmux server with a fake `gh`. An owner comment `/choose B`, a label change, an assignee change and an issue close each cause one record and one constant wake line in the coordinator pane. The same events from another account cause none. A fake `claude` on PATH records no call during `watch`.
 - [ ] `start --dry-run` with `github` lists the window `ops` with `factory watch`. With `local`, it lists no `ops` window.
 - [ ] Board choice, tests with a fake `gh`: `init --tracker github --items acme/web --decisions acme/decisions --yes` makes a node, and `factory doctor` exits 0. When the fake says that the decision repo is public, `init` exits 4 and writes no file, and `doctor` fails on such a config. `tracker status` prints `github`.
 - [ ] Override test: a node with the default `github` and a project with `kind: local`. `item add --project P` goes to the `local` files, and an item with no project goes to the fake `gh`. `tracker status` prints both.
 - [ ] `item import` moves the `local` files (fixture `board.json` and `waiting.json`) into `github` items, and a second run creates no duplicates.
 - [ ] State remote, integration test: machine A makes a state repo and pushes it to a bare repo path. Machine B (a temp HOME) runs `init --state-from <path>`. The profile index equals the one of machine A, and `doctor` exits 0. `state pull` with a diverged remote exits 1 and changes nothing. With a dirty `.factory/`, `state pull` and `upgrade` stop, name the files and change nothing.
 - [ ] The old render and board scripts are not called by any process (a search of the tmux hooks and the cron list finds none). `scripts/check-parity.sh FAC-M3` exits 0 for all rows.
-- [ ] State pull and the second machine. Test: a state pull brings a `.factory` to a second factory folder, and the FAC-M4 test `start warns when another machine is active` reads it.
+- [ ] State pull and the second machine. Test: a state pull brings a `.factory` to a second factory folder, and the test `start warns when another machine is active` (`test/integration/start.test.ts`) reads it. Concurrent use is in the FAC-M8 criteria.
 - [ ] This workspace: after `item import`, a check script finds each `local` item id in exactly one GitHub issue, and `factory doctor` exits 0 with `tracker.kind: github`.
 
 ### FAC-M8: Layers and team

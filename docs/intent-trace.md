@@ -40,8 +40,8 @@ How to read the table:
 | F-10b | `software` first, in a plain and a devflow form | §4.9, §2.2 | FAC-M2 (plain), FAC-M6 (devflow) | covered |
 | F-11 | Git commands for multi-repo work, from mars | §3, §4.2 | FAC-M5: `copies` tests on fixture repos, with the case `STUCK:` | covered |
 | F-12a | Analysis of firstmate: what it is, how it works, what factory takes | §4.8 | None. `docs/research/firstmate-and-mars.md` is the answer | not applicable: the answer is a document |
-| F-12b | Explain the doorbell inbox; make it the only way to send text | §4.12 | FAC-M4: inbox tests; static test that only `src/comms/` calls `send-keys`; typed line limit of 300 characters | covered |
-| F-12c | Communication as its own module | §4.12, §5.3 | FAC-M4: static test (no module outside `src/comms/` touches inbox files) | covered |
+| F-12b | Explain the doorbell inbox; make it the only way to send text | §4.12 | FAC-M4: session-name tests; static test that only `src/comms/` types into a pane; typed line of at most 300 characters, constants only. Native messages replace the inbox (D-101) | covered |
+| F-12c | Communication as its own module | §4.12, §5.3 | FAC-M4: static test (only `src/comms/` holds a tmux input verb); FAC-M5 `report`, FAC-M8 `deliver` | covered |
 | F-13 | Same machine only; no remote host | §5.3, §4.4 | FAC-M2: the config refuses `ssh://`, `https://` and relative addresses (tests) | covered |
 | D-45a | TypeScript on Node 22+, `factory`, `@dean0x/factory`, MIT, `.factory/`, `factory.yaml` | §4.7, §9 | FAC-M1 is done (PR #1) | covered |
 | D-45b | Private repo until a team member installs it; an npm publish waits for Dean's go | §4.7 | FAC-M10: `scripts/check-release-workflow.sh`, `scripts/release-gate.sh` tests, `scripts/check-environment.sh`, `scripts/check-private.sh` | covered |
@@ -57,9 +57,9 @@ How to read the table:
 | D-53b | Design v2 and a new roadmap replace FAC-M2 to FAC-M7 | §9 | None. `docs/design.md` and `docs/roadmap-v2.md` are the result | not applicable: the answer is the two documents |
 | D-53c | The D-51 A review covers the FAC-M1 setup and upgrade code | §9 | FAC-M2: `scripts/check-review-scope.sh docs/reviews/fac-m2-review-summary.md` exits 0 | covered |
 | D-53d | FAC-M1 goes to `dean0x/factory` as it is | §9 | FAC-M1 is done (PR #1) | covered |
-| D-55a | The doorbell inbox goes into FAC-M4 | §4.12 | FAC-M4: inbox tests (numbered record, constant line, `handled/`, bounded re-rings, restart) | covered |
+| D-55a | The doorbell inbox goes into FAC-M4 | §4.12 | Replaced by D-101 (native cross-session messages). FAC-M4: session-name, `worker new --assignment`, `worker reset` and `worker watch` tests | covered |
 | D-55b | The git commands across work copies (`factory copies`) go into FAC-M5 | §4.2 | FAC-M5: `copies` tests | covered |
-| D-55c | The rest of the 8 firstmate ideas, and `inbox next` and `inbox ack` | §4.8, §4.12 | Idea 3 and idea 4: FAC-M8 (`node tree` test, inherit list test). Idea 5: FAC-M5 (report tests) and FAC-M8 (rollup). Idea 8: FAC-M3 (`state pull` and `upgrade` on a dirty state repo). `inbox next` and `inbox ack`: FAC-M4 | covered |
+| D-55c | The rest of the 8 firstmate ideas, and `inbox next` and `inbox ack` | §4.8, §4.12 | Idea 3 and idea 4: FAC-M8 (`node tree` test, inherit list test). Idea 5: FAC-M5 (report tests) and FAC-M8 (rollup). Idea 8: FAC-M3 (`state pull` and `upgrade` on a dirty state repo). `inbox next` and `inbox ack`: retired by D-101 (no records) | covered |
 | D-56 | Build order M2, M4, M5, M6, M7, then M3, M8, M9 | §9 | None. The table "Milestones" of the roadmap holds the order. FAC-M10 comes after FAC-M8 and before FAC-M9 | not applicable: a build order, not a feature |
 
 ## Notes of the verbatim check (Dean's own words)
@@ -84,7 +84,7 @@ How to read the table:
 | V-F-1d | Keep node, owner, project; Dean is unsure what they mean | §4.1 | FAC-M2: glossary test (node, owner, project). Dean's yes or no to the glossary is in "Decisions needed" | covered |
 | V-F-1e | His 11 shop-floor words and the heading with no items | §7.1 | FAC-M2: `scripts/check-intent-docs.sh` counts 11 rows in the table | covered |
 | V-F-2a | Maybe do not create an own review desk | §4.10 | None. See F-2b | not applicable: the ask is to not build it |
-| V-F-2b | Use the tracker UI and CLI; listen on comments and more from the board | §4.10 | FAC-M3: wake test (comment, label change, assignee change and issue close each cause one record and one doorbell line; another account causes none; `watch` calls no model) | covered |
+| V-F-2b | Use the tracker UI and CLI; listen on comments and more from the board | §4.10 | FAC-M3: wake test (comment, label change, assignee change and issue close each cause one record and one constant wake line; another account causes none; `watch` calls no model) | covered |
 | V-F-2c | The user picks the tracker, as in devflow | §4.10, §4.4 | FAC-M3: tracker choice test and override test. FAC-M9: `site` and `key` tests and the mixed test | covered |
 | V-F-3a | The main session of "Codex" | §4.6 | FAC-M4: `session.agent: claude` loads and another value fails; static test on agent starts | covered |
 | V-F-3b | Which folder: the root of the repo, or the root of the folder where he starts | §4.3 | FAC-M2: workspace folder test (two repos and a worktree). Design v3 PR (moved from FAC-M2: D-60): the lookup from the factory folder, the coordinator folder and a project clone | covered |
@@ -108,7 +108,7 @@ How to read the table:
 | Gap 6 | The adopt moves the coordinator text out of the folder above the work copies | §8 | FAC-M7: `scripts/check-worker-paths.sh` | covered |
 | Gap 7 | The context percent has a proven source | §4.6 | FAC-M4: fixtures from the installed Claude Code; wrapper test | covered |
 | Gap 8 | The core works without the `software` recipe | §4.9 | FAC-M6: dependency test and the test recipe `document` | covered |
-| Gap 9 | The inbox is the only way; the comms module has a section | §4.12, §5.3 | FAC-M4: static tests (only `src/comms/` types or touches inbox files) | covered |
+| Gap 9 | The inbox is the only way; the comms module has a section | §4.12, §5.3 | FAC-M4: static test (only `src/comms/` types into a pane) | covered |
 | Gap 10 | "Safe" has a rule, and the busy case is tested | §4.11 | FAC-M4: `scripts/check-session-stop.sh` (rule and 12 rows) | covered |
 | Gap 11 | Nothing publishes without a protected environment and a decision | §4.7 | FAC-M10: the four release scripts and the install tests | covered |
 | Gap 12 | Subswitch has real preset values and a criterion | §4.6, §2.2 | FAC-M6: stub server tests. FAC-M7: `scripts/subswitch-run.sh` | covered |
@@ -116,7 +116,7 @@ How to read the table:
 | Gap 14 | Each command has a milestone; the Linux parts are tested | §4.2, §4.7 | FAC-M2: the docs check compares the §4.2 commands with the command map. FAC-M4: `machine` fixtures. FAC-M5: `lock run` tests and the report core | covered |
 | Gap 15 | The D-51 A review has an owner | §9 | FAC-M2: `scripts/check-review-scope.sh` | covered |
 | Gap 16 | The percent rule for context is checked | §4.6 | FAC-M4: `worker list` marks `PREPARE` and `MAX` at 29, 30, 40 and 41 percent | covered |
-| Gap 17 | The accepted firstmate ideas have a place | §4.8 | FAC-M3 (idea 8), FAC-M4 (`inbox next` and `inbox ack`), FAC-M5 and FAC-M8 (idea 5), FAC-M8 (ideas 3 and 4) | covered |
+| Gap 17 | The accepted firstmate ideas have a place | §4.8 | FAC-M3 (idea 8), FAC-M5 and FAC-M8 (idea 5), FAC-M8 (ideas 3 and 4) | covered |
 | Gap 18 | Small items: the `@lane` name, the word `lane` in the research doc, the `doc` operation | §5.1, §4.10 | FAC-M2: no `@lane` under `src/`; the docs check finds no whole word `lane` in `docs/research/`. FAC-M3: `doc` operation tests | covered |
 | Gap 19 | A proxy host receives the API traffic of the node; the owner is warned about a host that is not loopback | §4.6 | FAC-M5: unit test: `doctor` warns when the proxy host is not loopback, and gives no warning for a loopback host | covered |
 
