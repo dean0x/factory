@@ -62,7 +62,7 @@ const must = async (step: Promise<RunResult>, what: string): Promise<RunResult> 
 /** The variable that tells a program it runs inside tmux. A command of the sandbox never gets it. */
 const TMUX_VARIABLE = 'TMUX';
 
-const withoutTmux = (values: Readonly<Record<string, string>>): Record<string, string> =>
+export const withoutTmux = (values: Readonly<Record<string, string>>): Record<string, string> =>
   Object.fromEntries(Object.entries(values).filter(([name]) => name !== TMUX_VARIABLE));
 
 /**

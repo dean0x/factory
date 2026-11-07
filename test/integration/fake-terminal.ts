@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { Sandbox } from './harness.js';
+import { withoutTmux, type Sandbox } from './harness.js';
 
 /**
  * A fake terminal for the tests of a command that asks questions. The program `script` that comes with the OS gives the command
  * a pseudo terminal on its standard input, output and error. The helper answers each prompt once the prompt shows, and it fails
- * at once for a prompt that it does not know. It runs with the environment of the sandbox only.
+ * at once for a prompt that it does not know. It runs with the environment of the sandbox only, and it drops TMUX as `box.run` does.
  *
  * The standard input of `script` is an anonymous pipe from `cat`, not the pipe of `spawn`: that pipe is a socket, and the BSD
  * `script` stops with "Operation not supported on socket" when its standard input is a socket. The kernel of macOS builds a
@@ -59,7 +59,7 @@ export interface TerminalOptions {
   readonly env?: Readonly<Record<string, string>>;
   /** The prompts in the order that the program shows them, and the answer to each. */
   readonly exchanges?: readonly Exchange[];
-  /** The longest wait for one prompt. */
+  /** The longest wait for one prompt. The wait for the first prompt starts when the command starts: its line `PID:` shows. */
   readonly promptMs?: number;
   /** The longest time of the whole run. */
   readonly totalMs?: number;
@@ -124,6 +124,25 @@ const killGroup = (group: number | null | undefined): void => {
   }
 };
 
+/** Kill each process group, also after a kill that failed. Returns the first failure, or null when every kill worked. */
+const killGroups = (groups: readonly (number | null | undefined)[]): Error | null => {
+  let first: Error | null = null;
+  for (const group of groups) {
+    try {
+      killGroup(group);
+    } catch (error) {
+      first ??= error as Error;
+    }
+  }
+  return first;
+};
+
+/** The process group of the command: the number of the line `PID:` that the shell under `script` writes first. */
+const groupFrom = (text: string): number | null => {
+  const marked = PID_LINE.exec(text);
+  return marked === null ? null : Number(marked[1]);
+};
+
 const insideRoot = (root: string, path: string | undefined): boolean => {
   if (path === undefined || path === '') return false;
   const below = relative(resolve(root), resolve(path));
@@ -143,7 +162,13 @@ const PIPELINE = ['/bin/sh', '-c', '/bin/cat | script "$@"', 'sh'] as const;
  * Run a command in a fake terminal and answer its prompts. `words` is the whole command: the program and its arguments, for
  * example `[process.execPath, DIST, 'init']`. The run is done at the line `EXIT:<code>` that the shell writes after the command.
  * The returned promise is rejected, with the screen in the error, for a prompt that no exchange names, a wait that is too
- * long, an exit before the last prompt, or HOME outside the sandbox. Each end of the run kills the process groups of the command.
+ * long, an exit before the last prompt, or HOME outside the sandbox.
+ *
+ * Each end of the run, also a failed one, kills the process group of `sh`, `cat` and `script`, and the process group of the shell
+ * under `script` and the command (a command that leaves its group is not reached). The group of the command is known from the
+ * line `PID:`, and the helper reads that line again after the kills, so a line that came after the last read of the loop counts. A
+ * kill that fails does not stop the other kills or the bounded wait. Its error is thrown only when the run itself did not fail:
+ * the error of the run is the one that the caller sees.
  */
 export const runInTerminal = async (
   box: Sandbox,
@@ -153,7 +178,7 @@ export const runInTerminal = async (
   const form = scriptForm();
   if (form === null) throw new Error(`fake terminal: no form of script is known for ${process.platform}`);
   if (words.length === 0) throw new Error('fake terminal: the command has no words');
-  const env: Record<string, string> = { ...box.env, ...options.env, SHELL: '/bin/sh', TERM: 'dumb' };
+  const env = withoutTmux({ ...box.env, ...options.env, SHELL: '/bin/sh', TERM: 'dumb' });
   if (!insideRoot(box.root, env['HOME'])) {
     throw new Error(`fake terminal: HOME (${env['HOME'] ?? 'unset'}) is not inside the sandbox root ${box.root}`);
   }
@@ -203,18 +228,24 @@ export const runInTerminal = async (
   };
 
   let commandGroup: number | null = null;
+  let failed = false;
   try {
     let cursor = 0;
     let next = 0;
-    let promptSince = Date.now();
+    // The wait for a prompt starts when the command starts (its PID line shows), and again after each answer.
+    let promptSince: number | null = null;
+    // The step count is the fixed upper bound, and the deadline in wall time is the limit: a late timer makes a step longer.
+    const deadline = Date.now() + totalMs;
     const steps = Math.ceil(totalMs / STEP_MS);
-    for (let step = 0; step < steps; step += 1) {
+    for (let step = 0; step < steps && Date.now() < deadline; step += 1) {
       await sleep(STEP_MS);
       if (seen.spawnError !== null) return fail(`the program script did not start: ${seen.spawnError.message}`);
       if (seen.raw.length > MAX_OUTPUT_CHARS) return fail(`the command wrote more than ${MAX_OUTPUT_CHARS} characters`);
       const text = clean(seen.raw);
-      const marked = PID_LINE.exec(text);
-      if (commandGroup === null && marked !== null) commandGroup = Number(marked[1]);
+      if (commandGroup === null) {
+        commandGroup = groupFrom(text);
+        if (commandGroup !== null) promptSince = Date.now();
+      }
       const ended = EXIT_LINE.exec(text);
       if (ended !== null) {
         const pending = exchanges[next];
@@ -242,16 +273,23 @@ export const runInTerminal = async (
           promptSince = Date.now();
           continue;
         }
-        if (Date.now() - promptSince > promptMs) return fail(`the prompt ${expected.prompt} did not show in ${promptMs} ms`);
+        if (promptSince !== null && Date.now() - promptSince > promptMs) {
+          return fail(`the prompt ${expected.prompt} did not show in ${promptMs} ms`);
+        }
       }
       if (PROMPT_SHAPE.test(shown) && Date.now() - seen.changedAt >= QUIET_MS) {
         return fail(`the command shows a prompt that no exchange names (${collapse(shown).trim().slice(-200)})`);
       }
     }
     return fail(`the command did not end in ${totalMs} ms`);
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    killGroup(commandGroup);
-    killGroup(child.pid);
+    let fault = killGroups([commandGroup, child.pid]);
     await settledWithin(closed, KILL_WAIT_MS);
+    // The pipes are read to their end now, so a PID line that came after the last read of the loop is known.
+    if (commandGroup === null) fault ??= killGroups([groupFrom(clean(seen.raw))]);
+    if (fault !== null && !failed) throw fault;
   }
 };
