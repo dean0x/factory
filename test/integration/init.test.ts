@@ -1,9 +1,18 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join, relative, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { denyMatches } from '../helpers/deny-list.js';
-import { makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
+import { runInTerminal, scriptGate, type Exchange } from './fake-terminal.js';
+import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
+
+const gate = scriptGate();
+if (gate === 'skip') console.warn('The case of init.test.ts that needs a fake terminal is skipped: the program script is not installed.');
+
+/** The bounds of a run in the fake terminal: the wait for one prompt, the whole run, and the time limit of the case. */
+const PROMPT_MS = 15_000;
+const TOTAL_MS = 90_000;
+const CASE_MS = 120_000;
 
 let box: Sandbox;
 
@@ -654,6 +663,87 @@ describe('factory init: a received factory (built binary)', () => {
     expect(existsSync(join(received, 'factory.local.yaml'))).toBe(false);
     expect(existsSync(join(received, '.factory'))).toBe(false);
   });
+
+  /** True when `target` is a path below `root`. */
+  const isBelow = (root: string, target: string): boolean => {
+    const below = relative(root, target);
+    return below !== '' && !isAbsolute(below) && below.split(sep)[0] !== '..';
+  };
+
+  /**
+   * The six prompts of `init` for a received factory with a setup text, in the order that the program asks them, with the
+   * answer to each. The owner answers the two approval points with the default. The answer to the last prompt is yes only for
+   * a settings file inside the received factory, under its written path or its real path.
+   */
+  const receivedAnswers = (roots: readonly string[]): readonly Exchange[] => [
+    { prompt: /Your name(?: \[[^\]]*\])?: $/, answer: 'Second Owner' },
+    { prompt: /Your GitHub login(?: \[[^\]]*\])?: $/, answer: 'second-owner' },
+    { prompt: /Approval point merge \(merge a pull request\): owner or delegated\? \[owner\] $/, answer: 'owner' },
+    { prompt: /Approval point release \(release a version\): owner or delegated\? \[owner\] $/, answer: 'owner' },
+    { prompt: /Accept these files\? \[y\/N\] $/, answer: 'y' },
+    {
+      prompt: /Write this change\? \[y\/N\] $/,
+      answer: (shown) => {
+        const target = /This changes the settings of Claude Code in (\S+):/.exec(shown)?.[1];
+        if (target === undefined || !roots.some((root) => isBelow(root, target))) {
+          throw new Error(`the settings file to change is not inside the received factory: ${target ?? 'no target shown'}`);
+        }
+        return 'y';
+      },
+    },
+  ];
+
+  it.runIf(gate === 'fail')('needs the program script, because the variable CI is set', () => {
+    throw new Error('the program script is not installed, and the tests run with CI set');
+  });
+
+  it.skipIf(gate !== 'run')(
+    'starts a received factory after one init in a fake terminal: six answers, a recorded acceptance, then doctor and start --dry-run exit 0 (TP-7)',
+    async () => {
+      const received = await receivedFactory({ keepSetup: true });
+      const realReceived = await realpath(received);
+      const shared = await box.read(join(received, 'factory.yaml'));
+
+      const result = await runInTerminal(box, [process.execPath, DIST, 'init'], {
+        cwd: received,
+        env: second(),
+        exchanges: receivedAnswers([received, realReceived]),
+        promptMs: PROMPT_MS,
+        totalMs: TOTAL_MS,
+      });
+
+      expect(result.code, result.screen).toBe(0);
+      expect(result.screen).toContain('Registered the received node "demo"');
+      const entries = JSON.parse(await box.read(store('homes.json'))) as { homes: { id: string; origin: string; home: string }[] };
+      expect(entries.homes).toEqual([expect.objectContaining({ id: 'demo', origin: 'received', home: realReceived })]);
+      expect(await box.read(join(received, 'factory.yaml'))).toBe(shared);
+      expect((await box.git(received, ['status', '--porcelain', '-uall'])).stdout).toBe('');
+      expect(existsSync(join(received, 'web', '.git'))).toBe(true);
+
+      expect(existsSync(store('setup-acceptances.json'))).toBe(true);
+      const accepted = JSON.parse(await box.read(store('setup-acceptances.json'))) as {
+        acceptances: { root: string; node: string }[];
+      };
+      expect(accepted.acceptances).toEqual([expect.objectContaining({ root: realReceived, node: 'demo' })]);
+
+      const local = join(received, 'factory.local.yaml');
+      expect((await stat(local)).mode & 0o777).toBe(0o600);
+      const personal = await box.read(local);
+      expect(personal).toContain('Second Owner');
+      expect(personal).toContain('github: "second-owner"');
+      const settings = join(received, 'coordinator', '.claude', 'settings.local.json');
+      expect((await stat(settings)).mode & 0o777).toBe(0o600);
+      const hooks = await box.read(settings);
+      expect(hooks).toContain('factory hook Stop');
+      expect(hooks).toContain('factory hook statusline');
+
+      const doctor = await box.run(['doctor', '--home', received], { env: second() });
+      expect(doctor.code, doctor.stderr).toBe(0);
+      const start = await box.run(['start', '--dry-run', '--home', received], { env: second() });
+      expect(start.code, start.stderr).toBe(0);
+    },
+    CASE_MS,
+  );
 
   it('renders the shared limits into the coordinator text (TP-103)', async () => {
     const received = await receivedFactory();
