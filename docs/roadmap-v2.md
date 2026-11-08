@@ -156,6 +156,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [x] `session.agent: claude` loads. Any other value fails and names the key. A static test finds no start of an agent program except through `session.agent`.
 - [x] `machine` tests: fixture files for macOS (`memory_pressure` and `sysctl` output) and for Linux (`/proc/meminfo`, `/proc/loadavg`) give the same verdict format, with a fake platform for each. `worker new` refuses a work copy that another worker uses, and warns (exit 0, the worker still starts) when a resource limit fails or a machine fact is unknown (fake machine facts).
 - [x] The job commands of this milestone pass the short-output helper, and `docs/token-budget.md` has a measured size for each of them.
+- [ ] GitHub CI on `main` passes on the Ubuntu runner and on the macOS runner, at the merge commit of the last FAC-M4 PR or at a later commit. FAC-M4 moves to Done only after this green run. A local run of the CI steps does not count for this criterion.
 
 ### FAC-M5: Local board, check and release commands
 
@@ -173,6 +174,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 9. **Acceptance of shared check commands.** A check command from the shared file runs only after the owner accepts it (design §4.4).
 10. **Usage view and token estimate (F-22, F-23).** `factory status --usage` shows the token use, the limits and the work counts of the factory. `factory item estimate <id>` gives a token range for a work item from the closed items. The usage view uses the separate token meter package (`dean0x/tokenmeter`, which has no devflow dependency). It does not build its own count from factory data. Both commands read only data that factory records or that the package gives: the last-seen files, the hook and status line data (design §4.6), the board and the output of the package. They never read a file under `~/.claude`. If the status line data has token, cost or limit fields, the hook records them in the last-seen line. The FAC-M5 plan adds the flag and the subcommand to design §4.2.
 11. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
+12. **Owner fields on the board (adoption map G-1).** The setup names the owner's own item fields and the allowed values of each, for example a priority (`P0`, `P1`, `P2`), a type, a release flag on a queue row, and the worker. The connector contract (design §4.10) carries these fields. `item` and `queue` set and show them, and `local` keeps them in its files. FAC-M3 maps each field to a GitHub label or a Projects field.
+13. **Standing delegations as records (adoption map G-4).** A standing delegation is a decision record of the owner with a scope and no end time, for example "the coordinator may reset a worker". `worker relay` accepts it for each action inside its scope. A later owner decision ends it (design §6).
 
 **`factory copies` (D-55).** The coordinator's repeated git work across work copies becomes four commands. Workers do their own git work on their own branch.
 - `list`: one row per work copy: project, path, worker, branch, short HEAD.
@@ -235,12 +238,19 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   - `restart` resumes one worker with its session id from the last-seen file, and the other workers keep their panes.
 - [ ] Reboot. Test `reboot stops and starts every worker of this factory` (`test/integration/reboot.test.ts`): after `reboot`, each recorded worker runs again with its session id, through the same resume path as `start`. A session of another factory, a session with the same name and another home option, and a `claude` process outside the factory panes keep running (moved from FAC-M4: no observed failure).
 - [ ] Integration test: the hook writes the last-seen line on each event (fake hook input) (moved from FAC-M4: no observed failure).
+- [ ] Owner fields (G-1). Contract test against `local`, with a fixture setup that names a priority field (`P0`, `P1`, `P2`) and a type field: `item add` and `item update` store a field value, and `item list` and `queue` show it. A value outside the list, or a field that the setup does not name, fails and names the field, and changes no file. A queue row keeps its release flag. FAC-M3 runs the same test against `github`.
+- [ ] Standing delegations (G-4). Tests: `worker relay` types the owner prefix for an action inside the scope of a standing delegation, and refuses an action outside the scope. After a later owner decision ends the delegation, it refuses the same action. Only `factory decide` in a terminal window outside a factory session writes or ends a standing delegation (exit 4 with `FACTORY_SESSION` set). `doctor` and `start` list each active standing delegation with its scope and time.
 
 ### FAC-M6: devflow setup
 
 **Goal.** A project can use the devflow setup of the `software` recipe. The coordinator knows which project uses which setup. The core works with no `software` recipe. A person can share a setup, and the owner accepts every setup file.
 
 **Scope.** `factory recipe show` and `factory recipe variant devflow --project P` (the key `variant` names the setup), the devflow setup file (design §2.2), the worker addendum, the proxy preset with its real values, the `projects` block of the coordinator template (design §5.2), the assignment of `worker new --project P` with the stage commands of the setup of P only, `factory project add|remove|list` (moved from FAC-M4), and a test recipe in the test folder. The shareable setup (design §4.13): the setup files in the tracked `setup/` folder, a priorities rule that a second factory folder shows, and a desk reader as a setup file (design §4.14).
+
+**Owner layer (adoption map G-2, G-9, and Dean's "clay" note).**
+- **Owner hooks (G-2).** The setup has a hook list, `setup/hooks`. Each entry names an event (an item change, a decision, a merge or a release) and a setup script. factory runs the script after it writes the event to the event file. The owner accepts each hook as a setup file.
+- **Neutral core templates (G-9).** The role texts of the package hold no rule of one owner's way of work. The lines of Dean's way of work (design §4.13 lists them) move to a sample setup in `examples/` that a person can copy. The coordinator role text keeps "Coordinate. Do not produce." as its default (Dean's note), and keeps the use of the decision profile, because the profile is a factory feature.
+- **The clay rule.** An upgrade changes only the factory layer: the code, the fixed rules and the blocks that the package renders. It never overwrites the owner layer: the setup files, the owner text outside the blocks, the owner hooks and fields, the decision profile and the roadmaps. When the owner changed a part that the upgrade also changes, `upgrade` shows the conflict, and the owner decides.
 
 **Exit criteria.**
 - [ ] `recipe variant devflow` runs `detect`, offers `install` only after a yes, and writes the setup into the project entry (test with a fake `devflow`).
@@ -254,6 +264,9 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] Shareable setup. Test: a setup folder with a priorities rule and a desk reader as a setup file travels in the config repo. A second factory folder made from that repo shows the priorities rule in its coordinator text and runs the reader.
 - [ ] Upgrades never overwrite a setup file. Test: `upgrade` leaves every file under `setup/` as it was, also when the package text of the same name changed.
 - [ ] Setup acceptance of every setup file. Test: a setup commit that adds or changes a hook, a script, a settings file or a role text makes `start` with no terminal window exit 4, and makes `start` in a terminal window ask, until the owner accepts the new commit in a terminal window. This extends the acceptance of the setup hash from `setup/coordinator.md` (design §4.3) to every setup file. The accept command with `FACTORY_SESSION` set exits 4.
+- [ ] Owner hooks (G-2). Test: a fixture hook list with one hook on the decision event. After `factory decide`, the hook script runs once and reads the event on stdin. A hook that the owner did not accept does not run, and `start` and `doctor` name it. A hook that fails prints one warning line that names it, and the exit code of the command does not change.
+- [ ] Neutral core templates (G-9). Template test: the rendered coordinator and worker role texts of a new factory hold none of the lines that design §4.13 lists as Dean's way of work (a fixed list in the test), and the coordinator text holds "Coordinate. Do not produce." A factory with the sample setup of `examples/` shows those lines in its coordinator text.
+- [ ] Clay rule. Upgrade test: the owner edits a block that the package renders, and the new package changes the same block. `upgrade` keeps the owner text, shows the two texts as a diff, and names the two choices: keep the owner text, or take the new text (`--overwrite <name>`, old text to a backup file). With no terminal window, it keeps the owner text and lists each conflict. No file under `setup/` changes.
 
 ### FAC-M7: This workspace adopted (local board)
 
@@ -261,7 +274,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 **Scope.** `factory adopt` (design §8):
 - a factory folder next to the projects;
-- the move of the coordinator text out of the folder above the work copies;
+- the move of the coordinator text out of the folder above the work copies. The owner first splits the old `CLAUDE.md` into three files: the owner text (the draft of `setup/coordinator.md`), a runbook, and a list of the parts that factory retires (adoption map, section 5, step 1). `adopt` moves only the owner text, not the whole `CLAUDE.md`;
 - the import of the board and the items that wait for the owner into the `local` board files;
 - the approval point `merge` set to `delegated` by the owner, and the devflow setup for the devflow projects;
 - workers in the window `workers`, and `session.statusline` set to the status line command of the owner;
@@ -274,6 +287,7 @@ The import into GitHub issues is not here: it is FAC-M3.
 
 **Exit criteria.**
 - [ ] `factory adopt --dry-run` prints the plan, and a test checks it against a fixture copy of the workspace. The plan shows the move of the coordinator text.
+- [ ] Split owner text. Test on the fixture workspace with a fixture owner text: after the adopt, `setup/coordinator.md` holds the owner text, and the rendered coordinator text holds no line of the fixture `CLAUDE.md` that the owner text leaves out. With no owner text, `adopt --dry-run` stops (exit 2) and names the split step.
 - [ ] The adopt imports the fixture board and the fixture owner items into the `local` files with no loss: a test compares the item ids and titles before and after.
 - [ ] After the adopt, `factory doctor` exits 0 in the new factory folder, and the coordinator runs there.
 - [ ] Old worker names. When this workspace moves to factory, each old worker gets a name from its current work item, and `status` shows no worker whose name and work item differ (test).
