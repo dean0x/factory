@@ -32,7 +32,7 @@ import {
   type FakeDeps,
   type FakeOptions,
 } from '../helpers/fake-deps.js';
-import { gitHandler, STATE_GIT, type GitFixture } from '../helpers/git-fake.js';
+import { gitHandler, STATE_GIT, STATE_READ, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -1125,9 +1125,9 @@ describe('init: the state repository', () => {
       // The plan of the guard reads the git folder and the setting, and again for the hooks that stop. The install reads the git folder
       // once more and sets the path.
       `${STATE_GIT} rev-parse --absolute-git-dir`,
-      '-c core.fsmonitor=false config core.hooksPath',
+      `${STATE_READ} config core.hooksPath`,
       `${STATE_GIT} rev-parse --absolute-git-dir`,
-      '-c core.fsmonitor=false config core.hooksPath',
+      `${STATE_READ} config core.hooksPath`,
       `${STATE_GIT} rev-parse --absolute-git-dir`,
       `${STATE_GIT} config -- core.hooksPath ${GUARD_FOLDER}`,
       'config user.name',

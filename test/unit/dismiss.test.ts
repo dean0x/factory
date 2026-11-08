@@ -11,7 +11,7 @@ import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.j
 import { readWorkerRecord, writeWorkerRecord } from '../../src/workers/registry.js';
 import { unknownWorkItems, type WorkItem, type WorkItemPort } from '../../src/workers/work-items.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
-import { gitHandler, type GitFixture, type GitLog } from '../helpers/git-fake.js';
+import { FILE_MONITOR_OFF_WORD, gitHandler, type GitFixture, type GitLog } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type PaneFixture, type PaneView, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
@@ -746,7 +746,7 @@ describe('dismiss ID: the git link of the work copy', () => {
     const reads = readsOf(made);
     expect(reads.map((call) => call.args[8])).toEqual(['rev-parse', 'status', 'status']);
     for (const call of reads) {
-      expect(call.args.slice(2, 8)).toEqual(['-c', 'core.fsmonitor=false', '--git-dir', adminOf('alpha'), '--work-tree', alpha]);
+      expect(call.args.slice(2, 8)).toEqual(['-c', FILE_MONITOR_OFF_WORD, '--git-dir', adminOf('alpha'), '--work-tree', alpha]);
     }
   });
 

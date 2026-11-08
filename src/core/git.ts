@@ -33,8 +33,12 @@ export const parseGithubRepo = (url: string): string | null => {
   return match === null ? null : `${match[1]}/${match[2]}`;
 };
 
-/** The setting that turns off the program that git runs to find the changed files. */
-const FILE_MONITOR_OFF = 'core.fsmonitor=false';
+/**
+ * The setting that turns off the program that git runs to find the changed files. The value is empty on purpose. Before git 2.36,
+ * `core.fsmonitor` is the path of a program, so the value `false` would make git run a program with that name; an empty value
+ * names no program there. From git 2.36 an empty value reads as "off". So the file monitor is off on every git that factory accepts.
+ */
+const FILE_MONITOR_OFF = 'core.fsmonitor=';
 
 /**
  * The first words of a git command in the folder `dir`. With `gitDir`, git takes the repo from that folder and the files from

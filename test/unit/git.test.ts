@@ -45,6 +45,7 @@ import {
 import { commands, commandText, trackedFiles } from '../../src/names.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import {
+  FILE_MONITOR_OFF_WORD,
   gitHandler,
   STATE_GIT,
   STATE_GIT_WORDS,
@@ -602,7 +603,7 @@ describe('git: every git step in a state folder runs with hooks off (TP-15)', ()
   it('does not put the file monitor words on the calls that make the root repo, as they were', async () => {
     const { handler, log } = gitHandler();
     await initRootRepo(createFakeDeps({ cwd: WS, run: handler }), '/w/node', { paths: ['setup'], message: 'm', branch: 'main' });
-    expect(log.calls.some((call) => call.args.includes('core.fsmonitor=false'))).toBe(false);
+    expect(log.calls.some((call) => call.args.includes(FILE_MONITOR_OFF_WORD))).toBe(false);
   });
 });
 
@@ -1222,7 +1223,7 @@ describe('git: the checks before a work copy is freed', () => {
 
   describe('the reads of a work copy with the git folder that its clone keeps for it', () => {
     const GIT_DIR = '/w/node/web/.git/worktrees/alpha';
-    const named = ['-C', COPY, '-c', 'core.fsmonitor=false', '--git-dir', GIT_DIR, '--work-tree', COPY];
+    const named = ['-C', COPY, '-c', FILE_MONITOR_OFF_WORD, '--git-dir', GIT_DIR, '--work-tree', COPY];
 
     it('reads the last commit from that git folder, with the file monitor off', async () => {
       const { deps, calls } = asked(exited(0, `${HEAD}\n`));

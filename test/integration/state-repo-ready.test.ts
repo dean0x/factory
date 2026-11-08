@@ -3,7 +3,7 @@ import { appendFile, chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Deps } from '../../src/core/deps.js';
-import { requireStateConfigSafe, requireStateRepoReady } from '../../src/core/git.js';
+import { requireStateConfigSafe, requireStateRepoReady, stateStatusOf } from '../../src/core/git.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { commands } from '../../src/names.js';
 import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
@@ -70,22 +70,40 @@ describe('the ready check of the state repo with a staged submodule pointer (TP-
   });
 });
 
+/**
+ * A program that git runs for a filter, a hook or a file monitor: it writes the marker file. A filter also passes its input on,
+ * and a hook or a file monitor reads none.
+ */
+const writeProgram = async (name: string, passInput = false): Promise<{ readonly program: string; readonly marker: string }> => {
+  const program = join(box.root, `${name}.sh`);
+  const marker = join(box.root, `${name}.marker`);
+  await writeFile(program, `#!/bin/sh\n: > '${marker}'\n${passInput ? 'cat\n' : ''}`);
+  await chmod(program, 0o755);
+  return { program, marker };
+};
+
+const appendToLocalConfig = (text: string): Promise<void> => appendFile(join(stateDir, '.git', 'config'), text);
+
+describe('the git steps of the state repo start no file monitor program', () => {
+  it('reads the status without the program that the local config names for the file monitor, where git itself starts it', async () => {
+    const { program, marker } = await writeProgram('monitor');
+    await appendToLocalConfig(`[core]\n\tfsmonitor = ${program}\n`);
+
+    const status = await stateStatusOf(deps, stateDir);
+
+    expect(status).toEqual({ ok: true, value: [] });
+    expect(existsSync(marker), 'the file monitor program ran').toBe(false);
+    // Control: a plain status of git starts that program, so the marker proves the state step kept it from running.
+    await mustGit(['status', '--porcelain']);
+    expect(existsSync(marker), 'the control did not start the file monitor program').toBe(true);
+  });
+});
+
 describe('the git config check of a state repo whose config names a program (TP-16)', () => {
   const FILTER_FILE = 'attributes-filter.cfg';
 
-  /** A program that git runs for a filter or a hook: it writes the marker file and passes its input on. */
-  const writeProgram = async (name: string): Promise<{ readonly program: string; readonly marker: string }> => {
-    const program = join(box.root, `${name}.sh`);
-    const marker = join(box.root, `${name}.marker`);
-    await writeFile(program, `#!/bin/sh\n: > '${marker}'\ncat\n`);
-    await chmod(program, 0o755);
-    return { program, marker };
-  };
-
-  const appendToLocalConfig = (text: string): Promise<void> => appendFile(join(stateDir, '.git', 'config'), text);
-
   it('stops with exit 4, names the key, and starts no program, for a filter in a file that the local config includes', async () => {
-    const { program, marker } = await writeProgram('filter');
+    const { program, marker } = await writeProgram('filter', true);
     const included = join(box.root, FILTER_FILE);
     await writeFile(included, `[filter "x"]\n\tclean = ${program}\n`);
     await appendToLocalConfig(`[include]\n\tpath = ${included}\n`);
@@ -103,7 +121,7 @@ describe('the git config check of a state repo whose config names a program (TP-
   });
 
   it('stops requireStateRepoReady with exit 4 before it reads the status, for a filter in an included file', async () => {
-    const { program, marker } = await writeProgram('filter-ready');
+    const { program, marker } = await writeProgram('filter-ready', true);
     const included = join(box.root, FILTER_FILE);
     await writeFile(included, `[filter "x"]\n\tsmudge = ${program}\n`);
     await appendToLocalConfig(`[include]\n\tpath = ${included}\n`);

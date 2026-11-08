@@ -249,7 +249,7 @@ describe('factory upgrade (built binary)', () => {
       await initNode();
       const state = stateOf();
       // A read of the test uses the file monitor off, so that it leaves no marker of its own.
-      const quiet = (args: readonly string[]): ReturnType<Sandbox['git']> => box.git(state, ['-c', 'core.fsmonitor=false', ...args]);
+      const quiet = (args: readonly string[]): ReturnType<Sandbox['git']> => box.git(state, ['-c', 'core.fsmonitor=', ...args]);
 
       // The state repo lacks a line of its .gitignore, so the upgrade has a file to commit.
       await writeFile(join(state, '.gitignore'), 'state/\nlocks/\nbackups/\n');

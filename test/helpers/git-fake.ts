@@ -103,14 +103,20 @@ export interface GitLog {
 /** The words that a read of a work copy puts after `-C <folder>`: the file monitor off, the git folder and the work tree. */
 const PIN_WORDS = 6;
 
+/** The setting that turns the file monitor off: an empty value, which git before 2.36 reads as "no program" and git 2.36 and later reads as "off". */
+export const FILE_MONITOR_OFF_WORD = 'core.fsmonitor=';
+
 /** The words that every git step in a state folder puts after `-C <folder>`: the hooks off and the file monitor off. */
-export const STATE_GIT_WORDS: readonly string[] = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+export const STATE_GIT_WORDS: readonly string[] = ['-c', 'core.hooksPath=/dev/null', '-c', FILE_MONITOR_OFF_WORD];
 
 /** The same words as one text, for the pin of a command line. */
 export const STATE_GIT = STATE_GIT_WORDS.join(' ');
 
 /** The words that a read of one setting of a state folder puts after `-C <folder>`: the file monitor off. The read must see the setting as git sees it, so the hooks stay as set. */
-export const STATE_READ_WORDS: readonly string[] = ['-c', 'core.fsmonitor=false'];
+export const STATE_READ_WORDS: readonly string[] = ['-c', FILE_MONITOR_OFF_WORD];
+
+/** The same words as one text, for the pin of a command line. */
+export const STATE_READ = STATE_READ_WORDS.join(' ');
 
 const wordsAt = (args: readonly string[], at: number, words: readonly string[]): boolean =>
   words.every((word, index) => args[at + index] === word);
@@ -126,11 +132,11 @@ export const withoutStateWords = (args: readonly string[]): readonly string[] =>
 };
 
 /**
- * The argument list of a git call without the words of a pinned read (`-c core.fsmonitor=false --git-dir X --work-tree Y`) or of a step
+ * The argument list of a git call without the words of a pinned read (`-c core.fsmonitor= --git-dir X --work-tree Y`) or of a step
  * in a state folder, so the call gets the same answer as the same call without them. Any other list stays as it is.
  */
 const unpinned = (args: readonly string[]): readonly string[] =>
-  args[2] === '-c' && args[3] === 'core.fsmonitor=false' && args[4] === '--git-dir' && args[6] === '--work-tree'
+  args[2] === '-c' && args[3] === FILE_MONITOR_OFF_WORD && args[4] === '--git-dir' && args[6] === '--work-tree'
     ? [...args.slice(0, 2), ...args.slice(2 + PIN_WORDS)]
     : withoutStateWords(args);
 
