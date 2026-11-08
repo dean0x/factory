@@ -133,6 +133,30 @@ describe('factory upgrade (built binary)', () => {
       expect((await box.git(stateOf(), ['config', 'core.hooksPath'])).stdout.trim()).toBe(await guardOf());
     });
 
+    it('changes neither the setting, nor the guard folder, nor a backup when the ready check of the state repo refuses', async () => {
+      await initNode();
+      const state = stateOf();
+      const guard = await guardOf();
+      // The guard is off in two ways: another setting, and a missing hook file.
+      expect((await box.git(state, ['config', '--local', 'core.hooksPath', '/nonexistent'])).code).toBe(0);
+      await rm(join(guard, 'pre-commit'));
+      // The state repo lacks a line of its .gitignore, so the upgrade has a file to commit, and a staged file stops the upgrade.
+      await writeFile(join(state, '.gitignore'), 'state/\nlocks/\nbackups/\n');
+      expect((await box.git(state, ['add', '.gitignore'])).code).toBe(0);
+      expect((await box.git(state, ['commit', '-q', '-m', 'drop a line'])).code).toBe(0);
+      await writeFile(join(state, 'note.txt'), 'staged');
+      expect((await box.git(state, ['add', 'note.txt'])).code).toBe(0);
+      const hooksBefore = await readdir(guard);
+
+      const refused = await box.run(['upgrade', '--home', box.node]);
+      expect(refused.code).toBe(1);
+      expect(refused.stderr).toContain('staged changes');
+      expect((await box.git(state, ['config', '--local', 'core.hooksPath'])).stdout.trim()).toBe('/nonexistent');
+      expect(await readdir(guard)).toEqual(hooksBefore);
+      expect(await readdir(state)).not.toContain('backups');
+      expect((await box.git(state, ['log', '--format=%s'])).stdout.trim().split('\n')[0]).toBe('drop a line');
+    });
+
     it('names a hook file that stops, runs no hook, and the stopped hook does not run at a later commit', async () => {
       await initNode();
       const state = stateOf();
