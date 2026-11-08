@@ -510,6 +510,12 @@ export const boardKeys = {
 export const maxTrackLines = 17;
 
 /**
+ * The most characters of one line of text output. The first line of the output of a job command holds at most 120
+ * characters (`MAX_FIRST_LINE_CHARS` in `test/helpers/short-output.ts`). `displayLine` in `src/cli/output.ts` cuts to it.
+ */
+export const maxDisplayWidth = 120;
+
+/**
  * The names that an owner field can not take: the keys that an item, a queue row, a track or a decision record already
  * holds, and the track and stage keys. A field never replaces a key that the core owns, and never replaces a key that is
  * part of the proof of a decision.

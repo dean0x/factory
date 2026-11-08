@@ -359,10 +359,11 @@ describe('control characters in text output', () => {
     expect(renderWarnings(['bad \u001b[31m value\u0085'])).toBe('warning: bad ?[31m value?\n');
   });
 
-  it('leaves the JSON document as it is', () => {
-    const doc = { schema: 'x/v1', path: 'a\u001bb' };
-    expect(JSON.parse(renderJson(doc))).toEqual(doc);
+  it('M5-1b TP-105 removes hidden characters from the string values of the JSON document', () => {
+    const doc = { schema: 'x/v1', path: 'a\u001bb', note: 'c‮d' };
+    expect(JSON.parse(renderJson(doc))).toEqual({ schema: 'x/v1', path: 'ab', note: 'cd' });
     expect(renderJson(doc)).not.toContain('\u001b');
+    expect(renderJson(doc)).not.toContain('‮');
   });
 });
 
