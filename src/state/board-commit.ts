@@ -44,15 +44,17 @@ export interface BoardCommit {
 
 const BOARD = files.board;
 
-/** A path in the change is a plain path below the state folder: no folder above it, no empty or dotted part, and not the git folder. */
+/**
+ * A path in the change is a plain path below the state folder: no folder above it, no empty or dotted part, and no part that is
+ * a git folder. The git folder is compared in lower case, because a disk that ignores case gives `.GIT` the same folder as `.git`.
+ */
 const isPlainPath = (path: string): boolean => {
   const parts = path.split('/');
   return (
     path !== '' &&
     !isAbsolute(path) &&
     normalize(path) === path &&
-    parts.every((part) => part !== '' && part !== '.' && part !== '..') &&
-    parts[0] !== GIT_ENTRY
+    parts.every((part) => part !== '' && part !== '.' && part !== '..' && part.toLowerCase() !== GIT_ENTRY)
   );
 };
 
