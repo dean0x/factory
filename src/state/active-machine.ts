@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { failure, type CliError, type CliResult } from '../cli/errors.js';
+import { failure, gitConfigUnreadable, hasCode, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { commitPaths, requireStateRepoCommit, unstagePaths, type RepoPaths } from '../core/git.js';
 import { ok } from '../core/result.js';
@@ -13,8 +13,8 @@ import { withStateLock } from './state-lock.js';
 /**
  * The mark of the active machine (design 4.3). `start` writes it when it starts the session, and it names the machine that runs
  * the factory now: a UUID that this machine made once (`machineIdOf`) and the time. The state repo tracks the mark, so a machine
- * that pulls the state can see which machine ran last. A mark never stops a command: a mark of another machine, or a mark that
- * can not be written, is a warning.
+ * that pulls the state can see which machine ran last. A mark of another machine, or a mark that can not be written, is a warning
+ * and stops no command. The one exception is a git that can not list its config scopes (see `claimActiveMachine`).
  */
 
 const keys = activeMachine.keys;
@@ -188,58 +188,61 @@ const MARK_PATHS: RepoPaths = { present: [files.activeMachine], gone: [] };
  * The part of the claim that runs inside the state lock: the read of the mark, the ready check, the write and the commit. The
  * mark is read under the lock, so the text that a failed commit puts back is the text that was there when this run took the lock.
  */
-const claimLocked = async (deps: Deps, home: string, layout: Layout, machine: string): Promise<ClaimOutcome> => {
+const claimLocked = async (deps: Deps, home: string, layout: Layout, machine: string): Promise<CliResult<ClaimOutcome>> => {
   const read = await readActiveMark(deps, home);
   if (!read.ok) {
     deps.warn(notMarkedBy(read.error));
-    return { claimed: false, other: null };
+    return ok({ claimed: false, other: null });
   }
   const other = read.value.state === 'valid' && read.value.mark.machine !== machine ? read.value.mark : null;
   if (other !== null) deps.warn(otherMachineWarning(other));
   if (read.value.state === 'invalid') {
     if (read.value.text === null) {
       deps.warn(notMarked(`${layout.activeMachineFile} can not be replaced: ${read.value.reason}`));
-      return { claimed: false, other };
+      return ok({ claimed: false, other });
     }
     deps.warn(`The mark ${layout.activeMachineFile} is not valid (${read.value.reason}), so this run replaces it.`);
   }
 
   const ready = await requireStateRepoCommit(deps, layout.stateDir, [files.activeMachine], 'this command', commands.start);
   if (!ready.ok) {
+    // A git that can not list its config scopes is too old for the commands: this one fault stops the command. Every other fault is a warning.
+    if (hasCode(ready.error, gitConfigUnreadable)) return ready;
     deps.warn(notMarkedBy(ready.error));
-    return { claimed: false, other };
+    return ok({ claimed: false, other });
   }
   const previous = read.value.state === 'absent' ? null : read.value.text;
   const written = await deps.fs.writeTextAtomic(layout.activeMachineFile, markTextOf(machine, deps.now()), layout.stateDir);
   if (!written.ok) {
     deps.warn(notMarkedBy(written.error));
-    return { claimed: false, other };
+    return ok({ claimed: false, other });
   }
   const committed = await commitPaths(deps, layout.stateDir, MARK_PATHS, activeMachine.commitMessages.set);
-  if (committed.ok) return { claimed: true, other };
+  if (committed.ok) return ok({ claimed: true, other });
   deps.warn(notMarked(`${committed.error.message}${await putBack(deps, layout, previous, MARK_PATHS)}`));
-  return { claimed: false, other };
+  return ok({ claimed: false, other });
 };
 
 /**
  * Mark this machine as the active one: write the mark with the id of this machine and the time, and commit that file only. A
- * mark of another machine is a warning, printed before the write, and the mark is replaced all the same. Nothing here stops the
- * caller: a fault is a warning, and the value tells what happened. The call holds the state lock from the read of the mark to the
- * commit; a lock that another writer holds for the whole wait is a warning, and the call writes nothing. The state repo must be
- * ready for the commit (a git repo with an identity, no staged change, no change of the owner in the file of the mark), else the
- * call writes nothing. A commit that fails puts the file back as it was.
+ * mark of another machine is a warning, printed before the write, and the mark is replaced all the same. One fault stops the
+ * caller (exit 1): a git that can not list its config scopes, which needs git 2.26. Every other fault is a warning, and the value
+ * tells what happened. The call holds the state lock from the read of the mark to the commit; a lock that another writer holds for
+ * the whole wait is a warning, and the call writes nothing. The state repo must be ready for the commit (a git repo with an
+ * identity, no staged change, no change of the owner in the file of the mark), else the call writes nothing. A commit that fails
+ * puts the file back as it was.
  */
-export const claimActiveMachine = async (deps: Deps, home: string): Promise<ClaimOutcome> => {
+export const claimActiveMachine = async (deps: Deps, home: string): Promise<CliResult<ClaimOutcome>> => {
   const layout = layoutOf(home);
   const id = await machineIdOf(deps, home);
   if (!id.ok) {
     deps.warn(notMarkedBy(id.error));
-    return { claimed: false, other: null };
+    return ok({ claimed: false, other: null });
   }
-  const claimed = await withStateLock(deps, layout, async () => ok(await claimLocked(deps, home, layout, id.value)));
-  if (claimed.ok) return claimed.value;
+  const claimed = await withStateLock(deps, layout, () => claimLocked(deps, home, layout, id.value));
+  if (claimed.ok || hasCode(claimed.error, gitConfigUnreadable)) return claimed;
   deps.warn(notMarkedBy(claimed.error));
-  return { claimed: false, other: null };
+  return ok({ claimed: false, other: null });
 };
 
 const clearLocked = async (deps: Deps, home: string, layout: Layout, command: CommandName): Promise<CliResult<ClearOutcome>> => {

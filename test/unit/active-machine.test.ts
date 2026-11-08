@@ -8,6 +8,7 @@ import {
   machineIdOf,
   markNamesThisMachine,
   readActiveMark,
+  type ClaimOutcome,
 } from '../../src/state/active-machine.js';
 import { createFakeDeps, exited, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { withoutStateWords } from '../helpers/git-fake.js';
@@ -32,12 +33,16 @@ interface Setup {
   /** False: the run-time folder is not there yet. */
   readonly runtime?: boolean;
   readonly links?: Record<string, string>;
+  /** The exit code of `git config --list --show-scope`. Default: 0. A code other than 0 is what git below 2.26 gives. */
+  readonly configListExit?: number;
 }
 
 /** A fake of git for the state repo: the status, the identity, and the exit code of every other call. */
 const gitAnswer = (setup: Setup) => (call: RunCall) => {
   const command = withoutStateWords(call.args).slice(2).join(' ');
-  if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, setup.status ?? '');  if (command === 'config user.name' || command === 'config user.email') {
+  if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, setup.status ?? '');
+  if (command.startsWith('config --list --show-scope')) return exited(setup.configListExit ?? 0);
+  if (command === 'config user.name' || command === 'config user.email') {
     return setup.identity === false ? exited(1) : exited(0, 'Git User\n');
   }
   return exited(command.includes(' commit ') ? (setup.commitExit ?? 0) : 0);
@@ -73,6 +78,13 @@ const markOf = (deps: FakeDeps): { machine: string; at: string } | undefined => 
   if (text === undefined) return undefined;
   const parsed = JSON.parse(text) as Record<string, string>;
   return { machine: parsed[activeMachine.keys.machine] ?? '', at: parsed[activeMachine.keys.at] ?? '' };
+};
+
+/** The outcome of a claim that does not stop the command. */
+const claim = async (deps: FakeDeps): Promise<ClaimOutcome> => {
+  const result = await claimActiveMachine(deps, HOME);
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value;
 };
 
 const idOf = async (deps: FakeDeps): Promise<string> => {
@@ -179,7 +191,7 @@ describe('the mark of the active machine: the read', () => {
 describe('the mark of the active machine: the claim', () => {
   it('writes the id of this machine and the time, and commits only the file of the mark', async () => {
     const deps = make();
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome).toEqual({ claimed: true, other: null });
     expect(markOf(deps)).toEqual({ machine: FIRST_ID, at: NOW });
     expect(deps.warned).toEqual([]);
@@ -191,7 +203,7 @@ describe('the mark of the active machine: the claim', () => {
 
   it('writes the file with the schema id of the mark', async () => {
     const deps = make();
-    await claimActiveMachine(deps, HOME);
+    await claim(deps);
     const parsed = JSON.parse(deps.files.get(LAYOUT.activeMachineFile) ?? '{}') as Record<string, string>;
     expect(parsed[activeMachine.keys.schema]).toBe(schemaIds.activeMachine);
   });
@@ -200,7 +212,7 @@ describe('the mark of the active machine: the claim', () => {
     const deps = make();
     deps.seed(LAYOUT.machineIdFile, `${FIRST_ID}\n`);
     deps.seed(LAYOUT.activeMachineFile, markText(FIRST_ID, OTHER_AT));
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome).toEqual({ claimed: true, other: null });
     expect(deps.warned).toEqual([]);
     expect(markOf(deps)).toEqual({ machine: FIRST_ID, at: NOW });
@@ -209,7 +221,7 @@ describe('the mark of the active machine: the claim', () => {
   it('warns once, with the other machine and its time, when the mark names another machine, and then takes the mark', async () => {
     const deps = make();
     deps.seed(LAYOUT.activeMachineFile, markText(OTHER_ID, OTHER_AT));
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome).toEqual({ claimed: true, other: { machine: OTHER_ID, at: OTHER_AT } });
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain(OTHER_ID);
@@ -221,7 +233,7 @@ describe('the mark of the active machine: the claim', () => {
   it('warns that the mark is replaced when its text is not valid', async () => {
     const deps = make();
     deps.seed(LAYOUT.activeMachineFile, 'not json');
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome).toEqual({ claimed: true, other: null });
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain(files.activeMachine);
@@ -230,7 +242,7 @@ describe('the mark of the active machine: the claim', () => {
 
   it('warns, and writes and commits nothing, when the file of the mark is a link', async () => {
     const deps = make({ links: { [LAYOUT.activeMachineFile]: '/elsewhere/mark' } });
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome.claimed).toBe(false);
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain('is a link');
@@ -247,7 +259,7 @@ describe('the mark of the active machine: the claim', () => {
     'warns, and writes and commits nothing, when %s',
     async (_name, setup, reason) => {
       const deps = make(setup);
-      const outcome = await claimActiveMachine(deps, HOME);
+      const outcome = await claim(deps);
       expect(outcome.claimed).toBe(false);
       expect(deps.warned).toHaveLength(1);
       expect(deps.warned[0]).toContain(reason);
@@ -258,7 +270,7 @@ describe('the mark of the active machine: the claim', () => {
 
   it('ends the warning with the command that tries again, which claims the mark also while the session runs', async () => {
     const deps = make({ identity: false });
-    await claimActiveMachine(deps, HOME);
+    await claim(deps);
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain('Set both with "git config --global", then run "factory start" again.');
   });
@@ -266,7 +278,7 @@ describe('the mark of the active machine: the claim', () => {
   it('still warns about another machine when it can not commit the mark', async () => {
     const deps = make({ identity: false });
     deps.seed(LAYOUT.activeMachineFile, markText(OTHER_ID, OTHER_AT));
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome.other).toEqual({ machine: OTHER_ID, at: OTHER_AT });
     expect(deps.warned).toHaveLength(2);
     expect(deps.warned[0]).toContain(OTHER_ID);
@@ -275,7 +287,7 @@ describe('the mark of the active machine: the claim', () => {
 
   it('warns, clears the staged file and removes a new mark when the commit fails', async () => {
     const deps = make({ commitExit: 1 });
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome.claimed).toBe(false);
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain('cannot commit the state files');
@@ -287,17 +299,27 @@ describe('the mark of the active machine: the claim', () => {
     const deps = make({ commitExit: 1 });
     const old = markText(OTHER_ID, OTHER_AT);
     deps.seed(LAYOUT.activeMachineFile, old);
-    await claimActiveMachine(deps, HOME);
+    await claim(deps);
     expect(deps.files.get(LAYOUT.activeMachineFile)).toBe(old);
   });
 
   it('warns, and writes nothing, when it can not make the id of the machine', async () => {
     const deps = make();
     deps.seed(LAYOUT.machineIdFile, 'not an id\n');
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome).toEqual({ claimed: false, other: null });
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain(files.machineId);
+    expect(writesOf(deps)).toEqual([]);
+  });
+
+  it('fails with exit 1 and names git 2.26, with no warning, when git can not list the config scopes, and writes nothing', async () => {
+    const deps = make({ configListExit: 129 });
+    const result = await claimActiveMachine(deps, HOME);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('git 2.26') } });
+    if (!result.ok) expect(exitCodeOf[result.error.kind]).toBe(1);
+    expect(deps.warned).toEqual([]);
+    expect(deps.files.has(LAYOUT.activeMachineFile)).toBe(false);
     expect(writesOf(deps)).toEqual([]);
   });
 });
@@ -345,7 +367,7 @@ describe('the mark of the active machine in a state repo whose delete guard is o
   it('claims the mark and commits it, and reads no state of the guard', async () => {
     const deps = make();
     expect(deps.files.has(`${STATE}/.git/factory-guard/pre-commit`)).toBe(false);
-    expect(await claimActiveMachine(deps, HOME)).toEqual({ claimed: true, other: null });
+    expect(await claim(deps)).toEqual({ claimed: true, other: null });
     expect(writesOf(deps)).toHaveLength(2);
     expect(guardReadsOf(deps)).toEqual([]);
   });
@@ -373,7 +395,7 @@ describe('the mark of the active machine and the state lock (TP-19)', () => {
   it('claim: waits for the lock of another writer, then warns with the lock path and writes and commits nothing', async () => {
     const deps = make();
     deps.seed(LOCK_FILE, '1\n');
-    const outcome = await claimActiveMachine(deps, HOME);
+    const outcome = await claim(deps);
     expect(outcome.claimed).toBe(false);
     expect(deps.warned).toHaveLength(1);
     expect(deps.warned[0]).toContain(LOCK_FILE);
@@ -415,7 +437,7 @@ describe('the mark of the active machine and the state lock (TP-19)', () => {
 
   it('lets the lock go when the commit fails', async () => {
     const deps = make({ commitExit: 1 });
-    await claimActiveMachine(deps, HOME);
+    await claim(deps);
     expect(deps.files.has(LOCK_FILE)).toBe(false);
   });
 });

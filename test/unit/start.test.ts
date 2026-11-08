@@ -1,7 +1,7 @@
 import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { renderBlock } from '../../src/blocks/managed.js';
-import { failure } from '../../src/cli/errors.js';
+import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import { collectSetup } from '../../src/commands/init-received.js';
 import type { StartOptions } from '../../src/commands/start.js';
 import { runStart } from '../helpers/package-registry.js';
@@ -12,7 +12,7 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { activeMachine, env, files, hookNames, schemaIds, stateGuard, tmuxNames, trackedFiles } from '../../src/names.js';
+import { activeMachine, env, files, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
@@ -118,7 +118,7 @@ interface Setup {
    * The state folder is a git repo of its own. It answers the status, the identity, the staging and the commit.
    * `status` is the porcelain text of `git status` (default: no change). `commitExit` is the exit code of the commit.
    */
-  readonly stateRepo?: { readonly status?: string; readonly commitExit?: number };
+  readonly stateRepo?: { readonly status?: string; readonly commitExit?: number; readonly configListExit?: number };
   /**
    * The delete guard of the state repo. Default 'on': `init` wrote the hook and set `core.hooksPath`. 'off': the setting is not set.
    * 'unreadable': git can not tell the git folder.
@@ -139,6 +139,9 @@ const gitAnswer = (setup: Setup) => (call: RunCall) => {
       return setup.guard === 'unreadable' ? exited(128, '', 'fatal: cannot read the git folder\n') : exited(0, `${GIT_DIR}\n`);
     }
     if (command === 'config core.hooksPath') return setup.guard === 'off' ? exited(1) : exited(0, `${GUARD_DIR}\n`);
+    if (command.startsWith('config --list --show-scope') && setup.stateRepo.configListExit !== undefined) {
+      return exited(setup.stateRepo.configListExit, '', "error: unknown option `show-scope'\n");
+    }
     return exited(command.includes(' commit ') ? (setup.stateRepo.commitExit ?? 0) : 0);
   }
   if (call.args.includes('--show-toplevel') && setup.workTree !== undefined) return exited(0, `${setup.workTree}\n`);
@@ -1444,6 +1447,49 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       expect(made.deps.warned).toHaveLength(1);
       expect(made.deps.warned[0]).toContain('cannot commit the state files');
       expect(resumesOf(made.tmux)).toEqual(SESSION);
+    });
+
+    describe('git that can not list the config scopes (AC-26, TP-55)', () => {
+      /** The exit code of a git that does not know the option `--show-scope`. */
+      const UNKNOWN_OPTION = 129;
+
+      it('stops with exit 1 and names git 2.26, resumes no worker, and writes no mark and no commit', async () => {
+        const made = await seeded({ stateRepo: { configListExit: UNKNOWN_OPTION } });
+        const result = await startFactory(made.deps);
+        expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('git 2.26') } });
+        if (!result.ok) expect(exitCodeOf[result.error.kind]).toBe(1);
+        expect(made.deps.warned).toEqual([]);
+        expect(made.deps.files.has(MARK_FILE)).toBe(false);
+        expect(stateWrites(made.deps)).toEqual([]);
+        // Only the split of the view window had run: no worker had a pane.
+        expect(splitsOf(made.deps)).toBe(1);
+        expect(workerPanes(made.tmux)).toEqual([]);
+      });
+
+      it('stops the same way for a session that runs already', async () => {
+        const made = await seeded({ workers: [], stateRepo: { configListExit: UNKNOWN_OPTION }, tmux: { sessions: { demo: HOME } } });
+        const result = await startFactory(made.deps);
+        expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('git 2.26') } });
+        expect(made.deps.warned).toEqual([]);
+        expect(made.deps.files.has(MARK_FILE)).toBe(false);
+        expect(stateWrites(made.deps)).toEqual([]);
+      });
+    });
+
+    describe('the state lock stays held to the bound (AC-8, TP-19)', () => {
+      const LOCK_FILE = `${layoutOf(HOME).locksDir}/${stateLock.name}${stateLock.lock.suffix}`;
+
+      it('prints one warning line with the lock path, exits 0, and writes no mark and no commit', async () => {
+        const made = await seeded();
+        made.deps.seed(LOCK_FILE, '1\n');
+        const result = await startFactory(made.deps);
+        expect(result).toMatchObject({ ok: true, value: { failed: false } });
+        expect(made.deps.warned).toHaveLength(1);
+        expect(made.deps.warned[0]).toContain(LOCK_FILE);
+        expect(made.deps.files.has(MARK_FILE)).toBe(false);
+        expect(stateWrites(made.deps)).toEqual([]);
+        expect(made.deps.files.get(LOCK_FILE)).toBe('1\n');
+      });
     });
   });
 });

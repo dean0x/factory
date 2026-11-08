@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { failure } from '../../src/cli/errors.js';
+import { failure, gitConfigUnreadable } from '../../src/cli/errors.js';
 import {
   absoluteGitDirOf,
   addWorkTree,
@@ -800,7 +800,7 @@ describe('git: the minimum version of git (TP-55)', () => {
     const { handler } = gitHandler({ configListExit: 129 });
     expect(await ready(handler)).toMatchObject({
       ok: false,
-      error: { kind: 'failure', message: expect.stringContaining('git 2.26') },
+      error: { kind: 'failure', message: expect.stringContaining('git 2.26'), code: gitConfigUnreadable },
     });
   });
 

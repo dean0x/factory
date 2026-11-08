@@ -166,32 +166,36 @@ type Recovery = RecoveryReport | null;
 
 /**
  * What `start` does after it made the session, and only then: the mark of the active machine, then each recorded worker. The mark
- * comes first, so the warning about another active machine shows before any worker runs. A fault never stops the start: the
- * session runs, so every problem here is a warning, and the exit code stays 0.
+ * comes first, so the warning about another active machine shows before any worker runs. A fault is a warning and the exit code
+ * stays 0, with one exception: a git that can not list its config scopes stops the run (exit 1) before any worker runs.
  */
-const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers): Promise<Recovery> => {
-  await claimActiveMachine(deps, home);
+const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers): Promise<CliResult<Recovery>> => {
+  const claimed = await claimActiveMachine(deps, home);
+  if (!claimed.ok) return claimed;
   const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers });
-  if (recovered.ok) return recovered.value;
+  if (recovered.ok) return ok(recovered.value);
   deps.warn(`The ${roles.worker}s are not resumed: ${recovered.error.message}. ${recovered.error.hint ?? ''}`.trimEnd());
-  return null;
+  return ok(null);
 };
 
 /**
  * What `start` does for a session that runs already: it claims the mark of the active machine when the mark does not name this
  * machine, and then it warns once about the recorded workers that have no live pane. It never resumes a worker, because a worker
  * that was stopped on purpose stays stopped. The value is the workers that the warning names. A fault is a warning, and the exit
- * code stays 0.
+ * code stays 0, with the same one exception as `recoverSession`.
  */
-const checkRunningSession = async (deps: Deps, home: string, session: string): Promise<readonly string[]> => {
-  if (!(await markNamesThisMachine(deps, home))) await claimActiveMachine(deps, home);
+const checkRunningSession = async (deps: Deps, home: string, session: string): Promise<CliResult<readonly string[]>> => {
+  if (!(await markNamesThisMachine(deps, home))) {
+    const claimed = await claimActiveMachine(deps, home);
+    if (!claimed.ok) return claimed;
+  }
   const missing = await workersWithoutPane(deps, home, session);
   if (!missing.ok) {
     deps.warn(`The ${roles.worker}s are not checked: ${missing.error.message}. ${missing.error.hint ?? ''}`.trimEnd());
-    return [];
+    return ok([]);
   }
   if (missing.value.length > 0) deps.warn(noPaneWarning(missing.value));
-  return missing.value;
+  return ok(missing.value);
 };
 
 /** What `startAgain` made: the session, the coordinator that resumes, and the workers that run again. */
@@ -221,11 +225,12 @@ export const startAgain = async (
   const started = await startSession(deps, config.core.node.id, plan.value.steps);
   if (!started.ok) return started;
   const workers = await recoverSession(deps, home, config, answers);
+  if (!workers.ok) return workers;
   const { proxy, resumeId, warnings } = plan.value;
   return ok({
     proxy: proxy.label,
     coordinatorResumed: resumeId !== null,
-    workers,
+    workers: workers.value,
     warnings: [...warnings, ...(proxy.warning === undefined ? [] : [proxy.warning])],
   });
 };
@@ -486,9 +491,13 @@ export const runStart = async (
     if (!started.ok) return started;
   }
   // The recovery runs only for a session that this run made, and before the person is in the session.
-  const recovery = planned === null ? null : await recoverSession(deps, home, loaded.value, answers);
+  const recoveryResult = planned === null ? ok(null) : await recoverSession(deps, home, loaded.value, answers);
+  if (!recoveryResult.ok) return recoveryResult;
+  const recovery = recoveryResult.value;
   // A session that runs already resumes no worker. It claims the mark and names the workers that have no pane.
-  const withoutPane = planned === null ? await checkRunningSession(deps, home, id) : [];
+  const withoutPaneResult = planned === null ? await checkRunningSession(deps, home, id) : ok<readonly string[]>([]);
+  if (!withoutPaneResult.ok) return withoutPaneResult;
+  const withoutPane = withoutPaneResult.value;
   // A session that runs already can hold a coordinator pane that stays after its program ended.
   const ended = planned === null && (await coordinatorEnded(deps, id));
   const attached = await reach(deps, how, id);

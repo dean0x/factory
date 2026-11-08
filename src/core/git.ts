@@ -1,5 +1,5 @@
 import { basename, isAbsolute, join, resolve } from 'node:path';
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { codedFailure, failure, gitConfigUnreadable, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
 import { commands, commandText, dirs, minGitVersion, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps, RunOutput } from './deps.js';
@@ -607,13 +607,14 @@ const programKeysOf = (stdout: string): readonly string[] | null => {
 /**
  * Refuse (exit 4) when the local git config of the state folder, or a file it includes, has a key that names a program with no switch
  * to turn it off for one call: a filter driver (`filter.`) or a config hook (`hook.`). The refusal names the keys. It reads only.
- * The read needs git 2.26 (`--show-scope`); when it fails, the error (exit 1) names that version. `command` is the command that the
- * person runs again.
+ * The read needs git 2.26 (`--show-scope`); when it fails, the error (exit 1) names that version and carries the code
+ * `gitConfigUnreadable`, so a caller can tell it from the other failures. `command` is the command that the person runs again.
  */
 export const requireStateConfigSafe = async (deps: Deps, stateDir: string, command: CommandName): Promise<CliResult<void>> => {
   const again = `then run "${commandText(command)}" again.`;
   const unreadable = (detail: string): CliResult<never> =>
-    failure(
+    codedFailure(
+      gitConfigUnreadable,
       `cannot read the git config of ${dirs.state}: ${detail}. ${program} needs git ${minGitVersion} or later.`,
       `Update git, ${again}`,
     );
