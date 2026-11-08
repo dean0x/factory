@@ -162,7 +162,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [x] The job commands of this milestone pass the short-output helper, and `docs/token-budget.md` has a measured size for each of them.
 - [ ] GitHub CI on `main` passes on the Ubuntu runner and on the macOS runner, at the merge commit of the FAC-M4 close-out (831c695, #16) or at a later commit. `gh run list --branch main --workflow ci.yml --json conclusion,headSha` shows the run. FAC-M4 moves to Done only after this green run. A local run of the CI steps does not count for this criterion.
 
-### FAC-M5: Local board, check and release commands
+### FAC-M5: Local board and check commands
 
 **Goal.** The board, the requests and the decisions work with the `local` board. The merge check and the merge are one command each, with a short verdict. The report of one node exists, so `status` works before FAC-M7.
 
