@@ -448,15 +448,9 @@ const markerNotCommitted = (reason: string): MarkerCommit => ({
 
 /**
  * Commit the marker that was written again. A marker with the text that git holds has no change, so nothing is committed.
- * The status read and the commit run inside the state lock. A commit that fails, or a lock that another writer holds for the
- * whole wait, is a warning: the marker is in place.
+ * The caller holds the state lock. A commit that fails is a warning: the marker is in place.
  */
 const commitMarker = async (deps: Deps, layout: Layout): Promise<MarkerCommit> => {
-  const locked = await withStateLock(deps, layout, async () => ok(await commitMarkerLocked(deps, layout)));
-  return locked.ok ? locked.value : markerNotCommitted(locked.error.message);
-};
-
-const commitMarkerLocked = async (deps: Deps, layout: Layout): Promise<MarkerCommit> => {
   const status = await stateStatusOf(deps, layout.stateDir);
   if (!status.ok) return markerNotCommitted(status.error.message);
   if (!status.value.some((entry) => entry.path === stateRel.nodeJson)) return { committed: false, warnings: [] };
@@ -473,19 +467,20 @@ const commitMarkerLocked = async (deps: Deps, layout: Layout): Promise<MarkerCom
   return markerNotCommitted(committed.error.message);
 };
 
+/** What the writes of `init` up to the marker commit made: whether the state repo holds a commit of it, and the warnings. */
+interface Written {
+  readonly committed: boolean;
+  readonly warnings: readonly string[];
+}
+
 /**
  * Write the plan: the local file, the state folder or the marker, the delete guard of a state repo that was there, then the
- * entry in the factory list. A step that fails undoes the steps before it, the guard included: the old setting and the old guard
- * folder (or none) come back. The marker commit, the approval records and the setup acceptance come after the entry in the factory
- * list, so a run that fails leaves none of them. A commit, a record or an acceptance that fails is a warning.
+ * entry in the factory list, then the marker commit. A step that fails undoes the steps before it, the guard included: the old
+ * setting and the old guard folder (or none) come back. The marker commit comes after the entry in the factory list, so a run
+ * that fails leaves none of it. A commit that fails is a warning.
  */
-const applyExisting = async (
-  deps: Deps,
-  checked: Checked,
-  plan: Plan,
-  indexPath: string,
-): Promise<CliResult<Applied>> => {
-  const { config, points, repair, root, standing } = checked;
+const applyWrites = async (deps: Deps, checked: Checked, plan: Plan, indexPath: string): Promise<CliResult<Written>> => {
+  const { config, repair, root, standing } = checked;
   const { layout } = root;
   const id = config.core.node.id;
   const undo: (() => Promise<CliResult<void>>)[] = [];
@@ -568,6 +563,31 @@ const applyExisting = async (
     committed = marker.committed;
     warnings.push(...marker.warnings);
   }
+  return ok({ committed, warnings });
+};
+
+/**
+ * Write the plan, then the approval records, the setup acceptance and the render of the coordinator text. A state folder that
+ * was there can have another writer, so the writes up to the marker commit run inside the state lock when the run writes the
+ * marker: a lock that another writer holds for the whole wait stops the run (exit 1, the message names the lock) before the
+ * first write. The renders take the lock themselves, so they come after it is let go. A record or an acceptance that fails is
+ * a warning.
+ */
+const applyExisting = async (
+  deps: Deps,
+  checked: Checked,
+  plan: Plan,
+  indexPath: string,
+): Promise<CliResult<Applied>> => {
+  const { config, points, root, standing } = checked;
+  const { layout } = root;
+  const id = config.core.node.id;
+  const wrote =
+    checked.repair.kind === 'marker'
+      ? await withStateLock(deps, layout, () => applyWrites(deps, checked, plan, indexPath))
+      : await applyWrites(deps, checked, plan, indexPath);
+  if (!wrote.ok) return wrote;
+  const { committed, warnings } = wrote.value;
   // The text of the coordinator follows a changed mode, and it fails closed. The first render comes before any record is
   // written, and it counts each changed point as `owner`. The second render comes after the records and follows the modes
   // that count, so a point whose record failed stays `owner`. A run that changes no mode renders nothing.

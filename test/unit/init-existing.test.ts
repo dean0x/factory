@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { appendBlocks, renderBlock } from '../../src/blocks/managed.js';
-import { failure } from '../../src/cli/errors.js';
+import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import { runCli } from '../../src/cli/run.js';
 import type { InitOptions } from '../../src/commands/init.js';
 import { sameIdWarnings } from '../../src/commands/init-received.js';
@@ -198,7 +198,9 @@ const rootFiles = (deps: FakeDeps): string =>
 const outsideState = (deps: FakeDeps): string =>
   JSON.stringify([...deps.files].filter(([path]) => path.startsWith(`${ROOT}/`) && !path.startsWith(`${STATE}/`)).sort());
 
-const snapshot = (deps: FakeDeps): string => JSON.stringify([[...deps.files.entries()].sort(), [...deps.dirs].sort()]);
+/** The files and folders, except the locks folder of the state repo: a run that takes the state lock leaves it, empty and ignored by git. */
+const snapshot = (deps: FakeDeps): string =>
+  JSON.stringify([[...deps.files.entries()].sort(), [...deps.dirs].filter((dir) => dir !== `${STATE}/locks`).sort()]);
 
 const messageOf = (result: { ok: boolean; error?: { message: string; hint?: string } }): string =>
   `${result.error?.message ?? ''} ${result.error?.hint ?? ''}`;
@@ -1200,18 +1202,44 @@ describe('init: a root whose state folder has a missing or broken marker (TP-96,
   describe('and the state lock (TP-19)', () => {
     const LOCK_FILE = `${STATE}/locks/${stateLock.name}${stateLock.lock.suffix}`;
 
-    it('waits for the lock of another writer, then warns with the lock path, and leaves the marker in place with no commit', async () => {
-      const { deps, log } = existing({ state: 'no-marker' });
+    it.each([
+      ['a missing marker', 'no-marker' as const],
+      ['a broken marker', 'broken-marker' as const],
+    ])('waits for the lock of another writer, then exits 1 with the lock path, and writes no marker and no commit for %s', async (_name, state) => {
+      const { deps, log } = existing({ state, entry: null });
       deps.seed(LOCK_FILE, '1\n');
+      const before = snapshot(deps);
       const result = await runInit(deps, options({ yes: true }));
-      expect(result.ok).toBe(true);
-      expect(warningsOf(result).join('\n')).toContain(LOCK_FILE);
-      expect(warningsOf(result).join('\n')).toContain('not committed');
-      expect(result.ok && result.value.json['committed']).toBe(false);
-      expect((await inspectState(deps, ROOT)).kind).toBe('valid');
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining(LOCK_FILE) } });
+      if (!result.ok) expect(exitCodeOf[result.error.kind]).toBe(1);
+      expect(snapshot(deps)).toBe(before);
+      expect(deps.files.get(MARKER)).toBe(state === 'no-marker' ? undefined : '{not json');
+      expect(deps.files.has(INDEX)).toBe(false);
       expect(stateGit(log).some((command) => command.includes('commit') || command.startsWith('add'))).toBe(false);
       expect(deps.sleeps).toEqual(Array.from({ length: stateLock.lock.attempts - 1 }, () => stateLock.lock.waitMs));
       expect(deps.files.get(LOCK_FILE)).toBe('1\n');
+    });
+
+    it('stops before the guard of the state repo is written, and leaves the git folder as it was', async () => {
+      const { deps, log } = existing({ state: 'no-marker', entry: null });
+      deps.seedDir(`${STATE}/.git`);
+      deps.seed(LOCK_FILE, '1\n');
+      const before = snapshot(deps);
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining(LOCK_FILE) } });
+      expect(snapshot(deps)).toBe(before);
+      expect(log.commands().filter((line) => line.startsWith('config -- core.hooksPath'))).toEqual([]);
+    });
+
+    it('puts the marker, the guard and the entry back when a step after the marker fails, inside the lock', async () => {
+      const { deps, log } = existing({ state: 'no-marker', entry: null });
+      deps.seedDir(`${STATE}/.git`);
+      const before = snapshot(deps);
+      const result = await runInit(failingWrite(deps, '/homes.json'), options({ yes: true }));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(snapshot(deps)).toBe(before);
+      expect(log.commands()).toContain('config --unset core.hooksPath');
+      expect(deps.files.has(LOCK_FILE)).toBe(false);
     });
 
     it('holds the lock while it commits the marker, and lets the lock go after', async () => {
