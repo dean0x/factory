@@ -9,7 +9,7 @@ import { inspectConfig, localFileAccess, readNodeIdentity, wideModeNote } from '
 import { folderKey } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { GIT_ENTRY, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
+import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
@@ -546,16 +546,20 @@ export const checkTools = async (deps: Deps): Promise<CheckResult> => {
   }
   const missing: string[] = [];
   let tmuxFound = false;
+  let gitFound = false;
   for (const tool of TOOLS) {
     if (!(await onPath(deps, tool.name))) missing.push(`${tool.name} (${tool.neededFor})`);
     else if (tool.name === toolNames.tmux) tmuxFound = true;
+    else if (tool.name === toolNames.git) gitFound = true;
   }
   const problems = missing.length === 0 ? [] : [`missing: ${missing.join(', ')}`];
   const oldTmux = tmuxFound ? await tmuxProblem(deps) : null;
   if (oldTmux !== null) problems.push(oldTmux);
-  return problems.length === 0
-    ? check(checkIds.tools, 'ok', `Node.js ${major}, git, tmux, gh and claude are available`)
-    : check(checkIds.tools, 'warn', problems.join('; '));
+  // The state steps need git 2.26: a git that is older, or whose version is not read, is a failure and not a warning.
+  const oldGit = gitFound ? await gitVersionProblem(deps) : null;
+  if (oldGit !== null) problems.push(oldGit);
+  if (problems.length === 0) return check(checkIds.tools, 'ok', `Node.js ${major}, git, tmux, gh and claude are available`);
+  return check(checkIds.tools, oldGit === null ? 'warn' : 'fail', problems.join('; '));
 };
 
 /**

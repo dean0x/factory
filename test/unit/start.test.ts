@@ -31,7 +31,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
-import { withoutStateWords } from '../helpers/git-fake.js';
+import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -124,6 +124,8 @@ interface Setup {
    * 'unreadable': git can not tell the git folder.
    */
   readonly guard?: 'on' | 'off' | 'unreadable';
+  /** What `git --version` prints. Default: a git that is new enough. */
+  readonly gitVersion?: string;
 }
 
 /**
@@ -131,6 +133,7 @@ interface Setup {
  * the top of the work tree, the tracked paths and the ignore rules. The tmux log does not record its calls.
  */
 const gitAnswer = (setup: Setup) => (call: RunCall) => {
+  if (call.args.length === 1 && call.args[0] === '--version') return exited(0, setup.gitVersion ?? DEFAULT_GIT_VERSION);
   const command = withoutStateWords(call.args).slice(2).join(' ');
   if (setup.stateRepo !== undefined && call.args[1] === STATE_DIR) {
     if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, setup.stateRepo.status ?? '');
@@ -691,6 +694,50 @@ describe('start:the tools', () => {
     const result = await startFactory(deps);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('cannot read the version of tmux');
+  });
+
+  describe('the version of git', () => {
+    it.each([
+      ['git version 2.25.1\n', 'git 2.25 is older than 2.26'],
+      ['git version 1.8.3.1\n', 'git 1.8 is older than 2.26'],
+      ['', 'cannot read the version of git'],
+      ['git master\n', 'cannot read the version of git'],
+    ])('refuses %j with exit 1, the remedy, and no session', async (gitVersion, shown) => {
+      const { deps, tmux } = make({ gitVersion });
+      const result = await startFactory(deps);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining(shown) } });
+      if (!result.ok) {
+        expect(exitCodeOf[result.error.kind]).toBe(1);
+        expect(result.error.hint).toContain('factory doctor');
+      }
+      expect(tmux.commands()).toEqual(['-V']);
+      expect(tmux.sessions().size).toBe(0);
+    });
+
+    it('names git with the other problems of the tools', async () => {
+      const { deps } = make({ tools: ['tmux'], gitVersion: 'git version 2.25.1\n' });
+      const result = await startFactory(deps);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain('claude is not on PATH');
+        expect(result.error.message).toContain('git 2.25 is older than 2.26');
+      }
+    });
+
+    it('goes on for git 2.26', async () => {
+      const { deps } = make({ gitVersion: 'git version 2.26.0\n' });
+      expect((await startFactory(deps)).ok).toBe(true);
+    });
+
+    it('names the problem in a dry run, says that a real run stops, and starts nothing', async () => {
+      const { deps, tmux } = make({ gitVersion: 'git version 2.25.1\n' });
+      const output = await succeeded(deps, { dryRun: true });
+      expect(output.failed).toBe(false);
+      expect(output.lines.filter((line) => line.level === 'warn').map((line) => line.text)).toEqual([
+        'git 2.25 is older than 2.26 (factory needs git 2.26 or later; update git). A real run stops here.',
+      ]);
+      expect(tmux.calls.filter((call) => call.args[0] === 'new-session')).toEqual([]);
+    });
   });
 });
 

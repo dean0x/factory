@@ -951,6 +951,76 @@ describe('doctor: tools', () => {
     expect(result.level).toBe('warn');
     expect(result.text).toContain('git (');
   });
+
+  describe('the version of git', () => {
+    const versionCalls = (deps: FakeDeps) => deps.calls.filter((call) => call.command === 'git' && call.args[0] === '--version');
+
+    it.each([
+      ['git version 2.26.0\n'],
+      ['git version 2.26\n'],
+      ['git version 2.45.1\n'],
+      ['git version 2.100.0\n'],
+      ['git version 3.0.0\n'],
+      ['git version 2.39.5 (Apple Git-154)\n'],
+      ['git version 2.45.1.windows.1\n'],
+    ])('is ok for %j', async (version) => {
+      expect(await checkTools(makeDeps({ git: { version } }))).toMatchObject({ id: 'tools', level: 'ok' });
+    });
+
+    it.each([
+      ['git version 2.25.1\n', 'git 2.25'],
+      ['git version 2.9.5\n', 'git 2.9'],
+      ['git version 1.8.3.1\n', 'git 1.8'],
+      ['git version 1.99.0\n', 'git 1.99'],
+    ])('fails for %j, names both versions and the fix', async (version, shown) => {
+      const result = await checkTools(makeDeps({ git: { version } }));
+      expect(result).toMatchObject({ id: 'tools', level: 'fail' });
+      expect(result.text).toContain(`${shown} is older than 2.26`);
+      expect(result.text).toContain('factory needs git 2.26 or later');
+      expect(result.text).toContain('update git');
+    });
+
+    it.each([
+      ['an empty output', ''],
+      ['text with no version', 'hello\n'],
+      ['a version word with no number', 'git version\n'],
+      ['a number with no minor', 'git version 2\n'],
+      ['a number that is no version', 'git version x.y.z\n'],
+      ['digits that are too long for a version', 'git version 99999.1.0\n'],
+      ['a version in a long output', `git version 2.45.1${' '.repeat(300)}`],
+    ])('fails closed, and says so, for %s', async (_name, version) => {
+      const result = await checkTools(makeDeps({ git: { version } }));
+      expect(result).toMatchObject({ id: 'tools', level: 'fail' });
+      expect(result.text).toContain('cannot read the version of git');
+    });
+
+    it('fails closed when the version command of git ends with a failure', async () => {
+      const result = await checkTools(makeDeps({ git: { versionExit: 1 } }));
+      expect(result).toMatchObject({ id: 'tools', level: 'fail' });
+      expect(result.text).toContain('cannot read the version of git');
+    });
+
+    it('fails, and still names a missing program, when git is old and tmux is missing', async () => {
+      const result = await checkTools(makeDeps({ tools: ['git', 'gh', 'claude'], git: { version: 'git version 2.25.1\n' } }));
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('missing: tmux');
+      expect(result.text).toContain('git 2.25 is older than 2.26');
+    });
+
+    it('does not read the version of a git that is missing, and names it once', async () => {
+      const deps = makeDeps({ tools: ['tmux', 'gh', 'claude'] });
+      const result = await checkTools(deps);
+      expect(result.level).toBe('warn');
+      expect(result.text.match(/git/g)).toHaveLength(1);
+      expect(versionCalls(deps)).toEqual([]);
+    });
+
+    it('reads the version with one call that has no folder', async () => {
+      const deps = makeDeps();
+      await checkTools(deps);
+      expect(versionCalls(deps).map((call) => call.args)).toEqual([['--version']]);
+    });
+  });
 });
 
 describe('doctor: the version of the agent (TP-35)', () => {
@@ -1753,15 +1823,17 @@ describe('doctor: the command', () => {
     if (!none.ok) expect(none.error.message).toContain('/w/none is not a folder');
   });
 
-  it('reports a failing run of git as a warning, not as a crash', async () => {
+  it('reports a failing run of git as a warning of the state repo and as a failed tools check, not as a crash', async () => {
     const deps = await initialized();
     deps.seedDir(`${HOME}/.factory/.git`);
     const broken = { ...deps, run: async () => failure('cannot run git: EACCES') };
     const result = await runDoctor(broken, { home: HOME });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(levelOf(result.value.json['checks'] as CheckResult[], 'state-repo')).toBe('warn');
-    expect(result.value.failed).toBe(false);
+    const checks = result.value.json['checks'] as CheckResult[];
+    expect(levelOf(checks, 'state-repo')).toBe('warn');
+    expect(checks.find((entry) => entry.id === 'tools')).toMatchObject({ level: 'fail', text: expect.stringContaining('cannot read the version of git') });
+    expect(result.value.failed).toBe(true);
   });
 });
 

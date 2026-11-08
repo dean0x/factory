@@ -9,6 +9,7 @@ import {
   commitPaths,
   fetchBranches,
   gitClone,
+  gitVersionProblem,
   headEntriesAt,
   headOf,
   ignoredFilesOf,
@@ -16,10 +17,12 @@ import {
   initRootRepo,
   isAncestor,
   isFileMode,
+  isGitNewEnough,
   LINK_MODE,
   listRepoChildren,
   MAX_IGNORE_PATHS,
   MAX_SCAN_ENTRIES,
+  parseGitVersion,
   remoteBranchHeadOf,
   removeWorkTree,
   requireStateConfigListable,
@@ -868,6 +871,70 @@ describe('git: the minimum version of git (TP-55)', () => {
       const { result, log } = listable({ configListExit: 129 }, false);
       expect(await result).toEqual({ ok: true, value: undefined });
       expect(log.calls).toEqual([]);
+    });
+  });
+});
+
+describe('git: the version of git', () => {
+  it.each([
+    ['git version 2.45.1\n', { major: 2, minor: 45 }],
+    ['git version 2.26.0', { major: 2, minor: 26 }],
+    ['git version 2.39.5 (Apple Git-154)\n', { major: 2, minor: 39 }],
+    ['git version 2.45.1.windows.1\n', { major: 2, minor: 45 }],
+    ['git version 2.9.5\n', { major: 2, minor: 9 }],
+  ])('reads %j', (text, version) => {
+    expect(parseGitVersion(text)).toEqual(version);
+  });
+
+  it.each([[''], ['hello\n'], ['git version\n'], ['git version 2\n'], ['git version x.1\n'], ['git version 99999.1.0\n'], ['tmux 3.4\n']])(
+    'reads no version in %j',
+    (text) => {
+      expect(parseGitVersion(text)).toBeNull();
+    },
+  );
+
+  it('reads no version in an output that is too long', () => {
+    expect(parseGitVersion(`git version 2.45.1${' '.repeat(300)}`)).toBeNull();
+  });
+
+  it.each([
+    [{ major: 2, minor: 26 }, true],
+    [{ major: 2, minor: 25 }, false],
+    [{ major: 2, minor: 9 }, false],
+    [{ major: 2, minor: 100 }, true],
+    [{ major: 3, minor: 0 }, true],
+    [{ major: 1, minor: 99 }, false],
+  ])('judges %j as new enough: %s', (version, enough) => {
+    expect(isGitNewEnough(version)).toBe(enough);
+  });
+
+  describe('the problem with the git on PATH', () => {
+    const problemOf = (run: RunHandler) => gitVersionProblem(createFakeDeps({ cwd: WS, run }));
+
+    it('is none for a git that is new enough', async () => {
+      const { handler } = gitHandler({ version: 'git version 2.26.0\n' });
+      expect(await problemOf(handler)).toBeNull();
+    });
+
+    it('names both versions and the fix for a git that is older', async () => {
+      const { handler } = gitHandler({ version: 'git version 2.25.1\n' });
+      expect(await problemOf(handler)).toBe('git 2.25 is older than 2.26 (factory needs git 2.26 or later; update git)');
+    });
+
+    it('fails closed when git exits with a code, cannot run, or prints no version', async () => {
+      for (const run of [
+        gitHandler({ versionExit: 1 }).handler,
+        () => failure('cannot run git: ENOENT'),
+        gitHandler({ version: 'weird\n' }).handler,
+      ]) {
+        expect(await problemOf(run)).toBe('cannot read the version of git (factory needs git 2.26 or later)');
+      }
+    });
+
+    it('runs git once, with the version option only and the time limit of the other git calls', async () => {
+      const { handler, log } = gitHandler();
+      await problemOf(handler);
+      expect(log.calls.map((call) => [call.args, call.timeoutMs])).toEqual([[['--version'], 15_000]]);
     });
   });
 });

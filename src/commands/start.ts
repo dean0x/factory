@@ -5,7 +5,7 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import type { FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
-import { requireStateConfigListable } from '../core/git.js';
+import { gitVersionProblem, requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -457,7 +457,9 @@ export const runStart = async (
     if (!rendered.ok) return rendered;
   }
 
-  const toolFaults = await toolProblems(deps, !dryRun);
+  // The tools are checked also in a dry run. The version of git is read there too: it changes nothing, and the doctor check is the same.
+  const gitFault = await gitVersionProblem(deps);
+  const toolFaults = [...(await toolProblems(deps, !dryRun)), ...(gitFault === null ? [] : [gitFault])];
   if (!dryRun && toolFaults.length > 0) {
     return failure(
       toolFaults.join('. '),

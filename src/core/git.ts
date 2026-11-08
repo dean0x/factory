@@ -584,6 +584,43 @@ const FOLDER_SCOPES: ReadonlySet<string> = new Set(['local', 'worktree']);
 /** The exit code of git for an option that it does not know. */
 const GIT_UNKNOWN_OPTION_EXIT = 129;
 
+export interface GitVersion {
+  readonly major: number;
+  readonly minor: number;
+}
+
+/** The most characters of the output of `git --version` that are read. A longer output is not a version. */
+const MAX_VERSION_OUTPUT_CHARS = 200;
+
+/** The start of the output of `git --version`: `git version 2.45.1`, `git version 2.39.5 (Apple Git-154)`, `git version 2.45.1.windows.1`. */
+const GIT_VERSION = /^git version (\d{1,4})\.(\d{1,4})(?!\d)/;
+
+/** The version in the output of `git --version`. Null when the output is longer than `MAX_VERSION_OUTPUT_CHARS` or has no version. */
+export const parseGitVersion = (text: string): GitVersion | null => {
+  if (text.length > MAX_VERSION_OUTPUT_CHARS) return null;
+  const match = GIT_VERSION.exec(text.trim());
+  return match === null ? null : { major: Number(match[1]), minor: Number(match[2]) };
+};
+
+const [MIN_GIT_MAJOR = 0, MIN_GIT_MINOR = 0] = minGitVersion.split('.').map(Number);
+
+/** True when the version is `minGitVersion` or newer: the oldest git that the steps in the state folder need. */
+export const isGitNewEnough = (version: GitVersion): boolean =>
+  version.major > MIN_GIT_MAJOR || (version.major === MIN_GIT_MAJOR && version.minor >= MIN_GIT_MINOR);
+
+/**
+ * The problem with the git on PATH, or null when it is new enough. A version that cannot be read is a problem too, so the check fails
+ * closed. The text ends with the fix in parentheses, and it has no end mark, so a caller can join it with others.
+ */
+export const gitVersionProblem = async (deps: Deps): Promise<string | null> => {
+  const needs = `${program} needs git ${minGitVersion} or later`;
+  const result = await deps.run('git', ['--version'], { timeoutMs: GIT_TIMEOUT_MS });
+  const version = result.ok && result.value.exitCode === 0 ? parseGitVersion(result.value.stdout) : null;
+  if (version === null) return `cannot read the version of git (${needs})`;
+  if (isGitNewEnough(version)) return null;
+  return `git ${version.major}.${version.minor} is older than ${minGitVersion} (${needs}; update git)`;
+};
+
 /** The scope word that git prints: lower case letters only. Any other text means that the list is not read right. */
 const SCOPE_WORD = /^[a-z]+$/;
 

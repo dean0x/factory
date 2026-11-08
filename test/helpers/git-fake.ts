@@ -78,6 +78,10 @@ export interface GitFixture {
   readonly configList?: Readonly<Record<string, string>>;
   /** The exit code of `git config --list --show-scope`. Default: 0. A code other than 0 is what git below 2.26 gives. */
   readonly configListExit?: number;
+  /** What `git --version` prints. Default: a git that is new enough. */
+  readonly version?: string;
+  /** The exit code of `git --version`. Default: 0. */
+  readonly versionExit?: number;
   /** The value of `core.hooksPath` that git reads, by folder. A folder with no entry has none, and git exits with 1. */
   readonly hooksPath?: Readonly<Record<string, string>>;
   /** The value of `core.hooksPath` at a level other than the local file (global or system), by folder. The local value wins over it. */
@@ -130,6 +134,9 @@ const unpinned = (args: readonly string[]): readonly string[] =>
     ? [...args.slice(0, 2), ...args.slice(2 + PIN_WORDS)]
     : withoutStateWords(args);
 
+/** What `git --version` prints for a git that is new enough. */
+export const DEFAULT_GIT_VERSION = 'git version 2.45.1\n';
+
 /** What `git config --list --show-scope --includes -z` prints for a folder with one plain local setting. */
 const PLAIN_CONFIG_LIST = 'local\0core.bare\nfalse\0';
 
@@ -179,6 +186,10 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       const source = repoAt(from);
       cloned.set(target, { origin: from, ...(source?.originHead === undefined ? {} : { originHead: source.originHead }) });
       return exited(0);
+    }
+    if (call.command === 'git' && call.args.length === 1 && call.args[0] === '--version') {
+      const code = fixture.versionExit ?? 0;
+      return code === 0 ? exited(0, fixture.version ?? DEFAULT_GIT_VERSION) : exited(code, '', 'git: broken');
     }
     if (call.command !== 'git' || call.args[0] !== '-C') return missingProgram(call.command);
     // A read of a work copy names its git folder and turns the file monitor off: the answer is the same as without these words.
