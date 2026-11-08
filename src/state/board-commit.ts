@@ -1,22 +1,13 @@
 import { isAbsolute, join, normalize } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
-import {
-  blobTextOf,
-  commitPaths,
-  GIT_ENTRY,
-  headEntriesAt,
-  headOf,
-  isFileMode,
-  requireStateRepoCommit,
-  unstagePaths,
-  type RepoPaths,
-} from '../core/git.js';
+import { commitPaths, GIT_ENTRY, headOf, requireStateRepoCommit, unstagePaths, type RepoPaths } from '../core/git.js';
 import { err, ok } from '../core/result.js';
 import { namedItems, shownPath } from '../core/root-paths.js';
 import { commandText, dirs, files, maxFileBytes, type CommandName } from '../names.js';
 import { readCheckedFile, type NamedPath } from '../workers/registry.js';
 import { requireGuardOn } from './guard.js';
+import { BOARD_RESTORE_COMMAND, boardAtHead } from './head-board.js';
 import { lostItemIds } from './item-ids.js';
 import type { Layout } from './layout.js';
 import { withStateLock } from './state-lock.js';
@@ -110,23 +101,10 @@ const updatesOf = (now: BoardTexts, changed: BoardTexts): CliResult<BoardTexts> 
   return ok(updates);
 };
 
-/** The text of the board at the last commit, or null when the repo has no commit or the last commit holds no board. */
-const headBoardText = async (deps: Deps, stateDir: string, hasCommit: boolean): Promise<CliResult<string | null>> => {
-  if (!hasCommit) return ok(null);
-  const listed = await headEntriesAt(deps, stateDir, BOARD);
-  if (!listed.ok) return listed;
-  const [entry, ...more] = listed.value;
-  if (entry === undefined) return ok(null);
-  const unreadable = (reason: string): CliResult<never> => failure(`cannot read ${BOARD} of the last commit: ${reason}`);
-  if (more.length > 0) return unreadable('git listed more than one entry');
-  if (entry.kind !== 'blob' || !isFileMode(entry.mode)) return unreadable('it is not a plain file');
-  if (entry.size === null || entry.size > maxFileBytes) return unreadable(`it is larger than ${maxFileBytes} bytes`);
-  return blobTextOf(deps, stateDir, entry.id);
-};
-
 /**
  * No item id of the board at the last commit may be missing from the new board text. A closed item keeps its id. A board that can
- * not be read, on either side, stops the change: the check fails closed.
+ * not be read, on either side, stops the change: the check fails closed. The remedy for a board at the last commit that can not be
+ * read is a normal commit of a repair: the delete guard accepts a repair that keeps every item id of the last board that it can read.
  */
 const requireNoLostIds = async (
   deps: Deps,
@@ -135,16 +113,17 @@ const requireNoLostIds = async (
   newBoard: string | null,
   command: CommandName,
 ): Promise<CliResult<void>> => {
-  const before = await headBoardText(deps, stateDir, hasCommit);
-  if (!before.ok) return before;
-  const lost = lostItemIds(before.value, newBoard);
+  const head = await boardAtHead(deps, stateDir, hasCommit);
+  if (!head.ok) return head;
   const again = `then run "${commandText(command)}" again.`;
+  const repair = `Repair ${BOARD}, or restore it from an older commit with "${BOARD_RESTORE_COMMAND}", commit it, ${again}`;
+  if (head.value.kind === 'unreadable') {
+    return failure(`cannot read ${BOARD} of the last commit: ${head.value.reason}`, repair);
+  }
+  const lost = lostItemIds(head.value.kind === 'text' ? head.value.text : null, newBoard);
   if (!lost.ok) {
     return lost.error.side === 'before'
-      ? failure(
-          `cannot read ${BOARD} of the last commit: ${lost.error.reason}`,
-          `Repair ${BOARD}, then commit the repair with "git commit --no-verify". Then run "${commandText(command)}" again.`,
-        )
+      ? failure(`cannot read ${BOARD} of the last commit: ${lost.error.reason}`, repair)
       : failure(`cannot commit ${BOARD}: ${lost.error.reason}`, `Fix the change, ${again}`);
   }
   if (lost.value.length === 0) return ok(undefined);

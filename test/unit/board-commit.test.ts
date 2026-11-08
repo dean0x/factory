@@ -261,7 +261,8 @@ describe('the board commit helper: a change that loses an item id (TP-12)', () =
     const error = errorOf(await commitBoardChange(deps, LAYOUT, request({ change })));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toBe('cannot read board.json of the last commit: the text is not valid JSON');
-    expect(error.hint).toContain('git commit --no-verify');
+    expect(error.hint).toContain('git -C .factory restore --source=<commit> --staged --worktree -- board.json');
+    expect(error.hint).not.toContain('--no-verify');
     expect(error.hint).toContain('"factory start"');
     expect(deps.files.get(BOARD)).toBe('not json\n');
     expect(writesOf(seen)).toEqual([]);

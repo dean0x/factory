@@ -243,13 +243,59 @@ describe('a commit that the guard reads as a loss or cannot read (TP-8)', () => 
       expect(await filesOfHead()).toEqual([OTHER]);
     });
 
-    it('fails with the remedy for a commit that changes board.json', async () => {
+    it('passes a repair that keeps every item id of the last board that can be read, as a normal commit', async () => {
+      await writeInState(BOARD, board(['B-1', 'B-2', 'B-3']));
+      await mustGit(['add', BOARD]);
+      const result = await commit();
+      expect(result.code, result.stderr).toBe(0);
+      expect(await filesOfHead()).toEqual([BOARD]);
+    });
+
+    it('fails a repair that drops an item id of the last board that can be read, and names the id', async () => {
+      const before = await headId();
       await writeInState(BOARD, board(['B-1']));
       await mustGit(['add', BOARD]);
       const result = await commit();
       expect(result.code).not.toBe(0);
-      expect(result.stderr).toContain('git commit --no-verify');
+      expect(result.stderr).toContain('B-2');
+      expect(result.stderr).not.toContain('B-1');
+      expect(await headId()).toBe(before);
     });
+
+    it('fails a repair that is not JSON, with the remedy to commit again', async () => {
+      await writeInState(BOARD, 'still not json\n');
+      await mustGit(['add', BOARD]);
+      const result = await commit();
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('the text is not valid JSON');
+      expect(result.stderr).toContain('commit again');
+    });
+
+    it('accepts the repair that its own remedy gives: the board of an older commit, restored and committed', async () => {
+      const oldest = (await mustGit(['rev-list', '--max-parents=0', 'HEAD'])).stdout.trim();
+      await mustGit(['restore', `--source=${oldest}`, '--staged', '--worktree', '--', BOARD]);
+      const result = await commit();
+      expect(result.code, result.stderr).toBe(0);
+      expect(await readFile(join(stateDir, BOARD), 'utf8')).toBe(board(['B-1', 'B-2']));
+    });
+  });
+
+  describe('with no board that can be read within the bound of the history', () => {
+    it('fails closed with a remedy that names a normal action', async () => {
+      for (let step = 0; step <= stateGuard.historyBound; step += 1) {
+        await writeInState(BOARD, `not json ${step}\n`);
+        await mustGit(['add', BOARD]);
+        // `--no-verify` is the one way past the hook: the guard would stop these boards.
+        const planted = await commit('--no-verify');
+        expect(planted.code, planted.stderr).toBe(0);
+      }
+      await writeInState(BOARD, board(['B-1', 'B-2']));
+      await mustGit(['add', BOARD]);
+      const result = await commit();
+      expect(result.code).not.toBe(0);
+      expect(result.stderr).toContain('git -C .factory restore --source=<commit> --staged --worktree -- board.json');
+      expect(result.stderr).not.toContain('--no-verify');
+    }, SETUP_TIMEOUT_MS);
   });
 });
 

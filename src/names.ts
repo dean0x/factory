@@ -1288,6 +1288,8 @@ export const stateGuard = {
   hooksPathKey: 'core.hooksPath',
   /** The most entries that an install removes from the guard folder; a folder with more is left alone. */
   maxEntries: 64,
+  /** The most older commits of board.json that the guard reads back to find the last board that can be read. */
+  historyBound: 100,
   /** The word between the folder name and the pid in the name of the copy that an install keeps of an old guard folder. */
   copyWord: '.old-',
   interpreter: '#!/bin/sh',

@@ -234,7 +234,7 @@ export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>
 
 /**
  * The hooks of a repo do not run for a step of this tool. `/dev/null` is a file, so git finds no hook below it.
- * That turns off every hook; `--no-verify` turns off only two. An empty value is not documented as "no hooks".
+ * That turns off every hook, where the option of a commit turns off only two. An empty value is not documented as "no hooks".
  */
 const NO_HOOKS = 'core.hooksPath=/dev/null';
 
@@ -413,9 +413,24 @@ const treeEntryOf = (record: string): TreeEntry | null => {
  * of that folder. A repo with no commit, or a path that git can not read, is a failure. The commit is the one that a new work
  * tree of the repo starts from.
  */
-export const headEntriesAt = async (deps: Deps, dir: string, path: string): Promise<CliResult<readonly TreeEntry[]>> => {
-  const what = `cannot read ${path} of the last commit of ${dir}`;
-  const result = await deps.run('git', ['-C', dir, 'ls-tree', '-z', '-l', 'HEAD', '--', path], { timeoutMs: GIT_TIMEOUT_MS });
+export const headEntriesAt = (deps: Deps, dir: string, path: string): Promise<CliResult<readonly TreeEntry[]>> =>
+  entriesWith(deps, ['-C', dir], dir, HEAD_REV, path);
+
+/** The name of the last commit, as git takes it. */
+export const HEAD_REV = 'HEAD';
+
+const OBJECT_ID = /^[0-9a-f]{40,64}$/;
+
+const entriesWith = async (
+  deps: Deps,
+  lead: readonly string[],
+  dir: string,
+  rev: string,
+  path: string,
+): Promise<CliResult<readonly TreeEntry[]>> => {
+  if (rev !== HEAD_REV && !OBJECT_ID.test(rev)) return failure('cannot read a file of a commit: the commit id is not valid');
+  const what = `cannot read ${path} of ${rev === HEAD_REV ? 'the last commit' : `the commit ${rev.slice(0, 12)}`} of ${dir}`;
+  const result = await deps.run('git', [...lead, 'ls-tree', '-z', '-l', rev, '--', path], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`${what}: ${result.error.message}`);
   if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
   const entries: TreeEntry[] = [];
@@ -428,16 +443,47 @@ export const headEntriesAt = async (deps: Deps, dir: string, path: string): Prom
   return ok(entries);
 };
 
-const OBJECT_ID = /^[0-9a-f]{40,64}$/;
+/**
+ * As `headEntriesAt`, for the state repo at `dir`, with the hooks off. `rev` is `HEAD` or a commit id (40 to 64 hex digits), so no
+ * word acts as an option.
+ */
+export const stateEntriesAt = (deps: Deps, dir: string, rev: string, path: string): Promise<CliResult<readonly TreeEntry[]>> =>
+  entriesWith(deps, stateGit(dir), dir, rev, path);
 
-/** The text of the file of git with this object id. The caller checks the size first, from the entry of the file. */
-export const blobTextOf = async (deps: Deps, dir: string, id: string): Promise<CliResult<string>> => {
+const blobTextWith = async (deps: Deps, lead: readonly string[], dir: string, id: string): Promise<CliResult<string>> => {
   if (!OBJECT_ID.test(id)) return failure('cannot read a file of git: the object id is not valid');
   const what = `cannot read the file ${id} of ${dir}`;
-  const result = await deps.run('git', ['-C', dir, 'cat-file', 'blob', id], { timeoutMs: GIT_TIMEOUT_MS });
+  const result = await deps.run('git', [...lead, 'cat-file', 'blob', id], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`${what}: ${result.error.message}`);
   if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
   return ok(result.value.stdout);
+};
+
+/** The text of the file of git with this object id. The caller checks the size first, from the entry of the file. */
+export const blobTextOf = (deps: Deps, dir: string, id: string): Promise<CliResult<string>> =>
+  blobTextWith(deps, ['-C', dir], dir, id);
+
+/** As `blobTextOf`, for the state repo at `dir`, with the hooks off. */
+export const stateBlobTextOf = (deps: Deps, dir: string, id: string): Promise<CliResult<string>> =>
+  blobTextWith(deps, stateGit(dir), dir, id);
+
+/**
+ * The ids of the commits that changed `path`, on the line of first parents from the last commit of the state repo at `dir`, newest
+ * first, at most `limit` of them (`git log --first-parent`). The first id is the commit that made the file as the last commit has it.
+ * An id that git prints and that is no object id is a failure, so a line of other text (for example a signature report) never counts.
+ */
+export const stateCommitsOf = async (deps: Deps, dir: string, path: string, limit: number): Promise<CliResult<readonly string[]>> => {
+  if (!Number.isInteger(limit) || limit < 1) return failure('cannot read the history of a file: the limit is not a whole number above 0');
+  const what = `cannot read the history of ${path} in ${dir}`;
+  const words = ['log', '--first-parent', '--no-show-signature', '--format=%H', '-n', String(limit), HEAD_REV, '--', path];
+  const result = await deps.run('git', [...stateGit(dir), ...words], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  const ids = result.value.stdout.split('\n').filter((line) => line !== '');
+  if (ids.length > limit || !ids.every((id) => OBJECT_ID.test(id))) {
+    return failure(`${what}: git printed a line that ${program} can not read`);
+  }
+  return ok(ids);
 };
 
 /** The most paths that one ignore check takes. */
