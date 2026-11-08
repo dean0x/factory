@@ -622,7 +622,8 @@ describe('the item and track commands in the command line', () => {
     const result = await run(['item', '--help']);
     expect(result.code).toBe(0);
     expect(result.out).toContain('factory item move ID --state STATE|--stage STAGE [--home DIR]');
-    expect(result.out).toContain('factory item list [--all] [--track ID] [--home DIR]');
+    expect(result.out).toContain('factory item list [--all] [--track ID] [--follow] [--home DIR]');
+    expect(result.out).toMatch(/--follow\s+With list: draw the list again at each change of the board, until the terminal goes/);
     expect(result.out).toMatch(/--field NAME=VALUE\s+With add and update: set a field of the owner on the item/);
   });
 
@@ -653,6 +654,23 @@ describe('the item and track commands in the command line', () => {
     expect(listed.code).toBe(0);
     expect(listed.out).toContain('B-1  building  open    P1        bug   -     New');
     expect(repo.commits).toHaveLength(3);
+  });
+
+  it('M5-1b TP-56 runs item list --follow from the command line: a stdout that is not a terminal gets one frame, and the loop ends', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { track: 'core', stage: 'ticket' })], [{ id: 'core', name: 'Core', roadmap: true }]) });
+    const sink = captureSink();
+    const code = await runCli(['item', 'list', '--follow', '--home', BOARD_HOME], repo.deps, sink);
+    expect(code).toBe(0);
+    expect(repo.deps.written).toHaveLength(1);
+    expect(repo.deps.written[0]).toContain('core');
+    expect(repo.deps.sleeps).toEqual([]);
+    expect(sink.out.join('')).toBe('');
+  });
+
+  it('M5-1b TP-56 exits 2 for the flag --follow with a subcommand that does not list', async () => {
+    const result = await run(['item', 'close', 'B-1', '--follow']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--follow is not for');
   });
 
   it('shows one usage line for each subcommand of request and of queue', () => {

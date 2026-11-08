@@ -27,6 +27,7 @@ const BASE: ItemOptions = {
   state: undefined,
   stage: undefined,
   all: false,
+  follow: false,
   json: false,
 };
 
@@ -273,6 +274,10 @@ describe('item: the words and the flags are checked before the node is read (exi
     ['a field with no value separator', { words: ['add'], title: 'New', fields: ['priority'] }, 'NAME=VALUE'],
     ['a field given twice', { words: ['add'], title: 'New', fields: ['priority=P1', 'priority=P2'] }, 'given twice'],
     ['list with the JSON flag', { words: ['list'], json: true }, 'has no --json output'],
+    ['list that follows, with the JSON flag', { words: ['list'], follow: true, json: true }, 'has no --json output'],
+    ['add with the flag to follow', { words: ['add'], title: 'New', follow: true }, '--follow is not for'],
+    ['move with the flag to follow', { words: ['move', 'B-1'], stage: 'building', follow: true }, '--follow is not for'],
+    ['close with the flag to follow', { words: ['close', 'B-1'], follow: true }, '--follow is not for'],
   ];
 
   it.each(BAD)('M5-1b TP-22 %s exits 2 and touches no file', async (_name, overrides, message) => {

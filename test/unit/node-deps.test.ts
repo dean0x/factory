@@ -23,9 +23,16 @@ import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
+import { isatty } from 'node:tty';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNodeDeps, programArgvOf } from '../../src/core/node-deps.js';
 import { hookNames } from '../../src/names.js';
+
+// The real `isatty` stays the default. A test sets one answer, so that the check of a live terminal can be seen.
+vi.mock('node:tty', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:tty')>();
+  return { ...actual, isatty: vi.fn(actual.isatty) };
+});
 
 const deps = createNodeDeps();
 let dir = '';
@@ -943,6 +950,65 @@ describe('node deps: sleep', () => {
     const start = Date.now();
     await deps.sleep(40);
     expect(Date.now() - start).toBeGreaterThanOrEqual(35);
+  });
+});
+
+describe('node deps: the reader of a long program', () => {
+  const stdoutWrites = (outcome: (callback: (error?: Error | null) => void) => void): string[] => {
+    const taken: string[] = [];
+    vi.spyOn(process.stdout, 'write').mockImplementation((chunk: string | Uint8Array, second?: unknown) => {
+      taken.push(String(chunk));
+      outcome(second as (error?: Error | null) => void);
+      return true;
+    });
+    return taken;
+  };
+
+  const nextTurn = (): Promise<void> => new Promise((resolve) => void setImmediate(resolve));
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('M5-1b TP-102 gives the id of the parent process as the system gives it now', () => {
+    expect(createNodeDeps().parentPid()).toBe(process.ppid);
+  });
+
+  it('M5-1b TP-102 asks the system at each call whether stdout is a terminal, so a change shows', () => {
+    const made = createNodeDeps();
+    vi.mocked(isatty).mockReturnValueOnce(true).mockReturnValueOnce(false);
+    expect([made.stdoutIsTerminal(), made.stdoutIsTerminal()]).toEqual([true, false]);
+    expect(isatty).toHaveBeenLastCalledWith(1);
+  });
+
+  it('M5-1b TP-56 writes the text to stdout and waits until the write is done', async () => {
+    const taken = stdoutWrites((callback) => callback(null));
+    const result = await createNodeDeps().writeStdout('a frame\n');
+    expect(result.ok).toBe(true);
+    expect(taken).toEqual(['a frame\n']);
+  });
+
+  it.each(['EPIPE', 'EIO'])('M5-1b TP-56 fails with the code %s of a write that fails, and the error event of the stream that follows is handled', async (code) => {
+    const before = process.stdout.listenerCount('error');
+    const broken = Object.assign(new Error(`write ${code}`), { code });
+    // As the stream does: the callback of the write gets the error first, and then the stream emits it.
+    stdoutWrites((callback) => {
+      callback(broken);
+      process.stdout.emit('error', broken);
+    });
+    const result = await createNodeDeps().writeStdout('a frame\n');
+    expect(result.ok).toBe(false);
+    expect(result.ok ? '' : result.error.message).toContain(code);
+    await nextTurn();
+    expect(process.stdout.listenerCount('error')).toBe(before);
+  });
+
+  it('M5-1b TP-56 leaves no listener on stdout after a write that fails with no error event', async () => {
+    const before = process.stdout.listenerCount('error');
+    stdoutWrites((callback) => callback(Object.assign(new Error('write EIO'), { code: 'EIO' })));
+    expect((await createNodeDeps().writeStdout('x')).ok).toBe(false);
+    await nextTurn();
+    expect(process.stdout.listenerCount('error')).toBe(before);
   });
 });
 

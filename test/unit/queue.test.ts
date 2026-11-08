@@ -83,6 +83,7 @@ describe('queue set (TP-22, TP-28)', () => {
       state: undefined,
       stage: undefined,
       all: false,
+      follow: false,
       json: false,
     };
     valueOf(await runItem(repo.deps, options, recipes));

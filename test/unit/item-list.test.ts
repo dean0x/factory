@@ -1,12 +1,14 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runItem, type ItemOptions } from '../../src/commands/item.js';
-import { files as fileNames, stateLock } from '../../src/names.js';
+import type { Deps } from '../../src/core/deps.js';
+import { files as fileNames, followPollMs, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
-import { LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
+import { BOARD_PATH, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
+import type { FakeDeps } from '../helpers/fake-deps.js';
 import { HOME } from '../helpers/guard-fixture.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 
@@ -20,6 +22,7 @@ const BASE: ItemOptions = {
   state: undefined,
   stage: undefined,
   all: false,
+  follow: false,
   json: false,
 };
 
@@ -268,5 +271,305 @@ describe('item list: faults of the board file', () => {
   it('M5-1b TP-47 has no JSON output: the flag is a usage error', async () => {
     const error = errorOf(await list(await boardNode({ board: boardText() }), { json: true }));
     expect(exitCodeOf[error.kind]).toBe(2);
+  });
+});
+
+describe('item list --follow', () => {
+  const ESCAPE = String.fromCharCode(27);
+  const CONTROL_SEQUENCES = new RegExp(`${ESCAPE}\\[[0-9;]*[A-Za-z]`, 'g');
+  const withoutControl = (text: string): string => text.replace(CONTROL_SEQUENCES, '');
+  const writeFailure = (code: string): CliResult<void> => failure(`cannot write to the output: ${code}`);
+
+  /** A frame is a write of text lines. The write that only checks the reader holds no line. */
+  const framesOf = (deps: FakeDeps): string[] => deps.written.filter((text) => text.includes('\n')).map(withoutControl);
+
+  interface Followed {
+    readonly result: CliResult<CommandOutput>;
+    readonly deps: FakeDeps;
+    /** The reads of the status of the board file, in all. The read of the text makes some of them too. */
+    readonly stats: number;
+    /** The value of `stats` at the end of each wait, before the tick does anything. */
+    readonly statsAtWait: readonly number[];
+    /** The reads of the text of the board file, in all. One draw of the list makes more than one. */
+    readonly reads: number;
+    /** The value of `reads` at the end of each wait, before the tick does anything. */
+    readonly readsAtWait: readonly number[];
+  }
+
+  interface Drive {
+    /** Runs after each wait of the loop. `waits` is the number of waits so far, from 1. */
+    readonly afterWait?: (waits: number) => void;
+    /** Change the deps that the command gets. */
+    readonly wrap?: (deps: FakeDeps) => Deps;
+    readonly options?: Partial<ItemOptions>;
+    /** A person reads a terminal. Default: true. */
+    readonly terminal?: boolean;
+  }
+
+  /** Run the follow loop on the fake clock: a wait moves the clock, and no wait takes real time. */
+  const follow = async (repo: BoardRepo, drive: Drive = {}): Promise<Followed> => {
+    const base = repo.deps;
+    base.setStdoutTerminal(drive.terminal ?? true);
+    let stats = 0;
+    let reads = 0;
+    let waits = 0;
+    const statsAtWait: number[] = [];
+    const readsAtWait: number[] = [];
+    const watched: FakeDeps = {
+      ...base,
+      fs: {
+        ...base.fs,
+        statInfo: async (path) => {
+          if (path === BOARD_PATH) stats += 1;
+          return base.fs.statInfo(path);
+        },
+        readTextLimited: async (path, maxBytes, decode) => {
+          if (path === BOARD_PATH) reads += 1;
+          return base.fs.readTextLimited(path, maxBytes, decode);
+        },
+      },
+      sleep: async (ms) => {
+        await base.sleep(ms);
+        waits += 1;
+        statsAtWait.push(stats);
+        readsAtWait.push(reads);
+        drive.afterWait?.(waits);
+      },
+    };
+    const result = await runItem((drive.wrap ?? ((deps) => deps))(watched), { ...BASE, follow: true, ...drive.options }, recipes);
+    return { result, deps: base, stats, statsAtWait, reads, readsAtWait };
+  };
+
+  const endAt = (repo: BoardRepo, waits: number, signal: NodeJS.Signals = 'SIGTERM') => (count: number): void => {
+    if (count === waits) repo.deps.signals.emit(signal);
+  };
+
+  const BOARD = boardText([itemRecord('B-1', { track: 'core', stage: 'building' })], CORE);
+  const MORE = boardText([itemRecord('B-1', { track: 'core', stage: 'building' }), itemRecord('B-2', { track: 'docs', stage: 'ticket' })], CORE);
+
+  describe('the end (TP-56)', () => {
+    it.each<NodeJS.Signals>(['SIGHUP', 'SIGTERM'])('M5-1b TP-56 ends with no error on %s, takes no more wait, and removes its signal handlers', async (signal) => {
+      const repo = await boardNode({ board: BOARD });
+      const during: number[] = [];
+      const run = await follow(repo, {
+        afterWait: (waits) => {
+          during.push(repo.deps.signals.listenerCount('SIGHUP'), repo.deps.signals.listenerCount('SIGTERM'));
+          endAt(repo, 2, signal)(waits);
+        },
+      });
+      expect(run.result.ok).toBe(true);
+      expect(run.deps.sleeps).toHaveLength(2);
+      expect(during).toEqual([1, 1, 1, 1]);
+      expect(repo.deps.signals.listenerCount('SIGHUP')).toBe(0);
+      expect(repo.deps.signals.listenerCount('SIGTERM')).toBe(0);
+    });
+
+    it('M5-1b TP-56 ends at once on a signal that comes while the loop waits, with no wait to run out', async () => {
+      const repo = await boardNode({ board: BOARD });
+      setImmediate(() => repo.deps.signals.emit('SIGTERM'));
+      const run = await follow(repo, { wrap: (deps) => ({ ...deps, sleep: () => new Promise<void>(() => undefined) }) });
+      expect(run.result.ok).toBe(true);
+      expect(repo.deps.signals.listenerCount('SIGTERM')).toBe(0);
+    });
+
+    it.each(['EPIPE', 'EIO'])('M5-1b TP-56 ends with no error on a failed write of a frame with %s', async (code) => {
+      const repo = await boardNode({ board: BOARD });
+      let writes = 0;
+      const run = await follow(repo, {
+        // The board changes at the first wait, so the second frame is the write that fails. The write that checks the reader is before it.
+        afterWait: (waits) => {
+          if (waits === 1) repo.deps.seed(BOARD_PATH, MORE);
+        },
+        wrap: (deps) => ({
+          ...deps,
+          writeStdout: async (text) => {
+            writes += 1;
+            return text.includes('\n') && writes > 1 ? writeFailure(code) : deps.writeStdout(text);
+          },
+        }),
+      });
+      expect(run.result.ok).toBe(true);
+      expect(run.deps.sleeps).toHaveLength(1);
+      expect(repo.deps.signals.listenerCount('SIGTERM')).toBe(0);
+    });
+
+    it('M5-1b TP-56 keeps running on a board fault, shows the fault and the file, and draws the board when it is mended', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, {
+        afterWait: (waits) => {
+          if (waits === 1) repo.deps.seed(BOARD_PATH, 'not json');
+          if (waits === 2) repo.deps.seed(BOARD_PATH, MORE);
+          endAt(repo, 3)(waits);
+        },
+      });
+      expect(run.result.ok).toBe(true);
+      const frames = framesOf(run.deps);
+      expect(frames).toHaveLength(3);
+      expect(frames[0]).toContain('1 item in 2 tracks');
+      expect(frames[1]).toContain(fileNames.board);
+      expect(frames[1]).not.toContain('items in');
+      expect(frames[2]).toContain('2 items in 2 tracks');
+    });
+
+    it('M5-1b TP-56 keeps running when the board file is not there, and draws it when it comes back', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, {
+        afterWait: (waits) => {
+          if (waits === 1) repo.deps.files.delete(BOARD_PATH);
+          if (waits === 2) repo.deps.seed(BOARD_PATH, MORE);
+          endAt(repo, 3)(waits);
+        },
+      });
+      expect(run.result.ok).toBe(true);
+      const frames = framesOf(run.deps);
+      expect(frames[1]).toContain(fileNames.board);
+      expect(frames[2]).toContain('2 items in 2 tracks');
+    });
+  });
+
+  describe('the poll (TP-65)', () => {
+    it('M5-1b TP-65 waits the named poll time of 2 seconds between its ticks', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, { afterWait: endAt(repo, 4) });
+      expect(followPollMs).toBe(2000);
+      expect(run.deps.sleeps).toEqual([followPollMs, followPollMs, followPollMs, followPollMs]);
+    });
+
+    it('M5-1b TP-65 reads the status of the file at each tick, and rereads it only after a change of the time or the size', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, {
+        afterWait: (waits) => {
+          if (waits === 3) repo.deps.files.set(BOARD_PATH, MORE);
+          if (waits === 5) repo.deps.mtimes.set(BOARD_PATH, 1234);
+          endAt(repo, 7)(waits);
+        },
+      });
+      // Every tick but the last one read the status. The last tick got the signal first.
+      expect(run.statsAtWait).toHaveLength(7);
+      expect(run.statsAtWait.every((count, at) => at === 0 || count > (run.statsAtWait[at - 1] ?? 0))).toBe(true);
+      expect(run.stats).toBe(run.statsAtWait[6]);
+      // The text was read for frame 1, for the change of the size (tick 3) and for the change of the time (tick 5). The other ticks read none.
+      const perDraw = run.readsAtWait[0] ?? 0;
+      expect(perDraw).toBeGreaterThan(0);
+      expect([...run.readsAtWait, run.reads]).toEqual([1, 1, 1, 2, 2, 3, 3, 3].map((draws) => draws * perDraw));
+      const frames = framesOf(run.deps);
+      expect(frames).toHaveLength(3);
+      expect(frames[1]).toContain('2 items in 2 tracks');
+      expect(frames[2]).toBe(frames[1]);
+    });
+
+    it('M5-1b TP-65 draws no frame at a tick with no change', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, { afterWait: endAt(repo, 3) });
+      expect(framesOf(run.deps)).toHaveLength(1);
+      expect(run.reads).toBe(run.readsAtWait[0]);
+    });
+
+    it('M5-1b TP-65 keeps the cap of 20 lines on each redraw, for the board and for one track', async () => {
+      const items = Array.from({ length: 25 }, (_, at) => itemRecord(`B-${at + 1}`, { track: 'track1', stage: 'ticket' }));
+      const big = boardText(items, tracksOf(25));
+      for (const options of [{}, { track: 'track1' }]) {
+        const repo = await boardNode({ board: boardText([itemRecord('B-1', { track: 'track1', stage: 'ticket' })], tracksOf(25)) });
+        const run = await follow(repo, {
+          options,
+          afterWait: (waits) => {
+            if (waits === 1) repo.deps.seed(BOARD_PATH, big);
+            endAt(repo, 2)(waits);
+          },
+        });
+        const frames = framesOf(run.deps);
+        expect(frames).toHaveLength(2);
+        for (const frame of frames) expectShortOutput(frame);
+      }
+    });
+
+    it('M5-1b TP-65 draws the same lines as item list, with the cursor sequences around them on a terminal', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, { afterWait: endAt(repo, 1) });
+      expect(framesOf(run.deps)[0]).toBe(plainText(valueOf(await list(repo))));
+      const [first = ''] = repo.deps.written;
+      expect(first.startsWith(`${ESCAPE}[H`)).toBe(true);
+      expect(first.endsWith(`${ESCAPE}[J`)).toBe(true);
+    });
+  });
+
+  describe('the reader goes (TP-102)', () => {
+    it('M5-1b TP-102 ends at the first tick after the parent process changes, and makes no poll after it', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, {
+        afterWait: (waits) => {
+          if (waits === 2) repo.deps.setParentPid(1);
+        },
+      });
+      expect(run.result.ok).toBe(true);
+      expect(run.deps.sleeps).toHaveLength(2);
+      // The first tick read the status. The tick of the change read nothing.
+      expect(run.statsAtWait[1]).toBeGreaterThan(run.statsAtWait[0] ?? 0);
+      expect(run.stats).toBe(run.statsAtWait[1]);
+      expect(repo.deps.signals.listenerCount('SIGTERM')).toBe(0);
+    });
+
+    it('M5-1b TP-102 ends at the first tick after stdout stops being a terminal, and makes no poll after it', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, {
+        afterWait: (waits) => {
+          if (waits === 2) repo.deps.setStdoutTerminal(false);
+        },
+      });
+      expect(run.result.ok).toBe(true);
+      expect(run.deps.sleeps).toHaveLength(2);
+      expect(run.stats).toBe(run.statsAtWait[1]);
+    });
+
+    it.each(['EPIPE', 'EIO', 'ENOSPC'])('M5-1b TP-102 ends at the first tick after a write fails with %s, with no board change, and makes no poll after it', async (code) => {
+      const repo = await boardNode({ board: BOARD });
+      let writes = 0;
+      const run = await follow(repo, {
+        wrap: (deps) => ({
+          ...deps,
+          // Write 1 is the frame, write 2 is the check of the first tick, write 3 is the check of the second tick.
+          writeStdout: async (text) => {
+            writes += 1;
+            return writes === 3 ? writeFailure(code) : deps.writeStdout(text);
+          },
+        }),
+      });
+      expect(run.result.ok).toBe(true);
+      expect(run.deps.sleeps).toHaveLength(2);
+      expect(run.stats).toBe(run.statsAtWait[1]);
+      expect(run.reads).toBe(run.readsAtWait[0]);
+    });
+
+    it('M5-1b TP-102 draws one frame for a stdout that is not a terminal, and ends at once with no wait', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, { terminal: false });
+      expect(run.result.ok).toBe(true);
+      expect(run.deps.sleeps).toEqual([]);
+      expect(run.deps.written).toEqual([plainText(valueOf(await list(repo)))]);
+      expect(repo.deps.signals.listenerCount('SIGTERM')).toBe(0);
+    });
+
+    it('M5-1b TP-102 ends with no frame when the first write fails', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, { wrap: (deps) => ({ ...deps, writeStdout: async () => writeFailure('EPIPE') }) });
+      expect(run.result.ok).toBe(true);
+      expect(run.deps.sleeps).toEqual([]);
+    });
+  });
+
+  describe('the flags', () => {
+    it('M5-1b TP-56 shows the items of one track with --track, and the closed items with --all', async () => {
+      const repo = await boardNode({ board: boardText([itemRecord('B-1', { track: 'core' }), itemRecord('B-2', { track: 'core', status: 'done' })], CORE) });
+      const run = await follow(repo, { options: { track: 'core', all: true }, terminal: false });
+      expect(run.deps.written[0]).toContain('B-2');
+      expect(run.deps.written[0]).toContain('Track core: Core');
+    });
+
+    it('M5-1b TP-56 exits 2 for an unknown track and draws no frame', async () => {
+      const repo = await boardNode({ board: BOARD });
+      const run = await follow(repo, { options: { track: 'nope' } });
+      expect(exitCodeOf[errorOf(run.result).kind]).toBe(2);
+      expect(run.deps.written).toEqual([]);
+    });
   });
 });

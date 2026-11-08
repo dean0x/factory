@@ -47,8 +47,10 @@ export interface FakeOptions {
   readonly uid?: number | null;
   /** A person types at the process. Default: false. */
   readonly stdinIsTTY?: boolean;
-  /** A person reads the output on a terminal. Default: false. */
+  /** A person reads the output on a terminal. Default: false. It is the start value of `stdoutIsTerminal`, and `setStdoutTerminal` changes that one. */
   readonly stdoutIsTTY?: boolean;
+  /** The id of the parent process at the start. Default: 500. `setParentPid` changes it. */
+  readonly parentPid?: number;
   /** The text on the standard input, as `readStdin` reads it. A terminal gives no text. Default: empty. */
   readonly stdin?: string;
   /** The answer to a question. Default: no answer. */
@@ -98,6 +100,12 @@ export interface FakeDeps extends Deps {
   readonly invalidUtf8: Set<string>;
   /** The waits of `sleep`, in order. */
   readonly sleeps: number[];
+  /** The texts that `writeStdout` took, in order. */
+  readonly written: string[];
+  /** Change the parent process id that `parentPid` gives from now on. */
+  setParentPid(pid: number): void;
+  /** Change the value that `stdoutIsTerminal` gives from now on. */
+  setStdoutTerminal(value: boolean): void;
   /** The pids that `terminate` got, in order. The fake sends no signal to a real process. The call has no other signal. */
   readonly terminated: number[];
   /** The pids that `isRunning` got, in order. */
@@ -123,6 +131,7 @@ export const FAKE_PROGRAM_ARGV: readonly string[] = ['/opt/fake/bin/node', '/opt
 
 const DEFAULT_NOW = new Date('2030-01-02T03:04:05.678Z');
 const DEFAULT_UID = 1000;
+const DEFAULT_PARENT_PID = 500;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIR_MODE = 0o700;
 
@@ -143,6 +152,9 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const mtimes = new Map<string, number>();
   const invalidUtf8 = new Set<string>();
   const sleeps: number[] = [];
+  const written: string[] = [];
+  let parentPid = options.parentPid ?? DEFAULT_PARENT_PID;
+  let stdoutTerminal = options.stdoutIsTTY ?? false;
   const terminated: number[] = [];
   const checked: number[] = [];
   const randomTexts: string[] = [];
@@ -189,6 +201,13 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     mtimes,
     invalidUtf8,
     sleeps,
+    written,
+    setParentPid: (pid) => {
+      parentPid = pid;
+    },
+    setStdoutTerminal: (value) => {
+      stdoutTerminal = value;
+    },
     terminated,
     checked,
     randomTexts,
@@ -382,6 +401,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     },
     stdinIsTTY: options.stdinIsTTY ?? false,
     stdoutIsTTY: options.stdoutIsTTY ?? false,
+    stdoutIsTerminal: () => stdoutTerminal,
+    parentPid: () => parentPid,
+    writeStdout: async (text) => {
+      written.push(text);
+      return ok(undefined);
+    },
     readStdin: async (maxBytes) => {
       // The same results as the real read: a terminal gives empty text, and an input over the limit is an error.
       if (options.stdinIsTTY === true) return ok('');
