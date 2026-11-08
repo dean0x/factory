@@ -20,7 +20,7 @@ A team member installs factory on a new macOS or Linux machine. `factory init` a
 
 ## Milestones
 
-The build order is FAC-M2, M4, M5, M6, M7, M5b, then M3, M8, M10, M9. D-56 sets this order, and D-133 A adds FAC-M5b after FAC-M7. FAC-M5b holds the parts of FAC-M5 that the move of this workspace does not need: the release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script and the usage view. The release milestone FAC-M10 comes after FAC-M8 and before FAC-M9, because the Goal needs a release path and does not need Jira or Linear. This workspace moves to factory first, with the `local` board. The GitHub board comes right after the move. The sections below are in build order.
+The build order is FAC-M2, M4, M5, M6, M7, M11, M5b, then M3, M8, M10, M9. D-56 sets this order. D-133 A adds FAC-M5b after FAC-M7, and D-139 B adds FAC-M11 after FAC-M7 and before FAC-M5b and FAC-M3. FAC-M11 holds the one board contract, the board plugins, the `artifact` connector and the local change feed. FAC-M5b holds the parts of FAC-M5 that the move of this workspace does not need: the release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script and the usage view. The release milestone FAC-M10 comes after FAC-M8 and before FAC-M9, because the Goal needs a release path and does not need Jira or Linear. This workspace moves to factory first, with the `local` board. The board contract and the board plugins come right after the move, and the GitHub board plugin follows them. The sections below are in build order.
 
 | Order | Id | Name | Depends on | Design changes (F-n) |
 |---|---|---|---|---|
@@ -29,13 +29,14 @@ The build order is FAC-M2, M4, M5, M6, M7, M5b, then M3, M8, M10, M9. D-56 sets 
 | 3 | FAC-M5 | Local board and check commands | FAC-M4 | F-2, F-6 |
 | 4 | FAC-M6 | devflow setup | FAC-M5 | F-10, F-16 |
 | 5 | FAC-M7 | This workspace adopted (local board) | FAC-M4, FAC-M6 | F-3, F-8 |
-| 6 | FAC-M5b | Release check, copies sync and clean, usage view | FAC-M5, FAC-M7 | F-6, F-22, F-23, F-24 |
-| 7 | FAC-M3 | GitHub board, and the move to it | FAC-M7 | F-2, F-18, F-19 |
-| 8 | FAC-M8 | Layers and team | FAC-M7 | F-4 |
-| 9 | FAC-M10 | Release and install | FAC-M3, FAC-M8 | D-45 |
-| 10 | FAC-M9 | Jira and Linear connectors | FAC-M3 | F-2, F-19 |
+| 6 | FAC-M11 | Provider plugins | FAC-M5, FAC-M7 | D-139, D-140, D-141, D-142 |
+| 7 | FAC-M5b | Release check, copies sync and clean, usage view | FAC-M5, FAC-M7 | F-6, F-22, F-23, F-24 |
+| 8 | FAC-M3 | GitHub board plugin, and the move to it | FAC-M7, FAC-M11 | F-2, F-18, F-19 |
+| 9 | FAC-M8 | Layers and team | FAC-M7 | F-4 |
+| 10 | FAC-M10 | Release and install | FAC-M3, FAC-M8 | D-45 |
+| 11 | FAC-M9 | Jira and Linear plugins | FAC-M3 | F-2, F-19 |
 
-No milestone before FAC-M3 needs a network board: FAC-M5, FAC-M7 and FAC-M5b use the `local` board. FAC-M8 can run in parallel with FAC-M3. FAC-M9 can run at any time after FAC-M3.
+FAC-M11 needs the network for its `artifact` connector, which publishes the review page. FAC-M5, FAC-M7 and FAC-M5b use the `local` board. FAC-M8 can run in parallel with FAC-M3. FAC-M9 can run at any time after FAC-M3.
 
 ### Command map
 
@@ -44,7 +45,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | Command | Milestone |
 |---|---|
 | `init`, `start`, `doctor`, `upgrade`, `help` (with `help words`) | FAC-M2 |
-| `init --tracker --items --decisions --state-from`; `start` window `ops`; `upgrade` rule for a dirty state repo | FAC-M3 |
+| `init --tracker --items --decisions --state-from`; `start` window `ops` for the `github` board; `upgrade` rule for a dirty state repo | FAC-M3 |
 | `node children`, `node add-child`, `node remove-child` | FAC-M2 |
 | `node tree` | FAC-M8 |
 | `machine`, `layout`, `self`, `hook` | FAC-M4 |
@@ -53,7 +54,9 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `worker relay`, `worker recover` | FAC-M5 |
 | `worker adopt` | FAC-M7 |
 | `item`, `request`, `queue`, `decide <D-n> <option>` | FAC-M5 |
+| `track` | FAC-M5 |
 | `item estimate` | FAC-M5b |
+| `worker mark`, `worker list --follow` (the columns of the live board) | FAC-M5b |
 | `check`, `pr`, `issues`, `copies` (list, status), `lock` | FAC-M5 |
 | `state` (guard) | FAC-M5 |
 | `release` (check, verify, scope), `copies` (sync, clean) | FAC-M5b |
@@ -62,7 +65,10 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `report` (the rollup over children) | FAC-M8 |
 | `recipe` (show, variant), `project` (add, remove, list) | FAC-M6 |
 | `adopt` | FAC-M7 |
-| `tracker`, `state` (remote, push, pull), `watch`, `decide ask`, `decide read`, `item import` | FAC-M3 |
+| `plugin` (test) | FAC-M11 |
+| `tracker set artifact`, `tracker set plugin:<name>` | FAC-M11 |
+| `decide read` and `watch` for the `local` and `artifact` boards; `start` window `ops` for the `local` and `artifact` boards; `doctor` (the check of each board CLI) | FAC-M11 |
+| `tracker`, `state` (remote, push, pull), `decide read` and `watch` for the `github` board, `item import` | FAC-M3 |
 
 ### FAC-M2: Names, home, roles and schema 2
 
@@ -285,6 +291,56 @@ The import into GitHub issues is not here: it is FAC-M3.
 - [ ] `scripts/subswitch-run.sh` starts one worker of this workspace through the real Subswitch. It exits 0 only when the health check passed and the last-seen line arrived. The output is saved in `docs/reviews/fac-m7-subswitch-run.md`.
 - [ ] After the adopt, `tmux kill-server` and `factory start` restore every worker with its saved session id (a recorded run on this workspace).
 - [ ] The coordinator merges 5 PRs through `factory check` and `factory pr merge`.
+
+### FAC-M11: Provider plugins
+
+**Goal.** Every board connector speaks one versioned contract, and a user adds a board connector as an npm package, called a board plugin (D-139 B, D-140). The `local`, `artifact` and `github` connectors use the same interface as a plugin. The board holds the truth: a write goes to the board first, and the local board is the cache and the `local` connector (D-141 B). This milestone also adds the `artifact` connector, which publishes the review page, and the local change feed, so `watch` works with every kind of board. Design §4.10 has the board rules, and design §4.15 has the plugin rules. Community documents and examples for plugin authors wait for FAC-M10 (D-49).
+
+**Scope.**
+1. **Loader (D-140).** A board plugin is an npm package that exports the contract. The user installs it with npm and names it in `factory.local.yaml`, never in the shared file. Factory loads it in its own process. There is no accept command, no hash and no child process. Factory checks three things before the load:
+   - the name is a valid npm package name;
+   - the real path of the package is inside the folder that `npm root -g` prints. Factory finds this folder once, at `tracker set`, and keeps it for the node;
+   - the `package.json` of the package names the contract id. Factory reads this file before the load, so no plugin code runs before the check.
+
+   The remedy text of each stop says that the install is a trust decision.
+2. **Contract.** The contract id is `factory.board/v1`. The operation `describe` returns the version and the operations that the connector supports. Another major version is an error (exit 1) with a remedy. A minor version only adds. Factory checks each result against the schema of the contract. A connector calls a vendor CLI with an argument list, never with a shell, and sends item text on stdin or in a file. The time cap, the output byte cap and the result cap are named numbers in `src/names.ts`. A call past a cap has the result "unknown". The names `local`, `artifact` and `github` are reserved, and a plugin with one of them is an error (exit 1). Control characters in the output of any connector show as visible escapes.
+3. **Contract suite and `plugin test`.** One contract suite, which factory exports, runs against any connector. It has four layers: the schema of each operation, the behavior of each operation, an item title with shell characters, and recorded responses of the vendor CLI. `factory plugin test <name>` runs it against a plugin. The suite for `artifact` runs its script part with fixture data.
+4. **Board-first writes (D-141 B).** A write goes to the board first. The cache changes after the board write succeeds. There is no queue, and an unreachable board fails the write. A write with no answer before the time cap has the result "unknown", not "failed". The remedy tells the user to refresh the cache from the board before a retry. Each item carries its factory id, so the refresh finds the item and a retry makes no second item. Reads come from the cache, so offline work only reads. The one write that needs no board is in design §4.10.
+5. **An operation that a board lacks.** An operation that `describe` does not list stays cache-only, with a mark. `factory tracker status` shows one line for it.
+6. **Refresh and drift.** A refresh follows the one rule of design §4.10. A drift line names an item id. The drift check has a cap, and past the cap the output says "more than <cap>". The first copy of items to a board uses a map from local ids to board ids, runs in batches, resumes after a stop and makes no duplicate.
+7. **Local change feed.** The `local` board has a change feed. An event of the feed is a board event: it only wakes the coordinator. Its author is `session` or `terminal`, never `owner`. The feed has a size bound, and a cursor that is not valid gives "unknown". `watch` skips the writes of factory itself. `watch` and the window `ops` work for every kind of board, `local` and `artifact` included.
+8. **The `artifact` connector.** Its items live in the local files. This is the one named exception to board-first writes: the page is a view that factory renders, and a page answer records no decision (D-142 A). A failed publish never fails a write.
+   - The publish uses private visibility and takes a file path, so the page text never goes into model tokens. Factory prints one `PUBLISH:` line, only when the page changed, at most once for each set interval.
+   - The page counts as the decision store. At `tracker set artifact`, factory asks the owner in a terminal window to confirm that the page is private, and it records the answer for the node, outside the shared file. With no answer on record, factory prints no `PUBLISH:` line and exits 4, and the remedy is `factory tracker set artifact` in a terminal window. `doctor` warns "page privacy not checked", names the manual step, and never passes the check.
+   - The page data holds no password, no token and no machine path. The render escapes HTML, and the data block escapes `</script>`.
+   - `decide read --from FILE` reads the answers of the page from a data file that the agent writes. It shows each author as "page (not known)", and it records nothing. The file follows the real-path rule of the `item doc` attach (point 10), a size limit and a schema check. An error never repeats text of the file.
+9. **Doctor checks for board CLIs.** From FAC-M11, `doctor` checks each chosen board CLI for three things: present, configured and authorized. Each plugin declares its scopes. The output has only the check names and the scope names, never raw CLI output.
+10. **The attach rule of `item doc`.** `item doc` attaches a file only from inside a project or the factory folder, after factory finds the real path. It refuses a link, `factory.local.yaml`, a state file and a file over the size cap (exit 4).
+11. **Two record checks.** The decision log and the approval records get a check that finds a change that factory did not make. The text of an item gets a check before a write to a public items store: it refuses a value that looks like a password or a token.
+12. **Config schema change.** `tracker.kind` is `local`, `artifact`, `github` or `plugin:<name>`. Options go under `tracker.options`, and the plugin checks them with its own schema. An unknown key fails and names the key.
+
+The hosted-kind path of M5-1b (local first, then a hosted copy) is a test-double stub. FAC-M11 and FAC-M3 replace it with board-first writes.
+
+**Exit criteria.**
+- [ ] Loader test with a fixture global folder. A package inside the folder of `npm root -g` loads. A package outside it, and a link to a package outside it, do not load. A name that is not a valid npm package name loads nothing. A plugin name in the shared file `factory.yaml` loads nothing, and the output names `factory.local.yaml`.
+- [ ] Load order test. A fixture plugin writes a marker file when its code loads. With a wrong contract id in its `package.json`, the marker file does not exist after the call, and the call exits 1 with the remedy that the install is a trust decision.
+- [ ] Contract test. `describe` of a fixture plugin gives the version and the operations. A fixture with another major version exits 1 and names the remedy. A fixture with a higher minor version that adds one operation loads. A fixture with the name `local`, `artifact` or `github` exits 1 and names the three reserved names.
+- [ ] Schema and cap test (unit tests with a fake clock). A fixture plugin returns a wrong field type for each operation: factory rejects the result (exit 1), names the operation and changes no cache file. A fixture that gives no answer, one that prints more than the output byte cap and one that returns more than the result cap each give the result "unknown", and the output names the cap.
+- [ ] Argument list test. The contract suite makes an item with a title that holds shell characters, against a fake vendor CLI that records its call. The title arrives as one argument or on stdin, and no shell runs.
+- [ ] `factory plugin test <name>` runs the contract suite against a fixture plugin. It exits 0 for a good plugin, and it exits 1 and names the first failed operation for a bad one. The same suite passes in CI against `local`, and against `artifact` with fixture data for its script part. FAC-M3 adds `github`.
+- [ ] Board-first test with a fixture plugin. With the board up, `item add` writes the board and then the cache. With the board down, `item add` fails, changes no cache file and leaves no queue. With no answer before the time cap, the result is "unknown" and the cache is unchanged.
+- [ ] Retry test. A fixture board stores a write and loses the answer. After a refresh, a retry of the same write makes no second item: the board holds one item with that factory id.
+- [ ] Offline test. With the board down, `item list` and `status` read the cache and exit 0, and `factory decide <D-n> <option>` records the decision (the rule of design §4.10).
+- [ ] Refresh test (the rule of design §4.10). A fixture board differs from the cache in one item, one track, one note, one decision record and one approval record. After the refresh, the item, the track and the note equal the board. The decision log and the approval records have the same bytes as before, and the output has one drift line for each of the two records.
+- [ ] Drift cap test. A fixture with more drifted items than the cap prints the cap number of lines and then "more than <cap>". A fixture plugin whose `describe` leaves out `note` gives a cache-only note with a mark, and `tracker status` shows one line for it.
+- [ ] Local change feed test. A write of a session gives one event with the author `session`, and the same write in a terminal window gives `terminal`. No event has the author `owner`. The feed stops at its size bound. A cursor that is not valid gives "unknown". `start --dry-run` lists the window `ops` with `factory watch` for `local`, `artifact`, `github` and a plugin board.
+- [ ] `artifact` publish test with a fake publish command. A change of the page gives one `PUBLISH:` line. No change gives none. A second change inside the interval gives none. The output holds no page text. A failed publish exits 0 for the write that caused it.
+- [ ] Page privacy test. With no answer on record, a publish prints no `PUBLISH:` line and exits 4 with the remedy `factory tracker set artifact`. After the owner confirms in a pty test, the line prints. `doctor` warns "page privacy not checked" and exits 0.
+- [ ] Page data test. The data block holds no password, no token and no machine path. A title with HTML characters and a title with `</script>` show escaped in the render and in the data block. `decide read --from FILE` with a fixture data file shows the author "page (not known)", and the decision log has the same bytes after it. A file outside a project and the factory folder, a link, a file over the size limit and a file that fails the schema are each refused, and the error holds no text of the file.
+- [ ] Doctor test with fake board CLIs. For each of present, configured and authorized, a fixture CLI that fails the check gives one line with the check name and the scope name. A fixture CLI that prints a marker word gives output with no marker word.
+- [ ] Attach test. `item doc` attaches a file inside a project. It exits 4 for a file outside a project and the factory folder, for a link, for `factory.local.yaml`, for a state file and for a file over the size cap.
+- [ ] Record check test. After an edit by hand of `decision-log.json` and of one approval record, the check finds each edit and names the file. After a `factory decide`, the check passes. For a fake public items store, a write whose title holds a value that looks like a password or a token is refused, and the output names the item and never the value.
+- [ ] Config test. `tracker.kind` loads with `local`, `artifact`, `github` and `plugin:<name>`, and any other value fails and names the key. `tracker.options` loads when the plugin schema accepts it, and an unknown key under it fails and names the key.
 
 ### FAC-M5b: Release check, copies sync and clean, usage view
 
