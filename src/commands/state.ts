@@ -75,7 +75,7 @@ const indexBoardText = async (deps: Deps, dir: string, entry: IndexEntry): Promi
  *   stops the commit: the check fails closed.
  * The check reads and writes nothing.
  */
-export const checkBoardChange = async (deps: Deps, dir: string): Promise<CliResult<void>> => {
+const checkBoardChange = async (deps: Deps, dir: string): Promise<CliResult<void>> => {
   const index = await stateIndexEntryAt(deps, dir, BOARD);
   if (!index.ok) return gitFault(index.error.message);
   const head = await headOf(deps, dir);

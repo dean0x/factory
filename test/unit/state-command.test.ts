@@ -8,7 +8,7 @@ import { STATE_GIT, withoutStateWords } from '../helpers/git-fake.js';
 
 const STATE = '/h/node/.factory';
 
-const idOfText = (text: string): string => createHash('sha1').update(text).digest('hex');
+const idOfText = (text: string): string => createHash('sha256').update(text).digest('hex');
 
 const board = (ids: readonly string[], extra: Record<string, unknown> = {}): string =>
   `${JSON.stringify({ queue: [], items: ids.map((id) => ({ id, ...extra })) }, null, 2)}\n`;
