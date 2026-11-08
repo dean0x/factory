@@ -30,7 +30,7 @@ Run each check in a terminal window. Each check must show the result in the last
 | --- | --- | --- |
 | macOS, Linux, or Windows with WSL | `uname -s` | `Darwin` or `Linux` |
 | Node.js 22 or newer | `node --version` | `v22` or a higher number |
-| git | `git --version` | a version number |
+| git | `git --version` | version 2.26 or newer |
 | tmux 3.0 or newer | `tmux -V` | `tmux 3.0` or a higher number |
 | Claude Code 2.1.224 or newer | `claude --version` | `2.1.224` or a higher number |
 | An npm prefix that your user owns | `npm prefix --global` | a folder that your user owns |
