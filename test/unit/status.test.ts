@@ -1,4 +1,6 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { boardWorkItems } from '../../src/board/work-items.js';
 import { failure } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
@@ -6,15 +8,18 @@ import { runStatus, type StatusOptions } from '../../src/commands/status.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import type { PaneRow } from '../../src/launch/tmux.js';
-import { schemaIds, type HookEvent } from '../../src/names.js';
+import { files, schemaIds, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
+import { layoutOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession, type LastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord, type WorkerRecord } from '../../src/workers/registry.js';
 import { buildStatus, type LineRead, type StatusInput } from '../../src/workers/status.js';
 import { unknownWorkItems, type WorkItem, type WorkItemPort } from '../../src/workers/work-items.js';
+import { boardText, itemRecord } from '../helpers/board-node.js';
+import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
-import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { sampleConfig, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
@@ -679,5 +684,87 @@ describe('status: the folder (TP-51, TP-52)', () => {
     expect(await runCli(['status'], made.deps, sink)).toBe(2);
     expect(sink.errors.join('')).toContain('factory init');
     expect(sink.out.join('')).toBe('');
+  });
+});
+
+describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () => {
+  const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
+  const WORKERS = [
+    { id: 'alpha', line: { event: 'Stop', percent: 5 } },
+    { id: 'beta', line: { event: 'Stop', percent: 6 } },
+    { id: 'gamma', line: { event: 'Stop', percent: 7 } },
+  ] as const;
+  const BOARD = boardText([
+    itemRecord('B-1', { status: 'doing', lane: 'alpha' }),
+    itemRecord('B-2', { status: 'done', lane: 'gamma' }),
+  ]);
+
+  /** A factory with the three workers, a long quiet time, and the board file `text` (none: no board file). */
+  const withBoard = async (text: string | undefined, config: FactoryConfig = sampleConfigWithBoard()): Promise<Made> => {
+    const made = await make({ workers: WORKERS, panes: WORKERS.map((worker) => pane(worker.id)), config });
+    if (text !== undefined) made.deps.seed(BOARD_FILE, text);
+    made.deps.advance(24 * 60 * MINUTE);
+    return made;
+  };
+
+  it('M5-1b TP-43 shows the item in progress of a worker, and idle yes for a worker with no open work', async () => {
+    const made = await withBoard(BOARD);
+    const output = await statusOf(made, boardWorkItems(recipes));
+    expect(rowsOf(output)).toMatchObject([
+      { id: 'alpha', workItem: 'B-1', idle: 'no' },
+      { id: 'beta', workItem: 'none', idle: 'yes' },
+      { id: 'gamma', workItem: 'none', idle: 'yes' },
+    ]);
+    expect(jsonOf(output).workers.map((worker) => worker.workItem)).toEqual([busyWith('B-1'), NONE, NONE]);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('M5-1b TP-43 gives the board to the command line: status through runCli shows the item in progress', async () => {
+    const made = await withBoard(BOARD);
+    const sink = captureSink();
+    expect(await runCli(['status', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
+    expect(JSON.parse(sink.out.join(''))).toMatchObject({
+      workers: [
+        { id: 'alpha', workItem: busyWith('B-1'), idle: false },
+        { id: 'beta', workItem: NONE, idle: true },
+        { id: 'gamma', workItem: NONE, idle: true },
+      ],
+    });
+  });
+
+  it('M5-1b TP-44 shows every worker as unknown and none as idle when the setup has no board block', async () => {
+    const made = await withBoard(BOARD, sampleConfig());
+    const output = await statusOf(made, boardWorkItems(recipes));
+    expect(rowsOf(output).map((row) => [row.workItem, row.idle])).toEqual([
+      ['unknown', 'no'],
+      ['unknown', 'no'],
+      ['unknown', 'no'],
+    ]);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it.each([
+    ['a board file that is not there', undefined],
+    ['a board file that is not JSON', 'not json'],
+  ])('M5-1b TP-44 shows every worker as unknown and none as idle, with a warning, for %s', async (_name, text) => {
+    const made = await withBoard(text);
+    const output = await statusOf(made, boardWorkItems(recipes));
+    expect(rowsOf(output).map((row) => [row.workItem, row.idle])).toEqual([
+      ['unknown', 'no'],
+      ['unknown', 'no'],
+      ['unknown', 'no'],
+    ]);
+    expect(output.warnings).toHaveLength(1);
+    expect(output.warnings[0]).toContain(files.board);
+  });
+
+  it('M5-1b TP-64 reads the board file once, and the config and the board of a status run change no file', async () => {
+    const made = await withBoard(BOARD);
+    const before = snapshot(made.deps);
+    const counted = countReadsOf(made.deps, BOARD_FILE);
+    const result = await runStatus(counted.deps, options(), recipes, boardWorkItems(recipes));
+    expect(result.ok).toBe(true);
+    expect(counted.count()).toBe(1);
+    expect(snapshot(made.deps)).toBe(before);
   });
 });

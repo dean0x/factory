@@ -1,18 +1,24 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { boardWorkItems } from '../../src/board/work-items.js';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
 import { runDismiss, type DismissOptions } from '../../src/commands/dismiss.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
-import { dismissWords, schemaIds, type HookEvent } from '../../src/names.js';
+import { dismissWords, files, schemaIds, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { readWorkerRecord, writeWorkerRecord } from '../../src/workers/registry.js';
 import { unknownWorkItems, type WorkItem, type WorkItemPort } from '../../src/workers/work-items.js';
+import { boardText, itemRecord } from '../helpers/board-node.js';
+import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { FILE_MONITOR_OFF_WORD, gitHandler, type GitFixture, type GitLog } from '../helpers/git-fake.js';
-import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { sampleConfig, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
+import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type PaneFixture, type PaneView, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
@@ -1103,5 +1109,81 @@ describe('dismiss --idle', () => {
     const output = await outputOf(made, { idle: true }, portOf(items));
     expect(output.json).toMatchObject({ schema: schemaIds.dismiss, idle: true });
     expect(JSON.stringify(output.json)).toContain('alpha');
+  });
+});
+
+describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', () => {
+  const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
+  const WORKERS: readonly Seed[] = [{ id: 'alpha' }, { id: 'beta' }, { id: 'gamma' }];
+  /** Alpha has no item, beta has an item in progress, and gamma has a closed item. */
+  const BOARD = boardText([itemRecord('B-1', { status: 'doing', lane: 'beta' }), itemRecord('B-2', { status: 'done', lane: 'gamma' })]);
+
+  const withBoard = async (text: string | undefined, change: Partial<Setup> = {}): Promise<Made> => {
+    const made = await make({ workers: WORKERS, config: sampleConfigWithBoard(), ...change });
+    if (text !== undefined) made.deps.seed(BOARD_FILE, text);
+    return made;
+  };
+
+  /** The ids in the rows of the table, which are the lines after the title line that start with a worker id. */
+  const idsOf = (output: CommandOutput): string[] =>
+    output.lines.slice(1).flatMap((line) => WORKERS.filter((worker) => line.text.startsWith(worker.id)).map((worker) => worker.id));
+
+  const BOARD_PORT = boardWorkItems(recipes);
+
+  it('M5-1b TP-44 lists the workers that the board says have no open work, and not the worker with an item in progress', async () => {
+    const made = await withBoard(BOARD);
+    const output = await outputOf(made, { idle: true }, BOARD_PORT);
+    expect(idsOf(output)).toEqual(['alpha', 'gamma']);
+    expect(output.warnings).toEqual([]);
+    await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
+  });
+
+  it('M5-1b TP-44 gives the board to the command line: dismiss --idle through runCli lists the idle workers', async () => {
+    const made = await withBoard(BOARD);
+    const sink = captureSink();
+    expect(await runCli(['dismiss', '--idle', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
+    const json: { readonly workers: readonly { readonly id: string }[] } = JSON.parse(sink.out.join(''));
+    expect(json.workers.map((worker) => worker.id)).toEqual(['alpha', 'gamma']);
+  });
+
+  it('M5-1b TP-44 lists no worker when the setup has no board block', async () => {
+    const made = await withBoard(BOARD, { config: sampleConfig() });
+    const output = await outputOf(made, { idle: true }, BOARD_PORT);
+    expect(textOf(output)).toContain('No idle');
+    expect(output.warnings).toEqual([]);
+  });
+
+  it.each([
+    ['a board file that is not there', undefined],
+    ['a board file that is not JSON', 'not json'],
+  ])('M5-1b TP-44 lists no worker, with a warning that names the board file, for %s', async (_name, text) => {
+    const made = await withBoard(text);
+    const output = await outputOf(made, { idle: true }, BOARD_PORT);
+    expect(textOf(output)).toContain('No idle');
+    expect(output.warnings).toHaveLength(1);
+    expect(output.warnings[0]).toContain(files.board);
+  });
+
+  it('M5-1b TP-64 reads the board file once to list the idle workers, and once more just before the stops', async () => {
+    const listed = await withBoard(BOARD);
+    const listReads = countReadsOf(listed.deps, BOARD_FILE);
+    await runDismiss(listReads.deps, optionsOf({ idle: true }), recipes, BOARD_PORT);
+    expect(listReads.count()).toBe(1);
+    const picked = await withBoard(BOARD, { terminal: { answer: 'alpha' } });
+    const pickReads = countReadsOf(picked.deps, BOARD_FILE);
+    const result = await runDismiss(pickReads.deps, optionsOf({ idle: true }), recipes, BOARD_PORT);
+    expect(result.ok).toBe(true);
+    expect(pickReads.count()).toBe(2);
+  });
+
+  it('M5-1b TP-44 refuses a pick of a worker that got an item in progress while the owner typed, with nothing ended', async () => {
+    const made = await withBoard(BOARD, {
+      terminal: { answer: 'alpha gamma' },
+      atPrompt: (typing) => typing.deps.seed(BOARD_FILE, boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha' })])),
+    });
+    const error = await errorOf(made, { idle: true }, BOARD_PORT);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('alpha');
+    await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
   });
 });

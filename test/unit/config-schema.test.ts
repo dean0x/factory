@@ -680,8 +680,8 @@ describe('the board block (AC-12)', () => {
 
   const tokens = (count: number, prefix: string): string[] => Array.from({ length: count }, (_, index) => `${prefix}${index}`);
 
-  /** Text that is not a token: empty, a space, a hyphen or underscore first, a line break, a non-ASCII letter, or 33 characters. */
-  const BAD_TOKENS = ['', 'a b', ' a', '-a', '_a', 'a\nb', 'café', 'x'.repeat(33)];
+  /** Text that is not a token: empty, a space, a hyphen or underscore first, a line break, a non-ASCII letter, or 41 characters. */
+  const BAD_TOKENS = ['', 'a b', ' a', '-a', '_a', 'a\nb', 'café', 'x'.repeat(41)];
 
   it('M5-1b TP-27 accepts the block with its states, roles and fields, and keeps it in the core', () => {
     const parsed = parseMixed({ ...sampleObject(), board: sampleBoard() });
@@ -726,10 +726,18 @@ describe('the board block (AC-12)', () => {
     }
   });
 
-  it('M5-1b TP-27 accepts a token of 32 characters and refuses one of 33', () => {
-    const edge = 'a'.repeat(32);
+  it('M5-1b TP-27 TP-139 accepts a token of 40 characters, the length of the longest worker id, and refuses one of 41', () => {
+    const edge = 'a'.repeat(40);
     expect(checkBoard((board) => (board.fields[1].name = edge))).toBeNull();
     expect(checkBoard((board) => (board.fields[1].name = `${edge}a`))).toContain('board.fields.1.name:');
+  });
+
+  it('M5-1b TP-139 accepts a state and a value of 40 characters, and refuses one of 41', () => {
+    const edge = 'a'.repeat(40);
+    expect(checkBoard((board) => (board.states[2] = edge))).toBeNull();
+    expect(checkBoard((board) => (board.states[2] = `${edge}a`))).toContain('board.states.2:');
+    expect(checkBoard((board) => (board.fields[0].values[0] = edge))).toBeNull();
+    expect(checkBoard((board) => (board.fields[0].values[0] = `${edge}a`))).toContain('board.fields.0.values.0:');
   });
 
   it('M5-1b TP-27 refuses a role and a worker field that are not tokens', () => {
@@ -741,7 +749,8 @@ describe('the board block (AC-12)', () => {
   });
 
   it('M5-1b TP-27 never repeats a rejected value in the message', () => {
-    const secret = 'sk-ant-api03-SECRETSECRETSECRETSECRET';
+    const secret = `sk-ant-api03-${'SECRET'.repeat(5)}`;
+    expect(secret.length).toBeGreaterThan(boardLimits.maxTokenChars);
     const message = checkBoard((board) => {
       board.fields[0].name = secret;
       board.states[0] = secret;

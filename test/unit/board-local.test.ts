@@ -431,7 +431,7 @@ describe('the owner fields', () => {
   });
 
   it('M5-1b TP-26 refuses a token that is not a token with exit 2 and names the field', () => {
-    for (const value of ['', 'has space', '-x', 'a'.repeat(33)]) {
+    for (const value of ['', 'has space', '-x', 'a'.repeat(41)]) {
       const result = resolveFields(board, 'item', [{ name: 'lane', value }], { complete: false });
       expect(exitOf(result), value).toBe(2);
       expect(errorOf(result).message, value).toContain('lane');
