@@ -1312,18 +1312,17 @@ describe('doctor: the children', () => {
 describe('doctor: state repository', () => {
   it('fails when the state folder is not a git repository', async () => {
     const deps = await initialized();
+    expect((await deps.fs.remove(`${HOME}/.factory/.git`)).ok).toBe(true);
     expect(await checkStateRepo(deps, HOME)).toMatchObject({ id: 'state-repo', level: 'fail' });
   });
 
   it('is ok with a commit and an identity', async () => {
     const deps = await initialized({ git: { committed: [`${HOME}/.factory`] } });
-    deps.seedDir(`${HOME}/.factory/.git`);
     expect((await checkStateRepo(deps, HOME)).level).toBe('ok');
   });
 
   it('warns about a missing commit and a missing identity, and repeats both', async () => {
     const deps = await initialized({ git: { identity: false } });
-    deps.seedDir(`${HOME}/.factory/.git`);
     const result = await checkStateRepo(deps, HOME);
     expect(result.level).toBe('warn');
     expect(result.text).toContain('no commit yet');
@@ -1332,7 +1331,6 @@ describe('doctor: state repository', () => {
 
   it('warns when git is missing', async () => {
     const deps = await initialized({ tools: ['tmux'] });
-    deps.seedDir(`${HOME}/.factory/.git`);
     expect((await checkStateRepo(deps, HOME)).text).toContain('git is missing');
   });
 });
