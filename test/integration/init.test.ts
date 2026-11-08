@@ -216,6 +216,29 @@ describe('factory init (built binary)', () => {
     expect(status.stdout).toBe('');
   });
 
+  it('writes the delete guard into the git folder of the state repository, which git does not track (TP-1, TP-3)', async () => {
+    expect((await box.run(initArgs())).code).toBe(0);
+    const state = join(box.node, '.factory');
+    const guard = join(await realpath(state), '.git', 'factory-guard');
+    const hook = join(guard, 'pre-commit');
+    expect((await box.git(state, ['config', 'core.hooksPath'])).stdout.trim()).toBe(guard);
+    expect(await readdir(guard)).toEqual(['pre-commit']);
+    expect((await stat(hook)).mode & 0o777).toBe(0o755);
+    expect((await stat(guard)).mode & 0o777).toBe(0o755);
+    expect(await box.read(hook)).toMatch(/^#!\/bin\/sh\n# .*\nexec .* state guard\n$/);
+    expect((await box.git(state, ['ls-files'])).stdout).not.toContain('factory-guard');
+    expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
+    expect((await readdir(join(state, '.git'))).includes('hooks')).toBe(true);
+    expect(await readdir(join(state, '.git', 'hooks'))).not.toContain('pre-commit');
+  });
+
+  it('writes a guard that upgrade finds current: the setting and the hook survive the rename of the staging folder (TP-3)', async () => {
+    expect((await box.run(initArgs())).code).toBe(0);
+    const dry = await box.run(['upgrade', '--home', box.node, '--dry-run', '--json']);
+    expect(dry.code).toBe(0);
+    expect(JSON.parse(dry.stdout)).toMatchObject({ changed: false, stateGuard: 'current' });
+  });
+
   it('makes the root a git repo of its own with a first commit of the three shared paths, and doctor exits 0 (TP-10)', async () => {
     const result = await box.run(initArgs());
     expect({ code: result.code, stderr: withoutHookNotice(result.stderr) }).toEqual({ code: 0, stderr: '' });
