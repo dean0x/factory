@@ -176,7 +176,7 @@ const trackerSchema = z.discriminatedUnion(keys.tracker.kind, [localTrackerSchem
 
 /** A name, a state or a value of the `board` block. The message names the rule and never repeats the text. */
 const boardToken = z.string().regex(boardLimits.tokenPattern, {
-  error: 'must be a token: 1 to 32 letters, digits, dots, underscores or hyphens, starting with a letter or a digit',
+  error: `must be a token: 1 to ${boardLimits.maxTokenChars} letters, digits, dots, underscores or hyphens, starting with a letter or a digit`,
 });
 
 /** A list of tokens with no repeated entry, from one entry to `max` entries. */

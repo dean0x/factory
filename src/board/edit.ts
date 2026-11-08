@@ -171,7 +171,9 @@ export interface CheckedDecision {
 
 const optionOf = (option: DecisionAskInput['options'][number]): CliResult<Stored> => {
   if (!boardLimits.tokenPattern.test(option.key)) {
-    return usageError(`the option key ${shown(option.key)} is not a token: 1 to 32 letters, digits, dots, underscores or hyphens`);
+    return usageError(
+      `the option key ${shown(option.key)} is not a token: 1 to ${boardLimits.maxTokenChars} letters, digits, dots, underscores or hyphens`,
+    );
   }
   const text = lineOf(`text of option ${option.key}`, option.text, boardTextLimits.maxOptionChars);
   if (!text.ok) return text;

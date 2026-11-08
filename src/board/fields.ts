@@ -42,7 +42,9 @@ const valueOf = (field: BoardField, text: string): CliResult<FieldValue> => {
     case tokenKind:
       return boardLimits.tokenPattern.test(text)
         ? ok(text)
-        : usageError(`the field ${field.name} takes a token: 1 to 32 letters, digits, dots, underscores or hyphens`);
+        : usageError(
+            `the field ${field.name} takes a token: 1 to ${boardLimits.maxTokenChars} letters, digits, dots, underscores or hyphens`,
+          );
     case flagKind:
       return text === FLAG_ON || text === FLAG_OFF
         ? ok(text === FLAG_ON)

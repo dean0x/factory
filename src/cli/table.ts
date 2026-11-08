@@ -1,4 +1,5 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
+import { boardWorkItems } from '../board/work-items.js';
 import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
@@ -252,7 +253,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     summary: `Show each ${roles.worker} with its state, its work item and its idle state.`,
     usage: `${commandText(commands.status)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
-    run: (given, deps) => runStatus(deps, { home: given.string(flags.home) }, registry),
+    run: (given, deps) => runStatus(deps, { home: given.string(flags.home) }, registry, boardWorkItems(registry)),
   },
   {
     name: commands.dismiss,
@@ -280,6 +281,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         deps,
         { home: given.string(flags.home), words: given.positionals(), idle: given.bool(flags.idle), yes: given.bool(flags.yes) },
         registry,
+        boardWorkItems(registry),
       ),
   },
   {

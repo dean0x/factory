@@ -717,12 +717,16 @@ export const reservedFieldNames: readonly string[] = [
 ];
 
 /**
- * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to 32 letters, digits, dots,
- * underscores or hyphens, and the first character is a letter or a digit. The counts are the most states in the block, the most
- * owner fields, and the most values of one field.
+ * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to `maxTokenChars` letters, digits,
+ * dots, underscores or hyphens, and the first character is a letter or a digit. The cap is the length of the longest worker id (a
+ * slug of at most 40 characters, `slug` in `src/config/primitives.ts`), so a worker field can hold any worker id. The counts are
+ * the most states in the block, the most owner fields, and the most values of one field.
  */
+const maxTokenChars = 40;
+
 export const boardLimits = {
-  tokenPattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/,
+  maxTokenChars,
+  tokenPattern: new RegExp(`^[A-Za-z0-9][A-Za-z0-9._-]{0,${maxTokenChars - 1}}$`),
   maxStates: 20,
   maxFields: 20,
   maxValues: 30,
