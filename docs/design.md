@@ -621,7 +621,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 - `session.agent` (FAC-M4) is the program that factory starts for a session. Only `claude` is accepted. All starts of the agent use this value (§4.6). Before FAC-M4, the schema has no such key, and factory starts `claude`.
 - `approval` maps each approval point of the recipe to `owner` or `delegated`. A point that the file does not name is `owner`. The schema refuses a point that the recipe does not list. §6 says what each value means and what proves `delegated`.
 - The shared file holds no secret and no local path. `factory doctor` refuses a tracked file with a value that looks like a password or a token. The schema is checked at load with a fixed schema (Zod). An unknown key or a bad value stops the command and names the key. It never falls back to a looser default (from firstmate's fail-closed parse).
-- A command that a shared project entry names (a check command of the recipe) runs only after the owner accepts it. No code runs such a command before FAC-M5, which builds the acceptance.
+- A command that a shared project entry names (a check command of the recipe) runs only after the owner accepts it. No code runs such a command before FAC-M5b, which builds the acceptance.
 - A FAC-M2 config (the key `cells` or `approval.land`) is refused with a message to make the factory again with `init`.
 
 ### 4.5 Upgrades without loss of state
@@ -1000,15 +1000,15 @@ factory has no review desk of its own, not even as an option (F-2, F-17). A pers
 | Extension point | What it gives | Milestone |
 |---|---|---|
 | Board connector contract | The operations of §4.10: item, decision, doc and changes. A new board kind implements it. | FAC-M3 (GitHub), FAC-M9 (Jira, Linear) |
-| Event file | The digest of the node in `.factory/outbox/`, written by script (§5.4). A reader follows it. | FAC-M5 |
-| `report --json` | The digest on demand, in the same format (§5.4). | FAC-M5 |
+| Event file | The digest of the node in `.factory/outbox/`, written by script (§5.4). A reader follows it. | FAC-M5b |
+| `report --json` | The digest on demand, in the same format (§5.4). | FAC-M5b |
 | Recipe registration | A recipe is registered in the recipe registry. This is a code path. A new recipe needs no change to the core (§4.9). | FAC-M6 |
 | Setup files | A script and one line in the setup list. The owner accepts each file (§4.13). | FAC-M6 |
 | Owner hooks | A setup script that runs after an event, with the event on stdin (§4.13). | FAC-M6 |
 
 The event file and `report --json` hold these fields (§5.4): the node id, the layer, the factory version, the report schema version, the cursor, the state of each worker, the board counts by state and by each owner field (for example a priority), the items in progress, the milestone events, each request with its origin path, and the reports of the child nodes.
 
-A person with no code skill adds a desk reader as a setup file in FAC-M6. FAC-M5 adds a sample reader outside `src/`, in `examples/`. It reads the event file and `report --json` of a fixture node, and prints one line for each work item. A test runs it.
+A person with no code skill adds a desk reader as a setup file in FAC-M6. FAC-M5b adds a sample reader outside `src/`, in `examples/`. It reads the event file and `report --json` of a fixture node, and prints one line for each work item. A test runs it.
 
 ## 5. Layers: same mechanics, one role per layer
 
@@ -1186,7 +1186,7 @@ An open question of the owner blocks the merge (D-52). `factory check` gives `NO
 
 ### 6.2 Software recipe: releases (D-57)
 
-D-57 is answered: the release is an approval point of its own, with the values `owner` and `delegated` (OD-1). The default is `owner`: every release waits for the owner's go. With `release: delegated`, the proof is an **owner-approved release scope**: the items and the version that the owner approved for release. The owner writes the scope through the approval record writer (§6), with the same guards as a delegation. The scope is a record of its own kind. Its key is the node id, the real path of the factory folder, the project and the version. So a new scope never ends or changes a delegation, and the effective mode of §6 reads only delegation records. `factory release check` refuses (exit 4) when no owner-approved release scope names the version. The owner writes the scope with `factory release scope <project> <version>`, in a terminal window outside a factory session, and runs `factory release check` again. The approval of the work (§6.1) does not include the release. `release check` and `release verify` read only and publish nothing in every case. FAC-M5 builds the check and its test.
+D-57 is answered: the release is an approval point of its own, with the values `owner` and `delegated` (OD-1). The default is `owner`: every release waits for the owner's go. With `release: delegated`, the proof is an **owner-approved release scope**: the items and the version that the owner approved for release. The owner writes the scope through the approval record writer (§6), with the same guards as a delegation. The scope is a record of its own kind. Its key is the node id, the real path of the factory folder, the project and the version. So a new scope never ends or changes a delegation, and the effective mode of §6 reads only delegation records. `factory release check` refuses (exit 4) when no owner-approved release scope names the version. The owner writes the scope with `factory release scope <project> <version>`, in a terminal window outside a factory session, and runs `factory release check` again. The approval of the work (§6.1) does not include the release. `release check` and `release verify` read only and publish nothing in every case. FAC-M5b builds the check and its test.
 
 ## 7. Generic names
 
@@ -1321,7 +1321,7 @@ Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the
 | F-13 | One machine only for now. No `ssh://` transport, no remote readiness check and no remote child. The config refuses any address but `file://`. |
 | D-56 | The build order is FAC-M2, M4, M5, M6, M7, then M3, M8, M10, M9 (roadmap-v2; FAC-M10 is the release milestone, added after the intent check). |
 
-**D-57 is answered (v3).** F-6 asked whether "a-z" includes releases. The release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope (§6.2). FAC-M5 builds the release check.
+**D-57 is answered (v3).** F-6 asked whether "a-z" includes releases. The release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope (§6.2). FAC-M5b builds the release check.
 
 ### Intent fixes (2026-11-02, table IF)
 

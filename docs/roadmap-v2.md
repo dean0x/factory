@@ -20,21 +20,22 @@ A team member installs factory on a new macOS or Linux machine. `factory init` a
 
 ## Milestones
 
-The build order is FAC-M2, M4, M5, M6, M7, then M3, M8, M10, M9. D-56 sets M2, M4, M5, M6, M7, M3, M8, M9. The release milestone FAC-M10 comes after FAC-M8 and before FAC-M9, because the Goal needs a release path and does not need Jira or Linear. This workspace moves to factory first, with the `local` board. The GitHub board comes right after the move. The sections below are in build order.
+The build order is FAC-M2, M4, M5, M6, M7, M5b, then M3, M8, M10, M9. D-56 sets M2, M4, M5, M6, M7, M3, M8, M9. FAC-M5b (D-133 A) holds the parts of FAC-M5 that the move of this workspace does not need: the release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script and the usage view. The release milestone FAC-M10 comes after FAC-M8 and before FAC-M9, because the Goal needs a release path and does not need Jira or Linear. This workspace moves to factory first, with the `local` board. The GitHub board comes right after the move. The sections below are in build order.
 
 | Order | Id | Name | Depends on | Design changes (F-n) |
 |---|---|---|---|---|
 | 1 | FAC-M2 | Names, home, roles and schema 2 | FAC-M1 | F-1, F-3, F-4, F-5, F-10, F-13 |
 | 2 | FAC-M4 | Worker control | FAC-M2 | F-7, F-8, F-9, F-12, F-20, F-21 |
-| 3 | FAC-M5 | Local board, check and release commands | FAC-M4 | F-2, F-6, F-22, F-23 |
+| 3 | FAC-M5 | Local board and check commands | FAC-M4 | F-2, F-6 |
 | 4 | FAC-M6 | devflow setup | FAC-M5 | F-10, F-16 |
 | 5 | FAC-M7 | This workspace adopted (local board) | FAC-M4, FAC-M6 | F-3, F-8 |
-| 6 | FAC-M3 | GitHub board, and the move to it | FAC-M7 | F-2, F-18, F-19 |
-| 7 | FAC-M8 | Layers and team | FAC-M7 | F-4 |
-| 8 | FAC-M10 | Release and install | FAC-M3, FAC-M8 | D-45 |
-| 9 | FAC-M9 | Jira and Linear connectors | FAC-M3 | F-2, F-19 |
+| 6 | FAC-M5b | Release check, copies sync and clean, usage view | FAC-M5, FAC-M7 | F-6, F-22, F-23, F-24 |
+| 7 | FAC-M3 | GitHub board, and the move to it | FAC-M7 | F-2, F-18, F-19 |
+| 8 | FAC-M8 | Layers and team | FAC-M7 | F-4 |
+| 9 | FAC-M10 | Release and install | FAC-M3, FAC-M8 | D-45 |
+| 10 | FAC-M9 | Jira and Linear connectors | FAC-M3 | F-2, F-19 |
 
-No milestone before FAC-M3 needs a network board: FAC-M5 and FAC-M7 use the `local` board. FAC-M8 can run in parallel with FAC-M3. FAC-M9 can run at any time after FAC-M3.
+No milestone before FAC-M3 needs a network board: FAC-M5, FAC-M7 and FAC-M5b use the `local` board. FAC-M8 can run in parallel with FAC-M3. FAC-M9 can run at any time after FAC-M3.
 
 ### Command map
 
@@ -52,8 +53,11 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `worker relay`, `worker recover` | FAC-M5 |
 | `worker adopt` | FAC-M7 |
 | `item`, `request`, `queue`, `decide <D-n> <option>` | FAC-M5 |
-| `check`, `pr`, `issues`, `release`, `copies`, `lock` | FAC-M5 |
+| `item estimate` | FAC-M5b |
+| `check`, `pr`, `issues`, `copies` (list, status), `lock` | FAC-M5 |
+| `release` (check, verify, scope), `copies` (sync, clean) | FAC-M5b |
 | `status` (the digest for the owner), `report` (the digest of one node) | FAC-M5 |
+| `status --usage` | FAC-M5b |
 | `report` (the rollup over children) | FAC-M8 |
 | `recipe` (show, variant), `project` (add, remove, list) | FAC-M6 |
 | `adopt` | FAC-M7 |
@@ -160,28 +164,22 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 ### FAC-M5: Local board, check and release commands
 
-**Goal.** The board, the requests and the decisions work with the `local` board. The merge check, the merge and the release checks are one command each, with a short verdict. The report of one node exists, so `status` works before FAC-M7.
+**Goal.** The board, the requests and the decisions work with the `local` board. The merge check and the merge are one command each, with a short verdict. The report of one node exists, so `status` works before FAC-M7.
 
 **Scope.**
 1. **Local board (F-2).** The connector contract of design §4.10 and the `local` connector (files in `.factory/`; also the test double of later connectors). The commands `item`, `request`, `decide <D-n> <option>` (for `local`) and `queue`. The decision log and the decision profile tools. The state commit helper and the delete-guard hook.
-2. **Check and release (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `pr watch`, `issues audit`, `release check|verify|scope`. The approval point `release` with its proof (design §6.2).
-3. **`factory copies list|status|sync|clean` (D-55).**
+2. **Check (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `pr watch`, `issues audit`.
+3. **`factory copies list|status` (D-55).**
 4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge, release and decision. The rollup over children stays in FAC-M8. `lock run`. The view slot shows `factory item list`.
-5. **Token budget.** `scripts/budget-check.sh`.
-6. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
-7. **Extension points (design §4.14).** The event file and `report --json` hold the fields of design §4.14, and a sample reader outside `src/` (in `examples/`) reads them.
-8. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
-9. **Acceptance of shared check commands.** A check command from the shared file runs only after the owner accepts it (design §4.4).
-10. **Usage view and token estimate (F-22, F-23).** `factory status --usage` shows the token use, the limits and the work counts of the factory. `factory item estimate <id>` gives a token range for a work item from the closed items. The usage view uses the separate token meter package (`dean0x/tokenmeter`, which has no devflow dependency). It does not build its own count from factory data. Both commands read only data that factory records or that the package gives: the last-seen files, the hook and status line data (design §4.6), the board and the output of the package. They never read a file under `~/.claude`. If the status line data has token, cost or limit fields, the hook records them in the last-seen line. The FAC-M5 plan adds the flag and the subcommand to design §4.2.
-11. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
-12. **Owner fields on the board (adoption map G-1).** The setup names the owner's own item fields and the allowed values of each, for example a priority, a type, a release flag on a queue row, and the worker. The core has no default field or value; this workspace's values (`P0`, `P1`, `P2` and its type names) come from the sample setup. The connector contract (design §4.10) carries these fields. `item` and `queue` set and show them, and `local` keeps them in its files. FAC-M3 maps each field to a GitHub label or a Projects field.
-13. **Standing delegations as records (adoption map G-4).** A standing delegation is a decision record of the owner with a scope and no end time. The scope is one or more action names from a fixed list in `src/names.ts`, for example "reset a worker". `worker relay` names the action, and accepts the delegation for each action inside its scope. A later owner decision ends it (design §6).
+5. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
+6. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
+7. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
+8. **Owner fields on the board (adoption map G-1).** The setup names the owner's own item fields and the allowed values of each, for example a priority, a type, a release flag on a queue row, and the worker. The core has no default field or value; this workspace's values (`P0`, `P1`, `P2` and its type names) come from the sample setup. The connector contract (design §4.10) carries these fields. `item` and `queue` set and show them, and `local` keeps them in its files. FAC-M3 maps each field to a GitHub label or a Projects field.
+9. **Standing delegations as records (adoption map G-4).** A standing delegation is a decision record of the owner with a scope and no end time. The scope is one or more action names from a fixed list in `src/names.ts`, for example "reset a worker". `worker relay` names the action, and accepts the delegation for each action inside its scope. A later owner decision ends it (design §6).
 
-**`factory copies` (D-55).** The coordinator's repeated git work across work copies becomes four commands. Workers do their own git work on their own branch.
+**`factory copies` (D-55).** The coordinator's repeated git work across work copies becomes four commands. FAC-M5 builds `list` and `status`. FAC-M5b builds `sync` and `clean`. Workers do their own git work on their own branch.
 - `list`: one row per work copy: project, path, worker, branch, short HEAD.
 - `status`: for each work copy, the dirty files, ahead and behind, unpushed commits, and whether the branch is on the remote. One verdict line with counts.
-- `sync <pr|branch>`: a base update of a waiting PR. It merges `origin/<default>` into the branch in a short-lived worktree under `.factory/state/`, pushes with no force, and removes the worktree. On a conflict it stops and names the files.
-- `clean [--apply]`: it takes over `factory clean`. It removes a work copy only when no worker holds it, no item or resume file names it, the tip is on the remote, the tree is clean and the PR is merged.
 - Safety rules from firstmate: a default branch moves only by fast-forward. A dirty, diverged or off-default work copy is reported as `STUCK:` and left untouched. Batch commands continue after a failure and give a count at the end (from mars).
 - The commands extend `src/core/git.ts`; there is no second git module.
 
@@ -203,10 +201,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   - (c) an approved plan: an ask or decision item that names the plan path and commit SHA, answered `approve` with `factory decide` in the same way.
 
   Each test runs two times: with a direct assignment, and with an assignment by a second decision. Each run merges.
-- [ ] Release proof. Test: with `release: delegated`, `release check` refuses (exit 4) when no owner-approved release scope names the version. `release scope <project> <version>` writes the scope in a terminal window outside a factory session, and refuses (exit 4) with no terminal window and with `FACTORY_SESSION` set. After the scope, `release check` passes. A new scope does not change a delegation: after `release scope`, the effective mode of `release` stays `delegated`, and `doctor` lists the delegation with its old time.
-- [ ] Desk extension points. Test: the event file and `report --json` of a fixture node hold the fields that design §4.14 lists. A sample reader outside `src/` (in `examples/`) reads the event file and `report --json` of the fixture node and prints one line per work item. The test runs it.
 - [ ] Delegation control outside factory. Test: the session settings that factory renders hold deny rules for the record commands and for the store path, and a test reads the rendered settings. Design §6 keeps the limit text. The deny rules make the gap smaller. They do not close it.
-- [ ] Shared check commands. Test: a check command from the shared file does not run before the owner accepts it, and runs after the acceptance.
 - [ ] `pr merge` refuses, with a message that names the proof that is absent, in these cases:
   - approval with no assignment;
   - a record for another PR or head;
@@ -215,20 +210,13 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   - chat text with no record.
 - [ ] Board event tests (design §4.10, §6.1), with a fake connector that gives events with an author. The `github` connector comes in FAC-M3 and runs the same tests.
   - With any account setup, a board event is never a proof: an owner comment `approve`, an assignee change, a `worker:<id>` label and a review are each refused, and the message says that a board event is no proof. A decision from `factory decide` on a fake terminal window with no `FACTORY_SESSION` is accepted, and `pr merge` merges.
-- [ ] Config test: the approval point `release` loads with `owner` or `delegated`, and an absent key means `owner`. Any other value fails and names the key. `release check|verify` only read; a test asserts that they run no publish command.
-- [ ] `copies clean` is a dry run by default, and refuses a work copy with unpushed work or a path that a worker or resume file names. `factory clean` does not exist as a second command.
 - [ ] `copies list` and `copies status` give the right rows and counts on fixture repos with linked worktrees: clean, dirty, unpushed, branch not on the remote. They ask git, never a `.git` folder test.
-- [ ] `copies sync` tests on fixture repos: a clean merge pushes with no force and removes its worktree; a conflict stops, names the files and leaves no worktree; the worker's own work copy does not change.
 - [ ] A dirty, diverged or off-default work copy shows `STUCK:`, and no command changes it (test).
-- [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge`, `release verify` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`.
+- [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`.
 - [ ] `lock run` tests: with a fake platform `darwin` it uses `lockf`, and with `linux` it uses `flock`. A second run waits and stops at its bound with exit 3. The exit code of the inner command passes through.
 - [ ] A tmux test: the view slot pane shows the item titles of a fixture `local` board.
-- [ ] `scripts/budget-check.sh` exits 0 for the jobs built so far. It exits 1 when a fixture output is more than twice the figure in `docs/token-budget.md` (test with an inflated output).
 - [ ] Template test: the coordinator role text and the fixed rules follow the approval setting. With `merge: owner`, the text says that every merge waits for the owner. With `merge: delegated`, it names the proofs of design §6.1 and does not say that every merge waits.
 - [ ] Unit test: `doctor` warns, with the fix, when the host of a configured proxy is not loopback (`127.0.0.1`, `::1` or `localhost`). It gives no such warning for a loopback host.
-- [ ] Usage view (F-22). Test `status --usage shows tokens, limits and work counts for two subscriptions` (`test/unit/status-usage.test.ts`), on a fixture of last-seen lines and closed items for two subscriptions. The fixture also holds the output of the token meter package, and the test uses that output as a source. For each subscription and each model, the output shows the token use for today, this week and this month. When a session uses a relay server, the output also splits the token use by the relay server address, which the local file holds; the fixture has one session with a relay server. It shows the quota or weekly limit percent when the data of the subscription has one, and `-` when it has none. The fixture has one subscription of each kind. The output also shows the work counts (items closed and lines changed) for the three periods, and the tokens of each work item. Line 1 is the verdict, and the output follows the output rule (at most 20 lines, checked with the short-output helper). The static test of FAC-M4 (no source file opens a path under `~/.claude`) covers this code.
-- [ ] Forecast and share (F-24). The usage view shows the forecast and the share of the weekly capacity that the token meter package gives, and the usage view test checks both on its fixture.
-- [ ] Token estimate (F-23). Test `item estimate gives a token range from closed items` (`test/unit/item-estimate.test.ts`), on a fixture of closed items with measured tokens. With at least N similar closed items, `factory item estimate <id>` prints a token range and its basis (the closed items that it used) and exits 0. With fewer, it prints `NO BASIS` on line 1 and exits 3. N is a named number in `src/names.ts`, with the proposed value 3. The output follows the output rule. `docs/token-budget.md` keeps its 17 rows, because design §3 lists no job for these two commands (docs check 6).
 - [ ] Tests on a separate tmux server (moved from FAC-M4: no observed failure):
   - `worker new` makes a pane in the window `workers` with the pane option `@worker`;
   - `worker summon` shows the pane in the view slot, and the slot shows the board again after the time;
@@ -297,6 +285,35 @@ The import into GitHub issues is not here: it is FAC-M3.
 - [ ] After the adopt, `tmux kill-server` and `factory start` restore every worker with its saved session id (a recorded run on this workspace).
 - [ ] The coordinator merges 5 PRs through `factory check` and `factory pr merge`.
 
+### FAC-M5b: Release check, copies sync and clean, usage view
+
+**Goal.** The release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script and the usage view work with the `local` board. These parts come from FAC-M5. The move of this workspace (FAC-M7) does not need them, so they follow it (D-133 A).
+
+**Scope.**
+1. **Release check (F-6).** `release check|verify|scope`. The approval point `release` with its proof (design §6.2).
+2. **`factory copies sync|clean` (D-55).** FAC-M5 builds `list` and `status`. The safety rules and the single git module of FAC-M5 apply to these two commands.
+3. **Token budget.** `scripts/budget-check.sh`.
+4. **Extension points (design §4.14).** The event file and `report --json` hold the fields of design §4.14, and a sample reader outside `src/` (in `examples/`) reads them.
+5. **Acceptance of shared check commands.** A check command from the shared file runs only after the owner accepts it (design §4.4).
+6. **Usage view and token estimate (F-22, F-23).** `factory status --usage` shows the token use, the limits and the work counts of the factory. `factory item estimate <id>` gives a token range for a work item from the closed items. The usage view uses the separate token meter package (`dean0x/tokenmeter`, which has no devflow dependency). It does not build its own count from factory data. Both commands read only data that factory records or that the package gives: the last-seen files, the hook and status line data (design §4.6), the board and the output of the package. They never read a file under `~/.claude`. If the status line data has token, cost or limit fields, the hook records them in the last-seen line. The FAC-M5b plan adds the flag and the subcommand to design §4.2.
+
+**`factory copies sync|clean` (D-55).**
+- `sync <pr|branch>`: a base update of a waiting PR. It merges `origin/<default>` into the branch in a short-lived worktree under `.factory/state/`, pushes with no force, and removes the worktree. On a conflict it stops and names the files.
+- `clean [--apply]`: it takes over `factory clean`. It removes a work copy only when no worker holds it, no item or resume file names it, the tip is on the remote, the tree is clean and the PR is merged.
+
+**Exit criteria.**
+- [ ] Release proof. Test: with `release: delegated`, `release check` refuses (exit 4) when no owner-approved release scope names the version. `release scope <project> <version>` writes the scope in a terminal window outside a factory session, and refuses (exit 4) with no terminal window and with `FACTORY_SESSION` set. After the scope, `release check` passes. A new scope does not change a delegation: after `release scope`, the effective mode of `release` stays `delegated`, and `doctor` lists the delegation with its old time.
+- [ ] Config test: the approval point `release` loads with `owner` or `delegated`, and an absent key means `owner`. Any other value fails and names the key. `release check|verify` only read; a test asserts that they run no publish command.
+- [ ] `release verify` adds one event to `.factory/outbox/`, as `pr merge` and `decide` do in FAC-M5 (test).
+- [ ] Desk extension points. Test: the event file and `report --json` of a fixture node hold the fields that design §4.14 lists. A sample reader outside `src/` (in `examples/`) reads the event file and `report --json` of the fixture node and prints one line per work item. The test runs it.
+- [ ] Shared check commands. Test: a check command from the shared file does not run before the owner accepts it, and runs after the acceptance.
+- [ ] `copies clean` is a dry run by default, and refuses a work copy with unpushed work or a path that a worker or resume file names. `factory clean` does not exist as a second command.
+- [ ] `copies sync` tests on fixture repos: a clean merge pushes with no force and removes its worktree; a conflict stops, names the files and leaves no worktree; the worker's own work copy does not change.
+- [ ] `scripts/budget-check.sh` exits 0 for the jobs built so far. It exits 1 when a fixture output is more than twice the figure in `docs/token-budget.md` (test with an inflated output).
+- [ ] Usage view (F-22). Test `status --usage shows tokens, limits and work counts for two subscriptions` (`test/unit/status-usage.test.ts`), on a fixture of last-seen lines and closed items for two subscriptions. The fixture also holds the output of the token meter package, and the test uses that output as a source. For each subscription and each model, the output shows the token use for today, this week and this month. When a session uses a relay server, the output also splits the token use by the relay server address, which the local file holds; the fixture has one session with a relay server. It shows the quota or weekly limit percent when the data of the subscription has one, and `-` when it has none. The fixture has one subscription of each kind. The output also shows the work counts (items closed and lines changed) for the three periods, and the tokens of each work item. Line 1 is the verdict, and the output follows the output rule (at most 20 lines, checked with the short-output helper). The static test of FAC-M4 (no source file opens a path under `~/.claude`) covers this code.
+- [ ] Forecast and share (F-24). The usage view shows the forecast and the share of the weekly capacity that the token meter package gives, and the usage view test checks both on its fixture.
+- [ ] Token estimate (F-23). Test `item estimate gives a token range from closed items` (`test/unit/item-estimate.test.ts`), on a fixture of closed items with measured tokens. With at least N similar closed items, `factory item estimate <id>` prints a token range and its basis (the closed items that it used) and exits 0. With fewer, it prints `NO BASIS` on line 1 and exits 3. N is a named number in `src/names.ts`, with the proposed value 3. The output follows the output rule. `docs/token-budget.md` keeps its 17 rows, because design §3 lists no job for these two commands (docs check 6).
+
 ### FAC-M3: GitHub board, and the move to it
 
 **Goal.** The board, the requests and the decisions of this workspace move from the `local` board to GitHub. A script reads the answers on the board and shows them; the owner enters each decision with `factory decide`. The user picks the board tool at setup. The old page and scripts are retired. A second machine of the owner gets the profile.
@@ -316,6 +333,7 @@ The import into GitHub issues is not here: it is FAC-M3.
 - [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
 - [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
 - [ ] Wake test on a separate tmux server with a fake `gh`. A comment `/choose B`, a label change, an assignee change and an issue close each cause one record and one constant wake line in the coordinator pane, whatever account wrote the event. A board comment or label only wakes the coordinator and shows the answer; it records no decision. A fake `claude` on PATH records no call during `watch`.
+- [ ] watch does not wake the coordinator for an event that factory itself wrote (it marks its own comments), and a test shows that a coordinator comment causes no wake loop.
 - [ ] `start --dry-run` with `github` lists the window `ops` with `factory watch`. With `local`, it lists no `ops` window.
 - [ ] Board choice, tests with a fake `gh`: `init --tracker github --items acme/web --decisions acme/decisions --yes` makes a node, and `factory doctor` exits 0. When the fake says that the decision repo is public, `init` exits 4 and writes no file, and `doctor` fails on such a config. `tracker status` prints `github`.
 - [ ] Override test: a node with the default `github` and a project with `kind: local`. `item add --project P` goes to the `local` files, and an item with no project goes to the fake `gh`. `tracker status` prints both.
@@ -400,12 +418,12 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 
 - None blocks the FAC-M2 code.
 - Answered (D-59, F-14): the glossary words. Dean chose worker, request and coordinator, and queue, check and release check. The rename comes in the design v3 PR, not in FAC-M2.
-- Answered (D-57): the release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope. FAC-M5 builds the check (design §6.2).
+- Answered (D-57): the release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope. FAC-M5b builds the check (design §6.2).
 - Before FAC-M3 (after the workspace move in FAC-M7): which private repo holds the decision store of this workspace, and which private git remote holds the state repo (`state.remote`) for a second machine.
 - Answered (FAC-M4): the bound of `worker watch`: 40 checks of 30 s (`watchPoll` in `src/names.ts`), then `NO CHANGE`.
 - Before the milestone that builds each of the other watch commands (FAC-M3 for `factory watch`, FAC-M5 for `pr watch`): the bound of each command. The design gives no value for the number of reads per run of `factory watch`, and none for the maximum wait of `pr watch`. It also gives no result when the bound or the wait ends. Each value is a named number in `src/names.ts`.
-- Before FAC-M5 builds the usage view (F-22): the source of the usage of a subscription other than Claude Code, for example Codex. `session.agent` accepts only `claude` in FAC-M4. The owner decides the worker agent setting for another agent, and where its token and limit data come from. Until then, the usage view lists the Claude Code subscriptions only.
-- Before FAC-M5 builds the usage view (F-22): FAC-M4 task 2 records which quota or cost fields the real status line data has. If the data has no such field, the owner names the other source. A read under `~/.claude` is not a source (F-9).
+- Before FAC-M5b builds the usage view (F-22): the source of the usage of a subscription other than Claude Code, for example Codex. `session.agent` accepts only `claude` in FAC-M4. The owner decides the worker agent setting for another agent, and where its token and limit data come from. Until then, the usage view lists the Claude Code subscriptions only.
+- Before FAC-M5b builds the usage view (F-22): FAC-M4 task 2 records which quota or cost fields the real status line data has. If the data has no such field, the owner names the other source. A read under `~/.claude` is not a source (F-9).
 - Before FAC-M10: the old local paths in the git history. The owner decides; the history is not rewritten (D-7 A).
 - Before FAC-M10: the first publish and the public visibility of the repo. The owner writes a decision id in `docs/release-approval.md`.
 
