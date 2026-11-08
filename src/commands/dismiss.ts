@@ -1,6 +1,6 @@
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { err, ok } from '../core/result.js';
-import { printable, tableLines, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
+import { displayLine, printable, tableLines, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
@@ -40,7 +40,7 @@ import { readPanes } from '../workers/panes.js';
 import { requireRecord } from '../workers/registry.js';
 import { readStatus } from '../workers/status-read.js';
 import type { WorkerStatus } from '../workers/status.js';
-import { unknownWorkItems, type WorkItemPort } from '../workers/work-items.js';
+import type { WorkItemPort } from '../workers/work-items.js';
 
 export interface DismissOptions {
   readonly home: string | undefined;
@@ -127,7 +127,7 @@ const ignoredLines = (ignored: IgnoredList, verb: 'deletes' | 'deleted'): readon
   if (paths.length === 0 && !reachedCap) return [];
   const count = reachedCap ? `more than ${paths.length}` : `${paths.length}`;
   const noun = !reachedCap && paths.length === 1 ? 'file' : 'files';
-  const names = [paths.join(', '), ...(reachedCap ? ['and more'] : [])].filter((part) => part !== '').join(' ');
+  const names = [paths.map((path) => displayLine(path)).join(', '), ...(reachedCap ? ['and more'] : [])].filter((part) => part !== '').join(' ');
   return [text(`The removal ${verb} ${count} ignored ${noun}: ${names}.`)];
 };
 
@@ -416,7 +416,10 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
   const table =
     idle.length === 0
       ? [text(`No idle ${roles.worker}s.`)]
-      : tableLines(Object.values(dismissWords.columns), idle.map((entry) => [entry.id, entry.project, stateText(entry), pushedWord(entry.id)]));
+      : tableLines(
+          Object.values(dismissWords.columns),
+          idle.map((entry) => [entry.id, entry.project, stateText(entry), pushedWord(entry.id)].map((cell) => displayLine(cell))),
+        );
   const listed: readonly ListedWorker[] = idle.map((entry) => ({
     id: entry.id,
     project: entry.project,
@@ -461,7 +464,7 @@ export const runDismiss = async (
   deps: Deps,
   options: DismissOptions,
   registry: RecipeRegistry,
-  workItems: WorkItemPort = unknownWorkItems,
+  workItems: WorkItemPort,
 ): Promise<CliResult<CommandOutput>> => {
   const checked = checkWords(options);
   if (!checked.ok) return checked;
