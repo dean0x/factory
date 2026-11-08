@@ -1,5 +1,6 @@
 import { declaredFields, itemTarget } from '../board/fields.js';
 import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery } from '../board/contract.js';
+import { followBoard } from '../board/follow.js';
 import { boardView, trackView } from '../board/list-view.js';
 import { stageShown } from '../board/stages.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
@@ -9,7 +10,8 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { openBoard } from './board-open.js';
+import { layoutOf } from '../state/layout.js';
+import { openBoard, type OpenBoard } from './board-open.js';
 import { parseFieldWords, shown, usageFor } from './board-words.js';
 
 export interface ItemOptions {
@@ -24,6 +26,8 @@ export interface ItemOptions {
   readonly state: string | undefined;
   readonly stage: string | undefined;
   readonly all: boolean;
+  /** Draw the list again at each change of the board, until the reader goes. Only `list` takes it. */
+  readonly follow: boolean;
   readonly json: boolean;
 }
 
@@ -34,7 +38,7 @@ type Action =
   | { readonly kind: typeof itemCommands.update; readonly id: string; readonly patch: ItemPatch }
   | { readonly kind: typeof itemCommands.move; readonly id: string; readonly move: ItemMove }
   | { readonly kind: typeof itemCommands.close; readonly id: string }
-  | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery };
+  | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean };
 
 const SUBCOMMANDS = Object.values(itemCommands).join(', ');
 
@@ -44,7 +48,7 @@ const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
   [itemCommands.update]: [flags.title, flags.text, flags.track, flags.field],
   [itemCommands.move]: [flags.state, flags.stage],
   [itemCommands.close]: [],
-  [itemCommands.list]: [flags.all, flags.track],
+  [itemCommands.list]: [flags.all, flags.track, flags.follow],
 };
 
 const needsUsage = usageFor(commands.item);
@@ -60,6 +64,7 @@ const refuseStrayFlags = (subcommand: Subcommand, options: ItemOptions): CliResu
     [flags.state, options.state !== undefined],
     [flags.stage, options.stage !== undefined],
     [flags.all, options.all],
+    [flags.follow, options.follow],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.item} ${subcommand}`)}`);
@@ -122,7 +127,7 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
           `Run "${commandText(commandLines.itemList)}" for the text output.`,
         );
       }
-      return ok({ kind: subcommand, query: { all: options.all, ...withTrack(options) } });
+      return ok({ kind: subcommand, query: { all: options.all, ...withTrack(options) }, follow: options.follow });
     }
     default: {
       const unreachable: never = subcommand;
@@ -172,7 +177,11 @@ const listAnswer = async (connector: BoardConnector, config: FactoryConfig, quer
   return ok({ lines: trackView({ ...view, track }), json, warnings: [], failed: false });
 };
 
-const execute = async (connector: BoardConnector, config: FactoryConfig, action: Action): Promise<CliResult<CommandOutput>> => {
+/** The output of a follow that has ended: the frames went to stdout as they were drawn, so nothing is left to print. */
+const followed = (): CommandOutput => ({ lines: [], json: { schema: schemaIds.itemList }, warnings: [], failed: false });
+
+const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<CliResult<CommandOutput>> => {
+  const { connector, config } = board;
   switch (action.kind) {
     case itemCommands.add: {
       const added = await connector.addItem(action.input);
@@ -190,8 +199,11 @@ const execute = async (connector: BoardConnector, config: FactoryConfig, action:
       const closed = await connector.closeItem(action.id);
       return closed.ok ? ok(itemAnswer('Closed', action.kind, closed.value)) : closed;
     }
-    case itemCommands.list:
-      return listAnswer(connector, config, action.query);
+    case itemCommands.list: {
+      if (!action.follow) return listAnswer(connector, config, action.query);
+      const ended = await followBoard(deps, { layout: layoutOf(board.home), draw: () => listAnswer(connector, config, action.query) });
+      return ended.ok ? ok(followed()) : ended;
+    }
     default: {
       const unreachable: never = action;
       return unreachable;
@@ -202,12 +214,13 @@ const execute = async (connector: BoardConnector, config: FactoryConfig, action:
 /**
  * `item`: add, update, move, close and list the items of the board. The words and the flags are checked first (exit 2), then the node
  * is found and the connector runs the action. A write is one state commit through the connector, and the connector refuses it for a
- * hosted tracker kind. `list` reads the local files with no lock and has no JSON output.
+ * hosted tracker kind. `list` reads the local files with no lock and has no JSON output. With the follow flag, `list` draws the list
+ * again at each change of the board, until its reader goes (`followBoard`).
  */
 export const runItem = async (deps: Deps, options: ItemOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);
   if (!action.ok) return action;
   const board = await openBoard(deps, options.home, registry, commands.item);
   if (!board.ok) return board;
-  return execute(board.value.connector, board.value.config, action.value);
+  return execute(deps, board.value, action.value);
 };

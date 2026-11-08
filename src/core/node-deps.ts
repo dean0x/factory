@@ -21,6 +21,7 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
+import { isatty } from 'node:tty';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
 import { hookNames } from '../names.js';
@@ -530,6 +531,30 @@ export const programArgvOf = (execPath: string, script: string | undefined): rea
   }
 };
 
+/** The descriptor of standard output. The check of the terminal asks the system about this descriptor at each call. */
+const STDOUT_FD = 1;
+
+/**
+ * Write the text to stdout and wait for the write. A failed write gives the callback an error, and then the stream emits it too: a
+ * stream with no listener for that event ends the process. So a listener stays until the event has passed (the event comes in the
+ * same turn as the callback, before the next macrotask).
+ */
+const writeStdoutText = (text: string): Promise<CliResult<void>> =>
+  new Promise((resolve) => {
+    const out = process.stdout;
+    const failed = (error: Error): void => resolve(failure(`cannot write to the output: ${errorCode(error)}`));
+    out.once('error', failed);
+    out.write(text, (error) => {
+      if (error === null || error === undefined) {
+        out.off('error', failed);
+        resolve(ok(undefined));
+        return;
+      }
+      failed(error);
+      setImmediate(() => out.off('error', failed));
+    });
+  });
+
 export const createNodeDeps = (): Deps => ({
   fs: nodeFs,
   run: (command, args, options) =>
@@ -546,6 +571,9 @@ export const createNodeDeps = (): Deps => ({
     }),
   stdinIsTTY: stdinIsTerminal(),
   stdoutIsTTY: process.stdout.isTTY === true,
+  stdoutIsTerminal: () => isatty(STDOUT_FD),
+  parentPid: () => process.ppid,
+  writeStdout: writeStdoutText,
   readStdin,
   prompt: (question) =>
     new Promise((resolve) => {

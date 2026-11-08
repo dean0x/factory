@@ -438,7 +438,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       `${commandText(commandLines.itemUpdate)} ID [${flagText(flags.title)} TEXT] [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemMove)} ID ${flagText(flags.state)} STATE|${flagText(flags.stage)} STAGE [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemClose)} ID [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.itemList)} [${flagText(flags.all)}] [${flagText(flags.track)} ID] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemList)} [${flagText(flags.all)}] [${flagText(flags.track)} ID] [${flagText(flags.follow)}] [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -484,6 +484,10 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'boolean',
         description: `With ${itemCommands.list}: show the closed items too.`,
       },
+      [flags.follow]: {
+        type: 'boolean',
+        description: `With ${itemCommands.list}: draw the list again at each change of the board, until the terminal goes.`,
+      },
     },
     run: (given, deps) =>
       runItem(
@@ -498,6 +502,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           state: given.string(flags.state),
           stage: given.string(flags.stage),
           all: given.bool(flags.all),
+          follow: given.bool(flags.follow),
           json: given.bool(flags.json),
         },
         registry,

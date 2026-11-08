@@ -164,6 +164,22 @@ export interface Deps {
   /** True when a person reads the output of this process on a terminal. */
   readonly stdoutIsTTY: boolean;
   /**
+   * True when stdout is a terminal now. Each call asks the system again, so a program that runs for a long time sees the change when
+   * its terminal goes. `stdoutIsTTY` is the value at the start and never changes.
+   */
+  stdoutIsTerminal(): boolean;
+  /**
+   * The id of the parent process of this process, as the system gives it now. A process whose parent has ended gets a new parent, so
+   * the id changes: a long program that runs under a pane or a shell uses this to see that its owner has gone.
+   */
+  parentPid(): number;
+  /**
+   * Write the text to stdout, and wait until the system has taken it. A write that fails (EPIPE for a pipe whose reader has gone, EIO
+   * for a terminal that has gone) is a failure that names the code. A text of zero length makes no system call, so it can not show
+   * that the reader has gone.
+   */
+  writeStdout(text: string): Promise<CliResult<void>>;
+  /**
    * Read the standard input of this process to its end, as UTF-8 text. It reads at most `maxBytes` plus one byte: an input
    * of more than `maxBytes` bytes is an error, and the rest stays unread. An input that is not whole after a fixed time
    * limit is an error too: a pipe that stays open and sends nothing does not hold the program. When a person types at

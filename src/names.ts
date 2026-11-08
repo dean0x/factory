@@ -174,6 +174,7 @@ export const flags = {
   state: 'state',
   stage: 'stage',
   all: 'all',
+  follow: 'follow',
   roadmap: 'roadmap',
   question: 'question',
   option: 'option',
@@ -583,6 +584,15 @@ export const trackLimits = { idPattern: /^[a-z][a-z0-9-]*$/, maxIdChars: 32, max
  * and the queue hold at most this many rows, by the same count.
  */
 export const maxTrackLines = 17;
+
+/**
+ * The wait of the follow loop of `item list --follow` between two ticks, in milliseconds (the poll rule of Gate 1). The bound: at each
+ * tick the loop checks its reader and reads the status of the board file once, and it reads the text of the file only after a change
+ * of the time or the size of the file. So the loop makes at most one status read and one text read in each 2 seconds. The loop has no
+ * time limit, as a view must run until its terminal goes. It ends on a signal (SIGHUP or SIGTERM), on a failed write, when its parent
+ * process changes, and when stdout is not a terminal.
+ */
+export const followPollMs = 2_000;
 
 /**
  * The words and the limits of the output of `item` and `track`. A text from the board file is cut to the width of its cell
