@@ -216,8 +216,8 @@ Costs are rough, per use, for the new tokens that enter the coordinator context.
 | Status round (§2, §3) | ListAgents, panes, worktrees, PRs and milestones per repo, board, roadmaps, message each worker, capture idle panes | 20–30 calls, 40–80k | `factory status` | 1–2 calls, 3–5k (worker replies still cost their own tokens) |
 | Restart of all workers (§12) | Per worker: capture, push check, CronList, stop, respawn, rename, new assignment | ~50 calls, 60–100k | `factory reboot` | 2 calls, 3–5k |
 | Worker creation (§12) | Resource check, worktree, pane, launch, wait, rename, protocol line, assignment, board, workers table, respawn map, commit | 15–20 calls, 20–30k | `factory worker new <name> --project <p> --assignment <file>` | 1 call, 1–2k |
-| Board and owner-item updates (§11) | Edit JSON, render, commit, republish, label sync | 5–8 calls, 8–15k | `factory item …`, `factory request …` (board writes, labels built in) | 1–2 calls, 1–3k; no render step, because the board tool shows the board |
-| Reading the owner's answers (§8) | Read the page database, record each decision, relay it | 3–6 calls, 5–10k | `factory decide read` (a script reads `/choose` comments and labels, from any account, and shows them; the owner enters each answer with `factory decide`) | 1 call, <1k |
+| Board and owner-item updates (§11) | Edit JSON, render, commit, republish, label sync | 5–8 calls, 8–15k | `factory item …`, `factory request …`, `factory track …` (board writes, labels built in; the board gets each write first) | 1–2 calls, 1–3k; no render step, because the board tool shows the board |
+| Reading the owner's answers (§8) | Read the page database, record each decision, relay it | 3–6 calls, 5–10k | `factory decide read` (a script reads the answers on the board, from any account, and shows them; `--from FILE` reads the data file of the review page; it records nothing, and the owner enters each answer with `factory decide`) | 1 call, <1k |
 | Worker clear or compact, then a new assignment (§12) | Capture, idle and pushed checks, resume file check, C-u, type, verify | 8–10 calls, 10–15k | `factory worker reset <worker>` with `--clear` or `--compact` | 1 call, 1k |
 | Release pre-check and post-check (§7) | Version, changelog, package contents, registry; after: registry, clean install, smoke | 6–10 calls, 10–20k | `factory release check <project>` / `factory release verify <project> <version>` | 1 call each, 2–3k |
 | Issue audit and labels (§8) | List issues, classify, apply labels | 5–10 calls, 30–100k | `factory issues audit` (finds unlabeled or conflicting issues; the model classifies only those) | 1 call plus the classification of new issues only |
@@ -232,7 +232,7 @@ Costs are rough, per use, for the new tokens that enter the coordinator context.
 
 Rule for every command: the output is a short verdict for the model (`READY`, or `NOT READY: 2 open threads, CI pending`). `--json` gives the full facts. The default output never prints a diff, a log or a transcript.
 
-The board tool removes most of the render scripts of today (`render-board.py`, `render-dean.py`, the page data block). Its UI shows the board and the requests.
+The board tool removes most of the render scripts of today (`render-board.py`, `render-dean.py`, the page data block). Its UI shows the board and the requests. The `artifact` connector is the one exception: factory renders the review page by script, and the page text never goes into model tokens (§4.10, FAC-M11).
 
 ## 4. CLI shape
 
@@ -1384,6 +1384,55 @@ Each part of the setup of today (§1.1) has an owner in factory: a command, a mi
 | `decision-profile/` | `.factory/decision-profile/`; `adopt` moves the content | FAC-M2, FAC-M7 | planned |
 | `state/`, `locks/` | `.factory/state/`, `.factory/locks/`; `factory lock run` | FAC-M2, FAC-M5 | planned |
 | Global rules in `~/.claude/rules/devflow/` | Retired as a part of the setup, because devflow installs them and factory never writes there (§2.1). The role templates hold factory's own short rules | FAC-M2 | planned |
+
+### 8.2 Manual operations and their commands
+
+The workspace of today has 42 manual operations on the board, the requests, the decisions and the workers. This table gives each one a command, or "drop" with the reason. The column Board operation names the operation of the board connector that the command calls (§4.10, §4.15). The operations are `item add`, `item update`, `item move`, `item close`, `item list`, `item note`, `track add`, `track list`, `track update`, `decision ask`, `decision read`, `doc link`, `doc unlink` and `changes read`. "Not a connector operation" means that the command works on the state of factory only and calls no board connector. A write goes to the board first (board-first, §4.10). A note that names a milestone gives the milestone of that row. The other rows follow the milestones of §4.2.
+
+| # | Manual operation today | In factory | Board operation | Note |
+|---|---|---|---|---|
+| 1 | New board item: `board-set.sh new` with state, priority, type, title, text and track | `factory item add` | `item add` | |
+| 2 | Change one field of an item: title, text, priority, type, issues or worker (`board-set.sh`) | `factory item update` | `item update` | |
+| 3 | Change the state of an item, and its priority (`board-set.sh`) | `factory item move --state` | `item move` | |
+| 4 | Change the stage of an item at a milestone of a worker (`board-set.sh`) | `factory item move --stage` | `item move` | |
+| 5 | Set the track of an item (`board-set.sh`) | `factory item update --track` | `item update` | |
+| 6 | Mark an item done: merged with a PR, then released with a version (`board-set.sh`) | The merge command and the release flow call `factory item close` with the result | `item close` | Only these flows set merged or released. |
+| 7 | Remove an item with a reason, and write the line in `done.md` (`board-set.sh`) | `factory item close --reason` | `item close` | The reason goes to the state repo and to a note on the item. |
+| 8 | Add and remove a track (`board-set.sh`) | `factory track add`, `factory track update` | `track add`, `track update` | FAC-M5 sets the form that removes a track. |
+| 9 | Change the merge order and the release flag (`board-set.sh merge set`, `merge remove`) | `factory queue set`, `factory queue show` | Not a connector operation | The order of the finished work is not a field of an item. |
+| 10 | Attach an assignment, report, design or plan to an item, in the field `docs` (`board-set.sh`) | `factory item doc <id> <file>` | `doc link` | A link stops the command (§4.3, "Stops and warnings"). |
+| 11 | Render `board.md` and the Board view of the page (`render-board.py`) | Drop | None | The board tool or the `artifact` connector shows the board. With `local`, `factory item list` shows it. |
+| 12 | Set the priority label of the linked GitHub issues (CLAUDE.md §11) | `factory item update --priority` | `item update` | The `github` connector sets the label. |
+| 13 | Add an item that waits for the owner, by hand in `on-dean.json` (CLAUDE.md §11) | `factory request add` | `decision ask` | `request add --options FILE` asks a decision. |
+| 14 | Change a waiting item: the section (now or later) or the state (CLAUDE.md §11) | `factory request update` | `item update` | The options of a decision do not change after the ask. |
+| 15 | Remove a done waiting item, and write the line in `done.md` (CLAUDE.md §11) | `factory request close --reason` | `item close` | |
+| 16 | Add or remove a doc of a waiting item (`dean-set.sh`) | `factory item doc`, `factory item doc --remove` | `doc link`, `doc unlink` | |
+| 17 | Render `on-dean.md` and the data block of the page (`render-dean.py`) | Drop | None | The board tool or the `artifact` connector shows the waiting items. |
+| 18 | Write a row of `decision-log.json` by hand (CLAUDE.md §11) | `factory decide <D-n> <option>`, in a terminal window outside a factory session | Not a connector operation | The command records the decision. `decide read` shows answers and records nothing (§4.10). |
+| 19 | Write a decision record and link a principle (CLAUDE.md §11) | `factory decide <D-n> <option> --principle ID` | Not a connector operation | The wording of the principle stays model work. |
+| 20 | Publish the review page (CLAUDE.md §8) | The `artifact` connector prints one `PUBLISH:` line, only when the page changed, at most once for each interval | Internal to the `artifact` connector | The line names a file path. The page text never goes into model tokens. |
+| 21 | Read the answers of the review page (CLAUDE.md §8) | `factory decide read --from FILE` | `decision read` of the `artifact` connector | The command shows the answers and records nothing. A page answer is a board event, not a proof. To record it, the owner runs `factory decide`. |
+| 22 | A comment on the page with `@claude` wakes the coordinator (CLAUDE.md §8) | `factory watch`, with no doorbell (D-101) | `changes read` | |
+| 23 | Write a dated line in `board-log-<month>.md` and the detail in `board-detail.md` (CLAUDE.md §11) | `factory item note <id> <text>` | `item note` | The history of the state repo replaces the month log. |
+| 24 | Commit each state change (`state-commit.sh`) | Drop | Not a connector operation | Each write of factory is one state commit, so no manual step stays. |
+| 25 | Read `board.md` and `on-dean.md` at the start of a session, to see what is left (CLAUDE.md §11) | `factory item list`, `factory request list` | `item list` | The output is short. |
+| 26 | Set the fields of a worker row: doing, state, next and item (`lane-set.sh`) | The last-seen files and `factory worker list` | Not a connector operation | FAC-M4. |
+| 27 | Set the item that a worker works on (`lane-set.sh working_on`) | `factory item update --worker` | `item update` | The work item port of `status` reads it. |
+| 28 | Remove a worker row (`lane-set.sh`) | `factory dismiss` | Not a connector operation | FAC-M4. |
+| 29 | Update the track roadmap at a milestone (CLAUDE.md §11) | The roadmap stays a file. `factory track update --milestone` sets the current milestone | `track update` | The text of the roadmap stays model work. |
+| 30 | Close a GitHub issue after a merge (CLAUDE.md §8) | `factory item close` | `item close` | The rule about who may close an issue does not change. |
+| 31 | Copy text to the clipboard (`pbcopy`, CLAUDE.md §8) | Drop | None | It is a way to reach the owner, not a board operation (§4.12). |
+| 32 | Type the go of the owner in the pane of a worker (CLAUDE.md §8) | `factory worker relay <worker> --decision D-n` | Not a connector operation | It types only from a decision that the owner recorded (§4.12). |
+| 33 | Give the status when the owner asks (CLAUDE.md §8) | `factory status` | `item list` | |
+| 34 | Watch `state/lanes-stopped.txt` (CLAUDE.md §11) | `factory worker watch` | Not a connector operation | FAC-M4. |
+| 35 | Refresh the resume file (CLAUDE.md §11) | The worker writes its resume note in its assignment folder. There is no command. | Not a connector operation | FAC-M4. |
+| 36 | Refresh the workers table every 30 seconds (`lanes-table.py`): worker, doing now, state, next and context. The state comes from the transcript. | `factory worker list --follow` in the slot of the window view | Not a connector operation | The table has the closed list of states, the stage of the item of the worker and the time in that stage. The state comes from hook events, never from the transcript (§4.11, FAC-M5b). |
+| 37 | Show the tracks block of `board.md` and of the page (`tracklib.py`, `render-board.py`) | `factory track list` | `track list` | The tracks view (§4.11, FAC-M5b). |
+| 38 | Show the board pane: `md-view.sh` shows `board.md` with `glow` | The slot of the window view runs `factory item list --follow` | `item list` | The board pane (§4.11, FAC-M5b). |
+| 39 | Show the boxes above the workers table: Waiting on you, Machine (`live_boxes.py`) | `factory request list`, `factory machine` | `item list` for `request list`; `machine` is not a connector operation | The boxes (§4.11, FAC-M5b). |
+| 40 | Collect the token meter every 5 minutes (`usage-collect.sh`, `usage-pass.py`): sync, and the history of each item and worker | The token meter package collects. `factory status --usage` reads the result. No `usage collect` command exists. | Not a connector operation | FAC-M5b. The usage view reads the state history of the local board. |
+| 41 | Show the token estimate on each open item, for example "est. 3-6% of the Claude week" (`boardlib.py`, `live_usage.py`) | `factory item estimate`; `item list` shows the mark | Not a connector operation | FAC-M5b. |
+| 42 | Show the usage block of the live board (`live_usage.py`) | `factory status --usage` | Not a connector operation | FAC-M5b. |
 
 ## 9. Decisions
 
