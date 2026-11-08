@@ -66,7 +66,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `recipe` (show, variant), `project` (add, remove, list) | FAC-M6 |
 | `adopt` | FAC-M7 |
 | `plugin` (test) | FAC-M11 |
-| `tracker set artifact`, `tracker set plugin:<name>` | FAC-M11 |
+| `tracker set artifact`, `tracker set plugin:<package>` | FAC-M11 |
 | `decide read` and `watch` for the `local` and `artifact` boards; `start` window `ops` for the `local` and `artifact` boards; `doctor` (the check of each board CLI) | FAC-M11 |
 | `tracker`, `state` (remote, push, pull), `decide read` and `watch` for the `github` board, `item import` | FAC-M3 |
 
@@ -317,17 +317,17 @@ The import into GitHub issues is not here: it is FAC-M3.
 9. **Doctor checks for board CLIs.** From FAC-M11, `doctor` checks each chosen board CLI for three things: present, configured and authorized. Each plugin declares its scopes. The output has only the check names and the scope names, never raw CLI output.
 10. **The attach rule of `item doc`.** `item doc` attaches a file only from inside a project or the factory folder, after factory finds the real path. It refuses a link, `factory.local.yaml`, a state file and a file over the size cap (exit 4).
 11. **Two record checks.** The decision log and the approval records get a check that finds a change that factory did not make. The text of an item gets a check before a write to a public items store: it refuses a value that looks like a password or a token.
-12. **Config schema change.** `tracker.kind` is `local`, `artifact`, `github` or `plugin:<name>`. Options go under `tracker.options`, and the plugin checks them with its own schema. An unknown key fails and names the key.
+12. **Config schema change.** In the shared file `factory.yaml`, `tracker.kind` is `local`, `artifact` or `github`. A `tracker` block in `factory.local.yaml` can set `kind` to `plugin:<package>` and hold `tracker.options`. It overrides the shared kind on this node, and `tracker set plugin:<package>` writes it. `items` and `decisions` stay in the shared file. A shared file that names a plugin kind stops with exit 1 and names `factory.local.yaml`. The plugin checks its options with its own schema. An unknown key fails and names the key.
 
 The hosted-kind path of M5-1b (local first, then a hosted copy) is a test-double stub. FAC-M11 and FAC-M3 replace it with board-first writes.
 
 **Exit criteria.**
-- [ ] Loader test with a fixture global folder. A package inside the folder of `npm root -g` loads. A package outside it, and a link to a package outside it, do not load. A name that is not a valid npm package name loads nothing. A plugin name in the shared file `factory.yaml` loads nothing, and the output names `factory.local.yaml`.
+- [ ] Loader test with a fixture global folder. A package inside the folder of `npm root -g` loads. A package outside it, and a link to a package outside it, do not load. A name that is not a valid npm package name loads nothing. A plugin name in the shared file `factory.yaml` loads nothing, the command exits 1, and the output names `factory.local.yaml`.
 - [ ] Load order test. A fixture plugin writes a marker file when its code loads. With a wrong contract id in its `package.json`, the marker file does not exist after the call, and the call exits 1 with the remedy that the install is a trust decision.
 - [ ] Contract test. `describe` of a fixture plugin gives the version and the operations. A fixture with another major version exits 1 and names the remedy. A fixture with a higher minor version that adds one operation loads. A fixture with the name `local`, `artifact` or `github` exits 1 and names the three reserved names.
 - [ ] Schema and cap test (unit tests with a fake clock). A fixture plugin returns a wrong field type for each operation: factory rejects the result (exit 1), names the operation and changes no cache file. A fixture that gives no answer, one that prints more than the output byte cap and one that returns more than the result cap each give the result "unknown", and the output names the cap.
 - [ ] Argument list test. The contract suite makes an item with a title that holds shell characters, against a fake vendor CLI that records its call. The title arrives as one argument or on stdin, and no shell runs.
-- [ ] `factory plugin test <name>` runs the contract suite against a fixture plugin. It exits 0 for a good plugin, and it exits 1 and names the first failed operation for a bad one. The same suite passes in CI against `local`, and against `artifact` with fixture data for its script part. FAC-M3 adds `github`.
+- [ ] `factory plugin test <package>` runs the contract suite against a fixture plugin. It exits 0 for a good plugin, and it exits 1 and names the first failed operation for a bad one. The same suite passes in CI against `local`, and against `artifact` with fixture data for its script part. FAC-M3 adds `github`.
 - [ ] Board-first test with a fixture plugin. With the board up, `item add` writes the board and then the cache. With the board down, `item add` fails, changes no cache file and leaves no queue. With no answer before the time cap, the result is "unknown" and the cache is unchanged.
 - [ ] Retry test. A fixture board stores a write and loses the answer. After a refresh, a retry of the same write makes no second item: the board holds one item with that factory id.
 - [ ] Offline test. With the board down, `item list` and `status` read the cache and exit 0, and `factory decide <D-n> <option>` records the decision (the rule of design §4.10).
@@ -340,7 +340,7 @@ The hosted-kind path of M5-1b (local first, then a hosted copy) is a test-double
 - [ ] Doctor test with fake board CLIs. For each of present, configured and authorized, a fixture CLI that fails the check gives one line with the check name and the scope name. A fixture CLI that prints a marker word gives output with no marker word.
 - [ ] Attach test. `item doc` attaches a file inside a project. It exits 4 for a file outside a project and the factory folder, for a link, for `factory.local.yaml`, for a state file and for a file over the size cap.
 - [ ] Record check test. After an edit by hand of `decision-log.json` and of one approval record, the check finds each edit and names the file. After a `factory decide`, the check passes. For a fake public items store, a write whose title holds a value that looks like a password or a token is refused, and the output names the item and never the value.
-- [ ] Config test. `tracker.kind` loads with `local`, `artifact`, `github` and `plugin:<name>`, and any other value fails and names the key. `tracker.options` loads when the plugin schema accepts it, and an unknown key under it fails and names the key.
+- [ ] Config test. In `factory.yaml`, `tracker.kind` loads with `local`, `artifact` and `github`. In `factory.local.yaml`, `tracker.kind` loads with `plugin:<package>` and overrides the shared kind. `plugin:<package>` in `factory.yaml` exits 1 and names `factory.local.yaml`. Any other value fails and names the key. `tracker.options` loads when the plugin schema accepts it, and an unknown key under it fails and names the key.
 
 ### FAC-M5b: Release check, copies sync and clean, usage view
 
