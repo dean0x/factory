@@ -488,12 +488,15 @@ export const trackedFiles = { maxCount: 2_000, maxFileBytes } as const;
 export const minGitVersion = '2.26';
 
 /**
- * The keys of `board.json`. The top keys are the list of items and the list of tracks. `defaultQueue` is the key of the
- * queue when the recipe gives none. The other keys belong to an item (`id`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`).
+ * The keys of `board.json`. The top keys are the queue (its key comes from the recipe), the list of items and the list of
+ * tracks. `defaultQueue` is the key of the queue when the recipe gives none. The other keys belong to an item (`id`, `title`,
+ * `status`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`).
  */
 export const boardKeys = {
   items: 'items',
   id: 'id',
+  title: 'title',
+  status: 'status',
   tracks: 'tracks',
   track: 'track',
   stage: 'stage',
@@ -501,6 +504,29 @@ export const boardKeys = {
   roadmap: 'roadmap',
   defaultQueue: 'queue',
 } as const;
+
+/** The keys of the waiting file: the top keys, and the id of a waiting item. */
+export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', id: 'id' } as const;
+
+/** The keys of the decision log: the list of rows, and the key of a row that starts with the id of a decision. */
+export const decisionLogKeys = { rows: 'rows', item: 'item' } as const;
+
+/**
+ * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
+ * decision log names its decision at the start of its `item` text: the id, then the end of the text or a character that cannot
+ * continue the id. The numbers have at most 9 digits.
+ */
+export const boardIds = {
+  item: /^B-[0-9]{1,9}$/,
+  request: /^D-[0-9]{1,9}$/,
+  requestAtStart: /^D-[0-9]{1,9}(?![0-9A-Za-z_-])/,
+} as const;
+
+/**
+ * The limits of a track. An id starts with a lowercase letter and holds lowercase letters, digits and hyphens, up to `maxIdChars`.
+ * A name is one line of at most `maxNameChars` characters. A factory has at most `maxTracks` tracks.
+ */
+export const trackLimits = { idPattern: /^[a-z][a-z0-9-]*$/, maxIdChars: 32, maxNameChars: 60, maxTracks: 30 } as const;
 
 /**
  * The most track lines that `item list` prints. The output holds at most 20 lines (`MAX_OUTPUT_LINES` in
@@ -514,6 +540,9 @@ export const maxTrackLines = 17;
  * characters (`MAX_FIRST_LINE_CHARS` in `test/helpers/short-output.ts`). `displayLine` in `src/cli/output.ts` cuts to it.
  */
 export const maxDisplayWidth = 120;
+
+/** The most characters of typed text that a message repeats: a field name, a stage or a key. A longer text is cut. */
+export const maxEchoChars = 40;
 
 /**
  * The names that an owner field can not take: the keys that an item, a queue row, a track or a decision record already

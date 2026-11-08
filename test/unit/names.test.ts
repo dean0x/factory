@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   address,
@@ -673,6 +673,7 @@ describe('the install check', () => {
 describe('the old words and the jargon words in the text of the source (TP-60)', () => {
   /** The folders that print text, and the top files of src. */
   const TEXT_FOLDERS = [
+    'board',
     'commands',
     'cli',
     'config',
@@ -1089,6 +1090,62 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
       expect(textOf(path), relative(SRC, path)).toMatch(/\binFactorySession\(/);
       expect(textOf(path), relative(SRC, path)).toMatch(/\bstdinIsTTY\b/);
     }
+  });
+});
+
+describe('the layers of the board source (TP-104)', () => {
+  const BOARD_DIR = join(SRC, 'board');
+  const LOWER_FOLDERS = ['state', 'core', 'workers'];
+
+  /** The files that a source text imports from the board folder, from a file at `file`. */
+  const boardImportsOf = (file: string, source: string): string[] =>
+    importPathsOf(source)
+      .filter((path) => path.startsWith('.'))
+      .map((path) => resolve(dirname(file), path))
+      .filter((target) => target === BOARD_DIR || target.startsWith(`${BOARD_DIR}${sep}`))
+      .map((target) => relative(SRC, target));
+
+  it('M5-1b TP-104 has a board folder with the files of the connector core, and scans it', () => {
+    const scanned = allSourceFiles(BOARD_DIR).map((path) => relative(BOARD_DIR, path)).sort();
+    expect(scanned).toEqual(expect.arrayContaining(['contract.ts', 'fields.ts', 'files.ts', 'stages.ts', 'tracks.ts']));
+  });
+
+  it('M5-1b TP-104 lets no file of src/state, src/core or src/workers import the board folder', () => {
+    const found = LOWER_FOLDERS.flatMap((folder) => allSourceFiles(join(SRC, folder))).flatMap((path) =>
+      boardImportsOf(path, readFileSync(path, 'utf8')).map((target) => `${relative(SRC, path)} imports ${target}`),
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('M5-1b TP-104 finds each form of import of the board folder from a lower folder', () => {
+    const file = join(SRC, 'state', 'sample.ts');
+    const source = [
+      "import { a } from '../board/local.js';",
+      "export { b } from '../board/files';",
+      "const c = await import('../board/stages.js');",
+      "import '../board/tracks.js';",
+      "import { d } from '../board/index.js';",
+      "import { e } from './layout.js';",
+      "import { f } from 'zod';",
+    ].join('\n');
+    expect(boardImportsOf(file, source)).toEqual([
+      join('board', 'local.js'),
+      join('board', 'files'),
+      join('board', 'stages.js'),
+      join('board', 'tracks.js'),
+      join('board', 'index.js'),
+    ]);
+  });
+
+  it('M5-1b TP-104 lets a board file import the work item port type of src/workers', () => {
+    const file = join(BOARD_DIR, 'local.ts');
+    expect(boardImportsOf(file, "import type { WorkItemPort } from '../workers/work-items.js';")).toEqual([]);
+    expect(boardImportsOf(file, "import { a } from './files.js';")).toEqual([join('board', 'files.js')]);
+  });
+
+  it('M5-1b TP-104 parses JSON in the board folder with parseJsonText only', () => {
+    const found = allSourceFiles(BOARD_DIR).filter((path) => /\bJSON\.parse\b/.test(stripComments(readFileSync(path, 'utf8'))));
+    expect(found.map((path) => relative(SRC, path))).toEqual([]);
   });
 });
 
