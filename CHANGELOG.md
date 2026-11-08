@@ -168,6 +168,7 @@ Install
 Security
 
 - `start` and `doctor` find a Claude settings file that skips the permission prompts, that sets or clears an `env` variable whose name starts with `FACTORY_`, or that sets the proxy or the credential of the session in `env`, in `coordinator/`, in a project folder or at a tracked path. `doctor` fails and `start` exits with code 4. A settings file in `coordinator/` or in a project folder that runs a command (a hook, a status line or a key helper) stops them too. The hook and the status line that `factory` writes itself do not count.
+- The stop for a status line that `factory` did not write now tells the owner to check the command first, then names the way to keep it: set `session.statusline` in `factory.local.yaml` to it, and `factory` runs it and shows its output. A stop for a hook or a key helper only does not get this sentence.
 - A check of a security boundary that can not finish stops `start` with exit code 4, and `doctor` fails: git fails, a settings folder holds more than 64 settings files, or a settings file can not be read.
 - The token scan names a tracked file that holds a NUL byte (a binary file or a file in UTF-16) as not scanned. A base64 secret that holds a slash and no plus sign is no longer taken for a path.
 - `start` and `doctor` warn about a rule that allows a whole tool and about a setting that approves project MCP servers.

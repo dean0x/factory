@@ -1,7 +1,7 @@
 import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded } from './lifecycle-lab.js';
+import { expectLaunchRule, hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded, type Marker } from './lifecycle-lab.js';
 
 if (!hasTmux) console.warn('reboot.test.ts is skipped: tmux 3.0 or newer is not installed.');
 
@@ -10,6 +10,11 @@ const lab = useLab();
 const resumeIdOf = (argv: readonly string[]): string | undefined => {
   const at = argv.indexOf('--resume');
   return at < 0 ? undefined : argv[at + 1];
+};
+
+/** Each marker was resumed: its last launch obeys the rule of every launch, though the tmux server holds a proxy. */
+const expectRuleOf = async (...markers: readonly Marker[]): Promise<void> => {
+  for (const marker of markers) expectLaunchRule(await lab.argvOf(marker), await lab.proxyOf(marker));
 };
 
 describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, AC-20, TP-45, TP-46, TP-47)', () => {
@@ -31,6 +36,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, A
     expect(resumeIdOf(await lab.argvOf('demo'))).toBe(SESSIONS.demo);
     expect(resumeIdOf(await lab.argvOf('alpha'))).toBe(SESSIONS.alpha);
     expect(resumeIdOf(await lab.argvOf('beta'))).toBe(SESSIONS.beta);
+    await expectRuleOf('demo', 'alpha', 'beta');
     expect(await lab.launchCount('demo')).toBe(2);
     expect(await lab.launchCount('alpha')).toBe(2);
     expect(await lab.launchCount('beta')).toBe(2);
@@ -58,6 +64,7 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, A
     expect(await lab.launchCount('alpha')).toBe(2);
     expect(await lab.launchCount('beta')).toBe(2);
     expect(resumeIdOf(await lab.argvOf('alpha'))).toBe(SESSIONS.alpha);
+    await expectRuleOf('alpha', 'beta');
   }, LIFECYCLE_CASE_MS);
 
   it('exits 3 and stops nothing when one worker has no session id that it may resume (TP-46)', async () => {

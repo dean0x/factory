@@ -1,10 +1,11 @@
 import { execFile, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { hookNames } from '../../src/names.js';
 import { DIST, makeSandbox, removeOpenSandboxes, tmuxSocketOf, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
+import { expectLaunchRule } from './lifecycle-lab.js';
 
 const tmuxVersion = spawnSync('tmux', ['-V'], { encoding: 'utf8' }).stdout ?? '';
 const [major = 0] = (/(\d+)\./.exec(tmuxVersion)?.slice(1) ?? []).map(Number);
@@ -144,6 +145,13 @@ const ownSettings = (): Record<string, unknown> => ({
 });
 
 const settingsFileOf = (): string => join(box.node, 'coordinator', '.claude', 'settings.local.json');
+
+/** The status line input of the fixture (built from the field names of the status line docs; the values are made up). */
+const STATUS_PAYLOAD = (
+  JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'claude', 'payloads.json'), 'utf8')) as {
+    readonly statusline: { readonly payload: Readonly<Record<string, unknown>> };
+  }
+).statusline.payload;
 
 /**
  * Make the node with the clones of two work trees. The result is the folders of the clones in the root. `init --yes`
@@ -601,6 +609,52 @@ describe.skipIf(!hasTmux)('factory start: the hook settings of the coordinator (
     expect(await treeOf(box.node)).toEqual(before);
     expect(existsSync(socket)).toBe(false);
   });
+
+  /** Set the status line command of the owner in the private config of the node. The file keeps its mode. */
+  const setOwnerStatusline = async (command: string): Promise<void> => {
+    const path = join(box.node, 'factory.local.yaml');
+    const text = await readFile(path, 'utf8');
+    expect(text).toContain('statusline: null');
+    // A function gives the text as it is: a string would read `$$` and `$&` in the command as patterns.
+    await writeFile(path, text.replace('statusline: null', () => `statusline: ${JSON.stringify(command)}`));
+  };
+
+  it('writes only the own entries with --yes when the owner names a status line command, and the wrapper then prints its output (AC-2)', async () => {
+    await initNode({ hookSettings: false });
+    await setOwnerStatusline('echo owner-line');
+
+    const result = await startFactory('--yes');
+    expect(result.code).toBe(0);
+    expect(await waitForLaunch()).toEqual(['launched']);
+
+    expect(JSON.parse(await readFile(settingsFileOf(), 'utf8'))).toEqual(ownSettings());
+    expect((await stat(settingsFileOf())).mode & 0o777).toBe(0o600);
+    expect(await readFile(join(box.node, 'factory.local.yaml'), 'utf8')).toContain('statusline: "echo owner-line"');
+
+    const printed = await box.run(['hook', hookNames.statusline], {
+      cwd: box.node,
+      env: { FACTORY_HOME: box.node, FACTORY_SESSION: 'demo' },
+      input: JSON.stringify(STATUS_PAYLOAD),
+    });
+    expect(printed).toEqual({ code: 0, stdout: 'owner-line\n', stderr: '' });
+  });
+
+  it('stops with exit 4 for a status line that the program did not write, names the key that keeps it, and changes nothing (AC-1)', async () => {
+    await initNode({ hookSettings: false });
+    await mkdir(join(box.node, 'coordinator', '.claude'), { recursive: true });
+    const foreign = '{"statusLine":{"type":"command","command":"echo kept"}}\n';
+    await writeFile(settingsFileOf(), foreign, { mode: 0o600 });
+    const before = await treeOf(box.node);
+
+    const result = await startFactory('--yes');
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('session.statusline');
+    expect(result.stderr).toContain('Remove the setting from coordinator/.claude/settings.local.json');
+    expect(await readFile(settingsFileOf(), 'utf8')).toBe(foreign);
+    expect((await stat(settingsFileOf())).mode & 0o777).toBe(0o600);
+    expect(await treeOf(box.node)).toEqual(before);
+    await noSession();
+  });
 });
 
 /** The time limit of a case that makes workers and starts the session again: the setup takes seconds, and a resume waits up to 10 seconds. */
@@ -616,14 +670,17 @@ const MARK_COMMIT = 'chore: mark this machine as the active one';
 
 /**
  * A fake claude that tells what the recovery needs to know for each session. The names of its files end with the session marker:
+ * `proxy-<marker>` says `yes` when the environment of the last launch holds the proxy variable and `no` when it does not,
  * `argv-<marker>` holds the arguments of the last launch, and `launches-<marker>` has one line for each launch that ran on. A launch
  * with `--resume <id>` acts like the program: the file `no-transcript-<marker>` makes it end at once with an error, the file
  * `silent-<marker>` makes it run with no SessionStart hook, and else the hook of the new session writes its last-seen line.
+ * The file `proxy-<marker>` comes first, so a wait for any other file of the launch also covers it.
  */
 const recoveringClaude = (dir: string): string =>
   [
     '#!/bin/sh',
     `dir='${dir}'`,
+    'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/proxy-$FACTORY_SESSION"; else echo no > "$dir/proxy-$FACTORY_SESSION"; fi',
     'printf \'%s\\n\' "$@" > "$dir/argv-$FACTORY_SESSION"',
     'resume=""',
     'prev=""',
@@ -655,6 +712,24 @@ const sessionStarted = (marker: string, session: string): Promise<RunResult> =>
 
 /** The arguments of the last launch of the program with this session marker. */
 const argvOf = async (marker: string): Promise<string[]> => (await readFile(join(outDir, `argv-${marker}`), 'utf8')).trim().split('\n');
+
+/**
+ * Wait until the program has run this many times with this session marker. The program writes `launches-<marker>` after its
+ * `proxy-<marker>` and `argv-<marker>` files, so the files of the last launch are in place when the count is reached. The wait
+ * has an upper bound.
+ */
+const waitForLaunches = async (marker: string, count: number): Promise<void> => {
+  for (let step = 0; step < POLL_STEPS; step += 1) {
+    const text = await readFile(join(outDir, `launches-${marker}`), 'utf8').catch(() => '');
+    if (text.split('\n').filter((line) => line !== '').length >= count) return;
+    await sleep(POLL_STEP_MS);
+  }
+  throw new Error(`the program did not run ${count} times with the marker ${marker}`);
+};
+
+/** The last launch with this session marker obeys the rule of every launch, though the tmux server holds a proxy (`LAUNCH_PROXY_URL`). */
+const expectRule = async (marker: string): Promise<void> =>
+  expectLaunchRule(await argvOf(marker), (await waitForFile(`proxy-${marker}`)).trim());
 
 /** The session id after `--resume`, or undefined when the launch has no `--resume`. */
 const resumeIdOf = (argv: readonly string[]): string | undefined => {
@@ -719,6 +794,7 @@ describe.skipIf(!hasTmux)(
       expect(resumeIdOf(await argvOf('demo'))).toBe(COORDINATOR_SESSION);
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
       expect(resumeIdOf(await argvOf('beta'))).toBe(SESSIONS.beta);
+      for (const marker of ['demo', 'alpha', 'beta']) await expectRule(marker);
       expect(await hasWorkerPane('alpha')).toBe(true);
       expect(await hasWorkerPane('beta')).toBe(true);
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
@@ -729,8 +805,11 @@ describe.skipIf(!hasTmux)(
       const again = await startFactory();
       expect({ code: again.code, stderr: again.stderr }).toEqual({ code: 0, stderr: '' });
       expect(again.stdout).not.toContain('The coordinator resumes');
+      // The first launch of the setup also wrote files with no `--resume` and no proxy: only the second launch can pass the checks.
+      await waitForLaunches('demo', 2);
       expect(resumeIdOf(await argvOf('demo'))).toBeUndefined();
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      for (const marker of ['demo', 'alpha']) await expectRule(marker);
     }, RECOVERY_CASE_MS);
 
     it('starts a new conversation for the coordinator, with one warning that names the pointer file, for a pointer that holds no session id (TP-37)', async () => {
@@ -742,7 +821,10 @@ describe.skipIf(!hasTmux)(
       const warnings = again.stderr.split('\n').filter((line) => line.includes(pointer));
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('NOT resumed');
+      // The first launch of the setup also wrote files with no `--resume` and no proxy: only the second launch can pass the checks.
+      await waitForLaunches('demo', 2);
       expect(resumeIdOf(await argvOf('demo'))).toBeUndefined();
+      await expectRule('demo');
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     }, RECOVERY_CASE_MS);
 
@@ -780,6 +862,7 @@ describe.skipIf(!hasTmux)(
       expect(warnings[0]).toContain('factory worker resume beta');
       expect(again.stdout).toContain('Resumed the workers: alpha.');
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      await expectRule('alpha');
       expect(await hasWorkerPane('alpha')).toBe(true);
       expect(await hasWorkerPane('beta')).toBe(false);
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
@@ -796,6 +879,7 @@ describe.skipIf(!hasTmux)(
       expect(again.stderr.split('\n').filter((line) => line.includes('beta'))).toHaveLength(1);
       expect(again.stdout).toContain('Resumed the workers: alpha.');
       expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      await expectRule('alpha');
       expect(await hasWorkerPane('alpha')).toBe(true);
       expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     }, RECOVERY_CASE_MS);
@@ -808,6 +892,8 @@ describe.skipIf(!hasTmux)(
       expect(again.code, again.stderr).toBe(0);
       expect(again.stderr).toContain('work-copies/web/beta/.claude/settings.local.json');
       expect(again.stdout).toContain('Resumed the workers: alpha.');
+      expect(resumeIdOf(await argvOf('alpha'))).toBe(SESSIONS.alpha);
+      await expectRule('alpha');
       expect(await hasWorkerPane('alpha')).toBe(true);
       expect(await hasWorkerPane('beta')).toBe(false);
     }, RECOVERY_CASE_MS);

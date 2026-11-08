@@ -18,6 +18,8 @@ const POLL_STEPS = 100;
 const STOP_STEPS = 30;
 /** A fake value for the one setting of the user that the launch keeps among the variables that start with CLAUDE. */
 const FAKE_CONFIG_DIR = '/fake/claude-config';
+/** A proxy in the environment of the tmux server. A launch must remove it, so that the program never sees it. */
+const LAB_PROXY_URL = 'http://127.0.0.1:9';
 
 /**
  * The time limit of a case: the setup makes two workers (about ten seconds), a stop waits up to 30 seconds for the end of a process
@@ -35,15 +37,33 @@ export const SESSIONS = {
 export type Marker = keyof typeof SESSIONS;
 
 /**
- * A fake claude. The names of its files end with the session marker: `argv-<marker>` holds the arguments of the last launch, and
+ * The rule of every launch, new or resumed: the program starts in auto mode, no flag skips the permission checks, and the proxy
+ * variable of the tmux server did not reach it (`proxy` is the text of its `proxy-<marker>` file). The flag of the mode comes once,
+ * in the form with a separate value, so a later flag can not change the mode. A path is not a flag, so a word that starts with a
+ * slash is not read for a skip word.
+ */
+export const expectLaunchRule = (argv: readonly string[], proxy: string): void => {
+  expect(argv.filter((word) => word === '--permission-mode' || word.startsWith('--permission-mode='))).toHaveLength(1);
+  const mode = argv.indexOf('--permission-mode');
+  expect(mode).toBeGreaterThanOrEqual(0);
+  expect(argv[mode + 1]).toBe('auto');
+  expect(argv.filter((word) => !word.startsWith('/') && /dangerously|bypass|skip/i.test(word))).toEqual([]);
+  expect(proxy).toBe('no');
+};
+
+/**
+ * A fake claude. The names of its files end with the session marker: `proxy-<marker>` says `yes` when the environment of the last launch
+ * holds the proxy variable and `no` when it does not, `argv-<marker>` holds the arguments of the last launch, and
  * `launches-<marker>` has one line for each launch that ran on. A launch with `--resume <id>` acts like the program: the hook of the
  * new session writes its last-seen line. A launch whose marker has a file `record-term-<marker>` in the folder records the signal TERM in
- * `termed-<marker>` and ends with the code 143. A hang-up ends it too, but records nothing.
+ * `termed-<marker>` and ends with the code 143. A hang-up ends it too, but records nothing. The file `proxy-<marker>` comes first, so a
+ * wait for any other file of the launch also covers it.
  */
 const fakeClaude = (dir: string): string =>
   [
     '#!/bin/sh',
     `dir='${dir}'`,
+    'if [ -n "${ANTHROPIC_BASE_URL+x}" ]; then echo yes > "$dir/proxy-$FACTORY_SESSION"; else echo no > "$dir/proxy-$FACTORY_SESSION"; fi',
     'printf \'%s\\n\' "$@" > "$dir/argv-$FACTORY_SESSION"',
     'resume=""',
     'prev=""',
@@ -95,6 +115,8 @@ export interface Lab {
   event(marker: Marker, name: string): Promise<RunResult>;
   waitForFile(name: string): Promise<string>;
   argvOf(marker: Marker): Promise<readonly string[]>;
+  /** `yes` or `no`: whether the environment of the last launch with this session marker held the proxy variable. */
+  proxyOf(marker: Marker): Promise<string>;
   /** How many times the program ran with this session marker. */
   launchCount(marker: Marker): Promise<number>;
   /** The panes that carry a worker mark in the window workers. */
@@ -181,6 +203,7 @@ export const useLab = (): Lab => {
       ...made.env,
       SHELL: '/bin/sh',
       PATH: `${bin}:${made.env['PATH'] ?? ''}`,
+      ANTHROPIC_BASE_URL: LAB_PROXY_URL,
       CLAUDE_FAKE_PARENT: '1',
       CLAUDECODE: '1',
       CLAUDE_CONFIG_DIR: FAKE_CONFIG_DIR,
@@ -267,6 +290,7 @@ export const useLab = (): Lab => {
     event,
     waitForFile,
     argvOf: async (marker) => (await readFile(join(outDir, `argv-${marker}`), 'utf8')).trim().split('\n'),
+    proxyOf: async (marker) => (await waitForFile(`proxy-${marker}`)).trim(),
     launchCount: async (marker) =>
       (await readFile(join(outDir, `launches-${marker}`), 'utf8').catch(() => '')).split('\n').filter((line) => line !== '').length,
     workerPanes,
