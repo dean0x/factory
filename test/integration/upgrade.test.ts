@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { chmod, cp, lstat, mkdir, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -6,7 +7,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { hookNames, setupAcceptance } from '../../src/names.js';
 import { oldWordsIn } from '../helpers/old-words.js';
-import { makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, withoutTmux, type RunResult, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 
@@ -25,7 +26,20 @@ const initNode = async (): Promise<void> => {
   expect(result.code).toBe(0);
 };
 
-const COORDINATOR_FILE = ['coordinator', 'CLAUDE.md'] as const;
+/** Run a program with a given environment. The sandbox runs the built program only, so a test of a copy needs this. */
+const run = (
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  env: Readonly<Record<string, string>>,
+): Promise<RunResult> =>
+  new Promise((resolve) => {
+    execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: 60_000 }, (error, stdout, stderr) => {
+      resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr });
+    });
+  });
+
+const COORDINATOR_FILE =['coordinator', 'CLAUDE.md'] as const;
 
 interface StoredAcceptance {
   manifest: unknown;
@@ -133,6 +147,53 @@ describe('factory upgrade (built binary)', () => {
       expect((await readdir(elsewhere)).sort()).toEqual(['keep.txt', 'pre-commit']);
       expect(await box.read(join(elsewhere, 'pre-commit'))).toBe('other hook');
       expect((await lstat(guard)).isSymbolicLink()).toBe(true);
+    });
+  });
+
+  describe('the git steps of the state commit run no program that the state repo names (TP-17)', () => {
+    const stateOf = (): string => join(box.node, '.factory');
+    const markerOf = (name: string): string => join(box.root, 'markers', name);
+    const writeProgram = async (path: string, marker: string): Promise<void> => {
+      await writeFile(path, `#!/bin/sh\n: > '${marker}'\n`);
+      await chmod(path, 0o755);
+    };
+
+    it('commits the upgrade with no file monitor program, no hook file and no guard program started', async () => {
+      await initNode();
+      const state = stateOf();
+      // A read of the test uses the file monitor off, so that it leaves no marker of its own.
+      const quiet = (args: readonly string[]): ReturnType<Sandbox['git']> => box.git(state, ['-c', 'core.fsmonitor=false', ...args]);
+
+      // The state repo lacks a line of its .gitignore, so the upgrade has a file to commit.
+      await writeFile(join(state, '.gitignore'), 'state/\nlocks/\nbackups/\n');
+      expect((await quiet(['add', '.gitignore'])).code).toBe(0);
+      expect((await quiet(['commit', '-q', '-m', 'drop a line'])).code).toBe(0);
+      const before = Number((await quiet(['rev-list', '--count', 'HEAD'])).stdout.trim());
+
+      await mkdir(join(box.root, 'markers'));
+      const monitor = join(box.root, 'file-monitor.sh');
+      await writeProgram(monitor, markerOf('file-monitor'));
+      expect((await quiet(['config', 'core.fsmonitor', monitor])).code).toBe(0);
+      const hooks = join(await realpath(state), '.git', 'hooks');
+      await mkdir(hooks, { recursive: true });
+      await writeProgram(join(hooks, 'pre-commit'), markerOf('pre-commit'));
+      await writeProgram(join(hooks, 'post-commit'), markerOf('post-commit'));
+
+      // A copy of the built program that marks each start of the guard: git starts the guard only when the hooks are on.
+      const source = await box.read(DIST);
+      const lineEnd = source.indexOf('\n') + 1;
+      const copy = join(box.root, 'factory-marked.js');
+      const mark = `import { writeFileSync as markStart } from 'node:fs';\nif (process.argv.includes('guard')) markStart(${JSON.stringify(markerOf('guard'))}, '');\n`;
+      await writeFile(copy, `${source.slice(0, lineEnd)}${mark}${source.slice(lineEnd)}`);
+
+      const upgraded = await run('node', [copy, 'upgrade', '--home', box.node], box.root, withoutTmux(box.env));
+      expect(upgraded.code, upgraded.stderr).toBe(0);
+
+      expect(Number((await quiet(['rev-list', '--count', 'HEAD'])).stdout.trim())).toBe(before + 1);
+      expect((await quiet(['show', '--name-only', '--format=', 'HEAD'])).stdout.split('\n')).toContain('.gitignore');
+      for (const name of ['file-monitor', 'pre-commit', 'post-commit', 'guard']) {
+        expect(existsSync(markerOf(name)), `${name} ran`).toBe(false);
+      }
     });
   });
 
