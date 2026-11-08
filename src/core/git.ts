@@ -670,10 +670,17 @@ export const stateStatusOf = async (deps: Deps, dir: string): Promise<CliResult<
 /**
  * The value of one local setting of the state folder as git reads it, or null when it is not set. This read leaves the hooks as they
  * are set: with the hooks forced off, the value of `core.hooksPath` would always be `/dev/null`. The key is a name of the code.
+ * The scope `local` reads only the config file of the state folder, so a value of the global or system config does not show.
  */
-export const stateConfigValue = async (deps: Deps, dir: string, key: string): Promise<CliResult<string | null>> => {
+export const stateConfigValue = async (
+  deps: Deps,
+  dir: string,
+  key: string,
+  scope: 'effective' | 'local' = 'effective',
+): Promise<CliResult<string | null>> => {
   const what = `read ${key} of ${dir}`;
-  const result = await deps.run('git', ['-C', dir, '-c', FILE_MONITOR_OFF, 'config', key], { timeoutMs: GIT_TIMEOUT_MS });
+  const words = scope === 'local' ? ['config', '--local', key] : ['config', key];
+  const result = await deps.run('git', ['-C', dir, '-c', FILE_MONITOR_OFF, ...words], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
   if (result.value.exitCode === 1) return ok(null);
   if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
@@ -683,6 +690,18 @@ export const stateConfigValue = async (deps: Deps, dir: string, key: string): Pr
 /** Set one setting in the local git config of the state folder. The separator keeps a value that starts with a dash from acting as an option. */
 export const setStateConfig = (deps: Deps, dir: string, key: string, value: string): Promise<CliResult<void>> =>
   stateStep(deps, dir, ['config', '--', key, value], `set ${key}`);
+
+/** The exit code of `git config --unset` for a setting that is not in the file. */
+const CONFIG_KEY_ABSENT = 5;
+
+/** Remove one setting from the local git config of the state folder. A setting that is not there is as wanted already. */
+export const unsetStateConfig = async (deps: Deps, dir: string, key: string): Promise<CliResult<void>> => {
+  const what = `remove ${key}`;
+  const result = await deps.run('git', [...stateGit(dir), 'config', '--unset', key], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode === 0 || result.value.exitCode === CONFIG_KEY_ABSENT) return ok(undefined);
+  return exitFailure(what, result.value.exitCode, result.value.stderr);
+};
 
 /** The absolute path of the git folder of the state repo at `dir`. */
 export const absoluteGitDirOf = async (deps: Deps, dir: string): Promise<CliResult<string>> => {

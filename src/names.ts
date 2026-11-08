@@ -1288,6 +1288,8 @@ export const stateGuard = {
   hooksPathKey: 'core.hooksPath',
   /** The most entries that an install removes from the guard folder; a folder with more is left alone. */
   maxEntries: 64,
+  /** The word between the folder name and the pid in the name of the copy that an install keeps of an old guard folder. */
+  copyWord: '.old-',
   interpreter: '#!/bin/sh',
   comment: `# Written by ${program} from the text of the package. Git does not track this file. Run "${commandText(commands.upgrade)}" to write it again.`,
   /** The remedy of every case of an off guard. */

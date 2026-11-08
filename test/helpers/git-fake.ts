@@ -156,8 +156,11 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     copies.set(dir, found);
     return found;
   };
-  /** The local settings that a `git config -- <key> <value>` call wrote, by folder and key. A write wins over the fixture. */
-  const written = new Map<string, string>();
+  /**
+   * The local settings that a `git config -- <key> <value>` call wrote, by folder and key, or null for a `git config --unset <key>` call.
+   * A write wins over the fixture.
+   */
+  const written = new Map<string, string | null>();
   const handler: RunHandler = (call) => {
     calls.push(call);
     if (call.command === 'gh') {
@@ -195,9 +198,16 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       written.set(`${dir}\0${args[4]}`, args[5] ?? '');
       return exited(0);
     }
-    if (rest === 'config core.hooksPath') {
-      const value = written.get(`${dir}\0core.hooksPath`) ?? fixture.hooksPath?.[dir];
-      return value === undefined ? exited(1) : exited(0, `${value}\n`);
+    if (args[2] === 'config' && args[3] === '--unset' && args.length === 5) {
+      const key = `${dir}\0${args[4]}`;
+      const current = written.has(key) ? written.get(key) : fixture.hooksPath?.[dir];
+      written.set(key, null);
+      return exited(current === undefined || current === null ? 5 : 0);
+    }
+    // The fixture value counts as a local setting, so a read of the local file and a read of every level agree.
+    if (rest === 'config core.hooksPath' || rest === 'config --local core.hooksPath') {
+      const value = written.has(`${dir}\0core.hooksPath`) ? written.get(`${dir}\0core.hooksPath`) : fixture.hooksPath?.[dir];
+      return value === undefined || value === null ? exited(1) : exited(0, `${value}\n`);
     }
     if (rest === 'rev-parse --absolute-git-dir') return exited(0, `${fixture.gitDirs?.[dir] ?? `${dir}/.git`}\n`);
     if (rest === 'ls-files -z') {

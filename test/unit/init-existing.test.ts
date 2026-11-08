@@ -1359,6 +1359,59 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
     expect(snapshot(deps)).toBe(before);
   });
 
+  it.each([
+    ['a state folder that is complete', 'valid' as const],
+    ['a state folder with no marker', 'no-marker' as const],
+  ])('puts the git folder of %s back as it was when the factory list can not be written after the guard', async (_name, state) => {
+    const { deps, log } = existing({ state, entry: null });
+    repo(deps);
+    const before = snapshot(deps);
+    const result = await runInit(failingWrite(deps, '/homes.json'), options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(snapshot(deps)).toBe(before);
+    expect(setting(log)).toEqual([`config -- core.hooksPath ${GUARD}`]);
+    expect(log.commands()).toContain('config --unset core.hooksPath');
+  });
+
+  it('puts an old guard back as it was when a later step fails: the setting, the hook and the stray file', async () => {
+    const { deps, log } = existing({ state: 'valid', entry: null, fixture: { hooksPath: { [STATE]: '/old/hooks' } } });
+    repo(deps);
+    deps.seed(HOOK, '#!/bin/sh\nexit 0\n');
+    deps.modes.set(HOOK, 0o755);
+    deps.seed(`${GUARD}/stray`, 'x');
+    const before = snapshot(deps);
+    const result = await runInit(failingWrite(deps, '/homes.json'), options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.modes.get(HOOK)).toBe(0o755);
+    expect(setting(log)).toEqual([`config -- core.hooksPath ${GUARD}`, 'config -- core.hooksPath /old/hooks']);
+  });
+
+  it('puts an old guard folder back when the setting can not be written', async () => {
+    const { handler } = gitHandler({ repos: { [ROOT]: {}, [STATE]: {} }, tracked: { [ROOT]: TRACKED_SETUP }, status: MARKER_CHANGED });
+    const run: NonNullable<FakeOptions['run']> = (call) =>
+      call.args.includes('core.hooksPath') && call.args.includes('--') ? exited(1, '', 'fatal: cannot write') : handler(call);
+    const { deps } = existing({ state: 'valid', entry: null }, { run });
+    repo(deps);
+    deps.seed(HOOK, '#!/bin/sh\nexit 0\n');
+    deps.modes.set(HOOK, 0o755);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(snapshot(deps)).toBe(before);
+    expect(deps.modes.get(HOOK)).toBe(0o755);
+  });
+
+  it('keeps no copy of the old guard folder when the run works', async () => {
+    const { deps } = existing({ state: 'valid' });
+    repo(deps);
+    deps.seed(HOOK, '#!/bin/sh\nexit 0\n');
+    deps.modes.set(HOOK, 0o755);
+    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+    expect(deps.files.get(HOOK)).toBe(hookText());
+    expect([...deps.files.keys(), ...deps.dirs].filter((path) => path.includes(stateGuard.folder)).sort()).toEqual([GUARD, HOOK].sort());
+  });
+
   it('writes the guard once for a state folder that it makes: the staging folder holds it', async () => {
     const { deps, log } = existing({ state: 'absent' });
     expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);

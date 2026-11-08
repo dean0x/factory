@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { stateGuard } from '../../src/names.js';
-import { guardHookText, guardStateOf, installGuard } from '../../src/state/guard.js';
+import { guardHookText, guardStateOf, installGuard, installGuardWithUndo } from '../../src/state/guard.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 
 /**
@@ -296,5 +296,85 @@ describe('the index that git gives the hook (TP-9)', () => {
     expect(result.code, result.stderr).toBe(0);
     expect(await filesOfHead()).toEqual([OTHER]);
     expect((await mustGit(['diff', '--cached', '--name-only'])).stdout.trim()).toBe(BOARD);
+  });
+});
+
+describe('the undo of an install of the guard', () => {
+  const gitDirOf = async (): Promise<string> => join(await realpath(stateDir), '.git');
+
+  /** The names in the git folder that start with the guard folder name: the folder itself and a copy of it. */
+  const guardNames = async (): Promise<string[]> =>
+    (await readdir(await gitDirOf())).filter((name) => name.startsWith(stateGuard.folder)).sort();
+
+  it('puts the config file, the old hook, a stray file and a link back as they were, and the target of the link stays', async () => {
+    const folder = join(await gitDirOf(), stateGuard.folder);
+    const target = join(box.root, 'outside');
+    await mkdir(target);
+    await writeFile(join(target, 'keep.txt'), 'keep');
+    await symlink(target, join(folder, 'stray-link'));
+    await writeFile(join(folder, 'post-commit'), 'x');
+    await writeFile(join(folder, stateGuard.hookFile), '#!/bin/sh\nexit 0\n');
+    await chmod(join(folder, stateGuard.hookFile), 0o755);
+    await mustGit(['config', stateGuard.hooksPathKey, '/somewhere/else']);
+    const config = await readFile(join(await gitDirOf(), 'config'), 'utf8');
+    const entries = await readdir(folder);
+
+    const changed = await installGuardWithUndo(deps, stateDir);
+    expect(changed.ok).toBe(true);
+    expect(await guardStateOf(deps, stateDir)).toEqual({ ok: true, value: { on: true } });
+    expect(await guardNames()).toHaveLength(2);
+    if (!changed.ok) return;
+    const undone = await changed.value.undo();
+    expect(undone.ok).toBe(true);
+
+    expect(await readFile(join(await gitDirOf(), 'config'), 'utf8')).toBe(config);
+    expect(await readdir(folder)).toEqual(entries);
+    expect(await readFile(join(folder, stateGuard.hookFile), 'utf8')).toBe('#!/bin/sh\nexit 0\n');
+    expect((await stat(join(folder, stateGuard.hookFile))).mode & 0o777).toBe(0o755);
+    expect(await readFile(join(folder, 'post-commit'), 'utf8')).toBe('x');
+    expect(await readlink(join(folder, 'stray-link'))).toBe(target);
+    expect(await readdir(target)).toEqual(['keep.txt']);
+    expect(await guardNames()).toEqual([stateGuard.folder]);
+  });
+
+  it('removes the guard folder and the setting that it made, and leaves the config file as it was', async () => {
+    await rm(join(await gitDirOf(), stateGuard.folder), { recursive: true });
+    await mustGit(['config', '--unset', stateGuard.hooksPathKey]);
+    const config = await readFile(join(await gitDirOf(), 'config'), 'utf8');
+
+    const changed = await installGuardWithUndo(deps, stateDir);
+    expect(changed.ok).toBe(true);
+    expect(await guardStateOf(deps, stateDir)).toEqual({ ok: true, value: { on: true } });
+    if (!changed.ok) return;
+    expect((await changed.value.undo()).ok).toBe(true);
+
+    expect(await readFile(join(await gitDirOf(), 'config'), 'utf8')).toBe(config);
+    expect(await guardNames()).toEqual([]);
+  });
+
+  it('keeps no copy of the old guard folder after keep, and the guard stays on', async () => {
+    await writeFile(join(await gitDirOf(), stateGuard.folder, 'post-commit'), 'x');
+    const changed = await installGuardWithUndo(deps, stateDir);
+    expect(changed.ok).toBe(true);
+    if (!changed.ok) return;
+    expect((await changed.value.keep()).ok).toBe(true);
+    expect(await guardNames()).toEqual([stateGuard.folder]);
+    expect(await guardStateOf(deps, stateDir)).toEqual({ ok: true, value: { on: true } });
+  });
+
+  it('stops with exit 4 and changes nothing for a guard folder that is a link, and undo leaves the link and its target', async () => {
+    const folder = join(await gitDirOf(), stateGuard.folder);
+    const target = join(box.root, 'elsewhere');
+    await mkdir(target);
+    await writeFile(join(target, 'keep.txt'), 'keep');
+    await rm(folder, { recursive: true });
+    await symlink(target, folder);
+    const config = await readFile(join(await gitDirOf(), 'config'), 'utf8');
+
+    const changed = await installGuardWithUndo(deps, stateDir);
+    expect(changed).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(await readlink(folder)).toBe(target);
+    expect(await readdir(target)).toEqual(['keep.txt']);
+    expect(await readFile(join(await gitDirOf(), 'config'), 'utf8')).toBe(config);
   });
 });

@@ -29,6 +29,7 @@ import {
   setStateConfig,
   stashCountOf,
   stateConfigValue,
+  unsetStateConfig,
   stateIndexEntryAt,
   stateStatusOf,
   statusOf,
@@ -541,6 +542,7 @@ describe('git: every git step in a state folder runs with hooks off (TP-15)', ()
     ['unstagePaths', (deps) => unstagePaths(deps, STATE_DIR, PATHS)],
     ['stateStatusOf', (deps) => stateStatusOf(deps, STATE_DIR)],
     ['setStateConfig', (deps) => setStateConfig(deps, STATE_DIR, 'core.hooksPath', '/g/factory-guard')],
+    ['unsetStateConfig', (deps) => unsetStateConfig(deps, STATE_DIR, 'core.hooksPath')],
     ['absoluteGitDirOf', (deps) => absoluteGitDirOf(deps, STATE_DIR)],
     ['requireStateConfigSafe', (deps) => requireStateConfigSafe(deps, STATE_DIR, commands.upgrade)],
     ['requireStateRepoReady', (deps) => requireStateRepoReady(deps, STATE_DIR, [], 'the upgrade', commands.upgrade)],
@@ -604,6 +606,36 @@ describe('git: one setting of a state folder', () => {
     it('is an error when git exits with a code', async () => {
       const result = await setStateConfig(createFakeDeps({ cwd: WS, run: () => exited(255) }), STATE_DIR, 'core.hooksPath', GUARD);
       expect(result).toMatchObject({ ok: false, error: { message: 'cannot set core.hooksPath: git exited with 255' } });
+    });
+  });
+
+  describe('the read of a value in the local file only', () => {
+    it('asks git for the local file, with the hooks as set', async () => {
+      const { handler, log } = gitHandler({ hooksPath: { [STATE_DIR]: GUARD } });
+      const result = await stateConfigValue(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR, 'core.hooksPath', 'local');
+      expect(result).toEqual({ ok: true, value: GUARD });
+      expect(log.calls.map((call) => call.args)).toEqual([['-C', STATE_DIR, ...STATE_READ_WORDS, 'config', '--local', 'core.hooksPath']]);
+    });
+  });
+
+  describe('the removal of a value', () => {
+    it('unsets the key, and a read then gives null', async () => {
+      const { handler, log } = gitHandler({ hooksPath: { [STATE_DIR]: GUARD } });
+      const deps = createFakeDeps({ cwd: WS, run: handler });
+      expect(await unsetStateConfig(deps, STATE_DIR, 'core.hooksPath')).toEqual({ ok: true, value: undefined });
+      expect(log.calls[0]?.args).toEqual(['-C', STATE_DIR, ...STATE_GIT_WORDS, 'config', '--unset', 'core.hooksPath']);
+      expect(await stateConfigValue(deps, STATE_DIR, 'core.hooksPath')).toEqual({ ok: true, value: null });
+    });
+
+    it('is as wanted already for a key that is not there (git exits with 5)', async () => {
+      const { handler } = gitHandler();
+      expect(await unsetStateConfig(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR, 'core.hooksPath')).toEqual({ ok: true, value: undefined });
+    });
+
+    it('is an error when git exits with another code, or cannot run', async () => {
+      const unset = (run: RunHandler) => unsetStateConfig(createFakeDeps({ cwd: WS, run }), STATE_DIR, 'core.hooksPath');
+      expect(await unset(() => exited(255))).toMatchObject({ ok: false, error: { message: 'cannot remove core.hooksPath: git exited with 255' } });
+      expect(await unset(() => failure('cannot run git: ENOENT'))).toMatchObject({ ok: false, error: { kind: 'failure' } });
     });
   });
 

@@ -28,7 +28,7 @@ import {
 } from '../names.js';
 import { ownerModes, type ApprovalModes, type ApprovalPoint, type RecipeRegistry } from '../recipes/index.js';
 import { parseProxyUrl, proxyLabel } from '../safety/proxy.js';
-import { guardFolderLabel, guardNeedsInstall, installGuard } from '../state/guard.js';
+import { guardFolderLabel, guardNeedsInstall, installGuardWithUndo, type GuardChange } from '../state/guard.js';
 import { stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { STATE_LABEL } from '../state/load.js';
 import { withStateLock } from '../state/state-lock.js';
@@ -461,10 +461,9 @@ const commitMarkerLocked = async (deps: Deps, layout: Layout): Promise<MarkerCom
 
 /**
  * Write the plan: the local file, the state folder or the marker, the delete guard of a state repo that was there, then the
- * entry in the factory list. A step that fails undoes the steps before it. The guard has no undo: it lives in the git folder,
- * no other step reads it, and a second run finds it in place. The marker commit, the approval records and the setup acceptance
- * come after the entry in the factory list, so a run that fails leaves none of them. A commit, a record or an acceptance that
- * fails is a warning.
+ * entry in the factory list. A step that fails undoes the steps before it, the guard included: the old setting and the old guard
+ * folder (or none) come back. The marker commit, the approval records and the setup acceptance come after the entry in the factory
+ * list, so a run that fails leaves none of them. A commit, a record or an acceptance that fails is a warning.
  */
 const applyExisting = async (
   deps: Deps,
@@ -525,9 +524,12 @@ const applyExisting = async (
     }
   }
 
+  let guard: GuardChange | null = null;
   if (checked.guardDue) {
-    const installed = await installGuard(deps, layout.stateDir, layout.stateDir);
+    const installed = await installGuardWithUndo(deps, layout.stateDir);
     if (!installed.ok) return rollback(installed.error);
+    guard = installed.value;
+    undo.push(installed.value.undo);
   }
 
   const recorded = await recordNode(deps, indexPath, {
@@ -541,6 +543,10 @@ const applyExisting = async (
     return rollback(
       failure(recorded.error, `Fix the cause, then run "${commandText(commands.init)}" again. A second run works in the same folder.`).error,
     );
+  }
+  const kept = await guard?.keep();
+  if (kept?.ok === false) {
+    warnings.push(`The copy of the old guard folder stays (${kept.error.message}). Remove it by hand.`);
   }
 
   if (repair.kind === 'marker') {

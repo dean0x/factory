@@ -1,9 +1,9 @@
 import { basename, dirname, isAbsolute, join } from 'node:path';
-import { safetyRefusal, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
-import { absoluteGitDirOf, GIT_ENTRY, setStateConfig, stateConfigValue } from '../core/git.js';
+import { absoluteGitDirOf, GIT_ENTRY, setStateConfig, stateConfigValue, unsetStateConfig } from '../core/git.js';
 import { comparable } from '../core/paths.js';
-import { ok } from '../core/result.js';
+import { err, ok } from '../core/result.js';
 import { shellWord } from '../core/shell-word.js';
 import { commands, dirs, program, stateCommands, stateGuard } from '../names.js';
 
@@ -145,6 +145,118 @@ export const installGuard = async (deps: Deps, stateDir: string, finalStateDir: 
   const written = await deps.fs.writeTextAtomic(join(folder, hookName), text.value, gitDir.value, stateGuard.hookMode);
   if (!written.ok) return written;
   return setStateConfig(deps, stateDir, stateGuard.hooksPathKey, hooksPath.value);
+};
+
+/**
+ * Remove the guard folder. The folder is checked first: a link is removed itself and never followed, and a folder is removed only at
+ * its real path. A path that is not there is as wanted already.
+ */
+const removeGuardFolder = async (deps: Deps, folder: string): Promise<CliResult<void>> => {
+  const kind = await deps.fs.lstat(folder);
+  if (!kind.ok) return kind;
+  if (kind.value === null) return ok(undefined);
+  if (kind.value === 'dir') {
+    const real = await deps.fs.realpath(folder);
+    if (!real.ok) return real;
+    if (comparable(deps, real.value) !== comparable(deps, folder)) return folderRefusal(folder, 'is not at its real path');
+  }
+  return deps.fs.remove(folder);
+};
+
+/** The two parts of an install that a failed run puts back. */
+export interface GuardChange {
+  /**
+   * Put the guard back as it was before the install: the old setting (or none), and the old guard folder (or none). Every step runs;
+   * the first failure is the result.
+   */
+  readonly undo: () => Promise<CliResult<void>>;
+  /** The install stays: remove the copy of the old guard folder. */
+  readonly keep: () => Promise<CliResult<void>>;
+}
+
+interface GuardBefore {
+  readonly folder: string;
+  /** The copy of the old guard folder, or null when the folder was not a folder before. */
+  readonly copy: string | null;
+  /** True when the install may have created or replaced the guard folder. */
+  readonly changesFolder: boolean;
+  /** The value of the setting in the config file of the state folder, or null when it had none. */
+  readonly hooksPath: string | null;
+}
+
+const putGuardBack = async (deps: Deps, stateDir: string, before: GuardBefore): Promise<CliResult<void>> => {
+  const problems: string[] = [];
+  const note = (result: CliResult<unknown>): void => {
+    if (!result.ok) problems.push(result.error.message);
+  };
+  if (before.changesFolder) {
+    const removed = await removeGuardFolder(deps, before.folder);
+    note(removed);
+    if (removed.ok && before.copy !== null) note(await deps.fs.rename(before.copy, before.folder));
+  }
+  const now = await stateConfigValue(deps, stateDir, stateGuard.hooksPathKey, 'local');
+  if (!now.ok) note(now);
+  else if (now.value !== before.hooksPath) {
+    note(
+      before.hooksPath === null
+        ? await unsetStateConfig(deps, stateDir, stateGuard.hooksPathKey)
+        : await setStateConfig(deps, stateDir, stateGuard.hooksPathKey, before.hooksPath),
+    );
+  }
+  return problems.length === 0 ? ok(undefined) : failure(problems.join('; '));
+};
+
+/**
+ * Move the real guard folder to its copy name, after the same checks as the install makes: a folder with too many entries or at
+ * another real path is a stop (exit 4) before any change. A copy of an earlier run that is still there is removed first.
+ */
+const setFolderAside = async (deps: Deps, folder: string, copy: string): Promise<CliResult<void>> => {
+  const listed = await deps.fs.list(folder);
+  if (!listed.ok) return listed;
+  if (listed.value.length > stateGuard.maxEntries) return folderRefusal(folder, `holds more than ${stateGuard.maxEntries} entries`);
+  const real = await deps.fs.realpath(folder);
+  if (!real.ok) return real;
+  if (comparable(deps, real.value) !== comparable(deps, folder)) return folderRefusal(folder, 'is not at its real path');
+  const stale = await deps.fs.remove(copy);
+  return stale.ok ? deps.fs.rename(folder, copy) : stale;
+};
+
+/**
+ * `installGuard` for a state repo that stays in place, with an undo. An old guard folder is kept as a copy beside it until `keep`
+ * runs, so `undo` puts the folder back as it was; an old setting in the config file of the state folder is read first and put back
+ * too. An install that fails undoes itself. A refusal (exit 4) comes before any change. The undo follows the rules of the install:
+ * a link is never followed, and a folder is removed only at its real path.
+ */
+export const installGuardWithUndo = async (deps: Deps, stateDir: string): Promise<CliResult<GuardChange>> => {
+  const gitDir = await ownGitFolderOf(deps, stateDir);
+  if (!gitDir.ok) return gitDir;
+  if (gitDir.value === null) return gitFolderRefusal(stateDir);
+  const folder = join(gitDir.value, stateGuard.folder);
+  const copy = `${folder}${stateGuard.copyWord}${deps.pid}`;
+  const hooksPath = await stateConfigValue(deps, stateDir, stateGuard.hooksPathKey, 'local');
+  if (!hooksPath.ok) return hooksPath;
+  const kind = await deps.fs.lstat(folder);
+  if (!kind.ok) return kind;
+  const copied = kind.value === 'dir';
+  if (copied) {
+    const aside = await setFolderAside(deps, folder, copy);
+    if (!aside.ok) return aside;
+  }
+  const before: GuardBefore = {
+    folder,
+    copy: copied ? copy : null,
+    changesFolder: kind.value === null || copied,
+    hooksPath: hooksPath.value,
+  };
+  const undo = (): Promise<CliResult<void>> => putGuardBack(deps, stateDir, before);
+  const installed = await installGuard(deps, stateDir, stateDir);
+  if (!installed.ok) {
+    const undone = await undo();
+    return undone.ok
+      ? installed
+      : err({ ...installed.error, message: `${installed.error.message}. Putting the guard back failed too: ${undone.error.message}` });
+  }
+  return ok({ undo, keep: async () => (copied ? deps.fs.remove(copy) : ok(undefined)) });
 };
 
 /**
