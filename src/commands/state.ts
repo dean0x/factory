@@ -1,9 +1,9 @@
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
-import { headOf, isFileMode, stateBlobTextOf, stateIndexEntryAt, type IndexEntry } from '../core/git.js';
+import { isFileMode, stateBlobTextOf, stateHeadOf, stateIndexEntryAt, type IndexEntry } from '../core/git.js';
 import { ok } from '../core/result.js';
-import { namedItems } from '../core/root-paths.js';
+import { namedItems, shownPath } from '../core/root-paths.js';
 import {
   commands,
   commandLines,
@@ -110,7 +110,7 @@ const OLDER_NOTE = 'The last commit holds a board that can not be read, so the c
 const checkBoardChange = async (deps: Deps, dir: string): Promise<CliResult<void>> => {
   const index = await stateIndexEntryAt(deps, dir, BOARD);
   if (!index.ok) return gitFault(index.error.message);
-  const head = await headOf(deps, dir);
+  const head = await stateHeadOf(deps, dir);
   if (!head.ok) return gitFault(head.error.message);
   const headEntry = await headBoardEntry(deps, dir, head.value !== null);
   if (!headEntry.ok) return gitFault(headEntry.error.message);
@@ -127,7 +127,7 @@ const checkBoardChange = async (deps: Deps, dir: string): Promise<CliResult<void
   const lost = lostItemIds(compared.value.text, after.value);
   if (!lost.ok) return contentFault(lost.error.side, lost.error.reason);
   if (lost.value.length === 0) return ok(undefined);
-  const removed = `this commit removes ${lost.value.length === 1 ? 'the item id' : 'the item ids'} ${namedItems(lost.value)} from ${BOARD}.`;
+  const removed = `this commit removes ${lost.value.length === 1 ? 'the item id' : 'the item ids'} ${namedItems(lost.value.map(shownPath))} from ${BOARD}.`;
   return failure(`${removed} ${compared.value.older ? `${OLDER_NOTE} ` : ''}Mark an item closed, never remove it.`);
 };
 

@@ -530,8 +530,14 @@ export const requireWorkTreeTop = async (deps: Deps, dir: string, what: string):
  * The id of the commit that HEAD names, or null when the repo has no commit. It is an error when git cannot run. `gitDir` is the git
  * folder that the repo of `dir` has; see `gitIn`.
  */
-export const headOf = async (deps: Deps, dir: string, gitDir?: string): Promise<CliResult<string | null>> => {
-  const result = await deps.run('git', [...gitIn(dir, gitDir), 'rev-parse', '--verify', 'HEAD'], { timeoutMs: GIT_TIMEOUT_MS });
+export const headOf = (deps: Deps, dir: string, gitDir?: string): Promise<CliResult<string | null>> =>
+  headWith(deps, gitIn(dir, gitDir), dir);
+
+/** As `headOf`, for the state repo at `dir`, with the hooks off and the file monitor off. */
+export const stateHeadOf = (deps: Deps, dir: string): Promise<CliResult<string | null>> => headWith(deps, stateGit(dir), dir);
+
+const headWith = async (deps: Deps, lead: readonly string[], dir: string): Promise<CliResult<string | null>> => {
+  const result = await deps.run('git', [...lead, 'rev-parse', '--verify', HEAD_REV], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`cannot read the last commit of ${dir}: ${result.error.message}`);
   return ok(result.value.exitCode === 0 ? result.value.stdout.trim() : null);
 };

@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
 import { stateGuard } from '../../src/names.js';
-import { guardHookText, guardNeedsInstall, guardStateOf, installGuard, requireGuardOn } from '../../src/state/guard.js';
+import {
+  guardHookText,
+  guardNeedsInstall,
+  guardStateOf,
+  installGuard,
+  installGuardWithUndo,
+  requireGuardOn,
+} from '../../src/state/guard.js';
 import { createFakeDeps, exited, FAKE_PROGRAM_ARGV } from '../helpers/fake-deps.js';
 import { gitHandler, withoutStateWords } from '../helpers/git-fake.js';
 import { GIT_DIR, GUARD, HOME, HOOK, HOOK_TEXT, installed, linkAt, make, OFF_CASES, STATE, type Made } from '../helpers/guard-fixture.js';
@@ -166,6 +173,27 @@ describe('the install of the guard stops before any change (TP-53)', () => {
     expect(error.hint).toContain('upgrade');
     expect(made.deps.calls).toEqual([]);
     expect(made.deps.atomicWrites).toEqual([]);
+  });
+
+  it('refuses when the program path is not known before it moves an old guard folder, in the install with an undo', async () => {
+    const made = make({ programArgv: [] });
+    made.deps.seed(HOOK, 'old text\n');
+    const moves: string[] = [];
+    const deps: Deps = {
+      ...made.deps,
+      fs: {
+        ...made.deps.fs,
+        rename: async (from, to) => {
+          moves.push(from);
+          return made.deps.fs.rename(from, to);
+        },
+      },
+    };
+    const error = failureOf(await installGuardWithUndo(deps, STATE));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(moves).toEqual([]);
+    expect(made.deps.files.get(HOOK)).toBe('old text\n');
+    expect(made.deps.calls).toEqual([]);
   });
 });
 

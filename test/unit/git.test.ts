@@ -29,6 +29,7 @@ import {
   setStateConfig,
   stashCountOf,
   stateConfigValue,
+  stateHeadOf,
   unsetStateConfig,
   stateIndexEntryAt,
   stateStatusOf,
@@ -544,6 +545,7 @@ describe('git: every git step in a state folder runs with hooks off (TP-15)', ()
     ['setStateConfig', (deps) => setStateConfig(deps, STATE_DIR, 'core.hooksPath', '/g/factory-guard')],
     ['unsetStateConfig', (deps) => unsetStateConfig(deps, STATE_DIR, 'core.hooksPath')],
     ['absoluteGitDirOf', (deps) => absoluteGitDirOf(deps, STATE_DIR)],
+    ['stateHeadOf', (deps) => stateHeadOf(deps, STATE_DIR)],
     ['requireStateConfigSafe', (deps) => requireStateConfigSafe(deps, STATE_DIR, commands.upgrade)],
     ['requireStateRepoReady', (deps) => requireStateRepoReady(deps, STATE_DIR, [], 'the upgrade', commands.upgrade)],
   ];

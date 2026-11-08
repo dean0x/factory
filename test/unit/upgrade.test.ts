@@ -444,6 +444,19 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     expect(backupsOf(deps)).toEqual([]);
   });
 
+  it('stops with exit 4 before it writes the guard when the local git config names a program, and names the key (AC-7)', async () => {
+    const withKey = (inner: RunHandler): RunHandler => (call) =>
+      call.args.includes('--show-scope') ? exited(0, 'local\0filter.lfs.clean\ngit-lfs clean\0') : inner(call);
+    const { deps, gitSince } = await unguarded({ run: withKey });
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, newer));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('filter.lfs.clean');
+    expect(gitSince()).not.toContain(SETTING);
+    expect(snapshot(deps)).toEqual(before);
+    expect(backupsOf(deps)).toEqual([]);
+  });
+
   it('stops with exit 4 when the program path is not known, and writes nothing', async () => {
     const { deps } = await makeNode();
     const error = refusal(await upgrade({ ...deps, programArgv: [] }, newer));

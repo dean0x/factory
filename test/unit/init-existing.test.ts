@@ -1347,6 +1347,19 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
     expect(snapshot(deps)).toBe(before);
   });
 
+  it('exits 4 before any write when the local git config of the state folder names a program, and names the key (AC-7)', async () => {
+    const configList = { [STATE]: 'local\0filter.lfs.clean\ngit-lfs clean\0' };
+    const { deps, log } = existing({ state: 'valid', entry: null, fixture: { configList } });
+    repo(deps);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(messageOf(result)).toContain('filter.lfs.clean');
+    expect(setting(log)).toEqual([]);
+    expect(deps.files.has(INDEX)).toBe(false);
+    expect(snapshot(deps)).toBe(before);
+  });
+
   it('exits 4 and leaves the folder of the link as it was when the guard folder is a link', async () => {
     const { deps } = existing({ state: 'no-marker', entry: null }, { links: { [GUARD]: '/elsewhere/folder' } });
     repo(deps);

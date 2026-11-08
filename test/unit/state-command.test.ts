@@ -4,7 +4,7 @@ import { exitCodeOf } from '../../src/cli/errors.js';
 import { runState } from '../../src/commands/state.js';
 import { commandLines, commandText, maxFileBytes, schemaIds, stateGuard } from '../../src/names.js';
 import { createFakeDeps, exited, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
-import { STATE_GIT, withoutStateWords } from '../helpers/git-fake.js';
+import { STATE_GIT, STATE_GIT_WORDS, withoutStateWords } from '../helpers/git-fake.js';
 
 const STATE = '/h/node/.factory';
 
@@ -148,6 +148,12 @@ describe('the state guard command: changes that stop', () => {
     expect(error.message).toContain('B-2');
     expect(error.message).not.toContain('B-1');
     expect(error.message).not.toContain('\n');
+  });
+
+  it('shows an id with a control character as an escape', async () => {
+    const error = await stopOf({ head: board(['B-1', 'B-\u001b[31m9']), index: board(['B-1']) });
+    expect(error.message).not.toContain('\u001b');
+    expect(error.message).toContain('B-\\x1b[31m9');
   });
 
   it('names at most five ids and counts the rest', async () => {
@@ -320,7 +326,7 @@ describe('the state guard command: reads only', () => {
     const { deps } = await guardWith({ head: board(['B-1']), index: board(['B-1', 'B-2']) });
     const git = deps.calls.filter((call) => call.command === 'git');
     expect(git.length).toBeGreaterThan(0);
-    for (const call of git) expect(call.args.slice(0, 2)).toEqual(['-C', STATE]);
+    for (const call of git) expect(call.args.slice(0, 2 + STATE_GIT_WORDS.length)).toEqual(['-C', STATE, ...STATE_GIT_WORDS]);
     expect(commandsOf(deps).every((command) => /^(ls-files|rev-parse|ls-tree|cat-file|log)\b/.test(command))).toBe(true);
     expect(deps.files.size).toBe(0);
   });

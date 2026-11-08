@@ -228,6 +228,9 @@ const setFolderAside = async (deps: Deps, folder: string, copy: string): Promise
  * a link is never followed, and a folder is removed only at its real path.
  */
 export const installGuardWithUndo = async (deps: Deps, stateDir: string): Promise<CliResult<GuardChange>> => {
+  // The program path is checked before the old guard folder moves aside, so this refusal changes nothing.
+  const text = guardHookText(deps.programArgv);
+  if (!text.ok) return text;
   const gitDir = await ownGitFolderOf(deps, stateDir);
   if (!gitDir.ok) return gitDir;
   if (gitDir.value === null) return gitFolderRefusal(stateDir);

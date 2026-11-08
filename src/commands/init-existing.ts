@@ -6,7 +6,15 @@ import { inspectSharedConfig, loadConfig, parseConfigTexts, readNodeIdentity, se
 import type { FactoryConfig } from '../config/schema.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
-import { commitPaths, hasIdentity, requireStateRepoReady, requireWorkTreeTop, stateStatusOf, unstagePaths } from '../core/git.js';
+import {
+  commitPaths,
+  hasIdentity,
+  requireStateConfigSafe,
+  requireStateRepoReady,
+  requireWorkTreeTop,
+  stateStatusOf,
+  unstagePaths,
+} from '../core/git.js';
 import { entryProblemOf, markerProblemOf, reasonOf, rootRefusalOf } from '../core/home.js';
 import { recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -191,6 +199,12 @@ const checkExisting = async (
   if (!repair.ok) return repair;
   const guardDue = repair.value.kind === 'folder' ? ok(false) : await guardNeedsInstall(deps, root.value.layout.stateDir);
   if (!guardDue.ok) return guardDue;
+  // The guard sets a key in the git config of the state folder, so the check of that config comes before any write. The repair of
+  // the marker made that check in its ready check already.
+  if (guardDue.value && repair.value.kind === 'none') {
+    const safe = await requireStateConfigSafe(deps, root.value.layout.stateDir, commands.init);
+    if (!safe.ok) return safe;
+  }
 
   return ok({
     root: root.value,

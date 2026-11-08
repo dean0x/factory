@@ -1299,7 +1299,7 @@ export const stateGuard = {
 } as const;
 
 /** A subcommand of `worker` as a person types it, for example `factory worker watch`. */
-const workerCommandText =(subcommand: string): string => commandText(`${commands.worker} ${subcommand}`);
+const workerCommandText = (subcommand: string): string => commandText(`${commands.worker} ${subcommand}`);
 
 /** The command that replaces or adds one managed block, for example `factory upgrade --overwrite coordinator`. */
 export const overwriteCommand = (block: string): string =>

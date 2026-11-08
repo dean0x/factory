@@ -8,8 +8,9 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import {
   commitPaths,
   GIT_ENTRY,
-  headOf,
+  requireStateConfigSafe,
   requireStateRepoCommit,
+  stateHeadOf,
   unstagePaths,
   type RepoPaths,
 } from '../core/git.js';
@@ -186,9 +187,14 @@ const rootRepoLine = (made: MadeRootRepo): OutLine =>
     ? { level: 'ok', text: `Made the ${places.folder} a git repo. Its first commit holds ${made.paths.join(', ')}.` }
     : { level: 'warn', text: rootRepo.noIdentity };
 
-/** Write the delete guard when the plan says so, and give the line for it. A refusal of the write is exit 4 and changes no file. */
+/**
+ * Write the delete guard when the plan says so, and give the line for it. The write sets a key in the git config of the state folder,
+ * so the check of that config (`requireStateConfigSafe`) comes first. A refusal is exit 4 and changes no file.
+ */
 const writeGuard = async (deps: Deps, stateDir: string, plan: StateGuardPlan): Promise<CliResult<readonly OutLine[]>> => {
   if (plan.action !== 'install') return ok([]);
+  const safe = await requireStateConfigSafe(deps, stateDir, commands.upgrade);
+  if (!safe.ok) return safe;
   const installed = await installGuard(deps, stateDir, stateDir);
   return installed.ok ? ok([{ level: 'ok', text: `Wrote the delete guard in ${guardFolderLabel}.` }]) : installed;
 };
@@ -425,7 +431,7 @@ export const runUpgrade = async (
       const attempt = commit;
       if (attempt !== null) {
         // The commit may have landed although git reported an error, for example when the time limit stopped git.
-        const head = await headOf(deps, layout.stateDir);
+        const head = await stateHeadOf(deps, layout.stateDir);
         if (!head.ok) {
           return failure(
             `${error}. ${head.error.message}, so the files are not put back. ` +
@@ -500,7 +506,7 @@ export const runUpgrade = async (
     };
     const stateChanged = paths.present.length > 0;
     if (stateChanged) {
-      const head = await headOf(deps, layout.stateDir);
+      const head = await stateHeadOf(deps, layout.stateDir);
       if (!head.ok) return abort(head.error.message);
       commit = { head: head.value, paths };
       const committed = await commitPaths(deps, layout.stateDir, paths, COMMIT_MESSAGE);

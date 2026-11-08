@@ -1,7 +1,7 @@
 import { isAbsolute, join, normalize } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
-import { commitPaths, GIT_ENTRY, headOf, requireStateRepoCommit, unstagePaths, type RepoPaths } from '../core/git.js';
+import { commitPaths, GIT_ENTRY, requireStateRepoCommit, stateHeadOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { err, ok } from '../core/result.js';
 import { namedItems, shownPath } from '../core/root-paths.js';
 import { commandText, dirs, files, maxFileBytes, type CommandName } from '../names.js';
@@ -187,7 +187,7 @@ const commitLocked = async (
   // The refusal for a guard that is off comes before any write, and before the change of the caller runs.
   const guarded = await requireGuardOn(deps, layout.stateDir);
   if (!guarded.ok) return guarded;
-  const head = await headOf(deps, layout.stateDir);
+  const head = await stateHeadOf(deps, layout.stateDir);
   if (!head.ok) return head;
   const now = await currentTexts(deps, layout, touched);
   if (!now.ok) return now;
@@ -218,7 +218,7 @@ const commitLocked = async (
 
   // The commit may have landed although git reported an error, for example when the time limit stopped git.
   const error = committed.error.message;
-  const headAfter = await headOf(deps, layout.stateDir);
+  const headAfter = await stateHeadOf(deps, layout.stateDir);
   if (!headAfter.ok) {
     return failure(
       `${error}. ${headAfter.error.message}, so the files are not put back. ` +
