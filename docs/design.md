@@ -279,7 +279,7 @@ factory restart <worker>                    # restart one worker, and keep its c
 factory reboot                              # shut down the whole factory and start it again; each recorded worker resumes (§4.11)
 factory status [--home DIR] [--json]        # each worker with its state, its work item and its idle state; the digest for the owner (§4.11)
 factory dismiss <worker> [--yes] | --idle   # end a worker and free its work copy when its work is pushed; a dry run until --yes; --idle lists the idle workers first, and the owner picks (§4.11)
-factory doctor [--fix]                      # check the tools, their versions, the platform, the safety settings, the last-seen notes and the board
+factory doctor [--fix]                      # check the tools, their versions, the platform, the safety settings, the last-seen notes and the board; FAC-M11 adds the check of each board CLI: present, configured, authorized (§4.15)
 factory upgrade [--dry-run]                 # update the saved state and the parts of the text files that factory writes (§4.5)
 factory machine                             # the use of the processors, the memory and the disk against the limits
 factory help words                          # the plain description of each factory word (docs/glossary.md)
@@ -288,11 +288,14 @@ factory project add|remove|list
 factory recipe show                         # the project table of the coordinator, from the config
 factory tracker set <id> [--project P] [--items X] [--decisions X]   # change the board of the node, or of one project (§4.10)
 factory tracker status                      # the board of each project, and the check of its decision store
+factory plugin test <name>                  # run the contract suite of the board against a board plugin (§4.15, FAC-M11)
+factory track add|list|update ...           # the tracks of the roadmap, kept on the board (§4.11, FAC-M5)
 factory state remote <url|path> | push | pull   # set the private backup place of the saved state, and copy the state to it or from it (§4.3, FAC-M3)
 factory state guard                         # the delete-guard hooks of the state folder call it before a commit; not for people (§6, FAC-M5)
 
 factory worker new <id> --project P [--yes] [--copy PATH] [--assignment FILE]
-factory worker list [--json]                # the live workers table: pane, state, context percent and PREPARE or MAX mark (§4.6)
+factory worker list [--json] [--follow]     # the live workers table: pane, state, context percent and PREPARE or MAX mark (§4.6); --follow keeps the table live, with the columns of the live board (§4.11, FAC-M5b)
+factory worker mark <worker> parked|on-hold|none   # set the hold word of a worker, Parked or On hold, or clear it (§4.11, FAC-M5b)
 factory worker relay <worker> --decision D-n   # type owner input from a decision that the owner recorded (FAC-M5)
 factory worker reset <worker> (--clear | --compact)   # the session reset: type /clear or /compact in the pane of the worker, and check that it happened (§4.6, §4.12)
 factory worker stop <worker>                # end the program of the pane with TERM, and close the pane (§4.6, §4.11)
@@ -301,13 +304,12 @@ factory worker summon <worker> [--for 15m]  # show the pane of the worker in the
 factory worker watch [<worker>...] | recover | adopt <name>   # watch: exits at the first change of a worker, or after 20 minutes (§4.6); recover: FAC-M5; adopt: FAC-M7
 factory layout                              # make the window workers if it is missing, tile it, and put the board back in the slot (§4.6, §4.11)
 
-factory item add|update|move|close|list|import ...   # work items: the board
-factory request add|list|close ...          # items that wait for the owner
-factory decide ask <D-n> --options FILE     # a decision item in the decision store
-factory decide read [<D-n>]                 # read the answers on the board with no model use, and show them; it records nothing (§4.10)
+factory item add|update|move|close|list|note|doc|import ...   # work items: the board; note adds a note to an item, doc attaches a file to an item (§4.10)
+factory request add|list|update|close ...   # items that wait for the owner; add --options FILE asks a decision, as a decision item in the decision store (§4.10)
+factory decide read [<D-n>] [--from FILE]   # read the answers on the board with no model use, and show them; --from reads the data file of the page (FAC-M11); it records nothing (§4.10)
 factory decide <D-n> <option> [--note T] [--principle ID]   # the owner enters the decision in a terminal window, with every board kind; the decision log and the profile get it (§4.10)
 factory queue set|show                      # the order of the finished work that waits for an approval point
-factory watch                               # read the new board changes, a limited number of times; wake the coordinator (§4.10)
+factory watch                               # read the new board changes, the local change feed included, a limited number of times; wake the coordinator (§4.10)
 
 factory node tree | children | add-child | remove-child
 factory report [--json] [--since CURSOR]    # digest for the parent (§5)
@@ -316,7 +318,7 @@ factory adopt <path> [--dry-run]            # bring the setup of today into a no
 factory hook <event> | statusline           # Claude Code calls it; not for people (§4.6)
 ```
 
-Engineering note: `start` attaches to the tmux session when it runs, and `restart` resumes the worker with its session id. `doctor` checks the hooks that write the last-seen notes. `upgrade` migrates the state and the managed blocks. `machine` reads CPU, memory, disk and load. `state remote` sets the private git remote of the state folder. `state guard` is run by git, from the delete-guard hooks of the state folder, and never by a person (§6). `worker reset` and `self reset` type one constant line into a pane through `src/comms/` (§4.12). `decide read` reads the answers on the board by script, and records nothing. `decide <D-n>` records the decision of the owner, with every board kind. `watch` makes bounded reads. `--json` prints JSON, `--dry-run` changes nothing, and `--state-from` takes the work state from another machine (§4.3).
+Engineering note: `start` attaches to the tmux session when it runs, and `restart` resumes the worker with its session id. `doctor` checks the hooks that write the last-seen notes. `upgrade` migrates the state and the managed blocks. `machine` reads CPU, memory, disk and load. `state remote` sets the private git remote of the state folder. `state guard` is run by git, from the delete-guard hooks of the state folder, and never by a person (§6). `worker reset` and `self reset` type one constant line into a pane through `src/comms/` (§4.12). `decide read` reads the answers on the board by script, and records nothing. `decide <D-n>` records the decision of the owner, with every board kind. `watch` makes bounded reads, and it reads the local change feed too. `request add --options FILE` asks a decision. `plugin test` runs the contract suite of the board against a board plugin (§4.15). `track` keeps the tracks on the board, and `worker mark` sets the hold word of a worker (§4.11). `--json` prints JSON, `--dry-run` changes nothing, and `--state-from` takes the work state from another machine (§4.3).
 
 **Software recipe commands** (the commands that the `software` recipe adds)
 
