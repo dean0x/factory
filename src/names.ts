@@ -487,8 +487,27 @@ export const trackedFiles = { maxCount: 2_000, maxFileBytes } as const;
 /** The lowest version of git that factory runs with: the read of the git config of the state folder (`--show-scope`) needs it. */
 export const minGitVersion = '2.26';
 
-/** The keys of `board.json` that the reader of item ids uses: the list of items, and the id of one item. */
-export const boardKeys = { items: 'items', id: 'id' } as const;
+/**
+ * The keys of `board.json`. The top keys are the list of items and the list of tracks. `defaultQueue` is the key of the
+ * queue when the recipe gives none. The other keys belong to an item (`id`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`).
+ */
+export const boardKeys = {
+  items: 'items',
+  id: 'id',
+  tracks: 'tracks',
+  track: 'track',
+  stage: 'stage',
+  name: 'name',
+  roadmap: 'roadmap',
+  defaultQueue: 'queue',
+} as const;
+
+/**
+ * The most track lines that `item list` prints. The output holds at most 20 lines (`MAX_OUTPUT_LINES` in
+ * `test/helpers/short-output.ts`). Of them, one is the summary line, one is the heading line of the table (`tableLines` in
+ * `src/cli/output.ts`) and one is the more-tracks line. 20 - 3 is 17.
+ */
+export const maxTrackLines = 17;
 
 /** The first commit of the root repo, which `init` and `upgrade` make: the branch, the message and the notice of a missing identity. */
 export const rootRepo = {

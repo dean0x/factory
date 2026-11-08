@@ -111,10 +111,18 @@ describe('parseJsonText and initial files', () => {
   });
 
   it('writes the initial files with the shapes of the plan', () => {
-    expect(JSON.parse(initialBoardText())).toEqual({ queue: [], items: [] });
+    expect(JSON.parse(initialBoardText('queue'))).toEqual({ queue: [], items: [], tracks: [] });
     expect(JSON.parse(initialWaitingText())).toEqual({ intro: '', groups: [], items: [] });
     expect(JSON.parse(initialDecisionLogText())).toEqual({ rows: [] });
-    expect(initialBoardText().endsWith('\n')).toBe(true);
+    expect(initialBoardText('queue').endsWith('\n')).toBe(true);
+  });
+
+  it('M5-1b TP-29 writes the queue key that the caller gives, then the items and the tracks', () => {
+    expect(initialBoardText('line')).toBe('{\n  "line": [],\n  "items": [],\n  "tracks": []\n}\n');
+  });
+
+  it('M5-1b TP-70 seeds the tracks as an empty list', () => {
+    expect(JSON.parse(initialBoardText('line'))).toHaveProperty('tracks', []);
   });
 });
 

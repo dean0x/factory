@@ -15,6 +15,7 @@ import {
   keys,
   marker,
   maxFileBytes,
+  maxTrackLines,
   nodeCommands,
   permissionSkipList,
   program,
@@ -46,6 +47,7 @@ import { gitHandler } from '../helpers/git-fake.js';
 import { OLD_WORD_ENDINGS, OLD_WORD_LIST, oldWordsIn } from '../helpers/old-words.js';
 import { runInit } from '../helpers/package-registry.js';
 import { JARGON_ERE, JARGON_PATTERNS, jargonIn } from '../helpers/plain-words.js';
+import { MAX_OUTPUT_LINES } from '../helpers/short-output.js';
 import { allSourceFiles, callsOf, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
@@ -217,6 +219,13 @@ const propertyNamesOf = (tree: Readonly<Record<string, unknown>>): string[] =>
     name,
     ...(typeof value === 'object' && value !== null ? propertyNamesOf(value as Record<string, unknown>) : []),
   ]);
+
+describe('the limits of the track list', () => {
+  it('M5-1b TP-83 holds the track lines to the output cap minus the summary line, the table heading and the more-tracks line', () => {
+    expect(maxTrackLines).toBe(MAX_OUTPUT_LINES - 3);
+    expect(maxTrackLines).toBe(17);
+  });
+});
 
 describe('the role words and the terms', () => {
   /** The words that decision D-59 replaced in the roles and the terms. */

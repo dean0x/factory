@@ -65,6 +65,7 @@ import { nodeStateSchema, STATE_SCHEMA_VERSION } from '../state/schema.js';
 import { readSetupFile, renderableSetupText } from '../state/setup-text.js';
 import {
   findRecipe,
+  queueKeyOf,
   recipeIds,
   type ApprovalModes,
   type InitProjectKey,
@@ -321,8 +322,12 @@ const MAX_PARENT_LEVELS = 64;
 
 const withNewline = (text: string): string => (text.endsWith('\n') ? text : `${text}\n`);
 
-/** The state files. The worker file exists only when the layer has a worker block. */
-export const stateFilesOf = (templates: readonly BlockTemplate[], workerText: string | null): CliResult<readonly StateFile[]> => {
+/** The state files. The worker file exists only when the layer has a worker block. The board holds the queue under `queueKey`. */
+export const stateFilesOf = (
+  templates: readonly BlockTemplate[],
+  workerText: string | null,
+  queueKey: string,
+): CliResult<readonly StateFile[]> => {
   const state = nodeStateSchema.safeParse({
     [stateKeys.schemaVersion]: STATE_SCHEMA_VERSION,
     [stateKeys.createdWith]: FACTORY_VERSION,
@@ -332,7 +337,7 @@ export const stateFilesOf = (templates: readonly BlockTemplate[], workerText: st
   return ok([
     { rel: stateRel.nodeJson, text: jsonText(state.data) },
     ...(workerText === null ? [] : [{ rel: stateRel.worker, text: workerText }]),
-    { rel: stateRel.board, text: initialBoardText() },
+    { rel: stateRel.board, text: initialBoardText(queueKey) },
     { rel: stateRel.waiting, text: initialWaitingText() },
     { rel: stateRel.decisionLog, text: initialDecisionLogText() },
     { rel: stateRel.profileReadme, text: withNewline(fileTemplates.profileReadme) },
@@ -691,7 +696,7 @@ const planChecked = async (
 
   const config = parseSettings(settingsOf(checked, github, projects.value), registry);
   if (!config.ok) return config;
-  const stateFiles = stateFilesOf(templates, blocks.workerText);
+  const stateFiles = stateFilesOf(templates, blocks.workerText, queueKeyOf(checked.recipe));
   if (!stateFiles.ok) return stateFiles;
 
   const texts = renderConfig(config.value);
