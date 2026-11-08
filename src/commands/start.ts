@@ -212,9 +212,24 @@ export interface RestartedSession {
 }
 
 /**
+ * The git checks that come before a session is made: git is 2.26 or later, and it can list the config scopes of the state folder.
+ * The claim of the active machine stops on the second fault, after the session was made, and the session would stay with no one
+ * attached. A caller that makes a session calls this before its first change. `runStart` makes the same two checks inside its own
+ * tool check, because a dry run names them as problems.
+ */
+export const requireSessionGit = async (deps: Deps, home: string, command: CommandName): Promise<CliResult<void>> => {
+  const gitFault = await gitVersionProblem(deps);
+  if (gitFault !== null) {
+    return failure(gitFault, `Run "${commandText(commands.doctor)} ${flagText(flags.home)} ${shellWord(home)}" to check the tools.`);
+  }
+  return requireStateConfigListable(deps, layoutOf(home).stateDir, command);
+};
+
+/**
  * Makes the session of the node and recovers its coordinator and its workers: the steps of `start` after its checks and before
- * the person reaches the session. The caller has made the checks of the root and the tools, and the session does not run. `reboot`
- * calls this after it ended the session. `answers` holds the proxy answers of the run, so each proxy is asked once.
+ * the person reaches the session. The caller has made the checks of the root and the tools and of git (`requireSessionGit`), and
+ * the session does not run. `reboot` calls this after it ended the session. `answers` holds the proxy answers of the run, so each
+ * proxy is asked once.
  */
 export const startAgain = async (
   deps: Deps,
