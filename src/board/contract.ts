@@ -88,13 +88,11 @@ export interface DecisionOption {
   readonly rec?: boolean;
 }
 
-/** A decision item for the owner: a question with options. The connector gives it the next `D-n`. */
+/** A decision item for the owner: a one-line title and question, and 1 to 9 options. The connector gives it the next `D-n`. */
 export interface DecisionAskInput {
   readonly title: string;
   readonly question: string;
   readonly options: readonly DecisionOption[];
-  /** The id of a group of the waiting file. */
-  readonly group?: string;
 }
 
 /** A link from an item to a file of the factory folder: a relative path inside the folder, never a copy. */

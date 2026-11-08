@@ -49,7 +49,7 @@ const BOARD = files.board;
  * A path in the change is a plain path below the state folder: no folder above it, no empty or dotted part, and no part that is
  * a git folder. The git folder is compared in lower case, because a disk that ignores case gives `.GIT` the same folder as `.git`.
  */
-const isPlainPath = (path: string): boolean => {
+export const isPlainPath = (path: string): boolean => {
   const parts = path.split('/');
   return (
     path !== '' &&

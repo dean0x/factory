@@ -502,6 +502,8 @@ export const boardKeys = {
   stage: 'stage',
   name: 'name',
   roadmap: 'roadmap',
+  text: 'text',
+  docs: 'docs',
   defaultQueue: 'queue',
 } as const;
 
@@ -543,6 +545,31 @@ export const maxDisplayWidth = 120;
 
 /** The most characters of typed text that a message repeats: a field name, a stage or a key. A longer text is cut. */
 export const maxEchoChars = 40;
+
+/** The highest number of an id of the form `B-n` or `D-n`: the forms in `boardIds` take at most 9 digits. */
+export const maxBoardNumber = 999_999_999;
+
+/**
+ * The keys of a decision for the owner in the waiting file, and of one of its options. A decision holds an id (`waitingKeys.id`),
+ * a title, a question and a list of options. An option holds a key that the owner types, a text, and a mark for the option that the
+ * asker recommends.
+ */
+export const decisionKeys = { title: 'title', question: 'question', options: 'options' } as const;
+export const optionKeys = { key: 'key', text: 'text', rec: 'rec' } as const;
+
+/**
+ * The limits of the text of a board write. A title, a text, a question and the text of an option are one line each, with at most
+ * this many characters. A decision has at most `maxOptions` options. A link from an item to a file is a relative path of at most
+ * `maxDocPathChars` characters.
+ */
+export const boardTextLimits = {
+  maxTitleChars: 100,
+  maxTextChars: 500,
+  maxQuestionChars: 500,
+  maxOptionChars: 200,
+  maxOptions: 9,
+  maxDocPathChars: 200,
+} as const;
 
 /**
  * The names that an owner field can not take: the keys that an item, a queue row, a track or a decision record already
