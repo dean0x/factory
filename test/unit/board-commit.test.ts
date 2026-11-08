@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
-import { commands, stateLock } from '../../src/names.js';
-import { commitBoardChange, type BoardChange, type BoardCommit, type BoardTexts } from '../../src/state/board-commit.js';
+import { commands, files as fileNames, maxFileBytes, stateLock } from '../../src/names.js';
+import { commitBoardChange, readBoardFiles, type BoardChange, type BoardTexts } from '../../src/state/board-commit.js';
 import { installGuard } from '../../src/state/guard.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { exited, withFailingWrites, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
@@ -125,7 +125,7 @@ const request = (overrides: Partial<BoardChange> & Pick<BoardChange, 'change'>):
   ...overrides,
 });
 
-const errorOf = (result: CliResult<BoardCommit>): CliError => {
+const errorOf = <T>(result: CliResult<T>): CliError => {
   if (result.ok) throw new Error('the call worked');
   return result.error;
 };
@@ -463,5 +463,139 @@ describe('the board commit helper: the state lock (TP-18)', () => {
     expect(result).toEqual({ ok: true, value: { committed: true } });
     expect(held).toEqual(['change:true', 'commit:true']);
     expect(deps.sleeps.length).toBe(slept);
+  });
+});
+
+/** A board text with a pad key, so that a test can set the size of the text. An item has a status when `status` is given. */
+const boardWithPad = (ids: readonly string[], pad: string, status?: string): string =>
+  `${JSON.stringify({ queue: [], items: ids.map((id) => (status === undefined ? { id } : { id, status })), pad }, null, 2)}\n`;
+
+/** A board text of exactly `bytes` bytes. The pad is plain ASCII. */
+const boardOfSize = (bytes: number, ids: readonly string[] = ['B-1', 'B-2']): string =>
+  boardWithPad(ids, 'x'.repeat(bytes - Buffer.byteLength(boardWithPad(ids, ''), 'utf8')));
+
+const OVER = 'x'.repeat(maxFileBytes + 1);
+
+describe('the board commit helper: the size of the new text (TP-85)', () => {
+  it.each([
+    ['the board', fileNames.board],
+    ['the waiting file', fileNames.waiting],
+    ['the decision log', fileNames.decisionLog],
+  ])('M5-1b TP-85 refuses %s over the cap with exit 1, names the file and the cap, and changes no file and no commit', async (_name, file) => {
+    const { deps, seen } = await setup();
+    const before = stateFiles(deps);
+    const { change } = changing(ok(texts({ [file]: OVER })));
+    const error = errorOf(await commitBoardChange(deps, LAYOUT, request({ touched: [file], change })));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(file);
+    expect(error.message).toContain(String(maxFileBytes));
+    expect(stateFiles(deps)).toEqual(before);
+    expect(writesOf(seen)).toEqual([]);
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('M5-1b TP-85 writes no file at all when one of two changed files is over the cap', async () => {
+    const { deps, seen } = await setup();
+    const before = stateFiles(deps);
+    const { change } = changing(ok(texts({ 'board.json': board(['B-1', 'B-2', 'B-3']), 'waiting.json': OVER })));
+    const error = errorOf(await commitBoardChange(deps, LAYOUT, request({ touched: ['board.json', 'waiting.json'], change })));
+    expect(error.message).toContain('waiting.json');
+    expect(stateFiles(deps)).toEqual(before);
+    expect(writesOf(seen)).toEqual([]);
+  });
+
+  it('M5-1b TP-85 stops on the size before the lost-id check, so a board over the cap that drops an id exits 1', async () => {
+    const { deps } = await setup();
+    const { change } = changing(ok(texts({ 'board.json': boardOfSize(maxFileBytes + 1, ['B-1']) })));
+    const error = errorOf(await commitBoardChange(deps, LAYOUT, request({ change })));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(String(maxFileBytes));
+  });
+
+  it('M5-1b TP-85 counts bytes and not characters', async () => {
+    const { deps } = await setup();
+    const wide = 'é'.repeat(maxFileBytes / 2 + 1);
+    expect(wide.length).toBeLessThan(maxFileBytes);
+    const { change } = changing(ok(texts({ 'waiting.json': wide })));
+    const error = errorOf(await commitBoardChange(deps, LAYOUT, request({ touched: ['waiting.json'], change })));
+    expect(error.message).toContain(String(maxFileBytes));
+  });
+});
+
+describe('the board commit helper: the size check reads the new text (TP-86)', () => {
+  it('M5-1b TP-86 accepts a board of exactly the cap', async () => {
+    const { deps } = await setup();
+    const next = boardOfSize(maxFileBytes);
+    const { change } = changing(ok(texts({ 'board.json': next })));
+    expect(await commitBoardChange(deps, LAYOUT, request({ change }))).toEqual({ ok: true, value: { committed: true } });
+    expect(deps.files.get(BOARD)).toBe(next);
+  });
+
+  it('M5-1b TP-86 closes an item on a board just under the cap, because the new text is still within the cap', async () => {
+    const before = boardOfSize(maxFileBytes - 100);
+    const { deps } = await setup({ board: before });
+    const pad = 'x'.repeat(maxFileBytes - 100 - Buffer.byteLength(boardWithPad(['B-1', 'B-2'], ''), 'utf8'));
+    const closed = boardWithPad(['B-1', 'B-2'], pad, 'closed');
+    expect(Buffer.byteLength(closed, 'utf8')).toBeGreaterThan(Buffer.byteLength(before, 'utf8'));
+    expect(Buffer.byteLength(closed, 'utf8')).toBeLessThanOrEqual(maxFileBytes);
+    const { change } = changing(ok(texts({ 'board.json': closed })));
+    expect(await commitBoardChange(deps, LAYOUT, request({ change }))).toEqual({ ok: true, value: { committed: true } });
+    expect(deps.files.get(BOARD)).toBe(closed);
+  });
+
+  it('M5-1b TP-86 leaves a board of exactly the cap alone when the change keeps it, with no commit', async () => {
+    const full = boardOfSize(maxFileBytes);
+    const { deps, seen } = await setup({ board: full });
+    const { change } = changing(ok(texts({ 'board.json': full })));
+    expect(await commitBoardChange(deps, LAYOUT, request({ change }))).toEqual({ ok: true, value: { committed: false } });
+    expect(writesOf(seen)).toEqual([]);
+  });
+});
+
+describe('the board commit helper: a file that is not UTF-8 (TP-51)', () => {
+  it('M5-1b TP-51 stops with exit 1 and names the file, before the change runs, and writes nothing', async () => {
+    const { deps, seen } = await setup();
+    deps.invalidUtf8.add(BOARD);
+    const before = stateFiles(deps);
+    const { change, got } = changing(ok(texts({ 'board.json': board(['B-1', 'B-2', 'B-3']) })));
+    const error = errorOf(await commitBoardChange(deps, LAYOUT, request({ change })));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(BOARD);
+    expect(got).toEqual([]);
+    expect(stateFiles(deps)).toEqual(before);
+    expect(writesOf(seen)).toEqual([]);
+  });
+});
+
+describe('the board commit helper: the read with no lock (TP-93)', () => {
+  it('M5-1b TP-93 gives the text of each file, and null for a file that is not there', async () => {
+    const { deps } = await setup();
+    const read = await readBoardFiles(deps, LAYOUT, ['board.json', 'waiting.json']);
+    expect(read).toEqual({ ok: true, value: texts({ 'board.json': board(['B-1', 'B-2']), 'waiting.json': null }) });
+  });
+
+  it('M5-1b TP-93 reads while another process holds the state lock, does not wait, and leaves the lock file as it is', async () => {
+    const { deps } = await setup();
+    deps.seed(LOCK_FILE, '1\n');
+    const slept = deps.sleeps.length;
+    const read = await readBoardFiles(deps, LAYOUT, ['board.json']);
+    expect(read).toEqual({ ok: true, value: texts({ 'board.json': board(['B-1', 'B-2']) }) });
+    expect(deps.sleeps.length).toBe(slept);
+    expect(deps.files.get(LOCK_FILE)).toBe('1\n');
+  });
+
+  it('M5-1b TP-51 fails with exit 1 and names the file when the text is not UTF-8', async () => {
+    const { deps } = await setup();
+    deps.invalidUtf8.add(BOARD);
+    const error = errorOf(await readBoardFiles(deps, LAYOUT, ['board.json']));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(BOARD);
+  });
+
+  it('M5-1b TP-93 reads no file for a path that is not a plain path below the state folder', async () => {
+    const { deps, seen } = await setup();
+    const result = await readBoardFiles(deps, LAYOUT, ['../x']);
+    expect(result.ok).toBe(false);
+    expect(seen).toEqual([]);
   });
 });
