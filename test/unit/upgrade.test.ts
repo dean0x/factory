@@ -10,11 +10,12 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
-import { commands, env, hookNames, setupBlockNames } from '../../src/names.js';
+import { commands, env, hookNames, setupBlockNames, stateGuard } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
 import { jsonText, SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
+import { guardHookText } from '../../src/state/guard.js';
 import { parseJsonText } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { backup, restore, writeAll, type Written } from '../../src/upgrade/apply.js';
@@ -23,7 +24,16 @@ import { currentSpec, parseConfigTexts, runInit, runUpgrade } from '../helpers/p
 import { fileTemplates } from '../../src/templates/index.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
-import { createFakeDeps, exited, registerRoot, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
+import {
+  createFakeDeps,
+  exited,
+  FAKE_PROGRAM_ARGV,
+  registerRoot,
+  withFailingWrites,
+  type FakeDeps,
+  type RunCall,
+  type RunHandler,
+} from '../helpers/fake-deps.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
@@ -72,10 +82,16 @@ const makingGitFolders =
     return inner(call);
   };
 
+/**
+ * The guard folder of the state repo of the test node. The fake git keeps a setting by the folder that it was written in, and `init`
+ * writes the setting in the staging folder, so the fixture gives the setting that real git keeps after the rename.
+ */
+const NODE_GUARD_FOLDER = `${HOME}/.factory/.git/factory-guard`;
+
 const makeNode = async (
   options: { repo?: boolean; run?: (inner: RunHandler) => RunHandler; links?: Record<string, string> } = {},
 ): Promise<Node> => {
-  const { handler } = gitHandler();
+  const { handler } = gitHandler({ hooksPath: { [`${HOME}/.factory`]: NODE_GUARD_FOLDER } });
   const deps = createFakeDeps({
     cwd: '/w',
     env: { PATH: '/bin', ...INDEX_ENV },
@@ -125,6 +141,9 @@ const gitWrites = (commands: readonly string[]): string[] =>
   commands.filter(
     (command) => !command.startsWith('config') && !command.startsWith('rev-parse') && !command.startsWith('status'),
   );
+
+/** A git command that is neither a read of a setting nor the read of the git folder, which the plan of the delete guard makes. */
+const notAGuardRead = (command: string): boolean => !command.startsWith('config') && !command.startsWith('rev-parse --absolute-git-dir');
 
 const text = (deps: FakeDeps, path: string): string => deps.files.get(path) ?? '';
 const snapshot = (deps: FakeDeps): Map<string, string> => new Map(deps.files);
@@ -196,7 +215,7 @@ describe('upgrade: when nothing changes', () => {
     });
     expect(output.failed).toBe(false);
     expect(snapshot(deps)).toEqual(before);
-    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    expect(gitSince().filter(notAGuardRead)).toEqual([]);
   });
 
   it('skips a missing block with a warning, and does not create it', async () => {
@@ -313,6 +332,124 @@ describe('upgrade: the root .gitignore (TP-117)', () => {
   });
 });
 
+describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)', () => {
+  const GUARD = `${HOME}/.factory/.git/${stateGuard.folder}`;
+  const HOOK = `${GUARD}/${stateGuard.hookFile}`;
+  const SETTING = `config -- core.hooksPath ${GUARD}`;
+  const COMMIT = '-c commit.gpgsign=false commit -q -m chore: upgrade the state';
+  const GUARD_LINE = '.factory/.git/factory-guard: write the delete guard hook and point core.hooksPath at it';
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+
+  const hookText = (): string => {
+    const made = guardHookText(FAKE_PROGRAM_ARGV);
+    if (!made.ok) throw new Error(made.error.message);
+    return made.value;
+  };
+  /** A node whose guard is off: its hook file is gone. */
+  const unguarded = async (options: Parameters<typeof makeNode>[0] = {}): Promise<Node> => {
+    const node = await makeNode(options);
+    expect(node.deps.files.delete(HOOK)).toBe(true);
+    return node;
+  };
+  const backupsOf = (deps: FakeDeps): string[] => [...deps.files.keys()].filter((path) => path.startsWith(`${HOME}/.factory/backups/`));
+
+  it('plans no step and names no line when the guard is on', async () => {
+    const { deps } = await makeNode();
+    const output = success(await upgrade(deps));
+    expect(output.json).toMatchObject({ changed: false, stateGuard: 'current' });
+    expect(lineTexts(output).join('\n')).not.toContain('delete guard');
+  });
+
+  it('plans the install for a factory with no guard: the dry run names it, changes nothing and the JSON holds stateGuard (TP-4)', async () => {
+    const { deps, gitSince } = await unguarded();
+    const before = snapshot(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain(GUARD_LINE);
+    expect(output.json).toMatchObject({ changed: true, dryRun: true, stateGuard: 'install', committed: false, backup: null });
+    expect(snapshot(deps)).toEqual(before);
+    expect(gitSince().filter((command) => command.startsWith('config --'))).toEqual([]);
+  });
+
+  it('plans the install for each way that the guard is off: other hook bytes, an extra file, another mode', async () => {
+    for (const change of [
+      (deps: FakeDeps) => deps.files.set(HOOK, '#!/bin/sh\nexit 0\n'),
+      (deps: FakeDeps) => deps.seed(`${GUARD}/post-commit`, 'x'),
+      (deps: FakeDeps) => deps.modes.set(HOOK, 0o644),
+    ]) {
+      const { deps } = await makeNode();
+      change(deps);
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(output.json).toMatchObject({ stateGuard: 'install' });
+    }
+  });
+
+  it('writes the guard and makes no backup and no commit when the guard is the only change (TP-5)', async () => {
+    const { deps, gitSince } = await unguarded();
+    const output = success(await upgrade(deps));
+    expect(output.json).toMatchObject({ changed: true, stateGuard: 'install', backup: null, committed: false, blockBackups: [] });
+    expect(text(deps, HOOK)).toBe(hookText());
+    expect(deps.modes.get(HOOK)).toBe(0o755);
+    expect(gitSince()).toContain(SETTING);
+    expect(gitSince().some((command) => command.startsWith('add') || command.includes('commit'))).toBe(false);
+    expect(backupsOf(deps)).toEqual([]);
+    expect(lineTexts(output)).toContain('Wrote the delete guard in .factory/.git/factory-guard.');
+  });
+
+  it('finds nothing to upgrade the second time (TP-5)', async () => {
+    const { deps } = await unguarded();
+    success(await upgrade(deps));
+    const again = success(await upgrade(deps));
+    expect(again.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(again.json).toMatchObject({ changed: false, stateGuard: 'current' });
+  });
+
+  it('writes the guard before the ready check and the commit of the state files, and the commit holds no guard path (TP-5)', async () => {
+    const { deps, gitSince } = await unguarded();
+    const output = success(await upgrade(deps, newer));
+    const git = gitSince();
+    const [setting, ready, commit] = [git.indexOf(SETTING), git.findIndex((command) => command.startsWith('status')), git.indexOf(COMMIT)];
+    expect(output.json).toMatchObject({ stateGuard: 'install', committed: true });
+    expect(setting).toBeGreaterThanOrEqual(0);
+    expect(setting).toBeLessThan(ready);
+    expect(ready).toBeLessThan(commit);
+    expect(git.filter((command) => command.startsWith('add')).join('\n')).not.toContain(stateGuard.folder);
+    expect(text(deps, HOOK)).toBe(hookText());
+  });
+
+  it('keeps working in a factory whose guard is off: the upgrade of the state files runs and commits (TP-6)', async () => {
+    const { deps } = await unguarded();
+    const output = success(await upgrade(deps, newer));
+    expect(output.json).toMatchObject({ changed: true, committed: true });
+    expect(text(deps, CLAUDE)).toContain('New coordinator text.');
+  });
+
+  it('plans no guard step for a state folder that is no repo, so a change of the config only still works', async () => {
+    const { deps } = await makeNode({ repo: false });
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]), ...fixedBlocks(layer1Blocks) };
+    expect(success(await upgrade(deps, spec)).json).toMatchObject({ changed: true, stateGuard: 'current', committed: false });
+  });
+
+  it('stops with exit 4 and changes nothing when the guard folder is a link, and leaves the folder of the link as it was (TP-53)', async () => {
+    const links: Record<string, string> = {};
+    const { deps } = await makeNode({ links });
+    links[GUARD] = '/elsewhere/folder';
+    deps.seed('/elsewhere/folder/keep.txt', 'keep');
+    const before = snapshot(deps);
+    const error = refusal(await upgrade(deps, newer));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(snapshot(deps)).toEqual(before);
+    expect([...deps.files.keys()].filter((path) => path.startsWith('/elsewhere/'))).toEqual(['/elsewhere/folder/keep.txt']);
+    expect(backupsOf(deps)).toEqual([]);
+  });
+
+  it('stops with exit 4 when the program path is not known, and writes nothing', async () => {
+    const { deps } = await makeNode();
+    const error = refusal(await upgrade({ ...deps, programArgv: [] }, newer));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(backupsOf(deps)).toEqual([]);
+  });
+});
+
 describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
   const STATE_DIR = `${HOME}/.factory`;
   const STATE_IGNORE = `${STATE_DIR}/.gitignore`;
@@ -369,7 +506,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
     expect(text(deps, STATE_IGNORE)).toBe(`${BEFORE_WORKERS}${LINE}`);
     expect(snapshot(deps)).toEqual(after);
     expect(deps.atomicWrites).toHaveLength(writes);
-    expect(gitSince().slice(commands).filter((command) => !command.startsWith('config'))).toEqual([]);
+    expect(gitSince().slice(commands).filter(notAGuardRead)).toEqual([]);
   });
 
   it.each([
@@ -386,7 +523,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
     expect(output.json).toMatchObject({ changed: false, stateGitignore: 'current' });
     expect(text(deps, STATE_IGNORE)).toBe(mine);
     expect(deps.atomicWrites).toHaveLength(writes);
-    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    expect(gitSince().filter(notAGuardRead)).toEqual([]);
   });
 
   it('does not take a comment or a longer name for the line', async () => {
@@ -458,7 +595,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
     }
     expect(wholeState(deps)).toEqual(before);
     expect(text(deps, '/outside/ignore')).toBe(BEFORE_WORKERS);
-    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    expect(gitSince().filter(notAGuardRead)).toEqual([]);
   });
 
   it('exits 1 for a .gitignore with a change that is not committed, and writes nothing', async () => {
@@ -1473,7 +1610,9 @@ describe('upgrade: before it changes anything', () => {
   });
 
   it('needs a git identity', async () => {
-    const { deps } = await makeNode({ run: (inner) => (call) => (call.args.includes('config') ? exited(1) : inner(call)) });
+    const { deps } = await makeNode({
+      run: (inner) => (call) => (call.args.includes('user.name') || call.args.includes('user.email') ? exited(1) : inner(call)),
+    });
     const before = snapshot(deps);
     const error = refusal(await upgrade(deps, newer));
     expect(error.message).toBe('git has no user.name and user.email');
@@ -1504,7 +1643,11 @@ describe('upgrade: before it changes anything', () => {
 
   it('finds the node from the current folder, and fails when there is none', async () => {
     const { deps } = await makeNode();
-    const inside = createFakeDeps({ cwd: `${HOME}/deep`, env: INDEX_ENV });
+    const inside = createFakeDeps({
+      cwd: `${HOME}/deep`,
+      env: INDEX_ENV,
+      run: gitHandler({ hooksPath: { [`${HOME}/.factory`]: NODE_GUARD_FOLDER } }).handler,
+    });
     for (const [path, body] of deps.files) inside.seed(path, body);
     for (const dir of deps.dirs) inside.seedDir(dir);
     inside.seedDir(`${HOME}/deep`);
@@ -1656,9 +1799,12 @@ describe('upgrade: a node of schema 1', () => {
     return { deps, gitSince: () => deps.calls.slice(first).map((call) => withoutStateWords(call.args).slice(2).join(' ')) };
   };
 
-  /** The files of the node, without the backups. */
+  /**
+   * The files of the node, without the backups and without the git folder of the state repo. The delete guard lives in the git
+   * folder and a stopped run leaves it in place: a second run finds it current.
+   */
   const live = (deps: FakeDeps): Map<string, string> =>
-    new Map([...deps.files].filter(([path]) => !path.startsWith(BACKUPS_DIR)));
+    new Map([...deps.files].filter(([path]) => !path.startsWith(BACKUPS_DIR) && !path.startsWith(`${HOME}/.factory/.git/`)));
 
   it('has a worker line to edit', () => {
     expect(workerLine).not.toBe('');
@@ -1976,10 +2122,10 @@ describe('upgrade: a node of schema 1', () => {
       const { deps, gitSince } = makeOldNode({
         run: (inner) => (call) => (call.args.includes('status') ? exited(0, ' M roadmaps/README.md\0') : inner(call)),
       });
-      const before = snapshot(deps);
+      const before = live(deps);
       const error = refusal(await upgrade(deps));
       expect(error.message).toBe('.factory has changes in files that the upgrade changes: roadmaps/README.md');
-      expect(snapshot(deps)).toEqual(before);
+      expect(live(deps)).toEqual(before);
       expect(gitWrites(gitSince())).toEqual([]);
     });
 
@@ -2000,10 +2146,10 @@ describe('upgrade: a node of schema 1', () => {
     const { deps, gitSince } = makeOldNode({
       run: (inner) => (call) => (call.args.includes('status') ? exited(0, `${entry}\0 M board.md\0`) : inner(call)),
     });
-    const before = snapshot(deps);
+    const before = live(deps);
     const error = refusal(await upgrade(deps));
     expect(error.message).toBe(`.factory has changes in files that the upgrade changes: ${path}`);
-    expect(snapshot(deps)).toEqual(before);
+    expect(live(deps)).toEqual(before);
     expect(gitWrites(gitSince())).toEqual([]);
   });
 
@@ -2347,7 +2493,7 @@ describe('upgrade: a node of schema 1', () => {
     it('does not check the home when nothing is upgraded', async () => {
       const { deps, gitSince } = await makeNode();
       expect(success(await upgrade(deps)).warnings).toEqual([]);
-      expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+      expect(gitSince().filter(notAGuardRead)).toEqual([]);
     });
   });
 
@@ -2810,7 +2956,7 @@ describe('upgrade: the two config files', () => {
     expect(snapshot(deps)).toEqual(before);
     expect(deps.files.has(LOCAL)).toBe(false);
     expect(deps.atomicWrites.slice(written)).toEqual([]);
-    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    expect(gitSince().filter(notAGuardRead)).toEqual([]);
   });
 
   it('plans the shared file and the local file apart: only the local file migrates, and it is written with mode 600', async () => {
@@ -2922,7 +3068,7 @@ describe('upgrade: the two config files', () => {
       }
       expect(deps.modes.get(LOCAL)).toBe(mode);
       expect(snapshot(deps)).toEqual(before);
-      expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+      expect(gitSince().filter(notAGuardRead)).toEqual([]);
     });
 
     it('stops with exit 4 and one remedy line for a local file that is a link, before the mode fix, and changes nothing (TP-147)', async () => {
@@ -2939,7 +3085,7 @@ describe('upgrade: the two config files', () => {
       }
       expect(deps.modes.get(LOCAL)).toBe(0o644);
       expect(snapshot(deps)).toEqual(before);
-      expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+      expect(gitSince().filter(notAGuardRead)).toEqual([]);
     });
   });
 });
@@ -2975,7 +3121,7 @@ describe('upgrade: the link rule (TP-130)', () => {
     }
     expect(wholeState(deps)).toEqual(before);
     expect([...deps.files.keys()].some((file) => file.includes('/backups/'))).toBe(false);
-    expect(gitSince().filter((command) => !command.startsWith('config'))).toEqual([]);
+    expect(gitSince().filter(notAGuardRead)).toEqual([]);
   });
 
   it('stops for a link in an overwrite run too, and does not follow it to add a block', async () => {

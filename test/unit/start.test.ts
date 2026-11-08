@@ -405,6 +405,20 @@ describe('start:a new session', () => {
   });
 });
 
+describe('start:a factory whose delete guard is off (TP-6)', () => {
+  it('starts as it did before, and makes no git read of the guard', async () => {
+    const { deps } = make();
+    expect(deps.files.has(`${STATE_DIR}/.git/factory-guard/pre-commit`)).toBe(false);
+    const result = await startFactory(deps);
+    expect(result.ok).toBe(true);
+    const guardReads = deps.calls
+      .filter((call) => call.command === 'git')
+      .map((call) => withoutStateWords(call.args).slice(2).join(' '))
+      .filter((command) => command.includes('core.hooksPath') || command.startsWith('rev-parse --absolute-git-dir'));
+    expect(guardReads).toEqual([]);
+  });
+});
+
 describe('start:attach', () => {
   it('attaches with the terminal when a person types and reads, outside tmux', async () => {
     const { deps, tmux } = make({ tty: true });

@@ -6,15 +6,7 @@ import { inspectSharedConfig, loadConfig, parseConfigTexts, readNodeIdentity, se
 import type { FactoryConfig } from '../config/schema.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
-import {
-  commitPaths,
-  GIT_ENTRY,
-  hasIdentity,
-  requireStateRepoReady,
-  requireWorkTreeTop,
-  stateStatusOf,
-  unstagePaths,
-} from '../core/git.js';
+import { commitPaths, hasIdentity, requireStateRepoReady, requireWorkTreeTop, stateStatusOf, unstagePaths } from '../core/git.js';
 import { entryProblemOf, markerProblemOf, reasonOf, rootRefusalOf } from '../core/home.js';
 import { recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -32,12 +24,11 @@ import {
   program,
   roles,
   schemaIds,
-  stateGuard,
   values,
 } from '../names.js';
 import { ownerModes, type ApprovalModes, type ApprovalPoint, type RecipeRegistry } from '../recipes/index.js';
 import { parseProxyUrl, proxyLabel } from '../safety/proxy.js';
-import { guardNeedsInstall, installGuard } from '../state/guard.js';
+import { guardFolderLabel, guardNeedsInstall, installGuard } from '../state/guard.js';
 import { stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { STATE_LABEL } from '../state/load.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
@@ -583,15 +574,13 @@ const applyExisting = async (
   });
 };
 
-const GUARD_PATH = join(dirs.state, GIT_ENTRY, stateGuard.folder);
-
 const writtenNames = (plan: Plan, repair: Repair, text: TextOutcome | null, guarded: boolean): readonly string[] => {
   const names = { none: [], marker: [STATE_LABEL], folder: [`${dirs.state}/`] };
   return [
     ...(plan.local === null ? [] : [files.localConfig]),
     ...(text?.wrote === true ? [COORDINATOR_PATH] : []),
     ...names[repair.kind],
-    ...(guarded ? [GUARD_PATH] : []),
+    ...(guarded ? [guardFolderLabel] : []),
   ];
 };
 

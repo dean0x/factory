@@ -333,6 +333,32 @@ describe('the mark of the active machine: who it names', () => {
   });
 });
 
+describe('the mark of the active machine in a state repo whose delete guard is off (TP-6)', () => {
+  /** The git reads that tell a guard that is on from a guard that is off. The ready check of the state repo makes none of them. */
+  const guardReadsOf = (deps: FakeDeps): string[] =>
+    deps.calls
+      .filter((call) => call.command === 'git')
+      .map((call) => withoutStateWords(call.args).slice(2).join(' '))
+      .filter((command) => command.includes('core.hooksPath') || command.startsWith('rev-parse --absolute-git-dir'));
+
+  it('claims the mark and commits it, and reads no state of the guard', async () => {
+    const deps = make();
+    expect(deps.files.has(`${STATE}/.git/factory-guard/pre-commit`)).toBe(false);
+    expect(await claimActiveMachine(deps, HOME)).toEqual({ claimed: true, other: null });
+    expect(writesOf(deps)).toHaveLength(2);
+    expect(guardReadsOf(deps)).toEqual([]);
+  });
+
+  it('clears the mark and commits the removal, and reads no state of the guard', async () => {
+    const deps = make();
+    deps.seed(LAYOUT.machineIdFile, `${FIRST_ID}\n`);
+    deps.seed(LAYOUT.activeMachineFile, markText(FIRST_ID, OTHER_AT));
+    expect(await clearActiveMark(deps, HOME, commands.start)).toEqual({ ok: true, value: 'cleared' });
+    expect(writesOf(deps)).toHaveLength(2);
+    expect(guardReadsOf(deps)).toEqual([]);
+  });
+});
+
 describe('the mark of the active machine: the clear', () => {
   const marked = (machine: string): FakeDeps => {
     const deps = make();

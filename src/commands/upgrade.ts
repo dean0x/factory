@@ -36,6 +36,7 @@ import {
   rootRepo,
   schemaIds,
 } from '../names.js';
+import { guardFolderLabel, installGuard } from '../state/guard.js';
 import { layoutOf } from '../state/layout.js';
 import type { SetupTexts } from '../templates/types.js';
 import {
@@ -69,9 +70,11 @@ import {
   planRoot,
   planRootMoves,
   planStateGitignore,
+  planStateGuard,
   refusalOf,
   settleSetupBlocks,
   type FilesPlan,
+  type StateGuardPlan,
 } from '../upgrade/plan.js';
 import { applyHookSettings, hookPlanLines, planHookSettings } from '../upgrade/hook-settings.js';
 import { specFor, type UpgradeSpec } from '../upgrade/spec.js';
@@ -167,6 +170,13 @@ const rootRepoLine = (made: MadeRootRepo): OutLine =>
   made.committed
     ? { level: 'ok', text: `Made the ${places.folder} a git repo. Its first commit holds ${made.paths.join(', ')}.` }
     : { level: 'warn', text: rootRepo.noIdentity };
+
+/** Write the delete guard when the plan says so, and give the line for it. A refusal of the write is exit 4 and changes no file. */
+const writeGuard = async (deps: Deps, stateDir: string, plan: StateGuardPlan): Promise<CliResult<readonly OutLine[]>> => {
+  if (plan.action !== 'install') return ok([]);
+  const installed = await installGuard(deps, stateDir, stateDir);
+  return installed.ok ? ok([{ level: 'ok', text: `Wrote the delete guard in ${guardFolderLabel}.` }]) : installed;
+};
 
 const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };
 
@@ -269,6 +279,9 @@ export const runUpgrade = async (
   // The hook settings are planned with no write, so a stop of a check comes before the first write of the run.
   const hooks = await planHookSettings(deps, home, options.yes);
   if (!hooks.ok) return hooks;
+  // The guard is read last among the plans: it runs git, and a plan that stops the command runs no git command.
+  const guard = await planStateGuard(deps, layout);
+  if (!guard.ok) return guard;
 
   const changes = blocks.filter(isChange);
   const stateChanges =
@@ -280,7 +293,9 @@ export const runUpgrade = async (
     root.value.gitignore.action !== 'current' ||
     root.value.repo ||
     changes.length > 0;
-  const changed = stateChanges || hooks.value.length > 0;
+  // The guard is written inside the git folder, so it is no change of the saved state: it needs no backup and no commit.
+  const guardChange = guard.value.action === 'install';
+  const changed = stateChanges || hooks.value.length > 0 || guardChange;
 
   // The new texts come from pure functions. The dry run makes them too, so that it reports what the real run refuses.
   const stateText = stateFileText(state.value, upgrade, changes);
@@ -291,7 +306,7 @@ export const runUpgrade = async (
   if (!localText.ok) return localText;
 
   const lines: OutLine[] = [
-    ...planLines(config.value, local.value, state.value, files, stateGitignore.value, root.value, blocks, upgrade),
+    ...planLines(config.value, local.value, state.value, files, stateGitignore.value, guard.value, root.value, blocks, upgrade),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
   ];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
@@ -305,6 +320,7 @@ export const runUpgrade = async (
     moves: files.moves.map((move) => ({ from: move.from, to: move.to })),
     replaces: files.replaces.map((replace) => ({ path: replace.path, action: replace.action })),
     stateGitignore: stateGitignore.value.action,
+    stateGuard: guard.value.action,
     gitignore: root.value.gitignore.action,
     rootRepo: root.value.repo,
     blocks: blocks.map((plan) => ({
@@ -344,10 +360,16 @@ export const runUpgrade = async (
     const dryLines = [...hookPlanLines(hooks.value, options.yes), { level: 'text' as const, text: 'Dry run: no file was changed.' }];
     return done(dryLines, null, false, [], hooks.value.map((change) => change.file));
   }
+
+  // The guard comes first: before the ready check of the state repo and before any backup or write of the run. A refusal here
+  // (exit 4) has changed no file.
+  const guarded = await writeGuard(deps, layout.stateDir, guard.value);
+  if (!guarded.ok) return guarded;
+  const guardLines = guarded.value;
   if (!stateChanges) {
-    // Only the hook settings change: the run makes no backup and no commit.
+    // Only the guard and the hook settings change: the run makes no backup and no commit.
     const applied = await applyHookSettings(deps, hooks.value, options.yes);
-    return applied.ok ? done(applied.value.lines, null, false, [], applied.value.changed) : applied;
+    return applied.ok ? done([...guardLines, ...applied.value.lines], null, false, [], applied.value.changed) : applied;
   }
 
   const replacements = files.replaces.filter((replace) => replace.action === 'replace');
@@ -485,6 +507,7 @@ export const runUpgrade = async (
   }
   return done(
     [
+      ...guardLines,
       ...keptLines,
       ...(rootMade === null ? [] : [rootRepoLine(rootMade)]),
       { level: 'ok', text: `Changed ${count} ${count === 1 ? 'file' : 'files'}. The backup is in ${backupPath}.` },

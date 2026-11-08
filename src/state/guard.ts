@@ -10,6 +10,9 @@ import { commands, dirs, program, stateCommands, stateGuard } from '../names.js'
 /** The node program and the script: the two words that start this program again. */
 const PROGRAM_WORDS = 2;
 
+/** The guard folder as a message shows it: relative to the factory folder, for example `.factory/.git/factory-guard`. */
+export const guardFolderLabel = join(dirs.state, GIT_ENTRY, stateGuard.folder);
+
 /**
  * The text of the delete guard hook: a shell script that starts this program with the words `state guard`. The node program and the
  * script are written by their absolute paths, so the hook never reads PATH. Each word is quoted for the shell, so a path with a
