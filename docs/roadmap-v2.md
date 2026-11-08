@@ -20,7 +20,7 @@ A team member installs factory on a new macOS or Linux machine. `factory init` a
 
 ## Milestones
 
-The build order is FAC-M2, M4, M5, M6, M7, M5b, then M3, M8, M10, M9. D-56 sets M2, M4, M5, M6, M7, M3, M8, M9. FAC-M5b (D-133 A) holds the parts of FAC-M5 that the move of this workspace does not need: the release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script and the usage view. The release milestone FAC-M10 comes after FAC-M8 and before FAC-M9, because the Goal needs a release path and does not need Jira or Linear. This workspace moves to factory first, with the `local` board. The GitHub board comes right after the move. The sections below are in build order.
+The build order is FAC-M2, M4, M5, M6, M7, M5b, then M3, M8, M10, M9. D-56 sets this order, and D-133 A adds FAC-M5b after FAC-M7. FAC-M5b holds the parts of FAC-M5 that the move of this workspace does not need: the release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script and the usage view. The release milestone FAC-M10 comes after FAC-M8 and before FAC-M9, because the Goal needs a release path and does not need Jira or Linear. This workspace moves to factory first, with the `local` board. The GitHub board comes right after the move. The sections below are in build order.
 
 | Order | Id | Name | Depends on | Design changes (F-n) |
 |---|---|---|---|---|
@@ -55,13 +55,14 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `item`, `request`, `queue`, `decide <D-n> <option>` | FAC-M5 |
 | `item estimate` | FAC-M5b |
 | `check`, `pr`, `issues`, `copies` (list, status), `lock` | FAC-M5 |
+| `state` (guard) | FAC-M5 |
 | `release` (check, verify, scope), `copies` (sync, clean) | FAC-M5b |
 | `status` (the digest for the owner), `report` (the digest of one node) | FAC-M5 |
 | `status --usage` | FAC-M5b |
 | `report` (the rollup over children) | FAC-M8 |
 | `recipe` (show, variant), `project` (add, remove, list) | FAC-M6 |
 | `adopt` | FAC-M7 |
-| `tracker`, `state`, `watch`, `decide ask`, `decide read`, `item import` | FAC-M3 |
+| `tracker`, `state` (remote, push, pull), `watch`, `decide ask`, `decide read`, `item import` | FAC-M3 |
 
 ### FAC-M2: Names, home, roles and schema 2
 
@@ -97,7 +98,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [x] Glossary test: every term in the list `terms` of `src/names.ts` has an entry in `docs/glossary.md` and in `factory help words`. An entry has at most 25 words. The two texts are equal. The output has no deny-list word.
 - [x] The deny-list test has the patterns `FIX_NOW`, `ESCALATED` and `CHANGES REQUESTED`. No template and no file that `init` writes contains one.
 - [x] Helper test: the short-output helper has three checks: at most 20 lines, a non-empty first line, and a first line of at most 120 characters. It accepts 20 lines. It fails on 21 lines, on an empty first line and on a first line of 121 characters. It does not read the words of the first line. The default output of `factory start` (with no `--dry-run`) and of `node children` passes it.
-- [x] `scripts/check-review-scope.sh docs/reviews/fac-m2-review-summary.md` exits 0. It fails when the summary does not list the six paths: `src/commands/init.ts`, `src/commands/upgrade.ts`, `src/commands/doctor.ts`, `src/upgrade/apply.ts`, `src/upgrade/plan.ts` and `src/upgrade/spec.ts`.
+- [x] `scripts/check-review-scope.sh docs/reviews/fac-m2-review-summary.md` exits 0. It exits 1 when the summary has no section "Setup and upgrade code (D-51 A)", or when that section does not list the six paths: `src/commands/init.ts`, `src/commands/upgrade.ts`, `src/commands/doctor.ts`, `src/upgrade/apply.ts`, `src/upgrade/plan.ts` and `src/upgrade/spec.ts`.
 - [x] `scripts/check-intent-docs.sh` exits 0. It exits 1 when one of these checks fails:
   - a design section named in `docs/intent-trace.md` is not a heading of `docs/design.md`;
   - a milestone id of the trace is not named in this roadmap, or a milestone from FAC-M2 up has no heading here;
@@ -167,10 +168,10 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 **Goal.** The board, the requests and the decisions work with the `local` board. The merge check and the merge are one command each, with a short verdict. The report of one node exists, so `status` works before FAC-M7.
 
 **Scope.**
-1. **Local board (F-2).** The connector contract of design §4.10 and the `local` connector (files in `.factory/`; also the test double of later connectors). The commands `item`, `request`, `decide <D-n> <option>` (for `local`) and `queue`. The decision log and the decision profile tools. The state commit helper and the delete-guard hook.
+1. **Local board (F-2).** The connector contract of design §4.10 and the `local` connector (files in `.factory/`; also the test double of later connectors). The commands `item`, `request`, `decide <D-n> <option>` (for `local`; FAC-M3 adds `github`) and `queue`. The decision log and the decision profile tools. The board commit helper and the delete-guard hooks. Every write of a board file goes through the board commit helper.
 2. **Check (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `pr watch`, `issues audit`.
 3. **`factory copies list|status` (D-55).**
-4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge, release and decision. The rollup over children stays in FAC-M8. `lock run`. The view slot shows `factory item list`.
+4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. The rollup over children stays in FAC-M8. `lock run`. The view slot shows `factory item list`.
 5. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
 6. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
 7. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
@@ -190,7 +191,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] With `local`: `changes read` returns nothing, and `factory decide <D-n> <option>` records `by: owner`. `factory decide` refuses (exit 4) with no terminal window, and when `FACTORY_SESSION` is set.
 - [ ] Decision records for the profile (F-26a). Test: each `factory decide <D-n> <option>` writes one decision record in the format of the decision profile template (the question, the options, the chosen option, `decided_by: owner` and the time) in `.factory/decision-profile/`, and adds its line to the profile log. The coordinator text tells the coordinator to look up these records and the principles before it decides for the owner. A refused `decide` writes no record.
 - [ ] `item`, `request` and `queue` change only the `local` files, and every change is one commit in the state repo (test).
-- [ ] `init` sets `core.hooksPath`. The commit helper refuses when the hook is off. The hook refuses a commit that removes an item id from `board.json` (tests).
+- [ ] `init` sets `core.hooksPath`. The board commit helper refuses when the guard is off. The guard hooks refuse a commit that removes an item id from `board.json` (tests).
 - [ ] No command needs `python3`, `jq` or `glow` (a test runs the commands with a PATH that does not contain them).
 - [ ] `check` gives the same verdict as the manual merge check on 3 merged PRs, from recorded fixtures.
 - [ ] `check` exits 3 with `NOT READY` while the PR has an open ask or an open request, and gives `READY` after the item closes (tests).
@@ -320,7 +321,7 @@ The import into GitHub issues is not here: it is FAC-M3.
 
 **Scope.**
 1. The `github` connector (issues plus a Projects board, through `gh`) behind the FAC-M5 contract. The contract has the `doc` operation (attach a file, link a repo file) and `changes read` (comments, label changes, assignee changes, open or close changes, each with its author; card moves are out for now). The connector does not look at which account wrote an event. A separate account for the agents is optional, and it is the owner's own GitHub choice (D-128 A). One GitHub project holds the issues of all the repos of a factory (design §4.10).
-2. The commands `decide ask|read` and `watch`. `start` starts `watch` in the window `ops` when the board is not `local`.
+2. The commands `decide ask|read` and `watch`, and `decide <D-n> <option>` for the `github` board (design §4.10). With `github`, `decide <D-n> <option>` also adds a comment to the item that names the CLI. The comment is a record, not a proof (D-128 A). `start` starts `watch` in the window `ops` when the board is not `local`.
 3. The choice of the board: `init --tracker --items --decisions`, the question in a terminal window, `tracker set`, `tracker status`, and the per-project override (design §4.10).
 4. `item import` from the `local` files into a team board, and the move of this workspace's items into GitHub issues with a private decision store. The retirement of the old page and scripts.
 5. The state remote: `state remote|push|pull`, `init --state-from`, and the rule that `state pull` and `upgrade` move by fast-forward only (firstmate idea 8).
@@ -330,6 +331,7 @@ The import into GitHub issues is not here: it is FAC-M3.
 - [ ] The FAC-M5 connector contract tests pass against `github`, with a fake `gh` and recorded responses. No test needs the network. The tests name the `doc` operation: one attaches a file, one links a repo file.
 - [ ] With `local`, `factory watch` exits at once with a note.
 - [ ] `decide read` shows an answer `/choose B` or a label `choose:B`, with its author and link, from any account. A board comment or label only wakes the coordinator and shows the answer. The owner enters the decision with `factory decide`. A comment or a label records nothing. Tests cover a comment, a label, and two accounts.
+- [ ] `decide <D-n> <option>` with `github`. Test with a fake `gh`: the record has `by: owner`, and the item gets one comment that names the CLI.
 - [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
 - [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
 - [ ] Wake test on a separate tmux server with a fake `gh`. A comment `/choose B`, a label change, an assignee change and an issue close each cause one record and one constant wake line in the coordinator pane, whatever account wrote the event. A board comment or label only wakes the coordinator and shows the answer; it records no decision. A fake `claude` on PATH records no call during `watch`.
