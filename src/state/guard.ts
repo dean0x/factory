@@ -15,9 +15,11 @@ export const guardFolderLabel = join(dirs.state, GIT_ENTRY, stateGuard.folder);
 
 /**
  * The text of the delete guard hook: a shell script that starts this program with the words `state guard`. The node program and the
- * script are written by their absolute paths, so the hook never reads PATH. Each word is quoted for the shell, so a path with a
- * space or a `$(` stays one word. A program path that is not known (an empty list) or not absolute gives no text: a hook that names
- * no program can not check anything.
+ * script are written by their absolute paths, so the hook never reads PATH. The hook first checks with shell built-ins that the node
+ * program can run and that the script is a file. When one is gone, it prints one line with the remedy and stops with exit 1, so the
+ * commit stops with a line that names `factory upgrade` and not with a shell error. Each word is quoted for the shell, so a path
+ * with a space or a `$(` stays one word. A program path that is not known (an empty list) or not absolute gives no text: a hook
+ * that names no program can not check anything.
  */
 export const guardHookText = (programArgv: readonly string[]): CliResult<string> => {
   if (programArgv.length !== PROGRAM_WORDS || !programArgv.every((word) => isAbsolute(word))) {
@@ -26,8 +28,21 @@ export const guardHookText = (programArgv: readonly string[]): CliResult<string>
       `Start ${program} through its installed command. ${stateGuard.remedy}`,
     );
   }
-  const words = [...programArgv, commands.state, stateCommands.guard].map(shellWord).join(' ');
-  return ok(`${stateGuard.interpreter}\n${stateGuard.comment}\nexec ${words}\n`);
+  const quoted = programArgv.map(shellWord);
+  const [node, script] = quoted;
+  const words = [...quoted, ...[commands.state, stateCommands.guard].map(shellWord)].join(' ');
+  return ok(
+    [
+      stateGuard.interpreter,
+      stateGuard.comment,
+      `if [ ! -x ${node} ] || [ ! -f ${script} ]; then`,
+      `  printf '%s\\n' ${shellWord(stateGuard.programMissing)} >&2`,
+      '  exit 1',
+      'fi',
+      `exec ${words}`,
+      '',
+    ].join('\n'),
+  );
 };
 
 /** Why the guard is off. */

@@ -47,9 +47,19 @@ describe('the text of the guard hook (TP-1)', () => {
 
   it('quotes a path with a space, a command substitution and a quote, so that the shell reads each path as one word', () => {
     const text = guardHookText(["/opt/my node/bin/node", "/opt/$(touch x)/it's/cli.js"]);
+    const [node, script] = ["'/opt/my node/bin/node'", "'/opt/$(touch x)/it'\\''s/cli.js'"];
     expect(text).toEqual({
       ok: true,
-      value: `#!/bin/sh\n${stateGuard.comment}\nexec '/opt/my node/bin/node' '/opt/$(touch x)/it'\\''s/cli.js' state guard\n`,
+      value: [
+        '#!/bin/sh',
+        stateGuard.comment,
+        `if [ ! -x ${node} ] || [ ! -f ${script} ]; then`,
+        `  printf '%s\\n' '${stateGuard.programMissing}' >&2`,
+        '  exit 1',
+        'fi',
+        `exec ${node} ${script} state guard`,
+        '',
+      ].join('\n'),
     });
   });
 

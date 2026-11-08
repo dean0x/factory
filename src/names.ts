@@ -1296,6 +1296,8 @@ export const stateGuard = {
   copyWord: '.old-',
   interpreter: '#!/bin/sh',
   comment: `# Written by ${program} from the text of the package. Git does not track this file. Run "${commandText(commands.upgrade)}" to write it again.`,
+  /** The line that a hook prints, with a stop, when the node program or the script that it names is gone. */
+  programMissing: `${program}: the program of the delete guard is not there. Run "${commandText(commands.upgrade)}" to write the guard again.`,
   /** The remedy of every case of an off guard. */
   remedy: `Run "${commandText(commands.upgrade)}".`,
 } as const;

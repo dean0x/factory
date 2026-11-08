@@ -19,7 +19,17 @@ export const HOOK = `${GUARD}/${stateGuard.hookFiles[0]}`;
 /** The hook files after the first one: `pre-merge-commit` and `pre-applypatch`. */
 export const MERGE_HOOK = `${GUARD}/${stateGuard.hookFiles[1]}`;
 export const PATCH_HOOK = `${GUARD}/${stateGuard.hookFiles[2]}`;
-export const HOOK_TEXT = `#!/bin/sh\n${stateGuard.comment}\nexec /opt/fake/bin/node /opt/fake/lib/program/cli.js state guard\n`;
+/** The check of the two paths, the line to print when one is gone, and the start of the program: the text of every hook file. */
+export const HOOK_TEXT = [
+  '#!/bin/sh',
+  stateGuard.comment,
+  'if [ ! -x /opt/fake/bin/node ] || [ ! -f /opt/fake/lib/program/cli.js ]; then',
+  `  printf '%s\\n' '${stateGuard.programMissing}' >&2`,
+  '  exit 1',
+  'fi',
+  'exec /opt/fake/bin/node /opt/fake/lib/program/cli.js state guard',
+  '',
+].join('\n');
 
 export interface Made {
   readonly deps: FakeDeps;

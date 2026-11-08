@@ -175,6 +175,63 @@ describe('the text of the hook, run by a shell (TP-1)', () => {
     await expect(stat(join(box.root, 'injected'))).rejects.toThrow();
     await expect(stat(join(scriptFolder, 'injected'))).rejects.toThrow();
   });
+
+  describe('with a program or a script that is gone', () => {
+    interface Ran {
+      readonly code: number;
+      readonly stderr: string;
+    }
+
+    /** Write a hook for the two paths and run it with the shell by its absolute path and a PATH that holds no program. */
+    const runHook = async (program: string, script: string): Promise<Ran> => {
+      const text = guardHookText([program, script]);
+      if (!text.ok) throw new Error(text.error.message);
+      const hook = join(box.root, 'gone-hook.sh');
+      await writeFile(hook, text.value);
+      return new Promise<Ran>((resolve) => {
+        execFile('/bin/sh', [hook], { cwd: box.root, env: { PATH: join(box.root, 'no-such-folder') } }, (error, _out, stderr) =>
+          resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stderr }),
+        );
+      });
+    };
+
+    const present = async (): Promise<{ program: string; script: string }> => {
+      const program = join(box.root, 'node-stub');
+      await writeFile(program, '#!/bin/sh\nexit 0\n');
+      await chmod(program, 0o755);
+      const script = join(box.root, 'cli.js');
+      await writeFile(script, '');
+      return { program, script };
+    };
+
+    it('prints one line with the remedy and exits with a code other than 0 when the node program is gone', async () => {
+      const { script } = await present();
+      const ran = await runHook(join(box.root, 'gone-node'), script);
+      expect(ran.code).toBe(1);
+      expect(ran.stderr).toBe(`${stateGuard.programMissing}\n`);
+    });
+
+    it('prints one line with the remedy and exits with a code other than 0 when the script is gone', async () => {
+      const { program } = await present();
+      const ran = await runHook(program, join(box.root, 'gone-cli.js'));
+      expect(ran.code).toBe(1);
+      expect(ran.stderr).toBe(`${stateGuard.programMissing}\n`);
+    });
+
+    it('prints the remedy when the node program is a file that cannot run', async () => {
+      const { program, script } = await present();
+      await chmod(program, 0o644);
+      const ran = await runHook(program, script);
+      expect(ran.code).toBe(1);
+      expect(ran.stderr).toBe(`${stateGuard.programMissing}\n`);
+    });
+
+    it('starts the program when both paths are there, with no PATH to read', async () => {
+      const { program, script } = await present();
+      const ran = await runHook(program, script);
+      expect(ran).toEqual({ code: 0, stderr: '' });
+    });
+  });
 });
 
 describe('a manual commit that removes an item id (TP-7)', () => {
