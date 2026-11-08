@@ -1171,6 +1171,36 @@ describe('the layers of the board source (TP-104)', () => {
   });
 });
 
+describe('the work item port is a required parameter (TP-64, TP-77)', () => {
+  const COMMANDS = ['status.ts', 'dismiss.ts', 'worker-list.ts'].map((file) => join(SRC, 'commands', file));
+  const codeOf = (path: string): string => stripComments(readFileSync(path, 'utf8'));
+
+  it('M5-1b TP-64 holds no name of the unknown default in any source file', () => {
+    const found = allSourceFiles(SRC).filter((path) => /\bunknownWorkItems\b/.test(codeOf(path)));
+    expect(found.map((path) => relative(SRC, path))).toEqual([]);
+  });
+
+  it.each(COMMANDS)('M5-1b TP-64 gives the port parameter of %s no default', (path) => {
+    expect(codeOf(path)).toMatch(/\bworkItems:\s*WorkItemPort\b/);
+    expect(codeOf(path)).not.toMatch(/\bworkItems:\s*WorkItemPort\s*=/);
+  });
+
+  it('M5-1b TP-64 passes the port of the board at each call of status, dismiss and worker list', () => {
+    const lastArguments = (file: string, name: string): (string | undefined)[] =>
+      callsOf(readFileSync(join(SRC, file), 'utf8'), name).map((args) => args.at(-1)?.trim());
+    expect(lastArguments('cli/table.ts', 'runStatus')).toEqual(['boardWorkItems(registry)']);
+    expect(lastArguments('cli/table.ts', 'runDismiss')).toEqual(['boardWorkItems(registry)']);
+    expect(lastArguments('commands/worker.ts', 'runWorkerList')).toEqual(['boardWorkItems(registry)']);
+  });
+
+  it('M5-1b TP-77 sets no flow-only mark in a command, and the port never reads the stage', () => {
+    const files = allSourceFiles(join(SRC, 'commands')).concat(join(SRC, 'board', 'work-items.ts'));
+    const found = files.flatMap((path) => literalsOf(readFileSync(path, 'utf8')).filter((literal) => /^(merged|released)$/i.test(literal)));
+    expect(found).toEqual([]);
+    expect(codeOf(join(SRC, 'board', 'work-items.ts'))).not.toMatch(/\bstage\b/i);
+  });
+});
+
 describe('the caps that the change log and the pull request state', () => {
   it('holds the list of tracked files to 2,000 files', () => {
     expect(trackedFiles.maxCount).toBe(2000);

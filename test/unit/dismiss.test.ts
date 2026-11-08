@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { boardWorkItems } from '../../src/board/work-items.js';
 import { exitCodeOf, failure, type CliError } from '../../src/cli/errors.js';
-import type { CommandOutput } from '../../src/cli/output.js';
+import { renderJson, type CommandOutput } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { runDismiss, type DismissOptions } from '../../src/commands/dismiss.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
@@ -12,7 +12,7 @@ import { recipes } from '../../src/recipes/index.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { readWorkerRecord, writeWorkerRecord } from '../../src/workers/registry.js';
-import { unknownWorkItems, type WorkItem, type WorkItemPort } from '../../src/workers/work-items.js';
+import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
@@ -21,6 +21,7 @@ import { sampleConfig, sampleConfigWithBoard, seedConfig } from '../helpers/samp
 import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type PaneFixture, type PaneView, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { unknownPort } from '../helpers/unknown-port.js';
 
 const HOUR_MS = 3_600_000;
 const HEAD = 'a'.repeat(40);
@@ -186,13 +187,13 @@ const portOf = (items: Readonly<Record<string, WorkItem>>): WorkItemPort => ({
 
 const optionsOf = (change: Partial<DismissOptions>): DismissOptions => ({ home: HOME, words: [], idle: false, yes: false, ...change });
 
-const outputOf = async (made: Made, change: Partial<DismissOptions> = {}, port: WorkItemPort = unknownWorkItems): Promise<CommandOutput> => {
+const outputOf = async (made: Made, change: Partial<DismissOptions> = {}, port: WorkItemPort = unknownPort): Promise<CommandOutput> => {
   const result = await runDismiss(made.deps, optionsOf(change), recipes, port);
   if (!result.ok) throw new Error(`${result.error.message} ${result.error.hint ?? ''}`);
   return result.value;
 };
 
-const errorOf = async (made: Made, change: Partial<DismissOptions> = {}, port: WorkItemPort = unknownWorkItems): Promise<CliError> => {
+const errorOf = async (made: Made, change: Partial<DismissOptions> = {}, port: WorkItemPort = unknownPort): Promise<CliError> => {
   const result = await runDismiss(made.deps, optionsOf(change), recipes, port);
   if (result.ok) throw new Error(`the command did not fail: ${JSON.stringify(result.value.lines)}`);
   return result.error;
@@ -284,6 +285,27 @@ describe('dismiss ID: the dry run', () => {
     expect(text).toContain('and more');
     await expectNothingChanged(made, ['alpha']);
     expect(lineExists(made, 'alpha')).toBe(true);
+  });
+
+  describe('an ignored file with a hidden character in its name (TP-91, TP-105)', () => {
+    const BIDI = String.fromCodePoint(0x202e);
+    const NAME = `cache/a${BIDI}b\nSTUCK c.log`;
+    const dirtyCopy = async (): Promise<Made> =>
+      make({ workers: [{ id: 'alpha' }], git: { ignoredFiles: { [copyOf('alpha')]: [NAME, 'dist/'] } } });
+
+    it('M5-1b TP-91 prints the name as one clean line, and adds no line of its own', async () => {
+      const output = await outputOf(await dirtyCopy(), { words: ['alpha'] });
+      const line = output.lines.find((candidate) => candidate.text.startsWith('The removal deletes'));
+      expect(line?.text).toBe('The removal deletes 2 ignored files: cache/ab STUCK c.log, dist/.');
+      expect(output.lines.every((candidate) => !/[\n\r\t]/.test(candidate.text) && !candidate.text.includes(BIDI))).toBe(true);
+    });
+
+    it('M5-1b TP-105 removes only the hidden characters from the JSON, and keeps the line break as an escape', async () => {
+      const output = await outputOf(await dirtyCopy(), { words: ['alpha'] });
+      const text = renderJson(output.json);
+      expect(text).not.toContain(BIDI);
+      expect(text).toContain('cache/ab\\nSTUCK c.log');
+    });
   });
 
   it('says nothing about ignored files when there are none, and says that the branch stays', async () => {
@@ -570,7 +592,7 @@ describe('dismiss ID --yes: the free', () => {
       ...made.deps,
       fs: { ...made.deps.fs, remove: async (path) => (path === failing ? failure('cannot remove it: EACCES') : made.deps.fs.remove(path)) },
     };
-    const result = await runDismiss(broken, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownWorkItems);
+    const result = await runDismiss(broken, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownPort);
     if (result.ok) throw new Error('the free did not fail');
     const { message, hint } = result.error;
     expect(removals(made)).toEqual([`worktree remove -- ${copyOf('alpha')}`]);
@@ -594,7 +616,7 @@ describe('dismiss ID: a worker that must not end', () => {
     ['it has open work', { id: 'alpha' }, busyWith('item 7')],
   ])('is a failure with a remedy when %s, and nothing ends', async (_name, seed, item) => {
     const made = await make({ workers: [seed] });
-    const port = item === null ? unknownWorkItems : portOf({ alpha: item });
+    const port = item === null ? unknownPort : portOf({ alpha: item });
     for (const yes of [false, true]) {
       const error = await errorOf(made, { words: ['alpha'], yes }, port);
       expect(error.kind).toBe('failure');
@@ -682,7 +704,7 @@ describe('dismiss ID: the path of the work copy', () => {
     // The link appears after the check of the path: lstat still says folder, and the real path leads outside.
     const hidden: FakeDeps = { ...made.deps, fs: { ...made.deps.fs, lstat: async (path) => (path === `${HOME}/work-copies/web` ? ok('dir' as const) : made.deps.fs.lstat(path)) } };
     made.deps.seedDir('/elsewhere/web/alpha');
-    const result = await runDismiss(hidden, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownWorkItems);
+    const result = await runDismiss(hidden, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownPort);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe('safety');
     expect(made.git.commands()).toEqual([]);
@@ -715,7 +737,7 @@ describe('dismiss ID: the path of the work copy', () => {
         readTextLimited: (path, maxBytes) => made.deps.fs.readTextLimited(back(path), maxBytes),
       },
     };
-    const result = await runDismiss(linked, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownWorkItems);
+    const result = await runDismiss(linked, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownPort);
     if (!result.ok) throw new Error(result.error.message);
     expect(result.value.failed).toBe(false);
     expect(removals(made)).toEqual([`worktree remove -- ${real(copyOf('alpha'))}`]);
@@ -891,7 +913,7 @@ describe('dismiss ID: the refusals of the path checks speak the words of dismiss
     const made = await make({ workers: [{ id: 'alpha' }], links: { [`${HOME}/work-copies/web`]: '/elsewhere/web' } });
     const hidden: FakeDeps = { ...made.deps, fs: { ...made.deps.fs, lstat: async (path) => (path === `${HOME}/work-copies/web` ? ok('dir' as const) : made.deps.fs.lstat(path)) } };
     made.deps.seedDir('/elsewhere/web/alpha');
-    const result = await runDismiss(hidden, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownWorkItems);
+    const result = await runDismiss(hidden, optionsOf({ words: ['alpha'], yes: true }), recipes, unknownPort);
     if (result.ok) throw new Error('the command did not fail');
     expect(result.error.message).toBe(
       `the work copy ${alpha} of the worker alpha is not a folder of work-copies/<project>/alpha, so dismiss does not free it`,
