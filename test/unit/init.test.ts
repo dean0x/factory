@@ -1122,6 +1122,8 @@ describe('init: the state repository', () => {
     expect(git.map((call) => call.args.slice(2).join(' '))).toEqual([
       'init -q',
       'rev-parse --is-inside-work-tree --show-prefix',
+      // A git template can copy a key that names a program into the config of the new repository: the check comes before any step that stages.
+      `${STATE_GIT} config --list --show-scope --includes -z`,
       // The plan of the guard reads the git folder and the setting, and again for the hooks that stop. The install reads the git folder
       // once more and sets the path.
       `${STATE_GIT} rev-parse --absolute-git-dir`,
@@ -1135,6 +1137,36 @@ describe('init: the state repository', () => {
       `${STATE_GIT} add -A`,
       `${STATE_GIT} -c commit.gpgsign=false commit -q -m chore: initialize the state`,
     ]);
+  });
+
+  describe('a git template that copied a program key into the config of the new repository', () => {
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const copied = (key: string) => setup({ configList: { [staging]: `local\0${key}\ncat\0` } });
+
+    it.each(['filter.x.clean', 'hook.x.command'])('stops with exit 4 for %s, names the key, and stages and commits nothing', async (key) => {
+      const { deps, log } = copied(key);
+      const result = await runInit(deps, options());
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety', message: expect.stringContaining(key) } });
+      expect(log.commands().some((line) => line.startsWith('add') || line.includes('commit -q'))).toBe(false);
+      expect(deps.files.has(`${HOME}/.factory/node.json`)).toBe(false);
+    });
+
+    it('tells the person to clean the git template, because the new repository is removed', async () => {
+      const { deps } = copied('filter.x.clean');
+      const result = await runInit(deps, options());
+      expect(messageOf(result)).toContain('git template');
+      expect(messageOf(result)).toContain('Then run "factory init" again.');
+    });
+
+    it('checks the config after the work tree check and before the guard is written', async () => {
+      const { deps, log } = setup();
+      expect((await runInit(deps, options())).ok).toBe(true);
+      const lines = log.commands();
+      const check = lines.indexOf('config --list --show-scope --includes -z');
+      expect(check).toBeGreaterThan(lines.indexOf('rev-parse --is-inside-work-tree --show-prefix'));
+      expect(check).toBeLessThan(lines.findIndex((line) => line.startsWith('config -- core.hooksPath')));
+      expect(check).toBeLessThan(lines.findIndex((line) => line.startsWith('add')));
+    });
   });
 
   it('writes the package hook text as each hook file in the guard folder of the git folder, with mode 755, and sets the path (TP-1)', async () => {
