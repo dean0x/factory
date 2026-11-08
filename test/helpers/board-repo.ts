@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import type { TrackerCopy, TrackerWrite } from '../../src/board/local.js';
 import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { RunOutput } from '../../src/core/deps.js';
-import { ok } from '../../src/core/result.js';
 import { files } from '../../src/names.js';
 import { installGuard } from '../../src/state/guard.js';
 import { layoutOf } from '../../src/state/layout.js';
@@ -49,27 +47,6 @@ export interface BoardRepo {
   /** The git commands of the state repo since the setup, without the words of a state step. */
   gitCommands(): string[];
 }
-
-/** A tracker double: it records each copy that it gets, and ends it with the given result. */
-export interface TrackerSpy {
-  readonly tracker: TrackerCopy;
-  readonly calls: TrackerWrite[];
-}
-
-export const trackerSpy = (kind: string, outcome: CliResult<void> = ok(undefined), during?: () => void): TrackerSpy => {
-  const calls: TrackerWrite[] = [];
-  return {
-    calls,
-    tracker: {
-      kind,
-      copy: async (write) => {
-        calls.push(write);
-        during?.();
-        return outcome;
-      },
-    },
-  };
-};
 
 const idOfText = (text: string): string => createHash('sha256').update(text).digest('hex');
 

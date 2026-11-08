@@ -9,11 +9,11 @@ import { createLocalBoard, type LocalBoardOptions } from '../../src/board/local.
 import { firstStageOf, requireSettableStage, requireStage, stageShown, stagesOf, UNLISTED_MARK } from '../../src/board/stages.js';
 import { trackIdIssue, trackNameIssue, tracksOf } from '../../src/board/tracks.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { commands, commandText, files as fileNames, stateLock } from '../../src/names.js';
+import { commands, commandText, files as fileNames, stateLock, values } from '../../src/names.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { describeBoardContract } from '../contract/board-contract.js';
-import { boardRepo, trackerSpy, type BoardRepo } from '../helpers/board-repo.js';
+import { boardRepo, type BoardRepo } from '../helpers/board-repo.js';
 import { createFakeDeps } from '../helpers/fake-deps.js';
 import { linkAt } from '../helpers/guard-fixture.js';
 import { publishBoard } from '../helpers/publish-recipe.js';
@@ -496,7 +496,14 @@ const boardWith = (items: readonly Record<string, unknown>[], extra: Record<stri
   jsonOf({ [QUEUE]: [], items, tracks: [], ...extra });
 
 const connectorOf = (repo: BoardRepo, overrides: Partial<LocalBoardOptions> = {}): BoardConnector =>
-  createLocalBoard(repo.deps, LAYOUT, { queueKey: QUEUE, recipe: softwareBoard, config: sampleBoard(), command: commands.start, ...overrides });
+  createLocalBoard(repo.deps, LAYOUT, {
+    queueKey: QUEUE,
+    recipe: softwareBoard,
+    config: sampleBoard(),
+    command: commands.start,
+    tracker: values.trackerLocal,
+    ...overrides,
+  });
 
 const repoWith = async (board: string, others: { waiting?: string; decisionLog?: string } = {}): Promise<BoardRepo> => {
   const repo = await boardRepo({ board, ...others });
@@ -545,7 +552,7 @@ describe('the local connector: changes read (TP-21)', () => {
   it('M5-1b TP-21 names the local kind, and the kind of the hosted tracker when the setup has one', async () => {
     const repo = await repoWith(EMPTY_BOARD);
     expect(connectorOf(repo).kind).toBe('local');
-    expect(connectorOf(repo, { tracker: trackerSpy('github').tracker }).kind).toBe('github');
+    expect(connectorOf(repo, { tracker: 'github' }).kind).toBe('github');
   });
 });
 
@@ -562,19 +569,11 @@ describe('the local connector: each write is one state commit of the local files
     ['decision ask', (c) => c.askDecision(DECISION), [fileNames.waiting]],
   ];
 
-  it.each(WRITES)('M5-1b TP-66 %s makes one commit that holds only the local files, and no tracker call', async (_name, write, staged) => {
+  it.each(WRITES)('M5-1b TP-66 %s makes one commit that holds only the local files, and prints no tracker line', async (_name, write, staged) => {
     const repo = await repoWith(boardWith([item('B-1', { stage: 'ticket' })]));
-    const spy = trackerSpy('local');
-    const done = await write(connectorOf(repo, { tracker: spy.tracker }));
+    const done = await write(connectorOf(repo));
     expect(done.ok).toBe(true);
     expect(repo.commits.map((commit) => commit.staged)).toEqual([staged]);
-    expect(spy.calls).toEqual([]);
-    expect(repo.deps.warned).toEqual([]);
-  });
-
-  it('M5-1b TP-66 makes no tracker call when the setup has no tracker', async () => {
-    const repo = await repoWith(EMPTY_BOARD);
-    expect((await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY })).ok).toBe(true);
     expect(repo.deps.warned).toEqual([]);
   });
 });
@@ -900,6 +899,7 @@ describe('the local connector: a file that cannot be read (TP-51)', () => {
       recipe: softwareBoard,
       config: sampleBoard(),
       command: commands.start,
+      tracker: values.trackerLocal,
     });
     const error = errorOf(await linked.addItem({ title: 'New', fields: PRIORITY }));
     expect([1, 4]).toContain(exitCodeOf[error.kind]);
@@ -1004,6 +1004,7 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
       recipe: softwareBoard,
       config: sampleBoard(),
       command: commands.start,
+      tracker: values.trackerLocal,
     });
     expect(exitOf(await linked.linkDoc({ id: 'B-1', path: DOC_PATH }))).toBe(4);
     expectUntouched(repo, board);

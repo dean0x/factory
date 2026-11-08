@@ -3,7 +3,7 @@ import type { CliResult } from '../cli/errors.js';
 /**
  * The board connector contract (design 4.10). Every board connector gives these operations, and the contract suite
  * (`test/contract/board-contract.ts`) runs against each one. The `local` connector keeps the board in the files of the state folder.
- * It is also the test double of the hosted connectors.
+ * A hosted tracker kind has no connector in this version: the local connector reads the local files for it and refuses every write.
  *
  * The contract holds no read of a decision answer in this change, and no decision writer: a decision item is asked, and the owner
  * answers it outside the connector.

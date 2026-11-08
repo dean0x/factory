@@ -572,6 +572,13 @@ export const boardTextLimits = {
 } as const;
 
 /**
+ * The stop of a board write with a hosted tracker kind. The provider holds the truth of a hosted board, and the local board is a
+ * cache of it, so a write goes to the provider first. This version has no provider, so the write stops before the lock, with one line.
+ */
+export const hostedBoardLine = (kind: string): string =>
+  `The ${kind} board is not in this version. Hosted boards come in FAC-M3 (provider plugin).`;
+
+/**
  * The names that an owner field can not take: the keys that an item, a queue row, a track or a decision record already
  * holds, and the track and stage keys. A field never replaces a key that the core owns, and never replaces a key that is
  * part of the proof of a decision.

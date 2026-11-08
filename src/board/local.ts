@@ -1,11 +1,11 @@
 import { join } from 'node:path';
-import { failure, usageError, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
-import { files, maxEchoChars, places, values, type CommandName } from '../names.js';
+import { commandText, files, hostedBoardLine, maxEchoChars, places, values, type CommandName } from '../names.js';
 import type { RecipeBoard } from '../recipes/entry.js';
 import { commitBoardChange, type BoardTexts } from '../state/board-commit.js';
 import type { Layout } from '../state/layout.js';
@@ -38,32 +38,10 @@ import { boardJsonText } from './json.js';
  * the callback reads the files that the helper gives it, builds the new text and returns it, so the helper checks the guard, the size
  * and the item ids, writes the files and makes one state commit. A read takes no lock.
  *
- * A hosted tracker kind (`github`, `jira` or `linear`) gets a copy of each write that made a commit. The local files are written
- * first, the copy runs after the lock is free, and a copy that fails keeps the local commit. One warning line says that the local
- * file governs. A write that fails or changes nothing makes no copy.
+ * A hosted tracker kind (`github`, `jira` or `linear`) keeps the truth of the board at the provider, and the local files are a cache of
+ * it. This version has no provider, so every write of a hosted kind stops with a security stop (exit 4) before the input check and
+ * before the lock: it makes no commit and changes no file. A read of a hosted kind reads the local files, as the kind `local` does.
  */
-
-/** What a write did, in the words of the copy. */
-export type TrackerAction = 'item added' | 'item updated' | 'item moved' | 'item closed' | 'track added' | 'doc linked' | 'decision asked';
-
-/** One write that the local files hold already, for the copy to a hosted tracker. `id` is the item, the track or the decision. */
-export interface TrackerWrite {
-  readonly what: TrackerAction;
-  readonly id: string;
-}
-
-/** The copy of a write to a hosted tracker. A hosted connector (FAC-M3) implements it; the tests use doubles. */
-export interface TrackerCopy {
-  /** The tracker kind of the setup. The kind `local` is never copied. */
-  readonly kind: string;
-  copy(write: TrackerWrite): Promise<CliResult<void>>;
-}
-
-/** The copy of this version for a hosted kind: no hosted connector exists yet, so the copy fails and the warning says so. */
-export const unbuiltTracker = (kind: string): TrackerCopy => ({
-  kind,
-  copy: async () => failure(`there is no ${kind} board connector in this version`),
-});
 
 export interface LocalBoardOptions {
   /** The key of the queue in `board.json`: `queueKeyOf` of the recipe. */
@@ -74,8 +52,8 @@ export interface LocalBoardOptions {
   readonly config: BoardConfig | undefined;
   /** The command that a stop tells the person to run again. */
   readonly command: CommandName;
-  /** The hosted tracker that gets a copy of each write. Absent or of the kind `local`: no copy. */
-  readonly tracker?: TrackerCopy;
+  /** The tracker kind of the setup: `tracker.kind` of the config. Every kind but `local` refuses each write. */
+  readonly tracker: string;
 }
 
 const commitMessages = {
@@ -108,44 +86,31 @@ interface Applied<T> {
   readonly value: T;
 }
 
-interface Written<T> {
-  readonly value: T;
-  /** False when the write left every file as it was: there is no commit. */
-  readonly committed: boolean;
-}
-
 /** The edit of the board and the board after it, which the connector reads the result from. */
 interface BoardEdited<T> {
   readonly value: T;
   readonly doc: BoardDoc;
 }
 
-const copyWarning = (kind: string, id: string, copied: CliResult<void>): string => {
-  const governs = 'The local file governs.';
-  const saved = `${id} is saved in the local files`;
-  const where = `the ${displayLine(kind, maxEchoChars)} board`;
-  return copied.ok
-    ? `${saved} and copied to ${where}. ${governs}`
-    : `${saved}, but the copy to ${where} failed: ${displayLine(copied.error.message)}. ${governs}`;
-};
-
 export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoardOptions): BoardConnector => {
   const { queueKey } = options;
   const setup: BoardSetup = { recipe: options.recipe, config: options.config };
-  const hosted = options.tracker !== undefined && options.tracker.kind !== values.trackerLocal ? options.tracker : undefined;
 
-  /** Copy a write that made a commit to the hosted tracker, outside the lock, and print the one warning line. */
-  const copyTo = async (what: TrackerAction, id: string): Promise<void> => {
-    if (hosted === undefined) return;
-    deps.warn(copyWarning(hosted.kind, id, await hosted.copy({ what, id })));
-  };
+  /** The first step of every write: a hosted kind stops here, before the input check, the lock and any file call. */
+  const requireLocalTracker = (): CliResult<void> =>
+    options.tracker === values.trackerLocal
+      ? ok(undefined)
+      : safetyRefusal(
+          hostedBoardLine(displayLine(options.tracker, maxEchoChars)),
+          `Set the tracker kind to ${values.trackerLocal} in the config, then run "${commandText(options.command)}" again.`,
+        );
 
   /** One `commitBoardChange` call. The value of the change reaches the caller through the closure, because the helper gives back only whether it committed. */
   const commit = async <T>(
     touched: readonly string[],
     message: string,
     apply: (texts: BoardTexts) => CliResult<Applied<T>>,
-  ): Promise<CliResult<Written<T>>> => {
+  ): Promise<CliResult<T>> => {
     const outcome: { current: { readonly value: T } | undefined } = { current: undefined };
     const done = await commitBoardChange(deps, layout, {
       touched,
@@ -159,9 +124,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       },
     });
     if (!done.ok) return done;
-    return outcome.current === undefined
-      ? failure('the board change did not run')
-      : ok({ value: outcome.current.value, committed: done.value.committed });
+    return outcome.current === undefined ? failure('the board change did not run') : ok(outcome.current.value);
   };
 
   /** The change of `board.json`: read it, edit it, and give the new text. An edit with no top object leaves the text as it is. */
@@ -182,21 +145,14 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       return ok({ texts: new Map([[files.board, written.value.text]]), value: { value: edited.value.value, doc: written.value.read } });
     };
 
-  /** A write of `board.json`: commit, find the result in the board after the edit, and copy to a hosted tracker when a commit was made. */
+  /** A write of `board.json`: commit, and find the result in the board after the edit. */
   const boardWrite = async <T, R>(spec: {
     readonly message: string;
-    readonly what: TrackerAction;
     readonly edit: (doc: BoardDoc) => CliResult<Edit<T>>;
-    readonly idOf: (value: T) => string;
     readonly resultOf: (doc: BoardDoc, value: T) => CliResult<R>;
   }): Promise<CliResult<R>> => {
     const done = await commit([files.board], spec.message, boardChange(spec.edit));
-    if (!done.ok) return done;
-    const { value, committed } = done.value;
-    const result = spec.resultOf(value.doc, value.value);
-    if (!result.ok) return result;
-    if (committed) await copyTo(spec.what, spec.idOf(value.value));
-    return result;
+    return done.ok ? spec.resultOf(done.value.doc, done.value.value) : done;
   };
 
   const itemIn = (doc: BoardDoc, id: string): CliResult<BoardItem> => {
@@ -205,8 +161,8 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   };
 
   /** A write that gives back one item. */
-  const itemWrite = (message: string, what: TrackerAction, edit: (doc: BoardDoc) => CliResult<Edit<string>>): Promise<CliResult<BoardItem>> =>
-    boardWrite({ message, what, edit, idOf: (id) => id, resultOf: itemIn });
+  const itemWrite = (message: string, edit: (doc: BoardDoc) => CliResult<Edit<string>>): Promise<CliResult<BoardItem>> =>
+    boardWrite({ message, edit, resultOf: itemIn });
 
   /** The file must be a plain file of the factory folder, with no link on the way. The link is a security stop (exit 4). */
   const requireDocFile = async (path: string): Promise<CliResult<void>> => {
@@ -219,42 +175,48 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   };
 
   return {
-    kind: options.tracker?.kind ?? values.trackerLocal,
+    kind: options.tracker,
 
     async addItem(input) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
       const checked = checkNewItem(setup, input);
       if (!checked.ok) return checked;
-      return itemWrite(commitMessages.addItem, 'item added', (doc) => addItemIn(doc, checked.value));
+      return itemWrite(commitMessages.addItem, (doc) => addItemIn(doc, checked.value));
     },
 
     async updateItem(id, patch) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
       const changes = checkPatch(setup, patch);
       if (!changes.ok) return changes;
-      return itemWrite(commitMessages.updateItem(id), 'item updated', (doc) => changeItemIn(doc, id, changes.value));
+      return itemWrite(commitMessages.updateItem(id), (doc) => changeItemIn(doc, id, changes.value));
     },
 
     async moveItem(id, move) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
       const checked = checkMove(setup, move);
       if (!checked.ok) return checked;
       return boardWrite<ItemMoved, ItemMoved>({
         message: commitMessages.moveItem(id),
-        what: 'item moved',
         edit: (doc) => moveItemIn(doc, id, checked.value),
-        idOf: (moved) => moved.id,
         resultOf: (_doc, moved) => ok(moved),
       });
     },
 
     async closeItem(id) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
       const closed = checkClose(setup);
       if (!closed.ok) return closed;
-      return itemWrite(commitMessages.closeItem(id), 'item closed', (doc) => closeItemIn(doc, id, closed.value));
+      return itemWrite(commitMessages.closeItem(id), (doc) => closeItemIn(doc, id, closed.value));
     },
 
     async listItems(query) {
@@ -273,13 +235,13 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async addTrack(input) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
       const checked = checkNewTrack(input);
       if (!checked.ok) return checked;
       return boardWrite({
         message: commitMessages.addTrack(checked.value.id),
-        what: 'track added',
         edit: (doc) => addTrackIn(doc, checked.value),
-        idOf: (id) => id,
         resultOf: (doc, id): CliResult<BoardTrack> => {
           const track = doc.tracks.find((candidate) => candidate.id === id);
           return track === undefined ? failure(`${files.board}: the track ${id} is not on the board after the write`) : ok(track);
@@ -293,6 +255,8 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     },
 
     async askDecision(input) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
       const checked = checkDecision(input);
       if (!checked.ok) return checked;
       // The board is read too, so a board with the old queue key or a board that is not valid stops a decision as it stops an item.
@@ -315,19 +279,19 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         if (!written.ok) return written;
         return ok({ texts: new Map([[files.waiting, written.value.text]]), value: edited.value.value });
       });
-      if (!done.ok) return done;
-      if (done.value.committed) await copyTo('decision asked', done.value.value);
-      return ok(done.value.value);
+      return done;
     },
 
     async linkDoc(input) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
       const valid = checkItemId(input.id);
       if (!valid.ok) return valid;
       const path = checkDocPath(input.path);
       if (!path.ok) return path;
       const file = await requireDocFile(path.value);
       if (!file.ok) return file;
-      return itemWrite(commitMessages.linkDoc(input.id), 'doc linked', (doc) => linkDocIn(doc, input.id, path.value));
+      return itemWrite(commitMessages.linkDoc(input.id), (doc) => linkDocIn(doc, input.id, path.value));
     },
 
     async readChanges(): Promise<CliResult<ChangesRead>> {
