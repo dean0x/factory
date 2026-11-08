@@ -4,7 +4,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { activeMachine, env, schemaIds, tmuxNames, type HookEvent } from '../../src/names.js';
+import { activeMachine, env, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -687,6 +687,22 @@ describe('shutdown (AC-18)', () => {
       expect(output.failed).toBe(false);
       expect(countOf(made, 'kill-session')).toBe(1);
       expect(made.deps.files.get(MARK_FILE)).toBe(markText(OWN_MACHINE));
+    });
+
+    it('warns with the lock path, writes and commits nothing, and still ends the session, with exit 0, when another writer holds the state lock', async () => {
+      const lockFile = `${layoutOf(HOME).locksDir}/${stateLock.name}${stateLock.lock.suffix}`;
+      const made = await make({ mark: 'own' });
+      made.deps.seed(lockFile, '1\n');
+      const output = await succeeded(shutdown(made));
+      expect(output.failed).toBe(false);
+      expect(made.deps.warned).toHaveLength(1);
+      expect(made.deps.warned[0]).toContain('The mark of the active machine is not cleared');
+      expect(made.deps.warned[0]).toContain(lockFile);
+      expect(output.json).toMatchObject({ mark: 'failed' });
+      expect(made.deps.files.get(MARK_FILE)).toBe(markText(OWN_MACHINE));
+      expect(made.deps.files.get(lockFile)).toBe('1\n');
+      expect(made.events.filter((event) => event.startsWith('git '))).toEqual([]);
+      expect(countOf(made, 'kill-session')).toBe(1);
     });
   });
 });
