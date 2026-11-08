@@ -5,6 +5,7 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import type { FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
+import { requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -167,7 +168,8 @@ type Recovery = RecoveryReport | null;
 /**
  * What `start` does after it made the session, and only then: the mark of the active machine, then each recorded worker. The mark
  * comes first, so the warning about another active machine shows before any worker runs. A fault is a warning and the exit code
- * stays 0, with one exception: a git that can not list its config scopes stops the run (exit 1) before any worker runs.
+ * stays 0, with one exception: a git that can not list its config scopes stops the run (exit 1) before any worker runs. `runStart`
+ * makes that check before it makes the session, so the claim meets the fault only for a caller that did not.
  */
 const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers): Promise<CliResult<Recovery>> => {
   const claimed = await claimActiveMachine(deps, home);
@@ -455,13 +457,19 @@ export const runStart = async (
     if (!rendered.ok) return rendered;
   }
 
-  const problems = await toolProblems(deps, !dryRun);
-  if (!dryRun && problems.length > 0) {
+  const toolFaults = await toolProblems(deps, !dryRun);
+  if (!dryRun && toolFaults.length > 0) {
     return failure(
-      problems.join('. '),
+      toolFaults.join('. '),
       `Run "${commandText(commands.doctor)} ${flagText(flags.home)} ${home}" to check the tools.`,
     );
   }
+  // A git that can not list the config scopes stops the run here, before the hook settings, the session lookup and any launch.
+  // A session that this run made would stay, with no one attached, and each next run would stop on the same fault. Every other
+  // fault of the state git config is a warning of the claim of the active machine. A dry run names the stop as a problem.
+  const listable = await requireStateConfigListable(deps, layoutOf(home).stateDir, commands.start);
+  if (!listable.ok && !dryRun) return listable;
+  const problems = listable.ok ? toolFaults : [...toolFaults, listable.error.message];
 
   // The hook settings of the coordinator come after the root checks and the tool check, and before the session lookup and any
   // launch. A no on a terminal window goes on without the hook. Any error of the writer is a stop with its own exit code.

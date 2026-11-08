@@ -22,6 +22,7 @@ import {
   MAX_SCAN_ENTRIES,
   remoteBranchHeadOf,
   removeWorkTree,
+  requireStateConfigListable,
   requireStateConfigSafe,
   requireStateRepoCommit,
   requireStateRepoReady,
@@ -839,6 +840,35 @@ describe('git: the minimum version of git (TP-55)', () => {
     const { handler, log } = gitHandler({ configListExit: 129 });
     await ready(handler);
     expect(log.commands().some((command) => command.includes('status'))).toBe(false);
+  });
+
+  describe('the check that stops on an old git only', () => {
+    const listable = (fixture: GitFixture, withRepo = true) => {
+      const { handler, log } = gitHandler(fixture);
+      const deps = createFakeDeps({ cwd: WS, run: handler });
+      if (withRepo) deps.seedDir(`${STATE_DIR}/.git`);
+      return { result: requireStateConfigListable(deps, STATE_DIR, commands.start), log };
+    };
+
+    it('stops with the coded failure when git does not know the option', async () => {
+      expect(await listable({ configListExit: 129 }).result).toMatchObject({
+        ok: false,
+        error: { kind: 'failure', message: expect.stringContaining('git 2.26'), code: gitConfigUnreadable },
+      });
+    });
+
+    it('goes on for every other fault of the list, for a key that names a program, and for a clean list', async () => {
+      const program = 'local\0filter.lfs.clean\ncat\0';
+      expect(await listable({ configListExit: 128 }).result).toEqual({ ok: true, value: undefined });
+      expect(await listable({ configList: { [STATE_DIR]: program } }).result).toEqual({ ok: true, value: undefined });
+      expect(await listable({}).result).toEqual({ ok: true, value: undefined });
+    });
+
+    it('goes on, and starts no git, when the state folder has no .git entry', async () => {
+      const { result, log } = listable({ configListExit: 129 }, false);
+      expect(await result).toEqual({ ok: true, value: undefined });
+      expect(log.calls).toEqual([]);
+    });
   });
 });
 

@@ -1,5 +1,5 @@
 import { basename, isAbsolute, join, resolve } from 'node:path';
-import { codedFailure, failure, gitConfigUnreadable, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { codedFailure, failure, gitConfigUnreadable, hasCode, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
 import { commands, commandText, dirs, minGitVersion, program, trackedFiles, type CommandName } from '../names.js';
 import type { Deps, RunOutput } from './deps.js';
@@ -627,7 +627,7 @@ export const requireStateConfigSafe = async (deps: Deps, stateDir: string, comma
   if (result.value.exitCode === GIT_UNKNOWN_OPTION_EXIT) {
     return codedFailure(
       gitConfigUnreadable,
-      `${cannotRead}: git does not know the option --show-scope. ${program} needs git ${minGitVersion} or later.`,
+      `${cannotRead}: git does not know the option --show-scope. ${program} needs git ${minGitVersion} or later`,
       `Update git, ${again}`,
     );
   }
@@ -643,6 +643,18 @@ export const requireStateConfigSafe = async (deps: Deps, stateDir: string, comma
       ? `Remove the key with "${unset}", ${again}`
       : `Remove each key, for example the first with "${unset}", ${again}`,
   );
+};
+
+/**
+ * The check of a command that only warns about a state repo that is not ready, and still stops (exit 1) when git is too old to list
+ * the config scopes: the one failure of `requireStateConfigSafe` that carries the code `gitConfigUnreadable`. A state folder with no
+ * `.git` entry has no config to list, and every other result is ok here: the first step that commits reports it, as a warning.
+ */
+export const requireStateConfigListable = async (deps: Deps, stateDir: string, command: CommandName): Promise<CliResult<void>> => {
+  const repo = await deps.fs.stat(join(stateDir, GIT_ENTRY));
+  if (!repo.ok || repo.value === null) return ok(undefined);
+  const safe = await requireStateConfigSafe(deps, stateDir, command);
+  return !safe.ok && hasCode(safe.error, gitConfigUnreadable) ? safe : ok(undefined);
 };
 
 /**

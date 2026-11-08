@@ -1467,7 +1467,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       /** The exit code of a git that does not know the option `--show-scope`. */
       const UNKNOWN_OPTION = 129;
 
-      it('stops with exit 1 and names git 2.26, resumes no worker, and writes no mark and no commit', async () => {
+      it('stops with exit 1 and names git 2.26 before any session starts, and writes no mark and no commit', async () => {
         const made = await seeded({ stateRepo: { configListExit: UNKNOWN_OPTION } });
         const result = await startFactory(made.deps);
         expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('git 2.26') } });
@@ -1475,8 +1475,10 @@ describe('start:the recovery after a kill of the server and the mark of the acti
         expect(made.deps.warned).toEqual([]);
         expect(made.deps.files.has(MARK_FILE)).toBe(false);
         expect(stateWrites(made.deps)).toEqual([]);
-        // Only the split of the view window had run: no worker had a pane.
-        expect(splitsOf(made.deps)).toBe(1);
+        // No tmux call made a session or a pane, so a second start finds nothing to stop on.
+        expect(made.tmux.calls.filter((call) => call.args[0] === 'new-session')).toEqual([]);
+        expect(made.tmux.sessions().size).toBe(0);
+        expect(splitsOf(made.deps)).toBe(0);
         expect(workerPanes(made.tmux)).toEqual([]);
       });
 
@@ -1491,13 +1493,30 @@ describe('start:the recovery after a kill of the server and the mark of the acti
         expect(resumesOf(made.tmux)).toEqual(SESSION);
       });
 
-      it('stops the same way for a session that runs already', async () => {
-        const made = await seeded({ workers: [], stateRepo: { configListExit: UNKNOWN_OPTION }, tmux: { sessions: { demo: HOME } } });
+      it('stops the same way for a session that runs already, before it looks at the session and before the attach', async () => {
+        const made = await seeded({
+          workers: [],
+          tty: true,
+          stateRepo: { configListExit: UNKNOWN_OPTION },
+          tmux: { sessions: { demo: HOME } },
+        });
         const result = await startFactory(made.deps);
         expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('git 2.26') } });
         expect(made.deps.warned).toEqual([]);
         expect(made.deps.files.has(MARK_FILE)).toBe(false);
         expect(stateWrites(made.deps)).toEqual([]);
+        expect(made.tmux.commands().filter((command) => command !== '-V')).toEqual([]);
+        expect(made.deps.attached).toEqual([]);
+      });
+
+      it('names git 2.26 once, with no second stop text, in a dry run that a real run would stop', async () => {
+        const made = await seeded({ stateRepo: { configListExit: UNKNOWN_OPTION } });
+        const output = await succeeded(made.deps, { dryRun: true });
+        const stops = output.lines.filter((line) => line.text.includes('git 2.26'));
+        expect(stops).toHaveLength(1);
+        expect(stops[0]).toMatchObject({ level: 'warn' });
+        expect(stops[0]?.text).toContain('A real run stops here.');
+        expect(made.tmux.calls.filter((call) => call.args[0] === 'new-session')).toEqual([]);
       });
     });
 
