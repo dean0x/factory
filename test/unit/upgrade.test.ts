@@ -336,7 +336,8 @@ describe('upgrade: the root .gitignore (TP-117)', () => {
 
 describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)', () => {
   const GUARD = `${HOME}/.factory/.git/${stateGuard.folder}`;
-  const HOOK = `${GUARD}/${stateGuard.hookFile}`;
+  const HOOK = `${GUARD}/${stateGuard.hookFiles[0]}`;
+  const HOOKS = stateGuard.hookFiles.map((name) => `${GUARD}/${name}`);
   const SETTING = `config -- core.hooksPath ${GUARD}`;
   const COMMIT = '-c commit.gpgsign=false commit -q -m chore: upgrade the state';
   const GUARD_LINE = '.factory/.git/factory-guard: write the delete guard hook and point core.hooksPath at it';
@@ -372,11 +373,13 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     expect(gitSince().filter((command) => command.startsWith('config --'))).toEqual([]);
   });
 
-  it('plans the install for each way that the guard is off: other hook bytes, an extra file, another mode', async () => {
+  it('plans the install for each way that the guard is off: other hook bytes, an extra file, another mode, a missing hook file', async () => {
     for (const change of [
       (deps: FakeDeps) => deps.files.set(HOOK, '#!/bin/sh\nexit 0\n'),
       (deps: FakeDeps) => deps.seed(`${GUARD}/post-commit`, 'x'),
       (deps: FakeDeps) => deps.modes.set(HOOK, 0o644),
+      (deps: FakeDeps) => deps.files.delete(HOOKS[1] ?? ''),
+      (deps: FakeDeps) => deps.files.delete(HOOKS[2] ?? ''),
     ]) {
       const { deps } = await makeNode();
       change(deps);
@@ -389,8 +392,10 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     const { deps, gitSince } = await unguarded();
     const output = success(await upgrade(deps));
     expect(output.json).toMatchObject({ changed: true, stateGuard: 'install', backup: null, committed: false, blockBackups: [] });
-    expect(text(deps, HOOK)).toBe(hookText());
-    expect(deps.modes.get(HOOK)).toBe(0o755);
+    for (const hook of HOOKS) {
+      expect(text(deps, hook)).toBe(hookText());
+      expect(deps.modes.get(hook)).toBe(0o755);
+    }
     expect(gitSince()).toContain(SETTING);
     expect(gitSince().some((command) => command.startsWith('add') || command.includes('commit'))).toBe(false);
     expect(backupsOf(deps)).toEqual([]);

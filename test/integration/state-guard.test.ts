@@ -28,6 +28,9 @@ const board = (ids: readonly string[], extra: Record<string, unknown> = {}): str
 
 const BOARD = 'board.json';
 const OTHER = 'notes.txt';
+/** The hook file for `git commit`, and the names of all hook files in the order of a listing. */
+const PRE_COMMIT = stateGuard.hookFiles[0];
+const SORTED_HOOKS = [...stateGuard.hookFiles].sort();
 
 const git = (args: readonly string[]): Promise<RunResult> => box.git(stateDir, args);
 
@@ -74,14 +77,16 @@ afterEach(async () => {
 afterAll(removeOpenSandboxes);
 
 describe('the guard that the install writes (TP-1)', () => {
-  it('holds the package text as pre-commit with mode 755 in the guard folder of the git folder, and git tracks no guard file', async () => {
+  it('holds the package text as each hook file with mode 755 in the guard folder of the git folder, and git tracks no guard file', async () => {
     const gitDir = join(await realpath(stateDir), '.git');
-    const hook = join(gitDir, stateGuard.folder, stateGuard.hookFile);
     const text = guardHookText(deps.programArgv);
     expect(text.ok).toBe(true);
-    expect(await readFile(hook, 'utf8')).toBe(text.ok ? text.value : '');
-    expect((await stat(hook)).mode & 0o777).toBe(0o755);
-    expect(await readdir(join(gitDir, stateGuard.folder))).toEqual([stateGuard.hookFile]);
+    for (const name of stateGuard.hookFiles) {
+      const hook = join(gitDir, stateGuard.folder, name);
+      expect(await readFile(hook, 'utf8')).toBe(text.ok ? text.value : '');
+      expect((await stat(hook)).mode & 0o777).toBe(0o755);
+    }
+    expect(await readdir(join(gitDir, stateGuard.folder))).toEqual(SORTED_HOOKS);
     expect((await mustGit(['config', stateGuard.hooksPathKey])).stdout.trim()).toBe(join(gitDir, stateGuard.folder));
     const tracked = (await mustGit(['ls-files'])).stdout.split('\n').filter((line) => line !== '');
     expect(tracked.sort()).toEqual([BOARD, OTHER]);
@@ -102,7 +107,7 @@ describe('the guard that the install writes (TP-1)', () => {
     expect(await guardStateOf(deps, stateDir)).toMatchObject({ ok: true, value: { on: false, kind: 'hooks-path' } });
     const repaired = await installGuard(deps, stateDir, stateDir);
     expect(repaired.ok).toBe(true);
-    expect(await readdir(folder)).toEqual([stateGuard.hookFile]);
+    expect(await readdir(folder)).toEqual(SORTED_HOOKS);
     expect(await readdir(target)).toEqual(['hook-target', 'keep.txt']);
     expect(await readFile(join(target, 'keep.txt'), 'utf8')).toBe('keep');
     expect(await guardStateOf(deps, stateDir)).toEqual({ ok: true, value: { on: true } });
@@ -110,7 +115,7 @@ describe('the guard that the install writes (TP-1)', () => {
 
   it('replaces a hook file that is a link with a plain file, and does not write through the link', async () => {
     const gitDir = join(await realpath(stateDir), '.git');
-    const hook = join(gitDir, stateGuard.folder, stateGuard.hookFile);
+    const hook = join(gitDir, stateGuard.folder, PRE_COMMIT);
     const target = join(box.root, 'hook-target');
     await writeFile(target, 'target text');
     await chmod(target, 0o755);
@@ -131,15 +136,15 @@ describe('the guard folder is a link (TP-53)', () => {
     const target = join(box.root, 'other-folder');
     await mkdir(target);
     await writeFile(join(target, 'keep.txt'), 'keep');
-    await writeFile(join(target, stateGuard.hookFile), 'other hook');
+    await writeFile(join(target, PRE_COMMIT), 'other hook');
     await rm(folder, { recursive: true });
     await symlink(target, folder);
     const result = await installGuard(deps, stateDir, stateDir);
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: stateGuard.remedy } });
     expect(await readlink(folder)).toBe(target);
-    expect((await readdir(target)).sort()).toEqual([stateGuard.hookFile, 'keep.txt'].sort());
+    expect((await readdir(target)).sort()).toEqual([PRE_COMMIT, 'keep.txt'].sort());
     expect(await readFile(join(target, 'keep.txt'), 'utf8')).toBe('keep');
-    expect(await readFile(join(target, stateGuard.hookFile), 'utf8')).toBe('other hook');
+    expect(await readFile(join(target, PRE_COMMIT), 'utf8')).toBe('other hook');
     expect(await guardStateOf(deps, stateDir)).toMatchObject({ ok: true, value: { on: false, kind: 'folder-not-plain' } });
   });
 });
@@ -299,6 +304,73 @@ describe('a commit that the guard reads as a loss or cannot read (TP-8)', () => 
   });
 });
 
+describe('a merge commit and a mailed patch that remove an item id (TP-7)', () => {
+  /** A branch that forks from the last commit and holds the board `ids`. The hook would stop the removal, so `--no-verify` plants it. */
+  const plantBranch = async (name: string, ids: readonly string[]): Promise<void> => {
+    await mustGit(['checkout', '-q', '-b', name]);
+    await writeInState(BOARD, board(ids));
+    await mustGit(['add', BOARD]);
+    const planted = await commit('--no-verify');
+    expect(planted.code, planted.stderr).toBe(0);
+    await mustGit(['checkout', '-q', 'main']);
+  };
+
+  /** Move main on, so that a merge of the other branch is a merge commit and not a fast-forward. */
+  const moveMainOn = async (): Promise<void> => {
+    await writeInState(OTHER, 'two\n');
+    await mustGit(['add', OTHER]);
+    const moved = await commit();
+    expect(moved.code, moved.stderr).toBe(0);
+  };
+
+  /** The patch of the last commit of a branch, in a file. */
+  const patchOf = async (branch: string): Promise<string> => {
+    const file = join(box.root, `${branch}.patch`);
+    await writeFile(file, (await mustGit(['format-patch', '-1', '--stdout', branch])).stdout);
+    return file;
+  };
+
+  it('stops a merge commit that removes an item id, names the id, and the last commit stays', async () => {
+    await plantBranch('side', ['B-1']);
+    await moveMainOn();
+    const before = await headId();
+    const merged = await git(['merge', '--no-ff', '-m', 'merge side', 'side']);
+    expect(merged.code).not.toBe(0);
+    expect(merged.stderr).toContain('B-2');
+    expect(merged.stderr).toContain('Mark an item closed, never remove it.');
+    expect(await headId()).toBe(before);
+  });
+
+  it('passes a merge commit that adds an item', async () => {
+    await plantBranch('side', ['B-1', 'B-2', 'B-3']);
+    await moveMainOn();
+    const merged = await git(['merge', '--no-ff', '-m', 'merge side', 'side']);
+    expect(merged.code, merged.stderr).toBe(0);
+    expect((await mustGit(['rev-parse', '--verify', 'HEAD^2'])).code).toBe(0);
+    expect(await readFile(join(stateDir, BOARD), 'utf8')).toBe(board(['B-1', 'B-2', 'B-3']));
+  });
+
+  it('stops a mailed patch that removes an item id, names the id, and the last commit stays', async () => {
+    await plantBranch('drop', ['B-1']);
+    const patch = await patchOf('drop');
+    const before = await headId();
+    const applied = await git(['am', patch]);
+    expect(applied.code).not.toBe(0);
+    expect(applied.stderr).toContain('B-2');
+    expect(await headId()).toBe(before);
+  });
+
+  it('passes a mailed patch that adds an item', async () => {
+    await plantBranch('more', ['B-1', 'B-2', 'B-3']);
+    const patch = await patchOf('more');
+    const before = await headId();
+    const applied = await git(['am', patch]);
+    expect(applied.code, applied.stderr).toBe(0);
+    expect(await headId()).not.toBe(before);
+    expect(await readFile(join(stateDir, BOARD), 'utf8')).toBe(board(['B-1', 'B-2', 'B-3']));
+  });
+});
+
 describe('the index that git gives the hook (TP-9)', () => {
   it('reads the files of a commit of all files (-a), also when the removal is not staged', async () => {
     const before = await headId();
@@ -359,8 +431,8 @@ describe('the undo of an install of the guard', () => {
     await writeFile(join(target, 'keep.txt'), 'keep');
     await symlink(target, join(folder, 'stray-link'));
     await writeFile(join(folder, 'post-commit'), 'x');
-    await writeFile(join(folder, stateGuard.hookFile), '#!/bin/sh\nexit 0\n');
-    await chmod(join(folder, stateGuard.hookFile), 0o755);
+    await writeFile(join(folder, PRE_COMMIT), '#!/bin/sh\nexit 0\n');
+    await chmod(join(folder, PRE_COMMIT), 0o755);
     await mustGit(['config', stateGuard.hooksPathKey, '/somewhere/else']);
     const config = await readFile(join(await gitDirOf(), 'config'), 'utf8');
     const entries = await readdir(folder);
@@ -375,8 +447,8 @@ describe('the undo of an install of the guard', () => {
 
     expect(await readFile(join(await gitDirOf(), 'config'), 'utf8')).toBe(config);
     expect(await readdir(folder)).toEqual(entries);
-    expect(await readFile(join(folder, stateGuard.hookFile), 'utf8')).toBe('#!/bin/sh\nexit 0\n');
-    expect((await stat(join(folder, stateGuard.hookFile))).mode & 0o777).toBe(0o755);
+    expect(await readFile(join(folder, PRE_COMMIT), 'utf8')).toBe('#!/bin/sh\nexit 0\n');
+    expect((await stat(join(folder, PRE_COMMIT))).mode & 0o777).toBe(0o755);
     expect(await readFile(join(folder, 'post-commit'), 'utf8')).toBe('x');
     expect(await readlink(join(folder, 'stray-link'))).toBe(target);
     expect(await readdir(target)).toEqual(['keep.txt']);

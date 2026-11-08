@@ -609,7 +609,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     const guard = join(await realpath(state), '.git', 'factory-guard');
     expect(upgraded.stdout).toContain('Wrote the delete guard in .factory/.git/factory-guard.');
     expect((await box.git(state, ['config', 'core.hooksPath'])).stdout.trim()).toBe(guard);
-    expect(await readdir(guard)).toEqual(['pre-commit']);
+    expect(await readdir(guard)).toEqual(['pre-applypatch', 'pre-commit', 'pre-merge-commit']);
     expect(changes.stdout).not.toContain('factory-guard');
 
     const doctor = await box.run(['doctor', '--home', box.node]);

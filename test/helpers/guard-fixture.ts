@@ -13,7 +13,12 @@ export const HOME = '/h/node';
 export const STATE = `${HOME}/.factory`;
 export const GIT_DIR = `${STATE}/.git`;
 export const GUARD = `${GIT_DIR}/${stateGuard.folder}`;
-export const HOOK = `${GUARD}/${stateGuard.hookFile}`;
+/** The hook files of the guard folder: the paths, and the first of them (`pre-commit`). */
+export const HOOKS: readonly string[] = stateGuard.hookFiles.map((name) => `${GUARD}/${name}`);
+export const HOOK = `${GUARD}/${stateGuard.hookFiles[0]}`;
+/** The hook files after the first one: `pre-merge-commit` and `pre-applypatch`. */
+export const MERGE_HOOK = `${GUARD}/${stateGuard.hookFiles[1]}`;
+export const PATCH_HOOK = `${GUARD}/${stateGuard.hookFiles[2]}`;
 export const HOOK_TEXT = `#!/bin/sh\n${stateGuard.comment}\nexec /opt/fake/bin/node /opt/fake/lib/program/cli.js state guard\n`;
 
 export interface Made {
@@ -75,6 +80,11 @@ export const OFF_CASES: readonly (readonly [string, GuardOffKind, Change])[] = [
   ['another file in the guard folder', 'extra-entry', touch((made) => made.deps.seed(`${GUARD}/post-commit`, 'x'))],
   ['a folder in the guard folder', 'extra-entry', touch((made) => made.deps.seedDir(`${GUARD}/sub`))],
   ['a missing hook', 'hook-missing', touch((made) => made.deps.files.delete(HOOK))],
+  ['a missing pre-merge-commit hook', 'hook-missing', touch((made) => made.deps.files.delete(MERGE_HOOK))],
+  ['a missing pre-applypatch hook', 'hook-missing', touch((made) => made.deps.files.delete(PATCH_HOOK))],
+  ['a pre-merge-commit hook with other bytes', 'hook-bytes', touch((made) => made.deps.files.set(MERGE_HOOK, '#!/bin/sh\nexit 0\n'))],
+  ['a pre-applypatch hook with mode 644', 'hook-mode', touch((made) => made.deps.modes.set(PATCH_HOOK, 0o644))],
+  ['a pre-merge-commit hook that is a link', 'hook-not-plain', async (made) => linkAt(made.deps, MERGE_HOOK)],
   ['a missing guard folder', 'folder-missing', touch((made) => made.deps.fs.remove(GUARD))],
   ['a hook that is a link', 'hook-not-plain', async (made) => linkAt(made.deps, HOOK)],
   ['a guard folder that is a link', 'folder-not-plain', async (made) => linkAt(made.deps, GUARD)],

@@ -47,7 +47,7 @@ const OWN_SETTINGS = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
 const STATE_DIR = '/w/node/.factory';
 const GIT_DIR = '/w/node/.factory/.git';
 const GUARD_DIR = `${GIT_DIR}/${stateGuard.folder}`;
-const HOOK_FILE = `${GUARD_DIR}/${stateGuard.hookFile}`;
+const HOOK_FILES = stateGuard.hookFiles.map((name) => `${GUARD_DIR}/${name}`);
 const RUNTIME_DIR = '/w/node/.factory/state';
 const MACHINE_ID_FILE = '/w/node/.factory/state/machine-id';
 const MARK_FILE = '/w/node/.factory/active-machine.json';
@@ -191,8 +191,10 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
     const hook = guardHookText(deps.programArgv);
     if (!hook.ok) throw new Error(hook.error.message);
     deps.seedDir(GUARD_DIR);
-    deps.seed(HOOK_FILE, hook.value);
-    deps.modes.set(HOOK_FILE, stateGuard.hookMode);
+    for (const file of HOOK_FILES) {
+      deps.seed(file, hook.value);
+      deps.modes.set(file, stateGuard.hookMode);
+    }
   }
   deps.seedDir(RUNTIME_DIR);
   const config = setup.config ?? sampleConfig();

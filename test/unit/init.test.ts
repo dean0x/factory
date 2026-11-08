@@ -43,9 +43,9 @@ const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
 const INDEX = '/state/factory/homes.json';
 /** The guard folder of the state repo after the staging folder is renamed onto the state path. */
 const GUARD_FOLDER = `${HOME}/.factory/.git/${stateGuard.folder}`;
-const GUARD_HOOK = `${GUARD_FOLDER}/${stateGuard.hookFile}`;
-/** The hook as it is written, in the staging folder, before the rename. */
-const STAGING_HOOK = `${HOME}/.factory.tmp-4242/.git/${stateGuard.folder}/${stateGuard.hookFile}`;
+const GUARD_HOOKS = stateGuard.hookFiles.map((name) => `${GUARD_FOLDER}/${name}`);
+/** The hook files as they are written, in the staging folder, before the rename. */
+const STAGING_HOOKS = stateGuard.hookFiles.map((name) => `${HOME}/.factory.tmp-4242/.git/${stateGuard.folder}/${name}`);
 
 const options = (extra: Partial<InitOptions> = {}): InitOptions => ({
   home: HOME,
@@ -106,7 +106,7 @@ describe('init: the files', () => {
       'setup/roles/worker.md',
       'coordinator/CLAUDE.md',
       'coordinator/.claude/settings.local.json',
-      '.factory/.git/factory-guard/pre-commit',
+      ...stateGuard.hookFiles.map((name) => `.factory/.git/factory-guard/${name}`),
       '.factory/node.json',
       '.factory/roles/worker.md',
       '.factory/board.json',
@@ -1131,14 +1131,16 @@ describe('init: the state repository', () => {
     ]);
   });
 
-  it('writes the package hook text as pre-commit in the guard folder of the git folder, with mode 755, and sets the path (TP-1)', async () => {
+  it('writes the package hook text as each hook file in the guard folder of the git folder, with mode 755, and sets the path (TP-1)', async () => {
     const { deps, log } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
     const expected = guardHookText(FAKE_PROGRAM_ARGV);
     expect(expected.ok).toBe(true);
-    expect(deps.files.get(GUARD_HOOK)).toBe(expected.ok ? expected.value : null);
-    expect(deps.modes.get(GUARD_HOOK)).toBe(0o755);
-    expect(await deps.fs.list(GUARD_FOLDER)).toEqual({ ok: true, value: [stateGuard.hookFile] });
+    for (const hook of GUARD_HOOKS) {
+      expect(deps.files.get(hook)).toBe(expected.ok ? expected.value : null);
+      expect(deps.modes.get(hook)).toBe(0o755);
+    }
+    expect(await deps.fs.list(GUARD_FOLDER)).toEqual({ ok: true, value: [...stateGuard.hookFiles].sort() });
     expect(log.commands()).toContain(`config -- core.hooksPath ${GUARD_FOLDER}`);
   });
 
@@ -1146,7 +1148,7 @@ describe('init: the state repository', () => {
     const { deps } = setup();
     expect((await runInit(deps, options())).ok).toBe(true);
     const outside = [...deps.files.keys()].filter((path) => path.startsWith(`${HOME}/.factory/`) && !path.startsWith(`${HOME}/.factory/.git/`));
-    expect(outside.some((path) => path.includes(stateGuard.folder) || path.endsWith(stateGuard.hookFile))).toBe(false);
+    expect(outside.some((path) => path.includes(stateGuard.folder) || stateGuard.hookFiles.some((name) => path.endsWith(name)))).toBe(false);
     expect(GUARD_FOLDER.startsWith(`${HOME}/.factory/.git/`)).toBe(true);
   });
 
@@ -1158,7 +1160,7 @@ describe('init: the state repository', () => {
     expect(setCalls.map((call) => call.args[1])).toEqual([staging]);
     expect(setCalls.map((call) => call.args.at(-1))).toEqual([GUARD_FOLDER]);
     expect(GUARD_FOLDER).not.toContain('/hooks');
-    expect(deps.files.has(GUARD_HOOK)).toBe(true);
+    expect(GUARD_HOOKS.every((hook) => deps.files.has(hook))).toBe(true);
     expect([...deps.files.keys()].some((path) => path.includes('.tmp-'))).toBe(false);
   });
 
@@ -1321,7 +1323,7 @@ describe('init: rollback', () => {
     deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     expect((await runInit(deps, options())).ok).toBe(true);
     expect(deps.atomicWrites).toEqual([
-      STAGING_HOOK,
+      ...STAGING_HOOKS,
       `${HOME}/coordinator/CLAUDE.md`,
       `${HOME}/.gitignore`,
       `${HOME}/factory.local.yaml`,
@@ -1427,7 +1429,7 @@ describe('init: rollback', () => {
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
     await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
-    expect(deps.atomicWrites).toEqual([STAGING_HOOK, claude, `${HOME}/.gitignore`, `${HOME}/factory.local.yaml`, claude]);
+    expect(deps.atomicWrites).toEqual([...STAGING_HOOKS, claude, `${HOME}/.gitignore`, `${HOME}/factory.local.yaml`, claude]);
     expect(deps.files.get(claude)).toBe('Owner text.\n');
   });
 
@@ -1485,7 +1487,7 @@ describe('init: rollback', () => {
     expect(messageOf(result)).toContain(`cannot rename ${HOME}/.factory.tmp-4242: EXDEV`);
     expect(messageOf(result)).toContain('nothing was changed');
     expect(snapshot(deps)).toBe(before);
-    expect(deps.atomicWrites).toEqual([STAGING_HOOK]);
+    expect(deps.atomicWrites).toEqual(STAGING_HOOKS);
   });
 
   it('leaves the folder as it was and says so when the first commit fails', async () => {
@@ -1505,7 +1507,7 @@ describe('init: rollback', () => {
     expect(messageOf(result)).toContain('cannot commit the state files');
     expect(messageOf(result)).toContain('nothing was changed');
     expect(snapshot(deps)).toBe(before);
-    expect(deps.atomicWrites).toEqual([STAGING_HOOK]);
+    expect(deps.atomicWrites).toEqual(STAGING_HOOKS);
   });
 
   it('leaves no node when git cannot create the repository', async () => {

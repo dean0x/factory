@@ -1299,7 +1299,8 @@ describe('init: a root whose state folder has a missing or broken marker (TP-96,
 
 describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () => {
   const GUARD = `${STATE}/.git/${stateGuard.folder}`;
-  const HOOK = `${GUARD}/${stateGuard.hookFile}`;
+  const HOOKS = stateGuard.hookFiles.map((name) => `${GUARD}/${name}`);
+  const HOOK = `${GUARD}/${stateGuard.hookFiles[0]}`;
   const hookText = (): string => {
     const text = guardHookText(FAKE_PROGRAM_ARGV);
     if (!text.ok) throw new Error(text.error.message);
@@ -1325,8 +1326,10 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
     repo(made.deps);
     const result = await runInit(made.deps, options({ yes: true }));
     expect(result.ok).toBe(true);
-    expect(made.deps.files.get(HOOK)).toBe(hookText());
-    expect(made.deps.modes.get(HOOK)).toBe(0o755);
+    for (const hook of HOOKS) {
+      expect(made.deps.files.get(hook)).toBe(hookText());
+      expect(made.deps.modes.get(hook)).toBe(0o755);
+    }
     expect(setting(log)).toEqual([`config -- core.hooksPath ${GUARD}`]);
     expect(seen).toEqual([false]);
     expect(entryOf(made.deps)).toMatchObject({ id: 'demo' });
@@ -1336,11 +1339,13 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
   it('writes nothing for the guard when it is on already', async () => {
     const { deps, log } = existing({ state: 'valid', fixture: { hooksPath: { [STATE]: GUARD } } });
     repo(deps);
-    deps.seed(HOOK, hookText());
-    deps.modes.set(HOOK, 0o755);
+    for (const hook of HOOKS) {
+      deps.seed(hook, hookText());
+      deps.modes.set(hook, 0o755);
+    }
     const result = await runInit(deps, options({ yes: true }));
     expect(result.ok).toBe(true);
-    expect(deps.atomicWrites).not.toContain(HOOK);
+    expect(deps.atomicWrites.filter((path) => HOOKS.includes(path))).toEqual([]);
     expect(setting(log)).toEqual([]);
     expect(linesOf(result)).not.toContain('factory-guard');
   });
@@ -1450,7 +1455,7 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
     deps.modes.set(HOOK, 0o755);
     expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
     expect(deps.files.get(HOOK)).toBe(hookText());
-    expect([...deps.files.keys(), ...deps.dirs].filter((path) => path.includes(stateGuard.folder)).sort()).toEqual([GUARD, HOOK].sort());
+    expect([...deps.files.keys(), ...deps.dirs].filter((path) => path.includes(stateGuard.folder)).sort()).toEqual([GUARD, ...HOOKS].sort());
   });
 
   it('writes the guard once for a state folder that it makes: the staging folder holds it', async () => {

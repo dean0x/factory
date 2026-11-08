@@ -1276,13 +1276,15 @@ export const flagText = (name: string): string => `--${name}`;
 export const commandText = (command: string): string => `${program} ${command}`;
 
 /**
- * The delete guard of the state repo: a hook that git runs before a commit. `init` and `upgrade` write it from the text below into a
- * folder of the git folder of the state repo (never the folder `hooks`), and set the key `core.hooksPath` to that folder. The git
- * folder is not part of the tracked files, so the repo never holds the hook. The folder holds the hook file and nothing else.
+ * The delete guard of the state repo: hooks that git runs before it makes a commit. `init` and `upgrade` write them from the text
+ * below into a folder of the git folder of the state repo (never the folder `hooks`), and set the key `core.hooksPath` to that
+ * folder. The git folder is not part of the tracked files, so the repo never holds a hook. The folder holds the hook files and
+ * nothing else. Every hook file has the same text, which starts `state guard`: `pre-commit` is for `git commit`,
+ * `pre-merge-commit` is for the commit of `git merge`, and `pre-applypatch` is for `git am`.
  */
 export const stateGuard = {
   folder: 'factory-guard',
-  hookFile: 'pre-commit',
+  hookFiles: ['pre-commit', 'pre-merge-commit', 'pre-applypatch'],
   hookMode: 0o755,
   folderMode: 0o755,
   hooksPathKey: 'core.hooksPath',

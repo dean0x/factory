@@ -12,7 +12,22 @@ import {
 } from '../../src/state/guard.js';
 import { createFakeDeps, exited, FAKE_PROGRAM_ARGV } from '../helpers/fake-deps.js';
 import { gitHandler, withoutStateWords } from '../helpers/git-fake.js';
-import { GIT_DIR, GUARD, HOME, HOOK, HOOK_TEXT, installed, linkAt, make, OFF_CASES, STATE, type Made } from '../helpers/guard-fixture.js';
+import {
+  GIT_DIR,
+  GUARD,
+  HOME,
+  HOOK,
+  HOOKS,
+  HOOK_TEXT,
+  installed,
+  linkAt,
+  make,
+  MERGE_HOOK,
+  OFF_CASES,
+  PATCH_HOOK,
+  STATE,
+  type Made,
+} from '../helpers/guard-fixture.js';
 
 const entriesOf = async (deps: Deps, path: string): Promise<readonly string[]> => {
   const listed = await deps.fs.list(path);
@@ -52,12 +67,14 @@ describe('the text of the guard hook (TP-1)', () => {
 });
 
 describe('the install of the guard (TP-1)', () => {
-  it('writes the package text as pre-commit in the guard folder of the git folder, with mode 755, and nothing else', async () => {
+  it('writes the package text as pre-commit, pre-merge-commit and pre-applypatch in the guard folder of the git folder, with mode 755, and nothing else', async () => {
     const { deps } = await installed();
-    expect(deps.files.get(HOOK)).toBe(HOOK_TEXT);
-    expect(deps.modes.get(HOOK)).toBe(0o755);
-    expect(await entriesOf(deps, GUARD)).toEqual([stateGuard.hookFile]);
-    expect(deps.atomicWrites).toEqual([HOOK]);
+    for (const hook of HOOKS) {
+      expect(deps.files.get(hook)).toBe(HOOK_TEXT);
+      expect(deps.modes.get(hook)).toBe(0o755);
+    }
+    expect(await entriesOf(deps, GUARD)).toEqual([...stateGuard.hookFiles].sort());
+    expect(deps.atomicWrites).toEqual(HOOKS);
   });
 
   it('keeps the guard folder out of the folder hooks, and inside the git folder, which git does not track', async () => {
@@ -77,7 +94,9 @@ describe('the install of the guard (TP-1)', () => {
     made.deps.seedDir(`${staging}/.git`);
     const result = await installGuard(made.deps, staging, STATE);
     expect(result.ok).toBe(true);
-    expect(made.deps.files.get(`${staging}/.git/${stateGuard.folder}/${stateGuard.hookFile}`)).toBe(HOOK_TEXT);
+    for (const name of stateGuard.hookFiles) {
+      expect(made.deps.files.get(`${staging}/.git/${stateGuard.folder}/${name}`)).toBe(HOOK_TEXT);
+    }
     expect(made.gitCommands()).toContain(`config -- core.hooksPath ${GUARD}`);
     expect(made.gitCommands().join('\n')).not.toContain('tmp-4242/.git/factory-guard');
   });
@@ -89,7 +108,7 @@ describe('the install of the guard (TP-1)', () => {
     made.deps.seed(`${GUARD}/sub/deep.txt`, 'y');
     const result = await installGuard(made.deps, STATE, STATE);
     expect(result.ok).toBe(true);
-    expect(await entriesOf(made.deps, GUARD)).toEqual([stateGuard.hookFile]);
+    expect(await entriesOf(made.deps, GUARD)).toEqual([...stateGuard.hookFiles].sort());
     expect(made.deps.files.get(HOOK)).toBe(HOOK_TEXT);
     expect([...made.deps.files.keys()].some((path) => path.includes('deep.txt'))).toBe(false);
   });
@@ -220,6 +239,17 @@ describe('the state of the guard (TP-11)', () => {
     const state = await guardStateOf(changed, STATE);
     expect(state).toMatchObject({ ok: true, value: { on: false, kind } });
     if (state.ok && !state.value.on) expect(state.value.why).not.toBe('');
+  });
+
+  it('is off for a guard that holds pre-commit only, and the install writes the other two files', async () => {
+    const made = await installed();
+    made.deps.files.delete(MERGE_HOOK);
+    made.deps.files.delete(PATCH_HOOK);
+    expect(await guardStateOf(made.deps, STATE)).toMatchObject({ ok: true, value: { on: false, kind: 'hook-missing' } });
+    expect((await installGuard(made.deps, STATE, STATE)).ok).toBe(true);
+    expect(made.deps.files.get(MERGE_HOOK)).toBe(HOOK_TEXT);
+    expect(made.deps.files.get(PATCH_HOOK)).toBe(HOOK_TEXT);
+    expect(await guardStateOf(made.deps, STATE)).toEqual({ ok: true, value: { on: true } });
   });
 
   it('is a failure, never "on", when git cannot read the setting', async () => {

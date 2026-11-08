@@ -50,7 +50,7 @@ export type GuardState =
 
 const off = (kind: GuardOffKind, why: string): CliResult<GuardState> => ok({ on: false, kind, why });
 
-const hookName = stateGuard.hookFile;
+const hookFiles: readonly string[] = stateGuard.hookFiles;
 
 /**
  * The git folder of the state repo as git prints it, when it is the folder `.git` inside `stateDir`: a real folder, not a link, and
@@ -85,7 +85,7 @@ const hooksPathOf = async (deps: Deps, stateDir: string, finalStateDir: string, 
 };
 
 /**
- * Make the guard folder hold the hook file and nothing else. The folder is checked first: a link, or anything that is not a folder, is
+ * Make the guard folder hold the hook files and nothing else. The folder is checked first: a link, or anything that is not a folder, is
  * a stop (exit 4) before any entry is removed. A folder with many entries is a stop too. An entry is removed by its name inside the real
  * folder, and a link is removed itself, never followed. A hook file that is not a plain file is removed too.
  */
@@ -112,7 +112,7 @@ const prepareGuardFolder = async (deps: Deps, folder: string): Promise<CliResult
   if (comparable(deps, real.value) !== comparable(deps, folder)) return folderRefusal(folder, 'is not at its real path');
   for (const name of listed.value) {
     const entry = join(folder, name);
-    if (name === hookName) {
+    if (hookFiles.includes(name)) {
       const hook = await deps.fs.lstat(entry);
       if (!hook.ok) return hook;
       if (hook.value === 'file') continue;
@@ -124,7 +124,7 @@ const prepareGuardFolder = async (deps: Deps, folder: string): Promise<CliResult
 };
 
 /**
- * Write the guard into the state repo `stateDir`: the hook file from the package text in the guard folder of the git folder (mode
+ * Write the guard into the state repo `stateDir`: the hook files from the package text in the guard folder of the git folder (mode
  * 755), then the setting `core.hooksPath` with the absolute path of that folder inside `finalStateDir`. `finalStateDir` is the state
  * folder as it is after a rename of the staging folder; it equals `stateDir` for a state folder that stays in place.
  * Every refusal is exit 4 and comes before the first change: a program path that is not known, a git folder that is not the folder
@@ -142,8 +142,10 @@ export const installGuard = async (deps: Deps, stateDir: string, finalStateDir: 
   if (!hooksPath.ok) return hooksPath;
   const prepared = await prepareGuardFolder(deps, folder);
   if (!prepared.ok) return prepared;
-  const written = await deps.fs.writeTextAtomic(join(folder, hookName), text.value, gitDir.value, stateGuard.hookMode);
-  if (!written.ok) return written;
+  for (const name of hookFiles) {
+    const written = await deps.fs.writeTextAtomic(join(folder, name), text.value, gitDir.value, stateGuard.hookMode);
+    if (!written.ok) return written;
+  }
   return setStateConfig(deps, stateDir, stateGuard.hooksPathKey, hooksPath.value);
 };
 
@@ -262,12 +264,25 @@ export const installGuardWithUndo = async (deps: Deps, stateDir: string): Promis
   return ok({ undo, keep: async () => (copied ? deps.fs.remove(copy) : ok(undefined)) });
 };
 
+/** Whether one hook file is as the package writes it: a plain file with mode 755 and the text `expected`. */
+const hookStateOf = async (deps: Deps, hook: string, name: string, expected: string): Promise<CliResult<GuardState>> => {
+  const kind = await deps.fs.lstat(hook);
+  if (!kind.ok) return kind;
+  if (kind.value !== 'file') return off('hook-not-plain', `the hook file ${name} is a link or not a file`);
+  const info = await deps.fs.statInfo(hook);
+  if (!info.ok) return info;
+  if (info.value?.mode !== stateGuard.hookMode) return off('hook-mode', `the hook file ${name} does not have mode ${stateGuard.hookMode.toString(8)}`);
+  const text = await deps.fs.readTextLimited(hook, Buffer.byteLength(expected, 'utf8'));
+  if (!text.ok || text.value !== expected) return off('hook-bytes', `the hook file ${name} differs from the text of the package`);
+  return ok({ on: true });
+};
+
 /**
  * Whether the guard of the state repo `stateDir` is on. It is on when all of these hold: the program path is known; the git folder is the
  * folder `.git` of the state folder; `core.hooksPath` (as git reads it, with every config level) is the guard folder; the guard folder is
- * a real folder that holds the hook file and nothing else; the hook file is a plain file with mode 755; and its bytes are the package
- * text for this program path. Any other case is off, with the first reason found. A read that fails is an error, never "on". A moved
- * package or a moved state folder is off until the guard is installed again.
+ * a real folder that holds the hook files and nothing else; each hook file is a plain file with mode 755; and its bytes are the package
+ * text for this program path. A missing hook file is off, so the install writes it again. Any other case is off, with the first reason
+ * found. A read that fails is an error, never "on". A moved package or a moved state folder is off until the guard is installed again.
  */
 export const guardStateOf = async (deps: Deps, stateDir: string): Promise<CliResult<GuardState>> => {
   const expected = guardHookText(deps.programArgv);
@@ -290,18 +305,14 @@ export const guardStateOf = async (deps: Deps, stateDir: string): Promise<CliRes
   if (folderKind.value !== 'dir') return off('folder-not-plain', `the guard folder ${folder} is a link or not a folder`);
   const names = await deps.fs.list(folder);
   if (!names.ok) return names;
-  if (!names.value.includes(hookName)) return off('hook-missing', `the hook file ${hookName} is missing`);
-  if (names.value.length > 1) return off('extra-entry', `the guard folder holds a file other than ${hookName}`);
+  const missing = hookFiles.find((name) => !names.value.includes(name));
+  if (missing !== undefined) return off('hook-missing', `the hook file ${missing} is missing`);
+  if (names.value.length > hookFiles.length) return off('extra-entry', `the guard folder holds a file other than ${hookFiles.join(', ')}`);
 
-  const hook = join(folder, hookName);
-  const hookKind = await deps.fs.lstat(hook);
-  if (!hookKind.ok) return hookKind;
-  if (hookKind.value !== 'file') return off('hook-not-plain', `the hook file ${hookName} is a link or not a file`);
-  const info = await deps.fs.statInfo(hook);
-  if (!info.ok) return info;
-  if (info.value?.mode !== stateGuard.hookMode) return off('hook-mode', `the hook file ${hookName} does not have mode ${stateGuard.hookMode.toString(8)}`);
-  const text = await deps.fs.readTextLimited(hook, Buffer.byteLength(expected.value, 'utf8'));
-  if (!text.ok || text.value !== expected.value) return off('hook-bytes', `the hook file ${hookName} differs from the text of the package`);
+  for (const name of hookFiles) {
+    const state = await hookStateOf(deps, join(folder, name), name, expected.value);
+    if (!state.ok || !state.value.on) return state;
+  }
   return ok({ on: true });
 };
 

@@ -153,10 +153,11 @@ describe('init: a received factory (TP-29, TP-30)', () => {
     const { deps, log } = received({}, terminal);
     expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
     const guard = `${ROOT}/.factory/.git/${stateGuard.folder}`;
-    const hook = `${guard}/${stateGuard.hookFile}`;
     const text = guardHookText(FAKE_PROGRAM_ARGV);
-    expect(deps.files.get(hook)).toBe(text.ok ? text.value : null);
-    expect(deps.modes.get(hook)).toBe(0o755);
+    for (const name of stateGuard.hookFiles) {
+      expect(deps.files.get(`${guard}/${name}`)).toBe(text.ok ? text.value : null);
+      expect(deps.modes.get(`${guard}/${name}`)).toBe(0o755);
+    }
     expect(log.commands()).toContain(`config -- core.hooksPath ${guard}`);
   });
 

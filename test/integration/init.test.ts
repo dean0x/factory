@@ -220,12 +220,13 @@ describe('factory init (built binary)', () => {
     expect((await box.run(initArgs())).code).toBe(0);
     const state = join(box.node, '.factory');
     const guard = join(await realpath(state), '.git', 'factory-guard');
-    const hook = join(guard, 'pre-commit');
     expect((await box.git(state, ['config', 'core.hooksPath'])).stdout.trim()).toBe(guard);
-    expect(await readdir(guard)).toEqual(['pre-commit']);
-    expect((await stat(hook)).mode & 0o777).toBe(0o755);
+    expect(await readdir(guard)).toEqual(['pre-applypatch', 'pre-commit', 'pre-merge-commit']);
+    for (const name of await readdir(guard)) {
+      expect((await stat(join(guard, name))).mode & 0o777).toBe(0o755);
+      expect(await box.read(join(guard, name))).toMatch(/^#!\/bin\/sh\n# .*\nexec .* state guard\n$/);
+    }
     expect((await stat(guard)).mode & 0o777).toBe(0o755);
-    expect(await box.read(hook)).toMatch(/^#!\/bin\/sh\n# .*\nexec .* state guard\n$/);
     expect((await box.git(state, ['ls-files'])).stdout).not.toContain('factory-guard');
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
     expect((await readdir(join(state, '.git'))).includes('hooks')).toBe(true);
