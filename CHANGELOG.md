@@ -113,9 +113,26 @@ The last-seen hook and the settings write
 - `factory upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports. The JSON output names the old name of a renamed block in `blocks[].renamedFrom`.
 - A node on layer 1 with entries in `children` stops the migration and changes nothing, because the children of layer 1 are workers. A node of version 0.1.0 that lists a project stops it too (exit code 1): make the factory again with `init`. The message gives the remedy.
 
+The delete guard of the state repo
+
+- `init` and `upgrade` write three hooks into `.factory/.git/factory-guard/` and set `core.hooksPath` of `.factory/` to that folder: `pre-commit` (for `git commit`), `pre-merge-commit` (for a `git merge` that makes a merge commit) and `pre-applypatch` (for `git am`). Each hook runs `factory state guard`. A commit stops when it removes an item id from `board.json`, removes the file, or changes it to a text that cannot be read. A commit that does not change `board.json` passes. Git runs no hook for `git revert`, `git cherry-pick`, `git rebase`, `git reset`, and a `git merge` or `git pull` that fast-forwards, so these are not checked.
+- The hooks run the Node program and the script by their absolute paths. If a path is gone (a Node update, a second install, a moved package), the hook prints one line that names `factory upgrade`, and the commit stops with exit code 1.
+- New command `factory state guard`, for git and not for people. The JSON object of the command is `factory.state-guard/v1`. New field `stateGuard` in the object `factory.upgrade/v1`, with the value `current`, `install` or `unsupported`. `unsupported` means that only a person can repair the guard: `.factory/.git` is a file, a link or another folder; the program path is not known; or the guard folder is a link, is not a folder, is not at its real path, or holds more than 64 entries. `init` and `upgrade` then warn with the cause and a manual step, and go on with exit code 0.
+- `init`, `upgrade` and `upgrade --dry-run` print one warning that lists the hooks of the state repo that stop running when the guard is written: the files in `.factory/.git/hooks` that are not `.sample` files, the hooks of another `core.hooksPath`, and the extra entries of the guard folder. Factory runs none of them.
+- `upgrade` writes the guard after the ready check, the link checks and the backups, and before the first file change. A stop after that step keeps the guard: "Wrote the delete guard in .factory/.git/factory-guard. It stays."
+- `doctor` and `start` warn when the guard is off, and their exit codes stay the same.
+- The ready check of `.factory/` stops for a staged change of a submodule pointer. Every git step in `.factory/` runs with the file monitor off (`core.fsmonitor=`, an empty value).
+- A key `filter.` or `hook.` in the local git config of `.factory/` stops `init`, `upgrade` and the render of the setup text with exit code 4. For a new `.factory/`, `init` checks the config before its first `git add`, and the remedy names `init.templateDir`.
+
+Git 2.26 and the state lock
+
+- The minimum git version is 2.26. `doctor` fails the check `tools` for an older git, and when it cannot read the git version. `start` reads the git version and the git config of `.factory/` right after its tool check, before it makes or looks at a session. `reboot` outside the session does the same before its first stop. With git older than 2.26, they exit with code 1 before they make or end a session. A dry run of `start` warns. `init` and `upgrade` exit with code 1 for the same fault when they must change `.factory/`.
+- One lock file, `.factory/locks/state.lock`, covers each step that changes `.factory/` and commits it. A second writer waits 20 tries of 250 ms, then exits with code 1 and names the lock file. The claim of the active machine by `start` warns and goes on with exit code 0.
+- The lock file holds an owner token, `<pid>-<16 hex characters>`. A step that ends removes the lock file only when it holds its own token. A lock file older than 300 seconds is taken over, and the new lock file holds the token of the new owner.
+
 `doctor`
 
-- `factory doctor` runs 26 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `setup-text`, `roles`, `tracker`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls` and `agent-version`.
+- `factory doctor` runs 27 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `setup-text`, `roles`, `tracker`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls`, `agent-version` and `state-guard`.
 - `delegations` shows the mode of each approval point. A `delegated` mode with no matching approval record warns, and the point counts as `owner`.
 - `instruction-files` warns when the factory folder, or a folder above it, holds a file that an agent loads as an instruction.
 - `project-urls` warns for a project that has no URL that you can share.
