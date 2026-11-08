@@ -343,7 +343,7 @@ describe('a commit that the guard reads as a loss or cannot read (TP-8)', () => 
   });
 
   describe('with no board that can be read within the bound of the history', () => {
-    it('fails closed with a remedy that names a normal action', async () => {
+    beforeEach(async () => {
       for (let step = 0; step <= stateGuard.historyBound; step += 1) {
         await writeInState(BOARD, `not json ${step}\n`);
         await mustGit(['add', BOARD]);
@@ -351,13 +351,37 @@ describe('a commit that the guard reads as a loss or cannot read (TP-8)', () => 
         const planted = await commit('--no-verify');
         expect(planted.code, planted.stderr).toBe(0);
       }
-      await writeInState(BOARD, board(['B-1', 'B-2']));
+    }, SETUP_TIMEOUT_MS);
+
+    it('fails closed for a board that no older commit held, with a remedy that names a normal action', async () => {
+      const before = await headId();
+      // The board keeps every id of the oldest board, and it is still not a board of the history.
+      await writeInState(BOARD, board(['B-1', 'B-2', 'B-3']));
       await mustGit(['add', BOARD]);
       const result = await commit();
       expect(result.code).not.toBe(0);
       expect(result.stderr).toContain('git -C .factory restore --source=<commit> --staged --worktree -- board.json');
       expect(result.stderr).not.toContain('--no-verify');
-    }, SETUP_TIMEOUT_MS);
+      expect(await headId()).toBe(before);
+    });
+
+    it('accepts the board that the remedy of the stop restores from an older commit', async () => {
+      await writeInState(BOARD, board(['B-1', 'B-2', 'B-3']));
+      await mustGit(['add', BOARD]);
+      const stopped = await commit();
+      expect(stopped.code).not.toBe(0);
+      // Follow the remedy as the hook prints it: the git command of the text, with the id of the oldest commit for `<commit>`.
+      const remedy = /"(git -C \.factory restore [^"]+)"/.exec(stopped.stderr)?.[1];
+      expect(remedy).toBeDefined();
+      const oldest = (await mustGit(['rev-list', '--max-parents=0', 'HEAD'])).stdout.trim();
+      await mustGit((remedy ?? '').replace('<commit>', oldest).split(' ').slice(3));
+      const commits = await countOfCommits();
+      const result = await commit();
+      expect(result.code, result.stderr).toBe(0);
+      expect(await countOfCommits()).toBe(commits + 1);
+      expect(await filesOfHead()).toEqual([BOARD]);
+      expect(await readFile(join(stateDir, BOARD), 'utf8')).toBe(board(['B-1', 'B-2']));
+    });
   });
 });
 

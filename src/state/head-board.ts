@@ -63,19 +63,23 @@ export type EarlierBoard =
   | { readonly kind: 'text'; readonly text: string }
   /** The history starts, or a commit holds no board file, before any board that can be read: there is nothing to compare with. */
   | { readonly kind: 'nothing' }
-  /** The bound ended the walk before it found a board that can be read. */
-  | { readonly kind: 'bound' };
+  /**
+   * The bound ended the walk before it found a board that can be read. `beyond` holds the commits after the bound, newest first, up to
+   * `stateGuard.restoreBound` older commits in all: the walk did not read them.
+   */
+  | { readonly kind: 'bound'; readonly beyond: readonly string[] };
 
 const NOTHING: EarlierBoard = { kind: 'nothing' };
 
 /**
  * Walk back through the commits that changed the board file, on the line of first parents from the last commit, and give the first
  * board that can be read (`itemIdsOf` reads it). The walk reads at most `stateGuard.historyBound` older commits. A commit that holds
- * no board file ends the walk with nothing to compare with. Call it when the board at the last commit can not be read. A read of git
- * that fails is an error, never "nothing". Every git call runs with the hooks off.
+ * no board file ends the walk with nothing to compare with. At the bound, the result names the next commits of the file, so that a
+ * caller can look for a board that was put back (`holdsBoardFile`). Call it when the board at the last commit can not be read. A read
+ * of git that fails is an error, never "nothing". Every git call runs with the hooks off.
  */
 export const earlierReadableBoard = async (deps: Deps, dir: string): Promise<CliResult<EarlierBoard>> => {
-  const commits = await stateCommitsOf(deps, dir, BOARD, stateGuard.historyBound + 1);
+  const commits = await stateCommitsOf(deps, dir, BOARD, stateGuard.restoreBound + 1);
   if (!commits.ok) return commits;
   // The first commit is the one that made the board at the last commit.
   for (const commit of commits.value.slice(1, stateGuard.historyBound + 1)) {
@@ -86,5 +90,21 @@ export const earlierReadableBoard = async (deps: Deps, dir: string): Promise<Cli
     if (board.value.kind === 'absent') return ok(NOTHING);
     if (board.value.kind === 'text' && itemIdsOf(board.value.text).ok) return ok({ kind: 'text', text: board.value.text });
   }
-  return ok(commits.value.length > stateGuard.historyBound ? { kind: 'bound' } : NOTHING);
+  if (commits.value.length <= stateGuard.historyBound) return ok(NOTHING);
+  return ok({ kind: 'bound', beyond: commits.value.slice(stateGuard.historyBound + 1, stateGuard.restoreBound + 1) });
+};
+
+/**
+ * True when the board file at one of `commits` is the plain file with the object id `id`. The commits are the `beyond` of a walk that
+ * ended at the bound, and each one is read once. A commit with no board file, or with a board that is not a plain file, is not a match.
+ * A read of git that fails is an error, never "no match". Every git call runs with the hooks off.
+ */
+export const holdsBoardFile = async (deps: Deps, dir: string, commits: readonly string[], id: string): Promise<CliResult<boolean>> => {
+  for (const commit of commits.slice(0, stateGuard.restoreBound - stateGuard.historyBound)) {
+    const entry = await boardEntryAt(deps, dir, commit);
+    if (!entry.ok) return entry;
+    const found = entry.value;
+    if (found !== null && found.kind === 'blob' && isFileMode(found.mode) && found.id === id) return ok(true);
+  }
+  return ok(false);
 };

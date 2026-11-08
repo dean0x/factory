@@ -1298,6 +1298,11 @@ export const stateGuard = {
   maxShownStops: 5,
   /** The most older commits of board.json that the guard reads back to find the last board that can be read. */
   historyBound: 100,
+  /**
+   * The most older commits of board.json that the guard reads when the walk back ends at `historyBound` with no board that can be
+   * read: it looks in the commits after the first `historyBound` for the board that a person put back. It counts from the last commit.
+   */
+  restoreBound: 500,
   /** The word between the folder name and the pid in the name of the copy that an install keeps of an old guard folder. */
   copyWord: '.old-',
   interpreter: '#!/bin/sh',

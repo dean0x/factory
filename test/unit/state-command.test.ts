@@ -301,14 +301,70 @@ describe('the state guard command: a board at the last commit that cannot be rea
   });
 
   it('stops at the bound with a remedy that names a normal action, and reads at most the bound', async () => {
-    const history = Array.from({ length: stateGuard.historyBound + 20 }, () => BAD);
+    const history = Array.from({ length: stateGuard.restoreBound + 20 }, () => BAD);
     const { result, deps } = await guardWith({ head: BAD, history, index: board(['B-1']) });
     const error = result.ok ? null : result.error;
     expect(error === null ? 0 : exitCodeOf[error.kind]).toBe(1);
     expect(error?.message).toContain(`${stateGuard.historyBound}`);
     expect(error?.hint).toContain('git -C .factory restore --source=<commit> --staged --worktree -- board.json');
+    expect(error?.hint).toContain(`${stateGuard.restoreBound}`);
     expect(error?.hint).not.toContain('--no-verify');
-    expect(commandsOf(deps).filter((command) => command.startsWith('ls-tree')).length).toBeLessThanOrEqual(stateGuard.historyBound + 1);
+    expect(commandsOf(deps).filter((command) => command.startsWith('ls-tree')).length).toBeLessThanOrEqual(stateGuard.restoreBound + 1);
+  });
+
+  describe('at the bound of the history, where the board of an older commit is put back', () => {
+    const OTHER_BAD = 'still not json\n';
+    const unreadable = (count: number): readonly string[] => Array.from({ length: count }, () => BAD);
+
+    it('passes the board that an older commit held: the restore that the remedy gives', async () => {
+      const { result } = await guardWith({ head: BAD, history: [...unreadable(stateGuard.historyBound), GOOD], index: GOOD });
+      expect(result.ok).toBe(true);
+    });
+
+    it('passes the board of the last commit that the read reaches', async () => {
+      const history = [...unreadable(stateGuard.restoreBound - 1), GOOD];
+      const { result } = await guardWith({ head: BAD, history, index: GOOD });
+      expect(result.ok).toBe(true);
+    });
+
+    it('stops for a board that is older than the commits that the read reaches', async () => {
+      const history = [...unreadable(stateGuard.restoreBound), GOOD];
+      const error = await stopOf({ head: BAD, history, index: GOOD });
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain(`${stateGuard.historyBound}`);
+    });
+
+    it('stops for a board that no older commit held, also when it keeps every item id of a board in the history', async () => {
+      const history = [...unreadable(stateGuard.historyBound), GOOD];
+      const error = await stopOf({ head: BAD, history, index: board(['B-1', 'B-2', 'B-3']) });
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain(`${stateGuard.historyBound}`);
+      expect(error.hint).toContain('git -C .factory restore --source=<commit> --staged --worktree -- board.json');
+    });
+
+    it('stops for a restored board that can not be read, with the remedy for the new board', async () => {
+      const history = [...unreadable(stateGuard.historyBound), OTHER_BAD];
+      const error = await stopOf({ head: BAD, history, index: OTHER_BAD });
+      expect(error.message).toBe('cannot read board.json of this commit: the text is not valid JSON');
+      expect(error.hint).toContain('commit again');
+    });
+
+    it('stops with exit 1 and a remedy when the read of an older commit fails, and never passes the board', async () => {
+      const history = [...unreadable(stateGuard.historyBound), GOOD];
+      const fails = { [`ls-tree -z -l ${commitIdOf(stateGuard.historyBound + 1)}`]: 128 };
+      const error = await stopOf({ head: BAD, history, index: GOOD, fails });
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toMatch(/^cannot read/);
+      expect(error.hint).toContain('git status');
+    });
+
+    it('reads the commits of the file once, and no commit that the walk back read before', async () => {
+      const history = [...unreadable(stateGuard.historyBound), GOOD];
+      const { deps } = await guardWith({ head: BAD, history, index: GOOD });
+      expect(commandsOf(deps).filter((command) => command.startsWith('log'))).toHaveLength(1);
+      const trees = commandsOf(deps).filter((command) => command.startsWith('ls-tree'));
+      expect(trees).toHaveLength(new Set(trees).size);
+    });
   });
 
   it('reads the history of the file only when the board at the last commit can not be read', async () => {
