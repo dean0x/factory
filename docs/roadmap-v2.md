@@ -371,31 +371,41 @@ The hosted-kind path of M5-1b (local first, then a hosted copy) is a test-double
 - [ ] Forecast and share (F-24). The usage view shows the forecast and the share of the weekly capacity that the token meter package gives, and the usage view test checks both on its fixture.
 - [ ] Token estimate (F-23). Test `item estimate gives a token range from closed items` (`test/unit/item-estimate.test.ts`), on a fixture of closed items with measured tokens. With at least N similar closed items, `factory item estimate <id>` prints a token range and its basis (the closed items that it used) and exits 0. With fewer, it prints `NO BASIS` on line 1 and exits 3. N is a named number in `src/names.ts`, with the proposed value 3. The output follows the output rule. `docs/token-budget.md` keeps its 17 rows, because design §3 lists no job for these two commands (docs check 6).
 
-### FAC-M3: GitHub board, and the move to it
+### FAC-M3: GitHub board plugin, and the move to it
 
 **Goal.** The board, the requests and the decisions of this workspace move from the `local` board to GitHub. A script reads the answers on the board and shows them; the owner enters each decision with `factory decide`. The user picks the board tool at setup. The old page and scripts are retired. A second machine of the owner gets the profile.
 
 **Scope.**
-1. The `github` connector (issues plus a Projects board, through `gh`) behind the FAC-M5 contract. The contract has the `doc` operation (attach a file, link a repo file) and `changes read` (comments, label changes, assignee changes, open or close changes, each with its author; card moves are out for now). The connector does not look at which account wrote an event. A separate account for the agents is optional, and it is the owner's own GitHub choice (D-128 A). One GitHub project holds the issues of all the repos of a factory (design §4.10).
-2. The commands `decide ask|read` and `watch`, and `decide <D-n> <option>` for the `github` board (design §4.10). With `github`, `decide <D-n> <option>` also adds a comment to the item that names the CLI. The comment is a record, not a proof (D-128 A). `start` starts `watch` in the window `ops` when the board is not `local`.
+1. The `github` connector (issues plus a Projects board, through `gh`). It is an internal board plugin on the contract of FAC-M11, with board-first writes (design §4.10). The contract has the `doc` operation (attach a file, link a repo file) and `changes read` (comments, label changes, assignee changes, open or close changes, each with its author; card moves are out for now). The connector does not look at which account wrote an event. A separate account for the agents is optional, and it is the owner's own GitHub choice (D-128 A). One GitHub project holds the issues of all the repos of a factory (design §4.10).
+
+   The connector maps the contract to GitHub in this way:
+   - a track is a field of the Projects board;
+   - a note is a comment on the issue;
+   - an unlink edits the link comment that factory wrote, and no other comment.
+
+   The check of item text from FAC-M11 runs before each write to a public items store.
+2. The commands `decide read` and `watch`, and `decide <D-n> <option>` for the `github` board (design §4.10). With `github`, `request add --options` asks a decision on the board. With `github`, `decide <D-n> <option>` also adds a comment to the item that names the CLI. The comment is a record, not a proof (D-128 A). `start` starts `watch` in the window `ops` for the `github` board. FAC-M11 does the same for the other kinds of board.
 3. The choice of the board: `init --tracker --items --decisions`, the question in a terminal window, `tracker set`, `tracker status`, and the per-project override (design §4.10).
 4. `item import` from the `local` files into a team board, and the move of this workspace's items into GitHub issues with a private decision store. The retirement of the old page and scripts.
 5. The state remote: `state remote|push|pull`, `init --state-from`, and the rule that `state pull` and `upgrade` move by fast-forward only (firstmate idea 8).
 
 **Exit criteria.**
 - [ ] One board for two repos. A recorded run of real `gh project` commands on a private throw-away project that holds the issues of two repos: create the project, `item-add` from each repo, one `item-list` with `--limit` that lists the items of both repos, `--query` with a filter by repo, and a field edit. The record holds commands and field names only, no ids and no URLs. Then a connector test with recorded responses prints a "more than <cap>" line when the list exceeds the cap.
-- [ ] The FAC-M5 connector contract tests pass against `github`, with a fake `gh` and recorded responses. No test needs the network. The tests name the `doc` operation: one attaches a file, one links a repo file.
-- [ ] With `local`, `factory watch` exits at once with a note.
+- [ ] The contract suite of FAC-M11 passes against `github`, with a fake `gh` and recorded responses. No test needs the network. The tests name the `doc` operation: one attaches a file, one links a repo file.
+- [ ] Board-first test with a fake `gh`. `item add` makes the issue and then the cache entry. With a `gh` that fails, `item add` fails and changes no cache file. With no answer before the time cap, the result is "unknown" and the cache is unchanged.
+- [ ] GitHub map test with a fake `gh`. A track is written as a field of the Projects board, and a note as a comment on the issue. An unlink edits the link comment that factory wrote, and it changes no other comment.
+- [ ] Item text check test with a fake `gh` that says the items repo is public. `item add` with a title that holds a value that looks like a password or a token is refused, and no write call goes to `gh`. The output names the item and never the value.
+- [ ] `factory watch` with `github` reads the board through a fake `gh`. With `local`, it reads the local change feed of FAC-M11 and makes no call to `gh`.
 - [ ] `decide read` shows an answer `/choose B` or a label `choose:B`, with its author and link, from any account. A board comment or label only wakes the coordinator and shows the answer. The owner enters the decision with `factory decide`. A comment or a label records nothing. Tests cover a comment, a label, and two accounts.
 - [ ] `decide <D-n> <option>` with `github`. Test with a fake `gh`: the record has `by: owner`, and the item gets one comment that names the CLI.
 - [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
 - [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
 - [ ] Wake test on a separate tmux server with a fake `gh`. A comment `/choose B`, a label change, an assignee change and an issue close each cause one record and one constant wake line in the coordinator pane, whatever account wrote the event. A board comment or label only wakes the coordinator and shows the answer; it records no decision. A fake `claude` on PATH records no call during `watch`.
 - [ ] watch does not wake the coordinator for an event that factory itself wrote (it marks its own comments), and a test shows that a coordinator comment causes no wake loop.
-- [ ] `start --dry-run` with `github` lists the window `ops` with `factory watch`. With `local`, it lists no `ops` window.
+- [ ] `start --dry-run` with `github` lists the window `ops` with `factory watch`, as it does for every other kind of board (FAC-M11).
 - [ ] Board choice, tests with a fake `gh`: `init --tracker github --items acme/web --decisions acme/decisions --yes` makes a node, and `factory doctor` exits 0. When the fake says that the decision repo is public, `init` exits 4 and writes no file, and `doctor` fails on such a config. `tracker status` prints `github`.
 - [ ] Override test: a node with the default `github` and a project with `kind: local`. `item add --project P` goes to the `local` files, and an item with no project goes to the fake `gh`. `tracker status` prints both.
-- [ ] `item import` moves the `local` files (fixture `board.json` and `waiting.json`) into `github` items, and a second run creates no duplicates.
+- [ ] `item import` moves the `local` files (fixture `board.json` and `waiting.json`) into `github` items. It follows the first-copy rule of FAC-M11: a map from local ids to GitHub ids, batches, and a resume after a stop. A fake `gh` that fails in the middle of a batch leaves some items copied, the next run copies only the rest, and a second full run creates no duplicates.
 - [ ] State remote, integration test: machine A makes a state repo and pushes it to a bare repo path. Machine B (a temp HOME) runs `init --state-from <path>`. The profile index equals the one of machine A, and `doctor` exits 0. `state pull` with a diverged remote exits 1 and changes nothing. With a dirty `.factory/`, `state pull` and `upgrade` stop, name the files and change nothing.
 - [ ] The old render and board scripts are not called by any process (a search of the tmux hooks and the cron list finds none). `scripts/check-parity.sh FAC-M3` exits 0 for all rows.
 - [ ] State pull and the second machine. Test: a state pull brings a `.factory` to a second factory folder, and the test `start warns when another machine is active` (`test/integration/start.test.ts`) reads it. Concurrent use is in the FAC-M8 criteria.
@@ -434,16 +444,16 @@ The hosted-kind path of M5-1b (local first, then a hosted copy) is a test-double
 - [ ] Clean machine: a script in a clean Linux container, and the same script on a macOS runner, runs `npm i -g` from the tarball of `npm pack` with a throw-away HOME and a fake `gh`. Then `factory init --yes --tracker github` in a temp repo, `factory start --dry-run` and `factory doctor` all exit 0. The script edits no file by hand.
 - [ ] CI runs the workflow up to `npm publish --dry-run`, and the dry run exits 0.
 
-### FAC-M9: Jira and Linear connectors
+### FAC-M9: Jira and Linear plugins
 
-**Goal.** A team that uses Jira or Linear gets the same board features. FAC-M9 follows FAC-M3, so the board contract is proven with GitHub first.
+**Goal.** A team that uses Jira or Linear gets the same board features. Jira and Linear are board plugins on the contract of FAC-M11. FAC-M9 follows FAC-M3, so the contract is proven with GitHub first.
 
 **Exit criteria.**
-- [ ] The connector contract tests (FAC-M5) pass for `jira` and `linear` with recorded responses, as they do for `local` and `github`.
-- [ ] One board for many repos. A connector test with recorded responses for each tool lists, in one board view, the work items of two projects (Jira) or two teams (Linear) that map to two repos of the factory, with a filter by repo.
-- [ ] `doctor` checks the decision store privacy for each connector.
-- [ ] `tracker set jira` with no `site` exits 2 and names `site`. `tracker set linear` with no `key` exits 2 and names `key`.
-- [ ] Mixed test with fakes: a node with a `github` project and a `jira` project. `item add --project P` goes to the connector of P, and `tracker status` prints both.
+- [ ] The `jira` plugin and the `linear` plugin pass `factory plugin test` with recorded responses, as `local`, `artifact` and `github` pass the same contract suite.
+- [ ] One board for many repos. A plugin test with recorded responses for each tool lists, in one board view, the work items of two projects (Jira) or two teams (Linear) that map to two repos of the factory, with a filter by repo.
+- [ ] `doctor` checks the decision store privacy for each connector. It also checks the CLI of each of the two plugins: present, configured and authorized (FAC-M11).
+- [ ] `site` and `key` are plugin options under `tracker.options`. `tracker set plugin:jira` with no `site` exits 2 and names `site`. `tracker set plugin:linear` with no `key` exits 2 and names `key`.
+- [ ] Mixed test with fakes: a node with a `github` project and a `plugin:jira` project. `item add --project P` goes to the connector of P, and `tracker status` prints both.
 
 ## Design v3 PR (after FAC-M2)
 
@@ -471,6 +481,7 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 
 - Other recipes, for example research or content (F-10). A user-made setup comes with FAC-M6, and a user-made recipe needs no new milestone: the test recipe of the code PR shows that `init`, the block render, `doctor`, `upgrade` and `start --dry-run` run with a second recipe.
 - No review desk of its own, not even as an option (F-2, F-17). A person who wants one builds a reader on an extension point (design §4.14).
+- A board tool other than `local`, `artifact`, `github`, Jira and Linear has no milestone. A user installs a board plugin for it (design §4.15).
 
 ## Decisions needed
 
@@ -479,7 +490,7 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - Answered (D-57): the release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope. FAC-M5b builds the check (design §6.2).
 - Before FAC-M3 (after the workspace move in FAC-M7): which private repo holds the decision store of this workspace, and which private git remote holds the state repo (`state.remote`) for a second machine.
 - Answered (FAC-M4): the bound of `worker watch`: 40 checks of 30 s (`watchPoll` in `src/names.ts`), then `NO CHANGE`.
-- Before the milestone that builds each of the other watch commands (FAC-M3 for `factory watch`, FAC-M5 for `pr watch`): the bound of each command. The design gives no value for the number of reads per run of `factory watch`, and none for the maximum wait of `pr watch`. It also gives no result when the bound or the wait ends. Each value is a named number in `src/names.ts`.
+- Before the milestone that builds each of the other watch commands (FAC-M11 for `factory watch` with `local` and `artifact`, FAC-M3 for `factory watch` with `github`, FAC-M5 for `pr watch`): the bound of each command. The design gives no value for the number of reads per run of `factory watch` for each connector, and none for the maximum wait of `pr watch`. It also gives no result when the bound or the wait ends. Each value is a named number in `src/names.ts`.
 - Before FAC-M5b builds the usage view (F-22): the source of the usage of a subscription other than Claude Code, for example Codex. `session.agent` accepts only `claude` in FAC-M4. The owner decides the worker agent setting for another agent, and where its token and limit data come from. Until then, the usage view lists the Claude Code subscriptions only.
 - Before FAC-M5b builds the usage view (F-22): FAC-M4 task 2 records which quota or cost fields the real status line data has. If the data has no such field, the owner names the other source. A read under `~/.claude` is not a source (F-9).
 - Before FAC-M10: the old local paths in the git history. The owner decides; the history is not rewritten (D-7 A).
@@ -491,5 +502,5 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - **FAC-M2 grows.** The intent fixes add scope to the PR. The steps are separate commits (plan §13a), so the review reads them one by one.
 - **The session-stop test can show that no way is safe.** Then `factory worker stop` keeps the rule "idle session, then `kill -TERM`", and the table records why.
 - **The status line payload can lack the context percent.** FAC-M4 captures real payloads first. If the field is not there, design §4.6 names another source before the hook is built.
-- **GitHub Projects API changes.** The connector keeps all calls in one module, with recorded-response tests.
+- **GitHub Projects API changes.** The `github` plugin keeps all calls in one module, with recorded-response tests. The contract suite of FAC-M11 runs against it.
 - **The old page and scripts read the `local` files.** A format change in FAC-M5 breaks the owner view of FAC-M7. `scripts/check-owner-view.sh` runs in FAC-M7 and in FAC-M3 until the retirement.
