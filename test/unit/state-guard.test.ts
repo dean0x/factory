@@ -1,69 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliResult } from '../../src/cli/errors.js';
-import type { Deps, RunOutput } from '../../src/core/deps.js';
-import { setStateConfig } from '../../src/core/git.js';
-import { ok } from '../../src/core/result.js';
+import type { Deps } from '../../src/core/deps.js';
 import { stateGuard } from '../../src/names.js';
-import {
-  guardHookText,
-  guardNeedsInstall,
-  guardStateOf,
-  installGuard,
-  requireGuardOn,
-  type GuardOffKind,
-} from '../../src/state/guard.js';
-import { createFakeDeps, exited, FAKE_PROGRAM_ARGV, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
-import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
-
-const HOME = '/h/node';
-const STATE = `${HOME}/.factory`;
-const GIT_DIR = `${STATE}/.git`;
-const GUARD = `${GIT_DIR}/${stateGuard.folder}`;
-const HOOK = `${GUARD}/${stateGuard.hookFile}`;
-const HOOK_TEXT = `#!/bin/sh\n${stateGuard.comment}\nexec /opt/fake/bin/node /opt/fake/lib/program/cli.js state guard\n`;
-
-interface Made {
-  readonly deps: FakeDeps;
-  readonly gitCommands: () => string[];
-}
-
-interface MakeOptions {
-  readonly links?: Record<string, string>;
-  readonly programArgv?: readonly string[];
-  readonly fixture?: GitFixture;
-  /** An answer for a git call that replaces the fake. Undefined: the fake answers. */
-  readonly answer?: (call: RunCall) => CliResult<RunOutput> | undefined;
-}
-
-const make = (options: MakeOptions = {}): Made => {
-  const { handler, log } = gitHandler(options.fixture);
-  const deps = createFakeDeps({
-    cwd: HOME,
-    run: (call) => options.answer?.(call) ?? handler(call),
-    ...(options.links === undefined ? {} : { links: options.links }),
-    ...(options.programArgv === undefined ? {} : { programArgv: options.programArgv }),
-  });
-  deps.seedDir(GIT_DIR);
-  return { deps, gitCommands: () => log.commands() };
-};
-
-/** A deps in which the path is a link, as `lstat` sees it. Everything else is as it was. */
-const linkAt = (deps: Deps, path: string): Deps => ({
-  ...deps,
-  fs: { ...deps.fs, lstat: async (target) => (target === path ? ok('link') : deps.fs.lstat(target)) },
-});
+import { guardHookText, guardNeedsInstall, guardStateOf, installGuard, requireGuardOn } from '../../src/state/guard.js';
+import { createFakeDeps, exited, FAKE_PROGRAM_ARGV } from '../helpers/fake-deps.js';
+import { gitHandler, withoutStateWords } from '../helpers/git-fake.js';
+import { GIT_DIR, GUARD, HOME, HOOK, HOOK_TEXT, installed, linkAt, make, OFF_CASES, STATE, type Made } from '../helpers/guard-fixture.js';
 
 const entriesOf = async (deps: Deps, path: string): Promise<readonly string[]> => {
   const listed = await deps.fs.list(path);
   if (!listed.ok) throw new Error(listed.error.message);
   return listed.value;
-};
-
-const installed = async (): Promise<Made> => {
-  const made = make();
-  const result = await installGuard(made.deps, STATE, STATE);
-  if (!result.ok) throw new Error(result.error.message);
-  return made;
 };
 
 const failureOf = <T>(result: CliResult<T>) => {
@@ -221,37 +168,6 @@ describe('the install of the guard stops before any change (TP-53)', () => {
     expect(made.deps.atomicWrites).toEqual([]);
   });
 });
-
-/** Change the installed guard, and give back the deps that the next call reads with. */
-type Change = (made: Made) => Promise<Deps>;
-
-/** A change of the files or of the settings: the deps stay the same. */
-const touch =
-  (change: (made: Made) => unknown): Change =>
-  async (made) => {
-    await change(made);
-    return made.deps;
-  };
-
-/** The ways that the guard is off, each one made from an installed guard. */
-const OFF_CASES: readonly (readonly [string, GuardOffKind, Change])[] = [
-  ['another value of core.hooksPath', 'hooks-path', touch((made) => setStateConfig(made.deps, STATE, 'core.hooksPath', '/other/hooks'))],
-  ['a setting of core.hooksPath that is a relative path', 'hooks-path', touch((made) => setStateConfig(made.deps, STATE, 'core.hooksPath', stateGuard.folder))],
-  ['hook bytes that differ from the package text', 'hook-bytes', touch((made) => made.deps.files.set(HOOK, '#!/bin/sh\nexit 0\n'))],
-  ['hook bytes with text added at the end', 'hook-bytes', touch((made) => made.deps.files.set(HOOK, `${HOOK_TEXT}echo more\n`))],
-  ['an empty hook', 'hook-bytes', touch((made) => made.deps.files.set(HOOK, ''))],
-  ['another file in the guard folder', 'extra-entry', touch((made) => made.deps.seed(`${GUARD}/post-commit`, 'x'))],
-  ['a folder in the guard folder', 'extra-entry', touch((made) => made.deps.seedDir(`${GUARD}/sub`))],
-  ['a missing hook', 'hook-missing', touch((made) => made.deps.files.delete(HOOK))],
-  ['a missing guard folder', 'folder-missing', touch((made) => made.deps.fs.remove(GUARD))],
-  ['a hook that is a link', 'hook-not-plain', async (made) => linkAt(made.deps, HOOK)],
-  ['a guard folder that is a link', 'folder-not-plain', async (made) => linkAt(made.deps, GUARD)],
-  ['a hook with mode 644', 'hook-mode', touch((made) => made.deps.modes.set(HOOK, 0o644))],
-  ['a hook with mode 775', 'hook-mode', touch((made) => made.deps.modes.set(HOOK, 0o775))],
-  ['a program that moved', 'hook-bytes', async (made) => ({ ...made.deps, programArgv: ['/opt/new/bin/node', '/opt/new/lib/cli.js'] })],
-  ['a program path that is not known', 'program-unknown', async (made) => ({ ...made.deps, programArgv: [] })],
-  ['a .git entry that is a link', 'git-folder', async (made) => linkAt(made.deps, GIT_DIR)],
-];
 
 describe('the state of the guard (TP-11)', () => {
   it('is on after an install', async () => {
