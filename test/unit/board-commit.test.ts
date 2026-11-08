@@ -70,10 +70,10 @@ const setup = async (changes: Partial<Repo> = {}, fixture: GitFixture = {}): Pro
   const answer = (call: RunCall): CliResult<RunOutput> | undefined => {
     const command = withoutStateWords(call.args).slice(2).join(' ');
     seen.push(command);
-    if (command === 'rev-parse --verify HEAD') {
+    if (command === 'rev-parse -q --verify HEAD') {
       if (attempted && repo.headFailsAfterCommit) return failure('cannot run git: ENOENT');
       const head = committed ? NEW_HEAD : repo.head;
-      return head === null ? exited(128) : exited(0, `${head}\n`);
+      return head === null ? exited(1) : exited(0, `${head}\n`);
     }
     if (command === 'ls-tree -z -l HEAD -- board.json') {
       if (repo.board === null) return exited(0, '');

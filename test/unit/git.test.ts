@@ -492,8 +492,38 @@ describe('git: the commit that HEAD names', () => {
   });
 });
 
+describe('git: the commit that HEAD names in a state repo', () => {
+  const STATE_DIR = '/w/node/.factory';
+  const head = (run: RunHandler) => stateHeadOf(createFakeDeps({ cwd: WS, run }), STATE_DIR);
+
+  it('is the commit id when the repo has a commit, asked with the quiet form of rev-parse', async () => {
+    const calls: (readonly string[])[] = [];
+    const result = await head((call) => {
+      calls.push(call.args);
+      return exited(0, 'abc123\n');
+    });
+    expect(result).toEqual({ ok: true, value: 'abc123' });
+    expect(calls).toEqual([['-C', STATE_DIR, ...STATE_GIT_WORDS, 'rev-parse', '-q', '--verify', 'HEAD']]);
+  });
+
+  it('is null only for exit 1: the repo has no commit', async () => {
+    expect(await head(() => exited(1))).toEqual({ ok: true, value: null });
+  });
+
+  it.each([128, 129, 2])('is an error for exit %i, so a broken HEAD is never taken for a repo with no commit', async (code) => {
+    expect(await head(() => exited(code))).toMatchObject({
+      ok: false,
+      error: { message: `cannot read the last commit of ${STATE_DIR}: git exited with ${code}` },
+    });
+  });
+
+  it('is an error when git cannot run', async () => {
+    expect(await head(() => failure('cannot run git: SIGTERM'))).toMatchObject({ ok: false });
+  });
+});
+
 describe('git: the status of a state repo', () => {
-  const status = (run: RunHandler) => stateStatusOf(createFakeDeps({ cwd: WS, run }), '/w/node/.factory');
+  const status =(run: RunHandler) => stateStatusOf(createFakeDeps({ cwd: WS, run }), '/w/node/.factory');
 
   it('asks for every untracked file one by one, with names that git does not quote, and reads no submodule', async () => {
     const { handler, log } = gitHandler();

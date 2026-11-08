@@ -533,8 +533,22 @@ export const requireWorkTreeTop = async (deps: Deps, dir: string, what: string):
 export const headOf = (deps: Deps, dir: string, gitDir?: string): Promise<CliResult<string | null>> =>
   headWith(deps, gitIn(dir, gitDir), dir);
 
-/** As `headOf`, for the state repo at `dir`, with the hooks off and the file monitor off. */
-export const stateHeadOf = (deps: Deps, dir: string): Promise<CliResult<string | null>> => headWith(deps, stateGit(dir), dir);
+/** The exit code of `git rev-parse -q --verify` for a name that git does not find: the repo has no commit. */
+const GIT_NOT_FOUND_EXIT = 1;
+
+/**
+ * As `headOf`, for the state repo at `dir`, with the hooks off and the file monitor off. Only the exit code that means "not found" (1,
+ * with the quiet form of `rev-parse`) is a repo with no commit. Any other exit code is an error, so a HEAD that git cannot read is never
+ * taken for a repo with no commit.
+ */
+export const stateHeadOf = async (deps: Deps, dir: string): Promise<CliResult<string | null>> => {
+  const what = `cannot read the last commit of ${dir}`;
+  const result = await deps.run('git', [...stateGit(dir), 'rev-parse', '-q', '--verify', HEAD_REV], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode === 0) return ok(result.value.stdout.trim());
+  if (result.value.exitCode === GIT_NOT_FOUND_EXIT) return ok(null);
+  return failure(`${what}: git exited with ${result.value.exitCode}`);
+};
 
 const headWith = async (deps: Deps, lead: readonly string[], dir: string): Promise<CliResult<string | null>> => {
   const result = await deps.run('git', [...lead, 'rev-parse', '--verify', HEAD_REV], { timeoutMs: GIT_TIMEOUT_MS });

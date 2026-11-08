@@ -1794,7 +1794,8 @@ describe('upgrade: when a step fails after the backup', () => {
               committed = true;
               return failure('cannot run git: SIGTERM');
             }
-            if (call.args.includes('HEAD')) return committed ? exited(0, 'def456\n') : exited(128);
+            // Git exits with 1 for a repo with no commit, when it is asked in the quiet form.
+            if (call.args.includes('HEAD')) return committed ? exited(0, 'def456\n') : exited(1);
             return inner(call);
           };
         },

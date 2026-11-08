@@ -60,7 +60,7 @@ const gitFor = (setup: Setup) => {
     if (command === 'ls-files --stage -z -- board.json') {
       return exited(0, indexId === null ? '' : `${setup.indexMode ?? '100644'} ${indexId} 0\tboard.json\0`);
     }
-    if (command === 'rev-parse --verify HEAD') return setup.commit === false ? exited(128) : exited(0, 'c0ffee\n');
+    if (command === 'rev-parse -q --verify HEAD') return setup.commit === false ? exited(1) : exited(0, 'c0ffee\n');
     const asked = LOG_COMMAND.exec(command);
     if (asked !== null) {
       const places = [0, ...older.map((_, index) => index + 1)];
@@ -224,6 +224,15 @@ describe('the state guard command: changes that stop', () => {
     const error = await stopOf({ head: board(['B-1']), index: board(['B-1', 'B-2']), fails: { [prefix]: 128 } });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toMatch(/^cannot read/);
+    expect(error.hint).toBe(
+      `Run "git status" in .factory, then commit again. Git runs "${commandText(commandLines.stateGuard)}" before each commit.`,
+    );
+  });
+
+  it('stops with exit 1 and a remedy when git cannot tell the last commit, and does not take it for a repo with no commit', async () => {
+    const error = await stopOf({ head: board(['B-1', 'B-2']), index: board(['B-1']), fails: { 'rev-parse': 128 } });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe(`cannot read the last commit of ${STATE}: git exited with 128`);
     expect(error.hint).toBe(
       `Run "git status" in .factory, then commit again. Git runs "${commandText(commandLines.stateGuard)}" before each commit.`,
     );

@@ -296,9 +296,12 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
         return repo?.originHead === undefined ? exited(128) : exited(0, `${repo.originHead}\n`);
       case 'branch --show-current':
         return repo?.branch === undefined ? exited(0, '\n') : exited(0, `${repo.branch}\n`);
+      // The state repo asks in the quiet form, and git exits with 1 for a repo with no commit. The other form exits with 128.
+      case 'rev-parse -q --verify HEAD':
       case 'rev-parse --verify HEAD':
         if (fixture.heads?.[dir] !== undefined) return exited(0, `${fixture.heads[dir]}\n`);
-        return fixture.committed?.includes(dir) === true ? exited(0, 'abc123\n') : exited(128);
+        if (fixture.committed?.includes(dir) === true) return exited(0, 'abc123\n');
+        return exited(rest === 'rev-parse -q --verify HEAD' ? 1 : 128);
       default:
         return exited(0);
     }
