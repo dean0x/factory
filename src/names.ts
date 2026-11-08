@@ -1251,8 +1251,27 @@ export const flagText = (name: string): string => `--${name}`;
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
 
+/**
+ * The delete guard of the state repo: a hook that git runs before a commit. `init` and `upgrade` write it from the text below into a
+ * folder of the git folder of the state repo (never the folder `hooks`), and set the key `core.hooksPath` to that folder. The git
+ * folder is not part of the tracked files, so the repo never holds the hook. The folder holds the hook file and nothing else.
+ */
+export const stateGuard = {
+  folder: 'factory-guard',
+  hookFile: 'pre-commit',
+  hookMode: 0o755,
+  folderMode: 0o755,
+  hooksPathKey: 'core.hooksPath',
+  /** The most entries that an install removes from the guard folder; a folder with more is left alone. */
+  maxEntries: 64,
+  interpreter: '#!/bin/sh',
+  comment: `# Written by ${program} from the text of the package. Git does not track this file. Run "${commandText(commands.upgrade)}" to write it again.`,
+  /** The remedy of every case of an off guard. */
+  remedy: `Run "${commandText(commands.upgrade)}".`,
+} as const;
+
 /** A subcommand of `worker` as a person types it, for example `factory worker watch`. */
-const workerCommandText = (subcommand: string): string => commandText(`${commands.worker} ${subcommand}`);
+const workerCommandText =(subcommand: string): string => commandText(`${commands.worker} ${subcommand}`);
 
 /** The command that replaces or adds one managed block, for example `factory upgrade --overwrite coordinator`. */
 export const overwriteCommand = (block: string): string =>
