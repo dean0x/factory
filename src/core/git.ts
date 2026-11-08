@@ -555,13 +555,15 @@ const programKeysOf = (stdout: string): readonly string[] | null => {
 /**
  * Refuse (exit 4) when the local git config of the state folder, or a file it includes, has a key that names a program with no switch
  * to turn it off for one call: a filter driver (`filter.`) or a config hook (`hook.`). The refusal names the keys. It reads only.
- * The read needs git 2.26 (`--show-scope`); when it fails, the error (exit 1) names that version.
+ * The read needs git 2.26 (`--show-scope`); when it fails, the error (exit 1) names that version. `command` is the command that the
+ * person runs again.
  */
-export const requireStateConfigSafe = async (deps: Deps, stateDir: string): Promise<CliResult<void>> => {
+export const requireStateConfigSafe = async (deps: Deps, stateDir: string, command: CommandName): Promise<CliResult<void>> => {
+  const again = `then run "${commandText(command)}" again.`;
   const unreadable = (detail: string): CliResult<never> =>
     failure(
       `cannot read the git config of ${dirs.state}: ${detail}. ${program} needs git ${minGitVersion} or later.`,
-      'Update git, then run the command again.',
+      `Update git, ${again}`,
     );
   const result = await deps.run('git', [...stateGit(stateDir), 'config', '--list', '--show-scope', '--includes', '-z'], {
     timeoutMs: GIT_TIMEOUT_MS,
@@ -576,8 +578,8 @@ export const requireStateConfigSafe = async (deps: Deps, stateDir: string): Prom
   return safetyRefusal(
     `the local git config of ${dirs.state} sets ${shownPaths(keys)}, which ${keys.length === 1 ? 'names' : 'name'} a program, so ${program} makes no git change there`,
     keys.length === 1
-      ? `Remove the key with "${unset}", then run the command again.`
-      : `Remove each key, for example the first with "${unset}", then run the command again.`,
+      ? `Remove the key with "${unset}", ${again}`
+      : `Remove each key, for example the first with "${unset}", ${again}`,
   );
 };
 
@@ -595,7 +597,7 @@ export const requireStateRepoReady = async (
   command: CommandName,
 ): Promise<CliResult<void>> => {
   const again = `Then run "${commandText(command)}" again.`;
-  const safe = await requireStateConfigSafe(deps, stateDir);
+  const safe = await requireStateConfigSafe(deps, stateDir, command);
   if (!safe.ok) return safe;
   const status = await stateStatusOf(deps, stateDir);
   if (!status.ok) return status;

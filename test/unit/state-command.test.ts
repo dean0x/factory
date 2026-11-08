@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf } from '../../src/cli/errors.js';
 import { runState } from '../../src/commands/state.js';
-import { maxFileBytes, schemaIds } from '../../src/names.js';
+import { commandLines, commandText, maxFileBytes, schemaIds } from '../../src/names.js';
 import { createFakeDeps, exited, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { STATE_GIT, withoutStateWords } from '../helpers/git-fake.js';
 
@@ -192,7 +192,9 @@ describe('the state guard command: changes that stop', () => {
     const error = await stopOf({ head: board(['B-1']), index: board(['B-1', 'B-2']), fails: { [prefix]: 128 } });
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toMatch(/^cannot read/);
-    expect(error.hint).toBe('Run "git status" in .factory, then commit again.');
+    expect(error.hint).toBe(
+      `Run "git status" in .factory, then commit again. Git runs "${commandText(commandLines.stateGuard)}" before each commit.`,
+    );
   });
 
   it('stops with exit 1 when git cannot run', async () => {

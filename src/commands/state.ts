@@ -33,9 +33,14 @@ type FaultSide = 'before' | 'after';
 
 const SIDE_WORDS: Readonly<Record<FaultSide, string>> = { before: 'the last commit', after: 'this commit' };
 
+const GUARD_LINE = commandText(commandLines.stateGuard);
+
+/** The remedy lines name the command that stopped the commit, because git runs it and a person does not. */
+const GIT_RUNS_GUARD = `Git runs "${GUARD_LINE}" before each commit.`;
+
 const SIDE_REMEDY: Readonly<Record<FaultSide, string>> = {
-  before: `Repair ${BOARD}, then commit the repair with "git commit --no-verify". The guard can not compare with a file that it can not read.`,
-  after: `Repair ${BOARD}, or put it back, then commit again.`,
+  before: `Repair ${BOARD}, then commit the repair with "git commit --no-verify". "${GUARD_LINE}" can not compare with a file that it can not read.`,
+  after: `Repair ${BOARD}, or put it back, then commit again. ${GIT_RUNS_GUARD}`,
 };
 
 /** A board that can not be read: the check fails closed, and the commit stops. */
@@ -44,7 +49,7 @@ const contentFault = (side: FaultSide, reason: string): CliResult<never> =>
 
 /** A read of git that failed: the check fails closed, and the commit stops. */
 const gitFault = (message: string): CliResult<never> =>
-  failure(message, `Run "git status" in ${dirs.state}, then commit again.`);
+  failure(message, `Run "git status" in ${dirs.state}, then commit again. ${GIT_RUNS_GUARD}`);
 
 const NOT_PLAIN = 'it is not a plain file';
 const TOO_LARGE = `it is larger than ${maxFileBytes} bytes`;
@@ -99,8 +104,6 @@ const checkBoardChange = async (deps: Deps, dir: string): Promise<CliResult<void
     `this commit removes ${lost.value.length === 1 ? 'the item id' : 'the item ids'} ${namedItems(lost.value)} from ${BOARD}. Mark an item closed, never remove it.`,
   );
 };
-
-const GUARD_LINE = commandText(commandLines.stateGuard);
 
 /** `state guard`: git runs it as the hook of the state repo. It takes no word. */
 export const runStateGuard = async (deps: Deps, words: readonly string[]): Promise<CliResult<CommandOutput>> => {

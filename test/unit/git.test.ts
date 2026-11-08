@@ -36,7 +36,7 @@ import {
   unstagePaths,
   withoutUserinfo,
 } from '../../src/core/git.js';
-import { commands, trackedFiles } from '../../src/names.js';
+import { commands, commandText, trackedFiles } from '../../src/names.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import {
   gitHandler,
@@ -542,7 +542,7 @@ describe('git: every git step in a state folder runs with hooks off (TP-15)', ()
     ['stateStatusOf', (deps) => stateStatusOf(deps, STATE_DIR)],
     ['setStateConfig', (deps) => setStateConfig(deps, STATE_DIR, 'core.hooksPath', '/g/factory-guard')],
     ['absoluteGitDirOf', (deps) => absoluteGitDirOf(deps, STATE_DIR)],
-    ['requireStateConfigSafe', (deps) => requireStateConfigSafe(deps, STATE_DIR)],
+    ['requireStateConfigSafe', (deps) => requireStateConfigSafe(deps, STATE_DIR, commands.upgrade)],
     ['requireStateRepoReady', (deps) => requireStateRepoReady(deps, STATE_DIR, [], 'the upgrade', commands.upgrade)],
   ];
 
@@ -666,7 +666,7 @@ describe('git: a state repo whose local config names a program (TP-16)', () => {
     settings.map(([scope, key, value]) => `${scope}\0${key}${value === undefined ? '' : `\n${value}`}\0`).join('');
   const checked = (configList: string) => {
     const { handler, log } = gitHandler({ configList: { [STATE_DIR]: configList } });
-    return { result: requireStateConfigSafe(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR), log };
+    return { result: requireStateConfigSafe(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR, commands.upgrade), log };
   };
 
   it.each([
@@ -684,6 +684,18 @@ describe('git: a state repo whose local config names a program (TP-16)', () => {
         hint: expect.stringContaining(`git -C .factory config --unset ${key}`),
       },
     });
+  });
+
+  it('names the command that the person runs again in the remedy of each case', async () => {
+    const one = await checked(listOf(['local', 'filter.a.clean', 'x'])).result;
+    const many = await checked(listOf(['local', 'filter.a.clean', 'x'], ['local', 'hook.b.command', 'y'])).result;
+    const unreadable = await checked('local\0core.bare\nfalse\0local\0').result;
+    for (const result of [one, many, unreadable]) {
+      expect(result).toMatchObject({
+        ok: false,
+        error: { hint: expect.stringContaining(`, then run "${commandText(commands.upgrade)}" again.`) },
+      });
+    }
   });
 
   it('refuses a key with no value, and quotes a key with a space in the remedy', async () => {
