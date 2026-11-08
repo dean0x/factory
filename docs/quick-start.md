@@ -343,7 +343,7 @@ The command stops every worker and starts each one again with its session id. Ou
 
 ## 12. Known limits
 
-- **No board yet.** The right pane of the window `view` is a plain shell.
+- **The board pane.** The right pane of the window `view` runs `factory item list --follow`, so it shows the board. If that program ends, the pane stays as it is, and nothing starts it again.
 - **Work items.** `factory status` shows `unknown` as the work item of each worker, and `no` as its idle state. So `factory dismiss --idle` lists nothing.
 - **Authority of the owner.** A message between sessions carries no authority of the owner. To give a worker the authority of the owner, type in its pane. Start the text with the owner prefix. The prefix is in `factory.local.yaml`.
 - **devflow.** Factory has no devflow setup yet. If you want devflow, install it as a normal Claude Code plugin.
