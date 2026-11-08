@@ -314,6 +314,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
           dirs.delete(key);
           addDir(to + key.slice(from.length));
         }
+        // The modes follow the paths, as the modes of real files do.
+        for (const [key, mode] of [...modes.entries()].filter(([key]) => under(from, key))) {
+          modes.delete(key);
+          modes.set(to + key.slice(from.length), mode);
+        }
         return ok(undefined);
       },
       remove: async (path) => {
@@ -354,7 +359,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         ...(runOptions?.signal === undefined ? {} : { signal: runOptions.signal }),
       };
       calls.push(call);
-      return (options.run ?? (() => missingProgram(command)))(call);
+      const result = (options.run ?? (() => missingProgram(command)))(call);
+      // As real git does: `git init` makes the folder `.git` in the folder.
+      if (command === 'git' && args[0] === '-C' && args[2] === 'init' && result.ok && result.value.exitCode === 0) {
+        addDir(posix.join(args[1] ?? '', '.git'));
+      }
+      return result;
     },
     runAttached: async (command: string, args: readonly string[]) => {
       const call: RunCall = { command, args, cwd: undefined };

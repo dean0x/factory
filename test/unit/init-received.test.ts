@@ -9,10 +9,12 @@ import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { ok } from '../../src/core/result.js';
-import { env, trackedFiles } from '../../src/names.js';
+import { env, stateGuard, trackedFiles } from '../../src/names.js';
+import { guardHookText } from '../../src/state/guard.js';
 import {
   createFakeDeps,
   exited,
+  FAKE_PROGRAM_ARGV,
   registerRoot,
   withFailingWrites,
   type FakeDeps,
@@ -145,6 +147,27 @@ describe('init: a received factory (TP-29, TP-30)', () => {
     expect(coordinatorText(deps)).toContain('factory:');
     // The root repo is there already: init makes no repo and no commit in it.
     expect(log.calls.filter((call) => call.args[1] === ROOT && ['init', 'add', 'commit'].includes(call.args[2] ?? ''))).toEqual([]);
+  });
+
+  it('writes the delete guard into the state repo that it makes, with the setting for the final path (TP-2)', async () => {
+    const { deps, log } = received({}, terminal);
+    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+    const guard = `${ROOT}/.factory/.git/${stateGuard.folder}`;
+    const hook = `${guard}/${stateGuard.hookFile}`;
+    const text = guardHookText(FAKE_PROGRAM_ARGV);
+    expect(deps.files.get(hook)).toBe(text.ok ? text.value : null);
+    expect(deps.modes.get(hook)).toBe(0o755);
+    expect(log.commands()).toContain(`config -- core.hooksPath ${guard}`);
+  });
+
+  it('stops with exit 4 and leaves no list entry and no state folder when the guard can not be written (TP-2)', async () => {
+    const { deps } = received({}, { ...terminal, programArgv: [] });
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(deps.files.has(INDEX)).toBe(false);
+    expect(deps.dirs.has(`${ROOT}/.factory`)).toBe(false);
+    expect(snapshot(deps)).toBe(before);
   });
 
   it('records the root with the origin received, also when an old entry of the folder says own', async () => {

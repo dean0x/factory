@@ -61,14 +61,14 @@ interface Node {
 }
 
 /**
- * A git that makes the folder of the repo, as real git does: `git init` leaves a `.git` folder. The fake file system has
- * no git, so this wrapper seeds the folder, and a second run finds the repo that the first run made.
+ * The `init` of a test node runs with the plain git fake, outside the `run` of the deps, so its calls are not in the list of the
+ * calls. The `run` of the deps makes the folder `.git` for `git init`, as real git does; this wrapper does the same for the init.
  */
 const makingGitFolders =
-  (target: () => FakeDeps | undefined) =>
+  (target: FakeDeps) =>
   (inner: RunHandler): RunHandler =>
   (call) => {
-    if (call.command === 'git' && call.args[0] === '-C' && call.args[2] === 'init') target()?.seedDir(`${call.args[1]}/.git`);
+    if (call.command === 'git' && call.args[0] === '-C' && call.args[2] === 'init') target.seedDir(`${call.args[1]}/.git`);
     return inner(call);
   };
 
@@ -76,16 +76,14 @@ const makeNode = async (
   options: { repo?: boolean; run?: (inner: RunHandler) => RunHandler; links?: Record<string, string> } = {},
 ): Promise<Node> => {
   const { handler } = gitHandler();
-  let made: FakeDeps | undefined;
   const deps = createFakeDeps({
     cwd: '/w',
     env: { PATH: '/bin', ...INDEX_ENV },
-    run: makingGitFolders(() => made)(options.run?.(handler) ?? handler),
+    run: options.run?.(handler) ?? handler,
     ...(options.links === undefined ? {} : { links: options.links }),
   });
-  made = deps;
   const init = await runInit(
-    { ...deps, run: async (command, args, runOptions) => handler({ command, args, cwd: runOptions?.cwd }) },
+    { ...deps, run: async (command, args, runOptions) => makingGitFolders(deps)(handler)({ command, args, cwd: runOptions?.cwd }) },
     {
       home: HOME,
       name: 'demo',
@@ -99,9 +97,7 @@ const makeNode = async (
     },
   );
   expect(init.ok).toBe(true);
-  if (options.repo !== false) deps.seedDir(`${HOME}/.factory/.git`);
-  // The fake git makes no folder, so the root repo that `init` made is seeded here.
-  deps.seedDir(`${HOME}/.git`);
+  if (options.repo === false) expect((await deps.fs.remove(`${HOME}/.factory/.git`)).ok).toBe(true);
   const first = deps.calls.length;
   return { deps, gitSince: () => deps.calls.slice(first).map((call) => withoutStateWords(call.args).slice(2).join(' ')) };
 };
@@ -1650,13 +1646,11 @@ describe('upgrade: a node of schema 1', () => {
     } = {},
   ): Node => {
     const { handler } = gitHandler(options.git);
-    let made: FakeDeps | undefined;
     const deps = createFakeDeps({
       cwd: '/w',
       env: { PATH: '/bin', ...(options.env ?? INDEX_ENV) },
-      run: makingGitFolders(() => made)(options.run?.(handler) ?? handler),
+      run: options.run?.(handler) ?? handler,
     });
-    made = deps;
     seedSchema1Node(deps, HOME, options.doc);
     const first = deps.calls.length;
     return { deps, gitSince: () => deps.calls.slice(first).map((call) => withoutStateWords(call.args).slice(2).join(' ')) };
