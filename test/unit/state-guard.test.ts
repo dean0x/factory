@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { exitCodeOf, type CliResult } from '../../src/cli/errors.js';
+import { exitCodeOf, failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, RunOutput } from '../../src/core/deps.js';
 import { setStateConfig } from '../../src/core/git.js';
 import { ok } from '../../src/core/result.js';
 import { stateGuard } from '../../src/names.js';
 import {
   guardHookText,
+  guardNeedsInstall,
   guardStateOf,
   installGuard,
   requireGuardOn,
@@ -282,6 +283,36 @@ describe('the state of the guard (TP-11)', () => {
     const broken = { ...made.deps, run: async () => exited(128, '', 'fatal: broken') };
     const state = await guardStateOf(broken, STATE);
     expect(state.ok).toBe(false);
+  });
+});
+
+describe('the need to write the guard (TP-2, TP-4)', () => {
+  it('is no when the guard is on', async () => {
+    const { deps } = await installed();
+    expect(await guardNeedsInstall(deps, STATE)).toEqual({ ok: true, value: false });
+  });
+
+  it('is yes for a state repo that has no guard', async () => {
+    const { deps } = make();
+    expect(await guardNeedsInstall(deps, STATE)).toEqual({ ok: true, value: true });
+  });
+
+  it.each(OFF_CASES)('is yes for %s', async (_name, _kind, mutate) => {
+    const made = await installed();
+    expect(await guardNeedsInstall(await mutate(made), STATE)).toEqual({ ok: true, value: true });
+  });
+
+  it('is no for a state folder with no .git entry: there is no repo to guard, and no git command runs', async () => {
+    const deps = createFakeDeps({ cwd: HOME, run: gitHandler().handler });
+    deps.seedDir(STATE);
+    expect(await guardNeedsInstall(deps, STATE)).toEqual({ ok: true, value: false });
+    expect(deps.calls).toEqual([]);
+  });
+
+  it('is a failure, never "no", when the entry can not be read', async () => {
+    const { deps } = make();
+    const broken: Deps = { ...deps, fs: { ...deps.fs, lstat: async (path) => failure(`cannot read ${path}: EIO`) } };
+    expect((await guardNeedsInstall(broken, STATE)).ok).toBe(false);
   });
 });
 

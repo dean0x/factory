@@ -6,7 +6,15 @@ import { inspectSharedConfig, loadConfig, parseConfigTexts, readNodeIdentity, se
 import type { FactoryConfig } from '../config/schema.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
-import { commitPaths, hasIdentity, requireStateRepoReady, requireWorkTreeTop, stateStatusOf, unstagePaths } from '../core/git.js';
+import {
+  commitPaths,
+  GIT_ENTRY,
+  hasIdentity,
+  requireStateRepoReady,
+  requireWorkTreeTop,
+  stateStatusOf,
+  unstagePaths,
+} from '../core/git.js';
 import { entryProblemOf, markerProblemOf, reasonOf, rootRefusalOf } from '../core/home.js';
 import { recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -24,10 +32,12 @@ import {
   program,
   roles,
   schemaIds,
+  stateGuard,
   values,
 } from '../names.js';
 import { ownerModes, type ApprovalModes, type ApprovalPoint, type RecipeRegistry } from '../recipes/index.js';
 import { parseProxyUrl, proxyLabel } from '../safety/proxy.js';
+import { guardNeedsInstall, installGuard } from '../state/guard.js';
 import { stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { STATE_LABEL } from '../state/load.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
@@ -96,6 +106,8 @@ interface Checked {
   readonly config: FactoryConfig;
   readonly standing: Standing;
   readonly repair: Repair;
+  /** True when the state folder is a repo that the run writes the delete guard into. A folder that the run makes gets it from `makeStateFolder`. */
+  readonly guardDue: boolean;
   readonly points: readonly ApprovalPoint[];
   readonly registry: RecipeRegistry;
   readonly warnings: readonly string[];
@@ -185,12 +197,15 @@ const checkExisting = async (
   if (!standing.ok) return standing;
   const repair = await repairOf(deps, root.value.layout);
   if (!repair.ok) return repair;
+  const guardDue = repair.value.kind === 'folder' ? ok(false) : await guardNeedsInstall(deps, root.value.layout.stateDir);
+  if (!guardDue.ok) return guardDue;
 
   return ok({
     root: root.value,
     config: config.value,
     standing: standing.value,
     repair: repair.value,
+    guardDue: guardDue.value,
     points: config.value.entry.approvalPoints,
     registry,
     warnings: [
@@ -391,6 +406,8 @@ interface TextOutcome {
 
 interface Applied {
   readonly committed: boolean;
+  /** True when the run wrote the delete guard into the state repo that was there. */
+  readonly guarded: boolean;
   readonly warnings: readonly string[];
   readonly accepted: boolean;
   readonly approval: ApprovalModes;
@@ -439,9 +456,11 @@ const commitMarker = async (deps: Deps, layout: Layout): Promise<{ readonly comm
 };
 
 /**
- * Write the plan: the local file, the state folder or the marker, then the entry in the factory list. A step that fails
- * undoes the steps before it. The marker commit, the approval records and the setup acceptance come after the entry in the
- * factory list, so a run that fails leaves none of them. A commit, a record or an acceptance that fails is a warning.
+ * Write the plan: the local file, the state folder or the marker, the delete guard of a state repo that was there, then the
+ * entry in the factory list. A step that fails undoes the steps before it. The guard has no undo: it lives in the git folder,
+ * no other step reads it, and a second run finds it in place. The marker commit, the approval records and the setup acceptance
+ * come after the entry in the factory list, so a run that fails leaves none of them. A commit, a record or an acceptance that
+ * fails is a warning.
  */
 const applyExisting = async (
   deps: Deps,
@@ -502,6 +521,11 @@ const applyExisting = async (
     }
   }
 
+  if (checked.guardDue) {
+    const installed = await installGuard(deps, layout.stateDir, layout.stateDir);
+    if (!installed.ok) return rollback(installed.error);
+  }
+
   const recorded = await recordNode(deps, indexPath, {
     home: layout.home,
     id,
@@ -540,6 +564,7 @@ const applyExisting = async (
   const renders = tightened !== null && settled !== null ? { tightened, settled } : null;
   return ok({
     committed,
+    guarded: checked.guardDue,
     accepted: accepted.accepted,
     approval,
     text:
@@ -558,12 +583,15 @@ const applyExisting = async (
   });
 };
 
-const writtenNames = (plan: Plan, repair: Repair, text: TextOutcome | null): readonly string[] => {
+const GUARD_PATH = join(dirs.state, GIT_ENTRY, stateGuard.folder);
+
+const writtenNames = (plan: Plan, repair: Repair, text: TextOutcome | null, guarded: boolean): readonly string[] => {
   const names = { none: [], marker: [STATE_LABEL], folder: [`${dirs.state}/`] };
   return [
     ...(plan.local === null ? [] : [files.localConfig]),
     ...(text?.wrote === true ? [COORDINATOR_PATH] : []),
     ...names[repair.kind],
+    ...(guarded ? [GUARD_PATH] : []),
   ];
 };
 
@@ -615,7 +643,10 @@ export const runExisting = async (
   const hook = await writeHookSettings(deps, home, options.yes);
   if (!hook.ok) return hook;
 
-  const written = [...writtenNames(plan.value, checked.value.repair, applied.value.text), ...hook.value.written];
+  const written = [
+    ...writtenNames(plan.value, checked.value.repair, applied.value.text, applied.value.guarded),
+    ...hook.value.written,
+  ];
   const warnings = [...checked.value.warnings, ...delegationWarnings(checked.value), ...applied.value.warnings, ...hook.value.warnings];
   const headline = received
     ? `Registered the ${roles.node} "${id}" in ${home}.`

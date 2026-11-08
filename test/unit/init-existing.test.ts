@@ -12,14 +12,16 @@ import { locateHome } from '../../src/core/home.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { commands, env, stateKeys, values } from '../../src/names.js';
+import { commands, env, stateGuard, stateKeys, values } from '../../src/names.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
+import { guardHookText } from '../../src/state/guard.js';
 import { inspectState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { blockInputOf, blockTemplatesFor } from '../../src/templates/index.js';
 import {
   createFakeDeps,
   exited,
+  FAKE_PROGRAM_ARGV,
   registerRoot,
   withFailingWrites,
   type FakeDeps,
@@ -1232,6 +1234,104 @@ describe('init: a root whose state folder has a missing or broken marker (TP-96,
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
     expect(messageOf(result)).toContain('newer');
     expect(snapshot(deps)).toBe(before);
+  });
+});
+
+describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () => {
+  const GUARD = `${STATE}/.git/${stateGuard.folder}`;
+  const HOOK = `${GUARD}/${stateGuard.hookFile}`;
+  const hookText = (): string => {
+    const text = guardHookText(FAKE_PROGRAM_ARGV);
+    if (!text.ok) throw new Error(text.error.message);
+    return text.value;
+  };
+  /** A state folder that is a git repo of its own, as the fake file system shows it. */
+  const repo = (deps: FakeDeps): void => deps.seedDir(`${STATE}/.git`);
+  const setting = (log: { commands(): string[] }): string[] => log.commands().filter((line) => line.startsWith('config -- core.hooksPath'));
+
+  it.each([
+    ['a state folder that is complete', 'valid' as const],
+    ['a state folder with no marker', 'no-marker' as const],
+    ['a state folder with a broken marker', 'broken-marker' as const],
+  ])('writes the guard into the git folder of %s, before the entry in the factory list', async (_name, state) => {
+    const seen: boolean[] = [];
+    const { handler, log } = gitHandler({ repos: { [ROOT]: {}, [STATE]: {} }, tracked: { [ROOT]: TRACKED_SETUP }, status: MARKER_CHANGED });
+    const made = existing({ state, entry: null }, {
+      run: (call) => {
+        if (call.args.includes('core.hooksPath') && call.args.includes('--')) seen.push(made.deps.files.has(INDEX));
+        return handler(call);
+      },
+    });
+    repo(made.deps);
+    const result = await runInit(made.deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(made.deps.files.get(HOOK)).toBe(hookText());
+    expect(made.deps.modes.get(HOOK)).toBe(0o755);
+    expect(setting(log)).toEqual([`config -- core.hooksPath ${GUARD}`]);
+    expect(seen).toEqual([false]);
+    expect(entryOf(made.deps)).toMatchObject({ id: 'demo' });
+    expect(linesOf(result)).toContain('.factory/.git/factory-guard');
+  });
+
+  it('writes nothing for the guard when it is on already', async () => {
+    const { deps, log } = existing({ state: 'valid', fixture: { hooksPath: { [STATE]: GUARD } } });
+    repo(deps);
+    deps.seed(HOOK, hookText());
+    deps.modes.set(HOOK, 0o755);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(deps.atomicWrites).not.toContain(HOOK);
+    expect(setting(log)).toEqual([]);
+    expect(linesOf(result)).not.toContain('factory-guard');
+  });
+
+  it('repairs a guard whose hook text differs from the text of the package', async () => {
+    const { deps } = existing({ state: 'valid', fixture: { hooksPath: { [STATE]: GUARD } } });
+    repo(deps);
+    deps.seed(HOOK, '#!/bin/sh\nexit 0\n');
+    deps.modes.set(HOOK, 0o755);
+    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+    expect(deps.files.get(HOOK)).toBe(hookText());
+  });
+
+  it('leaves a state folder with no git entry as it is: there is no repo to guard', async () => {
+    const { deps, log } = existing({ state: 'valid' });
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect([...deps.files.keys()].some((path) => path.includes(stateGuard.folder))).toBe(false);
+    expect(setting(log)).toEqual([]);
+  });
+
+  it.each([
+    ['a state folder that is complete', 'valid' as const],
+    ['a state folder with no marker', 'no-marker' as const],
+  ])('exits 4, writes nothing and lists no entry when the guard of %s can not be written', async (_name, state) => {
+    const { deps } = existing({ state, entry: null }, { programArgv: [] });
+    repo(deps);
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(deps.files.has(INDEX)).toBe(false);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('exits 4 and leaves the folder of the link as it was when the guard folder is a link', async () => {
+    const { deps } = existing({ state: 'no-marker', entry: null }, { links: { [GUARD]: '/elsewhere/folder' } });
+    repo(deps);
+    deps.seed('/elsewhere/folder/keep.txt', 'keep');
+    const before = snapshot(deps);
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect([...deps.files.keys()].filter((path) => path.startsWith('/elsewhere/'))).toEqual(['/elsewhere/folder/keep.txt']);
+    expect(deps.files.has(INDEX)).toBe(false);
+    expect(snapshot(deps)).toBe(before);
+  });
+
+  it('writes the guard once for a state folder that it makes: the staging folder holds it', async () => {
+    const { deps, log } = existing({ state: 'absent' });
+    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+    expect(deps.files.get(HOOK)).toBe(hookText());
+    expect(setting(log)).toEqual([`config -- core.hooksPath ${GUARD}`]);
   });
 });
 

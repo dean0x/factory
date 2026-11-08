@@ -188,6 +188,20 @@ export const guardStateOf = async (deps: Deps, stateDir: string): Promise<CliRes
 };
 
 /**
+ * Whether a tool that writes the guard has work to do in the state folder `stateDir`: the folder has a `.git` entry and the guard is
+ * off. A folder with no `.git` entry is no repo, so there is nothing to guard and no git command runs; the check of the state repo
+ * names that case where a command needs the repo. Any other `.git` entry (a link, a git file, a folder) gets the full check, so the
+ * write then repairs it or stops with exit 4. A read that fails is an error, never "no".
+ */
+export const guardNeedsInstall = async (deps: Deps, stateDir: string): Promise<CliResult<boolean>> => {
+  const entry = await deps.fs.lstat(join(stateDir, GIT_ENTRY));
+  if (!entry.ok) return entry;
+  if (entry.value === null) return ok(false);
+  const state = await guardStateOf(deps, stateDir);
+  return state.ok ? ok(!state.value.on) : state;
+};
+
+/**
  * Stop (exit 4) when the guard is off, with the remedy that repairs it. A tool that commits to the state repo asks this before it
  * writes. It reads only.
  */
