@@ -71,12 +71,25 @@ export interface GitFixture {
   readonly ignoredFiles?: Readonly<Record<string, readonly string[]>>;
   /** The text of the error of `git worktree remove`, by the folder that git runs in. The command then fails with exit code 128. */
   readonly worktreeRemoveFails?: Readonly<Record<string, string>>;
+  /**
+   * What `git config --list --show-scope --includes -z` prints, by folder: a scope, a NUL, the key, a line break, the value and a
+   * NUL for each setting. A folder with no entry has one plain local setting.
+   */
+  readonly configList?: Readonly<Record<string, string>>;
+  /** The exit code of `git config --list --show-scope`. Default: 0. A code other than 0 is what git below 2.26 gives. */
+  readonly configListExit?: number;
+  /** The value of `core.hooksPath` that git reads, by folder. A folder with no entry has none, and git exits with 1. */
+  readonly hooksPath?: Readonly<Record<string, string>>;
+  /** What `git rev-parse --absolute-git-dir` prints, by folder. Default: the folder `.git` inside the folder. */
+  readonly gitDirs?: Readonly<Record<string, string>>;
 }
 
 export interface GitLog {
   readonly calls: RunCall[];
-  /** The git command lines, without the folder: for example "add -A". */
+  /** The git command lines, without the folder and without the words of a step in a state folder: for example "add -A". */
   commands(): string[];
+  /** The git command lines, without the folder and with every other word as git got it. */
+  rawCommands(): string[];
   /** The argument lists of the clones. */
   clones(): (readonly string[])[];
 }
@@ -84,14 +97,39 @@ export interface GitLog {
 /** The words that a read of a work copy puts after `-C <folder>`: the file monitor off, the git folder and the work tree. */
 const PIN_WORDS = 6;
 
+/** The words that every git step in a state folder puts after `-C <folder>`: the hooks off and the file monitor off. */
+export const STATE_GIT_WORDS: readonly string[] = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+
+/** The same words as one text, for the pin of a command line. */
+export const STATE_GIT = STATE_GIT_WORDS.join(' ');
+
+/** The words that a read of one setting of a state folder puts after `-C <folder>`: the file monitor off. The read must see the setting as git sees it, so the hooks stay as set. */
+export const STATE_READ_WORDS: readonly string[] = ['-c', 'core.fsmonitor=false'];
+
+const wordsAt = (args: readonly string[], at: number, words: readonly string[]): boolean =>
+  words.every((word, index) => args[at + index] === word);
+
 /**
- * The argument list of a git call without the words of a pinned read (`-c core.fsmonitor=false --git-dir X --work-tree Y`), so a read
- * of a work copy gets the same answer as the same read without them. Any other list stays as it is.
+ * The argument list of a git call without the words of a step in a state folder (`STATE_GIT_WORDS`, `STATE_READ_WORDS`). A test that
+ * reads what a step does uses this and leaves the check of the words to the tests of the git module. Any other list stays as it is.
+ */
+export const withoutStateWords = (args: readonly string[]): readonly string[] => {
+  if (wordsAt(args, 2, STATE_GIT_WORDS)) return [...args.slice(0, 2), ...args.slice(2 + STATE_GIT_WORDS.length)];
+  if (wordsAt(args, 2, STATE_READ_WORDS)) return [...args.slice(0, 2), ...args.slice(2 + STATE_READ_WORDS.length)];
+  return args;
+};
+
+/**
+ * The argument list of a git call without the words of a pinned read (`-c core.fsmonitor=false --git-dir X --work-tree Y`) or of a step
+ * in a state folder, so the call gets the same answer as the same call without them. Any other list stays as it is.
  */
 const unpinned = (args: readonly string[]): readonly string[] =>
   args[2] === '-c' && args[3] === 'core.fsmonitor=false' && args[4] === '--git-dir' && args[6] === '--work-tree'
     ? [...args.slice(0, 2), ...args.slice(2 + PIN_WORDS)]
-    : args;
+    : withoutStateWords(args);
+
+/** What `git config --list --show-scope --includes -z` prints for a folder with one plain local setting. */
+const PLAIN_CONFIG_LIST = 'local\0core.bare\nfalse\0';
 
 /**
  * The top folder of the work tree that holds `dir`: the nearest folder above `dir`, or `dir` itself, that is a work tree.
@@ -118,6 +156,8 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     copies.set(dir, found);
     return found;
   };
+  /** The local settings that a `git config -- <key> <value>` call wrote, by folder and key. A write wins over the fixture. */
+  const written = new Map<string, string>();
   const handler: RunHandler = (call) => {
     calls.push(call);
     if (call.command === 'gh') {
@@ -146,6 +186,20 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
       if (fixture.noWorkTree?.includes(dir) !== true) cloned.set(dir, {});
       return exited(0);
     }
+    if (rest === 'config --list --show-scope --includes -z') {
+      const code = fixture.configListExit ?? 0;
+      if (code !== 0) return exited(code, '', "error: unknown option `show-scope'");
+      return exited(0, fixture.configList?.[dir] ?? PLAIN_CONFIG_LIST);
+    }
+    if (args[2] === 'config' && args[3] === '--' && args.length === 6) {
+      written.set(`${dir}\0${args[4]}`, args[5] ?? '');
+      return exited(0);
+    }
+    if (rest === 'config core.hooksPath') {
+      const value = written.get(`${dir}\0core.hooksPath`) ?? fixture.hooksPath?.[dir];
+      return value === undefined ? exited(1) : exited(0, `${value}\n`);
+    }
+    if (rest === 'rev-parse --absolute-git-dir') return exited(0, `${fixture.gitDirs?.[dir] ?? `${dir}/.git`}\n`);
     if (rest === 'ls-files -z') {
       if (repo === undefined) return exited(128, '', 'fatal: not a git repository');
       if ((fixture.lsFilesExit ?? 0) !== 0) return exited(fixture.lsFilesExit ?? 0, '', 'fatal: ls-files failed');
@@ -195,6 +249,7 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     }
     switch (rest) {
       case 'status --porcelain -z --untracked-files=all':
+      case 'status --porcelain -z --untracked-files=all --ignore-submodules=all':
         return exited(0, fixture.status?.[dir] ?? '');
       case 'rev-parse --git-common-dir':
         return repo === undefined ? exited(128) : exited(0, `${repo.commonDir ?? '.git'}\n`);
@@ -228,6 +283,10 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     log: {
       calls,
       commands: () =>
+        calls
+          .filter((call) => call.command === 'git')
+          .map((call) => (call.args[0] === '-C' ? withoutStateWords(call.args).slice(2) : call.args).join(' ')),
+      rawCommands: () =>
         calls
           .filter((call) => call.command === 'git')
           .map((call) => (call.args[0] === '-C' ? call.args.slice(2) : call.args).join(' ')),

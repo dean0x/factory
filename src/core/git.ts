@@ -1,8 +1,8 @@
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
-import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
-import type { Deps } from './deps.js';
+import { commands, commandText, dirs, minGitVersion, program, trackedFiles, type CommandName } from '../names.js';
+import type { Deps, RunOutput } from './deps.js';
 import { isInUserClaudeFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
 import { shellWord } from './shell-word.js';
@@ -170,11 +170,15 @@ const exitFailure = (what: string, exitCode: number, stderr: string): CliResult<
   return failure(`cannot ${what}: git exited with ${exitCode}${detail === '' ? '' : ` (${detail})`}`);
 };
 
-const gitStep = async (deps: Deps, dir: string, args: readonly string[], what: string): Promise<CliResult<void>> => {
-  const result = await deps.run('git', ['-C', dir, ...args], { timeoutMs: GIT_TIMEOUT_MS });
+/** One git step that has to work. `lead` is the words before the command, for example `-C <folder>`. */
+const gitStepWith = async (deps: Deps, lead: readonly string[], args: readonly string[], what: string): Promise<CliResult<void>> => {
+  const result = await deps.run('git', [...lead, ...args], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
   return result.value.exitCode === 0 ? ok(undefined) : failure(`cannot ${what}: git exited with ${result.value.exitCode}`);
 };
+
+const gitStep = (deps: Deps, dir: string, args: readonly string[], what: string): Promise<CliResult<void>> =>
+  gitStepWith(deps, ['-C', dir], args, what);
 
 /** The message of `run` ends with this signal name when the time limit stops the program. */
 const TIME_LIMIT_SIGNAL = 'SIGTERM';
@@ -229,20 +233,32 @@ export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>
   gitStep(deps, dir, ['init', '-q'], 'create the state repository');
 
 /**
- * The hooks of a state repo do not run for a commit of this tool. `/dev/null` is a file, so git finds no hook below it.
+ * The hooks of a repo do not run for a step of this tool. `/dev/null` is a file, so git finds no hook below it.
  * That turns off every hook; `--no-verify` turns off only two. An empty value is not documented as "no hooks".
  */
 const NO_HOOKS = 'core.hooksPath=/dev/null';
 
-const commitStaged = (deps: Deps, dir: string, message: string, what: string): Promise<CliResult<void>> =>
-  gitStep(deps, dir, ['-c', 'commit.gpgsign=false', '-c', NO_HOOKS, 'commit', '-q', '-m', message], what);
+/** The setting that turns off the signing of a commit. */
+const NO_SIGNING = ['-c', 'commit.gpgsign=false'] as const;
+
+const commitWords = (message: string): readonly string[] => ['commit', '-q', '-m', message];
+
+/**
+ * The first words of every git step that factory runs in the state folder `dir`: the hooks are off and the file monitor is off.
+ * So the step runs no hook, and it does not run the programs that the local git config of the folder names for these two jobs.
+ */
+const stateGit = (dir: string): readonly string[] => ['-C', dir, '-c', NO_HOOKS, '-c', FILE_MONITOR_OFF];
+
+/** One git step in the state folder `dir`; see `stateGit`. */
+const stateStep = (deps: Deps, dir: string, args: readonly string[], what: string): Promise<CliResult<void>> =>
+  gitStepWith(deps, stateGit(dir), args, what);
 
 const COMMIT_STATE = 'commit the state files';
 
 /** Stage everything and commit, for a new repo. The caller checks the identity first. */
 export const commitAll = async (deps: Deps, dir: string, message: string): Promise<CliResult<void>> => {
-  const staged = await gitStep(deps, dir, ['add', '-A'], 'stage the state files');
-  return staged.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : staged;
+  const staged = await stateStep(deps, dir, ['add', '-A'], 'stage the state files');
+  return staged.ok ? stateStep(deps, dir, [...NO_SIGNING, ...commitWords(message)], COMMIT_STATE) : staged;
 };
 
 export interface RootRepoInput {
@@ -271,7 +287,12 @@ export const initRootRepo = async (deps: Deps, root: string, input: RootRepoInpu
   if (!(await hasIdentity(deps, root))) return ok({ committed: false });
   const staged = await gitStep(deps, root, ['add', '--', ...input.paths], 'stage the config files');
   if (!staged.ok) return staged;
-  const committed = await commitStaged(deps, root, input.message, 'commit the config files');
+  const committed = await gitStep(
+    deps,
+    root,
+    [...NO_SIGNING, '-c', NO_HOOKS, ...commitWords(input.message)],
+    'commit the config files',
+  );
   return committed.ok ? ok({ committed: true }) : committed;
 };
 
@@ -298,7 +319,7 @@ export const commitPaths = async (
   if (paths.present.length === 0 && paths.gone.length === 0) return failure(`cannot ${COMMIT_STATE}: no path was named`);
   if (paths.gone.length > 0) {
     // `--ignore-unmatch`: a path that git never tracked has no removal to record.
-    const removed = await gitStep(
+    const removed = await stateStep(
       deps,
       dir,
       ['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', ...paths.gone],
@@ -307,13 +328,13 @@ export const commitPaths = async (
     if (!removed.ok) return removed;
   }
   const added =
-    paths.present.length === 0 ? ok(undefined) : await gitStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
-  return added.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : added;
+    paths.present.length === 0 ? ok(undefined) : await stateStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
+  return added.ok ? stateStep(deps, dir, [...NO_SIGNING, ...commitWords(message)], COMMIT_STATE) : added;
 };
 
 /** Remove the staged changes of `paths` from the index. The files keep their text, and other staged changes stay. */
 export const unstagePaths = (deps: Deps, dir: string, paths: RepoPaths): Promise<CliResult<void>> =>
-  gitStep(deps, dir, ['reset', '-q', '--', ...paths.present, ...paths.gone], 'clear the staged files');
+  stateStep(deps, dir, ['reset', '-q', '--', ...paths.present, ...paths.gone], 'clear the staged files');
 
 /** The paths that a repo tracks, in the order of git, and whether git named more paths than the list can hold. */
 export interface TrackedList {
@@ -502,8 +523,67 @@ const shownPaths = (paths: readonly string[]): string => {
   return paths.length > MAX_SHOWN_PATHS ? `${shown} and ${paths.length - MAX_SHOWN_PATHS} more` : shown;
 };
 
+/** The keys of the local git config that name a program and have no switch to turn them off for one call: a filter driver and a config hook. */
+const PROGRAM_KEY_PREFIXES: readonly string[] = ['filter.', 'hook.'];
+
+/** The scopes of `git config --show-scope` that belong to the folder itself. */
+const FOLDER_SCOPES: ReadonlySet<string> = new Set(['local', 'worktree']);
+
+/** The scope word that git prints: lower case letters only. Any other text means that the list is not read right. */
+const SCOPE_WORD = /^[a-z]+$/;
+
 /**
- * Refuse when a commit in the state repo could take a change of the owner. The index of the state repo must hold no
+ * The keys of `git config --list --show-scope --includes -z` that are set in the config of the folder itself and name a program. With
+ * `-z`, git prints for each setting the scope, a NUL, the key, a line break, the value and a NUL. A key with no value has no line break.
+ * The value can hold line breaks, so the key ends at the first one. Null when the list is not in this form.
+ */
+const programKeysOf = (stdout: string): readonly string[] | null => {
+  const parts = stdout.split('\0');
+  if (parts.pop() !== '' || parts.length % 2 !== 0) return null;
+  const keys: string[] = [];
+  for (let at = 0; at < parts.length; at += 2) {
+    const scope = parts[at] ?? '';
+    const entry = parts[at + 1] ?? '';
+    if (!SCOPE_WORD.test(scope)) return null;
+    const lineBreak = entry.indexOf('\n');
+    const key = lineBreak < 0 ? entry : entry.slice(0, lineBreak);
+    if (FOLDER_SCOPES.has(scope) && PROGRAM_KEY_PREFIXES.some((prefix) => key.toLowerCase().startsWith(prefix))) keys.push(key);
+  }
+  return keys;
+};
+
+/**
+ * Refuse (exit 4) when the local git config of the state folder, or a file it includes, has a key that names a program with no switch
+ * to turn it off for one call: a filter driver (`filter.`) or a config hook (`hook.`). The refusal names the keys. It reads only.
+ * The read needs git 2.26 (`--show-scope`); when it fails, the error (exit 1) names that version.
+ */
+export const requireStateConfigSafe = async (deps: Deps, stateDir: string): Promise<CliResult<void>> => {
+  const unreadable = (detail: string): CliResult<never> =>
+    failure(
+      `cannot read the git config of ${dirs.state}: ${detail}. ${program} needs git ${minGitVersion} or later.`,
+      'Update git, then run the command again.',
+    );
+  const result = await deps.run('git', [...stateGit(stateDir), 'config', '--list', '--show-scope', '--includes', '-z'], {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
+  if (!result.ok) return unreadable(result.error.message);
+  if (result.value.exitCode !== 0) return unreadable(`git exited with ${result.value.exitCode}`);
+  const keys = programKeysOf(result.value.stdout);
+  if (keys === null) return unreadable('git printed a list that is not in the form that was expected');
+  const [first] = keys;
+  if (first === undefined) return ok(undefined);
+  const unset = `git -C ${dirs.state} config --unset ${shellWord(first)}`;
+  return safetyRefusal(
+    `the local git config of ${dirs.state} sets ${shownPaths(keys)}, which ${keys.length === 1 ? 'names' : 'name'} a program, so ${program} makes no git change there`,
+    keys.length === 1
+      ? `Remove the key with "${unset}", then run the command again.`
+      : `Remove each key, for example the first with "${unset}", then run the command again.`,
+  );
+};
+
+/**
+ * Refuse when a commit in the state repo could take a change of the owner. The local git config of the state folder must name no
+ * program that has no switch for one call (`requireStateConfigSafe`). The index of the state repo must hold no
  * staged change. A path of `touched` must have no change of the owner, staged or not: `changing` names the command that
  * changes these paths ("the upgrade"), and `command` is the command that the person runs again.
  */
@@ -515,7 +595,9 @@ export const requireStateRepoReady = async (
   command: CommandName,
 ): Promise<CliResult<void>> => {
   const again = `Then run "${commandText(command)}" again.`;
-  const status = await statusOf(deps, stateDir);
+  const safe = await requireStateConfigSafe(deps, stateDir);
+  if (!safe.ok) return safe;
+  const status = await stateStatusOf(deps, stateDir);
   if (!status.ok) return status;
   const staged = status.value.filter((entry) => ![' ', '?', '!'].includes(entry.index));
   if (staged.length > 0) {
@@ -560,18 +642,54 @@ export const requireStateRepoCommit = async (
   return requireStateRepoReady(deps, stateDir, touched, changing, command);
 };
 
-/**
- * The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. `gitDir` is the git
- * folder that the repo of `dir` has; see `gitIn`.
- */
-export const statusOf = async (deps: Deps, dir: string, gitDir?: string): Promise<CliResult<readonly StatusEntry[]>> => {
-  const result = await deps.run('git', [...gitIn(dir, gitDir), 'status', '--porcelain', '-z', '--untracked-files=all'], {
-    timeoutMs: GIT_TIMEOUT_MS,
-  });
+const statusEntriesOf = (result: CliResult<RunOutput>, dir: string): CliResult<readonly StatusEntry[]> => {
   const what = `cannot read the changes of ${dir}`;
   if (!result.ok) return failure(`${what}: ${result.error.message}`);
   if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
   return ok(parseStatus(result.value.stdout));
+};
+
+const STATUS_WORDS = ['status', '--porcelain', '-z', '--untracked-files=all'] as const;
+
+/**
+ * The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. `gitDir` is the git
+ * folder that the repo of `dir` has; see `gitIn`.
+ */
+export const statusOf = async (deps: Deps, dir: string, gitDir: string): Promise<CliResult<readonly StatusEntry[]>> =>
+  statusEntriesOf(await deps.run('git', [...gitIn(dir, gitDir), ...STATUS_WORDS], { timeoutMs: GIT_TIMEOUT_MS }), dir);
+
+/** The changes in the index and in the work tree of the state repo at `dir`, as `statusOf`. A submodule is not read. */
+export const stateStatusOf = async (deps: Deps, dir: string): Promise<CliResult<readonly StatusEntry[]>> =>
+  statusEntriesOf(
+    await deps.run('git', [...stateGit(dir), ...STATUS_WORDS, '--ignore-submodules=all'], { timeoutMs: GIT_TIMEOUT_MS }),
+    dir,
+  );
+
+/**
+ * The value of one local setting of the state folder as git reads it, or null when it is not set. This read leaves the hooks as they
+ * are set: with the hooks forced off, the value of `core.hooksPath` would always be `/dev/null`. The key is a name of the code.
+ */
+export const stateConfigValue = async (deps: Deps, dir: string, key: string): Promise<CliResult<string | null>> => {
+  const what = `read ${key} of ${dir}`;
+  const result = await deps.run('git', ['-C', dir, '-c', FILE_MONITOR_OFF, 'config', key], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode === 1) return ok(null);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  return ok(result.value.stdout.replace(/\n$/, ''));
+};
+
+/** Set one setting in the local git config of the state folder. The separator keeps a value that starts with a dash from acting as an option. */
+export const setStateConfig = (deps: Deps, dir: string, key: string, value: string): Promise<CliResult<void>> =>
+  stateStep(deps, dir, ['config', '--', key, value], `set ${key}`);
+
+/** The absolute path of the git folder of the state repo at `dir`. */
+export const absoluteGitDirOf = async (deps: Deps, dir: string): Promise<CliResult<string>> => {
+  const what = `read the git folder of ${dir}`;
+  const result = await deps.run('git', [...stateGit(dir), 'rev-parse', '--absolute-git-dir'], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  const printed = result.value.stdout.replace(/\n$/, '');
+  return isAbsolute(printed) ? ok(printed) : failure(`cannot ${what}: git printed a path that is not absolute`);
 };
 
 /** The longest wait for a fetch: it reads the network. */

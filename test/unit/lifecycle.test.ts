@@ -18,6 +18,7 @@ import {
   type FetchHandler,
   type RunCall,
 } from '../helpers/fake-deps.js';
+import { withoutStateWords } from '../helpers/git-fake.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -121,9 +122,9 @@ interface Made {
 const answers: FetchHandler = () => ok({ status: 200 });
 
 const gitAnswer = (commitExit: number, identity: boolean) => (call: RunCall) => {
-  const command = call.args.slice(2).join(' ');
+  const command = withoutStateWords(call.args).slice(2).join(' ');
   if (call.args[1] === STATE_DIR) {
-    if (command === 'status --porcelain -z --untracked-files=all') return exited(0, '');
+    if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, '');
     if (command === 'config user.name' || command === 'config user.email') return identity ? exited(0, 'Git User\n') : exited(1);
     return exited(command.includes(' commit ') ? commitExit : 0);
   }

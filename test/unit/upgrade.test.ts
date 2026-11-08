@@ -26,7 +26,7 @@ import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, registerRoot, withFailingWrites, type FakeDeps, type RunCall, type RunHandler } from '../helpers/fake-deps.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
-import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import {
   OLD_ROADMAPS_README,
@@ -103,7 +103,7 @@ const makeNode = async (
   // The fake git makes no folder, so the root repo that `init` made is seeded here.
   deps.seedDir(`${HOME}/.git`);
   const first = deps.calls.length;
-  return { deps, gitSince: () => deps.calls.slice(first).map((call) => call.args.slice(2).join(' ')) };
+  return { deps, gitSince: () => deps.calls.slice(first).map((call) => withoutStateWords(call.args).slice(2).join(' ')) };
 };
 
 type UpgradeResult = Awaited<ReturnType<typeof runUpgrade>>;
@@ -323,7 +323,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
   /** The lines that a state repo from before the registry of the workers holds. */
   const BEFORE_WORKERS = 'state/\nlocks/\nbackups/\n';
   const LINE = 'workers/\n';
-  const COMMIT = '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state';
+  const COMMIT = '-c commit.gpgsign=false commit -q -m chore: upgrade the state';
 
   it('adds the workers line to a state repo that has none, and commits the file', async () => {
     const { deps, gitSince } = await makeNode();
@@ -467,7 +467,9 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
 
   it('exits 1 for a .gitignore with a change that is not committed, and writes nothing', async () => {
     const dirty = (inner: RunHandler): RunHandler => (call) =>
-      call.args[0] === '-C' && call.args[1] === STATE_DIR && call.args[2] === 'status' ? exited(0, ' M .gitignore\0') : inner(call);
+      call.args[0] === '-C' && call.args[1] === STATE_DIR && withoutStateWords(call.args)[2] === 'status'
+        ? exited(0, ' M .gitignore\0')
+        : inner(call);
     const { deps } = await makeNode({ run: dirty });
     deps.files.set(STATE_IGNORE, `${BEFORE_WORKERS}!mine\n`);
     const before = wholeState(deps);
@@ -618,7 +620,7 @@ describe('upgrade: managed blocks', () => {
     expect(output.json).toMatchObject({ changed: true, committed: true, backup: '.factory/backups/2030-01-02T03-04-05-678Z' });
     expect(gitWrites(gitSince())).toEqual([
       'add -A -- node.json',
-      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
+      '-c commit.gpgsign=false commit -q -m chore: upgrade the state',
     ]);
 
     const statuses = await inspectBlocks(deps, HOME, withBlock('coordinator', 'New coordinator text.'));
@@ -1571,7 +1573,7 @@ describe('upgrade: when the state repo holds changes of the owner', () => {
     expect(output.json).toMatchObject({ committed: true });
     expect(gitWrites(gitSince())).toEqual([
       'add -A -- node.json',
-      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
+      '-c commit.gpgsign=false commit -q -m chore: upgrade the state',
     ]);
   });
 
@@ -1657,7 +1659,7 @@ describe('upgrade: a node of schema 1', () => {
     made = deps;
     seedSchema1Node(deps, HOME, options.doc);
     const first = deps.calls.length;
-    return { deps, gitSince: () => deps.calls.slice(first).map((call) => call.args.slice(2).join(' ')) };
+    return { deps, gitSince: () => deps.calls.slice(first).map((call) => withoutStateWords(call.args).slice(2).join(' ')) };
   };
 
   /** The files of the node, without the backups. */
@@ -1750,7 +1752,7 @@ describe('upgrade: a node of schema 1', () => {
       '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the config repo',
       'rm -r -q --cached --ignore-unmatch -- protocol.md briefs',
       'add -A -- roles/worker.md roadmaps/README.md node.json .gitignore orders',
-      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
+      '-c commit.gpgsign=false commit -q -m chore: upgrade the state',
     ]);
     expect(text(deps, `${BACKUP}/.factory/protocol.md`)).toContain('factory:begin protocol');
     expect(deps.files.has(`${BACKUP}/.factory/briefs/.gitkeep`)).toBe(true);
@@ -2797,7 +2799,7 @@ describe('upgrade: the two config files', () => {
     const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin', ...INDEX_ENV }, run: handler });
     seedSchema1Node(deps, HOME);
     const first = deps.calls.length;
-    return { deps, gitSince: () => deps.calls.slice(first).map((call) => call.args.slice(2).join(' ')) };
+    return { deps, gitSince: () => deps.calls.slice(first).map((call) => withoutStateWords(call.args).slice(2).join(' ')) };
   };
 
   it('exits 2, names init and writes nothing for a root of the current schema with no local file, also in a dry run', async () => {

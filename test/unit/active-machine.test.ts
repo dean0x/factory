@@ -9,6 +9,7 @@ import {
   readActiveMark,
 } from '../../src/state/active-machine.js';
 import { createFakeDeps, exited, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
+import { withoutStateWords } from '../helpers/git-fake.js';
 
 const HOME = '/h/node';
 const LAYOUT = layoutOf(HOME);
@@ -34,9 +35,8 @@ interface Setup {
 
 /** A fake of git for the state repo: the status, the identity, and the exit code of every other call. */
 const gitAnswer = (setup: Setup) => (call: RunCall) => {
-  const command = call.args.slice(2).join(' ');
-  if (command === 'status --porcelain -z --untracked-files=all') return exited(0, setup.status ?? '');
-  if (command === 'config user.name' || command === 'config user.email') {
+  const command = withoutStateWords(call.args).slice(2).join(' ');
+  if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, setup.status ?? '');  if (command === 'config user.name' || command === 'config user.email') {
     return setup.identity === false ? exited(1) : exited(0, 'Git User\n');
   }
   return exited(command.includes(' commit ') ? (setup.commitExit ?? 0) : 0);
@@ -57,7 +57,7 @@ const make = (setup: Setup = {}): FakeDeps => {
 const writesOf = (deps: FakeDeps): string[] =>
   deps.calls
     .filter((call) => call.command === 'git' && call.args[1] === STATE)
-    .map((call) => call.args.slice(2).join(' '))
+    .map((call) => withoutStateWords(call.args).slice(2).join(' '))
     .filter((call) => /^(add|rm|reset)\b/.test(call) || call.includes(' commit '));
 
 const markText = (machine: string, at: string): string =>

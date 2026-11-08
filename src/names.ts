@@ -479,6 +479,9 @@ export const homeIndex = {
  */
 export const trackedFiles = { maxCount: 2_000, maxFileBytes } as const;
 
+/** The lowest version of git that factory runs with: the read of the git config of the state folder (`--show-scope`) needs it. */
+export const minGitVersion = '2.26';
+
 /** The first commit of the root repo, which `init` and `upgrade` make: the branch, the message and the notice of a missing identity. */
 export const rootRepo = {
   branch: 'main',

@@ -30,7 +30,7 @@ import {
   type FakeDeps,
   type FakeOptions,
 } from '../helpers/fake-deps.js';
-import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { gitHandler, STATE_GIT, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -1116,8 +1116,8 @@ describe('init: the state repository', () => {
       'rev-parse --is-inside-work-tree --show-prefix',
       'config user.name',
       'config user.email',
-      'add -A',
-      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the state',
+      `${STATE_GIT} add -A`,
+      `${STATE_GIT} -c commit.gpgsign=false commit -q -m chore: initialize the state`,
     ]);
   });
 

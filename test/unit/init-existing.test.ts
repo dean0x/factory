@@ -26,7 +26,7 @@ import {
   type FakeOptions,
 } from '../helpers/fake-deps.js';
 import { loadConfig, readNodeIdentity, runInit } from '../helpers/package-registry.js';
-import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { gitHandler, withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 import { acceptSetupText } from '../helpers/setup-acceptance.js';
@@ -239,7 +239,7 @@ const failingWrite = (deps: Deps, suffix: string): Deps => withFailingWrites(dep
 const stateGit = (log: { calls: { command: string; args: readonly string[] }[] }): string[] =>
   log.calls
     .filter((call) => call.command === 'git' && call.args[0] === '-C' && call.args[1] === STATE)
-    .map((call) => call.args.slice(2).join(' '));
+    .map((call) => withoutStateWords(call.args).slice(2).join(' '));
 
 describe('init: a registered root, the checks and the acceptance (TP-181)', () => {
   it('asks on a terminal window, writes the acceptance, and changes no other file', async () => {

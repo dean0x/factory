@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import {
+  absoluteGitDirOf,
   addWorkTree,
   blobTextOf,
   branchExists,
@@ -21,16 +22,29 @@ import {
   MAX_SCAN_ENTRIES,
   remoteBranchHeadOf,
   removeWorkTree,
+  requireStateConfigSafe,
+  requireStateRepoCommit,
+  requireStateRepoReady,
   requireWorkTreeTop,
+  setStateConfig,
   stashCountOf,
+  stateConfigValue,
+  stateStatusOf,
   statusOf,
   trackedFilesOf,
   unstagePaths,
   withoutUserinfo,
 } from '../../src/core/git.js';
-import { trackedFiles } from '../../src/names.js';
+import { commands, trackedFiles } from '../../src/names.js';
 import { createFakeDeps, exited, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
-import { gitHandler, type FakeRepo, type GitFixture } from '../helpers/git-fake.js';
+import {
+  gitHandler,
+  STATE_GIT,
+  STATE_GIT_WORDS,
+  STATE_READ_WORDS,
+  type FakeRepo,
+  type GitFixture,
+} from '../helpers/git-fake.js';
 
 const WS = '/ws';
 
@@ -332,9 +346,9 @@ describe('git: the commit of a new state repo', () => {
     const { handler, log } = gitHandler();
     const result = await commitAll(createFakeDeps({ cwd: WS, run: handler }), '/w/node/.factory', 'chore: first');
     expect(result.ok).toBe(true);
-    expect(log.commands()).toEqual([
-      'add -A',
-      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: first',
+    expect(log.rawCommands()).toEqual([
+      `${STATE_GIT} add -A`,
+      `${STATE_GIT} -c commit.gpgsign=false commit -q -m chore: first`,
     ]);
   });
 });
@@ -409,10 +423,10 @@ describe('git: the commit of chosen paths', () => {
     const { handler, log } = gitHandler();
     const result = await commitPaths(createFakeDeps({ cwd: WS, run: handler }), DIR, paths, 'chore: upgrade the state');
     expect(result.ok).toBe(true);
-    expect(log.commands()).toEqual([
-      'rm -r -q --cached --ignore-unmatch -- protocol.md',
-      'add -A -- node.json roles/worker.md',
-      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: upgrade the state',
+    expect(log.rawCommands()).toEqual([
+      `${STATE_GIT} rm -r -q --cached --ignore-unmatch -- protocol.md`,
+      `${STATE_GIT} add -A -- node.json roles/worker.md`,
+      `${STATE_GIT} -c commit.gpgsign=false commit -q -m chore: upgrade the state`,
     ]);
   });
 
@@ -433,9 +447,9 @@ describe('git: the commit of chosen paths', () => {
     const { handler, log } = gitHandler();
     const result = await commitPaths(createFakeDeps({ cwd: WS, run: handler }), DIR, { present: [], gone: ['protocol.md'] }, 'm');
     expect(result.ok).toBe(true);
-    expect(log.commands()).toEqual([
-      'rm -r -q --cached --ignore-unmatch -- protocol.md',
-      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m m',
+    expect(log.rawCommands()).toEqual([
+      `${STATE_GIT} rm -r -q --cached --ignore-unmatch -- protocol.md`,
+      `${STATE_GIT} -c commit.gpgsign=false commit -q -m m`,
     ]);
   });
 
@@ -451,7 +465,7 @@ describe('git: the commit of chosen paths', () => {
     const { handler, log } = gitHandler();
     const result = await unstagePaths(createFakeDeps({ cwd: WS, run: handler }), DIR, paths);
     expect(result.ok).toBe(true);
-    expect(log.commands()).toEqual(['reset -q -- node.json roles/worker.md protocol.md']);
+    expect(log.rawCommands()).toEqual([`${STATE_GIT} reset -q -- node.json roles/worker.md protocol.md`]);
   });
 });
 
@@ -471,13 +485,13 @@ describe('git: the commit that HEAD names', () => {
   });
 });
 
-describe('git: the status of a repo', () => {
-  const status = (run: RunHandler) => statusOf(createFakeDeps({ cwd: WS, run }), '/w/node/.factory');
+describe('git: the status of a state repo', () => {
+  const status = (run: RunHandler) => stateStatusOf(createFakeDeps({ cwd: WS, run }), '/w/node/.factory');
 
-  it('asks for every untracked file one by one, with names that git does not quote', async () => {
+  it('asks for every untracked file one by one, with names that git does not quote, and reads no submodule', async () => {
     const { handler, log } = gitHandler();
-    await statusOf(createFakeDeps({ cwd: WS, run: handler }), '/w/node/.factory');
-    expect(log.commands()).toEqual(['status --porcelain -z --untracked-files=all']);
+    await stateStatusOf(createFakeDeps({ cwd: WS, run: handler }), '/w/node/.factory');
+    expect(log.rawCommands()).toEqual([`${STATE_GIT} status --porcelain -z --untracked-files=all --ignore-submodules=all`]);
   });
 
   it('reads the state of the index and of the work tree for each path', async () => {
@@ -514,6 +528,211 @@ describe('git: the status of a repo', () => {
       error: { message: 'cannot read the changes of /w/node/.factory: git exited with 128' },
     });
     expect(await status(() => failure('cannot run git: SIGTERM'))).toMatchObject({ ok: false });
+  });
+});
+
+describe('git: every git step in a state folder runs with hooks off (TP-15)', () => {
+  const STATE_DIR = '/w/node/.factory';
+  const PATHS = { present: ['node.json'], gone: ['protocol.md'] };
+  const steps: readonly (readonly [string, (deps: FakeDeps) => Promise<unknown>])[] = [
+    ['commitAll', (deps) => commitAll(deps, STATE_DIR, 'm')],
+    ['commitPaths', (deps) => commitPaths(deps, STATE_DIR, PATHS, 'm')],
+    ['unstagePaths', (deps) => unstagePaths(deps, STATE_DIR, PATHS)],
+    ['stateStatusOf', (deps) => stateStatusOf(deps, STATE_DIR)],
+    ['setStateConfig', (deps) => setStateConfig(deps, STATE_DIR, 'core.hooksPath', '/g/factory-guard')],
+    ['absoluteGitDirOf', (deps) => absoluteGitDirOf(deps, STATE_DIR)],
+    ['requireStateConfigSafe', (deps) => requireStateConfigSafe(deps, STATE_DIR)],
+    ['requireStateRepoReady', (deps) => requireStateRepoReady(deps, STATE_DIR, [], 'the upgrade', commands.upgrade)],
+  ];
+
+  it.each(steps)('%s: each git call has the hooks off and the file monitor off', async (_name, step) => {
+    const { handler, log } = gitHandler();
+    await step(createFakeDeps({ cwd: WS, run: handler }));
+    expect(log.calls.length).toBeGreaterThan(0);
+    for (const call of log.calls) {
+      expect(call.args.slice(0, 2 + STATE_GIT_WORDS.length)).toEqual(['-C', STATE_DIR, ...STATE_GIT_WORDS]);
+    }
+  });
+
+  it('keeps the signing of a commit off', async () => {
+    const { handler, log } = gitHandler();
+    await commitAll(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR, 'm');
+    expect(log.calls.at(-1)?.args).toEqual(['-C', STATE_DIR, ...STATE_GIT_WORDS, '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'm']);
+  });
+
+  it('does not put the file monitor words on the calls that make the root repo, as they were', async () => {
+    const { handler, log } = gitHandler();
+    await initRootRepo(createFakeDeps({ cwd: WS, run: handler }), '/w/node', { paths: ['setup'], message: 'm', branch: 'main' });
+    expect(log.calls.some((call) => call.args.includes('core.fsmonitor=false'))).toBe(false);
+  });
+});
+
+describe('git: one setting of a state folder', () => {
+  const STATE_DIR = '/w/node/.factory';
+  const GUARD = '/f/.factory/.git/factory-guard';
+
+  describe('the read of a value', () => {
+    it('sees the value as git sees it: the hooks are not forced off, because the read would then always give /dev/null', async () => {
+      const { handler, log } = gitHandler({ hooksPath: { [STATE_DIR]: GUARD } });
+      const result = await stateConfigValue(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR, 'core.hooksPath');
+      expect(result).toEqual({ ok: true, value: GUARD });
+      expect(log.calls.map((call) => call.args)).toEqual([['-C', STATE_DIR, ...STATE_READ_WORDS, 'config', 'core.hooksPath']]);
+    });
+
+    it('is null for a setting that is not set', async () => {
+      const { handler } = gitHandler();
+      expect(await stateConfigValue(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR, 'core.hooksPath')).toEqual({ ok: true, value: null });
+    });
+
+    it('is an error when git exits with another code or cannot run, never "not set"', async () => {
+      const read = (run: RunHandler) => stateConfigValue(createFakeDeps({ cwd: WS, run }), STATE_DIR, 'core.hooksPath');
+      expect(await read(() => exited(128))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(await read(() => failure('cannot run git: ENOENT'))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    });
+  });
+
+  describe('the write of a value', () => {
+    it('sets the value after a separator, so that a value that starts with a dash is no option, and a read then gives it', async () => {
+      const { handler, log } = gitHandler();
+      const deps = createFakeDeps({ cwd: WS, run: handler });
+      expect(await setStateConfig(deps, STATE_DIR, 'core.hooksPath', GUARD)).toEqual({ ok: true, value: undefined });
+      expect(log.calls[0]?.args).toEqual(['-C', STATE_DIR, ...STATE_GIT_WORDS, 'config', '--', 'core.hooksPath', GUARD]);
+      expect(await stateConfigValue(deps, STATE_DIR, 'core.hooksPath')).toEqual({ ok: true, value: GUARD });
+    });
+
+    it('is an error when git exits with a code', async () => {
+      const result = await setStateConfig(createFakeDeps({ cwd: WS, run: () => exited(255) }), STATE_DIR, 'core.hooksPath', GUARD);
+      expect(result).toMatchObject({ ok: false, error: { message: 'cannot set core.hooksPath: git exited with 255' } });
+    });
+  });
+
+  describe('the absolute git folder', () => {
+    it('is the absolute path that git prints', async () => {
+      const { handler, log } = gitHandler({ gitDirs: { [STATE_DIR]: '/real/node/.factory/.git' } });
+      const result = await absoluteGitDirOf(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR);
+      expect(result).toEqual({ ok: true, value: '/real/node/.factory/.git' });
+      expect(log.calls[0]?.args.slice(-2)).toEqual(['rev-parse', '--absolute-git-dir']);
+    });
+
+    it('is an error when git prints a path that is not absolute, or exits with a code', async () => {
+      const read = (run: RunHandler) => absoluteGitDirOf(createFakeDeps({ cwd: WS, run }), STATE_DIR);
+      expect(await read(() => exited(0, '.git\n'))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(await read(() => exited(0, ''))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      expect(await read(() => exited(128))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    });
+  });
+});
+
+describe('git: a state repo whose local config names a program (TP-16)', () => {
+  const STATE_DIR = '/w/node/.factory';
+  /** The list as git prints it with `-z`: for each setting the scope, a NUL, the key, a line break, the value and a NUL. */
+  const listOf = (...settings: readonly (readonly [scope: string, key: string, value?: string])[]): string =>
+    settings.map(([scope, key, value]) => `${scope}\0${key}${value === undefined ? '' : `\n${value}`}\0`).join('');
+  const checked = (configList: string) => {
+    const { handler, log } = gitHandler({ configList: { [STATE_DIR]: configList } });
+    return { result: requireStateConfigSafe(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR), log };
+  };
+
+  it.each([
+    ['a filter driver of the local config', 'local', 'filter.lfs.clean'],
+    ['a filter driver of the config of the work tree', 'worktree', 'filter.lfs.smudge'],
+    ['a config hook', 'local', 'hook.pre-commit.command'],
+    ['a key in capital letters', 'local', 'Filter.x.process'],
+  ])('refuses %s with exit 4, names the key and the remedy', async (_name, scope, key) => {
+    const { result } = checked(listOf(['local', 'core.bare', 'false'], [scope, key, 'cat']));
+    expect(await result).toMatchObject({
+      ok: false,
+      error: {
+        kind: 'safety',
+        message: expect.stringContaining(key),
+        hint: expect.stringContaining(`git -C .factory config --unset ${key}`),
+      },
+    });
+  });
+
+  it('refuses a key with no value, and quotes a key with a space in the remedy', async () => {
+    expect(await checked(listOf(['local', 'filter.a.clean'])).result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(await checked(listOf(['local', 'filter.My Driver.clean', 'cat'])).result).toMatchObject({
+      ok: false,
+      error: { hint: expect.stringContaining("config --unset 'filter.My Driver.clean'") },
+    });
+  });
+
+  it('names every such key, up to a limit', async () => {
+    const { result } = checked(listOf(['local', 'filter.a.clean', 'x'], ['local', 'hook.b.command', 'y']));
+    expect(await result).toMatchObject({
+      ok: false,
+      error: { message: expect.stringMatching(/filter\.a\.clean.*hook\.b\.command/) },
+    });
+  });
+
+  it('accepts the same keys in the global and the system config, and other keys in every scope', async () => {
+    const list = listOf(
+      ['system', 'filter.lfs.clean', 'git-lfs clean'],
+      ['global', 'hook.pre-commit.command', 'x'],
+      ['local', 'core.hooksPath', '/g/factory-guard'],
+      ['local', 'filterx.y', 'z'],
+      ['command', 'core.hooksPath', '/dev/null'],
+    );
+    expect(await checked(list).result).toEqual({ ok: true, value: undefined });
+  });
+
+  it('reads a value with a line break as one value, so that a line in a value is no key', async () => {
+    expect(await checked(listOf(['local', 'core.note', 'one\nfilter.x.clean\ntwo'])).result).toEqual({ ok: true, value: undefined });
+  });
+
+  it('accepts a config with no setting at all', async () => {
+    expect(await checked('').result).toEqual({ ok: true, value: undefined });
+  });
+
+  it('is a failure when the list ends inside a setting, never an accept', async () => {
+    expect(await checked('local\0core.bare\nfalse\0local\0').result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+  });
+
+  it('stops requireStateRepoCommit with exit 4 before the status call and before any write', async () => {
+    const { handler, log } = gitHandler({ configList: { [STATE_DIR]: listOf(['local', 'filter.lfs.clean', 'x']) } });
+    const deps = createFakeDeps({ cwd: WS, run: handler });
+    deps.seedDir(`${STATE_DIR}/.git`);
+    const result = await requireStateRepoCommit(deps, STATE_DIR, ['node.json'], 'the upgrade', commands.upgrade);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(log.commands().some((command) => command.includes('status'))).toBe(false);
+    expect(log.commands().some((command) => /\b(add|rm|reset|commit)\b/.test(command))).toBe(false);
+  });
+
+  it('is the first call of the ready check', async () => {
+    const { handler, log } = gitHandler();
+    await requireStateRepoReady(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR, [], 'the upgrade', commands.upgrade);
+    expect(log.rawCommands()).toEqual([
+      `${STATE_GIT} config --list --show-scope --includes -z`,
+      `${STATE_GIT} status --porcelain -z --untracked-files=all --ignore-submodules=all`,
+    ]);
+  });
+});
+
+describe('git: the minimum version of git (TP-55)', () => {
+  const STATE_DIR = '/w/node/.factory';
+  const ready = (run: RunHandler) =>
+    requireStateRepoReady(createFakeDeps({ cwd: WS, run }), STATE_DIR, [], 'the upgrade', commands.upgrade);
+
+  it('fails with exit 1 and names git 2.26 when the config list with scopes fails', async () => {
+    const { handler } = gitHandler({ configListExit: 129 });
+    expect(await ready(handler)).toMatchObject({
+      ok: false,
+      error: { kind: 'failure', message: expect.stringContaining('git 2.26') },
+    });
+  });
+
+  it('names git 2.26 when git cannot run the list', async () => {
+    expect(await ready(() => failure('cannot run git: ENOENT'))).toMatchObject({
+      ok: false,
+      error: { kind: 'failure', message: expect.stringContaining('git 2.26') },
+    });
+  });
+
+  it('stops before the status call', async () => {
+    const { handler, log } = gitHandler({ configListExit: 129 });
+    await ready(handler);
+    expect(log.commands().some((command) => command.includes('status'))).toBe(false);
   });
 });
 

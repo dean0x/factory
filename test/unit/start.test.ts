@@ -30,6 +30,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
+import { withoutStateWords } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -121,9 +122,9 @@ interface Setup {
  * the top of the work tree, the tracked paths and the ignore rules. The tmux log does not record its calls.
  */
 const gitAnswer = (setup: Setup) => (call: RunCall) => {
-  const command = call.args.slice(2).join(' ');
+  const command = withoutStateWords(call.args).slice(2).join(' ');
   if (setup.stateRepo !== undefined && call.args[1] === STATE_DIR) {
-    if (command === 'status --porcelain -z --untracked-files=all') return exited(0, setup.stateRepo.status ?? '');
+    if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, setup.stateRepo.status ?? '');
     if (command === 'config user.name' || command === 'config user.email') return exited(0, 'Git User\n');
     return exited(command.includes(' commit ') ? (setup.stateRepo.commitExit ?? 0) : 0);
   }
@@ -998,7 +999,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
   const stateWrites = (deps: FakeDeps): string[] =>
     deps.calls
       .filter((call) => call.command === 'git' && call.args[1] === STATE_DIR)
-      .map((call) => call.args.slice(2).join(' '))
+      .map((call) => withoutStateWords(call.args).slice(2).join(' '))
       .filter((call) => /^(add|rm|reset)\b/.test(call) || call.includes(' commit '));
 
   const markText = (machine: string): string =>
@@ -2170,7 +2171,9 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
 
     /** The git calls in the state repo, each one as the words after `-C <folder>`. */
     const stateGit = (deps: FakeDeps): string[] =>
-      deps.calls.filter((call) => call.command === 'git' && call.args[1] === STATE_DIR).map((call) => call.args.slice(2).join(' '));
+      deps.calls
+        .filter((call) => call.command === 'git' && call.args[1] === STATE_DIR)
+        .map((call) => withoutStateWords(call.args).slice(2).join(' '));
 
     /** The writes of the render: the add, the reset and the commit calls, without those of the mark of the active machine. */
     const writesOf = (calls: readonly string[]): string[] =>

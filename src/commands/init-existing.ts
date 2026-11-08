@@ -6,7 +6,7 @@ import { inspectSharedConfig, loadConfig, parseConfigTexts, readNodeIdentity, se
 import type { FactoryConfig } from '../config/schema.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
-import { commitPaths, hasIdentity, requireStateRepoReady, requireWorkTreeTop, statusOf, unstagePaths } from '../core/git.js';
+import { commitPaths, hasIdentity, requireStateRepoReady, requireWorkTreeTop, stateStatusOf, unstagePaths } from '../core/git.js';
 import { entryProblemOf, markerProblemOf, reasonOf, rootRefusalOf } from '../core/home.js';
 import { recordNode } from '../core/home-index.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -422,7 +422,7 @@ const commitMarker = async (deps: Deps, layout: Layout): Promise<{ readonly comm
     committed: false,
     warnings: [`${STATE_LABEL} was written and not committed (${reason}). Commit it in ${dirs.state}.`],
   });
-  const status = await statusOf(deps, layout.stateDir);
+  const status = await stateStatusOf(deps, layout.stateDir);
   if (!status.ok) return notCommitted(status.error.message);
   if (!status.value.some((entry) => entry.path === stateRel.nodeJson)) return { committed: false, warnings: [] };
   if (!(await hasIdentity(deps, layout.stateDir))) {
