@@ -692,6 +692,34 @@ export const absoluteGitDirOf = async (deps: Deps, dir: string): Promise<CliResu
   return isAbsolute(printed) ? ok(printed) : failure(`cannot ${what}: git printed a path that is not absolute`);
 };
 
+/** One entry of the index: the mode and the id of the file. */
+export interface IndexEntry {
+  readonly mode: string;
+  readonly id: string;
+}
+
+/** `<mode> <id> <stage>TAB<path>`: the line of `git ls-files --stage -z`. */
+const INDEX_ENTRY = /^(\d{6}) ([0-9a-f]{40,64}) (\d)\t([\s\S]+)$/;
+
+/**
+ * The entry that the index of the state repo at `dir` has at `path`, or null when the index has none. The index is the one that git
+ * gives the program through `GIT_INDEX_FILE`, so a program that git starts for a commit reads the index of that commit. A path with
+ * two entries (a conflict), or an entry that is not at stage 0, is a failure. The read changes nothing.
+ */
+export const stateIndexEntryAt = async (deps: Deps, dir: string, path: string): Promise<CliResult<IndexEntry | null>> => {
+  const what = `read ${path} in the index of ${dir}`;
+  const result = await deps.run('git', [...stateGit(dir), 'ls-files', '--stage', '-z', '--', path], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  const records = result.value.stdout.split('\0').filter((record) => record !== '');
+  if (records.length === 0) return ok(null);
+  const [mode, id, stage, entryPath] = INDEX_ENTRY.exec(records[0] ?? '')?.slice(1) ?? [];
+  if (records.length !== 1 || mode === undefined || id === undefined || stage !== '0' || entryPath !== path) {
+    return failure(`cannot ${what}: git printed an entry that ${program} can not read`);
+  }
+  return ok({ mode, id });
+};
+
 /** The longest wait for a fetch: it reads the network. */
 const FETCH_TIMEOUT_MS = 60_000;
 

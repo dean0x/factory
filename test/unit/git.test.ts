@@ -29,6 +29,7 @@ import {
   setStateConfig,
   stashCountOf,
   stateConfigValue,
+  stateIndexEntryAt,
   stateStatusOf,
   statusOf,
   trackedFilesOf,
@@ -620,6 +621,41 @@ describe('git: one setting of a state folder', () => {
       expect(await read(() => exited(0, ''))).toMatchObject({ ok: false, error: { kind: 'failure' } });
       expect(await read(() => exited(128))).toMatchObject({ ok: false, error: { kind: 'failure' } });
     });
+  });
+});
+
+describe('git: one entry of the index of a state repo', () => {
+  const STATE_DIR = '/w/node/.factory';
+  const ID = 'a'.repeat(40);
+  const entryOf = (stage: string, path = 'board.json', mode = '100644'): string => `${mode} ${ID} ${stage}\t${path}\0`;
+  const read = (run: RunHandler) => stateIndexEntryAt(createFakeDeps({ cwd: WS, run }), STATE_DIR, 'board.json');
+
+  it('gives the mode and the id of the entry, read with the hooks off', async () => {
+    const calls: (readonly string[])[] = [];
+    const result = await read((call) => {
+      calls.push(call.args);
+      return exited(0, entryOf('0', 'board.json', '100755'));
+    });
+    expect(result).toEqual({ ok: true, value: { mode: '100755', id: ID } });
+    expect(calls).toEqual([['-C', STATE_DIR, ...STATE_GIT_WORDS, 'ls-files', '--stage', '-z', '--', 'board.json']]);
+  });
+
+  it('is null when the index has no entry for the path', async () => {
+    expect(await read(() => exited(0, ''))).toEqual({ ok: true, value: null });
+  });
+
+  it.each([
+    ['a conflict stage', entryOf('2')],
+    ['two entries', `${entryOf('0')}${entryOf('0', 'board.json/x')}`],
+    ['another path', entryOf('0', 'other.json')],
+    ['text that is no entry', 'board.json\0'],
+  ])('is an error for %s, never "no entry"', async (_name, stdout) => {
+    expect(await read(() => exited(0, stdout))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+  });
+
+  it('is an error when git exits with a code or cannot run', async () => {
+    expect(await read(() => exited(128, '', 'fatal: bad index'))).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(await read(() => failure('cannot run git: ENOENT'))).toMatchObject({ ok: false, error: { kind: 'failure' } });
   });
 });
 

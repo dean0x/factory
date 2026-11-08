@@ -54,6 +54,7 @@ export const commands = {
   layout: 'layout',
   upgrade: 'upgrade',
   hook: 'hook',
+  state: 'state',
   version: 'version',
   help: 'help',
 } as const;
@@ -104,6 +105,9 @@ export const workerCommands = {
 /** The subcommands of `self`. */
 export const selfCommands = { reset: 'reset' } as const;
 
+/** The subcommands of `state`. */
+export const stateCommands = { guard: 'guard' } as const;
+
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
   workerNew: `${commands.worker} ${workerCommands.new}`,
@@ -114,6 +118,7 @@ export const commandLines = {
   workerReset: `${commands.worker} ${workerCommands.reset}`,
   workerWatch: `${commands.worker} ${workerCommands.watch}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
+  stateGuard: `${commands.state} ${stateCommands.guard}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -1223,6 +1228,7 @@ export const schemaIds = {
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
+  stateGuard: `${program}.state-guard/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
   lastSeen: `${program}.last-seen/v1`,
