@@ -277,8 +277,8 @@ factory start [--home DIR] [--dry-run] [--yes]  # start the factory, or open it 
 factory shutdown                            # stop every session of this factory, and nothing else (§4.11)
 factory restart <worker>                    # restart one worker, and keep its conversation (§4.11)
 factory reboot                              # shut down the whole factory and start it again; each recorded worker resumes (§4.11)
-factory status [--home DIR] [--json]        # each worker with its state, its work item and its idle state; the digest for the owner (§4.11)
-factory dismiss <worker> [--yes] | --idle   # end a worker and free its work copy when its work is pushed; a dry run until --yes; --idle lists the idle workers first, and the owner picks (§4.11)
+factory status [--home DIR] [--json]        # each worker with its state, its work item and its unused state; the digest for the owner (§4.11)
+factory dismiss <worker> [--yes] | --unused # end a worker and free its work copy when its work is pushed; a dry run until --yes; --unused lists the unused workers first, and the owner picks (§4.11)
 factory doctor [--fix]                      # check the tools, their versions, the platform, the safety settings, the last-seen notes and the board; FAC-M11 adds the check of each board CLI: present, configured, authorized (§4.15)
 factory upgrade [--dry-run]                 # update the saved state and the parts of the text files that factory writes (§4.5)
 factory machine                             # the use of the processors, the memory and the disk against the limits
@@ -342,10 +342,10 @@ The lifecycle verbs of the core table:
 - `shutdown` stops every session of this factory, and nothing else.
 - `restart <worker>` restarts one worker with its session id.
 - `reboot` shuts down the whole factory and starts it again. Each recorded worker resumes.
-- `status` lists each worker with its state, its work item and its idle state.
-- `dismiss <worker>` and `dismiss --idle` end a worker and free its work copy. `--idle` lists the idle workers first, and the owner picks.
+- `status` lists each worker with its state, its work item and its unused state.
+- `dismiss <worker>` and `dismiss --unused` end a worker and free its work copy. `--unused` lists the unused workers first, and the owner picks.
 
-§4.11 defines "idle", "pushed" and "free", the stop scope and the recovery after a machine restart.
+§4.11 defines "unused", "pushed" and "free", the stop scope, the recovery after a machine restart and the worker states of the live board.
 
 Global flags: `--home PATH`, `--json`, `--quiet`, `--no-color`. A command finds the factory folder in this order: `--home`; else `FACTORY_HOME`, which factory sets in every session that it starts; else a walk up from the current folder to `factory.yaml`; else the factory list, which matches the current folder to a project path, or to the git folder of a project (§4.3).
 Output rule: the default output of a job command (a command that replaces a manual job of §3) has at most 20 lines, and the verdict is on the first line. `docs/token-budget.md` gives the size budget of each job.
@@ -491,9 +491,9 @@ A received factory is a trust boundary, so its checks are stops. The lighter rul
 | Warning (exit 0): the local file has a mode that others can read | `doctor`, a dry run. Other commands set the mode back to 600 and print a notice. | `chmod 600 factory.local.yaml` |
 | Error: a proxy does not answer | Before each start of a session; `doctor`; `status` (§4.6) | Start the proxy, or set `proxy: none` for the worker. |
 | Stop (exit 4): the tmux session of that name belongs to another factory, or has no `@factory_home` option | `start`, `shutdown`, `restart`, `reboot` (§4.11) | Run `factory shutdown` in the factory folder that owns the session, or end that session by hand. Then run `factory <command>` again, with the command that stopped. |
-| Error (exit 1): `dismiss` of a busy worker, of a worker whose state is not known, or of a worker whose work is not pushed (`STUCK:`) | `dismiss`, `dismiss --idle` (§4.11) | Wait until the worker waits at its prompt, finish the work item or give it to another worker, or push the branch of the worker and clean its work copy. Then run `factory dismiss <worker>` again. |
-| Stop (exit 4): `decide <D-n> <option>`, `dismiss <worker> --yes` or the pick step of `dismiss --idle` inside a factory session | `decide`, `dismiss`, `dismiss --idle` (§4.10, §4.11) | Run `factory decide <D-n> <option>`, `factory dismiss <worker> --yes` or `factory dismiss --idle` in a terminal window outside a factory session. |
-| Stop (exit 4): `dismiss` of a worker whose work copy is outside `work-copies/`, whose path holds a link, or whose `.git` file does not name the git folder that the clone keeps for it | `dismiss`, `dismiss --idle` (§4.11) | Check the record of the worker, the links in the path of its work copy and the `.git` file in it. Then run `factory dismiss <worker>` again. |
+| Error (exit 1): `dismiss` of a busy worker, of a worker whose state is not known, or of a worker whose work is not pushed (`STUCK:`) | `dismiss`, `dismiss --unused` (§4.11) | Wait until the worker waits at its prompt, finish the work item or give it to another worker, or push the branch of the worker and clean its work copy. Then run `factory dismiss <worker>` again. |
+| Stop (exit 4): `decide <D-n> <option>`, `dismiss <worker> --yes` or the pick step of `dismiss --unused` inside a factory session | `decide`, `dismiss`, `dismiss --unused` (§4.10, §4.11) | Run `factory decide <D-n> <option>`, `factory dismiss <worker> --yes` or `factory dismiss --unused` in a terminal window outside a factory session. |
+| Stop (exit 4): `dismiss` of a worker whose work copy is outside `work-copies/`, whose path holds a link, or whose `.git` file does not name the git folder that the clone keeps for it | `dismiss`, `dismiss --unused` (§4.11) | Check the record of the worker, the links in the path of its work copy and the `.git` file in it. Then run `factory dismiss <worker>` again. |
 | Stop (exit 4): a release check with `release: delegated` and no owner-approved release scope for the version | `release check` (§6.2) | Run `factory release scope <project> <version>` in a terminal window outside a factory session. Then run `factory release check <project> <version>` again. |
 | Stop (exit 4): the decision store is public | `init`, `tracker set` (§4.10). `doctor` fails on it. | `factory tracker set <id> --decisions <private repo>`, then `factory tracker status`. |
 | Error (exit 1): the package of a board plugin is not installed. Factory loads no code. | `tracker set`, `doctor` and every command that uses the board (§4.15, FAC-M11) | `npm install -g <package>`, then run `factory doctor`. The install is a trust decision (§4.15). |
@@ -570,7 +570,7 @@ limits:
   load_max: cpu_count        # adapts to each machine
   context_prepare_pct: 30
   context_max_pct: 40
-  idle_after: 2h             # <n>m or <n>h, 1m to 24h; a worker with no activity for this time may be idle (§4.11)
+  idle_after: 2h             # <n>m or <n>h, 1m to 24h; a worker with no activity for this time may be unused (§4.11); named unused_after from FAC-M5b
 tracker:                     # the default board of the node; a project can override it (§4.10)
   kind: github               # local | artifact | github; a board plugin is named in factory.local.yaml, never here
   items: acme/web            # where work items live (a repo)

@@ -49,7 +49,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `node children`, `node add-child`, `node remove-child` | FAC-M2 |
 | `node tree` | FAC-M8 |
 | `machine`, `layout`, `self`, `hook` | FAC-M4 |
-| `shutdown`, `restart`, `reboot`, `status` (the worker states, the work item, the idle state), `dismiss` (with `--idle`) | FAC-M4 |
+| `shutdown`, `restart`, `reboot`, `status` (the worker states, the work item, the unused state), `dismiss` (with `--idle`; FAC-M5b names it `--unused`) | FAC-M4 |
 | `worker` (new, list, reset, stop, resume, summon, watch) | FAC-M4 |
 | `worker relay`, `worker recover` | FAC-M5 |
 | `worker adopt` | FAC-M7 |
