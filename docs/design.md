@@ -1046,6 +1046,32 @@ The event file and `report --json` hold these fields (§5.4): the node id, the l
 
 A person with no code skill adds a desk reader as a setup file in FAC-M6. FAC-M5b adds a sample reader outside `src/`, in `examples/`. It reads the event file and `report --json` of a fixture node, and prints one line for each work item. A test runs it.
 
+### 4.15 Plugins
+
+A plugin adds a part to factory with no change to the package. A plugin is an npm package that exports a contract. The user installs it with npm. FAC-M11 builds the loader (D-140).
+
+**Kinds.** The one kind today is the board connector, with the contract id `factory.board/v1` (§4.10). A new kind needs its own contract id and its own rules here.
+
+**Find and load.**
+- The user names the package in the `tracker` block of `factory.local.yaml`: `kind: plugin:<package>` and `options` (§4.4). The shared file never names a plugin. A shared file that names one stops the command with exit 1 (§4.3, "Stops and warnings").
+- Factory loads a package only from the global npm folder that `npm root -g` prints. It finds this folder once, at `tracker set`, and keeps it for the node. It never loads code from the factory folder or from a project. This keeps the rule for a received factory (§4.3).
+- Three checks come before the load. The name is a valid npm package name. The real path of the package is inside the global npm folder. The `package.json` of the package names the contract id. Factory reads that file first, so no plugin code runs before the checks.
+- The names `local`, `artifact` and `github` are reserved. A plugin with one of them does not load.
+
+**Contract.** Factory loads the plugin in its own process and calls `describe`. It gives the version and the operations that the plugin supports. Another major version is an error (exit 1). A minor version only adds. Factory checks each result against the schema of the contract. A result that fails the check is an error, and the command writes nothing.
+
+**Limits.**
+- The time cap, the output byte cap and the result cap of a call are named numbers in `src/names.ts`. A call past a cap has the result "unknown".
+- A connector calls a vendor CLI with an argument list, never with a shell. It sends item text on stdin or in a file.
+- Control characters in connector output show as visible escapes.
+- Known limit: a time cap can not stop a plugin that blocks the process.
+
+**`plugin test <package>`.** The contract suite that factory exports runs against the plugin. It has four layers: the schema of each operation, the behavior of each operation, an item title with shell characters, and recorded responses of the vendor CLI. The command exits 0 for a good plugin. For a bad plugin it exits 1 and names the first failed operation.
+
+**Reach.** A plugin runs in the factory process, so it can reach everything that factory can reach: the files of the user, the logins of the board CLIs, the network, the state files and the decision log. The install is the trust decision of the user. Factory has no accept command, no hash and no child process for a plugin. The remedy text of each stop says this (§4.3, §6).
+
+Community documents and examples for plugin authors wait for FAC-M10.
+
 ## 5. Layers: same mechanics, one role per layer
 
 ### 5.1 The node
