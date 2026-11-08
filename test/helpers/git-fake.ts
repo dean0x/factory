@@ -80,6 +80,8 @@ export interface GitFixture {
   readonly configListExit?: number;
   /** The value of `core.hooksPath` that git reads, by folder. A folder with no entry has none, and git exits with 1. */
   readonly hooksPath?: Readonly<Record<string, string>>;
+  /** The value of `core.hooksPath` at a level other than the local file (global or system), by folder. The local value wins over it. */
+  readonly otherLevelHooksPath?: Readonly<Record<string, string>>;
   /** What `git rev-parse --absolute-git-dir` prints, by folder. Default: the folder `.git` inside the folder. */
   readonly gitDirs?: Readonly<Record<string, string>>;
 }
@@ -206,7 +208,9 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     }
     // The fixture value counts as a local setting, so a read of the local file and a read of every level agree.
     if (rest === 'config core.hooksPath' || rest === 'config --local core.hooksPath') {
-      const value = written.has(`${dir}\0core.hooksPath`) ? written.get(`${dir}\0core.hooksPath`) : fixture.hooksPath?.[dir];
+      const local = written.has(`${dir}\0core.hooksPath`) ? written.get(`${dir}\0core.hooksPath`) : fixture.hooksPath?.[dir];
+      // A level other than the local file (global or system) shows only in a read of every level, and the local file wins.
+      const value = local ?? (rest === 'config core.hooksPath' ? fixture.otherLevelHooksPath?.[dir] : undefined);
       return value === undefined || value === null ? exited(1) : exited(0, `${value}\n`);
     }
     if (rest === 'rev-parse --absolute-git-dir') return exited(0, `${fixture.gitDirs?.[dir] ?? `${dir}/.git`}\n`);

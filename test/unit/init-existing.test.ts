@@ -1359,6 +1359,50 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
     expect(deps.files.get(HOOK)).toBe(hookText());
   });
 
+  describe('the hooks that stop running when the guard is written', () => {
+    const stopWarnings = (result: Parameters<typeof warningsOf>[0]): string[] =>
+      warningsOf(result).filter((line) => line.includes('stop running when'));
+
+    it('warns that a hook file of the default hooks folder stops, writes the guard and leaves that file as it was', async () => {
+      const { deps } = existing({ state: 'valid' });
+      repo(deps);
+      deps.seed(`${STATE}/.git/hooks/pre-push`, '#!/bin/sh\n');
+      deps.seed(`${STATE}/.git/hooks/pre-commit.sample`, 'x');
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result.ok).toBe(true);
+      expect(stopWarnings(result)).toEqual([expect.stringContaining('.factory/.git/hooks/pre-push')]);
+      expect(stopWarnings(result)[0]).not.toContain('pre-commit.sample');
+      expect(deps.files.get(`${STATE}/.git/hooks/pre-push`)).toBe('#!/bin/sh\n');
+      for (const hook of HOOKS) expect(deps.files.get(hook)).toBe(hookText());
+    });
+
+    it('warns that an entry of the guard folder stops, and the install removes the entry', async () => {
+      const { deps } = existing({ state: 'valid', fixture: { hooksPath: { [STATE]: GUARD } } });
+      repo(deps);
+      deps.seed(`${GUARD}/post-commit`, 'x');
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result.ok).toBe(true);
+      expect(stopWarnings(result)).toEqual([expect.stringContaining('.factory/.git/factory-guard/post-commit')]);
+      expect(deps.files.has(`${GUARD}/post-commit`)).toBe(false);
+    });
+
+    it('warns that the hooks of a core.hooksPath of another level stop', async () => {
+      const { deps } = existing({ state: 'valid', fixture: { otherLevelHooksPath: { [STATE]: '/global/hooks' } } });
+      repo(deps);
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result.ok).toBe(true);
+      expect(stopWarnings(result)).toEqual([expect.stringContaining('the hooks in /global/hooks')]);
+    });
+
+    it('warns of no hook when none stops', async () => {
+      const { deps } = existing({ state: 'valid' });
+      repo(deps);
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result.ok).toBe(true);
+      expect(stopWarnings(result)).toEqual([]);
+    });
+  });
+
   it('leaves a state folder with no git entry as it is: there is no repo to guard', async () => {
     const { deps, log } = existing({ state: 'valid' });
     const result = await runInit(deps, options({ yes: true }));

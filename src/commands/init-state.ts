@@ -4,7 +4,7 @@ import type { Deps } from '../core/deps.js';
 import { commitAll, gitInit, hasIdentity, requireWorkTreeTop } from '../core/git.js';
 import { ok } from '../core/result.js';
 import { dirs } from '../names.js';
-import { guardPlanOf, guardUnsupportedLine, installGuard } from '../state/guard.js';
+import { guardPlanOf, guardPlanWarnings, installGuard } from '../state/guard.js';
 import type { Layout } from '../state/layout.js';
 import type { StateFile } from './init.js';
 
@@ -64,5 +64,5 @@ export const makeStateFolder = async (
   if (!target.ok) return target;
   if (target.value !== null) return failure(`${dirs.state} was made by another program during the run`);
   const moved = await deps.fs.rename(staging, layout.stateDir);
-  return moved.ok ? ok({ committed, warnings: guard.value.action === 'unsupported' ? [guardUnsupportedLine(guard.value)] : [] }) : moved;
+  return moved.ok ? ok({ committed, warnings: guardPlanWarnings(guard.value) }) : moved;
 };

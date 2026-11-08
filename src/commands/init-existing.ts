@@ -39,7 +39,7 @@ import { parseProxyUrl, proxyLabel } from '../safety/proxy.js';
 import {
   guardFolderLabel,
   guardPlanOf,
-  guardUnsupportedLine,
+  guardPlanWarnings,
   installGuardWithUndo,
   type GuardChange,
   type GuardPlan,
@@ -227,8 +227,8 @@ const checkExisting = async (
       ...root.value.warnings,
       ...(await sameIdWarnings(deps, indexPath, home, config.value.core.node.id)),
       ...leftover.value.map(tempFolderWarning),
-      // A guard that only a person can repair is a warning: the run goes on with its other work.
-      ...(guard.value.action === 'unsupported' ? [guardUnsupportedLine(guard.value)] : []),
+      // A guard that only a person can repair is a warning: the run goes on with its other work. So are the hooks that the guard stops.
+      ...guardPlanWarnings(guard.value),
     ],
   });
 };

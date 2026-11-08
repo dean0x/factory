@@ -413,13 +413,51 @@ const guardOffOf = async (deps: Deps, stateDir: string): Promise<CliResult<Guard
 };
 
 /**
+ * The hooks of the state repo that stop running when the install points `core.hooksPath` at the guard folder, each as a short text
+ * for a message. Git then runs only the hook files of the guard folder, so these stop: the hook files in the default hooks folder
+ * (only while no setting names another folder), the hooks in the folder that another setting of `core.hooksPath` names (the local
+ * config or a global or system config), and the entries of the guard folder that the install removes. It reads only and starts no hook.
+ */
+const stoppedHooksOf = async (deps: Deps, stateDir: string): Promise<CliResult<readonly string[]>> => {
+  const gitDir = await ownGitFolderOf(deps, stateDir);
+  if (!gitDir.ok) return gitDir;
+  if (gitDir.value === null) return ok([]);
+  const guardFolder = join(gitDir.value, stateGuard.folder);
+  const active = await stateConfigValue(deps, stateDir, stateGuard.hooksPathKey);
+  if (!active.ok) return active;
+  const stops: string[] = [];
+  if (active.value === null) {
+    const hooksFolder = join(gitDir.value, stateGuard.defaultHooksFolder);
+    const kind = await deps.fs.lstat(hooksFolder);
+    if (!kind.ok) return kind;
+    if (kind.value === 'dir') {
+      const names = await deps.fs.list(hooksFolder);
+      if (!names.ok) return names;
+      const label = join(dirs.state, GIT_ENTRY, stateGuard.defaultHooksFolder);
+      const hooks = names.value.filter((name) => !name.endsWith(stateGuard.sampleSuffix)).slice(0, stateGuard.maxEntries);
+      stops.push(...hooks.map((name) => join(label, name)));
+    }
+  } else if (active.value !== guardFolder) {
+    stops.push(`the hooks in ${active.value}, which ${stateGuard.hooksPathKey} names`);
+  }
+  const guard = await readGuardFolder(deps, guardFolder);
+  if (!guard.ok) return guard;
+  if (guard.value.kind === 'folder') {
+    const extra = guard.value.names.filter((name) => !hookFiles.includes(name));
+    stops.push(...extra.map((name) => join(guardFolderLabel, name)));
+  }
+  return ok(stops);
+};
+
+/**
  * What a tool that writes the guard does in the state folder: `current` when the guard is on or the folder is no repo, `install` when
- * the install repairs the guard, `unsupported` when only a person can repair it. The last case carries the cause and the step (the
+ * the install repairs the guard, `unsupported` when only a person can repair it. An `install` carries `stops`, the hooks that stop
+ * running because of it (`stoppedHooksOf`), so the tool can warn before it writes. The last case carries the cause and the step (the
  * install would stop with exit 4), so the tool warns and goes on with its other work.
  */
 export type GuardPlan =
   | { readonly action: 'current' }
-  | { readonly action: 'install' }
+  | { readonly action: 'install'; readonly stops: readonly string[] }
   | { readonly action: 'unsupported'; readonly why: string; readonly remedy: string };
 
 /** The plan of a tool that writes the guard in the state folder `stateDir`. It reads only. A read that fails is an error. */
@@ -428,12 +466,38 @@ export const guardPlanOf = async (deps: Deps, stateDir: string): Promise<CliResu
   if (!found.ok) return found;
   if (found.value === null) return ok({ action: 'current' });
   const { repair, why, remedy } = found.value;
-  return ok(repair === 'install' ? { action: 'install' } : { action: 'unsupported', why, remedy });
+  if (repair === 'hand') return ok({ action: 'unsupported', why, remedy });
+  const stops = await stoppedHooksOf(deps, stateDir);
+  return stops.ok ? ok({ action: 'install', stops: stops.value }) : stops;
 };
 
-/** The warning for a guard that only a person can repair, for a tool that writes the guard (`init`, `upgrade`): the cause and the step. */
-export const guardUnsupportedLine = (plan: Extract<GuardPlan, { readonly action: 'unsupported' }>): string =>
-  `The delete guard of ${dirs.state} is off, and ${program} can not write it: ${plan.why}. ${plan.remedy}`;
+/**
+ * The warnings of a plan, for a tool that writes the guard (`init`, `upgrade`): for a guard that only a person can repair, the cause
+ * and the step; for an install, one line that names the hooks that stop running (none when no hook stops). The tool shows them before
+ * it writes, also in a dry run.
+ */
+export const guardPlanWarnings = (plan: GuardPlan): readonly string[] => {
+  switch (plan.action) {
+    case 'current':
+      return [];
+    case 'unsupported':
+      return [`The delete guard of ${dirs.state} is off, and ${program} can not write it: ${plan.why}. ${plan.remedy}`];
+    case 'install': {
+      if (plan.stops.length === 0) return [];
+      const { maxShownStops } = stateGuard;
+      const shown = plan.stops.slice(0, maxShownStops).join(', ');
+      const rest = plan.stops.length > maxShownStops ? ` and ${plan.stops.length - maxShownStops} more` : '';
+      return [
+        `These hooks of ${dirs.state} stop running when ${program} writes the delete guard: ${shown}${rest}. ` +
+          `Git runs only the hooks of ${guardFolderLabel}, and ${program} runs no other hook.`,
+      ];
+    }
+    default: {
+      const unreachable: never = plan;
+      return unreachable;
+    }
+  }
+};
 
 /**
  * The warning line for a command that only warns about the guard of the state folder `stateDir` (`doctor` and `start`), or null when

@@ -10,6 +10,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
+import { setStateConfig, unsetStateConfig } from '../../src/core/git.js';
 import { commands, env, hookNames, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
@@ -434,6 +435,69 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     const { deps } = await makeNode({ repo: false });
     const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]), ...fixedBlocks(layer1Blocks) };
     expect(success(await upgrade(deps, spec)).json).toMatchObject({ changed: true, stateGuard: 'current', committed: false });
+  });
+
+  describe('the hooks that stop running when the guard is written', () => {
+    const STATE_DIR = `${HOME}/.factory`;
+    const DEFAULT_HOOK = `${STATE_DIR}/.git/hooks/pre-push`;
+    const stopWarnings = (output: CommandOutput): string[] => output.warnings.filter((line) => line.includes('stop running when'));
+
+    /** A node with a hook file in the default hooks folder and no setting, so that git runs that hook until the guard is written. */
+    const withDefaultHook = async (): Promise<Node> => {
+      const node = await unguarded();
+      expect((await unsetStateConfig(node.deps, STATE_DIR, stateGuard.hooksPathKey)).ok).toBe(true);
+      node.deps.seed(DEFAULT_HOOK, '#!/bin/sh\n');
+      node.deps.seed(`${STATE_DIR}/.git/hooks/pre-commit.sample`, 'x');
+      return node;
+    };
+
+    it('names a hook file of the default hooks folder in the dry run, and changes nothing', async () => {
+      const { deps } = await withDefaultHook();
+      const before = snapshot(deps);
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(stopWarnings(output)).toEqual([expect.stringContaining('.factory/.git/hooks/pre-push')]);
+      expect(stopWarnings(output)[0]).not.toContain('pre-commit.sample');
+      expect(output.lines.filter((line) => line.level === 'warn').map((line) => line.text)).toEqual(stopWarnings(output));
+      expect(snapshot(deps)).toEqual(before);
+    });
+
+    it('names the same hook in the real run, writes the guard and leaves the hook file as it was', async () => {
+      const { deps, gitSince } = await withDefaultHook();
+      const output = success(await upgrade(deps));
+      expect(stopWarnings(output)).toEqual([expect.stringContaining('.factory/.git/hooks/pre-push')]);
+      expect(output.json).toMatchObject({ stateGuard: 'install' });
+      expect(gitSince()).toContain(SETTING);
+      expect(text(deps, DEFAULT_HOOK)).toBe('#!/bin/sh\n');
+    });
+
+    it('names the entry of the guard folder that the install removes, and the entry is gone after the run', async () => {
+      const { deps } = await makeNode();
+      deps.seed(`${GUARD}/post-commit`, 'x');
+      const output = success(await upgrade(deps));
+      expect(stopWarnings(output)).toEqual([expect.stringContaining('.factory/.git/factory-guard/post-commit')]);
+      expect(deps.files.has(`${GUARD}/post-commit`)).toBe(false);
+    });
+
+    it('names the folder that a core.hooksPath of the state repo sets, which the install replaces', async () => {
+      const { deps } = await makeNode();
+      expect((await setStateConfig(deps, STATE_DIR, stateGuard.hooksPathKey, '/team/hooks')).ok).toBe(true);
+      const output = success(await upgrade(deps));
+      expect(stopWarnings(output)).toEqual([expect.stringContaining('the hooks in /team/hooks')]);
+    });
+
+    it('names the hooks once when the run also upgrades other files', async () => {
+      const { deps } = await withDefaultHook();
+      const output = success(await upgrade(deps, newer));
+      expect(output.json).toMatchObject({ stateGuard: 'install', committed: true });
+      expect(stopWarnings(output)).toHaveLength(1);
+    });
+
+    it('names no hook when the guard is the only change and no hook stops', async () => {
+      const { deps } = await unguarded();
+      const output = success(await upgrade(deps));
+      expect(output.json).toMatchObject({ stateGuard: 'install' });
+      expect(stopWarnings(output)).toEqual([]);
+    });
   });
 
   describe('a guard that the install can not repair', () => {

@@ -1122,7 +1122,10 @@ describe('init: the state repository', () => {
     expect(git.map((call) => call.args.slice(2).join(' '))).toEqual([
       'init -q',
       'rev-parse --is-inside-work-tree --show-prefix',
-      // The plan of the guard reads the git folder and the setting, then the install reads the git folder again and sets the path.
+      // The plan of the guard reads the git folder and the setting, and again for the hooks that stop. The install reads the git folder
+      // once more and sets the path.
+      `${STATE_GIT} rev-parse --absolute-git-dir`,
+      '-c core.fsmonitor=false config core.hooksPath',
       `${STATE_GIT} rev-parse --absolute-git-dir`,
       '-c core.fsmonitor=false config core.hooksPath',
       `${STATE_GIT} rev-parse --absolute-git-dir`,
@@ -1201,6 +1204,46 @@ describe('init: the state repository', () => {
     );
     expect(deps.files.get('/elsewhere/folder/keep.txt')).toBe('keep');
     expect([...deps.files.keys()].filter((path) => path.startsWith('/elsewhere/'))).toEqual(['/elsewhere/folder/keep.txt']);
+  });
+
+  it('warns that a hook file of the default hooks folder stops, which git copies from a template, and leaves that file as it was', async () => {
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const hook = `${staging}/.git/hooks/pre-push`;
+    const { handler } = gitHandler();
+    // Git copies the hook files of its template folder when it makes the repository, so they appear at `git init`.
+    const deps = createFakeDeps({
+      cwd: '/w',
+      env: ENV,
+      run: (call) => {
+        if (call.args[2] === 'init') {
+          deps.seed(hook, '#!/bin/sh\n');
+          deps.seed(`${staging}/.git/hooks/pre-commit.sample`, 'x');
+        }
+        return handler(call);
+      },
+    });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    const stops = (result.ok ? result.value.warnings : []).filter((line) => line.includes('stop running when'));
+    expect(stops).toEqual([expect.stringContaining('.factory/.git/hooks/pre-push')]);
+    expect(stops[0]).not.toContain('pre-commit.sample');
+    expect(deps.files.get(`${HOME}/.factory/.git/hooks/pre-push`)).toBe('#!/bin/sh\n');
+  });
+
+  it('warns that the hooks of a core.hooksPath of another level stop', async () => {
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const { deps } = setup({ otherLevelHooksPath: { [staging]: '/global/hooks' } });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    const stops = (result.ok ? result.value.warnings : []).filter((line) => line.includes('stop running when'));
+    expect(stops).toEqual([expect.stringContaining('the hooks in /global/hooks')]);
+  });
+
+  it('warns of no stopped hook for a new state repository that has only the example files of git', async () => {
+    const { deps } = setup();
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect((result.ok ? result.value.warnings : []).filter((line) => line.includes('stop running when'))).toEqual([]);
   });
 
   it('warns and makes no commit when there is no git identity', async () => {

@@ -30,7 +30,7 @@ import {
 } from '../names.js';
 import { locateShareList, WORKERS_GITIGNORE_LINE } from '../state/files.js';
 import { rootGitignoreOf, stateGitignoreOf } from '../state/gitignore.js';
-import { guardFolderLabel, guardPlanOf, guardUnsupportedLine, type GuardPlan } from '../state/guard.js';
+import { guardFolderLabel, guardPlanOf, guardPlanWarnings, type GuardPlan } from '../state/guard.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import type { BlockSet, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
@@ -471,18 +471,12 @@ const stateGitignoreLines = (plan: StateGitignorePlan): OutLine[] => {
 
 /** The lines for the delete guard of the state repo. A guard that is on gives no line. A guard that only a person can repair gives a warning. */
 const stateGuardLines = (plan: StateGuardPlan): OutLine[] => {
-  switch (plan.action) {
-    case 'current':
-      return [];
-    case 'install':
-      return [{ level: 'text', text: `${guardFolderLabel}: write the delete guard hook and point ${stateGuard.hooksPathKey} at it` }];
-    case 'unsupported':
-      return [{ level: 'warn', text: guardUnsupportedLine(plan) }];
-    default: {
-      const unreachable: never = plan;
-      return unreachable;
-    }
+  const warnings = guardPlanWarnings(plan).map((text): OutLine => ({ level: 'warn', text }));
+  if (plan.action === 'install') {
+    const write = `${guardFolderLabel}: write the delete guard hook and point ${stateGuard.hooksPathKey} at it`;
+    return [{ level: 'text', text: write }, ...warnings];
   }
+  return warnings;
 };
 
 export const planLines = (

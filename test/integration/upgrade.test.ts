@@ -133,6 +133,51 @@ describe('factory upgrade (built binary)', () => {
       expect((await box.git(stateOf(), ['config', 'core.hooksPath'])).stdout.trim()).toBe(await guardOf());
     });
 
+    it('names a hook file that stops, runs no hook, and the stopped hook does not run at a later commit', async () => {
+      await initNode();
+      const state = stateOf();
+      const marker = join(box.root, 'old-hook-ran');
+      const hooks = join(await realpath(state), '.git', 'hooks');
+      await mkdir(hooks, { recursive: true });
+      await writeFile(join(hooks, 'pre-commit'), `#!/bin/sh\n: > '${marker}'\n`);
+      await chmod(join(hooks, 'pre-commit'), 0o755);
+      expect((await box.git(state, ['config', '--local', '--unset', 'core.hooksPath'])).code).toBe(0);
+
+      // Before the upgrade the hook runs at a commit.
+      await writeFile(join(state, 'first.txt'), 'first');
+      expect((await box.git(state, ['add', 'first.txt'])).code).toBe(0);
+      expect((await box.git(state, ['commit', '-q', '-m', 'first'])).code).toBe(0);
+      expect(existsSync(marker)).toBe(true);
+      await rm(marker);
+
+      const dry = await box.run(['upgrade', '--home', box.node, '--dry-run']);
+      expect(dry.code).toBe(0);
+      expect(dry.stderr).toContain('.factory/.git/hooks/pre-commit');
+      expect(dry.stderr).toContain('stop running');
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('.factory/.git/hooks/pre-commit');
+      expect(existsSync(marker)).toBe(false);
+
+      await writeFile(join(state, 'second.txt'), 'second');
+      expect((await box.git(state, ['add', 'second.txt'])).code).toBe(0);
+      expect((await box.git(state, ['commit', '-q', '-m', 'second'])).code).toBe(0);
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it('names the folder of a core.hooksPath of the global config, which the guard replaces', async () => {
+      await initNode();
+      const state = stateOf();
+      const global = join(box.root, 'global-hooks');
+      await mkdir(global);
+      expect((await box.git(box.root, ['config', '--global', 'core.hooksPath', global])).code).toBe(0);
+      expect((await box.git(state, ['config', '--local', '--unset', 'core.hooksPath'])).code).toBe(0);
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain(`the hooks in ${global}, which core.hooksPath names`);
+      expect((await box.git(state, ['config', 'core.hooksPath'])).stdout.trim()).toBe(await guardOf());
+    });
+
     it('warns, exits 0 and leaves the folder of the link as it was when the guard folder is a link', async () => {
       await initNode();
       const guard = await guardOf();

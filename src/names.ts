@@ -1290,6 +1290,12 @@ export const stateGuard = {
   hooksPathKey: 'core.hooksPath',
   /** The most entries that an install removes from the guard folder; a folder with more is left alone. */
   maxEntries: 64,
+  /** The folder of the git folder that git reads hook files from when `core.hooksPath` is not set. */
+  defaultHooksFolder: 'hooks',
+  /** The end of the name of an example file in the default hooks folder: git does not run it. */
+  sampleSuffix: '.sample',
+  /** The most hooks that a warning names; it counts the rest. */
+  maxShownStops: 5,
   /** The most older commits of board.json that the guard reads back to find the last board that can be read. */
   historyBound: 100,
   /** The word between the folder name and the pid in the name of the copy that an install keeps of an old guard folder. */

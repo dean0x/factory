@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
+import { setStateConfig } from '../../src/core/git.js';
 import { stateGuard } from '../../src/names.js';
 import {
   guardHookText,
   guardPlanOf,
+  guardPlanWarnings,
   guardStateOf,
   guardWarning,
   installGuard,
@@ -308,12 +310,18 @@ describe('the plan to write the guard (TP-2, TP-4)', () => {
 
   it('is install for a state repo that has no guard', async () => {
     const { deps } = make();
-    expect(await guardPlanOf(deps, STATE)).toEqual({ ok: true, value: { action: 'install' } });
+    expect(await guardPlanOf(deps, STATE)).toEqual({ ok: true, value: { action: 'install', stops: [] } });
   });
 
-  it.each(OFF_CASES.filter(([, kind]) => !HAND_KINDS.has(kind)))('is install for %s', async (_name, _kind, mutate) => {
+  it.each(OFF_CASES.filter(([, kind]) => !HAND_KINDS.has(kind) && kind !== 'extra-entry'))('is install for %s', async (_name, _kind, mutate) => {
     const made = await installed();
-    expect(await guardPlanOf(await mutate(made), STATE)).toEqual({ ok: true, value: { action: 'install' } });
+    expect(await guardPlanOf(await mutate(made), STATE)).toMatchObject({ ok: true, value: { action: 'install' } });
+  });
+
+  it.each(OFF_CASES.filter(([, kind]) => kind === 'extra-entry'))('is install, and names the entry that stops, for %s', async (_name, _kind, mutate) => {
+    const made = await installed();
+    const plan = await guardPlanOf(await mutate(made), STATE);
+    expect(plan).toMatchObject({ ok: true, value: { action: 'install', stops: [expect.stringContaining('.factory/.git/factory-guard/')] } });
   });
 
   it.each(OFF_CASES.filter(([, kind]) => HAND_KINDS.has(kind)))(
@@ -344,6 +352,116 @@ describe('the plan to write the guard (TP-2, TP-4)', () => {
     const { deps } = make();
     const broken: Deps = { ...deps, fs: { ...deps.fs, lstat: async (path) => failure(`cannot read ${path}: EIO`) } };
     expect((await guardPlanOf(broken, STATE)).ok).toBe(false);
+  });
+});
+
+describe('the hooks that stop running when the guard is written', () => {
+  const stopsOf = async (deps: Deps): Promise<readonly string[]> => {
+    const plan = await guardPlanOf(deps, STATE);
+    if (!plan.ok || plan.value.action !== 'install') throw new Error('the plan is not an install');
+    return plan.value.stops;
+  };
+
+  it('names no hook for a state repo that has only the example files of git', async () => {
+    const { deps } = make();
+    deps.seed(`${GIT_DIR}/hooks/pre-commit.sample`, 'x');
+    deps.seed(`${GIT_DIR}/hooks/pre-push.sample`, 'x');
+    expect(await stopsOf(deps)).toEqual([]);
+  });
+
+  it('names a hook file of the default hooks folder, and not an example file', async () => {
+    const { deps } = make();
+    deps.seed(`${GIT_DIR}/hooks/pre-push`, '#!/bin/sh\n');
+    deps.seed(`${GIT_DIR}/hooks/pre-commit.sample`, 'x');
+    expect(await stopsOf(deps)).toEqual(['.factory/.git/hooks/pre-push']);
+  });
+
+  it('names the folder that a core.hooksPath of another level sets, and not the default hooks folder that it already replaces', async () => {
+    const { deps } = make({ fixture: { otherLevelHooksPath: { [STATE]: '/global/hooks' } } });
+    deps.seed(`${GIT_DIR}/hooks/pre-push`, '#!/bin/sh\n');
+    expect(await stopsOf(deps)).toEqual(['the hooks in /global/hooks, which core.hooksPath names']);
+  });
+
+  it('names the folder that a core.hooksPath of the state repo sets to another folder', async () => {
+    const made = await installed();
+    expect((await setStateConfig(made.deps, STATE, 'core.hooksPath', '/other/hooks')).ok).toBe(true);
+    expect(await stopsOf(made.deps)).toEqual(['the hooks in /other/hooks, which core.hooksPath names']);
+  });
+
+  it('names the entries of the guard folder that the install removes, and not the hook files of the package', async () => {
+    const made = await installed();
+    made.deps.files.set(HOOK, '#!/bin/sh\nexit 0\n');
+    made.deps.seed(`${GUARD}/pre-push`, 'x');
+    made.deps.seedDir(`${GUARD}/sub`);
+    expect(await stopsOf(made.deps)).toEqual(['.factory/.git/factory-guard/pre-push', '.factory/.git/factory-guard/sub']);
+  });
+
+  it('reads only: it runs no hook, writes no setting and leaves every file as it was', async () => {
+    const made = make({ fixture: { otherLevelHooksPath: { [STATE]: '/global/hooks' } } });
+    made.deps.seed(`${GIT_DIR}/hooks/pre-push`, '#!/bin/sh\n');
+    const before = new Map(made.deps.files);
+    await guardPlanOf(made.deps, STATE);
+    expect(new Map(made.deps.files)).toEqual(before);
+    // Git is asked only for the value of the setting (and for the git folder): it writes nothing and starts no hook.
+    const reads = ['config core.hooksPath', 'rev-parse --absolute-git-dir'];
+    expect(made.gitCommands().filter((line) => !reads.includes(line))).toEqual([]);
+    expect(made.deps.calls.filter((call) => call.command !== 'git')).toEqual([]);
+  });
+
+  it('names at most the bound of hook files of the default hooks folder', async () => {
+    const { deps } = make();
+    for (let at = 0; at < stateGuard.maxEntries + 10; at += 1) deps.seed(`${GIT_DIR}/hooks/hook-${String(at).padStart(3, '0')}`, 'x');
+    expect(await stopsOf(deps)).toHaveLength(stateGuard.maxEntries);
+  });
+
+  it('is a failure, not an install with no hook named, when the default hooks folder can not be listed', async () => {
+    const { deps } = make();
+    deps.seed(`${GIT_DIR}/hooks/pre-push`, 'x');
+    const broken: Deps = {
+      ...deps,
+      fs: { ...deps.fs, list: async (path) => (path === `${GIT_DIR}/hooks` ? failure(`cannot list ${path}: EIO`) : deps.fs.list(path)) },
+    };
+    expect(await guardPlanOf(broken, STATE)).toMatchObject({ ok: false });
+  });
+
+  it('is a failure, not an install with no hook named, when the second read of the setting fails', async () => {
+    // The check of the guard reads the setting first. The read for the hooks that stop is the second one.
+    let reads = 0;
+    const { deps } = make({
+      answer: (call) => {
+        if (!call.args.includes('core.hooksPath')) return undefined;
+        reads += 1;
+        return reads === 2 ? exited(128, '', 'fatal: bad config') : undefined;
+      },
+    });
+    expect(await guardPlanOf(deps, STATE)).toMatchObject({ ok: false });
+    expect(reads).toBe(2);
+  });
+});
+
+describe('the warnings of a plan to write the guard', () => {
+  it('is none for a guard that is on and none for an install that stops no hook', () => {
+    expect(guardPlanWarnings({ action: 'current' })).toEqual([]);
+    expect(guardPlanWarnings({ action: 'install', stops: [] })).toEqual([]);
+  });
+
+  it('is one line that names each hook that stops, and the folder that git runs instead', () => {
+    expect(guardPlanWarnings({ action: 'install', stops: ['.factory/.git/hooks/pre-push', '.factory/.git/hooks/commit-msg'] })).toEqual([
+      'These hooks of .factory stop running when factory writes the delete guard: .factory/.git/hooks/pre-push, .factory/.git/hooks/commit-msg. ' +
+        'Git runs only the hooks of .factory/.git/factory-guard, and factory runs no other hook.',
+    ]);
+  });
+
+  it('counts the hooks past the five that it names', () => {
+    const stops = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+    const [line] = guardPlanWarnings({ action: 'install', stops });
+    expect(line).toContain('a, b, c, d, e and 2 more.');
+  });
+
+  it('is the cause and the step by hand for a guard that only a person can repair', () => {
+    expect(guardPlanWarnings({ action: 'unsupported', why: 'the cause', remedy: 'Do the step.' })).toEqual([
+      'The delete guard of .factory is off, and factory can not write it: the cause. Do the step.',
+    ]);
   });
 });
 
