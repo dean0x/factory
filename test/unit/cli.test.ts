@@ -10,9 +10,9 @@ import {
 } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags } from '../../src/cli/table.js';
-import { commands, itemCommands, selfCommands, trackCommands, workerCommands } from '../../src/names.js';
+import { commands, itemCommands, queueCommands, requestCommands, selfCommands, trackCommands, workerCommands } from '../../src/names.js';
 import { FACTORY_VERSION } from '../../src/version.js';
-import { boardNode, boardText } from '../helpers/board-node.js';
+import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { HOME as BOARD_HOME } from '../helpers/guard-fixture.js';
@@ -653,6 +653,67 @@ describe('the item and track commands in the command line', () => {
     expect(listed.code).toBe(0);
     expect(listed.out).toContain('B-1  building  open    P1        bug   -     New');
     expect(repo.commits).toHaveLength(3);
+  });
+
+  it('shows one usage line for each subcommand of request and of queue', () => {
+    for (const subcommand of Object.values(requestCommands)) {
+      expect(usageOf(commands.request), subcommand).toContain(`factory ${commands.request} ${subcommand} `);
+    }
+    for (const subcommand of Object.values(queueCommands)) {
+      expect(usageOf(commands.queue), subcommand).toContain(`factory ${commands.queue} ${subcommand} `);
+    }
+  });
+
+  it('M5-1b TP-22 lists request and queue in the help, and shows their usage and flags in their own help', async () => {
+    const listed = await run(['help']);
+    expect(listed.out).toMatch(/\n {2}request {2,}\S/);
+    expect(listed.out).toMatch(/\n {2}queue {2,}\S/);
+    const asked = await run(['request', '--help']);
+    expect(asked.code).toBe(0);
+    expect(asked.out).toContain('factory request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY] [--home DIR]');
+    expect(asked.out).toContain('factory request close ID [--home DIR]');
+    expect(asked.out).toMatch(/--option KEY=TEXT\s+With add: one answer that the owner can give/);
+    const queue = await run(['queue', '--help']);
+    expect(queue.code).toBe(0);
+    expect(queue.out).toContain('factory queue set NAME [--item ID]... [--note TEXT] [--field NAME=VALUE]... [--position N] [--home DIR]');
+    expect(queue.out).toMatch(/--position N\s+With set: the place of the row in the queue/);
+  });
+
+  it('M5-1b TP-22 names no decide command in the help of request, of queue or of the program', async () => {
+    for (const argv of [['help'], ['request', '--help'], ['queue', '--help']]) {
+      expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');
+    }
+  });
+
+  it('M5-1b TP-22 runs request add, request list, request close, queue set and queue show from the command line, with the flags in any place', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1')], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    const added = await runBoard(['request', 'add', '--option', 'a=Plan A', '--title', 'Pick', '--option', 'b=Plan B', '--question', 'Which?', '--recommend', 'a']);
+    expect(added.out).toBe('Added D-1: Pick\n');
+    expect((await runBoard(['request', 'list'])).out).toMatch(/D-1\s+Pick\s+a,b/);
+    expect((await runBoard(['queue', 'set', 'Docs', '--item', 'B-1', '--field', 'release=true', '--position', '1'])).out).toBe('Added row 1 to the queue: Docs\n');
+    expect((await runBoard(['queue', 'show'])).out).toMatch(/1\s+Docs\s+B-1\s+true/);
+    expect((await runBoard(['request', 'close', 'D-1'])).out).toBe('Closed D-1: Pick\n');
+    expect(repo.commits).toHaveLength(3);
+  });
+
+  it('M5-1b TP-22 prints the document of request add and of queue set for the JSON flag', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1')], []) });
+    const sink = captureSink();
+    const code = await runCli(['request', 'add', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Yes', '--json', '--home', BOARD_HOME], repo.deps, sink);
+    expect(code).toBe(0);
+    expect(JSON.parse(sink.out.join(''))).toEqual({ schema: 'factory.request/v1', action: 'add', id: 'D-1', title: 'Pick' });
+    const queueSink = captureSink();
+    await runCli(['queue', 'set', 'Docs', '--item', 'B-1', '--json', '--home', BOARD_HOME], repo.deps, queueSink);
+    expect(JSON.parse(queueSink.out.join(''))).toEqual({
+      schema: 'factory.queue/v1',
+      action: 'set',
+      row: { name: 'Docs', position: 1, items: ['B-1'], created: true, changed: true },
+    });
   });
 
   it('M5-1b TP-22 prints the document of item add for the JSON flag', async () => {

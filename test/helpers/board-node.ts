@@ -11,8 +11,11 @@ import { sampleConfigWithBoard, seedConfig } from './sample-config.js';
  */
 
 /** The text of a board file in the old form: 2-space indent and a line break at the end. The queue key is the software one. */
-export const boardText = (items: readonly Record<string, unknown>[] = [], tracks?: readonly Record<string, unknown>[]): string =>
-  `${JSON.stringify({ [softwareQueueKey]: [], items, ...(tracks === undefined ? {} : { tracks }) }, null, 2)}\n`;
+export const boardText = (
+  items: readonly Record<string, unknown>[] = [],
+  tracks?: readonly Record<string, unknown>[],
+  queue: readonly Record<string, unknown>[] = [],
+): string => `${JSON.stringify({ [softwareQueueKey]: queue, items, ...(tracks === undefined ? {} : { tracks }) }, null, 2)}\n`;
 
 /** One item of the board file. */
 export const itemRecord = (id: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({ id, title: `Item ${id}`, status: 'open', ...extra });

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { BoardConnector, DecisionAskInput } from '../../src/board/contract.js';
+import type { DecisionAskInput, LocalBoard } from '../../src/board/contract.js';
 import { createLocalBoard } from '../../src/board/local.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
@@ -17,6 +17,9 @@ const DOC_PATH = 'docs/design.md';
 const HOSTED_LINE = 'Hosted boards come in FAC-M3 (provider plugin).';
 
 const START_BOARD = `${JSON.stringify({ [QUEUE]: [], items: [{ id: 'B-1', title: 'First', status: 'open', stage: 'ticket' }], tracks: [] }, null, 2)}\n`;
+
+/** A waiting file that holds one request, so a close has a request to take off. */
+const START_WAITING = `${JSON.stringify({ intro: '', groups: [], items: [{ id: 'D-1', title: 'Open', question: 'Why?', options: [{ key: 'a', text: 'Yes' }] }] }, null, 2)}\n`;
 
 const DECISION: DecisionAskInput = {
   title: 'Pick a plan',
@@ -35,15 +38,15 @@ const errorOf = <T>(result: CliResult<T>): CliError => {
 };
 
 const repoWith = async (): Promise<BoardRepo> => {
-  const repo = await boardRepo({ board: START_BOARD });
+  const repo = await boardRepo({ board: START_BOARD, waiting: START_WAITING });
   repo.deps.seed(join(HOME, DOC_PATH), '# Design\n');
   return repo;
 };
 
-const connectorOf = (deps: Deps, tracker: string): BoardConnector =>
+const connectorOf = (deps: Deps, tracker: string): LocalBoard =>
   createLocalBoard(deps, LAYOUT, { queueKey: QUEUE, recipe: softwareBoard, config: sampleBoard(), command: commands.start, tracker });
 
-type Write = (connector: BoardConnector) => Promise<CliResult<unknown>>;
+type Write = (connector: LocalBoard) => Promise<CliResult<unknown>>;
 
 /** Each write of the connector, with input that the local connector accepts. */
 const WRITES: readonly (readonly [string, Write])[] = [
@@ -55,6 +58,8 @@ const WRITES: readonly (readonly [string, Write])[] = [
   ['track add', (c) => c.addTrack({ id: 'core', name: 'Core', roadmap: true })],
   ['doc link', (c) => c.linkDoc({ id: 'B-1', path: DOC_PATH })],
   ['decision ask', (c) => c.askDecision(DECISION)],
+  ['request close', (c) => c.closeRequest('D-1')],
+  ['queue set', (c) => c.setQueueRow({ name: 'Docs', items: ['B-1'] })],
 ];
 
 /** Each write of the connector, with input that the local connector refuses with exit 2. */
@@ -66,6 +71,8 @@ const BAD_WRITES: readonly (readonly [string, Write])[] = [
   ['track add', (c) => c.addTrack({ id: 'Bad Id', name: '', roadmap: true })],
   ['doc link', (c) => c.linkDoc({ id: 'B-1', path: '../outside.md' })],
   ['decision ask', (c) => c.askDecision({ title: '', question: '', options: [] })],
+  ['request close', (c) => c.closeRequest('nope')],
+  ['queue set', (c) => c.setQueueRow({ name: ' ' })],
 ];
 
 const FILES = [fileNames.board, fileNames.waiting, fileNames.decisionLog];
@@ -145,6 +152,8 @@ describe('a hosted tracker kind reads the local files; the local kind writes (TP
     expect(connector.kind).toBe(kind);
     expect(valueOf(await connector.listItems({ all: true })).map((item) => item.id)).toEqual(['B-1']);
     expect(valueOf(await connector.listTracks())).toEqual([]);
+    expect(valueOf(await connector.listRequests()).map((request) => request.id)).toEqual(['D-1']);
+    expect(valueOf(await connector.listQueue())).toEqual([]);
     expect(valueOf(await connector.readChanges(null))).toEqual({ events: [], cursor: null });
     expect(repo.deps.warned).toEqual([]);
     expect(repo.commits).toEqual([]);
