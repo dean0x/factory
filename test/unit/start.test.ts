@@ -1480,6 +1480,17 @@ describe('start:the recovery after a kill of the server and the mark of the acti
         expect(workerPanes(made.tmux)).toEqual([]);
       });
 
+      it('only warns, and goes on with exit 0, when the config list fails for another reason than an unknown option', async () => {
+        const made = await seeded({ stateRepo: { configListExit: 128 } });
+        const result = await startFactory(made.deps);
+        expect(result).toMatchObject({ ok: true, value: { failed: false } });
+        expect(made.deps.warned).toHaveLength(1);
+        expect(made.deps.warned[0]).toContain('git exited with 128');
+        expect(made.deps.warned[0]).not.toContain('git 2.26');
+        expect(made.deps.files.has(MARK_FILE)).toBe(false);
+        expect(resumesOf(made.tmux)).toEqual(SESSION);
+      });
+
       it('stops the same way for a session that runs already', async () => {
         const made = await seeded({ workers: [], stateRepo: { configListExit: UNKNOWN_OPTION }, tmux: { sessions: { demo: HOME } } });
         const result = await startFactory(made.deps);

@@ -581,6 +581,9 @@ const PROGRAM_KEY_PREFIXES: readonly string[] = ['filter.', 'hook.'];
 /** The scopes of `git config --show-scope` that belong to the folder itself. */
 const FOLDER_SCOPES: ReadonlySet<string> = new Set(['local', 'worktree']);
 
+/** The exit code of git for an option that it does not know. */
+const GIT_UNKNOWN_OPTION_EXIT = 129;
+
 /** The scope word that git prints: lower case letters only. Any other text means that the list is not read right. */
 const SCOPE_WORD = /^[a-z]+$/;
 
@@ -607,21 +610,27 @@ const programKeysOf = (stdout: string): readonly string[] | null => {
 /**
  * Refuse (exit 4) when the local git config of the state folder, or a file it includes, has a key that names a program with no switch
  * to turn it off for one call: a filter driver (`filter.`) or a config hook (`hook.`). The refusal names the keys. It reads only.
- * The read needs git 2.26 (`--show-scope`); when it fails, the error (exit 1) names that version and carries the code
- * `gitConfigUnreadable`, so a caller can tell it from the other failures. `command` is the command that the person runs again.
+ * The read needs git 2.26 (`--show-scope`). A git that does not know the option exits with 129: that error (exit 1) names the
+ * version and carries the code `gitConfigUnreadable`, so a caller can tell it from the other failures. Any other fault (git does
+ * not run, the time limit, another exit code, a list that does not parse) is a plain failure (exit 1) with no code and no
+ * version text. Every fault is an error, never an accept. `command` is the command that the person runs again.
  */
 export const requireStateConfigSafe = async (deps: Deps, stateDir: string, command: CommandName): Promise<CliResult<void>> => {
   const again = `then run "${commandText(command)}" again.`;
+  const cannotRead = `cannot read the git config of ${dirs.state}`;
   const unreadable = (detail: string): CliResult<never> =>
-    codedFailure(
-      gitConfigUnreadable,
-      `cannot read the git config of ${dirs.state}: ${detail}. ${program} needs git ${minGitVersion} or later.`,
-      `Update git, ${again}`,
-    );
+    failure(`${cannotRead}: ${detail}`, `Find the cause with "git -C ${dirs.state} config --list", ${again}`);
   const result = await deps.run('git', [...stateGit(stateDir), 'config', '--list', '--show-scope', '--includes', '-z'], {
     timeoutMs: GIT_TIMEOUT_MS,
   });
   if (!result.ok) return unreadable(result.error.message);
+  if (result.value.exitCode === GIT_UNKNOWN_OPTION_EXIT) {
+    return codedFailure(
+      gitConfigUnreadable,
+      `${cannotRead}: git does not know the option --show-scope. ${program} needs git ${minGitVersion} or later.`,
+      `Update git, ${again}`,
+    );
+  }
   if (result.value.exitCode !== 0) return unreadable(`git exited with ${result.value.exitCode}`);
   const keys = programKeysOf(result.value.stdout);
   if (keys === null) return unreadable('git printed a list that is not in the form that was expected');

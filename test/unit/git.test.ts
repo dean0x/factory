@@ -796,7 +796,7 @@ describe('git: the minimum version of git (TP-55)', () => {
   const ready = (run: RunHandler) =>
     requireStateRepoReady(createFakeDeps({ cwd: WS, run }), STATE_DIR, [], 'the upgrade', commands.upgrade);
 
-  it('fails with exit 1 and names git 2.26 when the config list with scopes fails', async () => {
+  it('fails with exit 1, names git 2.26 and carries the code when git does not know the option of the list (exit 129)', async () => {
     const { handler } = gitHandler({ configListExit: 129 });
     expect(await ready(handler)).toMatchObject({
       ok: false,
@@ -804,10 +804,34 @@ describe('git: the minimum version of git (TP-55)', () => {
     });
   });
 
-  it('names git 2.26 when git cannot run the list', async () => {
-    expect(await ready(() => failure('cannot run git: ENOENT'))).toMatchObject({
-      ok: false,
-      error: { kind: 'failure', message: expect.stringContaining('git 2.26') },
+  describe('a fault of the list that is not an unknown option', () => {
+    const plainFailure = (result: Awaited<ReturnType<typeof ready>>) => {
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure', hint: expect.any(String) } });
+      if (result.ok) return;
+      expect(result.error.message).not.toContain('git 2.26');
+      expect(result.error).not.toHaveProperty('code');
+    };
+
+    it('is a plain failure, with no code and no git 2.26 text, when git exits with another code', async () => {
+      const { handler } = gitHandler({ configListExit: 128 });
+      const result = await ready(handler);
+      plainFailure(result);
+      expect(result).toMatchObject({ error: { message: expect.stringContaining('git exited with 128') } });
+    });
+
+    it('is a plain failure when git cannot run the list or runs into the time limit', async () => {
+      plainFailure(await ready(() => failure('cannot run git: ENOENT')));
+      plainFailure(await ready(() => failure('git timed out after 15000 ms')));
+    });
+
+    it('is a plain failure when the list is not in the form that was expected', async () => {
+      plainFailure(await ready(() => exited(0, 'local\0core.bare\nfalse\0local\0')));
+    });
+
+    it('still stops the ready check, so a commit never goes on', async () => {
+      const { handler, log } = gitHandler({ configListExit: 1 });
+      expect(await ready(handler)).toMatchObject({ ok: false });
+      expect(log.commands().some((command) => command.includes('status'))).toBe(false);
     });
   });
 

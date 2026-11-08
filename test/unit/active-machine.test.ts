@@ -322,6 +322,17 @@ describe('the mark of the active machine: the claim', () => {
     expect(deps.files.has(LAYOUT.activeMachineFile)).toBe(false);
     expect(writesOf(deps)).toEqual([]);
   });
+
+  it('warns, and writes nothing, when the config list fails for another reason than an unknown option', async () => {
+    const deps = make({ configListExit: 128 });
+    const outcome = await claim(deps);
+    expect(outcome).toEqual({ claimed: false, other: null });
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain('git exited with 128');
+    expect(deps.warned[0]).not.toContain('git 2.26');
+    expect(deps.files.has(LAYOUT.activeMachineFile)).toBe(false);
+    expect(writesOf(deps)).toEqual([]);
+  });
 });
 
 describe('the mark of the active machine: who it names', () => {
