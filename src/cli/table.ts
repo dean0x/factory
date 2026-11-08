@@ -3,6 +3,7 @@ import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
+import { runItem } from '../commands/item.js';
 import { runLayout } from '../commands/layout.js';
 import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
@@ -11,6 +12,7 @@ import { runSelf } from '../commands/self.js';
 import { runStart } from '../commands/start.js';
 import { runState } from '../commands/state.js';
 import { runStatus } from '../commands/status.js';
+import { runTrack } from '../commands/track.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
 import { runWorker } from '../commands/worker.js';
@@ -18,6 +20,7 @@ import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import {
   assignmentSource,
+  boardTextLimits,
   commandLines,
   commands,
   commandText,
@@ -28,12 +31,15 @@ import {
   flagText,
   helpTopics,
   hookNames,
+  itemCommands,
   nodeCommands,
   places,
   program,
   roles,
   schemaIds,
   summonLimits,
+  trackCommands,
+  trackLimits,
   typing,
   values,
   workerCommands,
@@ -415,6 +421,106 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           overwrite: given.strings(flags.overwrite),
           yes: given.bool(flags.yes),
         },
+        registry,
+      ),
+  },
+  {
+    name: commands.item,
+    summary: 'Add, change, move, close and list the items of the board.',
+    usage: [
+      `${commandText(commandLines.itemAdd)} ${flagText(flags.title)} TEXT [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemUpdate)} ID [${flagText(flags.title)} TEXT] [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemMove)} ID ${flagText(flags.state)} STATE|${flagText(flags.stage)} STAGE [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemClose)} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemList)} [${flagText(flags.all)}] [${flagText(flags.track)} ID] [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.title]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `With ${itemCommands.add} and ${itemCommands.update}: the title of the item. One line of at most ${boardTextLimits.maxTitleChars} characters.`,
+      },
+      [flags.text]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `With ${itemCommands.add} and ${itemCommands.update}: a note for the item. One line of at most ${boardTextLimits.maxTextChars} characters.`,
+      },
+      [flags.track]: {
+        type: 'string',
+        placeholder: 'ID',
+        description:
+          `With ${itemCommands.add} and ${itemCommands.update}: the id of the track of the item. With ${itemCommands.list}: show the items of this track only. ` +
+          `${commandText(commandLines.trackList)} shows the ids.`,
+      },
+      [flags.field]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'NAME=VALUE',
+        description:
+          `With ${itemCommands.add} and ${itemCommands.update}: set a field of the ${roles.owner} on the item. The setup declares the fields and their values. ` +
+          'Repeat the flag for more fields.',
+      },
+      [flags.state]: {
+        type: 'string',
+        placeholder: 'STATE',
+        description: `With ${itemCommands.move}: set the state of the item. The setup declares the states.`,
+      },
+      [flags.stage]: {
+        type: 'string',
+        placeholder: 'STAGE',
+        description:
+          `With ${itemCommands.move}: set the stage of the item. The ${roles.recipe} lists the stages. The item keeps its state. ` +
+          'A stage that only a flow sets is refused.',
+      },
+      [flags.all]: {
+        type: 'boolean',
+        description: `With ${itemCommands.list}: show the closed items too.`,
+      },
+    },
+    run: (given, deps) =>
+      runItem(
+        deps,
+        {
+          home: given.string(flags.home),
+          words: given.positionals(),
+          title: given.string(flags.title),
+          text: given.string(flags.text),
+          track: given.string(flags.track),
+          fields: given.strings(flags.field),
+          state: given.string(flags.state),
+          stage: given.string(flags.stage),
+          all: given.bool(flags.all),
+          json: given.bool(flags.json),
+        },
+        registry,
+      ),
+  },
+  {
+    name: commands.track,
+    summary: 'Add a track to the board, or list the tracks. A track groups items.',
+    usage: [
+      `${commandText(commandLines.trackAdd)} ID ${flagText(flags.name)} TEXT [${flagText(flags.roadmap)}] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.trackList)} [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.name]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `With ${trackCommands.add}: the name of the track. One line of at most ${trackLimits.maxNameChars} characters.`,
+      },
+      [flags.roadmap]: {
+        type: 'boolean',
+        description: `With ${trackCommands.add}: the track is part of the roadmap.`,
+      },
+    },
+    run: (given, deps) =>
+      runTrack(
+        deps,
+        { home: given.string(flags.home), words: given.positionals(), name: given.string(flags.name), roadmap: given.bool(flags.roadmap) },
         registry,
       ),
   },

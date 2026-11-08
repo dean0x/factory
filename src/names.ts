@@ -50,6 +50,8 @@ export const commands = {
   doctor: 'doctor',
   machine: 'machine',
   worker: 'worker',
+  item: 'item',
+  track: 'track',
   self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
@@ -102,6 +104,12 @@ export const workerCommands = {
   watch: 'watch',
 } as const;
 
+/** The subcommands of `item`. */
+export const itemCommands = { add: 'add', update: 'update', move: 'move', close: 'close', list: 'list' } as const;
+
+/** The subcommands of `track`. The command has no remove subcommand. */
+export const trackCommands = { add: 'add', list: 'list' } as const;
+
 /** The subcommands of `self`. */
 export const selfCommands = { reset: 'reset' } as const;
 
@@ -117,6 +125,13 @@ export const commandLines = {
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
   workerReset: `${commands.worker} ${workerCommands.reset}`,
   workerWatch: `${commands.worker} ${workerCommands.watch}`,
+  itemAdd: `${commands.item} ${itemCommands.add}`,
+  itemUpdate: `${commands.item} ${itemCommands.update}`,
+  itemMove: `${commands.item} ${itemCommands.move}`,
+  itemClose: `${commands.item} ${itemCommands.close}`,
+  itemList: `${commands.item} ${itemCommands.list}`,
+  trackAdd: `${commands.track} ${trackCommands.add}`,
+  trackList: `${commands.track} ${trackCommands.list}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
   stateGuard: `${commands.state} ${stateCommands.guard}`,
 } as const;
@@ -139,6 +154,14 @@ export const flags = {
   clear: 'clear',
   compact: 'compact',
   assignment: 'assignment',
+  field: 'field',
+  title: 'title',
+  text: 'text',
+  track: 'track',
+  state: 'state',
+  stage: 'stage',
+  all: 'all',
+  roadmap: 'roadmap',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -533,9 +556,34 @@ export const trackLimits = { idPattern: /^[a-z][a-z0-9-]*$/, maxIdChars: 32, max
 /**
  * The most track lines that `item list` prints. The output holds at most 20 lines (`MAX_OUTPUT_LINES` in
  * `test/helpers/short-output.ts`). Of them, one is the summary line, one is the heading line of the table (`tableLines` in
- * `src/cli/output.ts`) and one is the more-tracks line. 20 - 3 is 17.
+ * `src/cli/output.ts`) and one is the more-tracks line. 20 - 3 is 17. The list of the items of one track holds at most this many
+ * item rows, by the same count.
  */
 export const maxTrackLines = 17;
+
+/**
+ * The words and the limits of the output of `item` and `track`. A text from the board file is cut to the width of its cell
+ * (`maxCellChars`) before it goes into a table. A field is given as `NAME` and `fieldSeparator` and the value.
+ */
+export const itemWords = {
+  item: 'item',
+  items: 'items',
+  track: 'track',
+  tracks: 'tracks',
+  columns: { id: 'ID', stage: 'STAGE', status: 'STATUS', title: 'TITLE' },
+  trackColumns: { track: 'TRACK', items: 'ITEMS', stages: 'STAGES' },
+  trackListColumns: { id: 'ID', name: 'NAME', roadmap: 'ROADMAP' },
+  /** What a table shows for the items on no listed track, for an item with no stage, and for an empty part. */
+  noTrack: '(no track)',
+  noStage: 'no stage',
+  empty: '-',
+  roadmapYes: 'yes',
+  roadmapNo: 'no',
+  fieldSeparator: '=',
+  maxCellChars: 60,
+  maxFieldChars: 30,
+  maxStatusChars: 20,
+} as const;
 
 /**
  * The most characters of one line of text output. The first line of the output of a job command holds at most 120
@@ -1388,6 +1436,10 @@ export const schemaIds = {
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
+  item: `${program}.item/v1`,
+  itemList: `${program}.item-list/v1`,
+  track: `${program}.track/v1`,
+  trackList: `${program}.track-list/v1`,
   stateGuard: `${program}.state-guard/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,

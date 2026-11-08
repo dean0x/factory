@@ -69,6 +69,13 @@ const sourceFiles = (dir: string): string[] =>
 const flat = (...groups: readonly Record<string, unknown>[]): string[] =>
   groups.flatMap((group) => Object.values(group).flatMap((value) => (typeof value === 'string' ? [value] : [])));
 
+/**
+ * Flags that are plain words too, which the source uses for other things: `text` is the level of a line of output, and `title`
+ * and `stage` are keys of an item. A literal that equals one of them is no breach. A literal that holds the flag with its two
+ * dashes (`--text`) still is one: the check of the flags below has no such exemption.
+ */
+const PLAIN_WORD_FLAGS: ReadonlySet<string> = new Set([flags.text, flags.title, flags.stage]);
+
 /** Names that a string literal must never equal outside names.ts. */
 const EXACT_NAMES = new Set([
   ...flat(
@@ -90,7 +97,7 @@ const EXACT_NAMES = new Set([
     stateKeys,
     schema1.keys,
     { windowView: tmuxNames.windowView, windowWorkers: tmuxNames.windowWorkers, slotBoard: tmuxNames.slotBoard },
-  ),
+  ).filter((name) => !PLAIN_WORD_FLAGS.has(name)),
   ...values.approvalModes,
 ]);
 
@@ -153,7 +160,7 @@ const violationsInText = (source: string, path: string): string[] => {
     if (!GIT_VOCABULARY_FILES.has(path)) {
       if (EXACT_NAMES.has(literal)) found.push(`"${literal}" is a name`);
       for (const flag of flat(flags)) {
-        if (literal.includes(`--${flag}`)) found.push(`"${literal}" holds the flag --${flag}`);
+        if (new RegExp(`--${flag}(?![A-Za-z0-9-])`).test(literal)) found.push(`"${literal}" holds the flag --${flag}`);
       }
     }
     for (const word of WORD_NAMES) {
@@ -191,6 +198,21 @@ describe('names', () => {
       `sample.ts: "${files.config}" holds the name ${files.config}`,
     );
     expect(violationsInText("const a = 'plain words';", path)).toEqual([]);
+  });
+
+  it('leaves a flag that is a plain word alone as a word, and reports it with its two dashes', () => {
+    const path = join(SRC, 'sample.ts');
+    for (const flag of PLAIN_WORD_FLAGS) {
+      expect(violationsInText(`const a = '${flag}';`, path)).toEqual([]);
+      expect(violationsInText(`const a = 'use --${flag} here';`, path)).toEqual([`sample.ts: "use --${flag} here" holds the flag --${flag}`]);
+    }
+    expect(violationsInText(`const a = '${flags.home}';`, path)).toEqual([`sample.ts: "${flags.home}" is a name`]);
+  });
+
+  it('reports a flag only as a whole flag, so the git flag --staged is not the flag --stage', () => {
+    const path = join(SRC, 'sample.ts');
+    expect(violationsInText("const a = 'git restore --staged';", path)).toEqual([]);
+    expect(violationsInText(`const a = 'git restore --${flags.home}=x';`, path)).toHaveLength(1);
   });
 
   it('reads the string literals of a text, and leaves out comments, template expressions and placeholders', () => {

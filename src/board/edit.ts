@@ -28,7 +28,7 @@ import type {
   ItemPatch,
   TrackAddInput,
 } from './contract.js';
-import { resolveFields, type FieldInput } from './fields.js';
+import { itemTarget, resolveFields, type FieldInput } from './fields.js';
 import type { BoardDoc, DecisionLogDoc, WaitingDoc } from './files.js';
 import { firstStageOf, requireSettableStage } from './stages.js';
 import { holdsBreak, lineIssue } from './text.js';
@@ -95,7 +95,7 @@ export const checkNewItem = (setup: BoardSetup, input: ItemAddInput): CliResult<
   if (!title.ok) return title;
   const text = optionalLineOf('text', input.text, boardTextLimits.maxTextChars);
   if (!text.ok) return text;
-  const fields = resolveFields(setup.config, 'item', inputsOf(input.fields), { complete: true });
+  const fields = resolveFields(setup.config, itemTarget, inputsOf(input.fields), { complete: true });
   if (!fields.ok) return fields;
   return ok({ title: title.value, text: text.value, track: input.track, status, stage: firstStageOf(setup.recipe), fields: fields.value });
 };
@@ -113,7 +113,7 @@ export const checkPatch = (setup: BoardSetup, patch: ItemPatch): CliResult<ItemC
   if (!title.ok) return title;
   const text = optionalLineOf('text', patch.text, boardTextLimits.maxTextChars);
   if (!text.ok) return text;
-  const fields = resolveFields(setup.config, 'item', inputsOf(patch.fields), { complete: false });
+  const fields = resolveFields(setup.config, itemTarget, inputsOf(patch.fields), { complete: false });
   if (!fields.ok) return fields;
   return ok({ title: title.value, text: text.value, track: patch.track, fields: fields.value });
 };
