@@ -2,7 +2,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { safetyRefusal, type CliResult } from '../cli/errors.js';
 import { commands, commandText, dirs, env, places, privateFile, program } from '../names.js';
 import type { Deps, PathInfo } from './deps.js';
-import { takeLock, type LockPolicy } from './file-lock.js';
+import { freeLock, takeLock, type LockPolicy } from './file-lock.js';
 import { isWrittenInside } from './paths.js';
 import { err, ok, type Result } from './result.js';
 
@@ -98,16 +98,16 @@ const userFileLock: LockPolicy = {
 
 /**
  * Take the lock file beside the file. The lock file is new, so only one process holds it. A stale lock is taken over. The
- * error is the reason that the lock is not taken.
+ * value is the token that frees the lock. The error is the reason that the lock is not taken.
  */
-const takeUserFileLock = async (deps: Deps, lockPath: string): Promise<Result<void, string>> => {
+const takeUserFileLock = async (deps: Deps, lockPath: string): Promise<Result<string, string>> => {
   const taken = await takeLock(deps, lockPath, userFileLock);
   if (!taken.ok) return taken;
-  if (taken.value === 'link') return err(`the lock ${lockPath} is a link. Remove that file.`);
-  if (taken.value === 'held') {
+  if (taken.value.kind === 'link') return err(`the lock ${lockPath} is a link. Remove that file.`);
+  if (taken.value.kind === 'held') {
     return err(`another ${program} command holds the lock ${lockPath}. Wait until that command ends, or remove that file when no such command runs.`);
   }
-  return ok(undefined);
+  return ok(taken.value.token);
 };
 
 /** What a change of a per-user file reads and gives: the current text, or null for a file that does not exist. */
@@ -135,10 +135,10 @@ export const changePrivateFile = async (
   const current = await readPrivateText(deps, path, maxBytes);
   const next = current.ok ? await change(current.value) : err(`${path} cannot be read: ${current.error}`);
   const written = next.ok ? await deps.fs.writeTextAtomic(path, next.value, dirname(path), privateFile.fileMode) : null;
-  const lockGone = await deps.fs.remove(lockPath);
+  const lockGone = await freeLock(deps, lockPath, locked.value);
   if (!next.ok) return next;
   if (written?.ok === false) return err(written.error.message);
   return lockGone.ok
     ? ok(undefined)
-    : err(`the change is saved, but ${program} cannot remove the lock file ${lockPath}: ${lockGone.error.message}. Remove that file.`);
+    : err(`the change is saved, but ${program} cannot remove the lock file ${lockPath}: ${lockGone.error}. Remove that file.`);
 };

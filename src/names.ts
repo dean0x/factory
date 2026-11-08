@@ -1051,7 +1051,9 @@ export const activeMachine = {
  * to the commit, so two writers never take each other's change. The lock file is `<name><suffix>` in the locks folder of the state
  * folder. A writer tries `attempts` times and waits `waitMs` between two tries, so it waits 4.75 seconds at most, then it stops with
  * exit 1 and names the lock file. A lock that is older than `staleMs` was left by a process that ended, and the next writer takes it.
- * `staleMs` is larger than the longest locked run: about eight git calls with a limit of 15 seconds each, and a backup.
+ * The lock file holds the token of its writer, so a writer that ran past `staleMs` does not remove the lock file of the writer that
+ * took its lock over. `staleMs` is larger than the longest locked run: about 13 git calls on the upgrade path with a limit of
+ * 15 seconds each (195 seconds at most), and a backup.
  */
 export const stateLock = {
   name: 'state',
