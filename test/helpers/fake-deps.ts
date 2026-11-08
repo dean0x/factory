@@ -41,6 +41,8 @@ export interface FakeOptions {
   readonly fetch?: FetchHandler;
   readonly now?: Date;
   readonly pid?: number;
+  /** The node program and the real path of the script. Default: `FAKE_PROGRAM_ARGV`. */
+  readonly programArgv?: readonly string[];
   /** The id of the user of the process. Default: 1000. Null: a platform with no user ids. */
   readonly uid?: number | null;
   /** A person types at the process. Default: false. */
@@ -110,6 +112,9 @@ export const exited = (exitCode: number, stdout = '', stderr = ''): CliResult<Ru
 
 export const missingProgram = (command: string): CliResult<RunOutput> =>
   failure(`cannot run ${command}: ENOENT`);
+
+/** The program path of a fake process: the node program and the script, both absolute. */
+export const FAKE_PROGRAM_ARGV: readonly string[] = ['/opt/fake/bin/node', '/opt/fake/lib/program/cli.js'];
 
 const DEFAULT_NOW = new Date('2030-01-02T03:04:05.678Z');
 const DEFAULT_UID = 1000;
@@ -386,6 +391,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     platform: { os: options.os ?? 'linux', nodeVersion: options.nodeVersion ?? 'v22.1.0' },
     cwd: options.cwd ?? '/work',
     pid: options.pid ?? 4242,
+    programArgv: options.programArgv ?? FAKE_PROGRAM_ARGV,
     uid,
   };
   fake.seedDir(fake.cwd);
