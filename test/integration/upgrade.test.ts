@@ -1,4 +1,5 @@
-import { chmod, cp, lstat, mkdir, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { chmod, cp, lstat, mkdir, readdir, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -6,7 +7,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { hookNames, setupAcceptance } from '../../src/names.js';
 import { oldWordsIn } from '../helpers/old-words.js';
-import { makeSandbox, removeOpenSandboxes, withoutHookNotice, type Sandbox } from './harness.js';
+import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, withoutTmux, type RunResult, type Sandbox } from './harness.js';
 
 let box: Sandbox;
 
@@ -25,7 +26,20 @@ const initNode = async (): Promise<void> => {
   expect(result.code).toBe(0);
 };
 
-const COORDINATOR_FILE = ['coordinator', 'CLAUDE.md'] as const;
+/** Run a program with a given environment. The sandbox runs the built program only, so a test of a copy needs this. */
+const run = (
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  env: Readonly<Record<string, string>>,
+): Promise<RunResult> =>
+  new Promise((resolve) => {
+    execFile(command, [...args], { cwd, env, encoding: 'utf8', timeout: 60_000 }, (error, stdout, stderr) => {
+      resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : -1, stdout, stderr });
+    });
+  });
+
+const COORDINATOR_FILE =['coordinator', 'CLAUDE.md'] as const;
 
 interface StoredAcceptance {
   manifest: unknown;
@@ -73,6 +87,201 @@ describe('factory upgrade (built binary)', () => {
     const result = await box.run(['upgrade', '--home', box.node]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('Nothing to upgrade.');
+  });
+
+  describe('the delete guard of the state repo (TP-4, TP-5, TP-53)', () => {
+    const stateOf = (): string => join(box.node, '.factory');
+    const guardOf = async (): Promise<string> => join(await realpath(stateOf()), '.git', 'factory-guard');
+    const headOf = async (): Promise<string> => (await box.git(stateOf(), ['rev-parse', 'HEAD'])).stdout.trim();
+
+    it('names the missing guard in a dry run and changes nothing', async () => {
+      await initNode();
+      const hook = join(await guardOf(), 'pre-commit');
+      await rm(hook);
+      const dry = await box.run(['upgrade', '--home', box.node, '--dry-run']);
+      expect(dry.code).toBe(0);
+      expect(dry.stdout).toContain('.factory/.git/factory-guard: write the delete guard hook and point core.hooksPath at it');
+      expect(existsSync(hook)).toBe(false);
+      expect(JSON.parse((await box.run(['upgrade', '--home', box.node, '--dry-run', '--json'])).stdout)).toMatchObject({
+        changed: true,
+        stateGuard: 'install',
+      });
+    });
+
+    it('writes the missing guard and makes no backup and no commit when nothing else changes', async () => {
+      await initNode();
+      const hook = join(await guardOf(), 'pre-commit');
+      const text = await box.read(hook);
+      await rm(hook);
+      const head = await headOf();
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain('Wrote the delete guard in .factory/.git/factory-guard.');
+      expect(await box.read(hook)).toBe(text);
+      expect((await stat(hook)).mode & 0o777).toBe(0o755);
+      expect(await headOf()).toBe(head);
+      expect(await readdir(stateOf())).not.toContain('backups');
+      expect((await box.git(stateOf(), ['status', '--porcelain'])).stdout).toBe('');
+      expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
+    });
+
+    it('repairs a setting that points elsewhere', async () => {
+      await initNode();
+      expect((await box.git(stateOf(), ['config', 'core.hooksPath', '/nonexistent'])).code).toBe(0);
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect((await box.git(stateOf(), ['config', 'core.hooksPath'])).stdout.trim()).toBe(await guardOf());
+    });
+
+    it('changes neither the setting, nor the guard folder, nor a backup when the ready check of the state repo refuses', async () => {
+      await initNode();
+      const state = stateOf();
+      const guard = await guardOf();
+      // The guard is off in two ways: another setting, and a missing hook file.
+      expect((await box.git(state, ['config', '--local', 'core.hooksPath', '/nonexistent'])).code).toBe(0);
+      await rm(join(guard, 'pre-commit'));
+      // The state repo lacks a line of its .gitignore, so the upgrade has a file to commit, and a staged file stops the upgrade.
+      await writeFile(join(state, '.gitignore'), 'state/\nlocks/\nbackups/\n');
+      expect((await box.git(state, ['add', '.gitignore'])).code).toBe(0);
+      expect((await box.git(state, ['commit', '-q', '-m', 'drop a line'])).code).toBe(0);
+      await writeFile(join(state, 'note.txt'), 'staged');
+      expect((await box.git(state, ['add', 'note.txt'])).code).toBe(0);
+      const hooksBefore = await readdir(guard);
+
+      const refused = await box.run(['upgrade', '--home', box.node]);
+      expect(refused.code).toBe(1);
+      expect(refused.stderr).toContain('staged changes');
+      expect((await box.git(state, ['config', '--local', 'core.hooksPath'])).stdout.trim()).toBe('/nonexistent');
+      expect(await readdir(guard)).toEqual(hooksBefore);
+      expect(await readdir(state)).not.toContain('backups');
+      expect((await box.git(state, ['log', '--format=%s'])).stdout.trim().split('\n')[0]).toBe('drop a line');
+    });
+
+    it('names a hook file that stops, runs no hook, and the stopped hook does not run at a later commit', async () => {
+      await initNode();
+      const state = stateOf();
+      const marker = join(box.root, 'old-hook-ran');
+      const hooks = join(await realpath(state), '.git', 'hooks');
+      await mkdir(hooks, { recursive: true });
+      await writeFile(join(hooks, 'pre-commit'), `#!/bin/sh\n: > '${marker}'\n`);
+      await chmod(join(hooks, 'pre-commit'), 0o755);
+      expect((await box.git(state, ['config', '--local', '--unset', 'core.hooksPath'])).code).toBe(0);
+
+      // Before the upgrade the hook runs at a commit.
+      await writeFile(join(state, 'first.txt'), 'first');
+      expect((await box.git(state, ['add', 'first.txt'])).code).toBe(0);
+      expect((await box.git(state, ['commit', '-q', '-m', 'first'])).code).toBe(0);
+      expect(existsSync(marker)).toBe(true);
+      await rm(marker);
+
+      const dry = await box.run(['upgrade', '--home', box.node, '--dry-run']);
+      expect(dry.code).toBe(0);
+      expect(dry.stderr).toContain('.factory/.git/hooks/pre-commit');
+      expect(dry.stderr).toContain('stop running');
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('.factory/.git/hooks/pre-commit');
+      expect(existsSync(marker)).toBe(false);
+
+      await writeFile(join(state, 'second.txt'), 'second');
+      expect((await box.git(state, ['add', 'second.txt'])).code).toBe(0);
+      expect((await box.git(state, ['commit', '-q', '-m', 'second'])).code).toBe(0);
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it('names the folder of a core.hooksPath of the global config, which the guard replaces', async () => {
+      await initNode();
+      const state = stateOf();
+      const global = join(box.root, 'global-hooks');
+      await mkdir(global);
+      expect((await box.git(box.root, ['config', '--global', 'core.hooksPath', global])).code).toBe(0);
+      expect((await box.git(state, ['config', '--local', '--unset', 'core.hooksPath'])).code).toBe(0);
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain(`the hooks in ${global}, which core.hooksPath names`);
+      expect((await box.git(state, ['config', 'core.hooksPath'])).stdout.trim()).toBe(await guardOf());
+    });
+
+    it('warns, exits 0 and leaves the folder of the link as it was when the guard folder is a link', async () => {
+      await initNode();
+      const guard = await guardOf();
+      const elsewhere = join(box.root, 'elsewhere');
+      await mkdir(elsewhere);
+      await writeFile(join(elsewhere, 'keep.txt'), 'keep');
+      await writeFile(join(elsewhere, 'pre-commit'), 'other hook');
+      await rm(guard, { recursive: true });
+      await symlink(elsewhere, guard);
+      const dry = JSON.parse((await box.run(['upgrade', '--home', box.node, '--dry-run', '--json'])).stdout);
+      expect(dry.stateGuard).toBe('unsupported');
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('The delete guard of .factory is off');
+      expect(result.stderr).toContain('Move .factory/.git/factory-guard away.');
+      expect(result.stderr).not.toContain('factory upgrade');
+      expect((await readdir(elsewhere)).sort()).toEqual(['keep.txt', 'pre-commit']);
+      expect(await box.read(join(elsewhere, 'pre-commit'))).toBe('other hook');
+      expect((await lstat(guard)).isSymbolicLink()).toBe(true);
+    });
+
+    it('warns, exits 0 and leaves the .git file as it was when the .git entry of the state folder is a file', async () => {
+      await initNode();
+      const git = join(stateOf(), '.git');
+      const moved = join(box.root, 'moved-git');
+      await rename(git, moved);
+      await writeFile(git, `gitdir: ${moved}\n`);
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('Make .factory/.git the git folder of .factory.');
+      expect(result.stderr).not.toContain('factory upgrade');
+      expect(await box.read(git)).toBe(`gitdir: ${moved}\n`);
+    });
+  });
+
+  describe('the git steps of the state commit run no program that the state repo names (TP-17)', () => {
+    const stateOf = (): string => join(box.node, '.factory');
+    const markerOf = (name: string): string => join(box.root, 'markers', name);
+    const writeProgram = async (path: string, marker: string): Promise<void> => {
+      await writeFile(path, `#!/bin/sh\n: > '${marker}'\n`);
+      await chmod(path, 0o755);
+    };
+
+    it('commits the upgrade with no file monitor program, no hook file and no guard program started', async () => {
+      await initNode();
+      const state = stateOf();
+      // A read of the test uses the file monitor off, so that it leaves no marker of its own.
+      const quiet = (args: readonly string[]): ReturnType<Sandbox['git']> => box.git(state, ['-c', 'core.fsmonitor=', ...args]);
+
+      // The state repo lacks a line of its .gitignore, so the upgrade has a file to commit.
+      await writeFile(join(state, '.gitignore'), 'state/\nlocks/\nbackups/\n');
+      expect((await quiet(['add', '.gitignore'])).code).toBe(0);
+      expect((await quiet(['commit', '-q', '-m', 'drop a line'])).code).toBe(0);
+      const before = Number((await quiet(['rev-list', '--count', 'HEAD'])).stdout.trim());
+
+      await mkdir(join(box.root, 'markers'));
+      const monitor = join(box.root, 'file-monitor.sh');
+      await writeProgram(monitor, markerOf('file-monitor'));
+      expect((await quiet(['config', 'core.fsmonitor', monitor])).code).toBe(0);
+      const hooks = join(await realpath(state), '.git', 'hooks');
+      await mkdir(hooks, { recursive: true });
+      await writeProgram(join(hooks, 'pre-commit'), markerOf('pre-commit'));
+      await writeProgram(join(hooks, 'post-commit'), markerOf('post-commit'));
+
+      // A copy of the built program that marks each start of the guard: git starts the guard only when the hooks are on.
+      const source = await box.read(DIST);
+      const lineEnd = source.indexOf('\n') + 1;
+      const copy = join(box.root, 'factory-marked.js');
+      const mark = `import { writeFileSync as markStart } from 'node:fs';\nif (process.argv.includes('guard')) markStart(${JSON.stringify(markerOf('guard'))}, '');\n`;
+      await writeFile(copy, `${source.slice(0, lineEnd)}${mark}${source.slice(lineEnd)}`);
+
+      const upgraded = await run('node', [copy, 'upgrade', '--home', box.node], box.root, withoutTmux(box.env));
+      expect(upgraded.code, upgraded.stderr).toBe(0);
+
+      expect(Number((await quiet(['rev-list', '--count', 'HEAD'])).stdout.trim())).toBe(before + 1);
+      expect((await quiet(['show', '--name-only', '--format=', 'HEAD'])).stdout.split('\n')).toContain('.gitignore');
+      for (const name of ['file-monitor', 'pre-commit', 'post-commit', 'guard']) {
+        expect(existsSync(markerOf(name)), `${name} ran`).toBe(false);
+      }
+    });
   });
 
   it('renders a changed setup text into the setup block, and a changed prefix into the safety block (TP-76, TP-102)', async () => {
@@ -483,6 +692,12 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(await box.read(join(state, '.gitignore'))).toBe('state/\nlocks/\nbackups/\nworkers/\n');
     expect(changes.stdout).toContain('.gitignore');
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
+    // The old state repo had no guard: the run wrote it into the git folder, and git does not track it.
+    const guard = join(await realpath(state), '.git', 'factory-guard');
+    expect(upgraded.stdout).toContain('Wrote the delete guard in .factory/.git/factory-guard.');
+    expect((await box.git(state, ['config', 'core.hooksPath'])).stdout.trim()).toBe(guard);
+    expect(await readdir(guard)).toEqual(['pre-applypatch', 'pre-commit', 'pre-merge-commit']);
+    expect(changes.stdout).not.toContain('factory-guard');
 
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);

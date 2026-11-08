@@ -26,6 +26,9 @@ const recipeFolderImports = (file: string, source: string): string[] =>
 
 const coreFiles = (): string[] => allSourceFiles(SRC).filter((path) => !insideRecipes(path));
 
+/** File names that git gives its hooks. A hook name is a git name, not a word of the software recipe. */
+const GIT_HOOK_NAMES: ReadonlySet<string> = new Set(['pre-merge-commit']);
+
 describe('the word list of the software recipe (TP-97)', () => {
   it('holds the words of the recipe, with the abbreviations', () => {
     expect([...softwareWordList]).toEqual([
@@ -99,7 +102,9 @@ describe('no software word in the core (TP-97)', () => {
 
   it('finds no word of the list in the string literals of src outside src/recipes', () => {
     const found = coreFiles().flatMap((path) =>
-      literalsOf(readFileSync(path, 'utf8')).flatMap((literal) =>
+      literalsOf(readFileSync(path, 'utf8'))
+        .filter((literal) => !GIT_HOOK_NAMES.has(literal))
+        .flatMap((literal) =>
         softwareWordsIn(literal).map((word) => `${relative(SRC, path)}: "${word}" in "${literal.slice(0, 80)}"`),
       ),
     );

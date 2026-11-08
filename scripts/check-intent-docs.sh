@@ -83,19 +83,21 @@ first=$(awk '
 report 1 "each section in intent-trace.md is a heading of design.md" "$first"
 
 # 2. Each milestone id of the trace is named in the roadmap. Each milestone from FAC-M2 up has a heading there.
+# A milestone id may end in one lowercase letter, such as FAC-M5b. The trace may name such an id only when the roadmap has a
+# heading for it.
 # A row of the trace that names the label "Design v3 PR" needs a heading of the roadmap that starts with the label. Under
 # that heading, down to the next heading of the same or a higher level, the roadmap has the two checkboxes "Docs PR" and
 # "Code PR". A checkbox may be ticked or not.
 first=$(awk '
   FILENAME == ARGV[1] {
     line = $0
-    while (match(line, /FAC-M[0-9]+/)) {
-      named[substr(line, RSTART + 5, RLENGTH - 5) + 0] = 1
+    while (match(line, /FAC-M[0-9]+[a-z]?/)) {
+      named[substr(line, RSTART + 5, RLENGTH - 5)] = 1
       line = substr(line, RSTART + RLENGTH)
     }
-    if ($0 ~ /^#+ FAC-M[0-9]+/) {
+    if ($0 ~ /^#+ FAC-M[0-9]+[a-z]?/) {
       split($2, part, ":")
-      heading[substr(part[1], 6) + 0] = 1
+      heading[substr(part[1], 6)] = 1
     }
     if ($0 ~ /^```/) fenced = !fenced
     if (!fenced && $0 ~ /^#+ /) {
@@ -117,11 +119,13 @@ first=$(awk '
   {
     if (!labelline && $0 ~ /^\|/ && index($0, "Design v3 PR") > 0) labelline = FNR
     line = $0
-    while (match(line, /FAC-M[0-9]+/)) {
-      id = substr(line, RSTART + 5, RLENGTH - 5) + 0
+    while (match(line, /FAC-M[0-9]+[a-z]?/)) {
+      key = substr(line, RSTART + 5, RLENGTH - 5)
+      id = key + 0
       if (id > top) top = id
-      if (!(id in named) && !failed) {
-        printf "intent-trace.md line %d: FAC-M%d is not named in roadmap-v2.md\n", FNR, id
+      if (key !~ /^[0-9]+$/) lettered[key] = 1
+      if (!(key in named) && !failed) {
+        printf "intent-trace.md line %d: FAC-M%s is not named in roadmap-v2.md\n", FNR, key
         failed = 1
       }
       line = substr(line, RSTART + RLENGTH)
@@ -132,6 +136,12 @@ first=$(awk '
     for (id = 2; id <= top; id++) {
       if (!(id in heading)) {
         printf "roadmap-v2.md has no heading for FAC-M%d\n", id
+        exit
+      }
+    }
+    for (key in lettered) {
+      if (!(key in heading)) {
+        printf "roadmap-v2.md has no heading for FAC-M%s\n", key
         exit
       }
     }

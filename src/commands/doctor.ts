@@ -9,7 +9,7 @@ import { inspectConfig, localFileAccess, readNodeIdentity, wideModeNote } from '
 import { folderKey } from '../config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
+import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
@@ -54,6 +54,7 @@ import type { RecipeRegistry } from '../recipes/index.js';
 import { checkProxyHealth } from '../safety/proxy.js';
 import { findTokenPaths } from '../safety/secrets.js';
 import { locateShareList } from '../state/files.js';
+import { guardWarning } from '../state/guard.js';
 import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
@@ -545,16 +546,20 @@ export const checkTools = async (deps: Deps): Promise<CheckResult> => {
   }
   const missing: string[] = [];
   let tmuxFound = false;
+  let gitFound = false;
   for (const tool of TOOLS) {
     if (!(await onPath(deps, tool.name))) missing.push(`${tool.name} (${tool.neededFor})`);
     else if (tool.name === toolNames.tmux) tmuxFound = true;
+    else if (tool.name === toolNames.git) gitFound = true;
   }
   const problems = missing.length === 0 ? [] : [`missing: ${missing.join(', ')}`];
   const oldTmux = tmuxFound ? await tmuxProblem(deps) : null;
   if (oldTmux !== null) problems.push(oldTmux);
-  return problems.length === 0
-    ? check(checkIds.tools, 'ok', `Node.js ${major}, git, tmux, gh and claude are available`)
-    : check(checkIds.tools, 'warn', problems.join('; '));
+  // The state steps need git 2.26: a git that is older, or whose version is not read, is a failure and not a warning.
+  const oldGit = gitFound ? await gitVersionProblem(deps) : null;
+  if (oldGit !== null) problems.push(oldGit);
+  if (problems.length === 0) return check(checkIds.tools, 'ok', `Node.js ${major}, git, tmux, gh and claude are available`);
+  return check(checkIds.tools, oldGit === null ? 'warn' : 'fail', problems.join('; '));
 };
 
 /**
@@ -593,6 +598,21 @@ export const checkStateRepo = async (deps: Deps, home: string): Promise<CheckRes
   return problems.length === 0
     ? check(checkIds.stateRepo, 'ok', `${dirs.state} is a git repository with a commit`)
     : check(checkIds.stateRepo, 'warn', `${dirs.state}: ${problems.join('; ')}`);
+};
+
+/**
+ * The delete guard of the state repo. An off guard is a warning with the remedy, never a failure: a factory with the guard off keeps
+ * working, and only the commands that change the board refuse. The state-repo check names a folder that is no repo, and a missing git.
+ */
+export const checkStateGuard = async (deps: Deps, home: string): Promise<CheckResult> => {
+  const stateDir = layoutOf(home).stateDir;
+  const repo = await deps.fs.stat(join(stateDir, GIT_ENTRY));
+  if (!repo.ok || repo.value === null) return notChecked(checkIds.stateGuard, `${dirs.state} is not a git repository`);
+  if (!(await onPath(deps, 'git'))) return notChecked(checkIds.stateGuard, 'git is missing');
+  const warning = await guardWarning(deps, stateDir);
+  return warning === null
+    ? check(checkIds.stateGuard, 'ok', `the delete guard of ${dirs.state} is on`)
+    : check(checkIds.stateGuard, 'warn', warning);
 };
 
 export const checkProjects = async (
@@ -664,6 +684,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     tools,
     agentVersion,
     stateRepo,
+    stateGuard,
     projects,
     localFile,
   ] = await Promise.all([
@@ -678,6 +699,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkTools(deps),
     checkAgentVersion(deps, config),
     checkStateRepo(deps, home),
+    checkStateGuard(deps, home),
     checkProjects(deps, home, config),
     checkLocalFile(deps, home),
   ]);
@@ -702,6 +724,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     tools,
     agentVersion,
     stateRepo,
+    stateGuard,
     projects,
     ...checkProjectUrls(config),
   ];

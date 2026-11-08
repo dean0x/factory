@@ -3,9 +3,19 @@ import { err, ok, type Result } from './result.js';
 
 /**
  * The lock file. A process holds the lock while the lock file exists. The file is made with a name that must not exist, so
- * only one process makes it, and a link at that path is never followed. This module is the only owner of the take and of
- * the take-over of a stale lock. A caller sets the bounds with a policy and removes the lock file when it has finished.
+ * only one process makes it, and a link at that path is never followed. This module is the only owner of the take, of
+ * the take-over of a stale lock, and of the removal of the lock file. A caller sets the bounds with a policy and frees the lock when
+ * it has finished. The lock file holds the token of the process that made it, so a free step removes only the lock file that its own
+ * take made: a holder that ran past the stale age and lost its lock does not remove the lock file of the process that took it over.
  */
+
+/** The bytes of random text in a token. The token also holds the pid, which a person reads in the lock file. */
+const TOKEN_BYTES = 8;
+
+/** The most bytes of a lock file that a free step reads: a token and a line break fit, and a larger file is not a lock file of this module. */
+const MAX_LOCK_BYTES = 256;
+
+const lockText = (token: string): string => `${token}\n`;
 
 /** The bounds of one lock. */
 export interface LockPolicy {
@@ -20,8 +30,14 @@ export interface LockPolicy {
   readonly mode: number;
 }
 
-/** The end of a take: the lock is taken, the lock stayed with another process for all tries, or the lock path is a link. */
-export type LockTake = 'taken' | 'held' | 'link';
+/**
+ * The end of a take: the lock is taken (with the token that the lock file holds and that `freeLock` needs), the lock stayed with
+ * another process for all tries, or the lock path is a link.
+ */
+export type LockTake =
+  | { readonly kind: 'taken'; readonly token: string }
+  | { readonly kind: 'held' }
+  | { readonly kind: 'link' };
 
 /** True when a lock or a claim file is older than the stale age: a process that ended left it. */
 const isStale = (deps: Deps, info: PathInfo, policy: LockPolicy): boolean => deps.now().getTime() - info.mtimeMs > policy.staleMs;
@@ -76,21 +92,46 @@ const dropStaleLock = async (deps: Deps, lockPath: string, policy: LockPolicy): 
 
 /**
  * Take the lock file at the path. The call tries `policy.attempts` times and waits `policy.waitMs` between two tries, so
- * the wait has a fixed bound. A stale lock is taken over. A lock path that is a link ends the call at once with `link`, and
- * the link is not followed. When the lock is taken, the caller must remove the lock file. The error is the reason that a
- * call of the file system failed.
+ * the wait has a fixed bound. A stale lock is taken over, and the new lock file holds the token of this call. A lock path that
+ * is a link ends the call at once with `link`, and the link is not followed. When the lock is taken, the caller must free it with
+ * the token. The error is the reason that a call of the file system failed, or that there is no random text for the token: the
+ * call takes no lock without a token.
  */
 export const takeLock = async (deps: Deps, lockPath: string, policy: LockPolicy): Promise<Result<LockTake, string>> => {
+  const random = deps.randomHex(TOKEN_BYTES);
+  if (!random.ok) return err(random.error.message);
+  const token = `${deps.pid}-${random.value}`;
   for (let attempt = 1; attempt <= policy.attempts; attempt += 1) {
-    const created = await deps.fs.writeTextExclusive(lockPath, `${deps.pid}\n`, policy.mode);
+    const created = await deps.fs.writeTextExclusive(lockPath, lockText(token), policy.mode);
     if (!created.ok) return err(created.error.message);
-    if (created.value) return ok('taken');
+    if (created.value) return ok({ kind: 'taken', token });
     const kind = await deps.fs.lstat(lockPath);
     if (!kind.ok) return err(kind.error.message);
-    if (kind.value === 'link') return ok('link');
+    if (kind.value === 'link') return ok({ kind: 'link' });
     const dropped = await dropStaleLock(deps, lockPath, policy);
     if (!dropped.ok) return dropped;
     if (!dropped.value && attempt < policy.attempts) await deps.sleep(policy.waitMs);
   }
-  return ok('held');
+  return ok({ kind: 'held' });
+};
+
+/**
+ * Free the lock that a take made with `token`: remove the lock file only when it holds that token. A lock file with another
+ * text belongs to another process now (this lock went stale and that process took it over), so it stays, and that is no error. A
+ * lock file that is gone, and a lock path that is not a plain file, need nothing. The error is the reason that the file system could
+ * not read or remove the lock file of the caller. A caller that has finished its work treats this step as best effort.
+ */
+export const freeLock = async (deps: Deps, lockPath: string, token: string): Promise<Result<void, string>> => {
+  const kind = await deps.fs.lstat(lockPath);
+  if (!kind.ok) return err(kind.error.message);
+  if (kind.value !== 'file') return ok(undefined);
+  const held = await deps.fs.readTextLimited(lockPath, MAX_LOCK_BYTES);
+  if (!held.ok) {
+    // The file can go between the two calls: a lock file that is gone needs nothing.
+    const left = await deps.fs.lstat(lockPath);
+    return left.ok && left.value === null ? ok(undefined) : err(held.error.message);
+  }
+  if (held.value !== lockText(token)) return ok(undefined);
+  const removed = await deps.fs.remove(lockPath);
+  return removed.ok ? ok(undefined) : err(removed.error.message);
 };

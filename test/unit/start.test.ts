@@ -1,7 +1,7 @@
 import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { renderBlock } from '../../src/blocks/managed.js';
-import { failure } from '../../src/cli/errors.js';
+import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import { collectSetup } from '../../src/commands/init-received.js';
 import type { StartOptions } from '../../src/commands/start.js';
 import { runStart } from '../helpers/package-registry.js';
@@ -12,7 +12,8 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { activeMachine, env, files, hookNames, schemaIds, tmuxNames, trackedFiles } from '../../src/names.js';
+import { activeMachine, env, files, hookNames, schemaIds, stateGuard, stateLock, tmuxNames, trackedFiles } from '../../src/names.js';
+import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
@@ -30,6 +31,7 @@ import {
   type RunCall,
 } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
+import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { ACCEPTANCES, acceptFiles, acceptTracked } from '../helpers/setup-acceptance.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -43,6 +45,9 @@ const SETTINGS_FILE = '/w/node/coordinator/.claude/settings.local.json';
 /** The settings file as the writer of the hook settings leaves it. */
 const OWN_SETTINGS = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
 const STATE_DIR = '/w/node/.factory';
+const GIT_DIR = '/w/node/.factory/.git';
+const GUARD_DIR = `${GIT_DIR}/${stateGuard.folder}`;
+const HOOK_FILES = stateGuard.hookFiles.map((name) => `${GUARD_DIR}/${name}`);
 const RUNTIME_DIR = '/w/node/.factory/state';
 const MACHINE_ID_FILE = '/w/node/.factory/state/machine-id';
 const MARK_FILE = '/w/node/.factory/active-machine.json';
@@ -113,7 +118,14 @@ interface Setup {
    * The state folder is a git repo of its own. It answers the status, the identity, the staging and the commit.
    * `status` is the porcelain text of `git status` (default: no change). `commitExit` is the exit code of the commit.
    */
-  readonly stateRepo?: { readonly status?: string; readonly commitExit?: number };
+  readonly stateRepo?: { readonly status?: string; readonly commitExit?: number; readonly configListExit?: number };
+  /**
+   * The delete guard of the state repo. Default 'on': `init` wrote the hook and set `core.hooksPath`. 'off': the setting is not set.
+   * 'unreadable': git can not tell the git folder.
+   */
+  readonly guard?: 'on' | 'off' | 'unreadable';
+  /** What `git --version` prints. Default: a git that is new enough. */
+  readonly gitVersion?: string;
 }
 
 /**
@@ -121,10 +133,18 @@ interface Setup {
  * the top of the work tree, the tracked paths and the ignore rules. The tmux log does not record its calls.
  */
 const gitAnswer = (setup: Setup) => (call: RunCall) => {
-  const command = call.args.slice(2).join(' ');
+  if (call.args.length === 1 && call.args[0] === '--version') return exited(0, setup.gitVersion ?? DEFAULT_GIT_VERSION);
+  const command = withoutStateWords(call.args).slice(2).join(' ');
   if (setup.stateRepo !== undefined && call.args[1] === STATE_DIR) {
-    if (command === 'status --porcelain -z --untracked-files=all') return exited(0, setup.stateRepo.status ?? '');
+    if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=dirty') return exited(0, setup.stateRepo.status ?? '');
     if (command === 'config user.name' || command === 'config user.email') return exited(0, 'Git User\n');
+    if (command === 'rev-parse --absolute-git-dir') {
+      return setup.guard === 'unreadable' ? exited(128, '', 'fatal: cannot read the git folder\n') : exited(0, `${GIT_DIR}\n`);
+    }
+    if (command === 'config core.hooksPath') return setup.guard === 'off' ? exited(1) : exited(0, `${GUARD_DIR}\n`);
+    if (command.startsWith('config --list --show-scope') && setup.stateRepo.configListExit !== undefined) {
+      return exited(setup.stateRepo.configListExit, '', "error: unknown option `show-scope'\n");
+    }
     return exited(command.includes(' commit ') ? (setup.stateRepo.commitExit ?? 0) : 0);
   }
   if (call.args.includes('--show-toplevel') && setup.workTree !== undefined) return exited(0, `${setup.workTree}\n`);
@@ -169,7 +189,16 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
   for (const tool of setup.tools ?? ['tmux', 'claude']) deps.seed(`/bin/${tool}`, '');
-  deps.seedDir(`${STATE_DIR}/.git`);
+  deps.seedDir(GIT_DIR);
+  if (setup.guard === undefined || setup.guard === 'on') {
+    const hook = guardHookText(deps.programArgv);
+    if (!hook.ok) throw new Error(hook.error.message);
+    deps.seedDir(GUARD_DIR);
+    for (const file of HOOK_FILES) {
+      deps.seed(file, hook.value);
+      deps.modes.set(file, stateGuard.hookMode);
+    }
+  }
   deps.seedDir(RUNTIME_DIR);
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
@@ -404,6 +433,65 @@ describe('start:a new session', () => {
   });
 });
 
+describe('start:the delete guard of the state repo (TP-6, TP-14)', () => {
+  it('prints no warning when the guard is on', async () => {
+    const { deps } = make();
+    const output = await succeeded(deps);
+    expect(deps.warned).toEqual([]);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('starts the session, prints one warning line with the reason and the remedy, and exits 0, when the guard is off', async () => {
+    const { deps, tmux } = make({ guard: 'off' });
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({ ok: true, value: { failed: false, json: { started: true } } });
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(true);
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain('The delete guard of .factory is off');
+    expect(deps.warned[0]).toContain('core.hooksPath is not set');
+    expect(deps.warned[0]).toContain('Run "factory upgrade".');
+  });
+
+  it('prints the same one line in a dry run, and starts nothing', async () => {
+    const { deps, tmux } = make({ guard: 'off' });
+    await succeeded(deps, { dryRun: true });
+    expect(deps.warned.filter((line) => line.includes('delete guard'))).toHaveLength(1);
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
+  });
+
+  it('names the step by hand, and not factory upgrade, when the .git entry of the state folder is a git file', async () => {
+    const { deps } = make();
+    expect((await deps.fs.remove(GIT_DIR)).ok).toBe(true);
+    deps.seed(GIT_DIR, 'gitdir: ../.git/modules/.factory\n');
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({ ok: true, value: { failed: false, json: { started: true } } });
+    expect(deps.warned.filter((line) => line.includes('delete guard'))).toEqual([
+      expect.stringContaining('Make .factory/.git the git folder of .factory.'),
+    ]);
+    expect(deps.warned.join('\n')).not.toContain('factory upgrade');
+  });
+
+  it('prints one line that says the guard is not checked, and exits 0, when git can not tell the git folder', async () => {
+    const { deps } = make({ guard: 'unreadable' });
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({ ok: true, value: { failed: false, json: { started: true } } });
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain('The delete guard of .factory is not checked');
+  });
+
+  it('prints no guard line and runs no git read of the guard when the state folder has no git entry', async () => {
+    const { deps } = make();
+    expect((await deps.fs.remove(GIT_DIR)).ok).toBe(true);
+    await startFactory(deps);
+    expect(deps.warned.filter((line) => line.includes('delete guard'))).toEqual([]);
+    const guardReads = deps.calls
+      .filter((call) => call.command === 'git')
+      .map((call) => withoutStateWords(call.args).slice(2).join(' '))
+      .filter((command) => command.includes('core.hooksPath') || command.startsWith('rev-parse --absolute-git-dir'));
+    expect(guardReads).toEqual([]);
+  });
+});
+
 describe('start:attach', () => {
   it('attaches with the terminal when a person types and reads, outside tmux', async () => {
     const { deps, tmux } = make({ tty: true });
@@ -607,6 +695,50 @@ describe('start:the tools', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.message).toContain('cannot read the version of tmux');
   });
+
+  describe('the version of git', () => {
+    it.each([
+      ['git version 2.25.1\n', 'git 2.25 is older than 2.26'],
+      ['git version 1.8.3.1\n', 'git 1.8 is older than 2.26'],
+      ['', 'cannot read the version of git'],
+      ['git master\n', 'cannot read the version of git'],
+    ])('refuses %j with exit 1, the remedy, and no session', async (gitVersion, shown) => {
+      const { deps, tmux } = make({ gitVersion });
+      const result = await startFactory(deps);
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining(shown) } });
+      if (!result.ok) {
+        expect(exitCodeOf[result.error.kind]).toBe(1);
+        expect(result.error.hint).toContain('factory doctor');
+      }
+      expect(tmux.commands()).toEqual(['-V']);
+      expect(tmux.sessions().size).toBe(0);
+    });
+
+    it('names git with the other problems of the tools', async () => {
+      const { deps } = make({ tools: ['tmux'], gitVersion: 'git version 2.25.1\n' });
+      const result = await startFactory(deps);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain('claude is not on PATH');
+        expect(result.error.message).toContain('git 2.25 is older than 2.26');
+      }
+    });
+
+    it('goes on for git 2.26', async () => {
+      const { deps } = make({ gitVersion: 'git version 2.26.0\n' });
+      expect((await startFactory(deps)).ok).toBe(true);
+    });
+
+    it('names the problem in a dry run, says that a real run stops, and starts nothing', async () => {
+      const { deps, tmux } = make({ gitVersion: 'git version 2.25.1\n' });
+      const output = await succeeded(deps, { dryRun: true });
+      expect(output.failed).toBe(false);
+      expect(output.lines.filter((line) => line.level === 'warn').map((line) => line.text)).toEqual([
+        'git 2.25 is older than 2.26 (factory needs git 2.26 or later; update git). A real run stops here.',
+      ]);
+      expect(tmux.calls.filter((call) => call.args[0] === 'new-session')).toEqual([]);
+    });
+  });
 });
 
 describe('start:a step that fails', () => {
@@ -744,11 +876,14 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
   const WRITE_CALLS = ['writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'mkdir', 'chmod', 'copyTree', 'removeEmptyDir'];
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(SETTINGS_FILE) ?? 'null');
   const launched = (tmux: TmuxLog): boolean => tmux.commands().some((command) => command.startsWith('new-session'));
-  /** The files that the start writes after it made the session are the id of the machine and its mark: the hook writer writes neither. */
+  /**
+   * The files that the start writes after it made the session are the id of the machine and its mark: the hook writer writes neither.
+   * The locks folder is left out too: the write of the mark makes it.
+   */
   const otherFiles = (deps: FakeDeps): string =>
     JSON.stringify(
       [...deps.files.entries()].filter(([path]) => path !== SETTINGS_FILE && path !== MACHINE_ID_FILE && path !== MARK_FILE).sort(),
-    ) + [...deps.dirs].sort().join(',');
+    ) + [...deps.dirs].filter((path) => path !== layoutOf(HOME).locksDir).sort().join(',');
   const failed = async (deps: FakeDeps, options: Partial<StartOptions> = {}) => {
     const result = await startFactory(deps, options);
     if (result.ok) throw new Error('start should have stopped');
@@ -998,7 +1133,7 @@ describe('start:the recovery after a kill of the server and the mark of the acti
   const stateWrites = (deps: FakeDeps): string[] =>
     deps.calls
       .filter((call) => call.command === 'git' && call.args[1] === STATE_DIR)
-      .map((call) => call.args.slice(2).join(' '))
+      .map((call) => withoutStateWords(call.args).slice(2).join(' '))
       .filter((call) => /^(add|rm|reset)\b/.test(call) || call.includes(' commit '));
 
   const markText = (machine: string): string =>
@@ -1373,6 +1508,79 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       expect(made.deps.warned).toHaveLength(1);
       expect(made.deps.warned[0]).toContain('cannot commit the state files');
       expect(resumesOf(made.tmux)).toEqual(SESSION);
+    });
+
+    describe('git that can not list the config scopes (AC-26, TP-55)', () => {
+      /** The exit code of a git that does not know the option `--show-scope`. */
+      const UNKNOWN_OPTION = 129;
+
+      it('stops with exit 1 and names git 2.26 before any session starts, and writes no mark and no commit', async () => {
+        const made = await seeded({ stateRepo: { configListExit: UNKNOWN_OPTION } });
+        const result = await startFactory(made.deps);
+        expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('git 2.26') } });
+        if (!result.ok) expect(exitCodeOf[result.error.kind]).toBe(1);
+        expect(made.deps.warned).toEqual([]);
+        expect(made.deps.files.has(MARK_FILE)).toBe(false);
+        expect(stateWrites(made.deps)).toEqual([]);
+        // No tmux call made a session or a pane, so a second start finds nothing to stop on.
+        expect(made.tmux.calls.filter((call) => call.args[0] === 'new-session')).toEqual([]);
+        expect(made.tmux.sessions().size).toBe(0);
+        expect(splitsOf(made.deps)).toBe(0);
+        expect(workerPanes(made.tmux)).toEqual([]);
+      });
+
+      it('only warns, and goes on with exit 0, when the config list fails for another reason than an unknown option', async () => {
+        const made = await seeded({ stateRepo: { configListExit: 128 } });
+        const result = await startFactory(made.deps);
+        expect(result).toMatchObject({ ok: true, value: { failed: false } });
+        expect(made.deps.warned).toHaveLength(1);
+        expect(made.deps.warned[0]).toContain('git exited with 128');
+        expect(made.deps.warned[0]).not.toContain('git 2.26');
+        expect(made.deps.files.has(MARK_FILE)).toBe(false);
+        expect(resumesOf(made.tmux)).toEqual(SESSION);
+      });
+
+      it('stops the same way for a session that runs already, before it looks at the session and before the attach', async () => {
+        const made = await seeded({
+          workers: [],
+          tty: true,
+          stateRepo: { configListExit: UNKNOWN_OPTION },
+          tmux: { sessions: { demo: HOME } },
+        });
+        const result = await startFactory(made.deps);
+        expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('git 2.26') } });
+        expect(made.deps.warned).toEqual([]);
+        expect(made.deps.files.has(MARK_FILE)).toBe(false);
+        expect(stateWrites(made.deps)).toEqual([]);
+        expect(made.tmux.commands().filter((command) => command !== '-V')).toEqual([]);
+        expect(made.deps.attached).toEqual([]);
+      });
+
+      it('names git 2.26 once, with no second stop text, in a dry run that a real run would stop', async () => {
+        const made = await seeded({ stateRepo: { configListExit: UNKNOWN_OPTION } });
+        const output = await succeeded(made.deps, { dryRun: true });
+        const stops = output.lines.filter((line) => line.text.includes('git 2.26'));
+        expect(stops).toHaveLength(1);
+        expect(stops[0]).toMatchObject({ level: 'warn' });
+        expect(stops[0]?.text).toContain('A real run stops here.');
+        expect(made.tmux.calls.filter((call) => call.args[0] === 'new-session')).toEqual([]);
+      });
+    });
+
+    describe('the state lock stays held to the bound (AC-8, TP-19)', () => {
+      const LOCK_FILE = `${layoutOf(HOME).locksDir}/${stateLock.name}${stateLock.lock.suffix}`;
+
+      it('prints one warning line with the lock path, exits 0, and writes no mark and no commit', async () => {
+        const made = await seeded();
+        made.deps.seed(LOCK_FILE, '1\n');
+        const result = await startFactory(made.deps);
+        expect(result).toMatchObject({ ok: true, value: { failed: false } });
+        expect(made.deps.warned).toHaveLength(1);
+        expect(made.deps.warned[0]).toContain(LOCK_FILE);
+        expect(made.deps.files.has(MARK_FILE)).toBe(false);
+        expect(stateWrites(made.deps)).toEqual([]);
+        expect(made.deps.files.get(LOCK_FILE)).toBe('1\n');
+      });
     });
   });
 });
@@ -2170,7 +2378,9 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
 
     /** The git calls in the state repo, each one as the words after `-C <folder>`. */
     const stateGit = (deps: FakeDeps): string[] =>
-      deps.calls.filter((call) => call.command === 'git' && call.args[1] === STATE_DIR).map((call) => call.args.slice(2).join(' '));
+      deps.calls
+        .filter((call) => call.command === 'git' && call.args[1] === STATE_DIR)
+        .map((call) => withoutStateWords(call.args).slice(2).join(' '));
 
     /** The writes of the render: the add, the reset and the commit calls, without those of the mark of the active machine. */
     const writesOf = (calls: readonly string[]): string[] =>

@@ -79,6 +79,7 @@ const make = async (setup: Setup = {}): Promise<World> => {
     ...setup.tmux,
   });
   let reads = 0;
+  let running = false;
   const run: RunHandler = (call) => {
     setup.watch?.(isCoordinatorRead(call) ? 'coordinator' : (call.args[0] ?? ''));
     const result = tmux.handler(call);
@@ -103,7 +104,8 @@ const make = async (setup: Setup = {}): Promise<World> => {
     setup.watch === undefined
       ? created
       : withFsWatch(created, (method, path) => {
-          if (method !== 'readTextLimited') return;
+          // The setup writes the line under a lock, and the free step of that lock reads the lock file: that read is no read of the line by self reset.
+          if (method !== 'readTextLimited' || !running) return;
           if (path.startsWith(layoutOf(HOME).heartbeatDir)) setup.watch?.('line');
           if (path === RESUME_FILE) setup.watch?.('resume');
         });
@@ -120,7 +122,14 @@ const make = async (setup: Setup = {}): Promise<World> => {
     if (!pointer.ok) throw new Error(pointer.error.message);
   }
   deps.mtimes.set(RESUME_FILE, deps.now().getTime() - 5 * MINUTE);
-  return { deps, tmux: tmux.log, run: () => selfReset(deps, { home: HOME, config: sampleConfig() }) };
+  return {
+    deps,
+    tmux: tmux.log,
+    run: () => {
+      running = true;
+      return selfReset(deps, { home: HOME, config: sampleConfig() });
+    },
+  };
 };
 
 const errorOf = <T>(result: CliResult<T>): CliError => {

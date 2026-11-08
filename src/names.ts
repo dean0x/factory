@@ -54,6 +54,7 @@ export const commands = {
   layout: 'layout',
   upgrade: 'upgrade',
   hook: 'hook',
+  state: 'state',
   version: 'version',
   help: 'help',
 } as const;
@@ -104,6 +105,9 @@ export const workerCommands = {
 /** The subcommands of `self`. */
 export const selfCommands = { reset: 'reset' } as const;
 
+/** The subcommands of `state`. */
+export const stateCommands = { guard: 'guard' } as const;
+
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
   workerNew: `${commands.worker} ${workerCommands.new}`,
@@ -114,6 +118,7 @@ export const commandLines = {
   workerReset: `${commands.worker} ${workerCommands.reset}`,
   workerWatch: `${commands.worker} ${workerCommands.watch}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
+  stateGuard: `${commands.state} ${stateCommands.guard}`,
 } as const;
 
 /** What a remedy line names as the command to run again: a command, or a command with its subcommand. */
@@ -478,6 +483,12 @@ export const homeIndex = {
  * acceptance never covers part of a list or part of a file.
  */
 export const trackedFiles = { maxCount: 2_000, maxFileBytes } as const;
+
+/** The lowest version of git that factory runs with: the read of the git config of the state folder (`--show-scope`) needs it. */
+export const minGitVersion = '2.26';
+
+/** The keys of `board.json` that the reader of item ids uses: the list of items, and the id of one item. */
+export const boardKeys = { items: 'items', id: 'id' } as const;
 
 /** The first commit of the root repo, which `init` and `upgrade` make: the branch, the message and the notice of a missing identity. */
 export const rootRepo = {
@@ -1036,6 +1047,30 @@ export const activeMachine = {
 } as const;
 
 /**
+ * The lock of the state repo: every step that changes the files of the state repo and commits them holds it from the ready check
+ * to the commit, so two writers never take each other's change. The lock file is `<name><suffix>` in the locks folder of the state
+ * folder. A writer tries `attempts` times and waits `waitMs` between two tries, so it waits 4.75 seconds at most, then it stops with
+ * exit 1 and names the lock file. A lock that is older than `staleMs` was left by a process that ended, and the next writer takes it.
+ * The lock file holds the token of its writer, so a writer that ran past `staleMs` does not remove the lock file of the writer that
+ * took its lock over. `staleMs` is larger than the longest locked run: about 13 git calls on the upgrade path with a limit of
+ * 15 seconds each (195 seconds at most), and a backup.
+ */
+export const stateLock = {
+  name: 'state',
+  /** The permission bits of the lock file, and of the locks folder when the call makes it. */
+  fileMode: privateFile.fileMode,
+  folderMode: privateFile.folderMode,
+  lock: {
+    suffix: privateFile.lockSuffix,
+    takeoverSuffix: privateFile.takeoverSuffix,
+    mode: privateFile.fileMode,
+    attempts: 20,
+    waitMs: 250,
+    staleMs: 300_000,
+  },
+} as const;
+
+/**
  * The exclude file of a project clone (design 4.6): `info/exclude` in the common git folder, which every work copy of the
  * clone shares. It holds one entry that hides the settings file of the work copies from git, so a work copy that has only
  * that file counts as clean. The entry anchors at the top of a work tree.
@@ -1145,6 +1180,8 @@ export const checkIds = {
   /** The version of the agent program: the messages between sessions need 2.1.224 or newer. */
   agentVersion: 'agent-version',
   stateRepo: 'state-repo',
+  /** The delete guard of the state repo: a warning when it is off, with the remedy. */
+  stateGuard: 'state-guard',
   projects: 'projects',
   projectUrls: 'project-urls',
 } as const;
@@ -1217,6 +1254,7 @@ export const schemaIds = {
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
+  stateGuard: `${program}.state-guard/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
   lastSeen: `${program}.last-seen/v1`,
@@ -1238,6 +1276,44 @@ export const flagText = (name: string): string => `--${name}`;
 
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
+
+/**
+ * The delete guard of the state repo: hooks that git runs before it makes a commit. `init` and `upgrade` write them from the text
+ * below into a folder of the git folder of the state repo (never the folder `hooks`), and set the key `core.hooksPath` to that
+ * folder. The git folder is not part of the tracked files, so the repo never holds a hook. The folder holds the hook files and
+ * nothing else. Every hook file has the same text, which starts `state guard`: `pre-commit` is for `git commit`,
+ * `pre-merge-commit` is for the commit of `git merge`, and `pre-applypatch` is for `git am`.
+ */
+export const stateGuard = {
+  folder: 'factory-guard',
+  hookFiles: ['pre-commit', 'pre-merge-commit', 'pre-applypatch'],
+  hookMode: 0o755,
+  folderMode: 0o755,
+  hooksPathKey: 'core.hooksPath',
+  /** The most entries that an install removes from the guard folder; a folder with more is left alone. */
+  maxEntries: 64,
+  /** The folder of the git folder that git reads hook files from when `core.hooksPath` is not set. */
+  defaultHooksFolder: 'hooks',
+  /** The end of the name of an example file in the default hooks folder: git does not run it. */
+  sampleSuffix: '.sample',
+  /** The most hooks that a warning names; it counts the rest. */
+  maxShownStops: 5,
+  /** The most older commits of board.json that the guard reads back to find the last board that can be read. */
+  historyBound: 100,
+  /**
+   * The most older commits of board.json that the guard reads when the walk back ends at `historyBound` with no board that can be
+   * read: it looks in the commits after the first `historyBound` for the board that a person put back. It counts from the last commit.
+   */
+  restoreBound: 500,
+  /** The word between the folder name and the pid in the name of the copy that an install keeps of an old guard folder. */
+  copyWord: '.old-',
+  interpreter: '#!/bin/sh',
+  comment: `# Written by ${program} from the text of the package. Git does not track this file. Run "${commandText(commands.upgrade)}" to write it again.`,
+  /** The line that a hook prints, with a stop, when the node program or the script that it names is gone. */
+  programMissing: `${program}: the program of the delete guard is not there. Run "${commandText(commands.upgrade)}" to write the guard again.`,
+  /** The remedy of every case of an off guard. */
+  remedy: `Run "${commandText(commands.upgrade)}".`,
+} as const;
 
 /** A subcommand of `worker` as a person types it, for example `factory worker watch`. */
 const workerCommandText = (subcommand: string): string => commandText(`${commands.worker} ${subcommand}`);

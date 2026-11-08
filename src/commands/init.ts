@@ -851,6 +851,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
   const madeState = await makeStateFolder(deps, layout, staging, plan.stateFiles);
   if (!madeState.ok) return rollback(madeState.error);
   const identity = madeState.value.committed;
+  const stateWarnings = madeState.value.warnings;
   touched.state = true;
 
   const coordinatorDir = await makeFolder(layout.coordinatorDir);
@@ -973,6 +974,7 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
               'Set user.name and user.email, then commit there.',
           ]),
       ...(rootCommitted || plan.received ? [] : [rootRepo.noIdentity]),
+      ...stateWarnings,
       ...approvals.warnings,
       ...accepted.warnings,
     ],

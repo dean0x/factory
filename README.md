@@ -19,6 +19,7 @@ You need:
 
 - Node.js 22 or newer. The package has no runtime dependencies.
 - tmux 3.0 or newer, and `claude` on the PATH, for `factory start`.
+- git 2.26 or newer. With an older git, `factory start` exits with code 1 and starts no session, `factory upgrade` and `factory init` exit with code 1 when they must change `.factory/`, and `factory doctor` fails the check `tools`.
 - macOS or Linux. On native Windows, every command exits with code 1 and says to use WSL.
 
 ## Commands
@@ -41,7 +42,7 @@ You need:
 | `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker, and it says "Resumed" only after the new session wrote its SessionStart line. See "Resume a worker". |
 | `factory worker summon ID [--for TIME]` | Show the pane of the worker in the slot of the window `view` for `TIME` (default 15m, from 1m to 2h). The board comes back by itself. See "Summon a worker". |
 | `factory layout` | Make the window `workers` if it is missing, tile its panes, and put the board back in the slot of the window `view` after a summon. See "Make the windows again". |
-| `factory doctor` | Run 26 checks. See "Doctor". |
+| `factory doctor` | Run 27 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `PreToolUse` and `Notification`. It records `Notification` only for the types `permission_prompt` and `elicitation_dialog`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
@@ -423,7 +424,7 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 
 ### Doctor
 
-`factory doctor` runs 26 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 15 checks are new:
+`factory doctor` runs 27 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 16 checks are new:
 
 - `local-file`: the mode, the owner and the type of `factory.local.yaml`.
 - `root`: the factory folder is the top folder of its own git work tree and holds an intact share list. This is a warning.
@@ -440,6 +441,9 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 - `instruction-files`: the instruction files of agents in the factory folder and above it.
 - `project-urls`: a project with no URL that you can share is a warning.
 - `agent-version`: the version of the agent program (`claude --version`, 5 seconds). A version below 2.1.224, or a version that `doctor` cannot read, is a warning, because the messages between sessions need 2.1.224 or newer. It is not checked when the config is not valid.
+- `state-guard`: the delete guard of `.factory/` is on. A guard that is off is a warning, and the message names the step that repairs it (see "Upgrade a factory"). It is not checked when `.factory/` is no git repo.
+
+The check `tools` fails when git is older than 2.26, or when `doctor` cannot read the git version.
 
 The check of the Claude Code settings warns about `crossSessionInbound` set to `hold` or `refuse` (an unset value is no warning) and about the default mode `plan`, because a receiver in these cases holds or refuses the messages of other sessions. The warning text says that it reads project and local settings only. `doctor` cannot see user-level settings or a mode that you set in a pane.
 
@@ -479,6 +483,16 @@ factory upgrade
 `upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports.
 
 `upgrade` also adds the hook events that are missing (`Notification` and `PreToolUse`) to the hook settings of each recorded work copy whose settings file holds a hook entry of factory, and to the settings of the coordinator. It prints the change and asks first, with the same consent rule as `start`: a yes in a terminal window, or `--yes` outside a factory session. A dry run lists the change and writes nothing. A settings file with no hook entry of factory is skipped. A write that fails exits with code 1 and names the files that changed. `--json` lists the files in the field `hookSettings`. After this step, run `factory reboot`, so that each session gets its name and the new events.
+
+`upgrade` also writes the delete guard of `.factory/`. The guard is three hooks in `.factory/.git/factory-guard/`: `pre-commit` (for `git commit`), `pre-merge-commit` (for a `git merge` that makes a merge commit) and `pre-applypatch` (for `git am`). The setting `core.hooksPath` of `.factory/` names that folder. Each hook runs `factory state guard`. A commit in `.factory/` stops when it removes an item id from `board.json`, removes the file, or changes it to a text that cannot be read. A commit that does not change `board.json` passes. Git runs no hook for `git revert`, `git cherry-pick`, `git rebase`, `git reset`, and a `git merge` or `git pull` that fast-forwards, so the guard does not check them. `init` writes the same hooks into a new `.factory/`, and into an existing one that has no guard.
+
+The guard step comes after the ready check of `.factory/`, the link checks and the backups, and before the first file change. A run that stops before the step changes nothing. A run that stops after the step keeps the guard and says so: "Wrote the delete guard in .factory/.git/factory-guard. It stays." A run that changes only the guard makes no backup and no commit. `--json` names the action in the field `stateGuard`: `current` (the guard is on), `install` (the run writes it) or `unsupported`.
+
+Git reads hooks only from the guard folder after this step. So the hook files in `.factory/.git/hooks` and the hooks of another `core.hooksPath` stop running in the state repo, and factory runs none of them. `init`, `upgrade` and `upgrade --dry-run` print one warning that lists them before the write. The warning also lists the extra entries of the guard folder, which the step removes.
+
+Some cases are `unsupported`: only a person can repair the guard. They are `.factory/.git` as a file, a link or another folder; a program path that factory does not know; and a guard folder that is a link, is not a folder, is not at its real path, or holds more than 64 entries. Then `init` and `upgrade` warn with the cause and a manual step, and go on with exit code 0. `doctor` and `start` warn with the same step.
+
+The hooks run the Node program and the script of factory by their absolute paths. A Node update, a second install or a moved package changes a path. If a path is gone, each commit that the hooks check stops with one line that names `factory upgrade`. `doctor` and `start` warn that the guard is off. Run `factory upgrade` to write the hooks again.
 
 `upgrade` renders a block again when its text differs from the text that the package and your settings give. The owner prefix of `factory.local.yaml` is in the `safety` block. The context limits of `factory.yaml` are in the `coordinator` block. A block that you edited stays as it is, with a warning that names `factory upgrade --overwrite <block>`. `doctor` names the same command. The block `setup` is the exception: its text comes from the setup file, so `doctor` warns and names the setup file, and `upgrade` puts back the text of that file and keeps the edited text in a backup file (see below). A block that an earlier `upgrade` kept under its old name, for example `protocol`, stays under that name until you name it. `upgrade` and `doctor` find it under that name and name the flag.
 

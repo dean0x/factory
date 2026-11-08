@@ -9,10 +9,12 @@ import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { recordDelegation } from '../../src/core/owner-record.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
 import { ok } from '../../src/core/result.js';
-import { env, trackedFiles } from '../../src/names.js';
+import { env, stateGuard, trackedFiles } from '../../src/names.js';
+import { guardHookText } from '../../src/state/guard.js';
 import {
   createFakeDeps,
   exited,
+  FAKE_PROGRAM_ARGV,
   registerRoot,
   withFailingWrites,
   type FakeDeps,
@@ -145,6 +147,30 @@ describe('init: a received factory (TP-29, TP-30)', () => {
     expect(coordinatorText(deps)).toContain('factory:');
     // The root repo is there already: init makes no repo and no commit in it.
     expect(log.calls.filter((call) => call.args[1] === ROOT && ['init', 'add', 'commit'].includes(call.args[2] ?? ''))).toEqual([]);
+  });
+
+  it('writes the delete guard into the state repo that it makes, with the setting for the final path (TP-2)', async () => {
+    const { deps, log } = received({}, terminal);
+    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+    const guard = `${ROOT}/.factory/.git/${stateGuard.folder}`;
+    const text = guardHookText(FAKE_PROGRAM_ARGV);
+    for (const name of stateGuard.hookFiles) {
+      expect(deps.files.get(`${guard}/${name}`)).toBe(text.ok ? text.value : null);
+      expect(deps.modes.get(`${guard}/${name}`)).toBe(0o755);
+    }
+    expect(log.commands()).toContain(`config -- core.hooksPath ${guard}`);
+  });
+
+  it('makes the state folder without a guard, and warns with the cause, when the guard can not be written (TP-2)', async () => {
+    const { deps } = received({}, { ...terminal, programArgv: [] });
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.value.warnings : []).toEqual(
+      expect.arrayContaining([expect.stringContaining('can not write it: factory does not know the absolute path of its own program')]),
+    );
+    expect(deps.files.has(INDEX)).toBe(true);
+    expect(deps.files.has(`${ROOT}/.factory/node.json`)).toBe(true);
+    expect([...deps.files.keys()].some((path) => path.includes(stateGuard.folder))).toBe(false);
   });
 
   it('records the root with the origin received, also when an old entry of the folder says own', async () => {

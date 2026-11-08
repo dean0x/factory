@@ -1,4 +1,4 @@
-import { inspectBlocks } from '../blocks/status.js';
+import { fileOfTarget, inspectBlocks } from '../blocks/status.js';
 import { failure, type CliResult } from '../cli/errors.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
@@ -6,7 +6,8 @@ import { commitPaths, requireStateRepoCommit, unstagePaths, type RepoPaths } fro
 import { ok } from '../core/result.js';
 import { setupBlockNames, type CommandName } from '../names.js';
 import type { ApprovalModes } from '../recipes/index.js';
-import { layoutOf } from '../state/layout.js';
+import { layoutOf, type Layout } from '../state/layout.js';
+import { withStateLock } from '../state/state-lock.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import { blockFileTexts, inStateRepo, restore, writeAll, type Written } from './apply.js';
@@ -27,20 +28,18 @@ const SETUP_WRITES: readonly BlockPlan['action'][] = ['render', 'add'];
 const COMMIT_MESSAGE = 'chore: render the state text';
 
 /**
- * Write the new text of each file that holds one of these planned blocks: the same edit and the same atomic write as
- * `upgrade`. A file in the state repo is committed with the same steps as `upgrade`; a file outside it is not. A failed
- * write or commit puts every file back as it was. `command` is the command that the person runs again after a stop. The
- * value is true when a file was written.
+ * The steps of `writeBlockPlans` that run inside the state lock when a file of the state repo changes: the texts, the ready check,
+ * the writes and the commit. The texts are read under the lock, so they are made from the files as they are when the commit runs.
  */
-export const writeBlockPlans = async (
+const writeAndCommit = async (
   deps: Deps,
   home: string,
+  layout: Layout,
   changes: readonly BlockPlan[],
   command: CommandName,
 ): Promise<CliResult<boolean>> => {
   const texts = await blockFileTexts(deps, home, changes);
   if (!texts.ok) return texts;
-  const layout = layoutOf(home);
   const touched = inStateRepo(layout, texts.value.map((file) => file.path));
   if (touched.length > 0) {
     const ready = await requireStateRepoCommit(deps, layout.stateDir, touched, 'the render', command);
@@ -57,6 +56,25 @@ export const writeBlockPlans = async (
   const unstaged = wrote.ok ? await unstagePaths(deps, layout.stateDir, paths) : ok(undefined);
   const notes = [...problems, ...(unstaged.ok ? [] : [unstaged.error.message])];
   return notes.length === 0 ? committed : failure(`${committed.error.message}. ${notes.join('; ')}`);
+};
+
+/**
+ * Write the new text of each file that holds one of these planned blocks: the same edit and the same atomic write as
+ * `upgrade`. A file in the state repo is committed with the same steps as `upgrade`, inside the state lock; a file outside it is
+ * not, and needs no lock. A lock that another writer holds for the whole wait is a failure (exit 1) that names the lock file, and
+ * nothing is written. A failed write or commit puts every file back as it was. `command` is the command that the person runs
+ * again after a stop. The value is true when a file was written.
+ */
+export const writeBlockPlans = (
+  deps: Deps,
+  home: string,
+  changes: readonly BlockPlan[],
+  command: CommandName,
+): Promise<CliResult<boolean>> => {
+  const layout = layoutOf(home);
+  const inRepo = inStateRepo(layout, changes.map((change) => fileOfTarget(layout, change.template.target)));
+  const render = (): Promise<CliResult<boolean>> => writeAndCommit(deps, home, layout, changes, command);
+  return inRepo.length > 0 ? withStateLock(deps, layout, render) : render();
 };
 
 export interface CoordinatorRender {

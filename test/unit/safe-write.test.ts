@@ -225,6 +225,40 @@ describe('safe lock: with the fake file system', () => {
     expect(deps.files.size).toBe(0);
   });
 
+  it('keeps the lock file of the process that took over a stale lock when the first holder ends late, and removes it when that process ends', async () => {
+    const deps = fakeWithParent();
+    let endSecond: () => void = () => undefined;
+    const secondMayEnd = new Promise<void>((resolve) => (endSecond = resolve));
+    let secondHolds: () => void = () => undefined;
+    const secondHolding = new Promise<void>((resolve) => (secondHolds = resolve));
+    let secondText: string | undefined;
+    let second: Promise<CliResult<string>> = Promise.resolve(ok('not started'));
+
+    const first = await withFolderLock(deps, TARGET, LOCK, async () => {
+      const firstText = deps.files.get(lockFile);
+      // The lock of the first holder is older than the stale age, so the second holder takes it by the stale rule.
+      deps.advance(LOCK.staleMs + 1);
+      second = withFolderLock(deps, TARGET, LOCK, async () => {
+        secondText = deps.files.get(lockFile);
+        secondHolds();
+        await secondMayEnd;
+        return ok('second');
+      });
+      await secondHolding;
+      expect(secondText).toBeDefined();
+      expect(secondText).not.toBe(firstText);
+      return ok('first');
+    });
+
+    // The first holder ends: its release leaves the lock file of the second holder, and its own result is not changed.
+    expect(first).toEqual({ ok: true, value: 'first' });
+    expect(deps.files.get(lockFile)).toBe(secondText);
+
+    endSecond();
+    expect(await second).toEqual({ ok: true, value: 'second' });
+    expect(deps.files.size).toBe(0);
+  });
+
   it('does not run the work, and keeps the lock of the other process, when the lock stays', async () => {
     const deps = fakeWithParent();
     deps.seed(lockFile, '1\n');

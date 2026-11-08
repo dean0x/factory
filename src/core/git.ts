@@ -1,8 +1,8 @@
 import { basename, isAbsolute, join, resolve } from 'node:path';
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { codedFailure, failure, gitConfigUnreadable, hasCode, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { isBranchName } from '../config/primitives.js';
-import { commands, commandText, dirs, program, trackedFiles, type CommandName } from '../names.js';
-import type { Deps } from './deps.js';
+import { commands, commandText, dirs, minGitVersion, program, trackedFiles, type CommandName } from '../names.js';
+import type { Deps, RunOutput } from './deps.js';
 import { isInUserClaudeFolder, isWrittenInside, userClaudeFolderOf } from './paths.js';
 import { ok } from './result.js';
 import { shellWord } from './shell-word.js';
@@ -33,8 +33,12 @@ export const parseGithubRepo = (url: string): string | null => {
   return match === null ? null : `${match[1]}/${match[2]}`;
 };
 
-/** The setting that turns off the program that git runs to find the changed files. */
-const FILE_MONITOR_OFF = 'core.fsmonitor=false';
+/**
+ * The setting that turns off the program that git runs to find the changed files. The value is empty on purpose. Before git 2.36,
+ * `core.fsmonitor` is the path of a program, so the value `false` would make git run a program with that name; an empty value
+ * names no program there. From git 2.36 an empty value reads as "off". So the file monitor is off on every git that factory accepts.
+ */
+const FILE_MONITOR_OFF = 'core.fsmonitor=';
 
 /**
  * The first words of a git command in the folder `dir`. With `gitDir`, git takes the repo from that folder and the files from
@@ -170,11 +174,15 @@ const exitFailure = (what: string, exitCode: number, stderr: string): CliResult<
   return failure(`cannot ${what}: git exited with ${exitCode}${detail === '' ? '' : ` (${detail})`}`);
 };
 
-const gitStep = async (deps: Deps, dir: string, args: readonly string[], what: string): Promise<CliResult<void>> => {
-  const result = await deps.run('git', ['-C', dir, ...args], { timeoutMs: GIT_TIMEOUT_MS });
+/** One git step that has to work. `lead` is the words before the command, for example `-C <folder>`. */
+const gitStepWith = async (deps: Deps, lead: readonly string[], args: readonly string[], what: string): Promise<CliResult<void>> => {
+  const result = await deps.run('git', [...lead, ...args], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
   return result.value.exitCode === 0 ? ok(undefined) : failure(`cannot ${what}: git exited with ${result.value.exitCode}`);
 };
+
+const gitStep = (deps: Deps, dir: string, args: readonly string[], what: string): Promise<CliResult<void>> =>
+  gitStepWith(deps, ['-C', dir], args, what);
 
 /** The message of `run` ends with this signal name when the time limit stops the program. */
 const TIME_LIMIT_SIGNAL = 'SIGTERM';
@@ -229,20 +237,32 @@ export const gitInit = (deps: Deps, dir: string): Promise<CliResult<void>> =>
   gitStep(deps, dir, ['init', '-q'], 'create the state repository');
 
 /**
- * The hooks of a state repo do not run for a commit of this tool. `/dev/null` is a file, so git finds no hook below it.
- * That turns off every hook; `--no-verify` turns off only two. An empty value is not documented as "no hooks".
+ * The hooks of a repo do not run for a step of this tool. `/dev/null` is a file, so git finds no hook below it.
+ * That turns off every hook, where the option of a commit turns off only two. An empty value is not documented as "no hooks".
  */
 const NO_HOOKS = 'core.hooksPath=/dev/null';
 
-const commitStaged = (deps: Deps, dir: string, message: string, what: string): Promise<CliResult<void>> =>
-  gitStep(deps, dir, ['-c', 'commit.gpgsign=false', '-c', NO_HOOKS, 'commit', '-q', '-m', message], what);
+/** The setting that turns off the signing of a commit. */
+const NO_SIGNING = ['-c', 'commit.gpgsign=false'] as const;
+
+const commitWords = (message: string): readonly string[] => ['commit', '-q', '-m', message];
+
+/**
+ * The first words of every git step that factory runs in the state folder `dir`: the hooks are off and the file monitor is off.
+ * So the step runs no hook, and it does not run the programs that the local git config of the folder names for these two jobs.
+ */
+const stateGit = (dir: string): readonly string[] => ['-C', dir, '-c', NO_HOOKS, '-c', FILE_MONITOR_OFF];
+
+/** One git step in the state folder `dir`; see `stateGit`. */
+const stateStep = (deps: Deps, dir: string, args: readonly string[], what: string): Promise<CliResult<void>> =>
+  gitStepWith(deps, stateGit(dir), args, what);
 
 const COMMIT_STATE = 'commit the state files';
 
 /** Stage everything and commit, for a new repo. The caller checks the identity first. */
 export const commitAll = async (deps: Deps, dir: string, message: string): Promise<CliResult<void>> => {
-  const staged = await gitStep(deps, dir, ['add', '-A'], 'stage the state files');
-  return staged.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : staged;
+  const staged = await stateStep(deps, dir, ['add', '-A'], 'stage the state files');
+  return staged.ok ? stateStep(deps, dir, [...NO_SIGNING, ...commitWords(message)], COMMIT_STATE) : staged;
 };
 
 export interface RootRepoInput {
@@ -271,7 +291,12 @@ export const initRootRepo = async (deps: Deps, root: string, input: RootRepoInpu
   if (!(await hasIdentity(deps, root))) return ok({ committed: false });
   const staged = await gitStep(deps, root, ['add', '--', ...input.paths], 'stage the config files');
   if (!staged.ok) return staged;
-  const committed = await commitStaged(deps, root, input.message, 'commit the config files');
+  const committed = await gitStep(
+    deps,
+    root,
+    [...NO_SIGNING, '-c', NO_HOOKS, ...commitWords(input.message)],
+    'commit the config files',
+  );
   return committed.ok ? ok({ committed: true }) : committed;
 };
 
@@ -298,7 +323,7 @@ export const commitPaths = async (
   if (paths.present.length === 0 && paths.gone.length === 0) return failure(`cannot ${COMMIT_STATE}: no path was named`);
   if (paths.gone.length > 0) {
     // `--ignore-unmatch`: a path that git never tracked has no removal to record.
-    const removed = await gitStep(
+    const removed = await stateStep(
       deps,
       dir,
       ['rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', ...paths.gone],
@@ -307,13 +332,13 @@ export const commitPaths = async (
     if (!removed.ok) return removed;
   }
   const added =
-    paths.present.length === 0 ? ok(undefined) : await gitStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
-  return added.ok ? commitStaged(deps, dir, message, COMMIT_STATE) : added;
+    paths.present.length === 0 ? ok(undefined) : await stateStep(deps, dir, ['add', '-A', '--', ...paths.present], 'stage the state files');
+  return added.ok ? stateStep(deps, dir, [...NO_SIGNING, ...commitWords(message)], COMMIT_STATE) : added;
 };
 
 /** Remove the staged changes of `paths` from the index. The files keep their text, and other staged changes stay. */
 export const unstagePaths = (deps: Deps, dir: string, paths: RepoPaths): Promise<CliResult<void>> =>
-  gitStep(deps, dir, ['reset', '-q', '--', ...paths.present, ...paths.gone], 'clear the staged files');
+  stateStep(deps, dir, ['reset', '-q', '--', ...paths.present, ...paths.gone], 'clear the staged files');
 
 /** The paths that a repo tracks, in the order of git, and whether git named more paths than the list can hold. */
 export interface TrackedList {
@@ -392,9 +417,24 @@ const treeEntryOf = (record: string): TreeEntry | null => {
  * of that folder. A repo with no commit, or a path that git can not read, is a failure. The commit is the one that a new work
  * tree of the repo starts from.
  */
-export const headEntriesAt = async (deps: Deps, dir: string, path: string): Promise<CliResult<readonly TreeEntry[]>> => {
-  const what = `cannot read ${path} of the last commit of ${dir}`;
-  const result = await deps.run('git', ['-C', dir, 'ls-tree', '-z', '-l', 'HEAD', '--', path], { timeoutMs: GIT_TIMEOUT_MS });
+export const headEntriesAt = (deps: Deps, dir: string, path: string): Promise<CliResult<readonly TreeEntry[]>> =>
+  entriesWith(deps, ['-C', dir], dir, HEAD_REV, path);
+
+/** The name of the last commit, as git takes it. */
+export const HEAD_REV = 'HEAD';
+
+const OBJECT_ID = /^[0-9a-f]{40,64}$/;
+
+const entriesWith = async (
+  deps: Deps,
+  lead: readonly string[],
+  dir: string,
+  rev: string,
+  path: string,
+): Promise<CliResult<readonly TreeEntry[]>> => {
+  if (rev !== HEAD_REV && !OBJECT_ID.test(rev)) return failure('cannot read a file of a commit: the commit id is not valid');
+  const what = `cannot read ${path} of ${rev === HEAD_REV ? 'the last commit' : `the commit ${rev.slice(0, 12)}`} of ${dir}`;
+  const result = await deps.run('git', [...lead, 'ls-tree', '-z', '-l', rev, '--', path], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`${what}: ${result.error.message}`);
   if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
   const entries: TreeEntry[] = [];
@@ -407,16 +447,47 @@ export const headEntriesAt = async (deps: Deps, dir: string, path: string): Prom
   return ok(entries);
 };
 
-const OBJECT_ID = /^[0-9a-f]{40,64}$/;
+/**
+ * As `headEntriesAt`, for the state repo at `dir`, with the hooks off. `rev` is `HEAD` or a commit id (40 to 64 hex digits), so no
+ * word acts as an option.
+ */
+export const stateEntriesAt = (deps: Deps, dir: string, rev: string, path: string): Promise<CliResult<readonly TreeEntry[]>> =>
+  entriesWith(deps, stateGit(dir), dir, rev, path);
 
-/** The text of the file of git with this object id. The caller checks the size first, from the entry of the file. */
-export const blobTextOf = async (deps: Deps, dir: string, id: string): Promise<CliResult<string>> => {
+const blobTextWith = async (deps: Deps, lead: readonly string[], dir: string, id: string): Promise<CliResult<string>> => {
   if (!OBJECT_ID.test(id)) return failure('cannot read a file of git: the object id is not valid');
   const what = `cannot read the file ${id} of ${dir}`;
-  const result = await deps.run('git', ['-C', dir, 'cat-file', 'blob', id], { timeoutMs: GIT_TIMEOUT_MS });
+  const result = await deps.run('git', [...lead, 'cat-file', 'blob', id], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`${what}: ${result.error.message}`);
   if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
   return ok(result.value.stdout);
+};
+
+/** The text of the file of git with this object id. The caller checks the size first, from the entry of the file. */
+export const blobTextOf = (deps: Deps, dir: string, id: string): Promise<CliResult<string>> =>
+  blobTextWith(deps, ['-C', dir], dir, id);
+
+/** As `blobTextOf`, for the state repo at `dir`, with the hooks off. */
+export const stateBlobTextOf = (deps: Deps, dir: string, id: string): Promise<CliResult<string>> =>
+  blobTextWith(deps, stateGit(dir), dir, id);
+
+/**
+ * The ids of the commits that changed `path`, on the line of first parents from the last commit of the state repo at `dir`, newest
+ * first, at most `limit` of them (`git log --first-parent`). The first id is the commit that made the file as the last commit has it.
+ * An id that git prints and that is no object id is a failure, so a line of other text (for example a signature report) never counts.
+ */
+export const stateCommitsOf = async (deps: Deps, dir: string, path: string, limit: number): Promise<CliResult<readonly string[]>> => {
+  if (!Number.isInteger(limit) || limit < 1) return failure('cannot read the history of a file: the limit is not a whole number above 0');
+  const what = `cannot read the history of ${path} in ${dir}`;
+  const words = ['log', '--first-parent', '--no-show-signature', '--format=%H', '-n', String(limit), HEAD_REV, '--', path];
+  const result = await deps.run('git', [...stateGit(dir), ...words], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
+  const ids = result.value.stdout.split('\n').filter((line) => line !== '');
+  if (ids.length > limit || !ids.every((id) => OBJECT_ID.test(id))) {
+    return failure(`${what}: git printed a line that ${program} can not read`);
+  }
+  return ok(ids);
 };
 
 /** The most paths that one ignore check takes. */
@@ -464,9 +535,26 @@ export const requireWorkTreeTop = async (deps: Deps, dir: string, what: string):
  * folder that the repo of `dir` has; see `gitIn`.
  */
 export const headOf = async (deps: Deps, dir: string, gitDir?: string): Promise<CliResult<string | null>> => {
-  const result = await deps.run('git', [...gitIn(dir, gitDir), 'rev-parse', '--verify', 'HEAD'], { timeoutMs: GIT_TIMEOUT_MS });
+  const result = await deps.run('git', [...gitIn(dir, gitDir), 'rev-parse', '--verify', HEAD_REV], { timeoutMs: GIT_TIMEOUT_MS });
   if (!result.ok) return failure(`cannot read the last commit of ${dir}: ${result.error.message}`);
   return ok(result.value.exitCode === 0 ? result.value.stdout.trim() : null);
+};
+
+/** The exit code of `git rev-parse -q --verify` for a name that git does not find: the repo has no commit. */
+const GIT_NOT_FOUND_EXIT = 1;
+
+/**
+ * As `headOf`, for the state repo at `dir`, with the hooks off and the file monitor off. Only the exit code that means "not found" (1,
+ * with the quiet form of `rev-parse`) is a repo with no commit. Any other exit code is an error, so a HEAD that git cannot read is never
+ * taken for a repo with no commit.
+ */
+export const stateHeadOf = async (deps: Deps, dir: string): Promise<CliResult<string | null>> => {
+  const what = `cannot read the last commit of ${dir}`;
+  const result = await deps.run('git', [...stateGit(dir), 'rev-parse', '-q', '--verify', HEAD_REV], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`${what}: ${result.error.message}`);
+  if (result.value.exitCode === 0) return ok(result.value.stdout.trim());
+  if (result.value.exitCode === GIT_NOT_FOUND_EXIT) return ok(null);
+  return failure(`${what}: git exited with ${result.value.exitCode}`);
 };
 
 /** One path of `git status`: its state in the index, its state in the work tree, and the path in the repo. */
@@ -502,8 +590,128 @@ const shownPaths = (paths: readonly string[]): string => {
   return paths.length > MAX_SHOWN_PATHS ? `${shown} and ${paths.length - MAX_SHOWN_PATHS} more` : shown;
 };
 
+/** The keys of the local git config that name a program and have no switch to turn them off for one call: a filter driver and a config hook. */
+const PROGRAM_KEY_PREFIXES: readonly string[] = ['filter.', 'hook.'];
+
+/** The scopes of `git config --show-scope` that belong to the folder itself. */
+const FOLDER_SCOPES: ReadonlySet<string> = new Set(['local', 'worktree']);
+
+/** The exit code of git for an option that it does not know. */
+const GIT_UNKNOWN_OPTION_EXIT = 129;
+
+export interface GitVersion {
+  readonly major: number;
+  readonly minor: number;
+}
+
+/** The most characters of the output of `git --version` that are read. A longer output is not a version. */
+const MAX_VERSION_OUTPUT_CHARS = 200;
+
+/** The start of the output of `git --version`: `git version 2.45.1`, `git version 2.39.5 (Apple Git-154)`, `git version 2.45.1.windows.1`. */
+const GIT_VERSION = /^git version (\d{1,4})\.(\d{1,4})(?!\d)/;
+
+/** The version in the output of `git --version`. Null when the output is longer than `MAX_VERSION_OUTPUT_CHARS` or has no version. */
+export const parseGitVersion = (text: string): GitVersion | null => {
+  if (text.length > MAX_VERSION_OUTPUT_CHARS) return null;
+  const match = GIT_VERSION.exec(text.trim());
+  return match === null ? null : { major: Number(match[1]), minor: Number(match[2]) };
+};
+
+const [MIN_GIT_MAJOR = 0, MIN_GIT_MINOR = 0] = minGitVersion.split('.').map(Number);
+
+/** True when the version is `minGitVersion` or newer: the oldest git that the steps in the state folder need. */
+export const isGitNewEnough = (version: GitVersion): boolean =>
+  version.major > MIN_GIT_MAJOR || (version.major === MIN_GIT_MAJOR && version.minor >= MIN_GIT_MINOR);
+
 /**
- * Refuse when a commit in the state repo could take a change of the owner. The index of the state repo must hold no
+ * The problem with the git on PATH, or null when it is new enough. A version that cannot be read is a problem too, so the check fails
+ * closed. The text ends with the fix in parentheses, and it has no end mark, so a caller can join it with others.
+ */
+export const gitVersionProblem = async (deps: Deps): Promise<string | null> => {
+  const needs = `${program} needs git ${minGitVersion} or later`;
+  const result = await deps.run('git', ['--version'], { timeoutMs: GIT_TIMEOUT_MS });
+  const version = result.ok && result.value.exitCode === 0 ? parseGitVersion(result.value.stdout) : null;
+  if (version === null) return `cannot read the version of git (${needs})`;
+  if (isGitNewEnough(version)) return null;
+  return `git ${version.major}.${version.minor} is older than ${minGitVersion} (${needs}; update git)`;
+};
+
+/** The scope word that git prints: lower case letters only. Any other text means that the list is not read right. */
+const SCOPE_WORD = /^[a-z]+$/;
+
+/**
+ * The keys of `git config --list --show-scope --includes -z` that are set in the config of the folder itself and name a program. With
+ * `-z`, git prints for each setting the scope, a NUL, the key, a line break, the value and a NUL. A key with no value has no line break.
+ * The value can hold line breaks, so the key ends at the first one. Null when the list is not in this form.
+ */
+const programKeysOf = (stdout: string): readonly string[] | null => {
+  const parts = stdout.split('\0');
+  if (parts.pop() !== '' || parts.length % 2 !== 0) return null;
+  const keys: string[] = [];
+  for (let at = 0; at < parts.length; at += 2) {
+    const scope = parts[at] ?? '';
+    const entry = parts[at + 1] ?? '';
+    if (!SCOPE_WORD.test(scope)) return null;
+    const lineBreak = entry.indexOf('\n');
+    const key = lineBreak < 0 ? entry : entry.slice(0, lineBreak);
+    if (FOLDER_SCOPES.has(scope) && PROGRAM_KEY_PREFIXES.some((prefix) => key.toLowerCase().startsWith(prefix))) keys.push(key);
+  }
+  return keys;
+};
+
+/**
+ * Refuse (exit 4) when the local git config of the state folder, or a file it includes, has a key that names a program with no switch
+ * to turn it off for one call: a filter driver (`filter.`) or a config hook (`hook.`). The refusal names the keys. It reads only.
+ * The read needs git 2.26 (`--show-scope`). A git that does not know the option exits with 129: that error (exit 1) names the
+ * version and carries the code `gitConfigUnreadable`, so a caller can tell it from the other failures. Any other fault (git does
+ * not run, the time limit, another exit code, a list that does not parse) is a plain failure (exit 1) with no code and no
+ * version text. Every fault is an error, never an accept. `command` is the command that the person runs again.
+ */
+export const requireStateConfigSafe = async (deps: Deps, stateDir: string, command: CommandName): Promise<CliResult<void>> => {
+  const again = `then run "${commandText(command)}" again.`;
+  const cannotRead = `cannot read the git config of ${dirs.state}`;
+  const unreadable = (detail: string): CliResult<never> =>
+    failure(`${cannotRead}: ${detail}`, `Find the cause with "git -C ${dirs.state} config --list", ${again}`);
+  const result = await deps.run('git', [...stateGit(stateDir), 'config', '--list', '--show-scope', '--includes', '-z'], {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
+  if (!result.ok) return unreadable(result.error.message);
+  if (result.value.exitCode === GIT_UNKNOWN_OPTION_EXIT) {
+    return codedFailure(
+      gitConfigUnreadable,
+      `${cannotRead}: git does not know the option --show-scope. ${program} needs git ${minGitVersion} or later`,
+      `Update git, ${again}`,
+    );
+  }
+  if (result.value.exitCode !== 0) return unreadable(`git exited with ${result.value.exitCode}`);
+  const keys = programKeysOf(result.value.stdout);
+  if (keys === null) return unreadable('git printed a list that is not in the form that was expected');
+  const [first] = keys;
+  if (first === undefined) return ok(undefined);
+  const unset = `git -C ${dirs.state} config --unset ${shellWord(first)}`;
+  return safetyRefusal(
+    `the local git config of ${dirs.state} sets ${shownPaths(keys)}, which ${keys.length === 1 ? 'names' : 'name'} a program, so ${program} makes no git change there`,
+    keys.length === 1
+      ? `Remove the key with "${unset}", ${again}`
+      : `Remove each key, for example the first with "${unset}", ${again}`,
+  );
+};
+
+/**
+ * The check of a command that only warns about a state repo that is not ready, and still stops (exit 1) when git is too old to list
+ * the config scopes: the one failure of `requireStateConfigSafe` that carries the code `gitConfigUnreadable`. A state folder with no
+ * `.git` entry has no config to list, and every other result is ok here: the first step that commits reports it, as a warning.
+ */
+export const requireStateConfigListable = async (deps: Deps, stateDir: string, command: CommandName): Promise<CliResult<void>> => {
+  const repo = await deps.fs.stat(join(stateDir, GIT_ENTRY));
+  if (!repo.ok || repo.value === null) return ok(undefined);
+  const safe = await requireStateConfigSafe(deps, stateDir, command);
+  return !safe.ok && hasCode(safe.error, gitConfigUnreadable) ? safe : ok(undefined);
+};
+
+/**
+ * Refuse when a commit in the state repo could take a change of the owner. The local git config of the state folder must name no
+ * program that has no switch for one call (`requireStateConfigSafe`). The index of the state repo must hold no
  * staged change. A path of `touched` must have no change of the owner, staged or not: `changing` names the command that
  * changes these paths ("the upgrade"), and `command` is the command that the person runs again.
  */
@@ -515,7 +723,9 @@ export const requireStateRepoReady = async (
   command: CommandName,
 ): Promise<CliResult<void>> => {
   const again = `Then run "${commandText(command)}" again.`;
-  const status = await statusOf(deps, stateDir);
+  const safe = await requireStateConfigSafe(deps, stateDir, command);
+  if (!safe.ok) return safe;
+  const status = await stateStatusOf(deps, stateDir);
   if (!status.ok) return status;
   const staged = status.value.filter((entry) => ![' ', '?', '!'].includes(entry.index));
   if (staged.length > 0) {
@@ -560,18 +770,104 @@ export const requireStateRepoCommit = async (
   return requireStateRepoReady(deps, stateDir, touched, changing, command);
 };
 
-/**
- * The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. `gitDir` is the git
- * folder that the repo of `dir` has; see `gitIn`.
- */
-export const statusOf = async (deps: Deps, dir: string, gitDir?: string): Promise<CliResult<readonly StatusEntry[]>> => {
-  const result = await deps.run('git', [...gitIn(dir, gitDir), 'status', '--porcelain', '-z', '--untracked-files=all'], {
-    timeoutMs: GIT_TIMEOUT_MS,
-  });
+const statusEntriesOf = (result: CliResult<RunOutput>, dir: string): CliResult<readonly StatusEntry[]> => {
   const what = `cannot read the changes of ${dir}`;
   if (!result.ok) return failure(`${what}: ${result.error.message}`);
   if (result.value.exitCode !== 0) return failure(`${what}: git exited with ${result.value.exitCode}`);
   return ok(parseStatus(result.value.stdout));
+};
+
+const STATUS_WORDS = ['status', '--porcelain', '-z', '--untracked-files=all'] as const;
+
+/**
+ * The changes in the index and in the work tree of the repo at `dir`. Every untracked file has its own entry. `gitDir` is the git
+ * folder that the repo of `dir` has; see `gitIn`.
+ */
+export const statusOf = async (deps: Deps, dir: string, gitDir: string): Promise<CliResult<readonly StatusEntry[]>> =>
+  statusEntriesOf(await deps.run('git', [...gitIn(dir, gitDir), ...STATUS_WORDS], { timeoutMs: GIT_TIMEOUT_MS }), dir);
+
+/**
+ * The changes in the index and in the work tree of the state repo at `dir`, as `statusOf`. A staged submodule pointer shows, because
+ * a commit takes the whole index. The work tree of a submodule is not read, so git starts no program in it.
+ */
+export const stateStatusOf = async (deps: Deps, dir: string): Promise<CliResult<readonly StatusEntry[]>> =>
+  statusEntriesOf(
+    await deps.run('git', [...stateGit(dir), ...STATUS_WORDS, '--ignore-submodules=dirty'], { timeoutMs: GIT_TIMEOUT_MS }),
+    dir,
+  );
+
+/**
+ * The value of one local setting of the state folder as git reads it, or null when it is not set. This read leaves the hooks as they
+ * are set: with the hooks forced off, the value of `core.hooksPath` would always be `/dev/null`. The key is a name of the code.
+ * The scope `local` reads only the config file of the state folder, so a value of the global or system config does not show.
+ */
+export const stateConfigValue = async (
+  deps: Deps,
+  dir: string,
+  key: string,
+  scope: 'effective' | 'local' = 'effective',
+): Promise<CliResult<string | null>> => {
+  const what = `read ${key} of ${dir}`;
+  const words = scope === 'local' ? ['config', '--local', key] : ['config', key];
+  const result = await deps.run('git', ['-C', dir, '-c', FILE_MONITOR_OFF, ...words], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode === 1) return ok(null);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  return ok(result.value.stdout.replace(/\n$/, ''));
+};
+
+/** Set one setting in the local git config of the state folder. The separator keeps a value that starts with a dash from acting as an option. */
+export const setStateConfig = (deps: Deps, dir: string, key: string, value: string): Promise<CliResult<void>> =>
+  stateStep(deps, dir, ['config', '--', key, value], `set ${key}`);
+
+/** The exit code of `git config --unset` for a setting that is not in the file. */
+const CONFIG_KEY_ABSENT = 5;
+
+/** Remove one setting from the local git config of the state folder. A setting that is not there is as wanted already. */
+export const unsetStateConfig = async (deps: Deps, dir: string, key: string): Promise<CliResult<void>> => {
+  const what = `remove ${key}`;
+  const result = await deps.run('git', [...stateGit(dir), 'config', '--unset', key], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode === 0 || result.value.exitCode === CONFIG_KEY_ABSENT) return ok(undefined);
+  return exitFailure(what, result.value.exitCode, result.value.stderr);
+};
+
+/** The absolute path of the git folder of the state repo at `dir`. */
+export const absoluteGitDirOf = async (deps: Deps, dir: string): Promise<CliResult<string>> => {
+  const what = `read the git folder of ${dir}`;
+  const result = await deps.run('git', [...stateGit(dir), 'rev-parse', '--absolute-git-dir'], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  const printed = result.value.stdout.replace(/\n$/, '');
+  return isAbsolute(printed) ? ok(printed) : failure(`cannot ${what}: git printed a path that is not absolute`);
+};
+
+/** One entry of the index: the mode and the id of the file. */
+export interface IndexEntry {
+  readonly mode: string;
+  readonly id: string;
+}
+
+/** `<mode> <id> <stage>TAB<path>`: the line of `git ls-files --stage -z`. */
+const INDEX_ENTRY = /^(\d{6}) ([0-9a-f]{40,64}) (\d)\t([\s\S]+)$/;
+
+/**
+ * The entry that the index of the state repo at `dir` has at `path`, or null when the index has none. The index is the one that git
+ * gives the program through `GIT_INDEX_FILE`, so a program that git starts for a commit reads the index of that commit. A path with
+ * two entries (a conflict), or an entry that is not at stage 0, is a failure. The read changes nothing.
+ */
+export const stateIndexEntryAt = async (deps: Deps, dir: string, path: string): Promise<CliResult<IndexEntry | null>> => {
+  const what = `read ${path} in the index of ${dir}`;
+  const result = await deps.run('git', [...stateGit(dir), 'ls-files', '--stage', '-z', '--', path], { timeoutMs: GIT_TIMEOUT_MS });
+  if (!result.ok) return failure(`cannot ${what}: ${result.error.message}`);
+  if (result.value.exitCode !== 0) return exitFailure(what, result.value.exitCode, result.value.stderr);
+  const records = result.value.stdout.split('\0').filter((record) => record !== '');
+  if (records.length === 0) return ok(null);
+  const [mode, id, stage, entryPath] = INDEX_ENTRY.exec(records[0] ?? '')?.slice(1) ?? [];
+  if (records.length !== 1 || mode === undefined || id === undefined || stage !== '0' || entryPath !== path) {
+    return failure(`cannot ${what}: git printed an entry that ${program} can not read`);
+  }
+  return ok({ mode, id });
 };
 
 /** The longest wait for a fetch: it reads the network. */

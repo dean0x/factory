@@ -95,6 +95,19 @@ describe('scripts/check-intent-docs.sh', () => {
     expect(result.out).toContain('no heading for FAC-M5');
   });
 
+  it('does not take the heading of FAC-M5b for the heading of FAC-M5', async () => {
+    await change('roadmap-v2.md', (text) => text.replace('### FAC-M5:', '### Milestone M5:'));
+    expect(check().out).toContain('roadmap-v2.md has no heading for FAC-M5\n');
+  });
+
+  it('exits 1 for a milestone with a letter that the trace names and the roadmap has no heading for', async () => {
+    await change('roadmap-v2.md', (text) => text.replace('### FAC-M5b:', '### Milestone M5b:'));
+    const result = check();
+    expect(result.code).toBe(1);
+    expect(failedChecks(result.out)).toEqual(['2']);
+    expect(result.out).toContain('roadmap-v2.md has no heading for FAC-M5b');
+  });
+
   it('exits 1 for a command of design 4.2 with no row in the Command map', async () => {
     await change('roadmap-v2.md', (text) => text.replace(/^\| `item`, `request`.*\n/m, ''));
     const result = check();
@@ -977,7 +990,7 @@ const DESIGN_V3_ASKS = [
 ] as const;
 
 /** A milestone cell of a row starts with a milestone or the label. A cell that only names one later in its text, such as "None. FAC-M5 dropped this ask", does not. */
-const MILESTONE_OR_LABEL = /^(?:FAC-M\d+|Design v3 PR)\b/;
+const MILESTONE_OR_LABEL = /^(?:FAC-M\d+[a-z]?|Design v3 PR)\b/;
 
 /** The rows of the tables of the trace, by ask id, as five cells each. */
 const traceRows = (text: string): Map<string, string[]> => {
@@ -1027,6 +1040,7 @@ describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
     expect(mutated.get('F-15b')?.[3]).toBe(oldCell);
     expect(mutated.get('F-15b')?.[3]).not.toMatch(MILESTONE_OR_LABEL);
     expect(cell('F-15b', 3)).toMatch(MILESTONE_OR_LABEL);
+    expect('FAC-M5b: the usage view').toMatch(MILESTONE_OR_LABEL);
     expect('None. FAC-M5 dropped this ask').not.toMatch(MILESTONE_OR_LABEL);
     expect('None; not in the Design v3 PR').not.toMatch(MILESTONE_OR_LABEL);
   });

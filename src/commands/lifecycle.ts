@@ -33,7 +33,7 @@ import { recoverWorkers, type RecoveryReport } from '../workers/recovery.js';
 import { listWorkerRecords, requireRecord } from '../workers/registry.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { prepareLaunch, prepareRoot } from './launch-checks.js';
-import { renderStartFiles, startAgain } from './start.js';
+import { renderStartFiles, requireSessionGit, startAgain } from './start.js';
 
 /**
  * The lifecycle verbs (design 4.11): `shutdown` ends this factory, `restart` stops one worker and starts it again with its session
@@ -326,7 +326,8 @@ const rebootOutside = async (
  * `reboot`: every recorded worker stops and starts again with its session id. In order: the checks of `start` for the root and the
  * tools (exit 4); the session of the node, which must be the session of this folder when it runs (exit 4); one list of the panes;
  * then the checks of every worker before the first stop (`checkTargets`), which need a session id that passed the owner check
- * for each recorded worker (exit 3), and the proxy of each launch after the stop (exit 1). With no session, nothing stops and the
+ * for each recorded worker (exit 3), and the proxy of each launch after the stop (exit 1). Outside the session, the git checks of
+ * `start` come next (exit 1): a git older than 2.26 stops the reboot before the first stop. With no session, nothing stops and the
  * start path recovers the workers as `start` does.
  * Outside the session, the steps of `start` that change a file come first (the safety block rendered again, and the hook
  * settings), before the first stop. Then the session ends as `shutdown` ends it, and it starts again with its recovery. Inside the session (the pane
@@ -359,6 +360,12 @@ export const runReboot = async (
   });
   if (!checked.ok) return checked;
   const inside = running !== null && runsInside(deps, running);
+  // Outside the session, a session is made again. A git that is too old would stop its claim of the active machine after that, so the
+  // check comes before the first change and the first stop, and the session stays as it is.
+  if (!inside) {
+    const gitReady = await requireSessionGit(deps, home, commands.reboot);
+    if (!gitReady.ok) return gitReady;
+  }
   const run: RebootRun = { home, session, config, notes, answers: newProxyAnswers() };
   if (running !== null) {
     // The launches come after the stop, so their proxies are asked first: a proxy that does not answer stops nothing.

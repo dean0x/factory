@@ -20,11 +20,11 @@ import {
   type FileHandle,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createNodeDeps } from '../../src/core/node-deps.js';
+import { createNodeDeps, programArgvOf } from '../../src/core/node-deps.js';
 import { hookNames } from '../../src/names.js';
 
 const deps = createNodeDeps();
@@ -899,6 +899,30 @@ describe('node deps: sleep', () => {
     const start = Date.now();
     await deps.sleep(40);
     expect(Date.now() - start).toBeGreaterThanOrEqual(35);
+  });
+});
+
+describe('node deps: the program path', () => {
+  it('is the node program and the real path of the script, both absolute', async () => {
+    const script = await realpath(process.argv[1] ?? '');
+    expect(createNodeDeps().programArgv).toEqual([process.execPath, script]);
+    expect(createNodeDeps().programArgv.every((word) => isAbsolute(word))).toBe(true);
+  });
+
+  it('resolves a link to the script, so the path names the file that runs', async () => {
+    const script = fresh('script.js');
+    const link = fresh('link.js');
+    await writeFile(script, '');
+    await symlink(script, link);
+    expect(programArgvOf('/n/node', link)).toEqual(['/n/node', await realpath(script)]);
+  });
+
+  it('is empty when the process has no script path, so that no caller builds a command from a guess', () => {
+    expect(programArgvOf('/n/node', undefined)).toEqual([]);
+  });
+
+  it('is empty when the script path does not exist', () => {
+    expect(programArgvOf('/n/node', join(dir, 'no-such-script.js'))).toEqual([]);
   });
 });
 

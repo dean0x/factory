@@ -21,6 +21,7 @@ import {
   checkSecrets,
   checkSetupText,
   checkState,
+  checkStateGuard,
   checkStateRepo,
   checkTempFolders,
   checkTools,
@@ -64,6 +65,12 @@ interface Setup {
 }
 
 const AGENT_VERSION_TEXT = '2.1.224 (Claude Code)\n';
+
+/**
+ * The setting `core.hooksPath` as git reads it from the state folder after `init`. The git fake keeps a setting that init writes under
+ * the staging folder, and the staging folder is renamed afterwards, so the fixture names the setting of the final folder.
+ */
+const GUARD_ON: GitFixture = { hooksPath: { [`${HOME}/.factory`]: `${HOME}/.factory/.git/factory-guard` } };
 
 const makeDeps = (setup: Setup = {}): FakeDeps => {
   const git = gitHandler(setup.git ?? {});
@@ -944,6 +951,76 @@ describe('doctor: tools', () => {
     expect(result.level).toBe('warn');
     expect(result.text).toContain('git (');
   });
+
+  describe('the version of git', () => {
+    const versionCalls = (deps: FakeDeps) => deps.calls.filter((call) => call.command === 'git' && call.args[0] === '--version');
+
+    it.each([
+      ['git version 2.26.0\n'],
+      ['git version 2.26\n'],
+      ['git version 2.45.1\n'],
+      ['git version 2.100.0\n'],
+      ['git version 3.0.0\n'],
+      ['git version 2.39.5 (Apple Git-154)\n'],
+      ['git version 2.45.1.windows.1\n'],
+    ])('is ok for %j', async (version) => {
+      expect(await checkTools(makeDeps({ git: { version } }))).toMatchObject({ id: 'tools', level: 'ok' });
+    });
+
+    it.each([
+      ['git version 2.25.1\n', 'git 2.25'],
+      ['git version 2.9.5\n', 'git 2.9'],
+      ['git version 1.8.3.1\n', 'git 1.8'],
+      ['git version 1.99.0\n', 'git 1.99'],
+    ])('fails for %j, names both versions and the fix', async (version, shown) => {
+      const result = await checkTools(makeDeps({ git: { version } }));
+      expect(result).toMatchObject({ id: 'tools', level: 'fail' });
+      expect(result.text).toContain(`${shown} is older than 2.26`);
+      expect(result.text).toContain('factory needs git 2.26 or later');
+      expect(result.text).toContain('update git');
+    });
+
+    it.each([
+      ['an empty output', ''],
+      ['text with no version', 'hello\n'],
+      ['a version word with no number', 'git version\n'],
+      ['a number with no minor', 'git version 2\n'],
+      ['a number that is no version', 'git version x.y.z\n'],
+      ['digits that are too long for a version', 'git version 99999.1.0\n'],
+      ['a version in a long output', `git version 2.45.1${' '.repeat(300)}`],
+    ])('fails closed, and says so, for %s', async (_name, version) => {
+      const result = await checkTools(makeDeps({ git: { version } }));
+      expect(result).toMatchObject({ id: 'tools', level: 'fail' });
+      expect(result.text).toContain('cannot read the version of git');
+    });
+
+    it('fails closed when the version command of git ends with a failure', async () => {
+      const result = await checkTools(makeDeps({ git: { versionExit: 1 } }));
+      expect(result).toMatchObject({ id: 'tools', level: 'fail' });
+      expect(result.text).toContain('cannot read the version of git');
+    });
+
+    it('fails, and still names a missing program, when git is old and tmux is missing', async () => {
+      const result = await checkTools(makeDeps({ tools: ['git', 'gh', 'claude'], git: { version: 'git version 2.25.1\n' } }));
+      expect(result.level).toBe('fail');
+      expect(result.text).toContain('missing: tmux');
+      expect(result.text).toContain('git 2.25 is older than 2.26');
+    });
+
+    it('does not read the version of a git that is missing, and names it once', async () => {
+      const deps = makeDeps({ tools: ['tmux', 'gh', 'claude'] });
+      const result = await checkTools(deps);
+      expect(result.level).toBe('warn');
+      expect(result.text.match(/git/g)).toHaveLength(1);
+      expect(versionCalls(deps)).toEqual([]);
+    });
+
+    it('reads the version with one call that has no folder', async () => {
+      const deps = makeDeps();
+      await checkTools(deps);
+      expect(versionCalls(deps).map((call) => call.args)).toEqual([['--version']]);
+    });
+  });
 });
 
 describe('doctor: the version of the agent (TP-35)', () => {
@@ -1312,18 +1389,17 @@ describe('doctor: the children', () => {
 describe('doctor: state repository', () => {
   it('fails when the state folder is not a git repository', async () => {
     const deps = await initialized();
+    expect((await deps.fs.remove(`${HOME}/.factory/.git`)).ok).toBe(true);
     expect(await checkStateRepo(deps, HOME)).toMatchObject({ id: 'state-repo', level: 'fail' });
   });
 
   it('is ok with a commit and an identity', async () => {
     const deps = await initialized({ git: { committed: [`${HOME}/.factory`] } });
-    deps.seedDir(`${HOME}/.factory/.git`);
     expect((await checkStateRepo(deps, HOME)).level).toBe('ok');
   });
 
   it('warns about a missing commit and a missing identity, and repeats both', async () => {
     const deps = await initialized({ git: { identity: false } });
-    deps.seedDir(`${HOME}/.factory/.git`);
     const result = await checkStateRepo(deps, HOME);
     expect(result.level).toBe('warn');
     expect(result.text).toContain('no commit yet');
@@ -1332,8 +1408,74 @@ describe('doctor: state repository', () => {
 
   it('warns when git is missing', async () => {
     const deps = await initialized({ tools: ['tmux'] });
-    deps.seedDir(`${HOME}/.factory/.git`);
     expect((await checkStateRepo(deps, HOME)).text).toContain('git is missing');
+  });
+});
+
+describe('doctor: the delete guard of the state repository (TP-14)', () => {
+  const HOOK = `${HOME}/.factory/.git/factory-guard/pre-commit`;
+
+  it('is ok when init left the guard on', async () => {
+    const deps = await initialized({ git: GUARD_ON });
+    expect(await checkStateGuard(deps, HOME)).toMatchObject({ id: 'state-guard', level: 'ok' });
+  });
+
+  it('warns with the reason and the remedy when the guard is off, and never fails', async () => {
+    const deps = await initialized({ git: GUARD_ON });
+    deps.files.set(HOOK, '#!/bin/sh\nexit 0\n');
+    const result = await checkStateGuard(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('The delete guard of .factory is off');
+    expect(result.text).toContain('differs from the text of the package');
+    expect(result.text).toContain('Run "factory upgrade".');
+    const output = await doctor(deps);
+    expect(levelOf(output.json['checks'] as CheckResult[], 'state-guard')).toBe('warn');
+    expect(output.failed).toBe(false);
+  });
+
+  it('names the cause and the step by hand, and not factory upgrade, when the .git entry of the state folder is a link', async () => {
+    const deps = await initialized({ git: GUARD_ON });
+    const linked: Deps = {
+      ...deps,
+      fs: { ...deps.fs, lstat: async (path) => (path === `${HOME}/.factory/.git` ? ok('link' as const) : deps.fs.lstat(path)) },
+    };
+    const result = await checkStateGuard(linked, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('The delete guard of .factory is off: the git folder of .factory is not the folder .git inside it.');
+    expect(result.text).toContain('Make .factory/.git the git folder of .factory.');
+    expect(result.text).not.toContain('factory upgrade');
+  });
+
+  it('warns when the setting that names the guard folder is not set', async () => {
+    const deps = await initialized();
+    const unset: Deps = {
+      ...deps,
+      run: async (command, args, options) =>
+        command === 'git' && args.at(-2) === 'config' && args.at(-1) === 'core.hooksPath' ? exited(1) : deps.run(command, args, options),
+    };
+    const result = await checkStateGuard(unset, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('core.hooksPath is not set');
+  });
+
+  it('says that it did not check when the state folder is not a git repository', async () => {
+    const deps = await initialized();
+    expect((await deps.fs.remove(`${HOME}/.factory/.git`)).ok).toBe(true);
+    expect(await checkStateGuard(deps, HOME)).toMatchObject({ id: 'state-guard', level: 'warn', text: expect.stringContaining('not checked') });
+  });
+
+  it('says that it did not check when git is missing', async () => {
+    const deps = await initialized({ tools: ['tmux'] });
+    expect(await checkStateGuard(deps, HOME)).toMatchObject({ level: 'warn', text: expect.stringContaining('git is missing') });
+  });
+
+  it('warns that it cannot check, and does not call the guard on, when git fails', async () => {
+    const deps = await initialized();
+    const broken = { ...deps, run: async () => failure('cannot run git: EACCES') };
+    const result = await checkStateGuard(broken, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('The delete guard of .factory is not checked');
+    expect(result.text).toContain('EACCES');
   });
 });
 
@@ -1593,7 +1735,7 @@ describe('doctor: instruction files at the root and above it (TP-32, TP-34)', ()
 
 describe('doctor: the command', () => {
   it('passes on a fresh node: no failure, so it is not failed', async () => {
-    const deps = await initialized({ git: { repos: { [HOME]: {} }, committed: [`${HOME}/.factory`] } });
+    const deps = await initialized({ git: { ...GUARD_ON, repos: { [HOME]: {} }, committed: [`${HOME}/.factory`] } });
     deps.seedDir(`${HOME}/.factory/.git`);
     const output = await doctor(deps);
     expect(output.failed).toBe(false);
@@ -1624,10 +1766,11 @@ describe('doctor: the command', () => {
       'tools',
       'agent-version',
       'state-repo',
+      'state-guard',
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('26 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('27 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1650,7 +1793,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(26);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(27);
   });
 
   it('finds the node by walking up from the current folder', async () => {
@@ -1680,15 +1823,17 @@ describe('doctor: the command', () => {
     if (!none.ok) expect(none.error.message).toContain('/w/none is not a folder');
   });
 
-  it('reports a failing run of git as a warning, not as a crash', async () => {
+  it('reports a failing run of git as a warning of the state repo and as a failed tools check, not as a crash', async () => {
     const deps = await initialized();
     deps.seedDir(`${HOME}/.factory/.git`);
     const broken = { ...deps, run: async () => failure('cannot run git: EACCES') };
     const result = await runDoctor(broken, { home: HOME });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(levelOf(result.value.json['checks'] as CheckResult[], 'state-repo')).toBe('warn');
-    expect(result.value.failed).toBe(false);
+    const checks = result.value.json['checks'] as CheckResult[];
+    expect(levelOf(checks, 'state-repo')).toBe('warn');
+    expect(checks.find((entry) => entry.id === 'tools')).toMatchObject({ level: 'fail', text: expect.stringContaining('cannot read the version of git') });
+    expect(result.value.failed).toBe(true);
   });
 });
 

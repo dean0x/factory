@@ -41,6 +41,8 @@ export interface FakeOptions {
   readonly fetch?: FetchHandler;
   readonly now?: Date;
   readonly pid?: number;
+  /** The node program and the real path of the script. Default: `FAKE_PROGRAM_ARGV`. */
+  readonly programArgv?: readonly string[];
   /** The id of the user of the process. Default: 1000. Null: a platform with no user ids. */
   readonly uid?: number | null;
   /** A person types at the process. Default: false. */
@@ -110,6 +112,9 @@ export const exited = (exitCode: number, stdout = '', stderr = ''): CliResult<Ru
 
 export const missingProgram = (command: string): CliResult<RunOutput> =>
   failure(`cannot run ${command}: ENOENT`);
+
+/** The program path of a fake process: the node program and the script, both absolute. */
+export const FAKE_PROGRAM_ARGV: readonly string[] = ['/opt/fake/bin/node', '/opt/fake/lib/program/cli.js'];
 
 const DEFAULT_NOW = new Date('2030-01-02T03:04:05.678Z');
 const DEFAULT_UID = 1000;
@@ -309,6 +314,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
           dirs.delete(key);
           addDir(to + key.slice(from.length));
         }
+        // The modes follow the paths, as the modes of real files do.
+        for (const [key, mode] of [...modes.entries()].filter(([key]) => under(from, key))) {
+          modes.delete(key);
+          modes.set(to + key.slice(from.length), mode);
+        }
         return ok(undefined);
       },
       remove: async (path) => {
@@ -349,7 +359,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         ...(runOptions?.signal === undefined ? {} : { signal: runOptions.signal }),
       };
       calls.push(call);
-      return (options.run ?? (() => missingProgram(command)))(call);
+      const result = (options.run ?? (() => missingProgram(command)))(call);
+      // As real git does: `git init` makes the folder `.git` in the folder.
+      if (command === 'git' && args[0] === '-C' && args[2] === 'init' && result.ok && result.value.exitCode === 0) {
+        addDir(posix.join(args[1] ?? '', '.git'));
+      }
+      return result;
     },
     runAttached: async (command: string, args: readonly string[]) => {
       const call: RunCall = { command, args, cwd: undefined };
@@ -386,6 +401,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     platform: { os: options.os ?? 'linux', nodeVersion: options.nodeVersion ?? 'v22.1.0' },
     cwd: options.cwd ?? '/work',
     pid: options.pid ?? 4242,
+    programArgv: options.programArgv ?? FAKE_PROGRAM_ARGV,
     uid,
   };
   fake.seedDir(fake.cwd);

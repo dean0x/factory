@@ -24,7 +24,7 @@ Out (later milestones, in the build order of D-56):
 - the `github` adapter, `watch`, `tracker` and `state` (FAC-M3);
 - the rollup, `deliver`, `node tree` (FAC-M8).
 
-Later milestones add optional config keys with no schema bump, because old configs stay valid: `session.agent` and `session.statusline` (FAC-M4), `approval.ship` and `tracker.agent_account` (FAC-M5), the tracker keys `site` and `key`, `recipe.projects[].tracker` and `state.remote` (FAC-M3, FAC-M9).
+Later milestones add optional config keys with no schema bump, because old configs stay valid: `session.agent` and `session.statusline` (FAC-M4), `approval.ship` (FAC-M5), the tracker keys `site` and `key`, `recipe.projects[].tracker` and `state.remote` (FAC-M3, FAC-M9).
 
 One PR (roadmap rule). There is no split: the renames and the schema change touch every module, and the roadmap keeps them in one PR so that the names test sees all of them at once.
 

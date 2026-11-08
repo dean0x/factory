@@ -26,9 +26,11 @@ import {
   program,
   setupBlockNames,
   setupFileOf,
+  stateGuard,
 } from '../names.js';
 import { locateShareList, WORKERS_GITIGNORE_LINE } from '../state/files.js';
 import { rootGitignoreOf, stateGitignoreOf } from '../state/gitignore.js';
+import { guardFolderLabel, guardPlanOf, guardPlanWarnings, type GuardPlan } from '../state/guard.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
 import type { BlockSet, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
@@ -297,6 +299,18 @@ export const planStateGitignore = async (deps: Deps, layout: Layout): Promise<Cl
   return ok({ action, filePath: layout.stateGitignoreFile, text: action === 'current' ? null : text });
 };
 
+/** What the run does to the delete guard of the state repo: write it again (`install`), nothing (`current`), or only warn (`unsupported`). */
+export type StateGuardPlan = GuardPlan;
+
+/**
+ * The plan for the delete guard of the state repo: `install` when the state folder is a repo and the guard is off (another setting,
+ * other hook bytes, a missing or extra file), else `current`. A guard that the install refuses (a git folder that is not the folder
+ * `.git`, a guard folder that is a link, a program path that is not known) is `unsupported`: the run warns with the cause and the
+ * step by hand, and goes on. A state folder with no git entry is no repo, so it has no guard to write. The plan reads only. The
+ * step is not a change of the saved state: it writes inside the git folder, so it needs no backup and no commit.
+ */
+export const planStateGuard = (deps: Deps, layout: Layout): Promise<CliResult<StateGuardPlan>> => guardPlanOf(deps, layout.stateDir);
+
 /**
  * The file moves and the new file texts of the steps that take the state to the current version.
  * A source that does not exist is skipped. A target that exists stops the upgrade. A file to replace that does not
@@ -453,12 +467,23 @@ const stateGitignoreLines = (plan: StateGitignorePlan): OutLine[] => {
   return lines[plan.action].map((text): OutLine => ({ level: 'text', text }));
 };
 
+/** The lines for the delete guard of the state repo. A guard that is on gives no line. A guard that only a person can repair gives a warning. */
+const stateGuardLines = (plan: StateGuardPlan): OutLine[] => {
+  const warnings = guardPlanWarnings(plan).map((text): OutLine => ({ level: 'warn', text }));
+  if (plan.action === 'install') {
+    const write = `${guardFolderLabel}: write the delete guard hook and point ${stateGuard.hooksPathKey} at it`;
+    return [{ level: 'text', text: write }, ...warnings];
+  }
+  return warnings;
+};
+
 export const planLines = (
   config: FilePlan,
   local: LocalPlan,
   state: FilePlan,
   files: FilesPlan,
   stateGitignore: StateGitignorePlan,
+  guard: StateGuardPlan,
   root: RootPlan,
   blocks: readonly BlockPlan[],
   upgrade: UpgradeSpec,
@@ -552,6 +577,7 @@ export const planLines = (
     ...moveLines,
     ...files.replaces.map(replaceLine),
     ...stateGitignoreLines(stateGitignore),
+    ...stateGuardLines(guard),
     ...rootLines(root),
     ...blocks.map(blockLine),
   ];

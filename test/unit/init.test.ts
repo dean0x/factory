@@ -13,8 +13,9 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { acceptanceState, manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { commands, env, files as fileNames, hookNames, setupAcceptance, values } from '../../src/names.js';
+import { commands, env, files as fileNames, hookNames, setupAcceptance, stateGuard, values } from '../../src/names.js';
 import { SHARE_LIST_BEGIN, SHARE_LIST_END, SHARE_LIST_PART } from '../../src/state/files.js';
+import { guardHookText } from '../../src/state/guard.js';
 import { loadState } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { FACTORY_VERSION } from '../../src/version.js';
@@ -24,13 +25,14 @@ import { loadConfig, planInit, runInit, runUpgrade } from '../helpers/package-re
 import {
   createFakeDeps,
   exited,
+  FAKE_PROGRAM_ARGV,
   registerRoot,
   withFailingWrites,
   withFsWatch,
   type FakeDeps,
   type FakeOptions,
 } from '../helpers/fake-deps.js';
-import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
+import { gitHandler, STATE_GIT, STATE_READ, type GitFixture } from '../helpers/git-fake.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -39,6 +41,11 @@ const HOME = '/w/node';
 /** init writes the root into the factory list as its last step, so every run needs a place for the list. */
 const ENV = { XDG_STATE_HOME: '/state', HOME: '/users/me' };
 const INDEX = '/state/factory/homes.json';
+/** The guard folder of the state repo after the staging folder is renamed onto the state path. */
+const GUARD_FOLDER = `${HOME}/.factory/.git/${stateGuard.folder}`;
+const GUARD_HOOKS = stateGuard.hookFiles.map((name) => `${GUARD_FOLDER}/${name}`);
+/** The hook files as they are written, in the staging folder, before the rename. */
+const STAGING_HOOKS = stateGuard.hookFiles.map((name) => `${HOME}/.factory.tmp-4242/.git/${stateGuard.folder}/${name}`);
 
 const options = (extra: Partial<InitOptions> = {}): InitOptions => ({
   home: HOME,
@@ -99,6 +106,7 @@ describe('init: the files', () => {
       'setup/roles/worker.md',
       'coordinator/CLAUDE.md',
       'coordinator/.claude/settings.local.json',
+      ...stateGuard.hookFiles.map((name) => `.factory/.git/factory-guard/${name}`),
       '.factory/node.json',
       '.factory/roles/worker.md',
       '.factory/board.json',
@@ -1114,11 +1122,160 @@ describe('init: the state repository', () => {
     expect(git.map((call) => call.args.slice(2).join(' '))).toEqual([
       'init -q',
       'rev-parse --is-inside-work-tree --show-prefix',
+      // A git template can copy a key that names a program into the config of the new repository: the check comes before any step that stages.
+      `${STATE_GIT} config --list --show-scope --includes -z`,
+      // The plan of the guard reads the git folder and the setting, and again for the hooks that stop. The install reads the git folder
+      // once more and sets the path.
+      `${STATE_GIT} rev-parse --absolute-git-dir`,
+      `${STATE_READ} config core.hooksPath`,
+      `${STATE_GIT} rev-parse --absolute-git-dir`,
+      `${STATE_READ} config core.hooksPath`,
+      `${STATE_GIT} rev-parse --absolute-git-dir`,
+      `${STATE_GIT} config -- core.hooksPath ${GUARD_FOLDER}`,
       'config user.name',
       'config user.email',
-      'add -A',
-      '-c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m chore: initialize the state',
+      `${STATE_GIT} add -A`,
+      `${STATE_GIT} -c commit.gpgsign=false commit -q -m chore: initialize the state`,
     ]);
+  });
+
+  describe('a git template that copied a program key into the config of the new repository', () => {
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const copied = (key: string) => setup({ configList: { [staging]: `local\0${key}\ncat\0` } });
+
+    it.each(['filter.x.clean', 'hook.x.command'])('stops with exit 4 for %s, names the key, and stages and commits nothing', async (key) => {
+      const { deps, log } = copied(key);
+      const result = await runInit(deps, options());
+      expect(result).toMatchObject({ ok: false, error: { kind: 'safety', message: expect.stringContaining(key) } });
+      expect(log.commands().some((line) => line.startsWith('add') || line.includes('commit -q'))).toBe(false);
+      expect(deps.files.has(`${HOME}/.factory/node.json`)).toBe(false);
+    });
+
+    it('tells the person to clean the git template, because the new repository is removed', async () => {
+      const { deps } = copied('filter.x.clean');
+      const result = await runInit(deps, options());
+      expect(messageOf(result)).toContain('git template');
+      expect(messageOf(result)).toContain('Then run "factory init" again.');
+    });
+
+    it('checks the config after the work tree check and before the guard is written', async () => {
+      const { deps, log } = setup();
+      expect((await runInit(deps, options())).ok).toBe(true);
+      const lines = log.commands();
+      const check = lines.indexOf('config --list --show-scope --includes -z');
+      expect(check).toBeGreaterThan(lines.indexOf('rev-parse --is-inside-work-tree --show-prefix'));
+      expect(check).toBeLessThan(lines.findIndex((line) => line.startsWith('config -- core.hooksPath')));
+      expect(check).toBeLessThan(lines.findIndex((line) => line.startsWith('add')));
+    });
+  });
+
+  it('writes the package hook text as each hook file in the guard folder of the git folder, with mode 755, and sets the path (TP-1)', async () => {
+    const { deps, log } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    const expected = guardHookText(FAKE_PROGRAM_ARGV);
+    expect(expected.ok).toBe(true);
+    for (const hook of GUARD_HOOKS) {
+      expect(deps.files.get(hook)).toBe(expected.ok ? expected.value : null);
+      expect(deps.modes.get(hook)).toBe(0o755);
+    }
+    expect(await deps.fs.list(GUARD_FOLDER)).toEqual({ ok: true, value: [...stateGuard.hookFiles].sort() });
+    expect(log.commands()).toContain(`config -- core.hooksPath ${GUARD_FOLDER}`);
+  });
+
+  it('keeps the guard out of what git tracks: the hook is inside the git folder, and no state file names it (TP-1)', async () => {
+    const { deps } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    const outside = [...deps.files.keys()].filter((path) => path.startsWith(`${HOME}/.factory/`) && !path.startsWith(`${HOME}/.factory/.git/`));
+    expect(outside.some((path) => path.includes(stateGuard.folder) || stateGuard.hookFiles.some((name) => path.endsWith(name)))).toBe(false);
+    expect(GUARD_FOLDER.startsWith(`${HOME}/.factory/.git/`)).toBe(true);
+  });
+
+  it('names the final state folder in the setting, not the staging folder, and the hook stays in place after the rename (TP-3)', async () => {
+    const { deps, log } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const setCalls = log.calls.filter((call) => call.args.includes('core.hooksPath') && call.args.includes('--'));
+    expect(setCalls.map((call) => call.args[1])).toEqual([staging]);
+    expect(setCalls.map((call) => call.args.at(-1))).toEqual([GUARD_FOLDER]);
+    expect(GUARD_FOLDER).not.toContain('/hooks');
+    expect(GUARD_HOOKS.every((hook) => deps.files.has(hook))).toBe(true);
+    expect([...deps.files.keys()].some((path) => path.includes('.tmp-'))).toBe(false);
+  });
+
+  it('writes the hook before the first commit, so the first commit of the folder runs with the hook in place (TP-1)', async () => {
+    const { deps, log } = setup();
+    expect((await runInit(deps, options())).ok).toBe(true);
+    const lines = log.commands();
+    const setting = lines.findIndex((line) => line.startsWith('config -- core.hooksPath'));
+    expect(setting).toBeGreaterThanOrEqual(0);
+    expect(setting).toBeLessThan(lines.findIndex((line) => line.includes('commit -q')));
+  });
+
+  it('goes on with a warning that names the program, and writes no hook, when the program path is not known (TP-1)', async () => {
+    const { deps } = setup({}, { programArgv: [] });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    const warnings = result.ok ? result.value.warnings : [];
+    expect(warnings.filter((line) => line.includes('can not write it'))).toEqual([
+      expect.stringContaining('absolute path of its own program'),
+    ]);
+    expect(warnings.join('\n')).not.toContain('factory upgrade');
+    expect([...deps.files.keys()].some((path) => path.includes(stateGuard.folder))).toBe(false);
+    expect(deps.files.has(`${HOME}/.factory/node.json`)).toBe(true);
+  });
+
+  it('goes on with a warning that names the link, and leaves the folder of the link as it was, when the guard folder is a link (TP-53)', async () => {
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const guard = `${staging}/.git/${stateGuard.folder}`;
+    const { deps } = setup({}, { links: { [guard]: '/elsewhere/folder' } });
+    deps.seed('/elsewhere/folder/keep.txt', 'keep');
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.value.warnings : []).toEqual(
+      expect.arrayContaining([expect.stringContaining(`${guard} is a link`)]),
+    );
+    expect(deps.files.get('/elsewhere/folder/keep.txt')).toBe('keep');
+    expect([...deps.files.keys()].filter((path) => path.startsWith('/elsewhere/'))).toEqual(['/elsewhere/folder/keep.txt']);
+  });
+
+  it('warns that a hook file of the default hooks folder stops, which git copies from a template, and leaves that file as it was', async () => {
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const hook = `${staging}/.git/hooks/pre-push`;
+    const { handler } = gitHandler();
+    // Git copies the hook files of its template folder when it makes the repository, so they appear at `git init`.
+    const deps = createFakeDeps({
+      cwd: '/w',
+      env: ENV,
+      run: (call) => {
+        if (call.args[2] === 'init') {
+          deps.seed(hook, '#!/bin/sh\n');
+          deps.seed(`${staging}/.git/hooks/pre-commit.sample`, 'x');
+        }
+        return handler(call);
+      },
+    });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    const stops = (result.ok ? result.value.warnings : []).filter((line) => line.includes('stop running when'));
+    expect(stops).toEqual([expect.stringContaining('.factory/.git/hooks/pre-push')]);
+    expect(stops[0]).not.toContain('pre-commit.sample');
+    expect(deps.files.get(`${HOME}/.factory/.git/hooks/pre-push`)).toBe('#!/bin/sh\n');
+  });
+
+  it('warns that the hooks of a core.hooksPath of another level stop', async () => {
+    const staging = `${HOME}/.factory.tmp-4242`;
+    const { deps } = setup({ otherLevelHooksPath: { [staging]: '/global/hooks' } });
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    const stops = (result.ok ? result.value.warnings : []).filter((line) => line.includes('stop running when'));
+    expect(stops).toEqual([expect.stringContaining('the hooks in /global/hooks')]);
+  });
+
+  it('warns of no stopped hook for a new state repository that has only the example files of git', async () => {
+    const { deps } = setup();
+    const result = await runInit(deps, options());
+    expect(result.ok).toBe(true);
+    expect((result.ok ? result.value.warnings : []).filter((line) => line.includes('stop running when'))).toEqual([]);
   });
 
   it('warns and makes no commit when there is no git identity', async () => {
@@ -1249,6 +1406,7 @@ describe('init: rollback', () => {
     deps.seed(`${HOME}/coordinator/CLAUDE.md`, 'Owner text.\n');
     expect((await runInit(deps, options())).ok).toBe(true);
     expect(deps.atomicWrites).toEqual([
+      ...STAGING_HOOKS,
       `${HOME}/coordinator/CLAUDE.md`,
       `${HOME}/.gitignore`,
       `${HOME}/factory.local.yaml`,
@@ -1354,7 +1512,7 @@ describe('init: rollback', () => {
     expect(plan.ok).toBe(true);
     if (!plan.ok) return;
     await applyInit(failingWrite(deps, '/factory.yaml'), plan.value);
-    expect(deps.atomicWrites).toEqual([claude, `${HOME}/.gitignore`, `${HOME}/factory.local.yaml`, claude]);
+    expect(deps.atomicWrites).toEqual([...STAGING_HOOKS, claude, `${HOME}/.gitignore`, `${HOME}/factory.local.yaml`, claude]);
     expect(deps.files.get(claude)).toBe('Owner text.\n');
   });
 
@@ -1412,7 +1570,7 @@ describe('init: rollback', () => {
     expect(messageOf(result)).toContain(`cannot rename ${HOME}/.factory.tmp-4242: EXDEV`);
     expect(messageOf(result)).toContain('nothing was changed');
     expect(snapshot(deps)).toBe(before);
-    expect(deps.atomicWrites).toEqual([]);
+    expect(deps.atomicWrites).toEqual(STAGING_HOOKS);
   });
 
   it('leaves the folder as it was and says so when the first commit fails', async () => {
@@ -1432,7 +1590,7 @@ describe('init: rollback', () => {
     expect(messageOf(result)).toContain('cannot commit the state files');
     expect(messageOf(result)).toContain('nothing was changed');
     expect(snapshot(deps)).toBe(before);
-    expect(deps.atomicWrites).toEqual([]);
+    expect(deps.atomicWrites).toEqual(STAGING_HOOKS);
   });
 
   it('leaves no node when git cannot create the repository', async () => {
@@ -2837,7 +2995,9 @@ describe('init: the setup texts and the link rule (TP-102, TP-130)', () => {
   it('works for a factory folder that sits under a linked parent folder (TP-149)', async () => {
     const links: Record<string, string> = { '/w/linked': '/w/real' };
     // The person says no to the hook settings: the fake file system keeps no file under the real path of a link.
-    const { deps } = setup({}, { links, stdinIsTTY: true, stdoutIsTTY: true, prompt: answerHome('y') });
+    // Git prints the real path of its git folder, so the fixture names the real staging folder.
+    const gitDirs = { '/w/linked/node/.factory.tmp-4242': '/w/real/node/.factory.tmp-4242/.git' };
+    const { deps } = setup({ gitDirs }, { links, stdinIsTTY: true, stdoutIsTTY: true, prompt: answerHome('y') });
     deps.seedDir('/w/real');
     const result = await runInit(deps, asking({ home: '/w/linked/node' }));
     expect(result.ok ? 'ok' : result.error.message).toBe('ok');

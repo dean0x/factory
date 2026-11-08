@@ -5,6 +5,7 @@ import { loadConfig, readNodeIdentity, settleLocalMode } from '../config/load.js
 import type { FactoryConfig } from '../config/schema.js';
 import { declinedHookText, ensureHookSettings, type HookSettingsOutcome } from '../core/claude-settings.js';
 import type { Deps } from '../core/deps.js';
+import { gitVersionProblem, requireStateConfigListable } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { warnInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
@@ -31,6 +32,7 @@ import {
   values,
   type CommandName,
 } from '../names.js';
+import { guardWarning } from '../state/guard.js';
 import { layoutOf } from '../state/layout.js';
 import { claimActiveMachine, markNamesThisMachine } from '../state/active-machine.js';
 import type { RecipeRegistry } from '../recipes/index.js';
@@ -165,32 +167,37 @@ type Recovery = RecoveryReport | null;
 
 /**
  * What `start` does after it made the session, and only then: the mark of the active machine, then each recorded worker. The mark
- * comes first, so the warning about another active machine shows before any worker runs. A fault never stops the start: the
- * session runs, so every problem here is a warning, and the exit code stays 0.
+ * comes first, so the warning about another active machine shows before any worker runs. A fault is a warning and the exit code
+ * stays 0, with one exception: a git that can not list its config scopes stops the run (exit 1) before any worker runs. `runStart`
+ * makes that check before it makes the session, so the claim meets the fault only for a caller that did not.
  */
-const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers): Promise<Recovery> => {
-  await claimActiveMachine(deps, home);
+const recoverSession = async (deps: Deps, home: string, config: FactoryConfig, answers: ProxyAnswers): Promise<CliResult<Recovery>> => {
+  const claimed = await claimActiveMachine(deps, home);
+  if (!claimed.ok) return claimed;
   const recovered = await recoverWorkers(deps, { home, config, proxyAnswers: answers });
-  if (recovered.ok) return recovered.value;
+  if (recovered.ok) return ok(recovered.value);
   deps.warn(`The ${roles.worker}s are not resumed: ${recovered.error.message}. ${recovered.error.hint ?? ''}`.trimEnd());
-  return null;
+  return ok(null);
 };
 
 /**
  * What `start` does for a session that runs already: it claims the mark of the active machine when the mark does not name this
  * machine, and then it warns once about the recorded workers that have no live pane. It never resumes a worker, because a worker
  * that was stopped on purpose stays stopped. The value is the workers that the warning names. A fault is a warning, and the exit
- * code stays 0.
+ * code stays 0, with the same one exception as `recoverSession`.
  */
-const checkRunningSession = async (deps: Deps, home: string, session: string): Promise<readonly string[]> => {
-  if (!(await markNamesThisMachine(deps, home))) await claimActiveMachine(deps, home);
+const checkRunningSession = async (deps: Deps, home: string, session: string): Promise<CliResult<readonly string[]>> => {
+  if (!(await markNamesThisMachine(deps, home))) {
+    const claimed = await claimActiveMachine(deps, home);
+    if (!claimed.ok) return claimed;
+  }
   const missing = await workersWithoutPane(deps, home, session);
   if (!missing.ok) {
     deps.warn(`The ${roles.worker}s are not checked: ${missing.error.message}. ${missing.error.hint ?? ''}`.trimEnd());
-    return [];
+    return ok([]);
   }
   if (missing.value.length > 0) deps.warn(noPaneWarning(missing.value));
-  return missing.value;
+  return ok(missing.value);
 };
 
 /** What `startAgain` made: the session, the coordinator that resumes, and the workers that run again. */
@@ -205,9 +212,24 @@ export interface RestartedSession {
 }
 
 /**
+ * The git checks that come before a session is made: git is 2.26 or later, and it can list the config scopes of the state folder.
+ * The claim of the active machine stops on the second fault, after the session was made, and the session would stay with no one
+ * attached. A caller that makes a session calls this before its first change. `runStart` makes the same two checks inside its own
+ * tool check, because a dry run names them as problems.
+ */
+export const requireSessionGit = async (deps: Deps, home: string, command: CommandName): Promise<CliResult<void>> => {
+  const gitFault = await gitVersionProblem(deps);
+  if (gitFault !== null) {
+    return failure(gitFault, `Run "${commandText(commands.doctor)} ${flagText(flags.home)} ${shellWord(home)}" to check the tools.`);
+  }
+  return requireStateConfigListable(deps, layoutOf(home).stateDir, command);
+};
+
+/**
  * Makes the session of the node and recovers its coordinator and its workers: the steps of `start` after its checks and before
- * the person reaches the session. The caller has made the checks of the root and the tools, and the session does not run. `reboot`
- * calls this after it ended the session. `answers` holds the proxy answers of the run, so each proxy is asked once.
+ * the person reaches the session. The caller has made the checks of the root and the tools and of git (`requireSessionGit`), and
+ * the session does not run. `reboot` calls this after it ended the session. `answers` holds the proxy answers of the run, so each
+ * proxy is asked once.
  */
 export const startAgain = async (
   deps: Deps,
@@ -220,11 +242,12 @@ export const startAgain = async (
   const started = await startSession(deps, config.core.node.id, plan.value.steps);
   if (!started.ok) return started;
   const workers = await recoverSession(deps, home, config, answers);
+  if (!workers.ok) return workers;
   const { proxy, resumeId, warnings } = plan.value;
   return ok({
     proxy: proxy.label,
     coordinatorResumed: resumeId !== null,
-    workers,
+    workers: workers.value,
     warnings: [...warnings, ...(proxy.warning === undefined ? [] : [proxy.warning])],
   });
 };
@@ -429,6 +452,9 @@ export const runStart = async (
   // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.
   const scan = await scanRoot(deps, home, loaded.value);
   for (const notice of rootNotices(scan)) deps.warn(notice);
+  // A factory with the delete guard off keeps working, so the guard is one warning line: the exit code stays the same.
+  const guardLine = await guardWarning(deps, layoutOf(home).stateDir);
+  if (guardLine !== null) deps.warn(guardLine);
   // A change of the setup text is the one stop that a question can end: when it is the only failure, the owner on a terminal
   // window accepts it here. Every other case stops with the line that names the accept command.
   const settled = scan.setup.kind === 'changed' && failsOnlyOnSetup(scan)
@@ -446,13 +472,21 @@ export const runStart = async (
     if (!rendered.ok) return rendered;
   }
 
-  const problems = await toolProblems(deps, !dryRun);
-  if (!dryRun && problems.length > 0) {
+  // The tools are checked also in a dry run. The version of git is read there too: it changes nothing, and the doctor check is the same.
+  const gitFault = await gitVersionProblem(deps);
+  const toolFaults = [...(await toolProblems(deps, !dryRun)), ...(gitFault === null ? [] : [gitFault])];
+  if (!dryRun && toolFaults.length > 0) {
     return failure(
-      problems.join('. '),
+      toolFaults.join('. '),
       `Run "${commandText(commands.doctor)} ${flagText(flags.home)} ${home}" to check the tools.`,
     );
   }
+  // A git that can not list the config scopes stops the run here, before the hook settings, the session lookup and any launch.
+  // A session that this run made would stay, with no one attached, and each next run would stop on the same fault. Every other
+  // fault of the state git config is a warning of the claim of the active machine. A dry run names the stop as a problem.
+  const listable = await requireStateConfigListable(deps, layoutOf(home).stateDir, commands.start);
+  if (!listable.ok && !dryRun) return listable;
+  const problems = listable.ok ? toolFaults : [...toolFaults, listable.error.message];
 
   // The hook settings of the coordinator come after the root checks and the tool check, and before the session lookup and any
   // launch. A no on a terminal window goes on without the hook. Any error of the writer is a stop with its own exit code.
@@ -482,9 +516,13 @@ export const runStart = async (
     if (!started.ok) return started;
   }
   // The recovery runs only for a session that this run made, and before the person is in the session.
-  const recovery = planned === null ? null : await recoverSession(deps, home, loaded.value, answers);
+  const recoveryResult = planned === null ? ok(null) : await recoverSession(deps, home, loaded.value, answers);
+  if (!recoveryResult.ok) return recoveryResult;
+  const recovery = recoveryResult.value;
   // A session that runs already resumes no worker. It claims the mark and names the workers that have no pane.
-  const withoutPane = planned === null ? await checkRunningSession(deps, home, id) : [];
+  const withoutPaneResult = planned === null ? await checkRunningSession(deps, home, id) : ok<readonly string[]>([]);
+  if (!withoutPaneResult.ok) return withoutPaneResult;
+  const withoutPane = withoutPaneResult.value;
   // A session that runs already can hold a coordinator pane that stays after its program ended.
   const ended = planned === null && (await coordinatorEnded(deps, id));
   const attached = await reach(deps, how, id);

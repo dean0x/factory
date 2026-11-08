@@ -1,6 +1,6 @@
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { constants, createReadStream, type Stats } from 'node:fs';
+import { constants, createReadStream, realpathSync, type Stats } from 'node:fs';
 import {
   chmod,
   copyFile,
@@ -504,6 +504,19 @@ const randomHexText = (bytes: number): CliResult<string> =>
     ? ok(randomBytes(bytes).toString('hex'))
     : failure(`cannot make random text: ${bytes} bytes is not a whole number from 1 to ${MAX_RANDOM_BYTES}`);
 
+/**
+ * The node program and the real path of the script, which is the second word of the arguments of a process. An empty list when the
+ * process has no script path or the path cannot be resolved: a made-up path would start another program.
+ */
+export const programArgvOf = (execPath: string, script: string | undefined): readonly string[] => {
+  if (script === undefined) return [];
+  try {
+    return [execPath, realpathSync(script)];
+  } catch {
+    return [];
+  }
+};
+
 export const createNodeDeps = (): Deps => ({
   fs: nodeFs,
   run: (command, args, options) =>
@@ -556,5 +569,6 @@ export const createNodeDeps = (): Deps => ({
   platform: { os: process.platform, nodeVersion: process.version },
   cwd: process.cwd(),
   pid: process.pid,
+  programArgv: programArgvOf(process.execPath, process.argv[1]),
   uid: typeof process.getuid === 'function' ? process.getuid() : null,
 });

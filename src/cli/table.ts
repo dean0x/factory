@@ -9,6 +9,7 @@ import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runSelf } from '../commands/self.js';
 import { runStart } from '../commands/start.js';
+import { runState } from '../commands/state.js';
 import { runStatus } from '../commands/status.js';
 import { runUpgrade } from '../commands/upgrade.js';
 import { runVersion } from '../commands/version.js';
@@ -418,6 +419,14 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       ),
   },
   hookCommandFor(registry),
+  {
+    name: commands.state,
+    summary: 'Check a commit in the state folder. Git runs it, not a person.',
+    usage: commandText(commandLines.stateGuard),
+    positionals: true,
+    options: {},
+    run: (given, deps) => runState(deps, { words: given.positionals() }),
+  },
   {
     name: commands.version,
     summary: 'Print the version.',

@@ -194,6 +194,12 @@ export interface Deps {
   readonly platform: Platform;
   readonly cwd: string;
   readonly pid: number;
+  /**
+   * The two words that start this program again: the node program (`process.execPath`) and the real path of the script
+   * (`process.argv[1]` with every link resolved). Both are absolute, so a command built from them never uses PATH.
+   * The list is empty when the path of the script is not known, and a caller that needs the program must then stop.
+   */
+  readonly programArgv: readonly string[];
   /** The id of the user that runs this process, or null on a platform that has no user ids. */
   readonly uid: number | null;
 }

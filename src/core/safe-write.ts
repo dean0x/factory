@@ -2,7 +2,7 @@ import { basename, join } from 'node:path';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { commands, commandText, places } from '../names.js';
 import type { Deps } from './deps.js';
-import { takeLock, type LockPolicy } from './file-lock.js';
+import { freeLock, takeLock, type LockPolicy } from './file-lock.js';
 import { comparable, isSameOrInside, realPathOf } from './paths.js';
 import { ok } from './result.js';
 
@@ -110,8 +110,10 @@ export interface FolderLock extends LockPolicy {
  * Run `work` while this call holds a lock file beside the file of the target. The folder is checked and made as for
  * `writeInFolder`, and the lock file is made in that real folder. A lock path that is a link is a security stop (exit 4),
  * and the link is not followed. The call waits within the bounds of the lock only. When the lock stays with another process
- * for all tries, `work` does not run and the value is a failure (exit 1). The lock file is removed when `work` ends, also
- * after a throw. A lock file that stays because of a failed removal is taken over when it is older than the stale age.
+ * for all tries, `work` does not run and the value is a failure (exit 1). The lock is freed when `work` ends, also after a
+ * throw, and that step is best effort: it never changes the value of `work`. It removes the lock file only when the file holds
+ * the token of this call. A holder that ran past the stale age lost its lock, and the lock file now belongs to the process that took
+ * over, so the file stays. A lock file that stays because of a failed removal is taken over when it is older than the stale age.
  */
 export const withFolderLock = async <T>(
   deps: Deps,
@@ -125,13 +127,14 @@ export const withFolderLock = async <T>(
   const lockPath = join(folder.value, `${target.name}${lock.suffix}`);
   const taken = await takeLock(deps, lockPath, lock);
   if (!taken.ok) return failure(taken.error);
-  if (taken.value === 'link') return safetyRefusal(`cannot write ${lockPath}: it is a link`, LINK_REMEDY);
-  if (taken.value === 'held') {
+  if (taken.value.kind === 'link') return safetyRefusal(`cannot write ${lockPath}: it is a link`, LINK_REMEDY);
+  if (taken.value.kind === 'held') {
     return failure(`cannot write ${join(folder.value, target.name)}: another process holds the lock ${lockPath}`);
   }
+  const { token } = taken.value;
   try {
     return await work();
   } finally {
-    await deps.fs.remove(lockPath);
+    await freeLock(deps, lockPath, token);
   }
 };

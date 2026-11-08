@@ -552,3 +552,50 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(JSON.parse(json.out)).toMatchObject({ schema: 'factory.worker-watch/v1' });
   });
 });
+
+describe('the state command in the command line', () => {
+  const STATE_DIR = '/h/node/.factory';
+
+  const runInState = async (argv: readonly string[]) => {
+    const { handler, log } = gitHandler();
+    const deps = createFakeDeps({ cwd: STATE_DIR, run: handler });
+    const sink = captureSink();
+    const code = await runCli([...argv], deps, sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join(''), log };
+  };
+
+  it('has one table entry that shows the usage of state guard, and says that git runs it, not a person', async () => {
+    const entry = commandTable.find((command) => command.name === commands.state);
+    expect(entry?.usage).toBe('factory state guard');
+    const listed = await run(['help']);
+    expect(listed.out).toMatch(/\n {2}state {5}Check a commit in the state folder\. Git runs it, not a person\./);
+    const result = await run(['state', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('Usage: factory state guard');
+  });
+
+  it('exits 0 and prints nothing for state guard when the commit changes no board', async () => {
+    const result = await runInState(['state', 'guard']);
+    expect(result.code).toBe(0);
+    expect(result.out).toBe('');
+    expect(result.err).toBe('');
+    expect(result.log.calls.length).toBeGreaterThan(0);
+  });
+
+  it('prints the schema of the check for state guard with --json', async () => {
+    const result = await runInState(['state', 'guard', '--json']);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.out)).toEqual({ schema: 'factory.state-guard/v1', passed: true });
+  });
+
+  it.each([
+    ['no subcommand', ['state'], 'needs a subcommand: guard'],
+    ['an unknown subcommand', ['state', 'nope'], 'unknown subcommand "nope"'],
+    ['a word after guard', ['state', 'guard', 'now'], 'takes no argument'],
+  ])('exits 2 for %s, and runs no program', async (_name, argv, message) => {
+    const result = await runInState(argv);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain(message);
+    expect(result.log.calls).toEqual([]);
+  });
+});

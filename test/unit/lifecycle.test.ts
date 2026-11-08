@@ -4,7 +4,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
-import { activeMachine, env, schemaIds, tmuxNames, type HookEvent } from '../../src/names.js';
+import { activeMachine, env, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -18,6 +18,7 @@ import {
   type FetchHandler,
   type RunCall,
 } from '../helpers/fake-deps.js';
+import { DEFAULT_GIT_VERSION, withoutStateWords } from '../helpers/git-fake.js';
 import { runReboot, runRestart, runShutdown } from '../helpers/package-registry.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -96,6 +97,10 @@ interface Setup {
   readonly endedCoordinator?: boolean;
   /** The exit code of the commit in the state repo. Default: 0. */
   readonly commitExit?: number;
+  /** The exit code of the list of the config scopes of the state repo. Default: 0. Git older than 2.26 exits with 129. */
+  readonly configListExit?: number;
+  /** What `git --version` prints. Default: a git that is new enough. */
+  readonly gitVersion?: string;
   /** False: git has no user.name and user.email. Default: true. */
   readonly identity?: boolean;
   /** The first word of a tmux command that fails with exit code 1, for example `kill-session`. */
@@ -120,11 +125,15 @@ interface Made {
 
 const answers: FetchHandler = () => ok({ status: 200 });
 
-const gitAnswer = (commitExit: number, identity: boolean) => (call: RunCall) => {
-  const command = call.args.slice(2).join(' ');
+const gitAnswer = (setup: Setup) => (call: RunCall) => {
+  const commitExit = setup.commitExit ?? 0;
+  const identity = setup.identity ?? true;
+  if (call.args.length === 1 && call.args[0] === '--version') return exited(0, setup.gitVersion ?? DEFAULT_GIT_VERSION);
+  const command = withoutStateWords(call.args).slice(2).join(' ');
   if (call.args[1] === STATE_DIR) {
-    if (command === 'status --porcelain -z --untracked-files=all') return exited(0, '');
+    if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=dirty') return exited(0, '');
     if (command === 'config user.name' || command === 'config user.email') return identity ? exited(0, 'Git User\n') : exited(1);
+    if (command.startsWith('config --list') && setup.configListExit !== undefined) return exited(setup.configListExit, '', 'error: unknown option');
     return exited(command.includes(' commit ') ? commitExit : 0);
   }
   if (command === 'rev-parse --is-inside-work-tree --show-prefix') return exited(0, 'true\n\n');
@@ -195,7 +204,7 @@ const make = async (setup: Setup = {}): Promise<Made> => {
     return pane === 'board' ? board : PANE[pane];
   };
   const from = setup.from === undefined ? {} : { TMUX_PANE: callerPane(setup.from) };
-  const git = gitAnswer(setup.commitExit ?? 0, setup.identity ?? true);
+  const git = gitAnswer(setup);
   const events: string[] = [];
   const base = createFakeDeps({
     cwd: '/w',
@@ -679,6 +688,22 @@ describe('shutdown (AC-18)', () => {
       expect(countOf(made, 'kill-session')).toBe(1);
       expect(made.deps.files.get(MARK_FILE)).toBe(markText(OWN_MACHINE));
     });
+
+    it('warns with the lock path, writes and commits nothing, and still ends the session, with exit 0, when another writer holds the state lock', async () => {
+      const lockFile = `${layoutOf(HOME).locksDir}/${stateLock.name}${stateLock.lock.suffix}`;
+      const made = await make({ mark: 'own' });
+      made.deps.seed(lockFile, '1\n');
+      const output = await succeeded(shutdown(made));
+      expect(output.failed).toBe(false);
+      expect(made.deps.warned).toHaveLength(1);
+      expect(made.deps.warned[0]).toContain('The mark of the active machine is not cleared');
+      expect(made.deps.warned[0]).toContain(lockFile);
+      expect(output.json).toMatchObject({ mark: 'failed' });
+      expect(made.deps.files.get(MARK_FILE)).toBe(markText(OWN_MACHINE));
+      expect(made.deps.files.get(lockFile)).toBe('1\n');
+      expect(made.events.filter((event) => event.startsWith('git '))).toEqual([]);
+      expect(countOf(made, 'kill-session')).toBe(1);
+    });
   });
 });
 
@@ -952,6 +977,54 @@ describe('reboot (AC-20)', () => {
       expect(exitCodeOf[(await failed(reboot(made))).kind]).toBe(4);
       expectNothingStopped(made);
       expect(countOf(made, 'new-session')).toBe(0);
+    });
+  });
+
+  describe('the git that the start path needs (git 2.26)', () => {
+    /** The exit code of a git that does not know the option `--show-scope`. */
+    const UNKNOWN_OPTION = 129;
+    const writes = (made: Made): string[] => made.events.filter((event) => event.startsWith('write '));
+
+    it('exits 1, stops nothing and makes no session when git cannot list the config scopes', async () => {
+      const made = await make({ configListExit: UNKNOWN_OPTION });
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('git 2.26');
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+      expect(made.tmux.sessions().get(NODE)).toBe(HOME);
+      expect(writes(made)).toEqual([]);
+      expect(made.deps.warned).toEqual([]);
+    });
+
+    it('exits 1 and makes no session when no session runs', async () => {
+      const made = await make({ sessions: {}, configListExit: UNKNOWN_OPTION });
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('git 2.26');
+      expect(countOf(made, 'new-session')).toBe(0);
+      expect(made.tmux.sessions().size).toBe(0);
+      expect(made.events.some((event) => event.startsWith('git commit'))).toBe(false);
+    });
+
+    it.each([
+      ['git version 2.25.1\n', 'git 2.25 is older than 2.26'],
+      ['', 'cannot read the version of git'],
+    ])('exits 1, stops nothing and makes no session for the git version %j', async (gitVersion, shown) => {
+      const made = await make({ gitVersion });
+      const error = await failed(reboot(made));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain(shown);
+      expect(error.hint).toContain('factory doctor');
+      expectNothingStopped(made);
+      expect(countOf(made, 'new-session')).toBe(0);
+    });
+
+    it('goes on for another fault of the config list, which stays a warning of the claim of the active machine', async () => {
+      const made = await make({ configListExit: 128 });
+      const output = await succeeded(reboot(made));
+      expect(output.json).toMatchObject({ started: true });
+      expect(countOf(made, 'new-session')).toBe(1);
     });
   });
 

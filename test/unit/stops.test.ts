@@ -62,7 +62,14 @@ const makeNode = async (): Promise<FakeDeps> => {
   const { handler } = gitHandler();
   const deps = createFakeDeps({ cwd: '/w', env: { PATH: '/bin', XDG_STATE_HOME: '/state', HOME: '/users/me' }, run: handler });
   const init = await runInit(
-    { ...deps, run: async (command, args, options) => handler({ command, args, cwd: options?.cwd }) },
+    {
+      ...deps,
+      run: async (command, args, options) => {
+        // As real git does: `git init` makes the folder `.git`. The deps of the node are not the deps of the init, so the test seeds it.
+        if (command === 'git' && args[0] === '-C' && args[2] === 'init') deps.seedDir(`${args[1]}/.git`);
+        return handler({ command, args, cwd: options?.cwd });
+      },
+    },
     {
       home: HOME,
       name: 'demo',
@@ -76,8 +83,6 @@ const makeNode = async (): Promise<FakeDeps> => {
     },
   );
   expect(init.ok).toBe(true);
-  // The fake git makes no folder, so the repos that `init` made are seeded here.
-  deps.seedDir(`${HOME}/.git`);
   deps.seed('/bin/tmux', '');
   deps.seed('/bin/claude', '');
   return deps;
