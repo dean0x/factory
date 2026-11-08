@@ -36,7 +36,14 @@ import {
 } from '../names.js';
 import { ownerModes, type ApprovalModes, type ApprovalPoint, type RecipeRegistry } from '../recipes/index.js';
 import { parseProxyUrl, proxyLabel } from '../safety/proxy.js';
-import { guardFolderLabel, guardNeedsInstall, installGuardWithUndo, type GuardChange } from '../state/guard.js';
+import {
+  guardFolderLabel,
+  guardPlanOf,
+  guardUnsupportedLine,
+  installGuardWithUndo,
+  type GuardChange,
+  type GuardPlan,
+} from '../state/guard.js';
 import { stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { STATE_LABEL } from '../state/load.js';
 import { withStateLock } from '../state/state-lock.js';
@@ -197,11 +204,13 @@ const checkExisting = async (
   if (!standing.ok) return standing;
   const repair = await repairOf(deps, root.value.layout);
   if (!repair.ok) return repair;
-  const guardDue = repair.value.kind === 'folder' ? ok(false) : await guardNeedsInstall(deps, root.value.layout.stateDir);
-  if (!guardDue.ok) return guardDue;
+  const guard =
+    repair.value.kind === 'folder' ? ok<GuardPlan>({ action: 'current' }) : await guardPlanOf(deps, root.value.layout.stateDir);
+  if (!guard.ok) return guard;
+  const guardDue = guard.value.action === 'install';
   // The guard sets a key in the git config of the state folder, so the check of that config comes before any write. The repair of
   // the marker made that check in its ready check already.
-  if (guardDue.value && repair.value.kind === 'none') {
+  if (guardDue && repair.value.kind === 'none') {
     const safe = await requireStateConfigSafe(deps, root.value.layout.stateDir, commands.init);
     if (!safe.ok) return safe;
   }
@@ -211,13 +220,15 @@ const checkExisting = async (
     config: config.value,
     standing: standing.value,
     repair: repair.value,
-    guardDue: guardDue.value,
+    guardDue,
     points: config.value.entry.approvalPoints,
     registry,
     warnings: [
       ...root.value.warnings,
       ...(await sameIdWarnings(deps, indexPath, home, config.value.core.node.id)),
       ...leftover.value.map(tempFolderWarning),
+      // A guard that only a person can repair is a warning: the run goes on with its other work.
+      ...(guard.value.action === 'unsupported' ? [guardUnsupportedLine(guard.value)] : []),
     ],
   });
 };

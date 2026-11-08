@@ -4,8 +4,9 @@ import type { Deps } from '../../src/core/deps.js';
 import { stateGuard } from '../../src/names.js';
 import {
   guardHookText,
-  guardNeedsInstall,
+  guardPlanOf,
   guardStateOf,
+  guardWarning,
   installGuard,
   installGuardWithUndo,
   requireGuardOn,
@@ -15,6 +16,7 @@ import { gitHandler, withoutStateWords } from '../helpers/git-fake.js';
 import {
   GIT_DIR,
   GUARD,
+  HAND_KINDS,
   HOME,
   HOOK,
   HOOKS,
@@ -69,10 +71,11 @@ describe('the text of the guard hook (TP-1)', () => {
     ['three words', ['/a/node', '/a/cli.js', '/a/more']],
     ['a script path that is not absolute', ['/opt/fake/bin/node', 'cli.js']],
     ['a node path that is not absolute', ['node', '/opt/fake/lib/cli.js']],
-  ])('refuses %s with exit 4 and a remedy, and builds no text', (_name, argv) => {
+  ])('refuses %s with exit 4 and a remedy by hand, and builds no text', (_name, argv) => {
     const error = failureOf(guardHookText(argv));
     expect(exitCodeOf[error.kind]).toBe(4);
-    expect(error.hint).toContain('upgrade');
+    expect(error.hint).toContain('Start factory through its installed command.');
+    expect(error.hint).not.toContain('upgrade');
   });
 });
 
@@ -153,7 +156,7 @@ describe('the install of the guard stops before any change (TP-53)', () => {
     made.deps.seed('/elsewhere/folder/pre-commit', 'other hook');
     const error = failureOf(await installGuard(made.deps, STATE, STATE));
     expect(exitCodeOf[error.kind]).toBe(4);
-    expect(error.hint).toBe(stateGuard.remedy);
+    expect(error.hint).toBe('Move .factory/.git/factory-guard away. It must be a folder, not a link or a file.');
     expect(made.deps.files.get('/elsewhere/folder/keep.txt')).toBe('keep');
     expect(made.deps.files.get('/elsewhere/folder/pre-commit')).toBe('other hook');
     expect(await entriesOf(made.deps, '/elsewhere/folder')).toEqual(['keep.txt', 'pre-commit']);
@@ -173,7 +176,7 @@ describe('the install of the guard stops before any change (TP-53)', () => {
     const made = make();
     const error = failureOf(await installGuard(linkAt(made.deps, GIT_DIR), STATE, STATE));
     expect(exitCodeOf[error.kind]).toBe(4);
-    expect(error.hint).toBe(stateGuard.remedy);
+    expect(error.hint).toBe('Make .factory/.git the git folder of .factory. It must be a folder, not a file or a link.');
     unchanged(made, 2);
   });
 
@@ -191,6 +194,7 @@ describe('the install of the guard stops before any change (TP-53)', () => {
     for (let at = 0; at <= stateGuard.maxEntries; at += 1) made.deps.seed(`${GUARD}/f${at}`, 'x');
     const error = failureOf(await installGuard(made.deps, STATE, STATE));
     expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.hint).toContain('Remove the entries of .factory/.git/factory-guard that are not hook files.');
     expect((await entriesOf(made.deps, GUARD)).length).toBe(stateGuard.maxEntries + 1);
     unchanged(made, 2);
   });
@@ -199,7 +203,7 @@ describe('the install of the guard stops before any change (TP-53)', () => {
     const made = make({ programArgv: [] });
     const error = failureOf(await installGuard(made.deps, STATE, STATE));
     expect(exitCodeOf[error.kind]).toBe(4);
-    expect(error.hint).toContain('upgrade');
+    expect(error.hint).toContain('Start factory through its installed command.');
     expect(made.deps.calls).toEqual([]);
     expect(made.deps.atomicWrites).toEqual([]);
   });
@@ -296,34 +300,71 @@ describe('the state of the guard (TP-11)', () => {
   });
 });
 
-describe('the need to write the guard (TP-2, TP-4)', () => {
-  it('is no when the guard is on', async () => {
+describe('the plan to write the guard (TP-2, TP-4)', () => {
+  it('is current when the guard is on', async () => {
     const { deps } = await installed();
-    expect(await guardNeedsInstall(deps, STATE)).toEqual({ ok: true, value: false });
+    expect(await guardPlanOf(deps, STATE)).toEqual({ ok: true, value: { action: 'current' } });
   });
 
-  it('is yes for a state repo that has no guard', async () => {
+  it('is install for a state repo that has no guard', async () => {
     const { deps } = make();
-    expect(await guardNeedsInstall(deps, STATE)).toEqual({ ok: true, value: true });
+    expect(await guardPlanOf(deps, STATE)).toEqual({ ok: true, value: { action: 'install' } });
   });
 
-  it.each(OFF_CASES)('is yes for %s', async (_name, _kind, mutate) => {
+  it.each(OFF_CASES.filter(([, kind]) => !HAND_KINDS.has(kind)))('is install for %s', async (_name, _kind, mutate) => {
     const made = await installed();
-    expect(await guardNeedsInstall(await mutate(made), STATE)).toEqual({ ok: true, value: true });
+    expect(await guardPlanOf(await mutate(made), STATE)).toEqual({ ok: true, value: { action: 'install' } });
   });
 
-  it('is no for a state folder with no .git entry: there is no repo to guard, and no git command runs', async () => {
+  it.each(OFF_CASES.filter(([, kind]) => HAND_KINDS.has(kind)))(
+    'is unsupported, with the cause and a step that does not name the install, for %s',
+    async (_name, _kind, mutate) => {
+      const made = await installed();
+      const plan = await guardPlanOf(await mutate(made), STATE);
+      expect(plan).toMatchObject({ ok: true, value: { action: 'unsupported' } });
+      if (!plan.ok || plan.value.action !== 'unsupported') return;
+      expect(plan.value.why).not.toBe('');
+      expect(plan.value.remedy).not.toContain('factory upgrade');
+    },
+  );
+
+  it('is unsupported for a guard folder that is a link, also when the setting is not the guard folder', async () => {
+    const made = make();
+    expect(await guardPlanOf(linkAt(made.deps, GUARD), STATE)).toMatchObject({ ok: true, value: { action: 'unsupported' } });
+  });
+
+  it('is current for a state folder with no .git entry: there is no repo to guard, and no git command runs', async () => {
     const deps = createFakeDeps({ cwd: HOME, run: gitHandler().handler });
     deps.seedDir(STATE);
-    expect(await guardNeedsInstall(deps, STATE)).toEqual({ ok: true, value: false });
+    expect(await guardPlanOf(deps, STATE)).toEqual({ ok: true, value: { action: 'current' } });
     expect(deps.calls).toEqual([]);
   });
 
-  it('is a failure, never "no", when the entry can not be read', async () => {
+  it('is a failure, never "current", when the entry can not be read', async () => {
     const { deps } = make();
     const broken: Deps = { ...deps, fs: { ...deps.fs, lstat: async (path) => failure(`cannot read ${path}: EIO`) } };
-    expect((await guardNeedsInstall(broken, STATE)).ok).toBe(false);
+    expect((await guardPlanOf(broken, STATE)).ok).toBe(false);
   });
+});
+
+describe('the warning for a guard that is off', () => {
+  it('names the remedy factory upgrade for a guard that the install repairs', async () => {
+    const made = await installed();
+    made.deps.files.delete(HOOK);
+    expect(await guardWarning(made.deps, STATE)).toBe(
+      `The delete guard of .factory is off: the hook file pre-commit is missing. ${stateGuard.remedy}`,
+    );
+  });
+
+  it.each(OFF_CASES.filter(([, kind]) => HAND_KINDS.has(kind)))(
+    'names the cause and a step by hand, and not the command that stops at it, for %s',
+    async (_name, _kind, mutate) => {
+      const made = await installed();
+      const line = await guardWarning(await mutate(made), STATE);
+      expect(line).toContain('The delete guard of .factory is off: ');
+      expect(line).not.toContain('factory upgrade');
+    },
+  );
 });
 
 describe('the refusal of an off guard (TP-11)', () => {
@@ -332,14 +373,15 @@ describe('the refusal of an off guard (TP-11)', () => {
     expect(await requireGuardOn(deps, STATE)).toEqual({ ok: true, value: undefined });
   });
 
-  it.each(OFF_CASES)('refuses with exit 4 and the remedy factory upgrade for %s, and writes nothing', async (_name, _kind, mutate) => {
+  it.each(OFF_CASES)('refuses with exit 4 and the remedy for %s, and writes nothing', async (_name, kind, mutate) => {
     const made = await installed();
     const changed = await mutate(made);
     const before = { files: new Map(made.deps.files), writes: made.deps.atomicWrites.length, config: made.gitCommands().filter((c) => c.startsWith('config --')).length };
     const error = failureOf(await requireGuardOn(changed, STATE));
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain('the delete guard');
-    expect(error.hint).toBe('Run "factory upgrade".');
+    if (HAND_KINDS.has(kind)) expect(error.hint).not.toContain('factory upgrade');
+    else expect(error.hint).toBe('Run "factory upgrade".');
     expect(made.deps.files).toEqual(before.files);
     expect(made.deps.atomicWrites.length).toBe(before.writes);
     expect(made.gitCommands().filter((c) => c.startsWith('config --')).length).toBe(before.config);

@@ -1363,6 +1363,19 @@ describe('doctor: the delete guard of the state repository (TP-14)', () => {
     expect(output.failed).toBe(false);
   });
 
+  it('names the cause and the step by hand, and not factory upgrade, when the .git entry of the state folder is a link', async () => {
+    const deps = await initialized({ git: GUARD_ON });
+    const linked: Deps = {
+      ...deps,
+      fs: { ...deps.fs, lstat: async (path) => (path === `${HOME}/.factory/.git` ? ok('link' as const) : deps.fs.lstat(path)) },
+    };
+    const result = await checkStateGuard(linked, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('The delete guard of .factory is off: the git folder of .factory is not the folder .git inside it.');
+    expect(result.text).toContain('Make .factory/.git the git folder of .factory.');
+    expect(result.text).not.toContain('factory upgrade');
+  });
+
   it('warns when the setting that names the guard folder is not set', async () => {
     const deps = await initialized();
     const unset: Deps = {

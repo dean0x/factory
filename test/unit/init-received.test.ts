@@ -161,14 +161,16 @@ describe('init: a received factory (TP-29, TP-30)', () => {
     expect(log.commands()).toContain(`config -- core.hooksPath ${guard}`);
   });
 
-  it('stops with exit 4 and leaves no list entry and no state folder when the guard can not be written (TP-2)', async () => {
+  it('makes the state folder without a guard, and warns with the cause, when the guard can not be written (TP-2)', async () => {
     const { deps } = received({}, { ...terminal, programArgv: [] });
-    const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    expect(deps.files.has(INDEX)).toBe(false);
-    expect(deps.dirs.has(`${ROOT}/.factory`)).toBe(false);
-    expect(snapshot(deps)).toBe(before);
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.value.warnings : []).toEqual(
+      expect.arrayContaining([expect.stringContaining('can not write it: factory does not know the absolute path of its own program')]),
+    );
+    expect(deps.files.has(INDEX)).toBe(true);
+    expect(deps.files.has(`${ROOT}/.factory/node.json`)).toBe(true);
+    expect([...deps.files.keys()].some((path) => path.includes(stateGuard.folder))).toBe(false);
   });
 
   it('records the root with the origin received, also when an old entry of the folder says own', async () => {

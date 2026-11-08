@@ -13,6 +13,18 @@ const PROGRAM_WORDS = 2;
 /** The guard folder as a message shows it: relative to the factory folder, for example `.factory/.git/factory-guard`. */
 export const guardFolderLabel = join(dirs.state, GIT_ENTRY, stateGuard.folder);
 
+/** The ways that the install refuses to write the guard. A person does a step by hand first; the install can not repair them. */
+export type HandKind = 'program-unknown' | 'git-folder' | 'folder-not-plain' | 'folder-not-real' | 'folder-too-big';
+
+/** The step of each case in `HandKind`. None of them names `upgrade`, because that command stops at the same case. */
+const HAND_REMEDY: Readonly<Record<HandKind, string>> = {
+  'program-unknown': `Start ${program} through its installed command. The hook needs the absolute path of the program.`,
+  'git-folder': `Make ${join(dirs.state, GIT_ENTRY)} the git folder of ${dirs.state}. It must be a folder, not a file or a link.`,
+  'folder-not-plain': `Move ${guardFolderLabel} away. It must be a folder, not a link or a file.`,
+  'folder-not-real': `Make ${guardFolderLabel} a folder at its real path, with no link in the path.`,
+  'folder-too-big': `Remove the entries of ${guardFolderLabel} that are not hook files. It holds more than ${stateGuard.maxEntries}.`,
+};
+
 /**
  * The text of the delete guard hook: a shell script that starts this program with the words `state guard`. The node program and the
  * script are written by their absolute paths, so the hook never reads PATH. The hook first checks with shell built-ins that the node
@@ -25,7 +37,7 @@ export const guardHookText = (programArgv: readonly string[]): CliResult<string>
   if (programArgv.length !== PROGRAM_WORDS || !programArgv.every((word) => isAbsolute(word))) {
     return safetyRefusal(
       `${program} does not know the absolute path of its own program, so it writes no hook that starts it`,
-      `Start ${program} through its installed command. ${stateGuard.remedy}`,
+      HAND_REMEDY['program-unknown'],
     );
   }
   const quoted = programArgv.map(shellWord);
@@ -47,23 +59,38 @@ export const guardHookText = (programArgv: readonly string[]): CliResult<string>
 
 /** Why the guard is off. */
 export type GuardOffKind =
-  | 'program-unknown'
-  | 'git-folder'
+  | HandKind
   | 'hooks-path'
   | 'folder-missing'
-  | 'folder-not-plain'
   | 'extra-entry'
   | 'hook-missing'
   | 'hook-not-plain'
   | 'hook-mode'
   | 'hook-bytes';
 
+/** Who repairs an off guard: the install (`factory upgrade`), or a person by hand (the kinds in `HandKind`). */
+export type GuardRepair = 'install' | 'hand';
+
 export type GuardState =
   | { readonly on: true }
-  /** `why` is one sentence for a message. */
-  | { readonly on: false; readonly kind: GuardOffKind; readonly why: string };
+  /** `why` is one sentence for a message. `remedy` is the sentence that names the step that repairs the guard. */
+  | {
+      readonly on: false;
+      readonly kind: GuardOffKind;
+      readonly why: string;
+      readonly repair: GuardRepair;
+      readonly remedy: string;
+    };
 
-const off = (kind: GuardOffKind, why: string): CliResult<GuardState> => ok({ on: false, kind, why });
+type GuardOff = Extract<GuardState, { readonly on: false }>;
+
+/** An off guard that `factory upgrade` repairs. */
+const off = (kind: Exclude<GuardOffKind, HandKind>, why: string): CliResult<GuardState> =>
+  ok({ on: false, kind, why, repair: 'install', remedy: stateGuard.remedy });
+
+/** An off guard that a person repairs by hand: the install refuses it. */
+const offByHand = (kind: HandKind, why: string): CliResult<GuardState> =>
+  ok({ on: false, kind, why, repair: 'hand', remedy: HAND_REMEDY[kind] });
 
 const hookFiles: readonly string[] = stateGuard.hookFiles;
 
@@ -84,10 +111,61 @@ const ownGitFolderOf = async (deps: Deps, stateDir: string): Promise<CliResult<s
 };
 
 const gitFolderRefusal = (stateDir: string): CliResult<never> =>
-  safetyRefusal(`the git folder of ${stateDir} is not the folder ${GIT_ENTRY} inside it, so ${program} writes no guard there`, stateGuard.remedy);
+  safetyRefusal(
+    `the git folder of ${stateDir} is not the folder ${GIT_ENTRY} inside it, so ${program} writes no guard there`,
+    HAND_REMEDY['git-folder'],
+  );
 
-const folderRefusal = (folder: string, what: string): CliResult<never> =>
-  safetyRefusal(`the guard folder ${folder} ${what}, so ${program} changes nothing in it`, stateGuard.remedy);
+/** A fault of the guard folder that the install can not repair: `what` ends the sentence "the guard folder ... <what>". */
+interface FolderBlock {
+  readonly kind: Extract<HandKind, 'folder-not-plain' | 'folder-not-real' | 'folder-too-big'>;
+  readonly what: string;
+}
+
+const NOT_A_FOLDER: FolderBlock = { kind: 'folder-not-plain', what: 'is not a folder' };
+const NOT_AT_REAL_PATH: FolderBlock = { kind: 'folder-not-real', what: 'is not at its real path' };
+
+const folderRefusal = (folder: string, block: FolderBlock): CliResult<never> =>
+  safetyRefusal(`the guard folder ${folder} ${block.what}, so ${program} changes nothing in it`, HAND_REMEDY[block.kind]);
+
+/** The guard folder as the disk shows it: not there, a fault that the install can not repair, or a real folder with its entries. */
+type GuardFolder =
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'blocked'; readonly block: FolderBlock }
+  | { readonly kind: 'folder'; readonly names: readonly string[] };
+
+const blocked = (block: FolderBlock): CliResult<GuardFolder> => ok({ kind: 'blocked', block });
+
+/**
+ * Read the guard folder without a change, by the rules of the install: a link is never followed, and anything that is not a folder is
+ * a fault. A folder with more entries than the install removes is a fault, and so is a folder that is not at its real path.
+ */
+const readGuardFolder = async (deps: Deps, folder: string): Promise<CliResult<GuardFolder>> => {
+  const kind = await deps.fs.lstat(folder);
+  if (!kind.ok) return kind;
+  if (kind.value === null) return ok({ kind: 'missing' });
+  if (kind.value === 'link') return blocked({ kind: 'folder-not-plain', what: 'is a link' });
+  if (kind.value !== 'dir') return blocked(NOT_A_FOLDER);
+  const names = await deps.fs.list(folder);
+  if (!names.ok) return names;
+  if (names.value.length > stateGuard.maxEntries) {
+    return blocked({ kind: 'folder-too-big', what: `holds more than ${stateGuard.maxEntries} entries` });
+  }
+  const real = await deps.fs.realpath(folder);
+  if (!real.ok) return real;
+  if (comparable(deps, real.value) !== comparable(deps, folder)) return blocked(NOT_AT_REAL_PATH);
+  return ok({ kind: 'folder', names: names.value });
+};
+
+/** The guard folder as `readGuardFolder` gives it, made first when it is not there. A link can take the place of the new folder, so the new folder is read again. */
+const guardFolderMade = async (deps: Deps, folder: string): Promise<CliResult<GuardFolder>> => {
+  const read = await readGuardFolder(deps, folder);
+  if (!read.ok || read.value.kind !== 'missing') return read;
+  const made = await deps.fs.mkdir(folder, stateGuard.folderMode);
+  if (!made.ok) return made;
+  const again = await readGuardFolder(deps, folder);
+  return again.ok && again.value.kind === 'missing' ? blocked(NOT_A_FOLDER) : again;
+};
 
 /**
  * The path that `core.hooksPath` gets: the guard folder of the final state folder. In the staging folder of `init` the state folder
@@ -105,27 +183,11 @@ const hooksPathOf = async (deps: Deps, stateDir: string, finalStateDir: string, 
  * folder, and a link is removed itself, never followed. A hook file that is not a plain file is removed too.
  */
 const prepareGuardFolder = async (deps: Deps, folder: string): Promise<CliResult<void>> => {
-  const kind = await deps.fs.lstat(folder);
-  if (!kind.ok) return kind;
-  if (kind.value === 'link') return folderRefusal(folder, 'is a link');
-  if (kind.value !== null && kind.value !== 'dir') return folderRefusal(folder, 'is not a folder');
-  const listed = kind.value === 'dir' ? await deps.fs.list(folder) : ok<readonly string[]>([]);
-  if (!listed.ok) return listed;
-  if (listed.value.length > stateGuard.maxEntries) {
-    return folderRefusal(folder, `holds more than ${stateGuard.maxEntries} entries`);
-  }
-  if (kind.value === null) {
-    const made = await deps.fs.mkdir(folder, stateGuard.folderMode);
-    if (!made.ok) return made;
-    // A link can take the place of the new folder before the next check.
-    const again = await deps.fs.lstat(folder);
-    if (!again.ok) return again;
-    if (again.value !== 'dir') return folderRefusal(folder, 'is not a folder');
-  }
-  const real = await deps.fs.realpath(folder);
-  if (!real.ok) return real;
-  if (comparable(deps, real.value) !== comparable(deps, folder)) return folderRefusal(folder, 'is not at its real path');
-  for (const name of listed.value) {
+  const read = await guardFolderMade(deps, folder);
+  if (!read.ok) return read;
+  if (read.value.kind === 'blocked') return folderRefusal(folder, read.value.block);
+  const names = read.value.kind === 'folder' ? read.value.names : [];
+  for (const name of names) {
     const entry = join(folder, name);
     if (hookFiles.includes(name)) {
       const hook = await deps.fs.lstat(entry);
@@ -175,7 +237,7 @@ const removeGuardFolder = async (deps: Deps, folder: string): Promise<CliResult<
   if (kind.value === 'dir') {
     const real = await deps.fs.realpath(folder);
     if (!real.ok) return real;
-    if (comparable(deps, real.value) !== comparable(deps, folder)) return folderRefusal(folder, 'is not at its real path');
+    if (comparable(deps, real.value) !== comparable(deps, folder)) return folderRefusal(folder, NOT_AT_REAL_PATH);
   }
   return deps.fs.remove(folder);
 };
@@ -228,12 +290,9 @@ const putGuardBack = async (deps: Deps, stateDir: string, before: GuardBefore): 
  * another real path is a stop (exit 4) before any change. A copy of an earlier run that is still there is removed first.
  */
 const setFolderAside = async (deps: Deps, folder: string, copy: string): Promise<CliResult<void>> => {
-  const listed = await deps.fs.list(folder);
-  if (!listed.ok) return listed;
-  if (listed.value.length > stateGuard.maxEntries) return folderRefusal(folder, `holds more than ${stateGuard.maxEntries} entries`);
-  const real = await deps.fs.realpath(folder);
-  if (!real.ok) return real;
-  if (comparable(deps, real.value) !== comparable(deps, folder)) return folderRefusal(folder, 'is not at its real path');
+  const read = await readGuardFolder(deps, folder);
+  if (!read.ok) return read;
+  if (read.value.kind === 'blocked') return folderRefusal(folder, read.value.block);
   const stale = await deps.fs.remove(copy);
   return stale.ok ? deps.fs.rename(folder, copy) : stale;
 };
@@ -301,16 +360,24 @@ const hookStateOf = async (deps: Deps, hook: string, name: string, expected: str
  * folder `.git` of the state folder; `core.hooksPath` (as git reads it, with every config level) is the guard folder; the guard folder is
  * a real folder that holds the hook files and nothing else; each hook file is a plain file with mode 755; and its bytes are the package
  * text for this program path. A missing hook file is off, so the install writes it again. Any other case is off, with the first reason
- * found. A read that fails is an error, never "on". A moved package or a moved state folder is off until the guard is installed again.
+ * found, and with the remedy: the first cases are the ones that the install refuses (`repair` is `hand`: the program path, the git
+ * folder, the faults of the guard folder), and they come before the setting and the files, because no install repairs the later cases
+ * while one of them holds. A read that fails is an error, never "on". A moved package or a moved state folder is off until the guard
+ * is installed again.
  */
 export const guardStateOf = async (deps: Deps, stateDir: string): Promise<CliResult<GuardState>> => {
   const expected = guardHookText(deps.programArgv);
-  if (!expected.ok) return off('program-unknown', `${program} does not know the absolute path of its own program`);
+  if (!expected.ok) return offByHand('program-unknown', `${program} does not know the absolute path of its own program`);
   const gitDir = await ownGitFolderOf(deps, stateDir);
   if (!gitDir.ok) return gitDir;
-  if (gitDir.value === null) return off('git-folder', `the git folder of ${dirs.state} is not the folder ${GIT_ENTRY} inside it`);
+  if (gitDir.value === null) {
+    return offByHand('git-folder', `the git folder of ${dirs.state} is not the folder ${GIT_ENTRY} inside it`);
+  }
 
   const folder = join(gitDir.value, stateGuard.folder);
+  const read = await readGuardFolder(deps, folder);
+  if (!read.ok) return read;
+  if (read.value.kind === 'blocked') return offByHand(read.value.block.kind, `the guard folder ${folder} ${read.value.block.what}`);
   const configured = await stateConfigValue(deps, stateDir, stateGuard.hooksPathKey);
   if (!configured.ok) return configured;
   if (configured.value !== folder) {
@@ -318,15 +385,11 @@ export const guardStateOf = async (deps: Deps, stateDir: string): Promise<CliRes
     return off('hooks-path', `${stateGuard.hooksPathKey} ${found}, not the guard folder`);
   }
 
-  const folderKind = await deps.fs.lstat(folder);
-  if (!folderKind.ok) return folderKind;
-  if (folderKind.value === null) return off('folder-missing', `the guard folder ${folder} is missing`);
-  if (folderKind.value !== 'dir') return off('folder-not-plain', `the guard folder ${folder} is a link or not a folder`);
-  const names = await deps.fs.list(folder);
-  if (!names.ok) return names;
-  const missing = hookFiles.find((name) => !names.value.includes(name));
+  if (read.value.kind === 'missing') return off('folder-missing', `the guard folder ${folder} is missing`);
+  const { names } = read.value;
+  const missing = hookFiles.find((name) => !names.includes(name));
   if (missing !== undefined) return off('hook-missing', `the hook file ${missing} is missing`);
-  if (names.value.length > hookFiles.length) return off('extra-entry', `the guard folder holds a file other than ${hookFiles.join(', ')}`);
+  if (names.length > hookFiles.length) return off('extra-entry', `the guard folder holds a file other than ${hookFiles.join(', ')}`);
 
   for (const name of hookFiles) {
     const state = await hookStateOf(deps, join(folder, name), name, expected.value);
@@ -336,27 +399,41 @@ export const guardStateOf = async (deps: Deps, stateDir: string): Promise<CliRes
 };
 
 /**
- * Why the guard of the state folder `stateDir` is off, or null when there is nothing to report. A folder with no `.git` entry is no
+ * The guard of the state folder `stateDir` when it is off, or null when there is nothing to report. A folder with no `.git` entry is no
  * repo, so there is nothing to guard and no git command runs; the check of the state repo names that case where a command needs the
  * repo. Any other `.git` entry (a link, a git file, a folder) gets the full check. A read that fails is an error, never null.
  */
-const guardOffWhy = async (deps: Deps, stateDir: string): Promise<CliResult<string | null>> => {
+const guardOffOf = async (deps: Deps, stateDir: string): Promise<CliResult<GuardOff | null>> => {
   const entry = await deps.fs.lstat(join(stateDir, GIT_ENTRY));
   if (!entry.ok) return entry;
   if (entry.value === null) return ok(null);
   const state = await guardStateOf(deps, stateDir);
   if (!state.ok) return state;
-  return ok(state.value.on ? null : state.value.why);
+  return ok(state.value.on ? null : state.value);
 };
 
 /**
- * Whether a tool that writes the guard has work to do in the state folder `stateDir`: the folder has a `.git` entry and the guard is
- * off. The write then repairs the guard or stops with exit 4. A read that fails is an error, never "no".
+ * What a tool that writes the guard does in the state folder: `current` when the guard is on or the folder is no repo, `install` when
+ * the install repairs the guard, `unsupported` when only a person can repair it. The last case carries the cause and the step (the
+ * install would stop with exit 4), so the tool warns and goes on with its other work.
  */
-export const guardNeedsInstall = async (deps: Deps, stateDir: string): Promise<CliResult<boolean>> => {
-  const why = await guardOffWhy(deps, stateDir);
-  return why.ok ? ok(why.value !== null) : why;
+export type GuardPlan =
+  | { readonly action: 'current' }
+  | { readonly action: 'install' }
+  | { readonly action: 'unsupported'; readonly why: string; readonly remedy: string };
+
+/** The plan of a tool that writes the guard in the state folder `stateDir`. It reads only. A read that fails is an error. */
+export const guardPlanOf = async (deps: Deps, stateDir: string): Promise<CliResult<GuardPlan>> => {
+  const found = await guardOffOf(deps, stateDir);
+  if (!found.ok) return found;
+  if (found.value === null) return ok({ action: 'current' });
+  const { repair, why, remedy } = found.value;
+  return ok(repair === 'install' ? { action: 'install' } : { action: 'unsupported', why, remedy });
 };
+
+/** The warning for a guard that only a person can repair, for a tool that writes the guard (`init`, `upgrade`): the cause and the step. */
+export const guardUnsupportedLine = (plan: Extract<GuardPlan, { readonly action: 'unsupported' }>): string =>
+  `The delete guard of ${dirs.state} is off, and ${program} can not write it: ${plan.why}. ${plan.remedy}`;
 
 /**
  * The warning line for a command that only warns about the guard of the state folder `stateDir` (`doctor` and `start`), or null when
@@ -364,17 +441,17 @@ export const guardNeedsInstall = async (deps: Deps, stateDir: string): Promise<C
  * guard is then not known to be on, and the command goes on.
  */
 export const guardWarning = async (deps: Deps, stateDir: string): Promise<string | null> => {
-  const why = await guardOffWhy(deps, stateDir);
-  if (!why.ok) return `The delete guard of ${dirs.state} is not checked: ${why.error.message}`;
-  return why.value === null ? null : `The delete guard of ${dirs.state} is off: ${why.value}. ${stateGuard.remedy}`;
+  const found = await guardOffOf(deps, stateDir);
+  if (!found.ok) return `The delete guard of ${dirs.state} is not checked: ${found.error.message}`;
+  return found.value === null ? null : `The delete guard of ${dirs.state} is off: ${found.value.why}. ${found.value.remedy}`;
 };
 
 /**
- * Stop (exit 4) when the guard is off, with the remedy that repairs it. A tool that commits to the state repo asks this before it
- * writes. It reads only.
+ * Stop (exit 4) when the guard is off, with the remedy that repairs it: `factory upgrade` where the install repairs the guard, the
+ * step by hand where it does not. A tool that commits to the state repo asks this before it writes. It reads only.
  */
 export const requireGuardOn = async (deps: Deps, stateDir: string): Promise<CliResult<void>> => {
   const state = await guardStateOf(deps, stateDir);
   if (!state.ok) return state;
-  return state.value.on ? ok(undefined) : safetyRefusal(`the delete guard of ${dirs.state} is off: ${state.value.why}`, stateGuard.remedy);
+  return state.value.on ? ok(undefined) : safetyRefusal(`the delete guard of ${dirs.state} is off: ${state.value.why}`, state.value.remedy);
 };

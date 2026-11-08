@@ -9,7 +9,7 @@ import { installGuard } from '../../src/state/guard.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { exited, withFailingWrites, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
-import { HOME, installed, make, OFF_CASES, STATE } from '../helpers/guard-fixture.js';
+import { HAND_KINDS, HOME, installed, make, OFF_CASES, STATE } from '../helpers/guard-fixture.js';
 
 const LAYOUT = layoutOf(HOME);
 const BOARD = `${STATE}/board.json`;
@@ -345,7 +345,7 @@ describe('the board commit helper: a change that stops before any write', () => 
 });
 
 describe('the board commit helper: a guard that is off (TP-11)', () => {
-  it.each(OFF_CASES)('refuses with exit 4 and the remedy factory upgrade for %s, and writes nothing', async (_name, _kind, mutate) => {
+  it.each(OFF_CASES)('refuses with exit 4 and the remedy for %s, and writes nothing', async (_name, kind, mutate) => {
     const made = await installed();
     made.deps.seed(BOARD, board(['B-1']));
     const before = stateFiles(made.deps);
@@ -354,7 +354,9 @@ describe('the board commit helper: a guard that is off (TP-11)', () => {
     const error = errorOf(await commitBoardChange(changed, LAYOUT, request({ change })));
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain('the delete guard');
-    expect(error.hint).toBe('Run "factory upgrade".');
+    // The install repairs most cases. The cases that it refuses name a step by hand, and not the command that stops at them.
+    if (HAND_KINDS.has(kind)) expect(error.hint).not.toContain('factory upgrade');
+    else expect(error.hint).toBe('Run "factory upgrade".');
     expect(got).toEqual([]);
     expect(stateFiles(made.deps)).toEqual(before);
     expect(made.gitCommands().filter((command) => /^(add|rm|reset)\b/.test(command) || command.includes(' commit '))).toEqual([]);

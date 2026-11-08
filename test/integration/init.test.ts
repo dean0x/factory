@@ -224,7 +224,9 @@ describe('factory init (built binary)', () => {
     expect(await readdir(guard)).toEqual(['pre-applypatch', 'pre-commit', 'pre-merge-commit']);
     for (const name of await readdir(guard)) {
       expect((await stat(join(guard, name))).mode & 0o777).toBe(0o755);
-      expect(await box.read(join(guard, name))).toMatch(/^#!\/bin\/sh\n# .*\nexec .* state guard\n$/);
+      expect(await box.read(join(guard, name))).toMatch(
+        /^#!\/bin\/sh\n# .*\nif \[ ! -x .* \] \|\| \[ ! -f .* \]; then\n  printf .* >&2\n  exit 1\nfi\nexec .* state guard\n$/,
+      );
     }
     expect((await stat(guard)).mode & 0o777).toBe(0o755);
     expect((await box.git(state, ['ls-files'])).stdout).not.toContain('factory-guard');

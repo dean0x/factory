@@ -103,4 +103,28 @@ export const OFF_CASES: readonly (readonly [string, GuardOffKind, Change])[] = [
   ['a program that moved', 'hook-bytes', async (made) => ({ ...made.deps, programArgv: ['/opt/new/bin/node', '/opt/new/lib/cli.js'] })],
   ['a program path that is not known', 'program-unknown', async (made) => ({ ...made.deps, programArgv: [] })],
   ['a .git entry that is a link', 'git-folder', async (made) => linkAt(made.deps, GIT_DIR)],
+  [
+    'a guard folder with more entries than the install removes',
+    'folder-too-big',
+    touch((made) => {
+      for (let at = 0; at <= stateGuard.maxEntries; at += 1) made.deps.seed(`${GUARD}/f${at}`, 'x');
+    }),
+  ],
+  [
+    'a guard folder that is not at its real path',
+    'folder-not-real',
+    async (made) => ({
+      ...made.deps,
+      fs: { ...made.deps.fs, realpath: async (path) => (path === GUARD ? ok('/elsewhere/factory-guard') : made.deps.fs.realpath(path)) },
+    }),
+  ],
 ];
+
+/** The kinds that the install refuses. A person repairs them by hand, and their remedy does not name the command `factory upgrade`. */
+export const HAND_KINDS: ReadonlySet<GuardOffKind> = new Set<GuardOffKind>([
+  'program-unknown',
+  'git-folder',
+  'folder-not-plain',
+  'folder-not-real',
+  'folder-too-big',
+]);

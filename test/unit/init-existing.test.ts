@@ -1370,14 +1370,19 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
   it.each([
     ['a state folder that is complete', 'valid' as const],
     ['a state folder with no marker', 'no-marker' as const],
-  ])('exits 4, writes nothing and lists no entry when the guard of %s can not be written', async (_name, state) => {
-    const { deps } = existing({ state, entry: null }, { programArgv: [] });
+  ])('goes on with a warning that names the program, and writes no guard, when the program path is not known for %s', async (_name, state) => {
+    const { deps, log } = existing({ state, entry: null }, { programArgv: [] });
     repo(deps);
-    const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    expect(deps.files.has(INDEX)).toBe(false);
-    expect(snapshot(deps)).toBe(before);
+    expect(result.ok).toBe(true);
+    expect(deps.files.has(INDEX)).toBe(true);
+    expect(warningsOf(result).filter((line) => line.includes('can not write it'))).toEqual([
+      expect.stringContaining('absolute path of its own program'),
+    ]);
+    expect(warningsOf(result).join('\n')).not.toContain('factory upgrade');
+    expect([...deps.files.keys()].some((path) => path.includes(stateGuard.folder))).toBe(false);
+    expect(setting(log)).toEqual([]);
+    expect(linesOf(result)).not.toContain('factory-guard');
   });
 
   it('exits 4 before any write when the local git config of the state folder names a program, and names the key (AC-7)', async () => {
@@ -1393,16 +1398,30 @@ describe('init: the delete guard of a state repo that exists (TP-2, TP-53)', () 
     expect(snapshot(deps)).toBe(before);
   });
 
-  it('exits 4 and leaves the folder of the link as it was when the guard folder is a link', async () => {
+  it('goes on with a warning that names the link, and leaves the folder of the link as it was, when the guard folder is a link', async () => {
     const { deps } = existing({ state: 'no-marker', entry: null }, { links: { [GUARD]: '/elsewhere/folder' } });
     repo(deps);
     deps.seed('/elsewhere/folder/keep.txt', 'keep');
-    const before = snapshot(deps);
     const result = await runInit(deps, options({ yes: true }));
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result.ok).toBe(true);
+    expect(warningsOf(result).filter((line) => line.includes('can not write it'))).toEqual([
+      expect.stringContaining(`${GUARD} is a link`),
+    ]);
     expect([...deps.files.keys()].filter((path) => path.startsWith('/elsewhere/'))).toEqual(['/elsewhere/folder/keep.txt']);
-    expect(deps.files.has(INDEX)).toBe(false);
-    expect(snapshot(deps)).toBe(before);
+    expect(deps.files.has(INDEX)).toBe(true);
+  });
+
+  it('goes on with a warning that names the manual step when the .git entry of the state folder is a git file', async () => {
+    const { deps, log } = existing({ state: 'valid', entry: null });
+    deps.seed(`${STATE}/.git`, 'gitdir: ../.git/modules/.factory\n');
+    const result = await runInit(deps, options({ yes: true }));
+    expect(result.ok).toBe(true);
+    expect(warningsOf(result)).toContain(
+      'The delete guard of .factory is off, and factory can not write it: the git folder of .factory is not the folder .git inside it. ' +
+        'Make .factory/.git the git folder of .factory. It must be a folder, not a file or a link.',
+    );
+    expect(setting(log)).toEqual([]);
+    expect(deps.files.has(INDEX)).toBe(true);
   });
 
   it.each([

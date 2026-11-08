@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { stateGuard } from '../../src/names.js';
-import { guardHookText, guardStateOf, installGuard, installGuardWithUndo } from '../../src/state/guard.js';
+import { guardFolderLabel, guardHookText, guardStateOf, installGuard, installGuardWithUndo } from '../../src/state/guard.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 
 /**
@@ -140,7 +140,7 @@ describe('the guard folder is a link (TP-53)', () => {
     await rm(folder, { recursive: true });
     await symlink(target, folder);
     const result = await installGuard(deps, stateDir, stateDir);
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: stateGuard.remedy } });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: expect.stringContaining(`Move ${guardFolderLabel} away.`) } });
     expect(await readlink(folder)).toBe(target);
     expect((await readdir(target)).sort()).toEqual([PRE_COMMIT, 'keep.txt'].sort());
     expect(await readFile(join(target, 'keep.txt'), 'utf8')).toBe('keep');

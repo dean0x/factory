@@ -1122,6 +1122,9 @@ describe('init: the state repository', () => {
     expect(git.map((call) => call.args.slice(2).join(' '))).toEqual([
       'init -q',
       'rev-parse --is-inside-work-tree --show-prefix',
+      // The plan of the guard reads the git folder and the setting, then the install reads the git folder again and sets the path.
+      `${STATE_GIT} rev-parse --absolute-git-dir`,
+      '-c core.fsmonitor=false config core.hooksPath',
       `${STATE_GIT} rev-parse --absolute-git-dir`,
       `${STATE_GIT} config -- core.hooksPath ${GUARD_FOLDER}`,
       'config user.name',
@@ -1173,26 +1176,31 @@ describe('init: the state repository', () => {
     expect(setting).toBeLessThan(lines.findIndex((line) => line.includes('commit -q')));
   });
 
-  it('stops with exit 4 and changes nothing when the program path is not known, so no hook is written (TP-1)', async () => {
+  it('goes on with a warning that names the program, and writes no hook, when the program path is not known (TP-1)', async () => {
     const { deps } = setup({}, { programArgv: [] });
-    const before = snapshot(deps);
     const result = await runInit(deps, options());
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
-    expect(messageOf(result)).toContain('factory upgrade');
-    expect(snapshot(deps)).toBe(before);
+    expect(result.ok).toBe(true);
+    const warnings = result.ok ? result.value.warnings : [];
+    expect(warnings.filter((line) => line.includes('can not write it'))).toEqual([
+      expect.stringContaining('absolute path of its own program'),
+    ]);
+    expect(warnings.join('\n')).not.toContain('factory upgrade');
+    expect([...deps.files.keys()].some((path) => path.includes(stateGuard.folder))).toBe(false);
+    expect(deps.files.has(`${HOME}/.factory/node.json`)).toBe(true);
   });
 
-  it('stops with exit 4 and leaves the folder of the link as it was when the guard folder is a link (TP-53)', async () => {
+  it('goes on with a warning that names the link, and leaves the folder of the link as it was, when the guard folder is a link (TP-53)', async () => {
     const staging = `${HOME}/.factory.tmp-4242`;
     const guard = `${staging}/.git/${stateGuard.folder}`;
     const { deps } = setup({}, { links: { [guard]: '/elsewhere/folder' } });
     deps.seed('/elsewhere/folder/keep.txt', 'keep');
-    const before = snapshot(deps);
     const result = await runInit(deps, options());
-    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(result.ok).toBe(true);
+    expect(result.ok ? result.value.warnings : []).toEqual(
+      expect.arrayContaining([expect.stringContaining(`${guard} is a link`)]),
+    );
     expect(deps.files.get('/elsewhere/folder/keep.txt')).toBe('keep');
     expect([...deps.files.keys()].filter((path) => path.startsWith('/elsewhere/'))).toEqual(['/elsewhere/folder/keep.txt']);
-    expect(snapshot(deps)).toBe(before);
   });
 
   it('warns and makes no commit when there is no git identity', async () => {

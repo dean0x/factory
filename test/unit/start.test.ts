@@ -456,6 +456,18 @@ describe('start:the delete guard of the state repo (TP-6, TP-14)', () => {
     expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
   });
 
+  it('names the step by hand, and not factory upgrade, when the .git entry of the state folder is a git file', async () => {
+    const { deps } = make();
+    expect((await deps.fs.remove(GIT_DIR)).ok).toBe(true);
+    deps.seed(GIT_DIR, 'gitdir: ../.git/modules/.factory\n');
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({ ok: true, value: { failed: false, json: { started: true } } });
+    expect(deps.warned.filter((line) => line.includes('delete guard'))).toEqual([
+      expect.stringContaining('Make .factory/.git the git folder of .factory.'),
+    ]);
+    expect(deps.warned.join('\n')).not.toContain('factory upgrade');
+  });
+
   it('prints one line that says the guard is not checked, and exits 0, when git can not tell the git folder', async () => {
     const { deps } = make({ guard: 'unreadable' });
     const result = await startFactory(deps);

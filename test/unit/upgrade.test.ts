@@ -436,17 +436,63 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     expect(success(await upgrade(deps, spec)).json).toMatchObject({ changed: true, stateGuard: 'current', committed: false });
   });
 
-  it('stops with exit 4 and changes nothing when the guard folder is a link, and leaves the folder of the link as it was (TP-53)', async () => {
-    const links: Record<string, string> = {};
-    const { deps } = await makeNode({ links });
-    links[GUARD] = '/elsewhere/folder';
-    deps.seed('/elsewhere/folder/keep.txt', 'keep');
-    const before = snapshot(deps);
-    const error = refusal(await upgrade(deps, newer));
-    expect(exitCodeOf[error.kind]).toBe(4);
-    expect(snapshot(deps)).toEqual(before);
-    expect([...deps.files.keys()].filter((path) => path.startsWith('/elsewhere/'))).toEqual(['/elsewhere/folder/keep.txt']);
-    expect(backupsOf(deps)).toEqual([]);
+  describe('a guard that the install can not repair', () => {
+    const GIT_DIR = `${HOME}/.factory/.git`;
+    const unsupportedWarnings = (output: CommandOutput): string[] => output.warnings.filter((line) => line.includes('can not write it'));
+
+    it('goes on with a warning that names the link, and writes nothing into the folder of the link, when the guard folder is a link (TP-53)', async () => {
+      const links: Record<string, string> = {};
+      const { deps } = await makeNode({ links });
+      links[GUARD] = '/elsewhere/folder';
+      deps.seed('/elsewhere/folder/keep.txt', 'keep');
+      const output = success(await upgrade(deps, newer));
+      expect(output.json).toMatchObject({ changed: true, stateGuard: 'unsupported', committed: true });
+      expect(text(deps, CLAUDE)).toContain('New coordinator text.');
+      expect(unsupportedWarnings(output)).toEqual([expect.stringContaining(`${GUARD} is a link`)]);
+      expect([...deps.files.keys()].filter((path) => path.startsWith('/elsewhere/'))).toEqual(['/elsewhere/folder/keep.txt']);
+    });
+
+    it('goes on with a warning that names the program, and writes no hook, when the program path is not known', async () => {
+      const { deps } = await makeNode();
+      const hooksBefore = HOOKS.map((hook) => text(deps, hook));
+      const output = success(await upgrade({ ...deps, programArgv: [] }, newer));
+      expect(output.json).toMatchObject({ stateGuard: 'unsupported', committed: true });
+      expect(unsupportedWarnings(output)).toEqual([expect.stringContaining('absolute path of its own program')]);
+      expect(HOOKS.map((hook) => text(deps, hook))).toEqual(hooksBefore);
+    });
+
+    it.each([
+      ['a git file, as a submodule has', (deps: FakeDeps) => deps.seed(GIT_DIR, 'gitdir: ../.git/modules/.factory\n'), {}],
+      ['a link', () => undefined, { [GIT_DIR]: '/elsewhere/.git' }],
+    ])('goes on with a warning that names the manual step when the .git entry of the state folder is %s', async (_name, change, linked) => {
+      const links: Record<string, string> = {};
+      const { deps } = await makeNode({ links });
+      if (Object.keys(linked).length === 0) await deps.fs.remove(GIT_DIR);
+      change(deps);
+      Object.assign(links, linked);
+
+      const dry = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(dry.json).toMatchObject({ changed: false, dryRun: true, stateGuard: 'unsupported' });
+      expect(unsupportedWarnings(dry)).toEqual([expect.stringContaining('Make .factory/.git the git folder of .factory.')]);
+      expect(unsupportedWarnings(dry)[0]).not.toContain('upgrade');
+
+      const output = success(await upgrade(deps, newer));
+      expect(output.json).toMatchObject({ changed: true, stateGuard: 'unsupported', committed: true });
+      expect(text(deps, CLAUDE)).toContain('New coordinator text.');
+      expect(unsupportedWarnings(output)).toEqual(unsupportedWarnings(dry));
+      expect(HOOKS.every((hook) => !deps.files.has(hook) || text(deps, hook) === hookText())).toBe(true);
+    });
+
+    it('keeps the warning on a second run, and does not say that there is nothing to upgrade without it', async () => {
+      const links: Record<string, string> = {};
+      const { deps } = await makeNode({ links });
+      links[GUARD] = '/elsewhere/folder';
+      success(await upgrade(deps, newer));
+      const again = success(await upgrade(deps, newer));
+      expect(again.json).toMatchObject({ changed: false, stateGuard: 'unsupported' });
+      expect(unsupportedWarnings(again)).toHaveLength(1);
+      expect(again.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    });
   });
 
   it('stops with exit 4 before it writes the guard when the local git config names a program, and names the key (AC-7)', async () => {
@@ -462,12 +508,6 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     expect(backupsOf(deps)).toEqual([]);
   });
 
-  it('stops with exit 4 when the program path is not known, and writes nothing', async () => {
-    const { deps } = await makeNode();
-    const error = refusal(await upgrade({ ...deps, programArgv: [] }, newer));
-    expect(exitCodeOf[error.kind]).toBe(4);
-    expect(backupsOf(deps)).toEqual([]);
-  });
 });
 
 describe('upgrade: the state lock (TP-19)', () => {

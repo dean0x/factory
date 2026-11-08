@@ -133,7 +133,7 @@ describe('factory upgrade (built binary)', () => {
       expect((await box.git(stateOf(), ['config', 'core.hooksPath'])).stdout.trim()).toBe(await guardOf());
     });
 
-    it('exits 4 and leaves the folder of the link as it was when the guard folder is a link', async () => {
+    it('warns, exits 0 and leaves the folder of the link as it was when the guard folder is a link', async () => {
       await initNode();
       const guard = await guardOf();
       const elsewhere = join(box.root, 'elsewhere');
@@ -142,11 +142,29 @@ describe('factory upgrade (built binary)', () => {
       await writeFile(join(elsewhere, 'pre-commit'), 'other hook');
       await rm(guard, { recursive: true });
       await symlink(elsewhere, guard);
+      const dry = JSON.parse((await box.run(['upgrade', '--home', box.node, '--dry-run', '--json'])).stdout);
+      expect(dry.stateGuard).toBe('unsupported');
       const result = await box.run(['upgrade', '--home', box.node]);
-      expect(result.code).toBe(4);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('The delete guard of .factory is off');
+      expect(result.stderr).toContain('Move .factory/.git/factory-guard away.');
+      expect(result.stderr).not.toContain('factory upgrade');
       expect((await readdir(elsewhere)).sort()).toEqual(['keep.txt', 'pre-commit']);
       expect(await box.read(join(elsewhere, 'pre-commit'))).toBe('other hook');
       expect((await lstat(guard)).isSymbolicLink()).toBe(true);
+    });
+
+    it('warns, exits 0 and leaves the .git file as it was when the .git entry of the state folder is a file', async () => {
+      await initNode();
+      const git = join(stateOf(), '.git');
+      const moved = join(box.root, 'moved-git');
+      await rename(git, moved);
+      await writeFile(git, `gitdir: ${moved}\n`);
+      const result = await box.run(['upgrade', '--home', box.node]);
+      expect(result.code).toBe(0);
+      expect(result.stderr).toContain('Make .factory/.git the git folder of .factory.');
+      expect(result.stderr).not.toContain('factory upgrade');
+      expect(await box.read(git)).toBe(`gitdir: ${moved}\n`);
     });
   });
 
