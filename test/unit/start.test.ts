@@ -12,7 +12,8 @@ import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/in
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { stripScript } from '../../src/launch/argv.js';
-import { activeMachine, env, files, hookNames, schemaIds, tmuxNames, trackedFiles } from '../../src/names.js';
+import { activeMachine, env, files, hookNames, schemaIds, stateGuard, tmuxNames, trackedFiles } from '../../src/names.js';
+import { guardHookText } from '../../src/state/guard.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { safetyTemplateFor } from '../../src/templates/index.js';
 import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
@@ -44,6 +45,9 @@ const SETTINGS_FILE = '/w/node/coordinator/.claude/settings.local.json';
 /** The settings file as the writer of the hook settings leaves it. */
 const OWN_SETTINGS = `${JSON.stringify(ownSettingsEntries, null, 2)}\n`;
 const STATE_DIR = '/w/node/.factory';
+const GIT_DIR = '/w/node/.factory/.git';
+const GUARD_DIR = `${GIT_DIR}/${stateGuard.folder}`;
+const HOOK_FILE = `${GUARD_DIR}/${stateGuard.hookFile}`;
 const RUNTIME_DIR = '/w/node/.factory/state';
 const MACHINE_ID_FILE = '/w/node/.factory/state/machine-id';
 const MARK_FILE = '/w/node/.factory/active-machine.json';
@@ -115,6 +119,11 @@ interface Setup {
    * `status` is the porcelain text of `git status` (default: no change). `commitExit` is the exit code of the commit.
    */
   readonly stateRepo?: { readonly status?: string; readonly commitExit?: number };
+  /**
+   * The delete guard of the state repo. Default 'on': `init` wrote the hook and set `core.hooksPath`. 'off': the setting is not set.
+   * 'unreadable': git can not tell the git folder.
+   */
+  readonly guard?: 'on' | 'off' | 'unreadable';
 }
 
 /**
@@ -126,6 +135,10 @@ const gitAnswer = (setup: Setup) => (call: RunCall) => {
   if (setup.stateRepo !== undefined && call.args[1] === STATE_DIR) {
     if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, setup.stateRepo.status ?? '');
     if (command === 'config user.name' || command === 'config user.email') return exited(0, 'Git User\n');
+    if (command === 'rev-parse --absolute-git-dir') {
+      return setup.guard === 'unreadable' ? exited(128, '', 'fatal: cannot read the git folder\n') : exited(0, `${GIT_DIR}\n`);
+    }
+    if (command === 'config core.hooksPath') return setup.guard === 'off' ? exited(1) : exited(0, `${GUARD_DIR}\n`);
     return exited(command.includes(' commit ') ? (setup.stateRepo.commitExit ?? 0) : 0);
   }
   if (call.args.includes('--show-toplevel') && setup.workTree !== undefined) return exited(0, `${setup.workTree}\n`);
@@ -170,7 +183,14 @@ const make = (setup: Setup = {}): { deps: FakeDeps; tmux: TmuxLog } => {
     ...(setup.links === undefined ? {} : { links: setup.links }),
   });
   for (const tool of setup.tools ?? ['tmux', 'claude']) deps.seed(`/bin/${tool}`, '');
-  deps.seedDir(`${STATE_DIR}/.git`);
+  deps.seedDir(GIT_DIR);
+  if (setup.guard === undefined || setup.guard === 'on') {
+    const hook = guardHookText(deps.programArgv);
+    if (!hook.ok) throw new Error(hook.error.message);
+    deps.seedDir(GUARD_DIR);
+    deps.seed(HOOK_FILE, hook.value);
+    deps.modes.set(HOOK_FILE, stateGuard.hookMode);
+  }
   deps.seedDir(RUNTIME_DIR);
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
@@ -405,12 +425,45 @@ describe('start:a new session', () => {
   });
 });
 
-describe('start:a factory whose delete guard is off (TP-6)', () => {
-  it('starts as it did before, and makes no git read of the guard', async () => {
+describe('start:the delete guard of the state repo (TP-6, TP-14)', () => {
+  it('prints no warning when the guard is on', async () => {
     const { deps } = make();
-    expect(deps.files.has(`${STATE_DIR}/.git/factory-guard/pre-commit`)).toBe(false);
+    const output = await succeeded(deps);
+    expect(deps.warned).toEqual([]);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('starts the session, prints one warning line with the reason and the remedy, and exits 0, when the guard is off', async () => {
+    const { deps, tmux } = make({ guard: 'off' });
     const result = await startFactory(deps);
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: true, value: { failed: false, json: { started: true } } });
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(true);
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain('The delete guard of .factory is off');
+    expect(deps.warned[0]).toContain('core.hooksPath is not set');
+    expect(deps.warned[0]).toContain('Run "factory upgrade".');
+  });
+
+  it('prints the same one line in a dry run, and starts nothing', async () => {
+    const { deps, tmux } = make({ guard: 'off' });
+    await succeeded(deps, { dryRun: true });
+    expect(deps.warned.filter((line) => line.includes('delete guard'))).toHaveLength(1);
+    expect(tmux.commands().some((line) => line.startsWith('new-session'))).toBe(false);
+  });
+
+  it('prints one line that says the guard is not checked, and exits 0, when git can not tell the git folder', async () => {
+    const { deps } = make({ guard: 'unreadable' });
+    const result = await startFactory(deps);
+    expect(result).toMatchObject({ ok: true, value: { failed: false, json: { started: true } } });
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain('The delete guard of .factory is not checked');
+  });
+
+  it('prints no guard line and runs no git read of the guard when the state folder has no git entry', async () => {
+    const { deps } = make();
+    expect((await deps.fs.remove(GIT_DIR)).ok).toBe(true);
+    await startFactory(deps);
+    expect(deps.warned.filter((line) => line.includes('delete guard'))).toEqual([]);
     const guardReads = deps.calls
       .filter((call) => call.command === 'git')
       .map((call) => withoutStateWords(call.args).slice(2).join(' '))

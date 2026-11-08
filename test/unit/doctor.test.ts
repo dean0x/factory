@@ -21,6 +21,7 @@ import {
   checkSecrets,
   checkSetupText,
   checkState,
+  checkStateGuard,
   checkStateRepo,
   checkTempFolders,
   checkTools,
@@ -64,6 +65,12 @@ interface Setup {
 }
 
 const AGENT_VERSION_TEXT = '2.1.224 (Claude Code)\n';
+
+/**
+ * The setting `core.hooksPath` as git reads it from the state folder after `init`. The git fake keeps a setting that init writes under
+ * the staging folder, and the staging folder is renamed afterwards, so the fixture names the setting of the final folder.
+ */
+const GUARD_ON: GitFixture = { hooksPath: { [`${HOME}/.factory`]: `${HOME}/.factory/.git/factory-guard` } };
 
 const makeDeps = (setup: Setup = {}): FakeDeps => {
   const git = gitHandler(setup.git ?? {});
@@ -1335,6 +1342,60 @@ describe('doctor: state repository', () => {
   });
 });
 
+describe('doctor: the delete guard of the state repository (TP-14)', () => {
+  const HOOK = `${HOME}/.factory/.git/factory-guard/pre-commit`;
+
+  it('is ok when init left the guard on', async () => {
+    const deps = await initialized({ git: GUARD_ON });
+    expect(await checkStateGuard(deps, HOME)).toMatchObject({ id: 'state-guard', level: 'ok' });
+  });
+
+  it('warns with the reason and the remedy when the guard is off, and never fails', async () => {
+    const deps = await initialized({ git: GUARD_ON });
+    deps.files.set(HOOK, '#!/bin/sh\nexit 0\n');
+    const result = await checkStateGuard(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('The delete guard of .factory is off');
+    expect(result.text).toContain('differs from the text of the package');
+    expect(result.text).toContain('Run "factory upgrade".');
+    const output = await doctor(deps);
+    expect(levelOf(output.json['checks'] as CheckResult[], 'state-guard')).toBe('warn');
+    expect(output.failed).toBe(false);
+  });
+
+  it('warns when the setting that names the guard folder is not set', async () => {
+    const deps = await initialized();
+    const unset: Deps = {
+      ...deps,
+      run: async (command, args, options) =>
+        command === 'git' && args.at(-2) === 'config' && args.at(-1) === 'core.hooksPath' ? exited(1) : deps.run(command, args, options),
+    };
+    const result = await checkStateGuard(unset, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('core.hooksPath is not set');
+  });
+
+  it('says that it did not check when the state folder is not a git repository', async () => {
+    const deps = await initialized();
+    expect((await deps.fs.remove(`${HOME}/.factory/.git`)).ok).toBe(true);
+    expect(await checkStateGuard(deps, HOME)).toMatchObject({ id: 'state-guard', level: 'warn', text: expect.stringContaining('not checked') });
+  });
+
+  it('says that it did not check when git is missing', async () => {
+    const deps = await initialized({ tools: ['tmux'] });
+    expect(await checkStateGuard(deps, HOME)).toMatchObject({ level: 'warn', text: expect.stringContaining('git is missing') });
+  });
+
+  it('warns that it cannot check, and does not call the guard on, when git fails', async () => {
+    const deps = await initialized();
+    const broken = { ...deps, run: async () => failure('cannot run git: EACCES') };
+    const result = await checkStateGuard(broken, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('The delete guard of .factory is not checked');
+    expect(result.text).toContain('EACCES');
+  });
+});
+
 describe('doctor: projects', () => {
   const withProject = (deps: FakeDeps) => {
     writeConfig(deps, sampleConfig());
@@ -1591,7 +1652,7 @@ describe('doctor: instruction files at the root and above it (TP-32, TP-34)', ()
 
 describe('doctor: the command', () => {
   it('passes on a fresh node: no failure, so it is not failed', async () => {
-    const deps = await initialized({ git: { repos: { [HOME]: {} }, committed: [`${HOME}/.factory`] } });
+    const deps = await initialized({ git: { ...GUARD_ON, repos: { [HOME]: {} }, committed: [`${HOME}/.factory`] } });
     deps.seedDir(`${HOME}/.factory/.git`);
     const output = await doctor(deps);
     expect(output.failed).toBe(false);
@@ -1622,10 +1683,11 @@ describe('doctor: the command', () => {
       'tools',
       'agent-version',
       'state-repo',
+      'state-guard',
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('26 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('27 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1648,7 +1710,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(26);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(27);
   });
 
   it('finds the node by walking up from the current folder', async () => {

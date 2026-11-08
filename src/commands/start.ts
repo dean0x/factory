@@ -31,6 +31,7 @@ import {
   values,
   type CommandName,
 } from '../names.js';
+import { guardWarning } from '../state/guard.js';
 import { layoutOf } from '../state/layout.js';
 import { claimActiveMachine, markNamesThisMachine } from '../state/active-machine.js';
 import type { RecipeRegistry } from '../recipes/index.js';
@@ -429,6 +430,9 @@ export const runStart = async (
   // printed and the command goes on. A failure is a stop (exit 4) with one remedy line, and nothing starts.
   const scan = await scanRoot(deps, home, loaded.value);
   for (const notice of rootNotices(scan)) deps.warn(notice);
+  // A factory with the delete guard off keeps working, so the guard is one warning line: the exit code stays the same.
+  const guardLine = await guardWarning(deps, layoutOf(home).stateDir);
+  if (guardLine !== null) deps.warn(guardLine);
   // A change of the setup text is the one stop that a question can end: when it is the only failure, the owner on a terminal
   // window accepts it here. Every other case stops with the line that names the accept command.
   const settled = scan.setup.kind === 'changed' && failsOnlyOnSetup(scan)

@@ -191,17 +191,37 @@ export const guardStateOf = async (deps: Deps, stateDir: string): Promise<CliRes
 };
 
 /**
- * Whether a tool that writes the guard has work to do in the state folder `stateDir`: the folder has a `.git` entry and the guard is
- * off. A folder with no `.git` entry is no repo, so there is nothing to guard and no git command runs; the check of the state repo
- * names that case where a command needs the repo. Any other `.git` entry (a link, a git file, a folder) gets the full check, so the
- * write then repairs it or stops with exit 4. A read that fails is an error, never "no".
+ * Why the guard of the state folder `stateDir` is off, or null when there is nothing to report. A folder with no `.git` entry is no
+ * repo, so there is nothing to guard and no git command runs; the check of the state repo names that case where a command needs the
+ * repo. Any other `.git` entry (a link, a git file, a folder) gets the full check. A read that fails is an error, never null.
  */
-export const guardNeedsInstall = async (deps: Deps, stateDir: string): Promise<CliResult<boolean>> => {
+const guardOffWhy = async (deps: Deps, stateDir: string): Promise<CliResult<string | null>> => {
   const entry = await deps.fs.lstat(join(stateDir, GIT_ENTRY));
   if (!entry.ok) return entry;
-  if (entry.value === null) return ok(false);
+  if (entry.value === null) return ok(null);
   const state = await guardStateOf(deps, stateDir);
-  return state.ok ? ok(!state.value.on) : state;
+  if (!state.ok) return state;
+  return ok(state.value.on ? null : state.value.why);
+};
+
+/**
+ * Whether a tool that writes the guard has work to do in the state folder `stateDir`: the folder has a `.git` entry and the guard is
+ * off. The write then repairs the guard or stops with exit 4. A read that fails is an error, never "no".
+ */
+export const guardNeedsInstall = async (deps: Deps, stateDir: string): Promise<CliResult<boolean>> => {
+  const why = await guardOffWhy(deps, stateDir);
+  return why.ok ? ok(why.value !== null) : why;
+};
+
+/**
+ * The warning line for a command that only warns about the guard of the state folder `stateDir` (`doctor` and `start`), or null when
+ * the guard is on or the folder has no repo. An off guard names its reason and the remedy. A read that fails gives a line too: the
+ * guard is then not known to be on, and the command goes on.
+ */
+export const guardWarning = async (deps: Deps, stateDir: string): Promise<string | null> => {
+  const why = await guardOffWhy(deps, stateDir);
+  if (!why.ok) return `The delete guard of ${dirs.state} is not checked: ${why.error.message}`;
+  return why.value === null ? null : `The delete guard of ${dirs.state} is off: ${why.value}. ${stateGuard.remedy}`;
 };
 
 /**

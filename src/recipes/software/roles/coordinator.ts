@@ -51,7 +51,7 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   '- `{{localConfigFile}}`: the personal configuration of the {{owner}}. Do not edit it.',
   '- `{{nodeFile}}`: the state version and the versions of the managed blocks.',
   '- `{{workerFile}}`: the instructions that every {{worker}} follows.',
-  '- `{{boardFile}}`: the list of all open work.',
+  '- `{{boardFile}}`: the list of all open work. Mark an item closed. Never remove an item from it.',
   '- `{{waitingFile}}`: the items that wait for the {{owner}}.',
   '- `{{decisionLogFile}}`: the decisions of the {{owner}}.',
   '- `{{profileDir}}`: the principles from which you decide.',

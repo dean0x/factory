@@ -493,6 +493,13 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
   });
 });
 
+describe('the coordinator text: the board (TP-54)', () => {
+  it('tells the coordinator to mark an item closed and never to remove it from the board', () => {
+    const text = layer1Blocks.find((template) => template.name === 'coordinator')?.body ?? '';
+    expect(text).toContain('the list of all open work. Mark an item closed. Never remove an item from it.');
+  });
+});
+
 describe('the worker text: questions, assignments and resume notes (TP-37)', () => {
   const workerOf = (nodeId: string): string =>
     blockTemplatesFor(blockInput(1, { nodeId })).find((template) => template.name === 'worker')?.body ?? '';

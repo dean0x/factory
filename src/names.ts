@@ -1178,6 +1178,8 @@ export const checkIds = {
   /** The version of the agent program: the messages between sessions need 2.1.224 or newer. */
   agentVersion: 'agent-version',
   stateRepo: 'state-repo',
+  /** The delete guard of the state repo: a warning when it is off, with the remedy. */
+  stateGuard: 'state-guard',
   projects: 'projects',
   projectUrls: 'project-urls',
 } as const;
