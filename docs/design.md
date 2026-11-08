@@ -288,7 +288,7 @@ factory project add|remove|list
 factory recipe show                         # the project table of the coordinator, from the config
 factory tracker set <id> [--project P] [--items X] [--decisions X]   # change the board of the node, or of one project (§4.10)
 factory tracker status                      # the board of each project, and the check of its decision store
-factory plugin test <name>                  # run the contract suite of the board against a board plugin (§4.15, FAC-M11)
+factory plugin test <package>               # run the contract suite of the board against a board plugin (§4.15, FAC-M11)
 factory track add|list|update ...           # the tracks of the roadmap, kept on the board (§4.11, FAC-M5)
 factory state remote <url|path> | push | pull   # set the private backup place of the saved state, and copy the state to it or from it (§4.3, FAC-M3)
 factory state guard                         # the delete-guard hooks of the state folder call it before a commit; not for people (§6, FAC-M5)
@@ -572,11 +572,9 @@ limits:
   context_max_pct: 40
   idle_after: 2h             # <n>m or <n>h, 1m to 24h; a worker with no activity for this time may be idle (§4.11)
 tracker:                     # the default board of the node; a project can override it (§4.10)
-  kind: github               # github | jira | linear | local
-  items: acme/web            # where work items live (a repo, or a project or team scope)
+  kind: github               # local | artifact | github; a board plugin is named in factory.local.yaml, never here
+  items: acme/web            # where work items live (a repo)
   decisions: acme/decisions  # the decision store; private by default (§4.10)
-  # site: "https://acme.atlassian.net"   # jira only: the base URL of the Jira site
-  # key: ACME                            # jira: the project key; linear: the team key
   watch_interval: 5m         # `factory watch` read interval
 recipe:
   id: software               # the approval points come with the installed recipe (§6)
@@ -589,7 +587,7 @@ recipe:
       default_branch: main
       merge_method: squash
       # variant: devflow     # FAC-M6: optional per-project override
-      # tracker: { kind: jira, items: WEB, site: "https://acme.atlassian.net", key: WEB }   # FAC-M3: optional override (§4.10)
+      # tracker: { kind: github, items: acme/api }   # FAC-M3: optional override; the kind is local, artifact or github (§4.10)
       gate: { checks: [] }   # extra repo checks for `factory check`
       heavy_test: "npm test" # runs under `factory lock run`
 ```
@@ -617,6 +615,9 @@ approval:                    # the mode of each approval point of the recipe (§
   release: owner
 sources:                     # the local source of a project with no shareable URL
   web: /srv/code/web         # the key is a listed project path (one folder name); the value is an absolute path or a file URL
+# tracker:                   # FAC-M11: a board plugin for this node; it overrides the kind of the shared file
+#   kind: plugin:<package>   # the npm package that the user installed (§4.15)
+#   options: {}              # the options of the plugin; the plugin checks them with its own schema
 # state:                     # FAC-M3
 #   remote: null             # the private place of the work state of one owner
 parent: null                 # or { id, address }; the address is file:// only (§5.3)
@@ -628,7 +629,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 | Key | File | Reason |
 |---|---|---|
 | `schema` | each file | Each file has its own version key. It is not a value that a person shares. |
-| `node`, `tracker` (kind, items, decisions, site, key, `watch_interval`) | shared | They describe the factory and its board. |
+| `node`, `tracker` (`kind` with `local`, `artifact` or `github`, `items`, `decisions`, `watch_interval`) | shared | They describe the factory and its board. |
 | `recipe` with the projects | shared | The recipe name and the project list make the same factory on every machine. |
 | `session`: `agent`, `permission_mode`, `effort`, `model` | shared | They are a way of working. |
 | `limits` | shared | The context percents are a way of working. The memory, disk and load values are a policy, and `load_max: cpu_count` adapts to each machine. |
@@ -639,6 +640,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 | `approval` (the mode of each point) | local | Personal. A delegation is owner authority and needs an approval record on each machine. The list of approval points travels with the recipe. Only the mode per person stays local. |
 | `parent`, `children` | local | True for one machine only; each holds an absolute `file://` address. |
 | the board account and its credentials (FAC-M3) | local | A credential. |
+| `tracker` with a board plugin as `kind`, and its `options` (FAC-M11) | local | True for one machine only. The user installs the plugin on this machine and names it here. A name in the shared file would ask each receiver to load a package that the receiver did not choose. |
 | `sources` | local | True for one machine only. It holds a local path, which never goes into the shared file. Each key names a listed project path. Each value is an absolute path or a `file` URL, with no user name, no `..` segment and no leading hyphen. |
 | `state.remote` (FAC-M3) | local | It names the private place of the work state of one owner. |
 
@@ -646,8 +648,10 @@ children: []                 # nodes this node manages, each { id, address } (§
 
 **Mode 600.** `init` writes the local file with mode 600. `start`, `init`, `node` and `upgrade` set a mode that has only group or other read bits back to 600, and print a notice. They stop (exit 4) when the file has a group or other write bit, when another account owns it, or when it is a link (D-14). `doctor` and every dry run only warn, and name the `chmod` command. With `factory.yaml` and no `factory.local.yaml`, `start`, `doctor` and `node` exit 2 and name `init`.
 
-- `tracker.kind: local` takes no other tracker key: the items and the decisions stay in `.factory/` (§4.10). The schema refuses `items`, `decisions`, `site`, `key` or `watch_interval` with `local`. Every other kind needs `items` and `decisions`. `jira` also needs `site` and `key`. `linear` also needs `key`.
-- A project can name its own `tracker` with `kind`, `items`, `site` and `key`. The decision store stays the one of the node, so the owner answers in one place. A project with no `tracker` uses the one of the node. The `tracker.decisions` key names a place, not the records, so it stays shared (D-9). With the `local` board the records stay in the private `.factory/`.
+- `tracker.kind: local` takes no other tracker key: the items and the decisions stay in `.factory/` (§4.10). The schema refuses `items`, `decisions` or `watch_interval` with `local`. The change feed of `local` has a fixed default interval, so it has no new key. `tracker.kind: artifact` takes no other tracker key either: its items stay in the local files, and its page is a view (§4.10). `github` needs `items` and `decisions`.
+- **The kind of the board in each file (FAC-M11).** In the shared file, `tracker.kind` takes only `local`, `artifact` or `github`. A board plugin is an npm package that the user installed (§4.15). The user names it only in `factory.local.yaml`, in a `tracker` block with `kind` and `options`. On this node, that block overrides the kind of the shared file. `factory tracker set plugin:<package>` writes the local file. `items` and `decisions` stay in the shared file. A shared file that names a plugin kind stops the command with exit 1, and the message names `factory.local.yaml` (§4.3, "Stops and warnings"). The plugin checks its `options` with its own schema, and an unknown key under `options` fails and names the key. A plugin such as `jira` or `linear` has the options `site` and `key` (FAC-M9).
+- **Page privacy and the records stay out of the shared file (FAC-M11).** The answer of the owner about the privacy of the `artifact` page is kept for each node, outside the shared file (§4.10). The decision log and the approval records are never a cache of the board. They stay in the owner store for every kind (§6).
+- A project can name its own `tracker` with `kind` and `items`. The kind is `local`, `artifact` or `github`. A project that uses a board plugin names it in `factory.local.yaml` too, never in the shared file. The decision store stays the one of the node, so the owner answers in one place. A project with no `tracker` uses the one of the node. The `tracker.decisions` key names a place, not the records, so it stays shared (D-9). With the `local` board the records stay in the private `.factory/`.
 - `session.agent` (FAC-M4) is the program that factory starts for a session. Only `claude` is accepted. All starts of the agent use this value (§4.6). Before FAC-M4, the schema has no such key, and factory starts `claude`.
 - `approval` maps each approval point of the recipe to `owner` or `delegated`. A point that the file does not name is `owner`. The schema refuses a point that the recipe does not list. §6 says what each value means and what proves `delegated`.
 - The shared file holds no secret and no local path. `factory doctor` refuses a tracked file with a value that looks like a password or a token. The schema is checked at load with a fixed schema (Zod). An unknown key or a bad value stops the command and names the key. It never falls back to a looser default (from firstmate's fail-closed parse).
@@ -1010,6 +1014,8 @@ factory has two kinds of files. The **core** is the metal: the code, and the fix
 | The scripts | setup | A script is a file of the setup. The owner accepts it (FAC-M6). |
 | The owner hooks (G-2) | setup | The hook list `setup/hooks` names an event and a setup script for each entry. factory runs the script after it writes the event to the event file, and gives the event on stdin. The owner accepts each hook as a setup file. A hook has a run-time bound, a named number in `src/names.ts`; factory stops a hook at the bound. A hook that fails or stops at the bound prints one warning line, and the command keeps its exit code (FAC-M6). |
 | The owner fields of the board (G-1) | setup | The setup names the fields and their values. The connector contract carries them (§4.10, FAC-M5). |
+| The board connectors `local`, `artifact` and `github` | core | They are internal board plugins. The package holds them, and they use the same contract as a board plugin of the owner (§4.15, FAC-M11). |
+| The board plugins of the owner | not a setup file | A board plugin is an npm package that the owner installs. The owner names it in `factory.local.yaml`. It is not a file of the setup, so the setup acceptance does not cover it, and there is no hash accept (D-140). The install is the trust decision (§4.15). |
 | The decision profile | core and setup | The store, the record tools and the use of the profile in decisions are core. The principles and the records are the owner's content. Each owner decision through `factory decide` writes a decision record that the profile uses later, so factory decides more on its own as the profile grows (FAC-M5). |
 | The fixed rules (the `safety` block) | core | It is the metal. An edit cannot remove it: `doctor` and `start` check its hash. |
 | The role block that the recipe renders | core | The package renders it again when the setting or the package changes. |
@@ -1128,6 +1134,7 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 | No relay server keys or passwords in output | yes | The relay server setting holds no keys, and `doctor` refuses a value that looks like a password or a token there. Output shows only the name, the host and the port of the relay server. |
 | A denial is final; another session does not do the denied step | yes | `worker relay` (FAC-M5) refuses a text that asks a worker to run a command that the node recorded as denied. A message from another session never carries the authority of the owner (§4.12). |
 | Never invent the owner's consent | yes | `worker relay` types owner input only for a decision that the owner recorded, or for an action inside the scope of an active standing delegation that the owner recorded. Only `factory decide` records an owner decision: it needs a terminal window and refuses inside a factory session. A board comment, label or assignee change is never a proof, with any account setup. |
+| A board result is never owner consent | no | factory checks each result of a board connector against the schema of the contract, and refuses a result that fails. A board result is data. Only `factory decide` writes a decision record, in a terminal window outside a factory session. A page answer and a board answer only show, and wake the agent (§4.10, §4.15, FAC-M11). |
 | Decisions stay private | yes | `doctor` fails when the decision store is public, and warns when it is not set (§4.10). |
 | No secrets in output | yes | No command prints the value of a secret setting. `doctor` refuses a value that looks like a password or a token in a shared file of the factory folder. A list of running programs shows only the number, the run time and the name of each program. |
 | Workers never ask the owner directly | yes (role texts) | none (the model follows the text) |
@@ -1196,6 +1203,8 @@ The rules:
 - **The setup acceptance is not an approval record.** It has its own writer and its own store, and it writes only its own kind. So `init --yes` can never write an approval record (§4.3).
 
 **What the guards do not prove (D-10 A).** The guard can not prove that the owner, and not another program of the same user, gives the answer. The same limit applies to the setup accept prompt and to the origin of an entry in the factory list. These controls stop mistakes, and they do not replace the permission checks of Claude Code. FAC-M5 adds a control outside factory that makes the gap smaller but does not close it. A state folder that the user links into `~/.claude` is not detected.
+
+The same limit (D-10 A) covers a board plugin. It runs inside factory with the rights of the user. It reaches the files, the logins of the board CLIs, the network, the state files and the decision log. The install is the trust decision of the user (D-140). A time cap cannot stop a plugin that blocks the process. A plugin result is never a proof. The check of the decision log and the approval records finds an edit by hand or by another tool. It does not find a program that writes a new valid record (FAC-M11, §4.15).
 
 ### 6.1 Software recipe: what counts as approval and assignment (D-52)
 
@@ -1407,9 +1416,13 @@ Dean gave F-14 to F-21, D-59 and D-60. The Gate 1 and Gate 2 answers and the lat
 - **Claude Code changes its hook events, status line JSON or CLI flags.** All Claude Code calls sit in one module, with a test that `doctor` runs against the installed version. The last-seen hook uses only documented hook events.
 - **A dead proxy stops every worker that uses it.** The health check runs before each launch, the default is `stop` with a clear fix, and the views show which workers use a proxy (§4.6).
 - **tmux typing is fragile.** factory types only constant lines through one module, checks the hook state and the pane start time first, and refuses a screen that shows an option list.
-- **Board limits and cost.** The APIs of the board tools have rate limits, and reads cost time. `factory watch` reads at a fixed interval with a bound per run, and caches in `.factory/state/`. A board that does not answer is "unknown", never "no answer".
+- **Board limits and cost.** The APIs of the board tools have rate limits, and reads cost time. `factory watch` reads at a fixed interval with a bound per run, and caches in `.factory/state/`. A board that does not answer is "unknown", never "no answer". Each board call has a time cap, an output byte cap and a result cap (§4.3, "Caps").
 - **A false decision answer.** Anyone with access can comment on a decision item. A board comment or label only wakes the coordinator and shows the answer. The owner enters the decision with `factory decide`. A comment or a label records nothing, so a false answer on the board changes no decision. `decide read` shows the author and the link.
 - **A public decision store.** `doctor` fails on it (§4.10).
+- **A board plugin has full reach.** A plugin runs inside factory with the rights of the user (D-140). Factory loads it only from the global npm folder, with a valid package name and the contract id in its `package.json`. Factory reads that file before any plugin code runs. The install is the trust decision, and each stop that concerns a plugin says so. Nothing stops a plugin that blocks the process or reads the files of the user (§6, "What the guards do not prove").
+- **The board holds the truth, so offline work only reads (D-141 B).** A write goes to the board first. The cache changes after the board answers. A board that is down fails the write, and no queue holds it. A write with no answer is "unknown": run `factory watch`, then retry. Each item carries its factory id, so a retry makes no second item. `factory decide` works offline.
+- **Page privacy is a manual check.** Factory cannot check that the page of the `artifact` board is private. It asks the owner once for each node. `doctor` warns each time and never passes the check (§4.10).
+- **The record checks have limits.** The check of the decision log and of the approval records finds an edit by hand or by another tool. It does not find a program that writes a new valid record (§6, D-10 A). The check of item text finds a value that looks like a password or a token. It does not find private facts in plain language.
 - **The renames and the schema 2 migration touch every part.** They come first in the roadmap, before more code uses the old names. The schema 1 → 2 migration has a test, and every name sits in `src/names.ts`.
 - **Scope grows.** The roadmap builds the CLI in stages. Each stage is useful for this workspace before the next one starts. Other recipes and other boards wait until the `software` recipe on GitHub works.
 - **Two copies of the setup during the move.** The adopt is one step with a dry run. The old page and scripts stay as the owner view of the `local` period and read the same `local` files, so there is one source of truth. FAC-M3 retires them, and a search finds no process that calls them.
