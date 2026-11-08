@@ -287,9 +287,13 @@ const hookStateOf = async (deps: Deps, hook: string, name: string, expected: str
   const info = await deps.fs.statInfo(hook);
   if (!info.ok) return info;
   if (info.value?.mode !== stateGuard.hookMode) return off('hook-mode', `the hook file ${name} does not have mode ${stateGuard.hookMode.toString(8)}`);
-  const text = await deps.fs.readTextLimited(hook, Buffer.byteLength(expected, 'utf8'));
-  if (!text.ok || text.value !== expected) return off('hook-bytes', `the hook file ${name} differs from the text of the package`);
-  return ok({ on: true });
+  const length = Buffer.byteLength(expected, 'utf8');
+  const differs = (): CliResult<GuardState> => off('hook-bytes', `the hook file ${name} differs from the text of the package`);
+  // A file of another size differs, so only a file of the right size is read. A read that fails then is an error, not "off".
+  if (info.value.size !== length) return differs();
+  const text = await deps.fs.readTextLimited(hook, length);
+  if (!text.ok) return text;
+  return text.value === expected ? ok({ on: true }) : differs();
 };
 
 /**

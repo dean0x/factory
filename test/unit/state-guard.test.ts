@@ -262,6 +262,32 @@ describe('the state of the guard (TP-11)', () => {
     expect(await guardStateOf(made.deps, STATE)).toEqual({ ok: true, value: { on: true } });
   });
 
+  it('is a failure, never "off" and never "on", when a hook file of the right size cannot be read', async () => {
+    const made = await installed();
+    const broken: Deps = { ...made.deps, fs: { ...made.deps.fs, readTextLimited: async (path) => failure(`cannot read ${path}: EIO`) } };
+    const state = await guardStateOf(broken, STATE);
+    expect(state.ok).toBe(false);
+    if (!state.ok) expect(state.error.message).toContain('EIO');
+  });
+
+  it('is off for a hook file of another size, and reads no text of it', async () => {
+    const made = await installed();
+    made.deps.files.set(HOOK, `${HOOK_TEXT}more\n`);
+    const reads: string[] = [];
+    const counting: Deps = {
+      ...made.deps,
+      fs: {
+        ...made.deps.fs,
+        readTextLimited: async (path, maxBytes) => {
+          reads.push(path);
+          return made.deps.fs.readTextLimited(path, maxBytes);
+        },
+      },
+    };
+    expect(await guardStateOf(counting, STATE)).toMatchObject({ ok: true, value: { on: false, kind: 'hook-bytes' } });
+    expect(reads).toEqual([]);
+  });
+
   it('is a failure, never "on", when git cannot read the setting', async () => {
     const made = await installed();
     const broken = { ...made.deps, run: async () => exited(128, '', 'fatal: broken') };
