@@ -9,7 +9,7 @@ import { commandText, files, hostedBoardLine, maxEchoChars, places, values, type
 import type { RecipeBoard } from '../recipes/entry.js';
 import { commitBoardChange, type BoardTexts } from '../state/board-commit.js';
 import type { Layout } from '../state/layout.js';
-import type { BoardConnector, BoardItem, BoardTrack, ChangesRead, ItemMoved } from './contract.js';
+import type { BoardItem, BoardTrack, ChangesRead, ItemMoved, LocalBoard, QueueRowSet } from './contract.js';
 import {
   addItemIn,
   addTrackIn,
@@ -23,20 +23,29 @@ import {
   checkNewItem,
   checkNewTrack,
   checkPatch,
+  checkQueueRow,
+  checkRequestId,
   closeItemIn,
+  closeRequestIn,
   linkDocIn,
   moveItemIn,
   requireTrack,
+  setRowIn,
   type BoardSetup,
   type Edit,
 } from './edit.js';
-import { parseBoard, parseDecisionLog, parseWaiting, readBoard, type BoardDoc } from './files.js';
+import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readWaiting, type BoardDoc, type DecisionLogDoc, type WaitingDoc } from './files.js';
 import { boardJsonText } from './json.js';
+import { queueRowsOf } from './queue.js';
+import { requestsOf } from './requests.js';
 
 /**
  * The local board connector (design 4.10): the board is the files of the state folder. Every write is one `commitBoardChange` call:
  * the callback reads the files that the helper gives it, builds the new text and returns it, so the helper checks the guard, the size
  * and the item ids, writes the files and makes one state commit. A read takes no lock.
+ *
+ * The local board has the operations of the contract and four more: the list and the close of the requests, and the list and the
+ * write of the queue. A hosted board maps them to the provider (FAC-M3), so they are not in the contract suite.
  *
  * A hosted tracker kind (`github`, `jira` or `linear`) keeps the truth of the board at the provider, and the local files are a cache of
  * it. This version has no provider, so every write of a hosted kind stops with a security stop (exit 4) before the input check and
@@ -64,7 +73,15 @@ const commitMessages = {
   linkDoc: (id: string): string => `chore: link a file to item ${id}`,
   addTrack: (id: string): string => `chore: add track ${id}`,
   askDecision: 'chore: add a decision to the board',
+  closeDecision: (id: string): string => `chore: close decision ${id}`,
+  setQueueRow: 'chore: change the queue',
 } as const;
+
+/** The files of a write of a decision. The board is among them, so the check of its queue key runs under the lock. */
+const decisionFiles = [files.waiting, files.decisionLog, files.board] as const;
+
+/** The date of a row of the decision log is the first 10 characters of an ISO time: `2030-01-02`. */
+const DATE_CHARS = 10;
 
 /** The text of one touched file, else a failure that names the file. */
 const textIn = (texts: BoardTexts, file: string): CliResult<string> => {
@@ -92,7 +109,7 @@ interface BoardEdited<T> {
   readonly doc: BoardDoc;
 }
 
-export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoardOptions): BoardConnector => {
+export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoardOptions): LocalBoard => {
   const { queueKey } = options;
   const setup: BoardSetup = { recipe: options.recipe, config: options.config };
 
@@ -153,6 +170,25 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   }): Promise<CliResult<R>> => {
     const done = await commit([files.board], spec.message, boardChange(spec.edit));
     return done.ok ? spec.resultOf(done.value.doc, done.value.value) : done;
+  };
+
+  /**
+   * The waiting file and the decision log as the helper read them. The board is checked too, so a board with the old queue key or a
+   * board that is not valid stops a write of a decision as it stops a write of an item.
+   */
+  const decisionDocsOf = (texts: BoardTexts): CliResult<{ readonly waiting: WaitingDoc; readonly log: DecisionLogDoc }> => {
+    const board = textIn(texts, files.board);
+    if (!board.ok) return board;
+    const checkedBoard = parseBoard(board.value, queueKey);
+    if (!checkedBoard.ok) return checkedBoard;
+    const waitingText = textIn(texts, files.waiting);
+    if (!waitingText.ok) return waitingText;
+    const waiting = parseWaiting(waitingText.value);
+    if (!waiting.ok) return waiting;
+    const logText = textIn(texts, files.decisionLog);
+    if (!logText.ok) return logText;
+    const log = parseDecisionLog(logText.value);
+    return log.ok ? ok({ waiting: waiting.value, log: log.value }) : log;
   };
 
   const itemIn = (doc: BoardDoc, id: string): CliResult<BoardItem> => {
@@ -259,27 +295,61 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const checked = checkDecision(input);
       if (!checked.ok) return checked;
-      // The board is read too, so a board with the old queue key or a board that is not valid stops a decision as it stops an item.
-      const done = await commit([files.waiting, files.decisionLog, files.board], commitMessages.askDecision, (texts) => {
-        const board = textIn(texts, files.board);
-        if (!board.ok) return board;
-        const checkedBoard = parseBoard(board.value, queueKey);
-        if (!checkedBoard.ok) return checkedBoard;
-        const waitingText = textIn(texts, files.waiting);
-        if (!waitingText.ok) return waitingText;
-        const waiting = parseWaiting(waitingText.value);
-        if (!waiting.ok) return waiting;
-        const logText = textIn(texts, files.decisionLog);
-        if (!logText.ok) return logText;
-        const log = parseDecisionLog(logText.value);
-        if (!log.ok) return log;
-        const edited = askIn(waiting.value, log.value, checked.value);
+      return commit(decisionFiles, commitMessages.askDecision, (texts) => {
+        const read = decisionDocsOf(texts);
+        if (!read.ok) return read;
+        const edited = askIn(read.value.waiting, read.value.log, checked.value);
         if (!edited.ok) return edited;
         const written = newText(files.waiting, edited.value.top, parseWaiting);
         if (!written.ok) return written;
         return ok({ texts: new Map([[files.waiting, written.value.text]]), value: edited.value.value });
       });
-      return done;
+    },
+
+    async listRequests() {
+      const waiting = await readWaiting(deps, layout);
+      return waiting.ok ? ok(requestsOf(waiting.value)) : waiting;
+    },
+
+    async closeRequest(id) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkRequestId(id);
+      if (!valid.ok) return valid;
+      return commit(decisionFiles, commitMessages.closeDecision(id), (texts) => {
+        const read = decisionDocsOf(texts);
+        if (!read.ok) return read;
+        const edited = closeRequestIn(read.value.waiting, read.value.log, id, deps.now().toISOString().slice(0, DATE_CHARS));
+        if (!edited.ok) return edited;
+        const waiting = newText(files.waiting, edited.value.waiting, parseWaiting);
+        if (!waiting.ok) return waiting;
+        const log = newText(files.decisionLog, edited.value.log, parseDecisionLog);
+        if (!log.ok) return log;
+        return ok({
+          texts: new Map([
+            [files.waiting, waiting.value.text],
+            [files.decisionLog, log.value.text],
+          ]),
+          value: edited.value.closed,
+        });
+      });
+    },
+
+    async listQueue() {
+      const doc = await readBoard(deps, layout, queueKey);
+      return doc.ok ? ok(queueRowsOf(doc.value)) : doc;
+    },
+
+    async setQueueRow(input) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const checked = checkQueueRow(setup, input);
+      if (!checked.ok) return checked;
+      return boardWrite<QueueRowSet, QueueRowSet>({
+        message: commitMessages.setQueueRow,
+        edit: (doc) => setRowIn(doc, setup, checked.value),
+        resultOf: (_doc, set) => ok(set),
+      });
     },
 
     async linkDoc(input) {

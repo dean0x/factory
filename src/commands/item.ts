@@ -1,5 +1,5 @@
 import { declaredFields, itemTarget } from '../board/fields.js';
-import type { BoardConnector, BoardItem, FieldValues, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery } from '../board/contract.js';
+import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery } from '../board/contract.js';
 import { boardView, trackView } from '../board/list-view.js';
 import { stageShown } from '../board/stages.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
@@ -7,9 +7,10 @@ import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, maxEchoChars, schemaIds } from '../names.js';
+import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { openBoard } from './board-open.js';
+import { parseFieldWords, shown, usageFor } from './board-words.js';
 
 export interface ItemOptions {
   readonly home: string | undefined;
@@ -46,11 +47,7 @@ const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
   [itemCommands.list]: [flags.all, flags.track],
 };
 
-/** Typed text for a message: cleaned, cut and quoted. */
-const shown = (text: string): string => JSON.stringify(displayLine(text, maxEchoChars));
-
-const needsUsage = (what: string): CliResult<never> =>
-  usageError(what, `Run "${commandText(commands.item)} ${flagText(flags.help)}".`);
+const needsUsage = usageFor(commands.item);
 
 const subcommandOf = (word: string): Subcommand | undefined => Object.values(itemCommands).find((candidate) => candidate === word);
 
@@ -66,19 +63,6 @@ const refuseStrayFlags = (subcommand: Subcommand, options: ItemOptions): CliResu
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.item} ${subcommand}`)}`);
-};
-
-/** The `NAME=VALUE` words of the field flag as the typed values of the fields. A repeated name is a usage error. */
-const parseFields = (inputs: readonly string[]): CliResult<FieldValues> => {
-  const given = new Map<string, string>();
-  for (const input of inputs) {
-    const at = input.indexOf(itemWords.fieldSeparator);
-    if (at <= 0) return needsUsage(`${flagText(flags.field)} takes NAME${itemWords.fieldSeparator}VALUE, not ${shown(input)}`);
-    const name = input.slice(0, at);
-    if (given.has(name)) return needsUsage(`the field ${shown(name)} is given twice`);
-    given.set(name, input.slice(at + itemWords.fieldSeparator.length));
-  }
-  return ok(Object.fromEntries(given));
 };
 
 const idArgument = (subcommand: Subcommand, args: readonly string[]): CliResult<string> => {
@@ -98,7 +82,7 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
   if (subcommand === undefined) return needsUsage(`unknown subcommand ${shown(word)}. The subcommands are: ${SUBCOMMANDS}`);
   const stray = refuseStrayFlags(subcommand, options);
   if (!stray.ok) return stray;
-  const fields = parseFields(options.fields);
+  const fields = parseFieldWords(needsUsage, options.fields);
   if (!fields.ok) return fields;
   switch (subcommand) {
     case itemCommands.add: {

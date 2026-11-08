@@ -8,11 +8,14 @@ import {
   boardLimits,
   boardTextLimits,
   decisionKeys,
+  decisionLogKeys,
   files,
   maxBoardNumber,
   maxEchoChars,
   optionKeys,
   places,
+  queueLimits,
+  requestWords,
   trackLimits,
   waitingKeys,
 } from '../names.js';
@@ -26,10 +29,15 @@ import type {
   ItemMove,
   ItemMoved,
   ItemPatch,
+  QueueRowInput,
+  QueueRowSet,
+  RequestClosed,
   TrackAddInput,
 } from './contract.js';
-import { itemTarget, resolveFields, type FieldInput } from './fields.js';
+import { declaredFields, itemTarget, resolveFields, rowTarget, type FieldInput } from './fields.js';
 import type { BoardDoc, DecisionLogDoc, WaitingDoc } from './files.js';
+import { rowItemsOf, rowNameOf } from './queue.js';
+import { requestTitleOf } from './requests.js';
 import { firstStageOf, requireSettableStage } from './stages.js';
 import { holdsBreak, lineIssue } from './text.js';
 import { trackIdIssue, trackNameIssue } from './tracks.js';
@@ -179,7 +187,7 @@ export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecisio
   const title = lineOf('title', input.title, boardTextLimits.maxTitleChars);
   if (!title.ok) return title;
   if (holdsBreak(input.question.trim())) return failure(`cannot write ${files.waiting}: the question holds a line break or a control character`);
-  const question = lineOf('question', input.question, boardTextLimits.maxQuestionChars);
+  const question = lineOf(decisionKeys.question, input.question, boardTextLimits.maxQuestionChars);
   if (!question.ok) return question;
   const { options } = input;
   if (options.length < 1 || options.length > boardTextLimits.maxOptions) {
@@ -210,6 +218,53 @@ const docPathIssue = (path: string): string | null => {
 export const checkDocPath = (path: string): CliResult<string> => {
   const issue = docPathIssue(path);
   return issue === null ? ok(path) : usageError(`the path ${shown(path)} ${issue}`);
+};
+
+/** A request id of the form `D-n`. The form check comes first, because the id goes into the text of a commit. */
+export const checkRequestId = (id: string): CliResult<string> =>
+  boardIds.request.test(id) ? ok(id) : usageError(`${shown(id)} is not a ${requestWords.request} id; a ${requestWords.request} id looks like D-12`);
+
+/** The row of a queue write after its input check: the optional parts are as the person gave them. */
+export interface CheckedRow {
+  readonly name: string;
+  readonly items: readonly string[] | undefined;
+  readonly note: string | undefined;
+  readonly fields: FieldValues;
+  readonly position: number | undefined;
+}
+
+const rowItemsIssue = (items: readonly string[]): CliResult<void> => {
+  if (items.length > queueLimits.maxRowItems) return usageError(`a row of the queue holds at most ${queueLimits.maxRowItems} items`);
+  const seen = new Set<string>();
+  for (const id of items) {
+    const valid = checkItemId(id);
+    if (!valid.ok) return valid;
+    if (seen.has(id)) return usageError(`the item ${id} is named twice`);
+    seen.add(id);
+  }
+  return ok(undefined);
+};
+
+/**
+ * A queue write: a one-line name and note, item ids of the form `B-n` with no repeat, owner fields of the row that the setup
+ * declares, and a position from 1. Whether the items are on the board, and whether a field is required, depend on the board and wait
+ * for the edit under the lock.
+ */
+export const checkQueueRow = (setup: BoardSetup, input: QueueRowInput): CliResult<CheckedRow> => {
+  const name = lineOf(boardKeys.name, input.name, boardTextLimits.maxTitleChars);
+  if (!name.ok) return name;
+  const note = optionalLineOf(boardKeys.note, input.note, boardTextLimits.maxTextChars);
+  if (!note.ok) return note;
+  if (input.items !== undefined) {
+    const items = rowItemsIssue(input.items);
+    if (!items.ok) return items;
+  }
+  const fields = resolveFields(setup.config, rowTarget, inputsOf(input.fields), { complete: false });
+  if (!fields.ok) return fields;
+  if (input.position !== undefined && !(Number.isInteger(input.position) && input.position >= 1)) {
+    return usageError('the position is a whole number from 1');
+  }
+  return ok({ name: name.value, items: input.items, note: note.value, fields: fields.value, position: input.position });
 };
 
 // The edits of a file that was read under the lock.
@@ -346,4 +401,78 @@ export const askIn = (
     [decisionKeys.options]: decision.options,
   };
   return ok({ top: { ...waiting.top, [waitingKeys.items]: [...listAt(waiting.top, waitingKeys.items), stored] }, value: id.value });
+};
+
+/** The new top objects of the waiting file and of the decision log after a close, and the request that the close took off. */
+export interface RequestCloseEdit {
+  readonly waiting: Stored;
+  readonly log: Stored;
+  readonly closed: RequestClosed;
+}
+
+/**
+ * Take a request off the waiting file and add a row for it to the decision log, so the number of the request stays used. The row
+ * holds the id and the title in its `item` text, the closed text and the date. It holds no key that names who answered, so no reader
+ * counts it as a decision. A request that is not in the waiting file is a usage error (exit 2). A log that names the id already is
+ * a failure (exit 1), because the log would name the id twice. Every other entry of both files stays as it is.
+ */
+export const closeRequestIn = (waiting: WaitingDoc, log: DecisionLogDoc, id: string, date: string): CliResult<RequestCloseEdit> => {
+  const found = waiting.items.find((entry) => entry.id === id);
+  if (found === undefined) return usageError(`${files.waiting} has no ${requestWords.request} ${shown(id)}`);
+  if (log.rows.some((row) => row.id === id)) return failure(`${files.decisionLog}: the id ${id} is used already`);
+  const title = requestTitleOf(found);
+  const row = {
+    [decisionLogKeys.item]: title === null ? id : `${id}: ${title.trim()}`,
+    [decisionLogKeys.decision]: requestWords.closedDecision,
+    [decisionLogKeys.date]: date,
+  };
+  return ok({
+    waiting: { ...waiting.top, [waitingKeys.items]: waiting.items.filter((entry) => entry.id !== id).map((entry) => entry.record) },
+    log: { ...log.top, [decisionLogKeys.rows]: [...listAt(log.top, decisionLogKeys.rows), row] },
+    closed: { id, title },
+  });
+};
+
+/** True when the stored value is a list that holds exactly these ids, in this order. */
+const holdsItems = (stored: unknown, items: readonly string[]): boolean =>
+  Array.isArray(stored) && stored.length === items.length && items.every((id, at) => stored[at] === id);
+
+/** A required field of the rows that the new row does not set, or undefined. */
+const missingRowField = (setup: BoardSetup, fields: FieldValues): string | undefined =>
+  declaredFields(setup.config, rowTarget).find((field) => field.required && !Object.hasOwn(fields, field.name))?.name;
+
+/**
+ * Add a row to the queue, change a row, or move it. The row is found by its name: a name that no row has makes a new row, and a name
+ * that two rows have is a usage error. Every item id must be on the board (a closed item is). A new row needs every required field of
+ * the rows, and the queue holds at most `queueLimits.maxRows` rows. A part that is left out stays as it is, and a change keeps every
+ * other key of the row, the release flag among them. A row with the values that it has, at the place that it has, changes nothing.
+ */
+export const setRowIn = (doc: BoardDoc, setup: BoardSetup, row: CheckedRow): CliResult<Edit<QueueRowSet>> => {
+  const matches = doc.queue.flatMap((record, at) => (rowNameOf(record) === row.name ? [at] : []));
+  if (matches.length > 1) return usageError(`the queue has two rows with the name ${shown(row.name)}`);
+  const unknown = row.items?.find((id) => !doc.items.some((item) => item.id === id));
+  if (unknown !== undefined) return usageError(`${files.board} has no item ${unknown}`);
+  const old = matches[0];
+  const created = old === undefined;
+  if (created) {
+    if (doc.queue.length >= queueLimits.maxRows) return usageError(`the queue has at most ${queueLimits.maxRows} rows`);
+    const missing = missingRowField(setup, row.fields);
+    if (missing !== undefined) return usageError(`the field ${missing} is required`);
+  }
+  // The places are counted from 1. A new row can go after the last row, and an old row stays in the places of the queue.
+  const lastPlace = created ? doc.queue.length + 1 : doc.queue.length;
+  if (row.position !== undefined && row.position > lastPlace) return usageError(`the position is 1 to ${lastPlace}`);
+  const place = row.position ?? (created ? lastPlace : old + 1);
+  const current: Stored = created ? { [boardKeys.name]: row.name } : (doc.queue[old] ?? {});
+  const entries: [string, unknown][] = [];
+  const itemsChanged = created || (row.items !== undefined && !holdsItems(current[boardKeys.items], row.items));
+  if (itemsChanged) entries.push([boardKeys.items, row.items ?? []]);
+  if (row.note !== undefined) entries.push([boardKeys.note, row.note]);
+  entries.push(...Object.entries(row.fields));
+  const next = withKeys(current, entries);
+  const others = created ? doc.queue : doc.queue.filter((_, at) => at !== old);
+  const rows = [...others.slice(0, place - 1), next.record, ...others.slice(place - 1)];
+  const changed = created || next.changed || place !== old + 1;
+  const value: QueueRowSet = { name: row.name, position: place, items: rowItemsOf(next.record), created, changed };
+  return ok({ top: changed ? { ...doc.top, [doc.queueKey]: rows } : null, value });
 };

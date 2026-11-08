@@ -20,8 +20,8 @@ type Target = BoardField['target'];
 
 const [valuesKind, flagKind, tokenKind] = values.boardKinds;
 
-/** The target of the fields of an item. The other target is a queue row. */
-export const [itemTarget] = values.boardTargets;
+/** The target of the fields of an item, and the target of the fields of a queue row. */
+export const [itemTarget, rowTarget] = values.boardTargets;
 
 const FLAG_ON = 'true';
 const FLAG_OFF = 'false';

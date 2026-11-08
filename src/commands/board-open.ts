@@ -1,4 +1,4 @@
-import type { BoardConnector } from '../board/contract.js';
+import type { LocalBoard } from '../board/contract.js';
 import { createLocalBoard } from '../board/local.js';
 import type { CliResult } from '../cli/errors.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
@@ -14,7 +14,7 @@ import { layoutOf } from '../state/layout.js';
 export interface OpenBoard {
   readonly home: string;
   readonly config: FactoryConfig;
-  readonly connector: BoardConnector;
+  readonly connector: LocalBoard;
 }
 
 /**

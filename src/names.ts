@@ -52,6 +52,8 @@ export const commands = {
   worker: 'worker',
   item: 'item',
   track: 'track',
+  request: 'request',
+  queue: 'queue',
   self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
@@ -110,6 +112,12 @@ export const itemCommands = { add: 'add', update: 'update', move: 'move', close:
 /** The subcommands of `track`. The command has no remove subcommand. */
 export const trackCommands = { add: 'add', list: 'list' } as const;
 
+/** The subcommands of `request`. The command has no subcommand that changes the options of a request that is open. */
+export const requestCommands = { add: 'add', list: 'list', close: 'close' } as const;
+
+/** The subcommands of `queue`. */
+export const queueCommands = { set: 'set', show: 'show' } as const;
+
 /** The subcommands of `self`. */
 export const selfCommands = { reset: 'reset' } as const;
 
@@ -132,6 +140,11 @@ export const commandLines = {
   itemList: `${commands.item} ${itemCommands.list}`,
   trackAdd: `${commands.track} ${trackCommands.add}`,
   trackList: `${commands.track} ${trackCommands.list}`,
+  requestAdd: `${commands.request} ${requestCommands.add}`,
+  requestList: `${commands.request} ${requestCommands.list}`,
+  requestClose: `${commands.request} ${requestCommands.close}`,
+  queueSet: `${commands.queue} ${queueCommands.set}`,
+  queueShow: `${commands.queue} ${queueCommands.show}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
   stateGuard: `${commands.state} ${stateCommands.guard}`,
 } as const;
@@ -162,6 +175,12 @@ export const flags = {
   stage: 'stage',
   all: 'all',
   roadmap: 'roadmap',
+  question: 'question',
+  option: 'option',
+  recommend: 'recommend',
+  item: 'item',
+  note: 'note',
+  position: 'position',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -527,14 +546,18 @@ export const boardKeys = {
   roadmap: 'roadmap',
   text: 'text',
   docs: 'docs',
+  note: 'note',
   defaultQueue: 'queue',
 } as const;
 
 /** The keys of the waiting file: the top keys, and the id of a waiting item. */
 export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', id: 'id' } as const;
 
-/** The keys of the decision log: the list of rows, and the key of a row that starts with the id of a decision. */
-export const decisionLogKeys = { rows: 'rows', item: 'item' } as const;
+/**
+ * The keys of the decision log: the list of rows, and the keys of a row. The `item` text of a row starts with the id of a decision.
+ * A row that a close of a request writes holds these three keys only: it names no one who answered.
+ */
+export const decisionLogKeys = { rows: 'rows', item: 'item', decision: 'decision', date: 'date' } as const;
 
 /**
  * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
@@ -556,8 +579,8 @@ export const trackLimits = { idPattern: /^[a-z][a-z0-9-]*$/, maxIdChars: 32, max
 /**
  * The most track lines that `item list` prints. The output holds at most 20 lines (`MAX_OUTPUT_LINES` in
  * `test/helpers/short-output.ts`). Of them, one is the summary line, one is the heading line of the table (`tableLines` in
- * `src/cli/output.ts`) and one is the more-tracks line. 20 - 3 is 17. The list of the items of one track holds at most this many
- * item rows, by the same count.
+ * `src/cli/output.ts`) and one is the more-tracks line. 20 - 3 is 17. The list of the items of one track, the list of the requests
+ * and the queue hold at most this many rows, by the same count.
  */
 export const maxTrackLines = 17;
 
@@ -583,6 +606,32 @@ export const itemWords = {
   maxCellChars: 60,
   maxFieldChars: 30,
   maxStatusChars: 20,
+} as const;
+
+/**
+ * The words of the output of `request`. A request is a decision item that waits for the owner. An option is given as its key,
+ * `optionSeparator` and its text. A request that a person closes with no answer gets a row in the decision log with the text
+ * `closedDecision`, so its number is never given again.
+ */
+export const requestWords = {
+  request: commands.request,
+  requests: `${commands.request}s`,
+  columns: { id: 'ID', title: 'TITLE', options: 'OPTIONS' },
+  optionSeparator: '=',
+  optionKeySeparator: ',',
+  closedDecision: 'closed with no answer',
+  maxCellChars: 60,
+  maxOptionsChars: 30,
+} as const;
+
+/** The words of the output of `queue`. The columns of the owner fields of a row come between the items and the note. */
+export const queueWords = {
+  queue: commands.queue,
+  row: 'row',
+  rows: 'rows',
+  columns: { position: 'NO', name: 'NAME', items: 'ITEMS', note: 'NOTE' },
+  itemSeparator: ' ',
+  maxCellChars: 60,
 } as const;
 
 /**
@@ -620,6 +669,12 @@ export const boardTextLimits = {
 } as const;
 
 /**
+ * The limits of the queue. A row of the queue holds at most `maxRowItems` item ids, and the queue holds at most `maxRows` rows. A
+ * write that would pass a limit is a usage error. A board that a person edited by hand and that passes a limit still reads.
+ */
+export const queueLimits = { maxRows: 30, maxRowItems: 30, positionPattern: /^[1-9][0-9]{0,2}$/ } as const;
+
+/**
  * The stop of a board write with a hosted tracker kind. The provider holds the truth of a hosted board, and the local board is a
  * cache of it, so a write goes to the provider first. This version has no provider, so the write stops before the lock, with one line.
  */
@@ -644,7 +699,7 @@ export const reservedFieldNames: readonly string[] = [
   'decided_by',
   'answer',
   boardKeys.name,
-  'note',
+  boardKeys.note,
   boardKeys.items,
   boardKeys.tracks,
   boardKeys.track,
@@ -1440,6 +1495,10 @@ export const schemaIds = {
   itemList: `${program}.item-list/v1`,
   track: `${program}.track/v1`,
   trackList: `${program}.track-list/v1`,
+  request: `${program}.${commands.request}/v1`,
+  requestList: `${program}.${commands.request}-list/v1`,
+  queue: `${program}.${commands.queue}/v1`,
+  queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,

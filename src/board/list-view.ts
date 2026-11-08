@@ -1,12 +1,12 @@
 import { displayLine, tableLines, type OutLine } from '../cli/output.js';
 import type { BoardField } from '../config/schema.js';
-import { flags, flagText, itemWords, maxDisplayWidth, maxTrackLines } from '../names.js';
+import { flags, flagText, itemWords, maxDisplayWidth, maxTrackLines, queueWords, requestWords } from '../names.js';
 import type { RecipeBoard } from '../recipes/entry.js';
-import type { BoardItem, BoardTrack } from './contract.js';
+import type { BoardItem, BoardRequest, BoardTrack, QueueRow } from './contract.js';
 import { stageShown, stagesOf } from './stages.js';
 
 /**
- * The text of `item list`. It is short by design: at most 20 lines, and a first line of at most 120 characters. The summary line,
+ * The text of `item list`, `request list` and `queue show`. It is short by design: at most 20 lines, and a first line of at most 120 characters. The summary line,
  * the heading line of the table and the more line take three of the lines, so the table holds at most `maxTrackLines` rows.
  * Every text from the board file is cleaned and cut by `displayLine` before it goes into a cell, and every line is cut to the
  * width of a line at the end.
@@ -91,8 +91,9 @@ export const boardView = (input: ListInput): readonly OutLine[] => {
   return framed([summary, ...tableLines(Object.values(itemWords.trackColumns), rows), ...more]);
 };
 
-const fieldText = (item: BoardItem, field: BoardField): string => {
-  const value = item.record[field.name];
+/** The cell of an owner field: the value as text, or a dash for a field that the record does not hold. */
+const fieldText = (record: Readonly<Record<string, unknown>>, field: BoardField): string => {
+  const value = record[field.name];
   if (typeof value === 'string') return clean(value, itemWords.maxFieldChars);
   return typeof value === 'boolean' ? String(value) : itemWords.empty;
 };
@@ -117,10 +118,63 @@ export const trackView = (input: ListInput & { readonly track: BoardTrack }): re
     clean(item.id, itemWords.maxCellChars),
     stageText(board, item.stage),
     clean(item.status, itemWords.maxStatusChars),
-    ...fields.map((field) => fieldText(item, field)),
+    ...fields.map((field) => fieldText(item.record, field)),
     clean(item.title, itemWords.maxCellChars),
   ]);
   const hidden = items.length - rows.length;
   const more = hidden > 0 ? [lineOf(`${plural(hidden, 'more item', 'more items')}.`)] : [];
   return framed([summary, ...tableLines(title, rows), ...more]);
+};
+
+/** A text or a dash: the cell of a part that a stored entry may lack. */
+const orDash = (text: string | null, width: number): string => (text === null ? itemWords.empty : clean(text, width));
+
+/**
+ * The view of the requests: a summary line, then a table with one row for each request (its number, its title and the keys of its
+ * options), then one more line when the requests do not fit. A part that an entry lacks shows as a dash.
+ */
+export const requestView = (requests: readonly BoardRequest[]): readonly OutLine[] => {
+  const summary = lineOf(`${requests.length} open ${requests.length === 1 ? requestWords.request : requestWords.requests}.`);
+  if (requests.length === 0) return framed([summary]);
+  const rows = requests.slice(0, maxTrackLines).map((request) => [
+    clean(request.id, requestWords.maxCellChars),
+    orDash(request.title, requestWords.maxCellChars),
+    request.options.length === 0 ? itemWords.empty : clean(request.options.join(requestWords.optionKeySeparator), requestWords.maxOptionsChars),
+  ]);
+  const hidden = requests.length - rows.length;
+  const more = hidden > 0 ? [lineOf(`${plural(hidden, `more ${requestWords.request}`, `more ${requestWords.requests}`)}.`)] : [];
+  return framed([summary, ...tableLines(Object.values(requestWords.columns), rows), ...more]);
+};
+
+export interface QueueViewInput {
+  readonly rows: readonly QueueRow[];
+  /** The owner fields of a row that the setup declares. */
+  readonly fields: readonly BoardField[];
+}
+
+/**
+ * The view of the queue: a summary line, then a table with one row for each row of the queue (its place, its name, its items, its
+ * owner fields and its note), then one more line when the rows do not fit.
+ */
+export const queueView = (input: QueueViewInput): readonly OutLine[] => {
+  const { rows, fields } = input;
+  const summary = lineOf(`${plural(rows.length, queueWords.row, queueWords.rows)} in the ${queueWords.queue}.`);
+  if (rows.length === 0) return framed([summary]);
+  const title = [
+    queueWords.columns.position,
+    queueWords.columns.name,
+    queueWords.columns.items,
+    ...fields.map((field) => field.name.toUpperCase()),
+    queueWords.columns.note,
+  ];
+  const lines = rows.slice(0, maxTrackLines).map((row) => [
+    String(row.position),
+    orDash(row.name, queueWords.maxCellChars),
+    row.items.length === 0 ? itemWords.empty : clean(row.items.join(queueWords.itemSeparator), queueWords.maxCellChars),
+    ...fields.map((field) => fieldText(row.record, field)),
+    orDash(row.note, queueWords.maxCellChars),
+  ]);
+  const hidden = rows.length - lines.length;
+  const more = hidden > 0 ? [lineOf(`${plural(hidden, `more ${queueWords.row}`, `more ${queueWords.rows}`)}.`)] : [];
+  return framed([summary, ...tableLines(title, lines), ...more]);
 };

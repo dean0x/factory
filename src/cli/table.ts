@@ -8,6 +8,8 @@ import { runLayout } from '../commands/layout.js';
 import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
+import { runQueue } from '../commands/queue.js';
+import { runRequest } from '../commands/request.js';
 import { runSelf } from '../commands/self.js';
 import { runStart } from '../commands/start.js';
 import { runState } from '../commands/state.js';
@@ -35,6 +37,10 @@ import {
   nodeCommands,
   places,
   program,
+  queueCommands,
+  queueLimits,
+  requestCommands,
+  requestWords,
   roles,
   schemaIds,
   summonLimits,
@@ -521,6 +527,106 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       runTrack(
         deps,
         { home: given.string(flags.home), words: given.positionals(), name: given.string(flags.name), roadmap: given.bool(flags.roadmap) },
+        registry,
+      ),
+  },
+  {
+    name: commands.request,
+    summary: `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, or close a ${requestWords.request} with no answer.`,
+    usage: [
+      `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestList)} [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestClose)} ID [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.title]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `With ${requestCommands.add}: the title of the ${requestWords.request}. One line of at most ${boardTextLimits.maxTitleChars} characters.`,
+      },
+      [flags.question]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `With ${requestCommands.add}: the question for the ${roles.owner}. One line of at most ${boardTextLimits.maxQuestionChars} characters.`,
+      },
+      [flags.option]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'KEY=TEXT',
+        description:
+          `With ${requestCommands.add}: one answer that the ${roles.owner} can give. The key is one word, and the text is one line of at most ${boardTextLimits.maxOptionChars} characters. ` +
+          `Repeat the flag for more answers, at most ${boardTextLimits.maxOptions}.`,
+      },
+      [flags.recommend]: {
+        type: 'string',
+        placeholder: 'KEY',
+        description: `With ${requestCommands.add}: the key of the answer that you recommend.`,
+      },
+    },
+    run: (given, deps) =>
+      runRequest(
+        deps,
+        {
+          home: given.string(flags.home),
+          words: given.positionals(),
+          title: given.string(flags.title),
+          question: given.string(flags.question),
+          options: given.strings(flags.option),
+          recommend: given.string(flags.recommend),
+        },
+        registry,
+      ),
+  },
+  {
+    name: commands.queue,
+    summary: 'Add, change and show the rows of the queue. The queue is the order of the finished work that waits for an approval point.',
+    usage: [
+      `${commandText(commandLines.queueSet)} NAME [${flagText(flags.item)} ID]... [${flagText(flags.note)} TEXT] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.position)} N] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.queueShow)} [${flagText(flags.home)} DIR]`,
+    ].join(`\n${' '.repeat('Usage: '.length)}`),
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.item]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'ID',
+        description:
+          `With ${queueCommands.set}: an item of the row. The flag sets the whole list of the row, so repeat it for each item. ` +
+          `A row holds at most ${queueLimits.maxRowItems} items.`,
+      },
+      [flags.note]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `With ${queueCommands.set}: a note for the row. One line of at most ${boardTextLimits.maxTextChars} characters.`,
+      },
+      [flags.field]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'NAME=VALUE',
+        description:
+          `With ${queueCommands.set}: set a field of the ${roles.owner} on the row. The setup declares the fields and their values. ` +
+          'Repeat the flag for more fields.',
+      },
+      [flags.position]: {
+        type: 'string',
+        placeholder: 'N',
+        description: `With ${queueCommands.set}: the place of the row in the queue, counted from 1. A new row goes to the end when the flag is absent.`,
+      },
+    },
+    run: (given, deps) =>
+      runQueue(
+        deps,
+        {
+          home: given.string(flags.home),
+          words: given.positionals(),
+          items: given.strings(flags.item),
+          note: given.string(flags.note),
+          fields: given.strings(flags.field),
+          position: given.string(flags.position),
+        },
         registry,
       ),
   },

@@ -114,6 +114,57 @@ export interface ChangesRead {
   readonly cursor: string | null;
 }
 
+/**
+ * One request that waits for the owner, as the waiting file shows it. The reader checks the id only, so a title that a hand edit
+ * left out is null. The options are the keys of the options, in order.
+ */
+export interface BoardRequest {
+  readonly id: string;
+  readonly title: string | null;
+  readonly options: readonly string[];
+}
+
+/** The request that a close took off the waiting file. */
+export interface RequestClosed {
+  readonly id: string;
+  readonly title: string | null;
+}
+
+/**
+ * One row of the queue, as the board file shows it. The reader does not check the keys of a row, so a name or a note that is not
+ * text reads as null, and an item list that is not a list of text reads as an empty list.
+ */
+export interface QueueRow {
+  /** The place in the queue, counted from 1. */
+  readonly position: number;
+  readonly name: string | null;
+  readonly items: readonly string[];
+  readonly note: string | null;
+  /** The stored object of the row, with every key in the order of the file. */
+  readonly record: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * The input of a queue write. The row is found by its name, and a name that no row has makes a new row at the end. A part that is
+ * left out stays as it is: the item ids replace the whole list of the row. A position moves the row to that place.
+ */
+export interface QueueRowInput {
+  readonly name: string;
+  readonly items?: readonly string[];
+  readonly note?: string;
+  readonly fields?: FieldValues;
+  readonly position?: number;
+}
+
+/** What a queue write did to the row. `changed` is false when the board stays as it is. */
+export interface QueueRowSet {
+  readonly name: string;
+  readonly position: number;
+  readonly items: readonly string[];
+  readonly created: boolean;
+  readonly changed: boolean;
+}
+
 export interface BoardConnector {
   /** The tracker kind of the connector. */
   readonly kind: string;
@@ -130,4 +181,23 @@ export interface BoardConnector {
   linkDoc(input: DocLinkInput): Promise<CliResult<BoardItem>>;
   /** The local connector has no changes: it gives an empty list. */
   readChanges(cursor: string | null): Promise<CliResult<ChangesRead>>;
+}
+
+/**
+ * The local board: the contract, and the operations of the owner's board that PR A has for the local files only. A hosted board maps
+ * a request and a queue to the provider (FAC-M3), so these operations are not in the contract suite. Each write of them refuses a
+ * hosted tracker kind first, as a write of the contract does.
+ */
+export interface LocalBoard extends BoardConnector {
+  /** The requests of the waiting file, in file order. */
+  listRequests(): Promise<CliResult<readonly BoardRequest[]>>;
+  /**
+   * Take a request off the waiting file and add a row for it to the decision log, in one commit. The row names no one who answered,
+   * so it counts as no decision, and the number of the request is never given again.
+   */
+  closeRequest(id: string): Promise<CliResult<RequestClosed>>;
+  /** The rows of the queue, in file order. */
+  listQueue(): Promise<CliResult<readonly QueueRow[]>>;
+  /** Add a row to the queue, change a row, or move it. */
+  setQueueRow(input: QueueRowInput): Promise<CliResult<QueueRowSet>>;
 }

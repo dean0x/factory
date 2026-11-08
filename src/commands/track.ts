@@ -1,11 +1,12 @@
 import type { BoardConnector, BoardTrack, TrackAddInput } from '../board/contract.js';
-import { usageError, type CliResult } from '../cli/errors.js';
+import type { CliResult } from '../cli/errors.js';
 import { displayLine, tableLines, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commandLines, commands, commandText, flags, flagText, itemWords, maxEchoChars, schemaIds, trackCommands } from '../names.js';
+import { commandLines, commands, commandText, flags, flagText, itemWords, schemaIds, trackCommands } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { openBoard } from './board-open.js';
+import { shown, usageFor } from './board-words.js';
 
 export interface TrackOptions {
   readonly home: string | undefined;
@@ -19,11 +20,7 @@ type Subcommand = (typeof trackCommands)[keyof typeof trackCommands];
 
 const SUBCOMMANDS = Object.values(trackCommands).join(', ');
 
-/** Typed text for a message: cleaned, cut and quoted. */
-const shown = (text: string): string => JSON.stringify(displayLine(text, maxEchoChars));
-
-const needsUsage = (what: string): CliResult<never> =>
-  usageError(what, `Run "${commandText(commands.track)} ${flagText(flags.help)}".`);
+const needsUsage = usageFor(commands.track);
 
 const subcommandOf = (word: string): Subcommand | undefined => Object.values(trackCommands).find((candidate) => candidate === word);
 
