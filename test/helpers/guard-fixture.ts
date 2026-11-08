@@ -37,6 +37,7 @@ export interface Made {
 }
 
 export interface MakeOptions {
+  readonly env?: Readonly<Record<string, string | undefined>>;
   readonly links?: Record<string, string>;
   readonly programArgv?: readonly string[];
   readonly fixture?: GitFixture;
@@ -49,6 +50,7 @@ export const make = (options: MakeOptions = {}): Made => {
   const deps = createFakeDeps({
     cwd: HOME,
     run: (call) => options.answer?.(call) ?? handler(call),
+    ...(options.env === undefined ? {} : { env: options.env }),
     ...(options.links === undefined ? {} : { links: options.links }),
     ...(options.programArgv === undefined ? {} : { programArgv: options.programArgv }),
   });

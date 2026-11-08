@@ -10,10 +10,12 @@ import {
 } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags } from '../../src/cli/table.js';
-import { commands, selfCommands, workerCommands } from '../../src/names.js';
+import { commands, itemCommands, selfCommands, trackCommands, workerCommands } from '../../src/names.js';
 import { FACTORY_VERSION } from '../../src/version.js';
+import { boardNode, boardText } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
+import { HOME as BOARD_HOME } from '../helpers/guard-fixture.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE } from '../helpers/slot-fixture.js';
@@ -598,5 +600,70 @@ describe('the state command in the command line', () => {
     expect(result.code).toBe(2);
     expect(result.err).toContain(message);
     expect(result.log.calls).toEqual([]);
+  });
+});
+
+describe('the item and track commands in the command line', () => {
+  const usageOf = (name: string): string => commandTable.find((command) => command.name === name)?.usage ?? '';
+
+  it('shows one usage line for each subcommand of item and of track', () => {
+    for (const subcommand of Object.values(itemCommands)) {
+      expect(usageOf(commands.item), subcommand).toContain(`factory ${commands.item} ${subcommand} `);
+    }
+    for (const subcommand of Object.values(trackCommands)) {
+      expect(usageOf(commands.track), subcommand).toContain(`factory ${commands.track} ${subcommand} `);
+    }
+  });
+
+  it('M5-1b TP-22 lists item and track in the help, and shows the flags of item in its help', async () => {
+    const listed = await run(['help']);
+    expect(listed.out).toMatch(/\n {2}item {2,}\S/);
+    expect(listed.out).toMatch(/\n {2}track {2,}\S/);
+    const result = await run(['item', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory item move ID --state STATE|--stage STAGE [--home DIR]');
+    expect(result.out).toContain('factory item list [--all] [--track ID] [--home DIR]');
+    expect(result.out).toMatch(/--field NAME=VALUE\s+With add and update: set a field of the owner on the item/);
+  });
+
+  it('M5-1b TP-22 names no decide command in the help of item, of track or of the program', async () => {
+    for (const argv of [['help'], ['item', '--help'], ['track', '--help']]) {
+      expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');
+    }
+  });
+
+  it('M5-1b TP-47 exits 2 for item list with the JSON flag, because item list has no JSON output', async () => {
+    const result = await run(['item', 'list', '--json']);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('has no --json output');
+  });
+
+  it('M5-1b TP-22 runs item add, item move, item list and track add from the command line, with the flags in any place', async () => {
+    const repo = await boardNode({ board: boardText([], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    expect((await runBoard(['track', 'add', 'core', '--name', 'Core', '--roadmap'])).out).toContain('Added the track core: Core (roadmap)');
+    const added = await runBoard(['item', 'add', '--title', 'New', '--track', 'core', '--field', 'priority=P1', '--field', 'type=bug']);
+    expect(added.out).toBe('Added B-1: New\n');
+    expect((await runBoard(['item', 'move', 'B-1', '--stage', 'building'])).out).toBe('B-1 stage: ticket -> building\n');
+    const listed = await runBoard(['item', 'list', '--track', 'core']);
+    expect(listed.code).toBe(0);
+    expect(listed.out).toContain('B-1  building  open    P1        bug   -     New');
+    expect(repo.commits).toHaveLength(3);
+  });
+
+  it('M5-1b TP-22 prints the document of item add for the JSON flag', async () => {
+    const repo = await boardNode({ board: boardText([], []) });
+    const sink = captureSink();
+    const code = await runCli(['item', 'add', '--title', 'New', '--field', 'priority=P1', '--json', '--home', BOARD_HOME], repo.deps, sink);
+    expect(code).toBe(0);
+    expect(JSON.parse(sink.out.join(''))).toEqual({
+      schema: 'factory.item/v1',
+      action: 'add',
+      item: { id: 'B-1', title: 'New', status: 'open', stage: 'ticket', track: null },
+    });
   });
 });

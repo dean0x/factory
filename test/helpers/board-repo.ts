@@ -36,6 +36,8 @@ export interface BoardRepoOptions {
   readonly head?: string;
   readonly waiting?: string;
   readonly decisionLog?: string;
+  /** The environment of the deps. Default: the fake default. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface BoardRepo {
@@ -82,7 +84,7 @@ export const boardRepo = async (options: BoardRepoOptions): Promise<BoardRepo> =
     }
     return undefined;
   };
-  const made = make({ answer });
+  const made = make({ answer, ...(options.env === undefined ? {} : { env: options.env }) });
   const fake = made.deps;
   deps = fake;
   const guarded = await installGuard(fake, STATE, STATE);
