@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { activeMachine, commands, files, privateFile, schemaIds } from '../../src/names.js';
+import { exitCodeOf } from '../../src/cli/errors.js';
+import { activeMachine, commands, files, privateFile, schemaIds, stateLock } from '../../src/names.js';
 import { layoutOf } from '../../src/state/layout.js';
 import {
   claimActiveMachine,
@@ -356,6 +357,66 @@ describe('the mark of the active machine in a state repo whose delete guard is o
     expect(await clearActiveMark(deps, HOME, commands.start)).toEqual({ ok: true, value: 'cleared' });
     expect(writesOf(deps)).toHaveLength(2);
     expect(guardReadsOf(deps)).toEqual([]);
+  });
+});
+
+describe('the mark of the active machine and the state lock (TP-19)', () => {
+  const LOCK_FILE = `${LAYOUT.locksDir}/${stateLock.name}${stateLock.lock.suffix}`;
+  const WAITS = Array.from({ length: stateLock.lock.attempts - 1 }, () => stateLock.lock.waitMs);
+  const marked = (machine: string): FakeDeps => {
+    const deps = make();
+    deps.seed(LAYOUT.machineIdFile, `${FIRST_ID}\n`);
+    deps.seed(LAYOUT.activeMachineFile, markText(machine, OTHER_AT));
+    return deps;
+  };
+
+  it('claim: waits for the lock of another writer, then warns with the lock path and writes and commits nothing', async () => {
+    const deps = make();
+    deps.seed(LOCK_FILE, '1\n');
+    const outcome = await claimActiveMachine(deps, HOME);
+    expect(outcome.claimed).toBe(false);
+    expect(deps.warned).toHaveLength(1);
+    expect(deps.warned[0]).toContain(LOCK_FILE);
+    expect(deps.sleeps).toEqual(WAITS);
+    expect(deps.files.has(LAYOUT.activeMachineFile)).toBe(false);
+    expect(writesOf(deps)).toEqual([]);
+    expect(deps.files.get(LOCK_FILE)).toBe('1\n');
+  });
+
+  it('clear: waits for the lock of another writer, then fails with exit 1 and the lock path, and keeps the mark', async () => {
+    const deps = marked(FIRST_ID);
+    deps.seed(LOCK_FILE, '1\n');
+    const cleared = await clearActiveMark(deps, HOME, commands.start);
+    expect(cleared).toMatchObject({ ok: false, error: { message: expect.stringContaining(LOCK_FILE) } });
+    if (!cleared.ok) expect(exitCodeOf[cleared.error.kind]).toBe(1);
+    expect(deps.sleeps).toEqual(WAITS);
+    expect(deps.files.get(LAYOUT.activeMachineFile)).toBe(markText(FIRST_ID, OTHER_AT));
+    expect(writesOf(deps)).toEqual([]);
+    expect(deps.files.get(LOCK_FILE)).toBe('1\n');
+  });
+
+  it.each([
+    ['claim', (deps: FakeDeps) => claimActiveMachine(deps, HOME)],
+    ['clear', (deps: FakeDeps) => clearActiveMark(deps, HOME, commands.start)],
+  ])('%s: holds the lock while it writes the mark and commits it, and lets the lock go after', async (_name, run) => {
+    const held: boolean[] = [];
+    const deps = marked(FIRST_ID);
+    const watching: FakeDeps = {
+      ...deps,
+      run: async (command, args, options) => {
+        if (args.includes('commit')) held.push(deps.files.has(LOCK_FILE));
+        return deps.run(command, args, options);
+      },
+    };
+    await run(watching);
+    expect(held).toEqual([true]);
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('lets the lock go when the commit fails', async () => {
+    const deps = make({ commitExit: 1 });
+    await claimActiveMachine(deps, HOME);
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
   });
 });
 

@@ -759,11 +759,14 @@ describe('start:the hook settings of the coordinator (AC-6, AC-11, TP-15, TP-16,
   const WRITE_CALLS = ['writeText', 'writeTextExclusive', 'writeTextAtomic', 'rename', 'remove', 'mkdir', 'chmod', 'copyTree', 'removeEmptyDir'];
   const settingsOf = (deps: FakeDeps): unknown => JSON.parse(deps.files.get(SETTINGS_FILE) ?? 'null');
   const launched = (tmux: TmuxLog): boolean => tmux.commands().some((command) => command.startsWith('new-session'));
-  /** The files that the start writes after it made the session are the id of the machine and its mark: the hook writer writes neither. */
+  /**
+   * The files that the start writes after it made the session are the id of the machine and its mark: the hook writer writes neither.
+   * The locks folder is left out too: the write of the mark makes it.
+   */
   const otherFiles = (deps: FakeDeps): string =>
     JSON.stringify(
       [...deps.files.entries()].filter(([path]) => path !== SETTINGS_FILE && path !== MACHINE_ID_FILE && path !== MARK_FILE).sort(),
-    ) + [...deps.dirs].sort().join(',');
+    ) + [...deps.dirs].filter((path) => path !== layoutOf(HOME).locksDir).sort().join(',');
   const failed = async (deps: FakeDeps, options: Partial<StartOptions> = {}) => {
     const result = await startFactory(deps, options);
     if (result.ok) throw new Error('start should have stopped');

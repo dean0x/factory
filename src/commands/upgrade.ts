@@ -38,6 +38,7 @@ import {
 } from '../names.js';
 import { guardFolderLabel, installGuard } from '../state/guard.js';
 import { layoutOf } from '../state/layout.js';
+import { withStateLock } from '../state/state-lock.js';
 import type { SetupTexts } from '../templates/types.js';
 import {
   applyMoves,
@@ -132,6 +133,20 @@ const originBeforeRun = async (deps: Deps, home: string, unregistered: boolean):
 interface CommitAttempt {
   readonly head: string | null;
   readonly paths: RepoPaths;
+}
+
+/** What the steps from the ready check to the commit leave for the steps after them. */
+interface Applied {
+  readonly backupDir: string;
+  /** The backup folder, relative to the home. */
+  readonly backupPath: string;
+  readonly savedBlocks: readonly BlockBackup[];
+  /** The number of files that the run wrote or moved. */
+  readonly count: number;
+  /** True when the run committed files of the state repo. */
+  readonly stateChanged: boolean;
+  /** The root repo that this run made, or null. */
+  readonly rootMade: MadeRootRepo | null;
 }
 
 /**
@@ -374,124 +389,139 @@ export const runUpgrade = async (
 
   const replacements = files.replaces.filter((replace) => replace.action === 'replace');
   const touchesState = state.value.kind === 'migrate' || changes.length > 0 || stateGitignore.value.text !== null;
-  if (touchesState) {
-    // These are the files that the upgrade can change in the repo: the commit holds those and no other file.
-    const touched = inStateRepo(layout, [
-      ...files.moves.flatMap((move) => [move.fromPath, move.toPath]),
-      ...replacements.map((replace) => replace.filePath),
-      ...(stateGitignore.value.text === null ? [] : [stateGitignore.value.filePath]),
-      ...(stateText.value === null ? [] : [layout.nodeJson]),
-      ...changes.map((change) => fileOfTarget(layout, change.template.target)),
-    ]);
-    const ready = await requireStateRepoCommit(deps, layout.stateDir, touched, 'the upgrade', commands.upgrade);
-    if (!ready.ok) return ready;
-  }
+  // These are the files that the upgrade can change in the repo: the commit holds those and no other file.
+  const touched = inStateRepo(layout, [
+    ...files.moves.flatMap((move) => [move.fromPath, move.toPath]),
+    ...replacements.map((replace) => replace.filePath),
+    ...(stateGitignore.value.text === null ? [] : [stateGitignore.value.filePath]),
+    ...(stateText.value === null ? [] : [layout.nodeJson]),
+    ...changes.map((change) => fileOfTarget(layout, change.template.target)),
+  ]);
 
-  // The paths are checked once more before the first write, because a path can change while the command plans.
-  const stillPlain = await requireNoRootLinks(deps, layout);
-  if (!stillPlain.ok) return stillPlain;
-  const backupDir = await backup(deps, home);
-  if (!backupDir.ok) return backupDir;
-  const backupPath = relative(home, backupDir.value);
-  // The old text of a block that this run replaces is kept before the first write. A stop here changed no file.
-  const savedBlocks = await backupBlocks(deps, home, changes);
-  if (!savedBlocks.ok) return savedBlocks;
+  // The steps from the ready check of the state repo to its commit. A run that can change a file of the state repo makes them
+  // inside the state lock, so no other writer takes its change or loses its own.
+  const applyChanges = async (): Promise<CliResult<Applied>> => {
+    if (touchesState) {
+      const ready = await requireStateRepoCommit(deps, layout.stateDir, touched, 'the upgrade', commands.upgrade);
+      if (!ready.ok) return ready;
+    }
 
-  const written: Written[] = [];
-  const moved: Moved[] = [];
-  let commit: CommitAttempt | null = null;
-  // The root repo that this run made, which a later failure removes.
-  let rootMade: MadeRootRepo | null = null;
-  const abort = async (error: string): Promise<CliResult<never>> => {
-    const attempt = commit;
-    if (attempt !== null) {
-      // The commit may have landed although git reported an error, for example when the time limit stopped git.
-      const head = await headOf(deps, layout.stateDir);
-      if (!head.ok) {
-        return failure(
-          `${error}. ${head.error.message}, so the files are not put back. ` +
-            `Run "git log -1 --stat" in ${dirs.state} to see whether the upgrade commit is there. ` +
-            `If it is not, restore the files from ${backupPath}.`,
+    // The paths are checked once more before the first write, because a path can change while the command plans.
+    const stillPlain = await requireNoRootLinks(deps, layout);
+    if (!stillPlain.ok) return stillPlain;
+    const backupDir = await backup(deps, home);
+    if (!backupDir.ok) return backupDir;
+    const backupPath = relative(home, backupDir.value);
+    // The old text of a block that this run replaces is kept before the first write. A stop here changed no file.
+    const savedBlocks = await backupBlocks(deps, home, changes);
+    if (!savedBlocks.ok) return savedBlocks;
+
+    const written: Written[] = [];
+    const moved: Moved[] = [];
+    let commit: CommitAttempt | null = null;
+    // The root repo that this run made, which a later failure removes.
+    let rootMade: MadeRootRepo | null = null;
+    const abort = async (error: string): Promise<CliResult<never>> => {
+      const attempt = commit;
+      if (attempt !== null) {
+        // The commit may have landed although git reported an error, for example when the time limit stopped git.
+        const head = await headOf(deps, layout.stateDir);
+        if (!head.ok) {
+          return failure(
+            `${error}. ${head.error.message}, so the files are not put back. ` +
+              `Run "git log -1 --stat" in ${dirs.state} to see whether the upgrade commit is there. ` +
+              `If it is not, restore the files from ${backupPath}.`,
+          );
+        }
+        if (head.value !== attempt.head) {
+          return failure(
+            `${error}. The upgrade commit was made in ${dirs.state}, so the files stay upgraded. ` +
+              `Run "git log -1 --stat" in ${dirs.state} to check it. ` +
+              `Then run "${commandText(commands.upgrade)}" again: it must say that there is nothing to upgrade. ` +
+              `The backup is in ${backupPath}.`,
+          );
+        }
+      }
+      const repoGone = rootMade === null ? ok(undefined) : await deps.fs.remove(join(home, GIT_ENTRY));
+      const problems = await restore(deps, home, written, moved);
+      const unstaged = attempt === null ? ok(undefined) : await unstagePaths(deps, layout.stateDir, attempt.paths);
+      const notes: string[] = [];
+      if (!repoGone.ok) {
+        notes.push(`${repoGone.error.message}. Remove ${GIT_ENTRY} in ${home} by hand.`);
+      }
+      if (problems.length > 0) {
+        const many = problems.length > 1;
+        notes.push(
+          `${problems.length} ${many ? 'files' : 'file'} could not be restored: ${problems.join('; ')}. ` +
+            `Restore ${many ? 'them' : 'it'} from ${backupPath}.`,
         );
       }
-      if (head.value !== attempt.head) {
-        return failure(
-          `${error}. The upgrade commit was made in ${dirs.state}, so the files stay upgraded. ` +
-            `Run "git log -1 --stat" in ${dirs.state} to check it. ` +
-            `Then run "${commandText(commands.upgrade)}" again: it must say that there is nothing to upgrade. ` +
-            `The backup is in ${backupPath}.`,
-        );
+      if (!unstaged.ok) {
+        notes.push(`${unstaged.error.message}. Run "git reset" in ${dirs.state} to clear the staged files.`);
       }
-    }
-    const repoGone = rootMade === null ? ok(undefined) : await deps.fs.remove(join(home, GIT_ENTRY));
-    const problems = await restore(deps, home, written, moved);
-    const unstaged = attempt === null ? ok(undefined) : await unstagePaths(deps, layout.stateDir, attempt.paths);
-    const notes: string[] = [];
-    if (!repoGone.ok) {
-      notes.push(`${repoGone.error.message}. Remove ${GIT_ENTRY} in ${home} by hand.`);
-    }
-    if (problems.length > 0) {
-      const many = problems.length > 1;
-      notes.push(
-        `${problems.length} ${many ? 'files' : 'file'} could not be restored: ${problems.join('; ')}. ` +
-          `Restore ${many ? 'them' : 'it'} from ${backupPath}.`,
+      return failure(
+        notes.length === 0
+          ? `${error}. The files are as they were. The backup is in ${backupPath}.`
+          : `${error}. ${notes.join(' ')}`,
       );
+    };
+
+    const movedFiles = await applyMoves(deps, files.moves, moved);
+    if (!movedFiles.ok) return abort(movedFiles.error.message);
+    const blockTexts = await blockFileTexts(deps, home, changes);
+    if (!blockTexts.ok) return abort(blockTexts.error.message);
+
+    const newFiles: NewFile[] = [
+      ...blockTexts.value,
+      ...replacements.map((replace) => ({ path: replace.filePath, text: replace.text })),
+      ...(stateText.value === null ? [] : [{ path: layout.nodeJson, text: stateText.value }]),
+      ...(stateGitignore.value.text === null ? [] : [{ path: stateGitignore.value.filePath, text: stateGitignore.value.text }]),
+      ...(root.value.gitignore.text === null ? [] : [{ path: root.value.gitignore.filePath, text: root.value.gitignore.text }]),
+      // The local file comes before the shared file, which is the last to change. A run that stops between the two leaves
+      // the old shared file with all its keys.
+      ...(localText.value === null
+        ? []
+        : [{ path: layout.localConfigFile, text: localText.value, mode: localFileModes.private }]),
+      ...(configText.value === null ? [] : [{ path: layout.configFile, text: configText.value }]),
+    ];
+    const wrote = await writeAll(deps, home, newFiles, written, commands.upgrade);
+    if (!wrote.ok) return abort(wrote.error.message);
+
+    // The root repo comes after the files that its first commit holds, and before the commit of the state repo.
+    if (root.value.repo) {
+      const madeRepo = await makeRootRepo(deps, home);
+      if (!madeRepo.ok) return abort(madeRepo.error.message);
+      rootMade = madeRepo.value;
     }
-    if (!unstaged.ok) {
-      notes.push(`${unstaged.error.message}. Run "git reset" in ${dirs.state} to clear the staged files.`);
+
+    const paths: RepoPaths = {
+      present: inStateRepo(layout, [...written.map((entry) => entry.path), ...moved.map((move) => move.to)]),
+      gone: inStateRepo(layout, moved.map((move) => move.from)),
+    };
+    const stateChanged = paths.present.length > 0;
+    if (stateChanged) {
+      const head = await headOf(deps, layout.stateDir);
+      if (!head.ok) return abort(head.error.message);
+      commit = { head: head.value, paths };
+      const committed = await commitPaths(deps, layout.stateDir, paths, COMMIT_MESSAGE);
+      if (!committed.ok) return abort(committed.error.message);
     }
-    return failure(
-      notes.length === 0
-        ? `${error}. The files are as they were. The backup is in ${backupPath}.`
-        : `${error}. ${notes.join(' ')}`,
-    );
+    return ok({
+      backupDir: backupDir.value,
+      backupPath,
+      savedBlocks: savedBlocks.value,
+      count: written.length + moved.length,
+      stateChanged,
+      rootMade,
+    });
   };
+  const applied = touched.length > 0 ? await withStateLock(deps, layout, applyChanges) : await applyChanges();
+  if (!applied.ok) return applied;
+  const { backupDir, backupPath, savedBlocks, count, stateChanged, rootMade } = applied.value;
 
-  const movedFiles = await applyMoves(deps, files.moves, moved);
-  if (!movedFiles.ok) return abort(movedFiles.error.message);
-  const blockTexts = await blockFileTexts(deps, home, changes);
-  if (!blockTexts.ok) return abort(blockTexts.error.message);
-
-  const newFiles: NewFile[] = [
-    ...blockTexts.value,
-    ...replacements.map((replace) => ({ path: replace.filePath, text: replace.text })),
-    ...(stateText.value === null ? [] : [{ path: layout.nodeJson, text: stateText.value }]),
-    ...(stateGitignore.value.text === null ? [] : [{ path: stateGitignore.value.filePath, text: stateGitignore.value.text }]),
-    ...(root.value.gitignore.text === null ? [] : [{ path: root.value.gitignore.filePath, text: root.value.gitignore.text }]),
-    // The local file comes before the shared file, which is the last to change. A run that stops between the two leaves
-    // the old shared file with all its keys.
-    ...(localText.value === null
-      ? []
-      : [{ path: layout.localConfigFile, text: localText.value, mode: localFileModes.private }]),
-    ...(configText.value === null ? [] : [{ path: layout.configFile, text: configText.value }]),
-  ];
-  const wrote = await writeAll(deps, home, newFiles, written, commands.upgrade);
-  if (!wrote.ok) return abort(wrote.error.message);
-
-  // The root repo comes after the files that its first commit holds, and before the commit of the state repo.
-  if (root.value.repo) {
-    const madeRepo = await makeRootRepo(deps, home);
-    if (!madeRepo.ok) return abort(madeRepo.error.message);
-    rootMade = madeRepo.value;
-  }
-
-  const paths: RepoPaths = {
-    present: inStateRepo(layout, [...written.map((entry) => entry.path), ...moved.map((move) => move.to)]),
-    gone: inStateRepo(layout, moved.map((move) => move.from)),
-  };
-  const stateChanged = paths.present.length > 0;
-  if (stateChanged) {
-    const head = await headOf(deps, layout.stateDir);
-    if (!head.ok) return abort(head.error.message);
-    commit = { head: head.value, paths };
-    const committed = await commitPaths(deps, layout.stateDir, paths, COMMIT_MESSAGE);
-    if (!committed.ok) return abort(committed.error.message);
-  }
-
-  const count = written.length + moved.length;
-  const pruned = [...(await pruneBackups(deps, home, backupDir.value)), ...(await pruneBlockBackups(deps, home))];
+  const pruned = [...(await pruneBackups(deps, home, backupDir)), ...(await pruneBlockBackups(deps, home))];
   const indexed = await indexUpgraded(deps, home, origin, registry);
-  const keptLines = savedBlocks.value.map((saved): OutLine => ({
+  const keptLines = savedBlocks.map((saved): OutLine => ({
     level: 'ok',
     text: `Kept the old text of block ${saved.block} in ${saved.path}.`,
   }));
@@ -519,7 +549,7 @@ export const runUpgrade = async (
     ],
     backupPath,
     stateChanged,
-    savedBlocks.value,
+    savedBlocks,
     hookApplied.value.changed,
   );
 };

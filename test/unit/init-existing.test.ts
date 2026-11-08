@@ -12,7 +12,7 @@ import { locateHome } from '../../src/core/home.js';
 import { effectiveModes } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { commands, env, stateGuard, stateKeys, values } from '../../src/names.js';
+import { commands, env, stateGuard, stateKeys, stateLock, values } from '../../src/names.js';
 import type { ApprovalModes } from '../../src/recipes/index.js';
 import { guardHookText } from '../../src/state/guard.js';
 import { inspectState } from '../../src/state/load.js';
@@ -1195,6 +1195,38 @@ describe('init: a root whose state folder has a missing or broken marker (TP-96,
     expect(result.ok).toBe(true);
     expect(entryOf(deps)).toMatchObject({ id: 'demo' });
     expect(warningsOf(result).join('\n')).toContain('not committed');
+  });
+
+  describe('and the state lock (TP-19)', () => {
+    const LOCK_FILE = `${STATE}/locks/${stateLock.name}${stateLock.lock.suffix}`;
+
+    it('waits for the lock of another writer, then warns with the lock path, and leaves the marker in place with no commit', async () => {
+      const { deps, log } = existing({ state: 'no-marker' });
+      deps.seed(LOCK_FILE, '1\n');
+      const result = await runInit(deps, options({ yes: true }));
+      expect(result.ok).toBe(true);
+      expect(warningsOf(result).join('\n')).toContain(LOCK_FILE);
+      expect(warningsOf(result).join('\n')).toContain('not committed');
+      expect(result.ok && result.value.json['committed']).toBe(false);
+      expect((await inspectState(deps, ROOT)).kind).toBe('valid');
+      expect(stateGit(log).some((command) => command.includes('commit') || command.startsWith('add'))).toBe(false);
+      expect(deps.sleeps).toEqual(Array.from({ length: stateLock.lock.attempts - 1 }, () => stateLock.lock.waitMs));
+      expect(deps.files.get(LOCK_FILE)).toBe('1\n');
+    });
+
+    it('holds the lock while it commits the marker, and lets the lock go after', async () => {
+      const held: boolean[] = [];
+      const { handler } = gitHandler({ repos: { [ROOT]: {}, [STATE]: {} }, tracked: { [ROOT]: TRACKED_SETUP }, status: MARKER_CHANGED });
+      const made = existing({ state: 'no-marker' }, {
+        run: (call) => {
+          if (call.args[1] === STATE && call.args.includes('commit')) held.push(made.deps.files.has(LOCK_FILE));
+          return handler(call);
+        },
+      });
+      expect((await runInit(made.deps, options({ yes: true }))).ok).toBe(true);
+      expect(held).toEqual([true]);
+      expect(made.deps.files.has(LOCK_FILE)).toBe(false);
+    });
   });
 
   it('refuses a state folder that is not the top of its own work tree: exit 4, and nothing is written (TP-124)', async () => {

@@ -10,7 +10,7 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
-import { commands, env, hookNames, setupBlockNames, stateGuard } from '../../src/names.js';
+import { commands, env, hookNames, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -19,6 +19,8 @@ import { guardHookText } from '../../src/state/guard.js';
 import { parseJsonText } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { backup, restore, writeAll, type Written } from '../../src/upgrade/apply.js';
+import { isChange, planBlock } from '../../src/upgrade/plan.js';
+import { writeBlockPlans } from '../../src/upgrade/render.js';
 import { finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
 import { currentSpec, parseConfigTexts, runInit, runUpgrade } from '../helpers/package-registry.js';
 import { fileTemplates } from '../../src/templates/index.js';
@@ -447,6 +449,100 @@ describe('upgrade: the delete guard of the state repo (TP-4, TP-5, TP-6, TP-53)'
     const error = refusal(await upgrade({ ...deps, programArgv: [] }, newer));
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(backupsOf(deps)).toEqual([]);
+  });
+});
+
+describe('upgrade: the state lock (TP-19)', () => {
+  const LOCK_FILE = `${HOME}/.factory/locks/${stateLock.name}${stateLock.lock.suffix}`;
+  const WAITS = Array.from({ length: stateLock.lock.attempts - 1 }, () => stateLock.lock.waitMs);
+  const newer = blocksSpec(withBlock('coordinator', 'New coordinator text.'));
+  const stagesOrCommits = (git: readonly string[]): string[] => git.filter((command) => command.startsWith('add') || command.includes('commit'));
+
+  /** The planned change of the worker block to its next version: it rewrites a file that the state repo holds. */
+  const workerChanges = async (deps: FakeDeps) =>
+    (await inspectBlocks(deps, HOME, withBlock('worker', 'New worker text.'))).map((status) => planBlock(status, false)).filter(isChange);
+
+  it('upgrade commit: waits for the lock of another writer, then stops with exit 1 and the lock path, and writes nothing', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.seed(LOCK_FILE, '1\n');
+    const before = snapshot(deps);
+    const slept = deps.sleeps.length;
+    const error = refusal(await upgrade(deps, newer));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(LOCK_FILE);
+    expect(deps.sleeps.slice(slept)).toEqual(WAITS);
+    expect(snapshot(deps)).toEqual(before);
+    expect(stagesOrCommits(gitSince())).toEqual([]);
+  });
+
+  it('upgrade commit: holds the lock from the ready check to the commit, and lets it go after', async () => {
+    const held: [string, boolean][] = [];
+    let current: FakeDeps | undefined;
+    const { deps } = await makeNode({
+      run: (inner) => (call) => {
+        const command = withoutStateWords(call.args).slice(2).join(' ');
+        if (command.startsWith('status') || command.includes('commit')) {
+          held.push([command.startsWith('status') ? 'status' : 'commit', current?.files.has(LOCK_FILE) ?? false]);
+        }
+        return inner(call);
+      },
+    });
+    current = deps;
+    expect(success(await upgrade(deps, newer)).json).toMatchObject({ committed: true });
+    expect(held.map(([step]) => step)).toEqual(['status', 'commit']);
+    expect(held.every(([, lockHeld]) => lockHeld)).toBe(true);
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('upgrade commit: lets the lock go when the run stops after the backup', async () => {
+    const { deps } = await makeNode({ run: (inner) => (call) => (call.args.includes('commit') ? exited(1, '', 'fatal') : inner(call)) });
+    expect(refusal(await upgrade(deps, newer)).message).toContain('cannot commit');
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('takes no lock for a dry run, and for a run that changes no file of the state repo', async () => {
+    const { deps } = await makeNode();
+    deps.seed(LOCK_FILE, '1\n');
+    expect(success(await upgrade(deps, newer, { dryRun: true })).json).toMatchObject({ changed: true, dryRun: true });
+    const spec: UpgradeSpec = { ...currentSpec, config: configAt(C + 1, [step('schema', C)]), ...fixedBlocks(layer1Blocks) };
+    expect(success(await upgrade(deps, spec)).json).toMatchObject({ changed: true, committed: false });
+    expect(deps.sleeps).toEqual([]);
+  });
+
+  it('block render commit: waits for the lock of another writer, then stops with exit 1 and the lock path, and writes nothing', async () => {
+    const { deps, gitSince } = await makeNode();
+    const changes = await workerChanges(deps);
+    expect(changes).toHaveLength(1);
+    deps.seed(LOCK_FILE, '1\n');
+    const before = snapshot(deps);
+    const slept = deps.sleeps.length;
+    const result = await writeBlockPlans(deps, HOME, changes, commands.start);
+    if (result.ok) throw new Error('expected an error');
+    expect(exitCodeOf[result.error.kind]).toBe(1);
+    expect(result.error.message).toContain(LOCK_FILE);
+    expect(deps.sleeps.slice(slept)).toEqual(WAITS);
+    expect(snapshot(deps)).toEqual(before);
+    expect(stagesOrCommits(gitSince())).toEqual([]);
+  });
+
+  it('block render commit: writes and commits the file of the state repo with the lock held, and lets it go after', async () => {
+    const { deps, gitSince } = await makeNode();
+    const changes = await workerChanges(deps);
+    expect(await writeBlockPlans(deps, HOME, changes, commands.start)).toEqual({ ok: true, value: true });
+    expect(text(deps, WORKER)).toContain('New worker text.');
+    expect(stagesOrCommits(gitSince())).toHaveLength(2);
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('block render commit: takes no lock for a file outside the state repo', async () => {
+    const { deps } = await makeNode();
+    const statuses = await inspectBlocks(deps, HOME, withBlock('coordinator', 'New coordinator text.'));
+    const changes = statuses.map((status) => planBlock(status, false)).filter(isChange);
+    expect(changes).toHaveLength(1);
+    deps.seed(LOCK_FILE, '1\n');
+    expect(await writeBlockPlans(deps, HOME, changes, commands.start)).toEqual({ ok: true, value: true });
+    expect(text(deps, CLAUDE)).toContain('New coordinator text.');
+    expect(deps.sleeps).toEqual([]);
   });
 });
 
@@ -3090,12 +3186,19 @@ describe('upgrade: the two config files', () => {
   });
 });
 
-/** The state of every file and folder, for a test that proves a run wrote nothing. */
-const wholeState = (deps: FakeDeps): { readonly files: Map<string, string>; readonly dirs: string[]; readonly modes: Map<string, number> } => ({
-  files: snapshot(deps),
-  dirs: [...deps.dirs].sort(),
-  modes: new Map(deps.modes),
-});
+/**
+ * The state of every file and folder, for a test that proves a run wrote nothing. The locks folder of the state folder is left out: a
+ * run that takes the state lock makes the folder, and the lock file is gone when the run ends.
+ */
+const wholeState = (deps: FakeDeps): { readonly files: Map<string, string>; readonly dirs: string[]; readonly modes: Map<string, number> } => {
+  const locks = `${HOME}/.factory/locks`;
+  const outsideLocks = (path: string): boolean => path !== locks && !path.startsWith(`${locks}/`);
+  return {
+    files: snapshot(deps),
+    dirs: [...deps.dirs].filter(outsideLocks).sort(),
+    modes: new Map([...deps.modes].filter(([path]) => outsideLocks(path))),
+  };
+};
 
 describe('upgrade: the link rule (TP-130)', () => {
   it.each([

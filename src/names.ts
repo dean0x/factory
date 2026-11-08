@@ -1047,6 +1047,28 @@ export const activeMachine = {
 } as const;
 
 /**
+ * The lock of the state repo: every step that changes the files of the state repo and commits them holds it from the ready check
+ * to the commit, so two writers never take each other's change. The lock file is `<name><suffix>` in the locks folder of the state
+ * folder. A writer tries `attempts` times and waits `waitMs` between two tries, so it waits 4.75 seconds at most, then it stops with
+ * exit 1 and names the lock file. A lock that is older than `staleMs` was left by a process that ended, and the next writer takes it.
+ * `staleMs` is larger than the longest locked run: about eight git calls with a limit of 15 seconds each, and a backup.
+ */
+export const stateLock = {
+  name: 'state',
+  /** The permission bits of the lock file, and of the locks folder when the call makes it. */
+  fileMode: privateFile.fileMode,
+  folderMode: privateFile.folderMode,
+  lock: {
+    suffix: privateFile.lockSuffix,
+    takeoverSuffix: privateFile.takeoverSuffix,
+    mode: privateFile.fileMode,
+    attempts: 20,
+    waitMs: 250,
+    staleMs: 300_000,
+  },
+} as const;
+
+/**
  * The exclude file of a project clone (design 4.6): `info/exclude` in the common git folder, which every work copy of the
  * clone shares. It holds one entry that hides the settings file of the work copies from git, so a work copy that has only
  * that file counts as clean. The entry anchors at the top of a work tree.

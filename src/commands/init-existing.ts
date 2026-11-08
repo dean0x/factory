@@ -31,6 +31,7 @@ import { parseProxyUrl, proxyLabel } from '../safety/proxy.js';
 import { guardFolderLabel, guardNeedsInstall, installGuard } from '../state/guard.js';
 import { stagingDirOf, stateRel, type Layout } from '../state/layout.js';
 import { STATE_LABEL } from '../state/load.js';
+import { withStateLock } from '../state/state-lock.js';
 import { blockInputOf, blockTemplatesFor } from '../templates/index.js';
 import type { SetupTexts } from '../templates/types.js';
 import { renderCoordinatorText, type CoordinatorRender } from '../upgrade/render.js';
@@ -421,17 +422,29 @@ const renderWarnings = (home: string, tightened: CliResult<CoordinatorRender>, s
   return [...new Set([...failed, ...kept])];
 };
 
+interface MarkerCommit {
+  readonly committed: boolean;
+  readonly warnings: readonly string[];
+}
+
+const markerNotCommitted = (reason: string): MarkerCommit => ({
+  committed: false,
+  warnings: [`${STATE_LABEL} was written and not committed (${reason}). Commit it in ${dirs.state}.`],
+});
+
 /**
  * Commit the marker that was written again. A marker with the text that git holds has no change, so nothing is committed.
- * A commit that fails is a warning: the marker is in place.
+ * The status read and the commit run inside the state lock. A commit that fails, or a lock that another writer holds for the
+ * whole wait, is a warning: the marker is in place.
  */
-const commitMarker = async (deps: Deps, layout: Layout): Promise<{ readonly committed: boolean; readonly warnings: readonly string[] }> => {
-  const notCommitted = (reason: string): { readonly committed: false; readonly warnings: readonly string[] } => ({
-    committed: false,
-    warnings: [`${STATE_LABEL} was written and not committed (${reason}). Commit it in ${dirs.state}.`],
-  });
+const commitMarker = async (deps: Deps, layout: Layout): Promise<MarkerCommit> => {
+  const locked = await withStateLock(deps, layout, async () => ok(await commitMarkerLocked(deps, layout)));
+  return locked.ok ? locked.value : markerNotCommitted(locked.error.message);
+};
+
+const commitMarkerLocked = async (deps: Deps, layout: Layout): Promise<MarkerCommit> => {
   const status = await stateStatusOf(deps, layout.stateDir);
-  if (!status.ok) return notCommitted(status.error.message);
+  if (!status.ok) return markerNotCommitted(status.error.message);
   if (!status.value.some((entry) => entry.path === stateRel.nodeJson)) return { committed: false, warnings: [] };
   if (!(await hasIdentity(deps, layout.stateDir))) {
     return {
@@ -443,7 +456,7 @@ const commitMarker = async (deps: Deps, layout: Layout): Promise<{ readonly comm
   const committed = await commitPaths(deps, layout.stateDir, paths, MARKER_COMMIT_MESSAGE);
   if (committed.ok) return { committed: true, warnings: [] };
   await unstagePaths(deps, layout.stateDir, paths);
-  return notCommitted(committed.error.message);
+  return markerNotCommitted(committed.error.message);
 };
 
 /**

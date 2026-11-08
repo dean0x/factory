@@ -8,6 +8,7 @@ import { activeMachine, commands, commandText, files, places, schemaIds, type Co
 import { readCheckedFile } from '../workers/registry.js';
 import { layoutOf, type Layout } from './layout.js';
 import { parseJsonText } from './load.js';
+import { withStateLock } from './state-lock.js';
 
 /**
  * The mark of the active machine (design 4.3). `start` writes it when it starts the session, and it names the machine that runs
@@ -184,25 +185,16 @@ const putBack = async (deps: Deps, layout: Layout, previous: string | null, path
 const MARK_PATHS: RepoPaths = { present: [files.activeMachine], gone: [] };
 
 /**
- * Mark this machine as the active one: write the mark with the id of this machine and the time, and commit that file only. A
- * mark of another machine is a warning, printed before the write, and the mark is replaced all the same. Nothing here stops the
- * caller: a fault is a warning, and the value tells what happened. The state repo must be ready for the commit (a git repo with
- * an identity, no staged change, no change of the owner in the file of the mark), else the call writes nothing. A commit that
- * fails puts the file back as it was.
+ * The part of the claim that runs inside the state lock: the read of the mark, the ready check, the write and the commit. The
+ * mark is read under the lock, so the text that a failed commit puts back is the text that was there when this run took the lock.
  */
-export const claimActiveMachine = async (deps: Deps, home: string): Promise<ClaimOutcome> => {
-  const layout = layoutOf(home);
-  const id = await machineIdOf(deps, home);
-  if (!id.ok) {
-    deps.warn(notMarkedBy(id.error));
-    return { claimed: false, other: null };
-  }
+const claimLocked = async (deps: Deps, home: string, layout: Layout, machine: string): Promise<ClaimOutcome> => {
   const read = await readActiveMark(deps, home);
   if (!read.ok) {
     deps.warn(notMarkedBy(read.error));
     return { claimed: false, other: null };
   }
-  const other = read.value.state === 'valid' && read.value.mark.machine !== id.value ? read.value.mark : null;
+  const other = read.value.state === 'valid' && read.value.mark.machine !== machine ? read.value.mark : null;
   if (other !== null) deps.warn(otherMachineWarning(other));
   if (read.value.state === 'invalid') {
     if (read.value.text === null) {
@@ -218,7 +210,7 @@ export const claimActiveMachine = async (deps: Deps, home: string): Promise<Clai
     return { claimed: false, other };
   }
   const previous = read.value.state === 'absent' ? null : read.value.text;
-  const written = await deps.fs.writeTextAtomic(layout.activeMachineFile, markTextOf(id.value, deps.now()), layout.stateDir);
+  const written = await deps.fs.writeTextAtomic(layout.activeMachineFile, markTextOf(machine, deps.now()), layout.stateDir);
   if (!written.ok) {
     deps.warn(notMarkedBy(written.error));
     return { claimed: false, other };
@@ -230,12 +222,27 @@ export const claimActiveMachine = async (deps: Deps, home: string): Promise<Clai
 };
 
 /**
- * Clear the mark of this machine: remove the file and commit the removal of that file only. A mark of another machine stays, and
- * so does a missing mark. `command` is the command that a person runs again after a fix of the state repo. A failure leaves the
- * mark as it was.
+ * Mark this machine as the active one: write the mark with the id of this machine and the time, and commit that file only. A
+ * mark of another machine is a warning, printed before the write, and the mark is replaced all the same. Nothing here stops the
+ * caller: a fault is a warning, and the value tells what happened. The call holds the state lock from the read of the mark to the
+ * commit; a lock that another writer holds for the whole wait is a warning, and the call writes nothing. The state repo must be
+ * ready for the commit (a git repo with an identity, no staged change, no change of the owner in the file of the mark), else the
+ * call writes nothing. A commit that fails puts the file back as it was.
  */
-export const clearActiveMark = async (deps: Deps, home: string, command: CommandName): Promise<CliResult<ClearOutcome>> => {
+export const claimActiveMachine = async (deps: Deps, home: string): Promise<ClaimOutcome> => {
   const layout = layoutOf(home);
+  const id = await machineIdOf(deps, home);
+  if (!id.ok) {
+    deps.warn(notMarkedBy(id.error));
+    return { claimed: false, other: null };
+  }
+  const claimed = await withStateLock(deps, layout, async () => ok(await claimLocked(deps, home, layout, id.value)));
+  if (claimed.ok) return claimed.value;
+  deps.warn(notMarkedBy(claimed.error));
+  return { claimed: false, other: null };
+};
+
+const clearLocked = async (deps: Deps, home: string, layout: Layout, command: CommandName): Promise<CliResult<ClearOutcome>> => {
   const read = await readActiveMark(deps, home);
   if (!read.ok) return read;
   if (read.value.state === 'absent') return ok('absent');
@@ -255,4 +262,15 @@ export const clearActiveMark = async (deps: Deps, home: string, command: Command
   if (committed.ok) return ok('cleared');
   const notes = await putBack(deps, layout, read.value.text, MARK_PATHS);
   return failure(`${committed.error.message}${notes}`);
+};
+
+/**
+ * Clear the mark of this machine: remove the file and commit the removal of that file only. A mark of another machine stays, and
+ * so does a missing mark. `command` is the command that a person runs again after a fix of the state repo. The call holds the state
+ * lock from the read of the mark to the commit; a lock that another writer holds for the whole wait is a failure (exit 1) that names
+ * the lock file. A failure leaves the mark as it was.
+ */
+export const clearActiveMark = (deps: Deps, home: string, command: CommandName): Promise<CliResult<ClearOutcome>> => {
+  const layout = layoutOf(home);
+  return withStateLock(deps, layout, () => clearLocked(deps, home, layout, command));
 };
