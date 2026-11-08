@@ -68,8 +68,8 @@ const guard = async <T>(action: string, path: string, work: () => Promise<T>): P
 const DEFAULT_FILE_MODE = 0o666;
 const TEMPORARY_SUFFIX_BYTES = 8;
 
-/** The text of the file, or null when the file holds more than `maxBytes`. At most `maxBytes` plus one byte is read. */
-const readBounded = async (path: string, maxBytes: number): Promise<string | null> => {
+/** The bytes of the file, or null when the file holds more than `maxBytes`. At most `maxBytes` plus one byte is read. */
+const readBounded = async (path: string, maxBytes: number): Promise<Buffer | null> => {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of createReadStream(path, { start: 0, end: maxBytes })) {
@@ -77,7 +77,19 @@ const readBounded = async (path: string, maxBytes: number): Promise<string | nul
     chunks.push(bytes);
     size += bytes.length;
   }
-  return size > maxBytes ? null : Buffer.concat(chunks).toString('utf8');
+  return size > maxBytes ? null : Buffer.concat(chunks);
+};
+
+/**
+ * The text of the bytes, or a failure when a byte sequence is not UTF-8. A byte order mark stays in the text (`ignoreBOM`), so the
+ * text is the same one that the lenient decode gives for every input that is UTF-8.
+ */
+const decodeStrict = (path: string, bytes: Buffer): CliResult<string> => {
+  try {
+    return ok(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
+  } catch {
+    return failure(`cannot read ${path}: the bytes are not valid UTF-8`);
+  }
 };
 
 /**
@@ -282,10 +294,11 @@ const createExclusive = async (path: string, text: string, mode: number): Promis
 
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
-  readTextLimited: async (path, maxBytes) => {
-    const text = await guard('read', path, () => readBounded(path, maxBytes));
-    if (!text.ok) return text;
-    return text.value === null ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text.value);
+  readTextLimited: async (path, maxBytes, decode = 'lenient') => {
+    const bytes = await guard('read', path, () => readBounded(path, maxBytes));
+    if (!bytes.ok) return bytes;
+    if (bytes.value === null) return failure(`cannot read ${path}: larger than ${maxBytes} bytes`);
+    return decode === 'fatal' ? decodeStrict(path, bytes.value) : ok(bytes.value.toString('utf8'));
   },
   digestFile: (path, textLimit, maxBytes) => guard('read', path, () => digestBytes(path, textLimit, maxBytes)),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),

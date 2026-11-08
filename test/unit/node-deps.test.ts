@@ -565,6 +565,50 @@ describe('node deps: fs', () => {
     });
   });
 
+  describe('a read with a strict decode', () => {
+    /** The byte 0xff never occurs in UTF-8. A lenient decode turns it into U+FFFD. */
+    const BAD_BYTES = Buffer.from([0x61, 0xff, 0x62]);
+
+    it('M5-1b TP-51 fails for a byte sequence that is not UTF-8, names the file, and gives no text', async () => {
+      const file = fresh('strict-bad.json');
+      await writeFile(file, BAD_BYTES);
+      const result = await deps.fs.readTextLimited(file, 100, 'fatal');
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.message).toContain(file);
+        expect(result.error.message).toContain('UTF-8');
+      }
+    });
+
+    it('M5-1b TP-51 reads valid text, with multi-byte characters and a byte order mark, as the lenient read does', async () => {
+      const file = fresh('strict-good.json');
+      const text = '﻿{"title":"é 日本 \u{1F600}"}\n';
+      await writeFile(file, text, 'utf8');
+      expect(await deps.fs.readTextLimited(file, 100, 'fatal')).toEqual({ ok: true, value: text });
+      expect(await deps.fs.readTextLimited(file, 100, 'lenient')).toEqual({ ok: true, value: text });
+    });
+
+    it('M5-1b TP-51 still says that a file over the limit is too large', async () => {
+      const file = fresh('strict-over.json');
+      await writeFile(file, 'abcdef', 'utf8');
+      const result = await deps.fs.readTextLimited(file, 5, 'fatal');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('larger than 5 bytes');
+    });
+
+    it('M5-1b TP-98 keeps the lenient decode when the read names no decode', async () => {
+      const file = fresh('lenient-default.json');
+      await writeFile(file, BAD_BYTES);
+      expect(await deps.fs.readTextLimited(file, 100)).toEqual({ ok: true, value: 'a�b' });
+    });
+
+    it('M5-1b TP-98 keeps the lenient decode when the read names the lenient decode', async () => {
+      const file = fresh('lenient-named.json');
+      await writeFile(file, BAD_BYTES);
+      expect(await deps.fs.readTextLimited(file, 100, 'lenient')).toEqual({ ok: true, value: 'a�b' });
+    });
+  });
+
   describe('a digest of the bytes of a file (TP-171)', () => {
     const sha256Of = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex');
     const BOUND = 1_000_000;

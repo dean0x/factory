@@ -91,6 +91,11 @@ export interface FakeDeps extends Deps {
   readonly owners: Map<string, number>;
   /** The time of the last write of a file, in milliseconds, by path. A file that is not in the map changed just now. */
   readonly mtimes: Map<string, number>;
+  /**
+   * The paths whose bytes are not UTF-8. The text in `files` is what a lenient read gives (it holds U+FFFD for the bad bytes), and a
+   * read with the `fatal` decode fails for the path.
+   */
+  readonly invalidUtf8: Set<string>;
   /** The waits of `sleep`, in order. */
   readonly sleeps: number[];
   /** The pids that `terminate` got, in order. The fake sends no signal to a real process. The call has no other signal. */
@@ -136,6 +141,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const modes = new Map<string, number>();
   const owners = new Map<string, number>();
   const mtimes = new Map<string, number>();
+  const invalidUtf8 = new Set<string>();
   const sleeps: number[] = [];
   const terminated: number[] = [];
   const checked: number[] = [];
@@ -181,6 +187,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     modes,
     owners,
     mtimes,
+    invalidUtf8,
     sleeps,
     terminated,
     checked,
@@ -225,10 +232,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         const text = files.get(path);
         return text === undefined ? enoent('read', path) : ok(text);
       },
-      readTextLimited: async (path, maxBytes) => {
+      readTextLimited: async (path, maxBytes, decode = 'lenient') => {
         const text = files.get(path);
         if (text === undefined) return enoent('read', path);
-        return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text);
+        if (Buffer.byteLength(text, 'utf8') > maxBytes) return failure(`cannot read ${path}: larger than ${maxBytes} bytes`);
+        // The fake keeps decoded text, so the paths in `invalidUtf8` stand for bytes that only a lenient decode can read.
+        return decode === 'fatal' && invalidUtf8.has(path) ? failure(`cannot read ${path}: the bytes are not valid UTF-8`) : ok(text);
       },
       digestFile: async (path, textLimit, maxBytes) => {
         const text = files.get(path);
