@@ -3,7 +3,7 @@
 This table maps each note from Dean to the text that answers it. It has one row for each ask id of the intent check (the baseline of 2026-11-02 and its verbatim check) and one row for each ask of the design v3 feedback. The intent check at each milestone merge reads the rows of that milestone. A row that is not covered blocks the merge, or moves to a named later milestone with a reason.
 
 How to read the table:
-- **Ask id.** `F-n`, `D-n` and `O-1x` are the ids of the first table of the check. `V-F-nx` is a row of the verbatim check, which compares Dean's own words. `Gap n` is a numbered gap of the check (1 to 19). `A1` to `A12` are the new gaps of the verbatim check. `F-14a` to `F-21c`, `D-57`, `D-59` and `D-60` are the asks of the design v3 feedback. `F-22a` to `F-25f` are the asks of the usage notes of 2026-11-03. `F-26a` to `F-26d` and `D-121` are the asks of the direction "factory is clay" of 2026-11-07. The letter gives the part of the note.
+- **Ask id.** `F-n`, `D-n` and `O-1x` are the ids of the first table of the check. `V-F-nx` is a row of the verbatim check, which compares Dean's own words. `Gap n` is a numbered gap of the check (1 to 19). `A1` to `A12` are the new gaps of the verbatim check. `F-14a` to `F-21c`, `D-57`, `D-59` and `D-60` are the asks of the design v3 feedback. `F-22a` to `F-25f` are the asks of the usage notes of 2026-11-03. `F-26a` to `F-26d` and `D-121` are the asks of the direction "factory is clay" of 2026-11-07. `D-128` is the decision of Dean about GitHub accounts. The letter gives the part of the note.
 - **Design section.** A heading of `docs/design.md`. A numbered section has its mark and number. The parts "Core and setup" and "Extension points" are named, because docs check 9 accepts their headings with no number.
 - **Milestone and exit criterion.** A milestone of `docs/roadmap-v2.md` and the check that proves the ask. The word "criterion" refers to the exit criteria of that milestone. "Design v3 PR" is the label of the milestone in the roadmap that has the two checkboxes for the docs PR and the code PR.
 - **Status.** `covered` means that the design and the roadmap answer the ask. `not applicable` gives the reason.
@@ -19,7 +19,7 @@ How to read the table:
 | F-1c | Factory words for commands and items | §4.1, §4.2, §7 | FAC-M4 (session reset) and FAC-M5 (request, queue, check, release check): each command has its own criterion. FAC-M2: names test and glossary test. Design v3 PR: the plain-words table (D-59) | covered |
 | F-2a | Use the team tracker (GitHub, Jira, Linear); the user picks it | §4.10, §4.4 | FAC-M3: tracker choice test (`init --tracker github` with a fake `gh`; `doctor` exits 0; a public store exits 4). FAC-M9: Jira and Linear | covered |
 | F-2b | Do not build an own review desk | §4.10, §4.2 | None. The command map has no desk row, and docs check 3 fails on one (F-17a) | not applicable: the ask is to not build it |
-| F-2c | A decision is a labelled item; a script reads the answer; private store; bounded watch | §4.10, §6 | FAC-M3: `decide read` tests (owner account only), `doctor` fails on a public store, `watch` bound test | covered |
+| F-2c | A decision is a labelled item; a script reads the answer; private store; bounded watch | §4.10, §6 | FAC-M3: `decide read` tests (it shows an answer from any account and records nothing), `doctor` fails on a public store, `watch` bound test | covered |
 | F-2d | Plans and designs: link the repo file or attach it | §4.10 | FAC-M3: the contract tests name the `doc` operation (attach a file, link a repo file) | covered |
 | F-3a | Say where the main session runs | §4.3 | FAC-M2: `init` tests (exit 4 rules) and the `start` test on a separate tmux server | covered |
 | F-3b | The user does not need to know the folder; `factory start` finds it | §4.3 | Design v3 PR (moved from FAC-M2: D-60 makes the factory one folder): the factory folder holds `factory.yaml`, so `start --dry-run` and `doctor` exit 0 from the factory folder, from the coordinator folder and from a project clone | covered |
@@ -49,7 +49,7 @@ How to read the table:
 | D-45d | Fix the six conflicts of design §1.3 | §1.3 | Conflicts 1, 2, 3, 5, 6: rows F-6, F-7, F-8, F-9, F-3c. Conflict 4 (context in percent): FAC-M4 `worker list` marks `PREPARE` and `MAX` | covered |
 | D-47 | The last-seen hook comes with the worker control milestone | §4.6 | FAC-M4: hook test and static test | covered |
 | D-52a | Approved and assigned work lands with no ask for each PR; `--admin` only at the pinned head | §6 | FAC-M5: head-changed refusal test | covered |
-| D-52b | What counts as approval and assignment | §6.1 | FAC-M5: one test for each proof (decision, ask, plan approved through an ask), with direct, decision and board assignment; a commit author is refused | covered |
+| D-52b | What counts as approval and assignment | §6.1 | FAC-M5: one test for each proof (decision, ask, plan approved through an ask), with direct and decision assignment; a commit author is refused | covered |
 | D-52c | Unapproved work, or a PR with a question for the owner, still waits | §6.1 | FAC-M5: refusal tests; `check` exits 3 with `NOT READY` while the PR has an open ask or an open request | covered |
 | D-52d | Releases are not in D-52; they wait for his go | §6.2 | FAC-M5: the `release check` no-publish test and the `approval.release` config test | covered |
 | D-52e | factory offers the rule as an owner choice | §4.4 | FAC-M5: `pr merge` tests for `owner` and `delegated` | covered |
@@ -84,7 +84,7 @@ How to read the table:
 | V-F-1d | Keep node, owner, project; Dean is unsure what they mean | §4.1 | FAC-M2: glossary test (node, owner, project). Dean's yes or no to the glossary is in "Decisions needed" | covered |
 | V-F-1e | His 11 shop-floor words and the heading with no items | §7.1 | FAC-M2: `scripts/check-intent-docs.sh` counts 11 rows in the table | covered |
 | V-F-2a | Maybe do not create an own review desk | §4.10 | None. See F-2b | not applicable: the ask is to not build it |
-| V-F-2b | Use the tracker UI and CLI; listen on comments and more from the board | §4.10 | FAC-M3: wake test (comment, label change, assignee change and issue close each cause one record and one constant wake line; another account causes none; `watch` calls no model) | covered |
+| V-F-2b | Use the tracker UI and CLI; listen on comments and more from the board | §4.10 | FAC-M3: wake test (comment, label change, assignee change and issue close each cause one record and one constant wake line, whatever account wrote the event; `watch` calls no model) | covered |
 | V-F-2c | The user picks the tracker, as in devflow | §4.10, §4.4 | FAC-M3: tracker choice test and override test. FAC-M9: `site` and `key` tests and the mixed test | covered |
 | V-F-3a | The main session of "Codex" | §4.6 | FAC-M4: `session.agent: claude` loads and another value fails; static test on agent starts | covered |
 | V-F-3b | Which folder: the root of the repo, or the root of the folder where he starts | §4.3 | FAC-M2: workspace folder test (two repos and a worktree). Design v3 PR (moved from FAC-M2: D-60): the lookup from the factory folder, the coordinator folder and a project clone | covered |
@@ -101,8 +101,9 @@ How to read the table:
 |---|---|---|---|---|
 | Gap 1 | Find the factory folder from a project folder | §4.3 | Design v3 PR (moved from FAC-M2: D-60): the lookup from the factory folder, the coordinator folder and a project clone | covered |
 | Gap 2 | The owner has a view and a way to answer in the `local` period | §4.10, §8 | FAC-M7: `scripts/check-owner-view.sh` and the owner answer pty test. FAC-M3 retires the old scripts | covered |
-| Gap 3 | The proof of approval follows D-52 | §6.1 | FAC-M5: one test for each proof, all from the owner's account or from a terminal window outside a factory session; `check` exits 3 on an open ask | covered |
-| IF-10 | A tracker event proves the owner only when the agents use another identity | §4.10, §6.1 | FAC-M5: tracker identity tests (shared account refuses tracker proofs and accepts `factory decide`; separate accounts accept owner events and refuse agent events); `doctor` warning test; README setup check | covered |
+| Gap 3 | The proof of approval follows D-52 | §6.1 | FAC-M5: one test for each proof, all through `factory decide` from a terminal window outside a factory session; `check` exits 3 on an open ask | covered |
+| IF-10 | A tracker event is never an owner proof, with any account setup; a `factory decide` record is | §4.10, §6.1 | FAC-M5: board event tests (with any account setup, a board event is refused as a proof and `factory decide` is accepted) | covered |
+| D-128 | factory does not care which GitHub account anyone uses. A GitHub comment, label, assignee or review is never an owner approval or proof. Owner approvals come only through `factory decide`, and later through a review page | §4.10, §6, §6.1 | FAC-M5: board event tests and the `pr merge` refusal for a board event. FAC-M3: `decide read` shows a board answer and records nothing; the wake test for any account | covered |
 | Gap 4 | The release question is open | §6.2, §4.4 | FAC-M5: `approval.release` config test. D-57 is answered: releases wait for the owner | covered |
 | Gap 5 | The user picks the tracker at setup | §4.10 | FAC-M3: tracker choice test with a fake `gh` | covered |
 | Gap 6 | The adopt moves the coordinator text out of the folder above the work copies | §8 | FAC-M7: `scripts/check-worker-paths.sh` | covered |

@@ -71,7 +71,7 @@ Software recipe: projects are git repos, the output is a pull request, and the a
 
 **Plain words (D-59).** A session that works on one track is a **worker**. A worker does all the steps, from the plan to the finished work, for one track of one project. Items that wait for the owner are **requests**. A written task is an **assignment**. The order of the finished work that waits for an approval point is the **queue**. `docs/glossary.md` has the table of plain words.
 
-**The team's board, not our own desk.** The work items, the requests and the decisions live in GitHub, Jira or Linear. Yes, GitHub Projects can hold issues from many repos. Not verified yet: FAC-M3 proves it with two repos. Jira and Linear are a separate question. Not checked yet: FAC-M9. The owner answers a decision with a comment such as `/choose B`. A script reads the answer, so the answer costs no model use. The place that holds the decisions is private by default.
+**The team's board, not our own desk.** The work items, the requests and the decisions live in GitHub, Jira or Linear. Yes, GitHub Projects can hold issues from many repos. Not verified yet: FAC-M3 proves it with two repos. Jira and Linear are a separate question. Not checked yet: FAC-M9. The owner can answer a decision with a comment such as `/choose B`. A script reads the comment, so the read costs no model use. The comment wakes the coordinator and shows the answer, and it records nothing. The owner enters the decision with `factory decide`. The place that holds the decisions is private by default.
 
 **Where things run.** One factory is one folder, and the folder is a shared repo, the config repo. The coordinator runs in `coordinator/` inside it. Workers run in work copies of the projects, under `work-copies/`. So a worker never loads the coordinator text. The config travels as a shared repo: clone the config repo on another machine and run `factory init`. Personal values and credentials stay in a local file that the share list leaves out.
 
@@ -217,11 +217,11 @@ Costs are rough, per use, for the new tokens that enter the coordinator context.
 | Restart of all workers (§12) | Per worker: capture, push check, CronList, stop, respawn, rename, new assignment | ~50 calls, 60–100k | `factory reboot` | 2 calls, 3–5k |
 | Worker creation (§12) | Resource check, worktree, pane, launch, wait, rename, protocol line, assignment, board, workers table, respawn map, commit | 15–20 calls, 20–30k | `factory worker new <name> --project <p> --assignment <file>` | 1 call, 1–2k |
 | Board and owner-item updates (§11) | Edit JSON, render, commit, republish, label sync | 5–8 calls, 8–15k | `factory item …`, `factory request …` (board writes, labels built in) | 1–2 calls, 1–3k; no render step, because the board tool shows the board |
-| Reading the owner's answers (§8) | Read the page database, record each decision, relay it | 3–6 calls, 5–10k | `factory decide read` (a script reads `/choose` comments and labels from the owner's account) | 1 call, <1k |
+| Reading the owner's answers (§8) | Read the page database, record each decision, relay it | 3–6 calls, 5–10k | `factory decide read` (a script reads `/choose` comments and labels, from any account, and shows them; the owner enters each answer with `factory decide`) | 1 call, <1k |
 | Worker clear or compact, then a new assignment (§12) | Capture, idle and pushed checks, resume file check, C-u, type, verify | 8–10 calls, 10–15k | `factory worker reset <worker>` with `--clear` or `--compact` | 1 call, 1k |
 | Release pre-check and post-check (§7) | Version, changelog, package contents, registry; after: registry, clean install, smoke | 6–10 calls, 10–20k | `factory release check <project>` / `factory release verify <project> <version>` | 1 call each, 2–3k |
 | Issue audit and labels (§8) | List issues, classify, apply labels | 5–10 calls, 30–100k | `factory issues audit` (finds unlabeled or conflicting issues; the model classifies only those) | 1 call plus the classification of new issues only |
-| Decision record and profile update (§1) | Record file, log line, principle, decision-log row, commit | 4–6 calls, 8–15k | `factory decide read` records it; `--principle <id>` links a principle | 1 call, 1–2k (the principle wording stays a model job) |
+| Decision record and profile update (§1) | Record file, log line, principle, decision-log row, commit | 4–6 calls, 8–15k | `factory decide <D-n> <option>` records it; `--principle <id>` links a principle | 1 call, 1–2k (the principle wording stays a model job) |
 | Work copy cleanup (§4) | List, check tip on remote, search board and resume files, remove | 5–8 calls, 5–10k | `factory copies clean` (dry run by default) | 1 call, 1k |
 | Typed founder-authority input (§12) | Map, capture, Escape/C-u, type, Enter, verify | 4–6 calls, 4–6k | `factory worker relay <worker> --decision <D-n>` (FAC-M5) | 1 call, <1k |
 | CI watch (§10) | Monitor or loop on `gh pr checks`, then read | 2–4 calls, 3–8k | `factory pr watch <pr>` (exits when CI ends; for a background task) | 1 call, <1k |
@@ -304,8 +304,8 @@ factory layout                              # make the window workers if it is m
 factory item add|update|move|close|list|import ...   # work items: the board
 factory request add|list|close ...          # items that wait for the owner
 factory decide ask <D-n> --options FILE     # a decision item in the decision store
-factory decide read [<D-n>] [--principle ID]   # read the answers with no model use; record them in the decision log and the profile
-factory decide <D-n> <option> [--note T]    # the owner answers in a terminal window, when there is no team board (§4.10)
+factory decide read [<D-n>]                 # read the answers on the board with no model use, and show them; it records nothing (§4.10)
+factory decide <D-n> <option> [--note T] [--principle ID]   # the owner enters the decision in a terminal window, with every board kind; the decision log and the profile get it (§4.10)
 factory queue set|show                      # the order of the finished work that waits for an approval point
 factory watch                               # read the new board changes, a limited number of times; wake the coordinator (§4.10)
 
@@ -316,7 +316,7 @@ factory adopt <path> [--dry-run]            # bring the setup of today into a no
 factory hook <event> | statusline           # Claude Code calls it; not for people (§4.6)
 ```
 
-Engineering note: `start` attaches to the tmux session when it runs, and `restart` resumes the worker with its session id. `doctor` checks the hooks that write the last-seen notes. `upgrade` migrates the state and the managed blocks. `machine` reads CPU, memory, disk and load. `state remote` sets the private git remote of the state folder. `state guard` is run by git, from the delete-guard hook of the state folder, and never by a person (§6). `worker reset` and `self reset` type one constant line into a pane through `src/comms/` (§4.12). `decide read` reads the answers by script. `decide <D-n>` is the answer path of the `local` board. `watch` makes bounded reads. `--json` prints JSON, `--dry-run` changes nothing, and `--state-from` takes the work state from another machine (§4.3).
+Engineering note: `start` attaches to the tmux session when it runs, and `restart` resumes the worker with its session id. `doctor` checks the hooks that write the last-seen notes. `upgrade` migrates the state and the managed blocks. `machine` reads CPU, memory, disk and load. `state remote` sets the private git remote of the state folder. `state guard` is run by git, from the delete-guard hook of the state folder, and never by a person (§6). `worker reset` and `self reset` type one constant line into a pane through `src/comms/` (§4.12). `decide read` reads the answers on the board by script, and records nothing. `decide <D-n>` records the decision of the owner, with every board kind. `watch` makes bounded reads. `--json` prints JSON, `--dry-run` changes nothing, and `--state-from` takes the work state from another machine (§4.3).
 
 **Software recipe commands** (the commands that the `software` recipe adds)
 
@@ -382,7 +382,7 @@ The factory folder is a git repo of its own, the config repo. It holds the confi
   .factory/                         # private state repo; ignored. Its git folder holds the delete-guard hook, which git does not track (§6)
     node.json                       # the factory marker: schema_version, created_with, block versions
     roles/worker.md                 # the worker role text that every worker reads; rendered on each machine from the package and from setup/roles/worker.md
-    decision-log.json               # decisions read from the board, with the answer and its author
+    decision-log.json               # the decisions that the owner recorded with `factory decide`, with the answer
     queue.json                      # the queue
     active-machine.json             # the machine that runs the session now: its id and the time; tracked, and written and committed by `factory start` (§4.11)
     board.json  waiting.json        # the items, only with the `local` board (§4.10)
@@ -882,25 +882,24 @@ factory does not build its own review desk. The board, the requests and the deci
 
 **Decisions.**
 - A decision is an item with the `decision` label. Its body has the question, the options and a recommendation.
-- The owner answers with a comment `/choose <option>`, or with a label `choose:<option>`.
-- `factory decide read` reads the answer with a script, not with model tokens. An answer counts only when its author is the owner's account on the board (`owner.github` for GitHub). The script records the decision in `decision-log.json`, with the comment link and the author.
-- With `local`, `factory decide <D-n> <option>` records the answer with `by: owner`. It needs a terminal window, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). The remedy is to run `factory decide <D-n> <option>` in a terminal window outside a factory session. This guard stops a session from answering by accident. The owner's permission settings are the second guard.
-- An *ask* is a decision item for one PR or one work item. The owner answers `approve` or `refuse` in the same way. §6.1 says which answers count as an approval.
+- The owner can write the answer on the item as a comment `/choose <option>`, or as a label `choose:<option>`. A comment or a label only shows the answer and wakes the coordinator. It records nothing.
+- `factory decide read` reads these answers with a script, not with model tokens. It shows each answer with its author and the link, and it records nothing.
+- `factory decide <D-n> <option>` records the decision with `by: owner` in `decision-log.json`, with every board kind. With `github`, it also adds a comment to the item that says the answer came from the CLI. That comment is a record, not a proof. The command needs a terminal window, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). The remedy is to run `factory decide <D-n> <option>` in a terminal window outside a factory session. This guard stops a session from answering by accident. The owner's permission settings are the second guard. A review page is a later way to record the same decision.
+- An *ask* is a decision item for one PR or one work item. The owner answers `approve` or `refuse` with `factory decide`. §6.1 says which answers count as an approval.
 
-**Board identity.** The author of a board event proves the owner only when the agents write with another identity. If the workers and the coordinator use the owner's own account, an agent can post a comment, a label or an assignee that looks like the owner's.
-- `tracker.agent_account` names the identity that the agents use: a machine user, or a GitHub App with its own token.
-- A board event counts as an owner proof only when two things are true: its author is the owner account, and `tracker.agent_account` is set to another account.
-- When `tracker.agent_account` is unset, or equal to the owner account, the account is *shared*. Then `doctor` warns, and no board event counts as a proof: no comment answer, no label and no assignee. Only `factory decide <D-n> <option>` from a terminal window outside a factory session counts. With a shared account, `factory decide` works with every board kind. It records `by: owner` in the decision log and adds a comment to the item that says the answer came from the CLI. That comment is a record, not a proof.
+**Board accounts (D-128 A).** factory does not look at which account anyone uses on the board. The owner, the coordinator and the workers can share one account, or use more than one. A separate account for the agents is optional, and it is the owner's own GitHub choice. factory has no setting for it and no check of it.
+- A board event is never a proof, with any account setup. A comment, a label, an assignee change and a review do not count as an owner approval, and they do not count as an assignment.
+- A `factory decide` record is a proof. It needs a terminal window outside a factory session.
 - With `local`, there are no board events, so only `factory decide` counts in every case.
-- The setup text (README and `factory doctor`) tells the owner how to make a machine user or an app for the agents.
+- A board event can wake the coordinator and show an answer. It records nothing.
 - Designs and plans: the `doc` operation links the repo file (GitHub shows Markdown), or attaches it.
 
-**Changes and wake-up (F-2).** There is no live push to a local session without a webhook server. So `factory watch` calls `changes read` with the board CLI at a fixed interval (`tracker.watch_interval`), with a bound on the number of reads per run. The coordinator reads these owner actions:
+**Changes and wake-up (F-2).** There is no live push to a local session without a webhook server. So `factory watch` calls `changes read` with the board CLI at a fixed interval (`tracker.watch_interval`), with a bound on the number of reads per run. The coordinator reads these board events:
 - a comment `/choose <option>`, and a mention of the coordinator;
 - a label added or removed, for example `choose:<option>` or `ready` (a work item is ready);
 - an issue or item opened or closed.
 
-An event counts only when its author is the owner's account on the board. An event from another account wakes nobody, and the digest counts it as "other". With a shared account (see "Board identity"), an owner event still wakes the coordinator, but it never counts as a proof. An assignee change is read, because it is a proof of assignment (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new owner event, it writes one record (FAC-M3 sets its format) and types one constant wake line through `src/comms/` (§4.12). `factory start` starts `factory watch` in the window `ops` (§4.11).
+Every new event wakes the coordinator, whatever account wrote it. An event only wakes the coordinator and shows what was written. It is never a proof (see "Board accounts"). An assignee change is read, but it assigns nothing (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new event, it writes one record (FAC-M3 sets its format) and types one constant wake line through `src/comms/` (§4.12). `factory start` starts `factory watch` in the window `ops` (§4.11).
 
 **Privacy.** An issue in a public repo is public. Decision items can hold private facts. So the default decision store is a private repo, or private draft items in a private Project. `factory doctor` fails when the decision store is public, and warns when it is not set. The `local` store is private: it is the node's own state repo, with no remote.
 
@@ -1098,7 +1097,7 @@ Each standing rule goes into a new setup in two ways. The text goes into the man
 | A relay server for the model calls only when the owner sets one, and only when it answers | yes | factory uses a relay server only from the local config (§4.6). It checks that the server answers before each start, and in `doctor` and `status`. If the server does not answer, the start stops and the message names the fix. A direct start is an explicit choice. `doctor` sends this check only for a factory folder that passes the registration check (§4.3). |
 | No relay server keys or passwords in output | yes | The relay server setting holds no keys, and `doctor` refuses a value that looks like a password or a token there. Output shows only the name, the host and the port of the relay server. |
 | A denial is final; another session does not do the denied step | yes | `worker relay` (FAC-M5) refuses a text that asks a worker to run a command that the node recorded as denied. A message from another session never carries the authority of the owner (§4.12). |
-| Never invent the owner's consent | yes | `worker relay` types owner input only for a decision that the owner recorded, or for an action inside the scope of an active standing delegation that the owner recorded. A board answer counts only from the owner's own account, and only when the agents use another account. With a shared account, or with no team board, only `factory decide` counts: it needs a terminal window and refuses inside a factory session. `doctor` warns on a shared account. |
+| Never invent the owner's consent | yes | `worker relay` types owner input only for a decision that the owner recorded, or for an action inside the scope of an active standing delegation that the owner recorded. Only `factory decide` records an owner decision: it needs a terminal window and refuses inside a factory session. A board comment, label or assignee change is never a proof, with any account setup. |
 | Decisions stay private | yes | `doctor` fails when the decision store is public, and warns when it is not set (§4.10). |
 | No secrets in output | yes | No command prints the value of a secret setting. `doctor` refuses a value that looks like a password or a token in a shared file of the factory folder. A list of running programs shows only the number, the run time and the name of each program. |
 | Workers never ask the owner directly | yes (role texts) | none (the model follows the text) |
@@ -1112,7 +1111,7 @@ Engineering note: the permission mode is auto mode. `session.permission_mode` ac
 
 Engineering note: the relay server is a proxy. Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the local config. The answer check is a health check; on failure the default is `stop`, and `direct` is the explicit choice. For a config in a parent folder, `doctor` sends no request and warns to run with `--home DIR`. For a factory folder that fails the registration check, `doctor` sends no request and the check fails. `doctor` warns when the variable is set in the shell. Output never shows user info, query strings or headers of the base URL.
 
-Engineering note: the denied commands are a `denied` list in the state folder. Owner input is the owner prefix, typed only for a record in `decision-log.json` with `by: owner`. `decide read` records `by: owner` only under the same rules; the other account is `tracker.agent_account`, and "no team board" is the `local` board.
+Engineering note: the denied commands are a `denied` list in the state folder. Owner input is the owner prefix, typed only for a record in `decision-log.json` with `by: owner`. `decide read` records nothing. Only `factory decide` records `by: owner`, with every board kind, and the account of a board event does not matter (D-128 A). "No team board" is the `local` board.
 
 Engineering note: no command prints env values. A shared file is a file that the config repo tracks. Process lists show only pid, elapsed time and command name.
 
@@ -1166,24 +1165,22 @@ The rules:
 
 With `merge: delegated`, `pr merge` needs two proofs: the owner approved the work, and the owner assigned it to a worker or a track. The proof of approval is one of three forms:
 1. **A decision.** A record in `decision-log.json` with `by: owner` that approves the work. The record names the work: a PR, an item or a track.
-2. **An ask.** An ask item (§4.10) for the PR or the work item, with the answer `approve` from the owner's account. With `github`, the answer is the comment `/choose approve` or the label `choose:approve`. With `local`, the owner types `factory decide <D-n> approve` in a terminal window outside any factory session.
-3. **An approved plan.** An ask or a decision item that names the plan file (its path and its commit SHA), answered `approve` through the owner input. With `github`, the answer is a comment or a label by the owner's account, read through the board connector. With `local`, it is `factory decide` from a terminal window outside a factory session. The plan text itself proves nothing.
+2. **An ask.** An ask item (§4.10) for the PR or the work item, with the answer `approve` recorded by `factory decide <D-n> approve`. The owner types it in a terminal window outside any factory session.
+3. **An approved plan.** An ask or a decision item that names the plan file (its path and its commit SHA), answered `approve` with `factory decide` in the same way. The plan text itself proves nothing.
 
-The assignment is direct, by a decision, or by the board:
+The assignment is direct or by a decision:
 - Direct: the proof of approval names the worker or the track.
 - By a decision: a second record by the owner names the worker or the track for that work.
-- By the board: the owner's account sets the assignee or a `worker:<id>` label on the work item. `factory watch` reads the change through the board connector (§4.10).
 
-Every board proof above (a comment answer, a label, an assignee) needs separate identities: the agents write with `tracker.agent_account`, not with the owner account (§4.10, "Board identity"). With a shared account, no board proof counts. Then only a decision recorded by `factory decide` from a terminal window outside a factory session proves approval or assignment.
+Only a `factory decide` record proves approval or assignment (D-128 A). A board event never does, with any account setup: a comment, a label, an assignee change and a review only wake the coordinator and show what was written (§4.10, "Board accounts").
 
 These do not count:
 - chat text;
-- an answer, a label or an assignee change from another account;
+- a comment, a label, an assignee change or a review on the board, from any account;
 - a record that names another PR or head SHA;
-- a commit author or a `Status:` line in a file. Agents can commit with the owner's own account, so a commit author proves nothing;
-- any board event while the agents and the owner share one account.
+- a commit author or a `Status:` line in a file. Agents can commit with the owner's own account, so a commit author proves nothing.
 
-An approval in chat becomes a proof when the owner writes it in one of the three forms. With `merge: owner`, only a decision or an answered ask for that PR and head SHA counts; a plan does not.
+An approval in chat becomes a proof when the owner enters it with `factory decide`, in one of the three forms. With `merge: owner`, only a decision or an answered ask for that PR and head SHA counts; a plan does not.
 
 An open question of the owner blocks the merge (D-52). `factory check` gives `NOT READY` while the PR has an open ask or an open request.
 
@@ -1333,7 +1330,7 @@ An independent check of the design against Dean's notes found open points. The O
 | Id | Decision |
 |---|---|
 | IF-1 | The review page of today and its scripts stay as the owner view until FAC-M3. FAC-M7 keeps them. FAC-M3 retires them (§4.10, §8). |
-| IF-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. A plan counts only through an ask or decision item answered `approve` by the owner; a commit author is no proof. The assignment is direct, by a decision, or by an assignee or `worker:<id>` label that the owner's account sets. `check` gives NOT READY while a PR has an open ask or an open request (§6.1). |
+| IF-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. A plan counts only through an ask or decision item answered `approve` by the owner; a commit author is no proof. The assignment is direct or by a decision; an assignee or label is no proof (D-128 A). `check` gives NOT READY while a PR has an open ask or an open request (§6.1). |
 | IF-3 | Releases have their own approval point, `release`, with the values `owner` and `delegated`. D-57 is answered (§6.2). |
 | IF-4 | "Codex" in note F-3: factory starts Claude Code. The config names one agent command for each node, and only `claude` is built (§4.6). |
 | IF-5 | Each layer has its own role template. FAC-M8 adds the template of layer 3. `doctor` warns when a layer has no template (§5.2). |
@@ -1341,7 +1338,7 @@ An independent check of the design against Dean's notes found open points. The O
 | IF-7 | The board scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira has `site` and `key` (§4.4, §4.10). |
 | IF-8 | The word list of Dean ends with the heading "machinery and automation hardware". A table in §7.1 maps each of his 11 words. |
 | IF-9 | The state repo can push to a private git remote that the owner names. `init --state-from` clones it on a second machine (§4.3). |
-| IF-10 | A board event proves the owner only when the agents use another identity (`tracker.agent_account`). With a shared account, `doctor` warns and only `factory decide` from a terminal window outside a factory session counts (§4.10, §6.1). |
+| IF-10 | A board event is never an owner proof, with any account setup. A `factory decide` record from a terminal window outside a factory session is a proof (D-128 A, §4.10, §6.1). |
 
 ### v3 (2026-11-02)
 
@@ -1365,6 +1362,7 @@ Dean gave F-14 to F-21, D-59 and D-60. The Gate 1 and Gate 2 answers and the lat
 | D-14 A | A local file that others can write, that another account owns or that is a link stops the command. A mode with read bits only is set to 600 with a notice (§4.4). |
 | D-15 B | A rule that allows a whole tool is a warning. Only a setting that skips permission prompts stops. |
 | D-16 A | A moved factory, and a factory list entry with no origin, count as received. |
+| D-128 A | factory does not care which GitHub account anyone uses. It never takes a GitHub comment, label, assignee or review as an owner approval or proof. Owner approvals come only through `factory decide` (the owner store), and later through a review page. A separate account for the agents is optional, the owner's own GitHub choice (§4.10, §6, §6.1). |
 | R2 | On your own factory, a tracked instruction file or Claude settings file is a warning. On a received factory, the owner accepts such files with the setup text, by one hash (§4.3). |
 
 ## 10. Risks
@@ -1373,7 +1371,7 @@ Dean gave F-14 to F-21, D-59 and D-60. The Gate 1 and Gate 2 answers and the lat
 - **A dead proxy stops every worker that uses it.** The health check runs before each launch, the default is `stop` with a clear fix, and the views show which workers use a proxy (§4.6).
 - **tmux typing is fragile.** factory types only constant lines through one module, checks the hook state and the pane start time first, and refuses a screen that shows an option list.
 - **Board limits and cost.** The APIs of the board tools have rate limits, and reads cost time. `factory watch` reads at a fixed interval with a bound per run, and caches in `.factory/state/`. A board that does not answer is "unknown", never "no answer".
-- **A false decision answer.** Anyone with access can comment on a decision item. `decide read` accepts only the owner's account, and records the author and the link. If the agents write with the owner's account, an agent can fake an answer. So an answer on the board counts only when `tracker.agent_account` is another account; else only `factory decide` counts.
+- **A false decision answer.** Anyone with access can comment on a decision item. A board comment or label only wakes the coordinator and shows the answer. The owner enters the decision with `factory decide`. A comment or a label records nothing, so a false answer on the board changes no decision. `decide read` shows the author and the link.
 - **A public decision store.** `doctor` fails on it (§4.10).
 - **The renames and the schema 2 migration touch every part.** They come first in the roadmap, before more code uses the old names. The schema 1 → 2 migration has a test, and every name sits in `src/names.ts`.
 - **Scope grows.** The roadmap builds the CLI in stages. Each stage is useful for this workspace before the next one starts. Other recipes and other boards wait until the `software` recipe on GitHub works.

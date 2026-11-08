@@ -199,26 +199,22 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] `pr merge` tests with `merge: owner`: it refuses with no owner decision or answered ask for that PR and head; it refuses when the head changed after `check`.
 - [ ] `pr merge` tests with `merge: delegated`. There is one test for each proof of design §6.1:
   - (a) a decision with `by: owner`;
-  - (b) an ask answered `approve` from the owner's account;
-  - (c) an approved plan: an ask or decision item that names the plan path and commit SHA, answered `approve` by the owner's account (`local`: `factory decide` from a fake terminal window with no `FACTORY_SESSION`).
+  - (b) an ask answered `approve` with `factory decide` (a fake terminal window with no `FACTORY_SESSION`);
+  - (c) an approved plan: an ask or decision item that names the plan path and commit SHA, answered `approve` with `factory decide` in the same way.
 
-  Each test runs three times: with a direct assignment, with an assignment by a second decision, and with an assignee or `worker:<id>` label set by the owner's account. Each run merges.
+  Each test runs two times: with a direct assignment, and with an assignment by a second decision. Each run merges.
 - [ ] Release proof. Test: with `release: delegated`, `release check` refuses (exit 4) when no owner-approved release scope names the version. `release scope <project> <version>` writes the scope in a terminal window outside a factory session, and refuses (exit 4) with no terminal window and with `FACTORY_SESSION` set. After the scope, `release check` passes. A new scope does not change a delegation: after `release scope`, the effective mode of `release` stays `delegated`, and `doctor` lists the delegation with its old time.
 - [ ] Desk extension points. Test: the event file and `report --json` of a fixture node hold the fields that design §4.14 lists. A sample reader outside `src/` (in `examples/`) reads the event file and `report --json` of the fixture node and prints one line per work item. The test runs it.
 - [ ] Delegation control outside factory. Test: the session settings that factory renders hold deny rules for the record commands and for the store path, and a test reads the rendered settings. Design §6 keeps the limit text. The deny rules make the gap smaller. They do not close it.
 - [ ] Shared check commands. Test: a check command from the shared file does not run before the owner accepts it, and runs after the acceptance.
 - [ ] `pr merge` refuses, with a message that names the proof that is absent, in these cases:
   - approval with no assignment;
-  - a decision by another account;
   - a record for another PR or head;
   - a plan file with `Status: approved` in a commit by the owner's account, with no answered ask or decision item;
-  - an assignee or label set by another account;
+  - a board comment, label, assignee change or review, from any account, with no `factory decide` record;
   - chat text with no record.
-- [ ] Board identity tests (design §4.10, §6.1), with a fake connector that gives events with an author. The `github` connector comes in FAC-M3 and runs the same tests.
-  - Shared account (`tracker.agent_account` unset, or equal to the owner account): an owner comment `approve`, an owner assignee and an owner `worker:<id>` label are each refused as a proof, and the message names the shared account. A decision from `factory decide` on a fake terminal window with no `FACTORY_SESSION` is accepted, and `pr merge` merges.
-  - Separate accounts: the same owner events are accepted, and `pr merge` merges. The same events with the agent account as author are refused.
-- [ ] `doctor` warns, with the fix, when the board kind is not `local` and `tracker.agent_account` is unset or equal to the owner account. The config accepts the key, and a value that looks like a password or a token in it fails (tests).
-- [ ] The README setup section tells the owner how to give the agents their own board identity (a machine user or an app). A docs check finds the section.
+- [ ] Board event tests (design §4.10, §6.1), with a fake connector that gives events with an author. The `github` connector comes in FAC-M3 and runs the same tests.
+  - With any account setup, a board event is never a proof: an owner comment `approve`, an assignee change, a `worker:<id>` label and a review are each refused, and the message says that a board event is no proof. A decision from `factory decide` on a fake terminal window with no `FACTORY_SESSION` is accepted, and `pr merge` merges.
 - [ ] Config test: the approval point `release` loads with `owner` or `delegated`, and an absent key means `owner`. Any other value fails and names the key. `release check|verify` only read; a test asserts that they run no publish command.
 - [ ] `copies clean` is a dry run by default, and refuses a work copy with unpushed work or a path that a worker or resume file names. `factory clean` does not exist as a second command.
 - [ ] `copies list` and `copies status` give the right rows and counts on fixture repos with linked worktrees: clean, dirty, unpushed, branch not on the remote. They ask git, never a `.git` folder test.
@@ -303,10 +299,10 @@ The import into GitHub issues is not here: it is FAC-M3.
 
 ### FAC-M3: GitHub board, and the move to it
 
-**Goal.** The board, the requests and the decisions of this workspace move from the `local` board to GitHub. A script reads the owner's answers. The user picks the board tool at setup. The old page and scripts are retired. A second machine of the owner gets the profile.
+**Goal.** The board, the requests and the decisions of this workspace move from the `local` board to GitHub. A script reads the answers on the board and shows them; the owner enters each decision with `factory decide`. The user picks the board tool at setup. The old page and scripts are retired. A second machine of the owner gets the profile.
 
 **Scope.**
-1. The `github` connector (issues plus a Projects board, through `gh`) behind the FAC-M5 contract. The contract has the `doc` operation (attach a file, link a repo file) and `changes read` (comments, label changes, assignee changes, open or close changes, each with its author; card moves are out for now). One GitHub project holds the issues of all the repos of a factory (design §4.10).
+1. The `github` connector (issues plus a Projects board, through `gh`) behind the FAC-M5 contract. The contract has the `doc` operation (attach a file, link a repo file) and `changes read` (comments, label changes, assignee changes, open or close changes, each with its author; card moves are out for now). The connector does not look at which account wrote an event. A separate account for the agents is optional, and it is the owner's own GitHub choice (D-128 A). One GitHub project holds the issues of all the repos of a factory (design §4.10).
 2. The commands `decide ask|read` and `watch`. `start` starts `watch` in the window `ops` when the board is not `local`.
 3. The choice of the board: `init --tracker --items --decisions`, the question in a terminal window, `tracker set`, `tracker status`, and the per-project override (design §4.10).
 4. `item import` from the `local` files into a team board, and the move of this workspace's items into GitHub issues with a private decision store. The retirement of the old page and scripts.
@@ -316,10 +312,10 @@ The import into GitHub issues is not here: it is FAC-M3.
 - [ ] One board for two repos. A recorded run of real `gh project` commands on a private throw-away project that holds the issues of two repos: create the project, `item-add` from each repo, one `item-list` with `--limit` that lists the items of both repos, `--query` with a filter by repo, and a field edit. The record holds commands and field names only, no ids and no URLs. Then a connector test with recorded responses prints a "more than <cap>" line when the list exceeds the cap.
 - [ ] The FAC-M5 connector contract tests pass against `github`, with a fake `gh` and recorded responses. No test needs the network. The tests name the `doc` operation: one attaches a file, one links a repo file.
 - [ ] With `local`, `factory watch` exits at once with a note.
-- [ ] `decide read` records an answer `/choose B` or a label `choose:B` from the owner's account. It ignores the same answer from another account. Tests cover both cases.
+- [ ] `decide read` shows an answer `/choose B` or a label `choose:B`, with its author and link, from any account. A board comment or label only wakes the coordinator and shows the answer. The owner enters the decision with `factory decide`. A comment or a label records nothing. Tests cover a comment, a label, and two accounts.
 - [ ] `doctor` fails on a public decision store and warns on an unset one (fake `gh` responses).
 - [ ] `watch` stops after its read bound, and wakes only on a new answer or mention (unit tests with a fake clock).
-- [ ] Wake test on a separate tmux server with a fake `gh`. An owner comment `/choose B`, a label change, an assignee change and an issue close each cause one record and one constant wake line in the coordinator pane. The same events from another account cause none. A fake `claude` on PATH records no call during `watch`.
+- [ ] Wake test on a separate tmux server with a fake `gh`. A comment `/choose B`, a label change, an assignee change and an issue close each cause one record and one constant wake line in the coordinator pane, whatever account wrote the event. A board comment or label only wakes the coordinator and shows the answer; it records no decision. A fake `claude` on PATH records no call during `watch`.
 - [ ] `start --dry-run` with `github` lists the window `ops` with `factory watch`. With `local`, it lists no `ops` window.
 - [ ] Board choice, tests with a fake `gh`: `init --tracker github --items acme/web --decisions acme/decisions --yes` makes a node, and `factory doctor` exits 0. When the fake says that the decision repo is public, `init` exits 4 and writes no file, and `doctor` fails on such a config. `tracker status` prints `github`.
 - [ ] Override test: a node with the default `github` and a project with `kind: local`. `item add --project P` goes to the `local` files, and an item with no project goes to the fake `gh`. `tracker status` prints both.

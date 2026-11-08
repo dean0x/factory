@@ -20,7 +20,7 @@ Rules:
 | 7 | Worker session reset, then a new assignment | `factory worker reset` | FAC-M4 | 1 call, 1k | 1000 | 74 |
 | 8 | Release pre-check and post-check | `factory release check`, `factory release verify` | FAC-M5 | 1 call each, 2–3k | 3000 | - |
 | 9 | Issue audit and labels | `factory issues audit` | FAC-M5 | 1 call plus the new issues only (no figure) | 1000 | - |
-| 10 | Decision record and profile update | `factory decide read`, `factory decide <D-n> <option>` | FAC-M3, FAC-M5 | 1 call, 1–2k | 2000 | - |
+| 10 | Decision record and profile update | `factory decide <D-n> <option>` | FAC-M5 | 1 call, 1–2k | 2000 | - |
 | 11 | Work copy cleanup | `factory copies clean` | FAC-M5 | 1 call, 1k | 1000 | - |
 | 12 | Typed owner-authority input | `factory worker relay` | FAC-M5 | 1 call, <1k | 1000 | - |
 | 13 | CI watch | `factory pr watch` | FAC-M5 | 1 call, <1k | 1000 | - |
