@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { checkFileAddress } from '../comms/address.js';
 import { isRecord, type SchemaParser } from '../migrate/inspect.js';
 import {
+  boardLimits,
   commands,
   commandText,
   durationBounds,
@@ -9,6 +10,7 @@ import {
   keys,
   layers,
   prefixPlaceholders,
+  reservedFieldNames,
   roles,
   schema2,
   values,
@@ -172,6 +174,79 @@ const trackerSchema = z.discriminatedUnion(keys.tracker.kind, [localTrackerSchem
   error: `must be one of: ${[values.trackerLocal, ...values.trackerHosted].join(', ')}`,
 });
 
+/** A name, a state or a value of the `board` block. The message names the rule and never repeats the text. */
+const boardToken = z.string().regex(boardLimits.tokenPattern, {
+  error: 'must be a token: 1 to 32 letters, digits, dots, underscores or hyphens, starting with a letter or a digit',
+});
+
+/** A list of tokens with no repeated entry, from one entry to `max` entries. */
+const boardTokens = (max: number) =>
+  z
+    .array(boardToken)
+    .min(1)
+    .max(max)
+    .refine((list) => new Set(list).size === list.length, { error: 'has a repeated entry' });
+
+const boardFieldName = boardToken.refine((name) => !reservedFieldNames.includes(name), {
+  error: `is reserved: an item, a queue row, a track or a decision already holds the keys ${reservedFieldNames.join(', ')}`,
+});
+
+const [itemTarget] = values.boardTargets;
+const [valuesKind, flagKind, tokenKind] = values.boardKinds;
+
+const boardFieldBase = {
+  [keys.boardField.name]: boardFieldName,
+  [keys.boardField.target]: z.enum(values.boardTargets, { error: `must be one of: ${values.boardTargets.join(', ')}` }),
+  [keys.boardField.required]: z.boolean().default(false),
+};
+
+/** An owner field: a name, where it lives, and what it holds. A field of the kind `values` lists the allowed values. */
+const boardFieldSchema = z.discriminatedUnion(
+  keys.boardField.kind,
+  [
+    z.strictObject({
+      ...boardFieldBase,
+      [keys.boardField.kind]: z.literal(valuesKind),
+      [keys.boardField.values]: boardTokens(boardLimits.maxValues),
+    }),
+    z.strictObject({ ...boardFieldBase, [keys.boardField.kind]: z.literal(flagKind) }),
+    z.strictObject({ ...boardFieldBase, [keys.boardField.kind]: z.literal(tokenKind) }),
+  ],
+  { error: `must be one of: ${values.boardKinds.join(', ')}` },
+);
+
+/**
+ * The `board` block: the setup names its own item states and owner fields. The core has no default for any of them. A state
+ * that carries a meaning (`in_progress`, `closed`) and the owner field of a worker must name something that the block declares.
+ */
+const boardSchema = z
+  .strictObject({
+    [keys.board.states]: boardTokens(boardLimits.maxStates).optional(),
+    [keys.board.inProgress]: boardToken.optional(),
+    [keys.board.closed]: boardToken.optional(),
+    [keys.board.workerField]: boardToken.optional(),
+    [keys.board.fields]: z.array(boardFieldSchema).max(boardLimits.maxFields).optional(),
+  })
+  .superRefine((board, ctx) => {
+    const states = board.states ?? [];
+    const fields = board.fields ?? [];
+    for (const role of [keys.board.inProgress, keys.board.closed] as const) {
+      const state = board[role];
+      if (state !== undefined && !states.includes(state)) {
+        ctx.addIssue({ code: 'custom', message: `names a state that is not in ${keys.board.states}`, path: [role] });
+      }
+    }
+    uniqueIds(ctx, [keys.board.fields], keys.boardField.name, fields.map((field) => ({ id: field.name })));
+    const worker = board.worker_field;
+    if (worker === undefined) return;
+    const declared = fields.find((field) => field.name === worker);
+    if (declared === undefined) {
+      ctx.addIssue({ code: 'custom', message: `names a field that is not in ${keys.board.fields}`, path: [keys.board.workerField] });
+    } else if (declared.target !== itemTarget) {
+      ctx.addIssue({ code: 'custom', message: `must name a field of an ${itemTarget}`, path: [keys.board.workerField] });
+    }
+  });
+
 /** The address of another node. Only a file address on this machine is valid (F-13). */
 const addressSchema = z.string().superRefine((value, ctx) => {
   const checked = checkFileAddress(value);
@@ -196,6 +271,7 @@ const sharedCoreSchemaFor = (ids: readonly string[]) =>
     [keys.root.session]: sharedSessionSchema,
     [keys.root.limits]: limitsSchema,
     [keys.root.tracker]: trackerSchema,
+    [keys.root.board]: boardSchema.optional(),
     [keys.root.recipe]: recipeBlockSchemaFor(ids),
   });
 
@@ -279,6 +355,8 @@ export interface FactoryConfig {
 
 export type ProxyConfig = z.infer<typeof proxySchema>;
 export type TrackerConfig = z.infer<typeof trackerSchema>;
+export type BoardConfig = z.infer<typeof boardSchema>;
+export type BoardField = z.infer<typeof boardFieldSchema>;
 export type LinkConfig = z.infer<typeof linkSchema>;
 
 const customIssue = (path: readonly (string | number)[], message: string): z.core.$ZodIssue => ({
@@ -465,12 +543,13 @@ export const parseConfig = (sharedRaw: unknown, localRaw: unknown, registry: Rec
 
 /** The parts of a combined config that belong in the shared file. */
 export const sharedOf = (config: FactoryConfig): SharedConfig => {
-  const { node, limits, tracker, session } = config.core;
+  const { node, limits, tracker, board, session } = config.core;
   return {
     core: {
       node,
       limits,
       tracker,
+      ...(board === undefined ? {} : { board }),
       session: {
         [keys.session.permissionMode]: session.permission_mode,
         [keys.session.agent]: session.agent,

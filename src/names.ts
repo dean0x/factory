@@ -509,6 +509,43 @@ export const boardKeys = {
  */
 export const maxTrackLines = 17;
 
+/**
+ * The names that an owner field can not take: the keys that an item, a queue row, a track or a decision record already
+ * holds, and the track and stage keys. A field never replaces a key that the core owns, and never replaces a key that is
+ * part of the proof of a decision.
+ */
+export const reservedFieldNames: readonly string[] = [
+  boardKeys.id,
+  'title',
+  'text',
+  'status',
+  'issues',
+  'docs',
+  'result',
+  'by',
+  'who',
+  'decided_by',
+  'answer',
+  boardKeys.name,
+  'note',
+  boardKeys.items,
+  boardKeys.tracks,
+  boardKeys.track,
+  boardKeys.stage,
+];
+
+/**
+ * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to 32 letters, digits, dots,
+ * underscores or hyphens, and the first character is a letter or a digit. The counts are the most states in the block, the most
+ * owner fields, and the most values of one field.
+ */
+export const boardLimits = {
+  tokenPattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/,
+  maxStates: 20,
+  maxFields: 20,
+  maxValues: 30,
+} as const;
+
 /** The first commit of the root repo, which `init` and `upgrade` make: the branch, the message and the notice of a missing identity. */
 export const rootRepo = {
   branch: 'main',
@@ -666,7 +703,12 @@ export const keys = {
     children: 'children',
     sources: 'sources',
     state: 'state',
+    board: 'board',
   },
+  /** The `board` block: the item states, the two states that carry a meaning, the owner field of a worker, and the owner fields. */
+  board: { states: 'states', inProgress: 'in_progress', closed: 'closed', workerField: 'worker_field', fields: 'fields' },
+  /** One owner field of the `board` block. */
+  boardField: { name: 'name', target: 'target', kind: 'kind', values: 'values', required: 'required' },
   node: { id: 'id', layer: 'layer' },
   owner: { display: 'display', github: 'github', prefix: 'prefix' },
   session: {
@@ -1129,6 +1171,10 @@ export const values = {
   approvalModes: [roles.owner, 'delegated'],
   trackerLocal: 'local',
   trackerHosted: ['github', 'jira', 'linear'],
+  /** Where an owner field lives: on an item, or on a queue row. */
+  boardTargets: ['item', 'row'],
+  /** What an owner field holds: one value of a list, a flag, or one free token. */
+  boardKinds: ['values', 'flag', 'token'],
   defaultWatchInterval: '5m',
   /** A worker with no activity for this time, and no open work, is idle. */
   defaultIdleAfter: '2h',
