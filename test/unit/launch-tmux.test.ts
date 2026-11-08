@@ -442,8 +442,55 @@ describe('the tmux call that makes a window', () => {
   });
 
   it('is the call that the start steps use for the workers window', () => {
-    const steps = startSteps({ id: 'demo', home: '/w/node', coordinatorDir: '/w/node/coordinator', launch: ['claude'] });
+    const steps = startSteps({
+      id: 'demo',
+      home: '/w/node',
+      coordinatorDir: '/w/node/coordinator',
+      launch: ['claude'],
+      program: ['/opt/bin/node', '/opt/lib/factory.js'],
+    });
     expect(steps.at(-1)).toEqual(newWindowArgs('demo', 'workers', '/w/node/coordinator'));
+  });
+});
+
+describe('the start call of the board pane', () => {
+  const COORDINATOR = '/w/node/coordinator';
+  /** A program path with a space and a dollar sign, as a node install can have. */
+  const PROGRAM = ['/opt/my node/bin/node', '/opt/$HOME/lib/factory.js'] as const;
+  const wordsAfterSeparator = (home: string): readonly string[] => [...PROGRAM, 'item', 'list', '--follow', '--home', home];
+  const stepsOf = (home: string): readonly TmuxArgs[] =>
+    startSteps({ id: 'demo', home, coordinatorDir: COORDINATOR, launch: ['claude'], program: PROGRAM });
+  const splitOf = (home: string): TmuxArgs => stepsOf(home).find((step) => step[0] === 'split-window') ?? [];
+
+  it.each(['/w/node', '/w/my node', '/w/$HOME/node', '/w/$(id) `x` "y"/node', "/w/it's/node", '/w/a;b/node'])(
+    'M5-1b TP-45 gives the pane the program words and then item list --follow --home with the home as separate words after the separator: %j',
+    (home) => {
+      expect(splitOf(home)).toEqual(['split-window', '-d', '-h', '-t', '=demo:view', '-c', COORDINATOR, '--', ...wordsAfterSeparator(home)]);
+    },
+  );
+
+  it('M5-1b TP-45 keeps a home that ends in a semicolon as one word', () => {
+    const split = splitOf('/w/node;');
+    expect(split.slice(split.indexOf('--') + 1)).toEqual([...PROGRAM, 'item', 'list', '--follow', '--home', '/w/node\\;']);
+  });
+
+  it('M5-1b TP-45 starts the board pane of a session with exactly those words as its program', () => {
+    const home = '/w/my $HOME node';
+    const { handler, log } = tmuxHandler({ sessions: {} });
+    for (const step of stepsOf(home)) expect(handler({ command: 'tmux', args: step, cwd: undefined }).ok).toBe(true);
+    const board = log.panes().find((pane) => pane.options['@slot'] === 'board');
+    expect(board?.command).toEqual(wordsAfterSeparator(home));
+    expect(board?.cwd).toBe(COORDINATOR);
+  });
+
+  it('M5-1b TP-45 gives the other panes the programs that they had', () => {
+    const { handler, log } = tmuxHandler({ sessions: {} });
+    for (const step of stepsOf('/w/node')) handler({ command: 'tmux', args: step, cwd: undefined });
+    expect(log.panes().map((pane) => `${pane.window} ${pane.command.join(' ')}`)).toEqual([
+      'view claude',
+      `view ${wordsAfterSeparator('/w/node').join(' ')}`,
+      'workers ',
+    ]);
   });
 });
 

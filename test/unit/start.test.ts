@@ -22,6 +22,7 @@ import { claudeFileText, softwareOwnerModes, workerFileText } from '../helpers/b
 import {
   createFakeDeps,
   exited,
+  FAKE_PROGRAM_ARGV,
   registerRoot,
   withFailingWrites,
   withFsWatch,
@@ -40,6 +41,8 @@ import { endsPane, startsSessions, withProgram, type Program } from '../helpers/
 
 const HOME = '/w/node';
 const COORDINATOR = '/w/node/coordinator';
+/** The words of the board pane after the separator: the program of the fake deps, then the follow view of the home. */
+const BOARD_WORDS = [...FAKE_PROGRAM_ARGV, 'item', 'list', '--follow', '--home', HOME];
 const CLAUDE_FILE = '/w/node/coordinator/CLAUDE.md';
 const SETTINGS_FILE = '/w/node/coordinator/.claude/settings.local.json';
 /** The settings file as the writer of the hook settings leaves it. */
@@ -241,10 +244,27 @@ describe('start:a new session', () => {
       SET_SESSION_MARKER,
       'set-option -p -t =demo:view.{left} @node demo',
       'set-option -t =demo: @factory_home /w/node',
-      `split-window -d -h -t =demo:view -c ${COORDINATOR}`,
+      `split-window -d -h -t =demo:view -c ${COORDINATOR} -- ${BOARD_WORDS.join(' ')}`,
       'set-option -p -t =demo:view.{right} @slot board',
       `new-window -d -t =demo: -n workers -c ${COORDINATOR}`,
     ]);
+  });
+
+  it('M5-1b TP-45 starts the board pane with the program words and the follow view of the home as separate words', async () => {
+    const { deps, tmux } = make();
+    await succeeded(deps);
+    const split = tmux.calls.find((call) => call.args[0] === 'split-window')?.args ?? [];
+    expect(split.slice(split.indexOf('--') + 1)).toEqual(BOARD_WORDS);
+    expect(tmux.panes().find((pane) => pane.options['@slot'] === 'board')?.command).toEqual(BOARD_WORDS);
+  });
+
+  it('M5-1b TP-45 starts no session when the path of its own program is not known, because the board pane has no program', async () => {
+    const { deps, tmux } = make({ guard: 'off' });
+    const result = await startFactory({ ...deps, programArgv: [] });
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    if (!result.ok) expect(result.error.message).toContain('does not know the path of its own program');
+    expect(tmux.commands().filter((line) => line.startsWith('new-session') || line.startsWith('split-window'))).toEqual([]);
+    expect(tmux.sessions().size).toBe(0);
   });
 
   it('starts in the coordinator folder, with the root as the home, and adds no folder for the root (TP-46)', async () => {
@@ -816,6 +836,13 @@ describe('start:--dry-run', () => {
     expect(text).toContain(`tmux new-session -d -s demo -n view -c ${COORDINATOR} -- ${typed}`);
     expect(text).toContain(`tmux new-window -d -t =demo: -n workers -c ${COORDINATOR}`);
     expect(output.json).toMatchObject({ schema: 'factory.start/v1', session: 'demo', started: false, attached: false, dryRun: true });
+  });
+
+  it('M5-1b TP-45 shows the call of the board pane with each word as a person could type it', async () => {
+    const { deps } = make();
+    const output = await succeeded(deps, { dryRun: true });
+    const text = output.lines.map((line) => line.text).join('\n');
+    expect(text).toContain(`tmux split-window -d -h -t =demo:view -c ${COORDINATOR} -- ${BOARD_WORDS.map(shellWord).join(' ')}`);
   });
 
   it('shows the removal of the proxy variable from the session, right after the new session', async () => {
