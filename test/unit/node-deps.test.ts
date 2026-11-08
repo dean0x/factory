@@ -24,7 +24,7 @@ import { basename, isAbsolute, join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createNodeDeps } from '../../src/core/node-deps.js';
+import { createNodeDeps, programArgvOf } from '../../src/core/node-deps.js';
 import { hookNames } from '../../src/names.js';
 
 const deps = createNodeDeps();
@@ -909,24 +909,20 @@ describe('node deps: the program path', () => {
     expect(createNodeDeps().programArgv.every((word) => isAbsolute(word))).toBe(true);
   });
 
+  it('resolves a link to the script, so the path names the file that runs', async () => {
+    const script = fresh('script.js');
+    const link = fresh('link.js');
+    await writeFile(script, '');
+    await symlink(script, link);
+    expect(programArgvOf('/n/node', link)).toEqual(['/n/node', await realpath(script)]);
+  });
+
   it('is empty when the process has no script path, so that no caller builds a command from a guess', () => {
-    const argv = process.argv;
-    process.argv = [process.execPath];
-    try {
-      expect(createNodeDeps().programArgv).toEqual([]);
-    } finally {
-      process.argv = argv;
-    }
+    expect(programArgvOf('/n/node', undefined)).toEqual([]);
   });
 
   it('is empty when the script path does not exist', () => {
-    const argv = process.argv;
-    process.argv = [process.execPath, join(dir, 'no-such-script.js')];
-    try {
-      expect(createNodeDeps().programArgv).toEqual([]);
-    } finally {
-      process.argv = argv;
-    }
+    expect(programArgvOf('/n/node', join(dir, 'no-such-script.js'))).toEqual([]);
   });
 });
 

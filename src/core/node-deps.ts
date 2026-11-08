@@ -505,14 +505,13 @@ const randomHexText = (bytes: number): CliResult<string> =>
     : failure(`cannot make random text: ${bytes} bytes is not a whole number from 1 to ${MAX_RANDOM_BYTES}`);
 
 /**
- * The node program and the real path of the script of this process. An empty list when the process has no script path or the
- * path cannot be resolved: a made-up path would start another program.
+ * The node program and the real path of the script, which is the second word of the arguments of a process. An empty list when the
+ * process has no script path or the path cannot be resolved: a made-up path would start another program.
  */
-const programArgvOf = (): readonly string[] => {
-  const script = process.argv[1];
+export const programArgvOf = (execPath: string, script: string | undefined): readonly string[] => {
   if (script === undefined) return [];
   try {
-    return [process.execPath, realpathSync(script)];
+    return [execPath, realpathSync(script)];
   } catch {
     return [];
   }
@@ -570,6 +569,6 @@ export const createNodeDeps = (): Deps => ({
   platform: { os: process.platform, nodeVersion: process.version },
   cwd: process.cwd(),
   pid: process.pid,
-  programArgv: programArgvOf(),
+  programArgv: programArgvOf(process.execPath, process.argv[1]),
   uid: typeof process.getuid === 'function' ? process.getuid() : null,
 });
