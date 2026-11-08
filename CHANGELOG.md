@@ -127,7 +127,7 @@ The delete guard of the state repo
 Git 2.26 and the state lock
 
 - The minimum git version is 2.26. `doctor` fails the check `tools` for an older git, and when it cannot read the git version. `start` reads the git version and the git config of `.factory/` right after its tool check, before it makes or looks at a session. `reboot` outside the session does the same before its first stop. With git older than 2.26, they exit with code 1 before they make or end a session. A dry run of `start` warns. `init` and `upgrade` exit with code 1 for the same fault when they must change `.factory/`.
-- One lock file, `.factory/locks/state.lock`, covers each step that changes `.factory/` and commits it. A second writer waits 20 tries of 250 ms, then exits with code 1 and names the lock file. The claim of the active machine by `start` warns and goes on with exit code 0.
+- One lock file, `.factory/locks/state.lock`, covers each step that changes `.factory/` and commits it. A second writer waits 20 tries of 250 ms, then exits with code 1 and names the lock file. Three steps only warn, write nothing and go on with exit code 0: the claim of the active machine by `start`, the clear of the mark by `shutdown`, and the clear of the mark in the end step of `reboot`.
 - The lock file holds an owner token, `<pid>-<16 hex characters>`. A step that ends removes the lock file only when it holds its own token. A lock file older than 300 seconds is taken over, and the new lock file holds the token of the new owner.
 
 `doctor`
