@@ -136,7 +136,7 @@ const gitAnswer = (setup: Setup) => (call: RunCall) => {
   if (call.args.length === 1 && call.args[0] === '--version') return exited(0, setup.gitVersion ?? DEFAULT_GIT_VERSION);
   const command = withoutStateWords(call.args).slice(2).join(' ');
   if (setup.stateRepo !== undefined && call.args[1] === STATE_DIR) {
-    if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, setup.stateRepo.status ?? '');
+    if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=dirty') return exited(0, setup.stateRepo.status ?? '');
     if (command === 'config user.name' || command === 'config user.email') return exited(0, 'Git User\n');
     if (command === 'rev-parse --absolute-git-dir') {
       return setup.guard === 'unreadable' ? exited(128, '', 'fatal: cannot read the git folder\n') : exited(0, `${GIT_DIR}\n`);

@@ -785,10 +785,13 @@ const STATUS_WORDS = ['status', '--porcelain', '-z', '--untracked-files=all'] as
 export const statusOf = async (deps: Deps, dir: string, gitDir: string): Promise<CliResult<readonly StatusEntry[]>> =>
   statusEntriesOf(await deps.run('git', [...gitIn(dir, gitDir), ...STATUS_WORDS], { timeoutMs: GIT_TIMEOUT_MS }), dir);
 
-/** The changes in the index and in the work tree of the state repo at `dir`, as `statusOf`. A submodule is not read. */
+/**
+ * The changes in the index and in the work tree of the state repo at `dir`, as `statusOf`. A staged submodule pointer shows, because
+ * a commit takes the whole index. The work tree of a submodule is not read, so git starts no program in it.
+ */
 export const stateStatusOf = async (deps: Deps, dir: string): Promise<CliResult<readonly StatusEntry[]>> =>
   statusEntriesOf(
-    await deps.run('git', [...stateGit(dir), ...STATUS_WORDS, '--ignore-submodules=all'], { timeoutMs: GIT_TIMEOUT_MS }),
+    await deps.run('git', [...stateGit(dir), ...STATUS_WORDS, '--ignore-submodules=dirty'], { timeoutMs: GIT_TIMEOUT_MS }),
     dir,
   );
 

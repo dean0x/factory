@@ -40,7 +40,7 @@ interface Setup {
 /** A fake of git for the state repo: the status, the identity, and the exit code of every other call. */
 const gitAnswer = (setup: Setup) => (call: RunCall) => {
   const command = withoutStateWords(call.args).slice(2).join(' ');
-  if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, setup.status ?? '');
+  if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=dirty') return exited(0, setup.status ?? '');
   if (command.startsWith('config --list --show-scope')) return exited(setup.configListExit ?? 0);
   if (command === 'config user.name' || command === 'config user.email') {
     return setup.identity === false ? exited(1) : exited(0, 'Git User\n');

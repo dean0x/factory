@@ -525,10 +525,10 @@ describe('git: the commit that HEAD names in a state repo', () => {
 describe('git: the status of a state repo', () => {
   const status =(run: RunHandler) => stateStatusOf(createFakeDeps({ cwd: WS, run }), '/w/node/.factory');
 
-  it('asks for every untracked file one by one, with names that git does not quote, and reads no submodule', async () => {
+  it('asks for every untracked file one by one, with names that git does not quote, and shows a staged submodule pointer without reading the submodule', async () => {
     const { handler, log } = gitHandler();
     await stateStatusOf(createFakeDeps({ cwd: WS, run: handler }), '/w/node/.factory');
-    expect(log.rawCommands()).toEqual([`${STATE_GIT} status --porcelain -z --untracked-files=all --ignore-submodules=all`]);
+    expect(log.rawCommands()).toEqual([`${STATE_GIT} status --porcelain -z --untracked-files=all --ignore-submodules=dirty`]);
   });
 
   it('reads the state of the index and of the work tree for each path', async () => {
@@ -820,7 +820,7 @@ describe('git: a state repo whose local config names a program (TP-16)', () => {
     await requireStateRepoReady(createFakeDeps({ cwd: WS, run: handler }), STATE_DIR, [], 'the upgrade', commands.upgrade);
     expect(log.rawCommands()).toEqual([
       `${STATE_GIT} config --list --show-scope --includes -z`,
-      `${STATE_GIT} status --porcelain -z --untracked-files=all --ignore-submodules=all`,
+      `${STATE_GIT} status --porcelain -z --untracked-files=all --ignore-submodules=dirty`,
     ]);
   });
 });

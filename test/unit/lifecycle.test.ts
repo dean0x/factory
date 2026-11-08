@@ -131,7 +131,7 @@ const gitAnswer = (setup: Setup) => (call: RunCall) => {
   if (call.args.length === 1 && call.args[0] === '--version') return exited(0, setup.gitVersion ?? DEFAULT_GIT_VERSION);
   const command = withoutStateWords(call.args).slice(2).join(' ');
   if (call.args[1] === STATE_DIR) {
-    if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=all') return exited(0, '');
+    if (command === 'status --porcelain -z --untracked-files=all --ignore-submodules=dirty') return exited(0, '');
     if (command === 'config user.name' || command === 'config user.email') return identity ? exited(0, 'Git User\n') : exited(1);
     if (command.startsWith('config --list') && setup.configListExit !== undefined) return exited(setup.configListExit, '', 'error: unknown option');
     return exited(command.includes(' commit ') ? commitExit : 0);

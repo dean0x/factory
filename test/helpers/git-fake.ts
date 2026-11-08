@@ -274,7 +274,7 @@ export const gitHandler = (fixture: GitFixture = {}): { handler: RunHandler; log
     }
     switch (rest) {
       case 'status --porcelain -z --untracked-files=all':
-      case 'status --porcelain -z --untracked-files=all --ignore-submodules=all':
+      case 'status --porcelain -z --untracked-files=all --ignore-submodules=dirty':
         return exited(0, fixture.status?.[dir] ?? '');
       case 'rev-parse --git-common-dir':
         return repo === undefined ? exited(128) : exited(0, `${repo.commonDir ?? '.git'}\n`);
