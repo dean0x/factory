@@ -30,9 +30,8 @@ export interface MadeState {
  * the first commit when git has an identity, and is then renamed onto the state path. The staging folder can sit in a
  * folder of a repo (the root repo), so a commit waits until the folder is the top of its own work tree. The config of the new repo
  * must name no program that has no switch to turn it off for one call (a filter or a config hook, from a git template): the run
- * stops with a security stop before it stages a file. The delete guard is
- * written into the staging folder before the first commit (when the install can write it, see `guardPlanOf`); its setting names the
- * path that the folder has after the rename.
+ * stops with a security stop before it stages a file. The delete guard is written into the staging folder before the first commit
+ * (when the install can write it, see `guardPlanOf`); its setting names the path that the folder has after the rename.
  * The rename needs an absent target: a state folder that another program made during the run is never replaced. A run that
  * fails may leave the staging folder, and the caller removes it.
  */

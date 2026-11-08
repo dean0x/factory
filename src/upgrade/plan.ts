@@ -300,8 +300,6 @@ export const planStateGitignore = async (deps: Deps, layout: Layout): Promise<Cl
 };
 
 /** What the run does to the delete guard of the state repo: write it again (`install`), nothing (`current`), or only warn (`unsupported`). */
-export type StateGuardAction = GuardPlan['action'];
-
 export type StateGuardPlan = GuardPlan;
 
 /**
