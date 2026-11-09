@@ -42,7 +42,11 @@ You need:
 | `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker, and it says "Resumed" only after the new session wrote its SessionStart line. See "Resume a worker". |
 | `factory worker summon ID [--for TIME]` | Show the pane of the worker in the slot of the window `view` for `TIME` (default 15m, from 1m to 2h). The board comes back by itself. See "Summon a worker". |
 | `factory layout` | Make the window `workers` if it is missing, tile its panes, and put the board back in the slot of the window `view` after a summon. See "Make the windows again". |
-| `factory doctor` | Run 27 checks. See "Doctor". |
+| `factory item add\|update\|move\|close\|list` | Work with the work items of the local board. `item list` prints one line for each track. `--track ID` shows one track, and `--follow` draws the list again at each change. See "Use the local board". |
+| `factory track add ID --name TEXT [--roadmap]`, `factory track list` | Add a track to the board, or list the tracks. A track is a named stream of work. See "Use the local board". |
+| `factory request add\|list\|close` | Put a question for the owner in the waiting file, list the open requests, or close one with no answer. See "Use the local board". |
+| `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. See "Use the local board". |
+| `factory doctor` | Run 28 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `PreToolUse` and `Notification`. It records `Notification` only for the types `permission_prompt` and `elicitation_dialog`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
@@ -54,7 +58,9 @@ You need:
 | `factory version` | Print the version. |
 | `factory help` | Show the help. |
 
-Run `factory <command> --help` to see the flags of one command. All commands take `--json`, `--quiet` and `--no-color`.
+Run `factory <command> --help` to see the flags of one command. All commands take `--json`, `--quiet` and `--no-color`. In `--json` output, only control, bidi and invisible characters are removed from string values. A line break stays as an escape, and no string is cut to a width.
+
+No command needs python3, jq or glow.
 
 ### Make a factory
 
@@ -180,7 +186,7 @@ A project with no origin, or with a local source, works on this machine. The fac
 
 The factory folder holds two config files:
 
-- `factory.yaml` is shared. Git tracks it, and it goes to every machine. It holds the node, the board (`tracker`), the session settings, the limits, and the recipe with its projects.
+- `factory.yaml` is shared. Git tracks it, and it goes to every machine. It holds the node, the board (`tracker`), the optional `board` block, the session settings, the limits, and the recipe with its projects.
 - `factory.local.yaml` is private. Git ignores it, and it has mode 600. It holds the owner, the proxies, the settings of a worker, the mode of each approval point (`approval`), the links to other nodes (`parent` and `children`) and the local source of a project (`sources`).
 
 Each file has its own `schema` key. A key stays private only if it is personal, a credential, or true for one machine only. The shared file refuses a private key, and the error names the key and the private file. A proxy entry in `factory.yaml` fails the load, and `start` makes no tmux call.
@@ -272,10 +278,38 @@ factory status --json
 | --- | --- |
 | `ID`, `PROJECT` | The id of the worker and its project. |
 | `STATE` | `stopped` when the worker has no live pane, also when no tmux session of the node runs. Else `at prompt`, `busy`, `waits` or `unknown`, as in `worker list`. |
-| `WORK ITEM` | The work item of the worker, `none` when it has no open work, or `unknown` when the board does not give it. |
+| `WORK ITEM` | The id of the open work item of the worker, `none` when it has no open work, or `unknown` when the board does not give it. |
 | `IDLE` | `yes` when the last activity of the worker is older than `limits.idle_after` and the worker has no open work. Else `no`. |
 
-A work item that is not known never makes a worker idle. The board reader is not built yet (FAC-M5), so for now every work item is `unknown` and `status` shows no idle worker. Run `status` in a git work tree of a listed project to use the factory of that project (see "Find the factory folder").
+The work item comes from the local board (see "Use the local board"). A worker gets the first open item in progress whose worker field holds the worker id. If there is none, it gets the first other open item. A work item that is not known never makes a worker idle. So `status` shows `unknown` and no idle worker when there is no `board` block, when the block names no worker field (`board.worker_field`), or when the board file is missing or corrupt. In the last case, one warning names the file. Run `status` in a git work tree of a listed project to use the factory of that project (see "Find the factory folder").
+
+### Use the local board
+
+With `tracker.kind: local`, the files `board.json`, `waiting.json` and `decision-log.json` in `.factory/` hold the board. The commands `item`, `track`, `request` and `queue` write them. Each write takes the state lock once and makes one commit in the state repo. A read takes no lock. A board kind other than `local` refuses a write with exit code 4 and makes no commit.
+
+The optional `board` block of `factory.yaml` says what an item and a queue row can hold: the states, the fields and their allowed values. The folder `examples/` of the package holds a sample, `examples/factory.board.yaml`. Copy its `board` block into your `factory.yaml`. The sample makes the field `priority` required, so the commands below name it. With no `board` block, `item add`, `item close` and `item move --state` exit with code 2 and point to that sample.
+
+```sh
+factory track add web --name "The web shop" --roadmap
+factory item add --title "Fix the login page" --track web --field priority=P1
+factory item list
+factory item move B-1 --stage review
+factory item close B-1
+factory request add --title "Which tool?" --question "Which tool do we use?" --option a="Tool A" --option b="Tool B" --recommend a
+factory request list
+factory queue set release-1 --item B-1
+factory queue show
+```
+
+- **Items.** `item add` gives the next id `B-n`, the first state of the `board` block and the first stage. `item update ID` changes the title, the text, the track or a field. `item move ID` takes `--state STATE` or `--stage STAGE`, and not both. `item close ID` keeps the item and its id.
+- **Tracks.** A track is a named stream of work with its own roadmap. A worker is not a track. `track add ID --name TEXT` makes a track. `item add --track ID` and `item update --track ID` take the id of a listed track only. A factory has at most 30 tracks.
+- **Stages.** The stage of an item tells where it is on the board. It is not a step of the work cycle, and it is never an approval. The recipe gives the list of stages. The stages `merged` and `released` are only set by a flow, so `item move` refuses them with exit code 2. The status of an item alone decides if it is open, closed or idle.
+- **The list.** `item list` prints one line for each track, with the counts by stage. `--track ID` lists the items of one track. `--all` shows the closed items too. The output has at most 20 lines, and at most 17 of them are track lines. `item list --follow` draws the list again at each change of the board file. It checks every 2 seconds. It ends on SIGHUP or SIGTERM, when a write fails, when the parent process changes, or when stdout is not a terminal window. The slot of the window `view` runs it.
+- **Requests.** `request add` puts a request in `waiting.json`. It gets the next number `D-n` above the highest number in the waiting file and the decision log. `request close ID` takes a request out of the waiting file and writes a log row "closed with no answer". That row has no `by` and no who. A log row with no `by` is no decision, and the number is never given again.
+- **The queue.** `queue set NAME` finds a row by its exact name, and makes a new row at the end when no row has that name. `--item` replaces the whole list of items of the row. The queue has at most 30 rows, and a row has at most 30 items.
+- **Limits.** A text over 1 MiB for one of the three files is refused with exit code 1, and nothing is written. `doctor` warns when a file reaches 80 percent of that cap. A file that is corrupt, is not valid UTF-8 or holds a repeated id stops the command with exit code 1 and names the file. A command that prints a stored text removes control, bidi and invisible characters, turns a line break or a tab into one space, and cuts the line to 120 characters.
+
+No command needs python3, jq or glow. The format of the three files is a promise, so a view outside the core can read them. In M5-1b such a view only reads. A page answer that records through the owner store is a later step (FAC-M5b).
 
 ### Dismiss a worker
 
@@ -424,7 +458,7 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 
 ### Doctor
 
-`factory doctor` runs 27 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 16 checks are new:
+`factory doctor` runs 28 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 17 checks are new:
 
 - `local-file`: the mode, the owner and the type of `factory.local.yaml`.
 - `root`: the factory folder is the top folder of its own git work tree and holds an intact share list. This is a warning.
@@ -442,6 +476,7 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 - `project-urls`: a project with no URL that you can share is a warning.
 - `agent-version`: the version of the agent program (`claude --version`, 5 seconds). A version below 2.1.224, or a version that `doctor` cannot read, is a warning, because the messages between sessions need 2.1.224 or newer. It is not checked when the config is not valid.
 - `state-guard`: the delete guard of `.factory/` is on. A guard that is off is a warning, and the message names the step that repairs it (see "Upgrade a factory"). It is not checked when `.factory/` is no git repo.
+- `board-size`: the size of `board.json`, `waiting.json` and `decision-log.json` against the read cap of 1 MiB. A file that reaches 80 percent of the cap is a warning that names the file. A command cannot read a file above the cap. A file that is not there is no fault. The check writes nothing.
 
 The check `tools` fails when git is older than 2.26, or when `doctor` cannot read the git version.
 
@@ -493,6 +528,14 @@ Git reads hooks only from the guard folder after this step. So the hook files in
 Some cases are `unsupported`: only a person can repair the guard. They are `.factory/.git` as a file, a link or another folder; a program path that factory does not know; and a guard folder that is a link, is not a folder, is not at its real path, or holds more than 64 entries. Then `init` and `upgrade` warn with the cause and a manual step, and go on with exit code 0. `doctor` and `start` warn with the same step.
 
 The hooks run the Node program and the script of factory by their absolute paths. A Node update, a second install or a moved package changes a path. If a path is gone, each commit that the hooks check stops with one line that names `factory upgrade`. `doctor` and `start` warn that the guard is off. Run `factory upgrade` to write the hooks again.
+
+`upgrade` also renames the queue key of `.factory/board.json` from `queue` to the queue key of the recipe (`merge` for the software recipe). It changes that key only: the key order, the layout and the text of the items stay. The renamed file is one more file of the one commit of the upgrade, and the upgrade makes no second board commit. A factory with no `board.json`, and a board that has the key of the recipe already, need no rename. The dry run prints this line, with the key of your recipe in place of `<key>`:
+
+```
+.factory/board.json: rename the queue key "queue" to "<key>". Your other text stays.
+```
+
+A board file that cannot be read stops `upgrade` with exit code 1 and names the file, also in a dry run. If the new text would lose an item id that the last commit holds, `upgrade` stops with exit code 4 and changes nothing. `--json` names the action in the field `boardQueueKey`: `rename` (the run changes the key) or `current` (the key is right). The upgrade adds no `tracks` key. An absent key reads as an empty list.
 
 `upgrade` renders a block again when its text differs from the text that the package and your settings give. The owner prefix of `factory.local.yaml` is in the `safety` block. The context limits of `factory.yaml` are in the `coordinator` block. A block that you edited stays as it is, with a warning that names `factory upgrade --overwrite <block>`. `doctor` names the same command. The block `setup` is the exception: its text comes from the setup file, so `doctor` warns and names the setup file, and `upgrade` puts back the text of that file and keeps the edited text in a backup file (see below). A block that an earlier `upgrade` kept under its old name, for example `protocol`, stays under that name until you name it. `upgrade` and `doctor` find it under that name and name the flag.
 
