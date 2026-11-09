@@ -14,6 +14,7 @@ import { inspectFile, refuse } from '../migrate/inspect.js';
 import { planMigrations, runMigrations, type Migration } from '../migrate/runner.js';
 import {
   blockNames,
+  boardKeys,
   commands,
   commandText,
   dirs,
@@ -28,11 +29,13 @@ import {
   setupFileOf,
   stateGuard,
 } from '../names.js';
+import { readBoardFiles } from '../state/board-commit.js';
 import { locateShareList, WORKERS_GITIGNORE_LINE } from '../state/files.js';
 import { rootGitignoreOf, stateGitignoreOf } from '../state/gitignore.js';
 import { guardFolderLabel, guardPlanOf, guardPlanWarnings, type GuardPlan } from '../state/guard.js';
 import type { Layout } from '../state/layout.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
+import { renameQueueKey } from './board-key.js';
 import type { BlockSet, ModesOf, UpgradeFile, UpgradeSpec } from './spec.js';
 
 const MAX_DIFF_LINES = 3;
@@ -299,6 +302,38 @@ export const planStateGitignore = async (deps: Deps, layout: Layout): Promise<Cl
   return ok({ action, filePath: layout.stateGitignoreFile, text: action === 'current' ? null : text });
 };
 
+/** What the run does to the queue key of the board file: rename it to the key of the recipe (`rename`), or nothing (`current`). */
+export type BoardQueueKeyAction = 'rename' | 'current';
+
+export interface BoardQueueKeyPlan {
+  readonly action: BoardQueueKeyAction;
+  readonly filePath: string;
+  /** The key that the recipe gives for the queue. */
+  readonly queueKey: string;
+  /** The new text of the board file. It is null when the key is current. */
+  readonly text: string | null;
+}
+
+/**
+ * The plan for the queue key of `board.json`. An old board holds the queue under the default key of the core, and the recipe may give
+ * another key: the plan renames it and keeps every other byte (`renameQueueKey`). A board with both keys, and a board that can not be
+ * read, stop the plan (exit 1) and name the file. A factory with no board file has nothing to rename. A recipe whose key is the default
+ * has nothing to rename either, and the plan then reads no file. The plan reads with no lock: the run reads the file again inside the
+ * state lock and builds the text to write from that read.
+ */
+export const planBoardQueueKey = async (deps: Deps, layout: Layout, queueKey: string): Promise<CliResult<BoardQueueKeyPlan>> => {
+  const filePath = join(layout.stateDir, files.board);
+  const current: BoardQueueKeyPlan = { action: 'current', filePath, queueKey, text: null };
+  if (queueKey === boardKeys.defaultQueue) return ok(current);
+  const read = await readBoardFiles(deps, layout, [files.board]);
+  if (!read.ok) return read;
+  const text = read.value.get(files.board);
+  if (text === null || text === undefined) return ok(current);
+  const renamed = renameQueueKey(text, queueKey);
+  if (!renamed.ok) return renamed;
+  return ok(renamed.value === null ? current : { action: 'rename', filePath, queueKey, text: renamed.value });
+};
+
 /** What the run does to the delete guard of the state repo: write it again (`install`), nothing (`current`), or only warn (`unsupported`). */
 export type StateGuardPlan = GuardPlan;
 
@@ -467,6 +502,17 @@ const stateGitignoreLines = (plan: StateGitignorePlan): OutLine[] => {
   return lines[plan.action].map((text): OutLine => ({ level: 'text', text }));
 };
 
+/** The line for the queue key of the board file. A current key gives no line. */
+const boardQueueKeyLines = (plan: BoardQueueKeyPlan): OutLine[] =>
+  plan.action === 'rename'
+    ? [
+        {
+          level: 'text',
+          text: `${join(dirs.state, files.board)}: rename the queue key "${boardKeys.defaultQueue}" to "${plan.queueKey}". Your other text stays.`,
+        },
+      ]
+    : [];
+
 /** The lines for the delete guard of the state repo. A guard that is on gives no line. A guard that only a person can repair gives a warning. */
 const stateGuardLines = (plan: StateGuardPlan): OutLine[] => {
   const warnings = guardPlanWarnings(plan).map((text): OutLine => ({ level: 'warn', text }));
@@ -483,6 +529,7 @@ export const planLines = (
   state: FilePlan,
   files: FilesPlan,
   stateGitignore: StateGitignorePlan,
+  boardKey: BoardQueueKeyPlan,
   guard: StateGuardPlan,
   root: RootPlan,
   blocks: readonly BlockPlan[],
@@ -577,6 +624,7 @@ export const planLines = (
     ...moveLines,
     ...files.replaces.map(replaceLine),
     ...stateGitignoreLines(stateGitignore),
+    ...boardQueueKeyLines(boardKey),
     ...stateGuardLines(guard),
     ...rootLines(root),
     ...blocks.map(blockLine),

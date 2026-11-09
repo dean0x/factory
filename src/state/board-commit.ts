@@ -137,8 +137,9 @@ const updatesOf = (now: BoardTexts, changed: BoardTexts): CliResult<BoardTexts> 
  * No item id of the board at the last commit may be missing from the new board text. A closed item keeps its id. A board that can
  * not be read, on either side, stops the change: the check fails closed. The remedy for a board at the last commit that can not be
  * read is a normal commit of a repair: the delete guard accepts a repair that keeps every item id of the last board that it can read.
+ * `upgrade` calls this check itself, because it holds the state lock already and so can not call `commitBoardChange`.
  */
-const requireNoLostIds = async (
+export const requireNoLostIds = async (
   deps: Deps,
   stateDir: string,
   hasCommit: boolean,

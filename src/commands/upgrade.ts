@@ -37,8 +37,9 @@ import {
   rootRepo,
   schemaIds,
 } from '../names.js';
+import { requireNoLostIds } from '../state/board-commit.js';
 import { guardFolderLabel, installGuard } from '../state/guard.js';
-import { layoutOf } from '../state/layout.js';
+import { layoutOf, type Layout } from '../state/layout.js';
 import { withStateLock } from '../state/state-lock.js';
 import type { SetupTexts } from '../templates/types.js';
 import {
@@ -65,6 +66,7 @@ import {
   isChange,
   planBlock,
   planBlockSet,
+  planBoardQueueKey,
   planFile,
   planFiles,
   planLines,
@@ -75,6 +77,7 @@ import {
   planStateGuard,
   refusalOf,
   settleSetupBlocks,
+  type BoardQueueKeyPlan,
   type FilesPlan,
   type StateGuardPlan,
 } from '../upgrade/plan.js';
@@ -207,6 +210,25 @@ const writeGuard = async (deps: Deps, stateDir: string, plan: StateGuardPlan): P
 const guardStays = (guardLines: readonly OutLine[]): string =>
   guardLines.length === 0 ? '' : ` ${guardLines.map((line) => line.text).join(' ')} It stays.`;
 
+/**
+ * The new text of the board file for the queue key, read again inside the state lock: the file may have changed since the plan, and
+ * the new text comes from this read. No item id of the board at the last commit may be missing from it. This is the check of the
+ * board commit helper, called directly: the run holds the lock already, and a second board commit would wait for that lock and fail.
+ * A refusal (exit 4 for a lost id, exit 1 for a board that can not be read) changes no file. The text is null when the plan has no
+ * rename, and when the file is current by now.
+ */
+const lockedBoardText = async (deps: Deps, layout: Layout, plan: BoardQueueKeyPlan): Promise<CliResult<string | null>> => {
+  if (plan.action !== 'rename') return ok(null);
+  const again = await planBoardQueueKey(deps, layout, plan.queueKey);
+  if (!again.ok) return again;
+  const text = again.value.text;
+  if (text === null) return ok(null);
+  const head = await stateHeadOf(deps, layout.stateDir);
+  if (!head.ok) return head;
+  const kept = await requireNoLostIds(deps, layout.stateDir, head.value !== null, text, commands.upgrade);
+  return kept.ok ? ok(text) : kept;
+};
+
 const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };
 
 /**
@@ -305,6 +327,10 @@ export const runUpgrade = async (
   const refused = refusalOf(blocks);
   if (!refused.ok) return refused;
 
+  // The board is read with no lock. A board with both keys, or one that can not be read, stops the run before any file changes.
+  const boardKey = await planBoardQueueKey(deps, layout, blockSet.value.queueKey);
+  if (!boardKey.ok) return boardKey;
+
   // The hook settings are planned with no write, so a stop of a check comes before the first write of the run.
   const hooks = await planHookSettings(deps, home, options.yes);
   if (!hooks.ok) return hooks;
@@ -319,6 +345,7 @@ export const runUpgrade = async (
     state.value.kind === 'migrate' ||
     files.moves.length > 0 ||
     stateGitignore.value.action !== 'current' ||
+    boardKey.value.action !== 'current' ||
     root.value.gitignore.action !== 'current' ||
     root.value.repo ||
     changes.length > 0;
@@ -335,7 +362,7 @@ export const runUpgrade = async (
   if (!localText.ok) return localText;
 
   const lines: OutLine[] = [
-    ...planLines(config.value, local.value, state.value, files, stateGitignore.value, guard.value, root.value, blocks, upgrade),
+    ...planLines(config.value, local.value, state.value, files, stateGitignore.value, boardKey.value, guard.value, root.value, blocks, upgrade),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
   ];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
@@ -349,6 +376,7 @@ export const runUpgrade = async (
     moves: files.moves.map((move) => ({ from: move.from, to: move.to })),
     replaces: files.replaces.map((replace) => ({ path: replace.path, action: replace.action })),
     stateGitignore: stateGitignore.value.action,
+    boardQueueKey: boardKey.value.action,
     stateGuard: guard.value.action,
     gitignore: root.value.gitignore.action,
     rootRepo: root.value.repo,
@@ -405,12 +433,14 @@ export const runUpgrade = async (
   }
 
   const replacements = files.replaces.filter((replace) => replace.action === 'replace');
-  const touchesState = state.value.kind === 'migrate' || changes.length > 0 || stateGitignore.value.text !== null;
+  const touchesState =
+    state.value.kind === 'migrate' || changes.length > 0 || stateGitignore.value.text !== null || boardKey.value.text !== null;
   // These are the files that the upgrade can change in the repo: the commit holds those and no other file.
   const touched = inStateRepo(layout, [
     ...files.moves.flatMap((move) => [move.fromPath, move.toPath]),
     ...replacements.map((replace) => replace.filePath),
     ...(stateGitignore.value.text === null ? [] : [stateGitignore.value.filePath]),
+    ...(boardKey.value.text === null ? [] : [boardKey.value.filePath]),
     ...(stateText.value === null ? [] : [layout.nodeJson]),
     ...changes.map((change) => fileOfTarget(layout, change.template.target)),
   ]);
@@ -427,6 +457,9 @@ export const runUpgrade = async (
     // The paths are checked once more before the first write, because a path can change while the command plans.
     const stillPlain = await requireNoRootLinks(deps, layout);
     if (!stillPlain.ok) return stillPlain;
+    // The board is read again here, inside the lock. A refusal of the board comes before the backup, so it changes no file.
+    const boardText = await lockedBoardText(deps, layout, boardKey.value);
+    if (!boardText.ok) return boardText;
     const backupDir = await backup(deps, home);
     if (!backupDir.ok) return backupDir;
     const backupPath = relative(home, backupDir.value);
@@ -502,6 +535,7 @@ export const runUpgrade = async (
       ...replacements.map((replace) => ({ path: replace.filePath, text: replace.text })),
       ...(stateText.value === null ? [] : [{ path: layout.nodeJson, text: stateText.value }]),
       ...(stateGitignore.value.text === null ? [] : [{ path: stateGitignore.value.filePath, text: stateGitignore.value.text }]),
+      ...(boardText.value === null ? [] : [{ path: boardKey.value.filePath, text: boardText.value }]),
       ...(root.value.gitignore.text === null ? [] : [{ path: root.value.gitignore.filePath, text: root.value.gitignore.text }]),
       // The local file comes before the shared file, which is the last to change. A run that stops between the two leaves
       // the old shared file with all its keys.
