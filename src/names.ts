@@ -87,6 +87,8 @@ export const terms = [
   'session reset',
   'queue',
   'check',
+  'track',
+  'stage',
 ] as const;
 
 /** The layers of a node, from the bottom: the workers, the coordinator, the manager, and the highest layer. */

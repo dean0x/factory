@@ -22,6 +22,8 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **queue** (was: staging): A queue is the order of the finished work that waits for an approval point, first item first. Not built yet.
 - **check** (was: inspect): A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.
 - **work item**: A work item is one unit of work on the board.
+- **track**: A track is a named stream of work with its own roadmap. A worker is not a track.
+- **stage**: A stage is where a work item is on the board. It is not a step of the work cycle. It is never an approval.
 - **approval point**: An approval point is a step of the work that needs an approval. The owner sets the mode of each point.
 - **delegated**: Delegated is a mode of an approval point: the coordinator approves for the owner. The other mode is owner.
 - **board**: A board is the system that holds the work items, the requests and the decisions. The config key is `tracker`.
