@@ -5,7 +5,8 @@ import { existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { manifestHash, type ManifestEntry } from '../../src/core/setup-acceptance.js';
-import { hookNames, setupAcceptance } from '../../src/names.js';
+import { boardKeys, hookNames, setupAcceptance, stateLock } from '../../src/names.js';
+import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { DIST, makeSandbox, removeOpenSandboxes, withoutHookNotice, withoutTmux, type RunResult, type Sandbox } from './harness.js';
 
@@ -569,6 +570,72 @@ describe('factory upgrade (built binary)', () => {
     const result = await box.run(['upgrade'], { cwd: box.root });
     expect(result.code).toBe(2);
     expect(result.stderr).toContain('--home DIR');
+  });
+});
+
+describe('factory upgrade of the queue key of the board (built binary, TP-30, TP-100, TP-101)', () => {
+  const stateOf = (): string => join(box.node, '.factory');
+  const boardFile = (): string => join(stateOf(), 'board.json');
+  const lockFile = (): string => join(stateOf(), 'locks', `${stateLock.name}${stateLock.lock.suffix}`);
+
+  /** A board in the form of the writers: the queue under `key`, and one open item for each id. */
+  const boardWith = (key: string, ids: readonly string[]): string =>
+    `${JSON.stringify({ [key]: [], items: ids.map((id) => ({ id, title: 'A title', status: 'open' })), tracks: [] }, null, 2)}\n`;
+
+  /** A new node, with the board that an older factory left: the queue under the key "queue", committed in the state repo. */
+  const leaveOldBoard = async (ids: readonly string[]): Promise<void> => {
+    await initNode();
+    await writeFile(boardFile(), boardWith(boardKeys.defaultQueue, ids));
+    expect((await box.git(stateOf(), ['add', '-A'])).code).toBe(0);
+    expect((await box.git(stateOf(), ['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'an old board'])).code).toBe(0);
+  };
+
+  const subjects = async (): Promise<string[]> => (await box.git(stateOf(), ['log', '--format=%s'])).stdout.trim().split('\n');
+
+  it('M5-1b TP-30 renames the key in the one upgrade commit, and then the board commands work', async () => {
+    await leaveOldBoard(['B-1', 'B-2']);
+    const blocked = await box.run(['item', 'list', '--home', box.node]);
+    expect(blocked.code).toBe(1);
+    expect(blocked.stderr).toContain('factory upgrade');
+
+    const result = await box.run(['upgrade', '--home', box.node]);
+    expect(result.code).toBe(0);
+    expect(await box.read(boardFile())).toBe(boardWith(softwareQueueKey, ['B-1', 'B-2']));
+    expect((await subjects()).slice(0, 2)).toEqual(['chore: upgrade the state', 'an old board']);
+    expect((await box.git(stateOf(), ['show', '--stat', '--format=', 'HEAD'])).stdout).toContain('board.json');
+    expect((await box.git(stateOf(), ['status', '--porcelain'])).stdout).toBe('');
+    expect(existsSync(lockFile())).toBe(false);
+    expect((await box.run(['item', 'list', '--home', box.node])).code).toBe(0);
+    expect((await box.run(['upgrade', '--home', box.node])).stdout).toContain('Nothing to upgrade.');
+  });
+
+  it('M5-1b TP-30 exits 1, names board.json and changes nothing when the board has both keys', async () => {
+    await initNode();
+    const both = `{\n  "${boardKeys.defaultQueue}": [],\n  "${softwareQueueKey}": [],\n  "items": []\n}\n`;
+    await writeFile(boardFile(), both);
+    const result = await box.run(['upgrade', '--home', box.node]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('board.json');
+    expect(await box.read(boardFile())).toBe(both);
+    expect(await readdir(stateOf())).not.toContain('backups');
+  });
+
+  it('M5-1b TP-101 exits 4 and changes no file when the new board text drops an item id that the last commit holds', async () => {
+    await leaveOldBoard(['B-1', 'B-2']);
+    // The work tree board lost an item, and git does not report it. Only the check against the last commit finds the loss.
+    expect((await box.git(stateOf(), ['update-index', '--assume-unchanged', 'board.json'])).code).toBe(0);
+    const short = boardWith(boardKeys.defaultQueue, ['B-1']);
+    await writeFile(boardFile(), short);
+    const head = (await box.git(stateOf(), ['rev-parse', 'HEAD'])).stdout.trim();
+
+    const result = await box.run(['upgrade', '--home', box.node]);
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('this change removes the item id B-2 from board.json');
+    expect(result.stderr).toContain('factory upgrade');
+    expect(await box.read(boardFile())).toBe(short);
+    expect((await box.git(stateOf(), ['rev-parse', 'HEAD'])).stdout.trim()).toBe(head);
+    expect(await readdir(stateOf())).not.toContain('backups');
+    expect(existsSync(lockFile())).toBe(false);
   });
 });
 
