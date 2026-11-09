@@ -4,6 +4,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/prom
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { checkIds } from '../../src/names.js';
 
 const ROOT = join(__dirname, '..', '..');
 const SCRIPT = join(ROOT, 'scripts', 'check-intent-docs.sh');
@@ -1073,5 +1074,108 @@ describe('docs/roadmap-v2.md: the resource check of worker new (TP-136)', () => 
 
   it('does not say that worker new refuses when a resource limit fails', () => {
     expect(roadmap).not.toContain('and refuses when a resource limit fails');
+  });
+});
+
+describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)', () => {
+  const docsText = (name: string): string => readFileSync(join(ROOT, 'docs', name), 'utf8');
+  const design = docsText('design.md');
+  const roadmap = docsText('roadmap-v2.md');
+  const glossary = docsText('glossary.md');
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
+  const part = (text: string, from: string, to: string): string => text.split(from)[1]?.split(to)[0] ?? '';
+
+  it('TP-94: lists the review page command, the board archive and the page answer as criteria of FAC-M5b', () => {
+    const later = part(roadmap, '### FAC-M5b: ', '\n### ');
+    expect(later).toMatch(/^- \[ \] Review page command \(TB-5\)\./m);
+    expect(later).toMatch(/^- \[ \] Board archive\./m);
+    expect(later).toMatch(/^- \[ \] Page answer \(TB-5\)\./m);
+  });
+
+  it('TP-94: lists the criteria of tracks and stages in FAC-M5, and the track views of M5-1c', () => {
+    const board = part(roadmap, '### FAC-M5: ', '\n### ');
+    expect(board).toMatch(/^- \[ \] Tracks and stages \(TB-7, M5-1b\)\./m);
+    expect(board).toMatch(/^- \[ \] Track views \(M5-1c, TB-1 to TB-3\)\./m);
+  });
+
+  it('TP-94: says in design 4.10 that the review page is an owner view that only reads in M5-1b', () => {
+    const connector = part(design, '### 4.10 Board connector', '\n### 4.11');
+    expect(connector).toContain('The review desk page of today is a supported owner view, and the owner can choose it.');
+    expect(connector).toContain(
+      'In M5-1b the page only reads. A page answer that records through the owner store is a FAC-M5b criterion.',
+    );
+  });
+
+  it('TP-94: says in step 4 of the migration that the page only reads the local files, and that FAC-M3 keeps the page', () => {
+    const migration = part(design, '## 8. Migration of this workspace', '\n## 9. Decisions');
+    expect(migration).toContain(
+      'In M5-1b the page only reads the local files. A page answer that records through the owner store is a FAC-M5b criterion.',
+    );
+    expect(migration).toContain('It does not retire the page (TB-5).');
+  });
+
+  it('TP-94: gives the terms track and stage in design 4.1 and in the glossary, and calls the steps of the work cycle steps', () => {
+    const concepts = part(design, '### 4.1 Concepts', '\n### 4.2');
+    expect(concepts).toMatch(/^- \*\*Track\*\*: a named stream of work with its own roadmap\. A worker is not a track\./m);
+    expect(concepts).toMatch(/^- \*\*Stage\*\*: where a work item is on the board\. It is not a step of the work cycle/m);
+    expect(concepts).toContain('It does all the steps of the work cycle for one track of one project.');
+    expect(glossary).toMatch(/^- \*\*track\*\*: A track is a named stream of work with its own roadmap\. A worker is not a track\./m);
+    expect(glossary).toMatch(/^- \*\*stage\*\*: A stage is where a work item is on the board\. It is not a step of the work cycle\./m);
+    expect(design.split('\n').filter((line) => /work cycle/i.test(line) && /\b(?:the|all) stages of the work cycle\b/i.test(line))).toEqual([]);
+  });
+
+  it('TP-94: records the direction about the board of each track in one decision row that has no D-n id', () => {
+    const decisions = design.split('## 9. Decisions')[1] ?? '';
+    const rows = decisions.split('\n').filter((line) => line.startsWith('| TB-5 to TB-7 |'));
+    expect(rows).toHaveLength(1);
+    const [row = ''] = rows;
+    const id = row.split('|')[1]?.trim() ?? '';
+    expect(id).not.toMatch(/^D-\d+$/);
+    expect(row).toContain('His words: "');
+    expect(row).toContain('supersedes the part of F-17 (Changes in v3, point 6) and the part of F-2 (Changes from v1, point 2)');
+  });
+
+  it('TP-94: gives each note of the direction a row in the intent trace', () => {
+    const trace = docsText('intent-trace.md');
+    for (let n = 1; n <= 8; n += 1) expect(trace).toMatch(new RegExp(`\\bTB-${n}\\b`));
+  });
+
+  it('TP-106: tells in the README and in design 4.2 that --json removes only hidden characters from string values', () => {
+    const sentence =
+      'In `--json` output, only control, bidi and invisible characters are removed from string values. A line break stays as an escape, and no string is cut to a width.';
+    expect(readme).toContain(sentence);
+    expect(part(design, '### 4.2 Commands', '### 4.3 ')).toContain(sentence);
+  });
+
+  it('TP-107: names the dismiss idle window of M5-2 in the Check item of FAC-M5', () => {
+    const board = part(roadmap, '### FAC-M5: ', '\n### ');
+    const item = board.split('\n').find((line) => line.startsWith('2. **Check (F-6).**')) ?? '';
+    expect(item).toContain(
+      'The dismiss idle window (M5-2): `dismiss --idle` reads the board again just before each stop, and not once before all stops.',
+    );
+    expect(item).toContain('M5-1b states this as a limit.');
+  });
+
+  it('TP-109: adds no decide row to the Commands table of the README and no decide command to the guide', () => {
+    const commands = part(readme, '## Commands', '\n### Make a factory');
+    expect(commands).not.toMatch(/^\| `factory decide/m);
+    expect(docsText('quick-start.md')).not.toContain('factory decide');
+  });
+
+  it('keeps the count of the doctor checks the same in the README and in the CHANGELOG as in the program', () => {
+    const count = Object.keys(checkIds).length;
+    expect(readme).toContain(`\`factory doctor\` runs ${count} checks.`);
+    expect(part(changelog, '## 0.2.0 (not released)', '\n## 0.1.0 (not released)')).toContain(`\`factory doctor\` runs ${count} checks.`);
+    expect(readme).toContain(`- \`${checkIds.boardSize}\`:`);
+  });
+
+  it('changes the CHANGELOG only in the section of 0.2.0 for the local board', () => {
+    const current = part(changelog, '## 0.2.0 (not released)', '\n## 0.1.0 (not released)');
+    expect(current).toContain('\nThe local board\n');
+    expect(current).toContain('`boardQueueKey`');
+    expect(current).toContain('`examples`');
+    expect(current).not.toContain('No command reads the file yet');
+    expect(changelog.split('## 0.1.0 (not released)')[1] ?? '').not.toContain('boardQueueKey');
   });
 });
