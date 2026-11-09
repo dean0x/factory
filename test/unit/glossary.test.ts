@@ -73,13 +73,13 @@ describe('the glossary of the program', () => {
     expect(text).toContain('A worker gets it as a file in its assignment folder.');
   });
 
-  it.each(['worker', 'session reset'])('TP-41: does not call the built word "%s" unbuilt', (term) => {
+  it.each(['worker', 'session reset', 'request', 'queue'])('TP-41: does not call the built word "%s" unbuilt', (term) => {
     const text = glossary.find((word) => word.term === term)?.text ?? '';
     expect(text.length, term).toBeGreaterThan(0);
     expect(text, term).not.toContain('Not built yet');
   });
 
-  it.each(['worker', 'assignment', 'session reset'])('TP-41: holds the same text as docs/glossary.md for "%s"', (term) => {
+  it.each(['worker', 'assignment', 'session reset', 'request', 'queue'])('TP-41: holds the same text as docs/glossary.md for "%s"', (term) => {
     const program = glossary.find((word) => word.term === term)?.text;
     const entry = partEntries(CORE_HEADING).find((candidate) => candidate.term === term);
     expect(entry, term).toBeDefined();

@@ -16,10 +16,10 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **coordinator**: A coordinator is a node on layer 1. It runs the factory for its owner and gives assignments to workers.
 - **recipe**: A recipe is the kind of work that a factory does, such as software or marketing. It sets the approval points.
 - **setup** (was: variant): A setup is one named way to run a recipe. It adds text and scripts to the fixed rules. The config key stays `recipe.variant`.
-- **request** (was: andon): A request is an item that waits for the owner. It can be a question to answer or an action to do. Not built yet.
+- **request** (was: andon): A request is an item that waits for the owner. It can be a question to answer or an action to do.
 - **assignment** (was: work order): An assignment is a written task for a worker or a child node. A worker gets it as a file in its assignment folder.
 - **session reset** (was: changeover): A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state.
-- **queue** (was: staging): A queue is the order of the finished work that waits for an approval point, first item first. Not built yet.
+- **queue** (was: staging): A queue is the order of the finished work that waits for an approval point, first item first.
 - **check** (was: inspect): A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.
 - **work item**: A work item is one unit of work on the board.
 - **track**: A track is a named stream of work with its own roadmap. A worker is not a track.

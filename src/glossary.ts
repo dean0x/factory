@@ -27,16 +27,13 @@ const SENTENCES: Readonly<Record<(typeof terms)[number], string>> = {
   setup:
     'A setup is one named way to run a {{recipe}}. It adds text and scripts to the fixed rules. ' +
     'The config key stays `{{variantKey}}`.',
-  request:
-    'A request is an item that waits for the {{owner}}. It can be a question to answer or an action to do. ' +
-    'Not built yet.',
+  request: 'A request is an item that waits for the {{owner}}. It can be a question to answer or an action to do.',
   assignment:
     'An assignment is a written task for a {{worker}} or a child {{node}}. ' +
     'A {{worker}} gets it as a file in its assignment folder.',
   'session reset':
     'A session reset wipes or shortens the memory of a session between two phases. A saved handoff keeps the state.',
-  queue:
-    'A queue is the order of the finished work that waits for an approval point, first item first. Not built yet.',
+  queue: 'A queue is the order of the finished work that waits for an approval point, first item first.',
   check:
     'A check looks at one piece of finished work. It says READY or NOT READY, with the reasons. Not built yet.',
   track: 'A track is a named stream of work with its own roadmap. A {{worker}} is not a track.',
