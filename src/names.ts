@@ -471,6 +471,9 @@ export const trafficEnvNames = [
 /** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
 export const maxFileBytes = 1_048_576;
 
+/** The share of `maxFileBytes`, in percent, at which `doctor` warns about the board, the waiting file or the decision log. */
+export const boardWarnPercent = 80;
+
 /**
  * The rules for the source file of an assignment (`worker new --assignment`). The file is read only from the factory folder or from the
  * git work tree of the working folder. No path part below that top starts with `dotMark`, except the orders folder below the factory
@@ -1433,6 +1436,8 @@ export const checkIds = {
   stateRepo: 'state-repo',
   /** The delete guard of the state repo: a warning when it is off, with the remedy. */
   stateGuard: 'state-guard',
+  /** The size of the board, the waiting file and the decision log against the read cap: a warning from `boardWarnPercent` on. */
+  boardSize: 'board-size',
   projects: 'projects',
   projectUrls: 'project-urls',
 } as const;
