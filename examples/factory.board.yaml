@@ -28,7 +28,7 @@ board:
   states: [open, doing, blocked, done]
   in_progress: doing    # a declared state
   closed: done    # a declared state
-  worker_field: lane    # a declared field of an item
+  worker_field: worker    # a declared field of an item
   fields:
     # A field with the target item belongs to an item. A field with the target row belongs to a queue row.
     - name: priority
@@ -41,7 +41,7 @@ board:
       kind: values
       values: [bug, feature, chore]
       required: false
-    - name: lane
+    - name: worker
       target: item
       kind: token
       required: false

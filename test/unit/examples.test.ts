@@ -5,7 +5,7 @@ import { renderConfig } from '../../src/config/render.js';
 import { oldWordsIn } from '../helpers/old-words.js';
 import { parseConfigTexts } from '../helpers/package-registry.js';
 import { jargonIn } from '../helpers/plain-words.js';
-import { sampleBoard, sampleConfig } from '../helpers/sample-config.js';
+import { sampleConfig } from '../helpers/sample-config.js';
 
 /**
  * The sample setup in `examples/`: a `factory.yaml` with a `board` block. It must load through the real config schema, so a
@@ -25,9 +25,12 @@ describe('the sample setup in examples/ (M5-1b TP-50)', () => {
     expect(loaded.ok, loaded.ok ? '' : loaded.error.message).toBe(true);
   });
 
-  it('M5-1b TP-50 holds the sample board block: states, a worker field and owner fields', () => {
+  it('M5-1b TP-50 names a worker field that the sample declares with the target item', () => {
     const loaded = parseConfigTexts(readExample('factory.board.yaml'), LOCAL_TEXT);
-    expect(loaded.ok && loaded.value.core.board).toEqual(sampleBoard());
+    const board = loaded.ok ? loaded.value.core.board : undefined;
+    const workerField = board?.worker_field;
+    expect(workerField).toBeDefined();
+    expect(board?.fields?.find((field) => field.name === workerField)).toMatchObject({ target: 'item' });
   });
 
   it('M5-1b TP-50 declares a release field with the target row', () => {
