@@ -1086,11 +1086,13 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
   const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
   const part = (text: string, from: string, to: string): string => text.split(from)[1]?.split(to)[0] ?? '';
 
-  it('TP-94: lists the review page command, the board archive and the page answer as criteria of FAC-M5b', () => {
+  it('TP-94: lists the board archive in FAC-M5b, and the review page render and the page answer in FAC-M11', () => {
     const later = part(roadmap, '### FAC-M5b: ', '\n### ');
-    expect(later).toMatch(/^- \[ \] Review page command \(TB-5\)\./m);
     expect(later).toMatch(/^- \[ \] Board archive\./m);
-    expect(later).toMatch(/^- \[ \] Page answer \(TB-5\)\./m);
+    expect(later).not.toMatch(/^- \[ \] (Review page command|Page answer) \(TB-5\)\./m);
+    const plugins = part(roadmap, '### FAC-M11: ', '\n### ');
+    expect(plugins).toMatch(/^- \[ \] Review page render test \(TB-5\)\./m);
+    expect(plugins).toMatch(/^- \[ \] Page answer test \(D-142 A\)\./m);
   });
 
   it('TP-94: lists the criteria of tracks and stages in FAC-M5, and the track views of M5-1c', () => {
