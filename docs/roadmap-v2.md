@@ -56,6 +56,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `item`, `request`, `queue`, `decide <D-n> <option>` | FAC-M5 |
 | `track` | FAC-M5 |
 | `item estimate` | FAC-M5b |
+| `item list --follow` (the board pane of the live board, with the estimate mark) | FAC-M5b |
 | `worker mark`, `worker list --follow` (the columns of the live board) | FAC-M5b |
 | `check`, `pr`, `issues`, `copies` (list, status), `lock` | FAC-M5 |
 | `state` (guard) | FAC-M5 |
