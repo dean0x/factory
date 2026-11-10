@@ -655,6 +655,12 @@ export const requestWords = {
   maxOptionsChars: 30,
 } as const;
 
+/**
+ * The words of `decide`. `read` is the word of a subcommand that this version does not have: the contract operation `decision read`
+ * waits for FAC-M11, so `decide read` is a usage error.
+ */
+export const decideWords = { read: 'read' } as const;
+
 /** The words of the output of `queue`. The columns of the owner fields of a row come between the items and the note. */
 export const queueWords = {
   queue: commands.queue,
@@ -1568,6 +1574,7 @@ export const schemaIds = {
   trackList: `${program}.track-list/v1`,
   request: `${program}.${commands.request}/v1`,
   requestList: `${program}.${commands.request}-list/v1`,
+  decide: `${program}.${commands.decide}/v1`,
   queue: `${program}.${commands.queue}/v1`,
   queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
