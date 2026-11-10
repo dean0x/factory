@@ -3,6 +3,7 @@ import { ok } from '../core/result.js';
 import { isRecord } from '../migrate/inspect.js';
 import { boardKeys, files, trackLimits } from '../names.js';
 import type { BoardTrack } from './contract.js';
+import { holdsBreak } from './text.js';
 
 /**
  * The tracks of the board file. `tracks` is an optional top key: a list of tracks, each with an id, a name and a roadmap flag.
@@ -10,9 +11,6 @@ import type { BoardTrack } from './contract.js';
  */
 
 const FILE = files.board;
-
-/** A control character: a line break, a tab and the other characters that a line of text can not hold. */
-const CONTROL = /\p{Cc}/u;
 
 /** The value when it is text, else the empty text, which no id and no name accepts. */
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -28,7 +26,7 @@ export const trackIdIssue = (id: string): string | null => {
 /** Why a text can not be a track name, or null when it can. The reason never repeats the text. */
 export const trackNameIssue = (name: string): string | null => {
   if (name.trim() === '') return 'a name is text that is not empty';
-  if (CONTROL.test(name)) return 'a name is one line';
+  if (holdsBreak(name)) return 'a name is one line, with no control character and no mark of text direction';
   return name.length > trackLimits.maxNameChars ? `a name has at most ${trackLimits.maxNameChars} characters` : null;
 };
 

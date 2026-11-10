@@ -79,6 +79,10 @@ describe('the rules of a track id and a track name (TP-80, TP-89)', () => {
     ['an id of more than the most characters', { words: ['add', `a${'b'.repeat(trackLimits.maxIdChars)}`], name: 'Core' }],
     ['a name of more than the most characters', { words: ['add', 'core'], name: 'x'.repeat(trackLimits.maxNameChars + 1) }],
     ['a name with a line break', { words: ['add', 'core'], name: 'Two\nlines' }],
+    ['a name with a line separator', { words: ['add', 'core'], name: `Two${String.fromCodePoint(0x2028)}lines` }],
+    ['a name with a paragraph separator', { words: ['add', 'core'], name: `Two${String.fromCodePoint(0x2029)}lines` }],
+    ['a name with a right-to-left override', { words: ['add', 'core'], name: `Two${String.fromCodePoint(0x202e)}lines` }],
+    ['a name with a direction isolate', { words: ['add', 'core'], name: `Two${String.fromCodePoint(0x2066)}lines` }],
     ['an empty name', { words: ['add', 'core'], name: ' ' }],
   ];
 
@@ -93,6 +97,13 @@ describe('the rules of a track id and a track name (TP-80, TP-89)', () => {
   it('M5-1b TP-80 accepts a track id of exactly the most characters, and a name of exactly the most characters', async () => {
     const repo = await boardNode();
     valueOf(await run(repo, { words: ['add', `a${'b'.repeat(trackLimits.maxIdChars - 1)}`], name: 'x'.repeat(trackLimits.maxNameChars) }));
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it('M5-1b TP-80 accepts a name with an emoji sequence that holds zero-width joiners', async () => {
+    const family = [0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467].map((code) => String.fromCodePoint(code)).join('');
+    const repo = await boardNode();
+    valueOf(await run(repo, { words: ['add', 'core'], name: `Team ${family}` }));
     expect(repo.commits).toHaveLength(1);
   });
 
@@ -148,13 +159,16 @@ describe('the words and the flags of track (TP-81)', () => {
   });
 });
 
-describe('track: text from the board file prints as one clean line (TP-91)', () => {
-  it('M5-1b TP-91 cleans a track name that holds a bidi mark', async () => {
-    const bidi = String.fromCodePoint(0x202e);
-    const repo = await boardNode({ board: boardText([], [track('core', `Co${bidi}re`)]) });
-    const text = plainText(valueOf(await run(repo, { words: ['list'] })));
-    expect(text).not.toContain(bidi);
-    expect(text.trimEnd().split('\n')[1]).toContain('Core');
+describe('track: a track name from the board file is one line (TP-91)', () => {
+  it.each([
+    ['a bidi mark', 0x202e],
+    ['a line separator', 0x2028],
+  ])('M5-1b TP-91 stops the read of a track name that holds %s, with exit 1, and names the file', async (_name, code) => {
+    const mark = String.fromCodePoint(code);
+    const repo = await boardNode({ board: boardText([], [track('core', `Co${mark}re`)]) });
+    const error = errorOf(await run(repo, { words: ['list'] }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(fileNames.board);
   });
 });
 

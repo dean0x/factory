@@ -188,7 +188,7 @@ const optionOf = (option: DecisionAskInput['options'][number]): CliResult<Stored
 export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecision> => {
   const title = lineOf('title', input.title, boardTextLimits.maxTitleChars);
   if (!title.ok) return title;
-  if (holdsBreak(input.question.trim())) return failure(`cannot write ${files.waiting}: the question holds a line break or a control character`);
+  if (holdsBreak(input.question.trim())) return failure(`cannot write ${files.waiting}: the question holds a line break, a control character or a mark of text direction`);
   const question = lineOf(decisionKeys.question, input.question, boardTextLimits.maxQuestionChars);
   if (!question.ok) return question;
   const { options } = input;
@@ -211,7 +211,7 @@ export const checkDecision = (input: DecisionAskInput): CliResult<CheckedDecisio
 /** Why a path can not be linked, as a phrase for a message ("the path ..."), or null. The checks need no file. */
 const docPathIssue = (path: string): string | null => {
   if (path === '') return 'is empty';
-  if (holdsBreak(path)) return 'holds a line break or a control character';
+  if (holdsBreak(path)) return 'holds a line break, a control character or a mark of text direction';
   if (path.length > boardTextLimits.maxDocPathChars) return `is longer than ${boardTextLimits.maxDocPathChars} characters`;
   if (path.includes('\\')) return 'holds a backslash';
   return isPlainPath(path) ? null : `is not a plain relative path inside the ${places.folder}`;

@@ -163,6 +163,10 @@ describe('the tracks of the board file', () => {
       trackOf({ id: 7 }),
       trackOf({ name: '' }),
       trackOf({ name: 'a\nb' }),
+      trackOf({ name: `a${String.fromCodePoint(0x2028)}b` }),
+      trackOf({ name: `a${String.fromCodePoint(0x2029)}b` }),
+      trackOf({ name: `a${String.fromCodePoint(0x202e)}b` }),
+      trackOf({ name: `a${String.fromCodePoint(0x2067)}b` }),
       trackOf({ name: 'a'.repeat(61) }),
       trackOf({ name: 9 }),
       trackOf({ roadmap: 'yes' }),
@@ -680,6 +684,9 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     ['a title with a line break', { title: 'one\ntwo', fields }, 'title'],
     ['a title with a line separator', { title: `one${String.fromCodePoint(0x2028)}two`, fields }, 'title'],
     ['a title with a paragraph separator', { title: `one${String.fromCodePoint(0x2029)}two`, fields }, 'title'],
+    ['a title with a right-to-left override', { title: `one${String.fromCodePoint(0x202e)}two`, fields }, 'title'],
+    ['a title with a pop of a direction isolate', { title: `one${String.fromCodePoint(0x2069)}two`, fields }, 'title'],
+    ['a text with a left-to-right embedding', { title: 'ok', text: `one${String.fromCodePoint(0x202a)}two`, fields }, 'text'],
     ['a text with a line break', { title: 'ok', text: 'one\r\ntwo', fields }, 'text'],
     ['a text of 501 characters', { title: 'ok', text: 'x'.repeat(501), fields }, 'text'],
     ['a field that the setup does not declare', { title: 'ok', fields: { priority: 'P1', colour: 'red' } }, 'colour'],
@@ -700,6 +707,13 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     const repo = await repoWith(EMPTY_BOARD);
     const added = valueOf(await connectorOf(repo).addItem({ title: 'x'.repeat(100), text: 'y'.repeat(500), fields }));
     expect([added.title.length, added.record['text']]).toEqual([100, 'y'.repeat(500)]);
+  });
+
+  it('M5-1b TP-24 takes a title with an emoji sequence that holds zero-width joiners', async () => {
+    const family = [0x1f468, 0x200d, 0x1f469, 0x200d, 0x1f467].map((code) => String.fromCodePoint(code)).join('');
+    const repo = await repoWith(EMPTY_BOARD);
+    const added = valueOf(await connectorOf(repo).addItem({ title: `Team ${family}`, fields }));
+    expect(added.title).toBe(`Team ${family}`);
   });
 
   it('M5-1b TP-24 refuses a change of an item with a long title, a line break or an unknown field, and changes no file', async () => {
@@ -755,12 +769,15 @@ describe('the local connector: the checks of a write (TP-24)', () => {
     ['a question with a line break', { ...DECISION, question: 'one\ntwo' }, 1, fileNames.waiting],
     ['a question of 501 characters', { ...DECISION, question: 'q'.repeat(501) }, 2, 'question'],
     ['an empty title', { ...DECISION, title: ' ' }, 2, 'title'],
+    ['a question with a direction isolate', { ...DECISION, question: `one${String.fromCodePoint(0x2066)}two` }, 1, fileNames.waiting],
     ['a title with a line break', { ...DECISION, title: 'a\nb' }, 2, 'title'],
+    ['a title with a right-to-left override', { ...DECISION, title: `a${String.fromCodePoint(0x202e)}b` }, 2, 'title'],
     ['no option', { ...DECISION, options: [] }, 2, 'options'],
     ['ten options', { ...DECISION, options: Array.from({ length: 10 }, (_, at) => ({ key: `k${at}`, text: `Option ${at}` })) }, 2, 'options'],
     ['an option key that is not a token', { ...DECISION, options: [{ key: 'a b', text: 'x' }] }, 2, 'option key'],
     ['an option key used twice', { ...DECISION, options: [{ key: 'a', text: 'x' }, { key: 'a', text: 'y' }] }, 2, 'twice'],
     ['an option text with a line break', { ...DECISION, options: [{ key: 'a', text: 'x\ny' }] }, 2, 'option'],
+    ['an option text with a direction isolate', { ...DECISION, options: [{ key: 'a', text: `x${String.fromCodePoint(0x2066)}y` }] }, 2, 'option'],
     ['two recommended options', { ...DECISION, options: [{ key: 'a', text: 'x', rec: true }, { key: 'b', text: 'y', rec: true }] }, 2, 'recommend'],
   ];
 
@@ -1004,6 +1021,15 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
     const doc = valueOf(parseBoard(repo.textOf(fileNames.board) ?? '', QUEUE));
     expect(doc.items[0]?.record['docs']).toEqual(['docs/a.md', DOC_PATH]);
     expect(repo.commits).toHaveLength(1);
+  });
+
+  it('M5-1b TP-24 refuses a path with a right-to-left override, also when the file is there, with exit 2, and writes nothing', async () => {
+    const path = `docs/design${String.fromCodePoint(0x202e)}.md`;
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    repo.deps.seed(join(HOME, path), '# Design\n');
+    expect(exitOf(await link(repo, path))).toBe(2);
+    expectUntouched(repo, board);
   });
 
   it('M5-1b TP-24 stops a link when the docs of the item is not a list of text, with exit 1, names the file, and changes nothing', async () => {
