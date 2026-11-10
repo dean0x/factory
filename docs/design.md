@@ -278,6 +278,7 @@ factory shutdown                            # stop every session of this factory
 factory restart <worker>                    # restart one worker, and keep its conversation (§4.11)
 factory reboot                              # shut down the whole factory and start it again; each recorded worker resumes (§4.11)
 factory status [--home DIR] [--json]        # each worker with its state, its work item and its unused state; the digest for the owner (§4.11)
+factory status --usage [--home DIR] [--json]   # the usage view: the token use, the limits and the work counts of the factory, from the token meter package (§4.11, FAC-M5b)
 factory dismiss <worker> [--yes] | --unused # end a worker and free its work copy when its work is pushed; a dry run until --yes; --unused lists the unused workers first, and the owner picks (§4.11)
 factory doctor [--fix]                      # check the tools, their versions, the platform, the safety settings, the last-seen notes and the board; FAC-M11 adds the check of each board CLI: present, configured, authorized (§4.15)
 factory upgrade [--dry-run]                 # update the saved state and the parts of the text files that factory writes (§4.5)
@@ -310,6 +311,7 @@ factory decide read [<D-n>] [--from FILE]   # read the answers on the board with
 factory decide <D-n> <option> [--note T] [--principle ID]   # the owner enters the decision in a terminal window, with every board kind; the decision log and the profile get it (§4.10)
 factory queue set|show                      # the order of the finished work that waits for an approval point
 factory watch                               # read the new board changes, the local change feed included, a limited number of times; wake the coordinator (§4.10)
+factory item estimate <id>                  # the token range of one work item, from closed items with measured tokens; NO BASIS when there are too few (§4.11, FAC-M5b)
 
 factory node tree | children | add-child | remove-child
 factory report [--json] [--since CURSOR]    # digest for the parent (§5)
