@@ -140,7 +140,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 95],
+    ['coordinator', 40, 90],
     ['manager', 20, 40],
     ['safety', 12, 25],
     ['worker', 40, 59],
