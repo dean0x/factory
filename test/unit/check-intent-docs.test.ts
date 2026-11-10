@@ -1086,11 +1086,13 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
   const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
   const part = (text: string, from: string, to: string): string => text.split(from)[1]?.split(to)[0] ?? '';
 
-  it('TP-94: lists the review page command, the board archive and the page answer as criteria of FAC-M5b', () => {
+  it('TP-94: lists the board archive in FAC-M5b, and the review page render and the page answer in FAC-M11', () => {
     const later = part(roadmap, '### FAC-M5b: ', '\n### ');
-    expect(later).toMatch(/^- \[ \] Review page command \(TB-5\)\./m);
     expect(later).toMatch(/^- \[ \] Board archive\./m);
-    expect(later).toMatch(/^- \[ \] Page answer \(TB-5\)\./m);
+    expect(later).not.toMatch(/^- \[ \] (Review page command|Page answer) \(TB-5\)\./m);
+    const plugins = part(roadmap, '### FAC-M11: ', '\n### ');
+    expect(plugins).toMatch(/^- \[ \] Review page render test \(TB-5\)\./m);
+    expect(plugins).toMatch(/^- \[ \] Page answer test \(D-142 A\)\./m);
   });
 
   it('TP-94: lists the criteria of tracks and stages in FAC-M5, and the track views of M5-1c', () => {
@@ -1103,15 +1105,20 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
     const connector = part(design, '### 4.10 Board connector', '\n### 4.11');
     expect(connector).toContain('The review desk page of today is a supported owner view, and the owner can choose it.');
     expect(connector).toContain(
-      'In M5-1b the page only reads. A page answer that records through the owner store is a FAC-M5b criterion.',
+      'In M5-1b the page only reads. A page answer is a board event. It shows and wakes, and records nothing (D-142 A).',
     );
+    expect(connector).not.toContain('A page answer that records through the owner store');
   });
 
   it('TP-94: says in step 4 of the migration that the page only reads the local files, and that FAC-M3 keeps the page', () => {
     const migration = part(design, '## 8. Migration of this workspace', '\n## 9. Decisions');
     expect(migration).toContain(
-      'In M5-1b the page only reads the local files. A page answer that records through the owner store is a FAC-M5b criterion.',
+      'In M5-1b the page only reads the local files. A page answer is a board event. It shows and wakes, and records nothing (D-142 A).',
     );
+    expect(migration).not.toContain('A page answer that records through the owner store');
+    const decisions = part(design, '## 9. Decisions', '\n## 10.');
+    expect(decisions).toContain('| D-142 A |');
+    expect(decisions).not.toContain('a page answer that records through the owner store');
     expect(migration).toContain('It does not retire the page (TB-5).');
   });
 

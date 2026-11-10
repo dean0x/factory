@@ -24,10 +24,12 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **work item**: A work item is one unit of work on the board.
 - **track**: A track is a named stream of work with its own roadmap. A worker is not a track.
 - **stage**: A stage is where a work item is on the board. It is not a step of the work cycle. It is never an approval.
+- **epic**: An epic is a group of work items under one goal of the owner. Each work item belongs to one epic.
 - **approval point**: An approval point is a step of the work that needs an approval. The owner sets the mode of each point.
 - **delegated**: Delegated is a mode of an approval point: the coordinator approves for the owner. The other mode is owner.
 - **board**: A board is the system that holds the work items, the requests and the decisions. The config key is `tracker`.
-- **board connector** (was: adapter): A board connector links factory to a board tool, such as GitHub, Jira or Linear. A local connector keeps the items in files.
+- **board connector** (was: adapter): A board connector links factory to a board. Local files, the review page and GitHub are connectors on one contract. A plugin adds more.
+- **plugin**: A plugin is an npm package that adds a part to factory, such as a board connector. The user installs it with npm.
 - **factory folder**: A factory folder is the folder of a node on layer 1 or above. It holds the config, the setup and the work copies.
 - **work copy** (was: checkouts): A work copy is a separate copy of a project folder in which one worker works. It is under `work-copies/` in the factory folder.
 - **factory list** (was: home index): The factory list is a file for your user. It lists each registered factory and the path of its folder.
