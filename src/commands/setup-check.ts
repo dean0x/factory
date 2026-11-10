@@ -186,13 +186,19 @@ export const checkRootSetup = async (
 export const mayAsk = (deps: Deps, dryRun: boolean): boolean =>
   !dryRun && deps.stdinIsTTY && deps.stdoutIsTTY && !inFactorySession(deps);
 
-/** The setup texts that the blocks may use after the check, and whether this run recorded an acceptance. */
+/**
+ * The setup texts that the blocks may use after the check, whether this run recorded an acceptance, and the warnings of the
+ * write. A warning names a lock file that stays after a saved acceptance: the run goes on and prints it.
+ */
 export interface SettledSetup {
   readonly texts: SetupTexts;
   readonly accepted: boolean;
+  readonly warnings: readonly string[];
 }
 
 const NO_TEXTS: SetupTexts = { coordinator: null, worker: null };
+
+const NO_WARNINGS: readonly string[] = [];
 
 const stopOf = (check: { readonly stop: SetupStop }): CliResult<never> => safetyRefusal(check.stop.text, check.stop.remedy);
 
@@ -211,9 +217,9 @@ export const settleSetup = async (
   const { home, node, check, dryRun, reason } = request;
   switch (check.kind) {
     case 'empty':
-      return ok({ texts: NO_TEXTS, accepted: false });
+      return ok({ texts: NO_TEXTS, accepted: false, warnings: NO_WARNINGS });
     case 'accepted':
-      return ok({ texts: check.setup.texts, accepted: false });
+      return ok({ texts: check.setup.texts, accepted: false, warnings: NO_WARNINGS });
     case 'unusable':
       return err(check.error);
     case 'unaccepted':
@@ -228,7 +234,12 @@ export const settleSetup = async (
         reason,
       });
       if (!answer.ok) return answer;
-      return answer.value ? ok({ texts: check.setup.texts, accepted: true }) : stopOf(check);
+      if (!answer.value.accepted) return stopOf(check);
+      return ok({
+        texts: check.setup.texts,
+        accepted: true,
+        warnings: answer.value.warning === null ? NO_WARNINGS : [answer.value.warning],
+      });
     }
     default: {
       const unreachable: never = check;

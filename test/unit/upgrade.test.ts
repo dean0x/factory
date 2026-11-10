@@ -34,6 +34,7 @@ import {
   exited,
   FAKE_PROGRAM_ARGV,
   registerRoot,
+  withFailingRemoves,
   withFailingWrites,
   type FakeDeps,
   type RunCall,
@@ -2728,6 +2729,17 @@ describe('upgrade: a node of schema 1', () => {
       expect(output.lines.some((line) => line.level === 'warn' && line.text === output.warnings[0])).toBe(true);
     });
 
+    it('counts the index as saved when only its lock file stays: a warning that names the lock file, and no advice to run init', async () => {
+      const { deps } = makeOldNode();
+      const stuck = withFailingRemoves(deps, (path) => path === `${INDEX}.lock`);
+      const output = success(await upgrade(stuck));
+      expect(output.json).toMatchObject({ changed: true, committed: true });
+      expect(indexed(deps)).toEqual([expect.objectContaining({ home: HOME })]);
+      expect(output.warnings.join('\n')).toContain(`${INDEX}.lock`);
+      expect(output.warnings.join('\n')).not.toContain('was not updated');
+      expect(output.warnings.join('\n')).not.toContain('to register it');
+    });
+
     it('exits 4 and changes no file when no folder is named for the index, because it can not register the folder', async () => {
       const { deps } = makeOldNode({ env: {} });
       const before = snapshot(deps);
@@ -3918,6 +3930,17 @@ describe('upgrade: the setup text needs the owner (TP-128, TP-129, TP-173, TP-17
       expect(question).toContain(`Hash of all files: ${hashesOf(deps)[0]}`);
       expect(blockBody(text(deps, CLAUDE), 'setup')).toBe('Second rules.');
       expect(output.json).toMatchObject({ changed: true });
+    });
+
+    it('counts the acceptance as saved when only its lock file stays: the run goes on, renders the text and warns with the lock file', async () => {
+      const { deps } = await changedNode();
+      const [oldHash] = hashesOf(deps);
+      const output = success(await upgrade(withFailingRemoves(asking(deps, 'y'), (path) => path === `${ACCEPTANCES}.lock`)));
+      expect(hashesOf(deps)).toHaveLength(1);
+      expect(hashesOf(deps)[0]).not.toBe(oldHash);
+      expect(blockBody(text(deps, CLAUDE), 'setup')).toBe('Second rules.');
+      expect(output.warnings.join('\n')).toContain(`${ACCEPTANCES}.lock`);
+      expect(output.warnings.join('\n')).not.toContain('was not written');
     });
 
     it('renders the text from the bytes that it hashed, also when the file changes while the owner reads', async () => {

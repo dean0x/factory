@@ -953,6 +953,9 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
     );
   }
 
+  // An entry that is saved with only its lock file left counts as written: the run keeps its work and warns.
+  const listWarnings = recorded.value.warning === null ? [] : [recorded.value.warning];
+
   // The records come after the entry in the factory list, so a run that fails leaves no record. A record that cannot be
   // written is a warning: the run keeps its work, and the point counts as `owner`.
   const approvals = await recordApprovals(
@@ -980,13 +983,17 @@ export const applyInit = async (deps: Deps, plan: InitPlan): Promise<CliResult<I
           ]),
       ...(rootCommitted || plan.received ? [] : [rootRepo.noIdentity]),
       ...stateWarnings,
+      ...listWarnings,
       ...approvals.warnings,
       ...accepted.warnings,
     ],
   });
 };
 
-/** Write a setup acceptance through its writer. A write that fails gives a warning and no acceptance. */
+/**
+ * Write a setup acceptance through its writer. A write that fails gives a warning and no acceptance. An acceptance that is
+ * saved with only its lock file left counts as accepted, with a warning that names the lock file.
+ */
 export const recordAcceptance = async (
   deps: Deps,
   acceptance: PlannedAcceptance | null,
@@ -994,7 +1001,7 @@ export const recordAcceptance = async (
   if (acceptance === null) return { accepted: false, warnings: [] };
   const written = await recordSetupAcceptance(deps, acceptance.input, acceptance.fromInitYes ? { fromInitYes: true } : {});
   return written.ok
-    ? { accepted: true, warnings: [] }
+    ? { accepted: true, warnings: written.value.warning === null ? [] : [written.value.warning] }
     : {
         accepted: false,
         warnings: [

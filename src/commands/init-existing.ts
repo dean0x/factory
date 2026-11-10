@@ -564,6 +564,8 @@ const applyWrites = async (deps: Deps, checked: Checked, plan: Plan, indexPath: 
       failure(recorded.error, `Fix the cause, then run "${commandText(commands.init)}" again. A second run works in the same folder.`).error,
     );
   }
+  // An entry that is saved with only its lock file left counts as written: the run keeps its work and warns.
+  if (recorded.value.warning !== null) warnings.push(recorded.value.warning);
   const kept = await guard?.keep();
   if (kept?.ok === false) {
     warnings.push(`The copy of the old guard folder stays (${kept.error.message}). Remove it by hand.`);

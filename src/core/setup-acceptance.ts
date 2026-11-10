@@ -414,16 +414,26 @@ const textWithRecord = (
 };
 
 /**
+ * The result of a write of the store. The warning names a lock file that stays after a saved change, or it is null. An
+ * acceptance that is saved with a lock file left counts as written.
+ */
+export interface AcceptanceWrite {
+  readonly warning: string | null;
+}
+
+/**
  * Write a setup acceptance. This is the only writer of the store. It refuses inside a factory session. A person in a
  * terminal window (input and output) can write any set. With no terminal window the call writes only for `init` on a new
  * root, and only for a first acceptance (no acceptance exists for this folder under any node id) of a set that holds no
  * file apart from the setup text. That call has these limits also in a terminal window, because no answer backs it.
+ * A change that is saved with only the lock file left (`writeState` is `saved-lock-left`) is a success, and the warning
+ * names the lock file.
  */
 export const recordSetupAcceptance = async (
   deps: Deps,
   input: AcceptanceInput,
   options: AcceptanceOptions = {},
-): Promise<CliResult<void>> => {
+): Promise<CliResult<AcceptanceWrite>> => {
   const outside = requireOutsideSession(deps);
   if (!outside.ok) return outside;
   if (options.fromInitYes === true) {
@@ -456,7 +466,8 @@ export const recordSetupAcceptance = async (
   const written = await changePrivateFile(deps, path.value, setupAcceptance.maxBytes, async (current) =>
     textWithRecord(deps, path.value, current, valid.data, options),
   );
-  if (written.ok) return ok(undefined);
+  if (written.ok) return ok({ warning: null });
+  if (written.error.writeState === 'saved-lock-left') return ok({ warning: `The setup acceptance: ${written.error.message}` });
   return options.fromInitYes === true && written.error.message === NOT_FIRST
     ? safetyRefusal('a setup acceptance without a terminal window is for a first acceptance only', terminalRemedy())
     : failure(`The setup acceptance was not written: ${written.error.message}`);
@@ -492,9 +503,17 @@ export const askSetupAcceptance = async (
 };
 
 /**
+ * What the accept step gave: whether the owner accepted, and the warning of the write (see `AcceptanceWrite`). A step
+ * that did not write has no warning.
+ */
+export interface AcceptStep extends AcceptanceWrite {
+  readonly accepted: boolean;
+}
+
+/**
  * The accept step for a set of files that a person looks at: it asks (see `askSetupAcceptance`), and on yes it writes the
- * acceptance. The value is true when the owner accepted. The caller decides when a step may ask at all: a first acceptance
- * belongs to `init`, and a dry run asks nothing.
+ * acceptance. `accepted` is true when the owner accepted and the acceptance is saved. The caller decides when a step may ask
+ * at all: a first acceptance belongs to `init`, and a dry run asks nothing.
  */
 export const acceptSetup = async (
   deps: Deps,
@@ -505,9 +524,10 @@ export const acceptSetup = async (
     readonly current: Collected;
     readonly reason: string;
   },
-): Promise<CliResult<boolean>> => {
+): Promise<CliResult<AcceptStep>> => {
   const answer = await askSetupAcceptance(deps, request);
-  if (!answer.ok || !answer.value) return answer;
+  if (!answer.ok) return answer;
+  if (!answer.value) return ok({ accepted: false, warning: null });
   const real = await deps.fs.realpath(request.root);
   if (!real.ok) return real;
   const written = await recordSetupAcceptance(deps, {
@@ -517,5 +537,5 @@ export const acceptSetup = async (
     entries: request.current.manifest.entries,
     reason: request.reason,
   });
-  return written.ok ? ok(true) : written;
+  return written.ok ? ok({ accepted: true, warning: written.value.warning }) : written;
 };

@@ -27,6 +27,7 @@ import {
   exited,
   FAKE_PROGRAM_ARGV,
   registerRoot,
+  withFailingRemoves,
   withFailingWrites,
   withFsWatch,
   type FakeDeps,
@@ -2618,6 +2619,33 @@ describe('init: when the factory list can not be written (TP-74, TP-94)', () => 
     expect(sink.errors.join('')).toContain('was not updated');
   });
 
+  it('counts the entry as saved when only its lock file stays: it keeps the files, exits 0 and warns with the lock file', async () => {
+    const { deps } = withRootRepo();
+    const result = await runInit(withFailingRemoves(deps, (path) => path === `${INDEX}.lock`), options());
+    expect(result.ok).toBe(true);
+    expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
+    expect(deps.files.has(`${HOME}/.git/HEAD`)).toBe(true);
+    expect(JSON.parse(deps.files.get(INDEX) ?? 'null')).toMatchObject({ homes: [{ home: HOME }] });
+    const warnings = result.ok ? result.value.warnings.join('\n') : '';
+    expect(warnings).toContain(`${INDEX}.lock`);
+    expect(warnings).not.toContain('was not updated');
+    expect(result.ok && result.value.json['warnings']).toEqual(expect.arrayContaining([expect.stringContaining(`${INDEX}.lock`)]));
+  });
+
+  it('through the command line exits 0 and prints the lock file as a warning when only the lock file of the entry stays', async () => {
+    const { deps } = withRootRepo();
+    const sink = captureSink();
+    const code = await runCli(
+      ['init', '--yes', '--home', HOME, '--owner-name', 'Test Owner'],
+      withFailingRemoves(deps, (path) => path === `${INDEX}.lock`),
+      sink,
+    );
+    expect(code).toBe(0);
+    expect(sink.out.join('')).toContain('Created the node');
+    expect(sink.errors.join('')).toContain(`${INDEX}.lock`);
+    expect(sink.errors.join('')).not.toContain('was not updated');
+  });
+
   it('lets a second init in the same folder succeed (TP-74)', async () => {
     const { deps } = withRootRepo();
     expect((await runInit(listFails(deps), options())).ok).toBe(false);
@@ -3521,6 +3549,21 @@ describe('init: the first acceptance of the setup text on a new root', () => {
     expect(deps.files.has(`${HOME}/factory.yaml`)).toBe(true);
     expect(deps.files.has(INDEX)).toBe(true);
     expect(deps.files.has(ACCEPTANCES)).toBe(false);
+  });
+
+  it.each([
+    ['no terminal window', {}],
+    ['a terminal window', terminal],
+  ])('counts the acceptance as saved when only its lock file stays, with %s: accepted, a warning that names the lock file, and no advice to run init', async (_name, window) => {
+    const { deps } = setup({}, person(window));
+    const result = await runInit(withFailingRemoves(deps, (path) => path === `${ACCEPTANCES}.lock`), options());
+    expect(result.ok).toBe(true);
+    expect(acceptancesOf(deps)).toHaveLength(1);
+    expect(result.ok && result.value.json['accepted']).toBe(true);
+    expect(warningsOf(result).join('\n')).toContain(`${ACCEPTANCES}.lock`);
+    expect(warningsOf(result).join('\n')).not.toContain('was not written');
+    expect(warningsOf(result).join('\n')).not.toContain('Run "factory init" in a terminal window');
+    expect(linesOf(result)).toContain('Accepted the setup text');
   });
 
   it('writes no acceptance in a factory session on a new root, still succeeds, and warns (TP-83)', async () => {

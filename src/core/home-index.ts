@@ -96,21 +96,31 @@ type Settle = (existing: HomeEntry | undefined, wanted: HomeEntry) => HomeEntry;
 const asWanted: Settle = (_existing, wanted) => wanted;
 
 /**
+ * The result of a write of the index. The warning names a lock file that stays after a saved change, or it is null. A change
+ * that is saved with a lock file left counts as written.
+ */
+export interface HomeWrite {
+  readonly warning: string | null;
+}
+
+/**
  * Put the home in the index file. An entry of the same home is replaced. A file that cannot be read stays as it is.
- * The file is written atomically, with mode 0600, under a lock (see `changePrivateFile`). The error is the reason.
- * `settle` changes the entry under the lock, from the old entry of the same home.
+ * The file is written atomically, with mode 0600, under a lock (see `changePrivateFile`). The error is the reason. A change
+ * that is saved with only the lock file left (`writeState` is `saved-lock-left`) is a success, and the warning names the
+ * lock file. `settle` changes the entry under the lock, from the old entry of the same home.
  */
 export const recordHome = async (
   deps: Deps,
   path: string,
   entry: HomeEntry,
   settle: Settle = asWanted,
-): Promise<Result<void, string>> => {
+): Promise<Result<HomeWrite, string>> => {
   if (entry[homeIndex.keys.projects].length > homeIndex.maxProjects) {
     return err(`a ${places.folder} can list at most ${homeIndex.maxProjects} projects`);
   }
   const written = await changePrivateFile(deps, path, homeIndex.maxBytes, (current) => textWithEntry(deps, path, current, entry, settle));
-  return written.ok ? written : err(written.error.message);
+  if (written.ok) return ok({ warning: null });
+  return written.error.writeState === 'saved-lock-left' ? ok({ warning: written.error.message }) : err(written.error.message);
 };
 
 /**
@@ -146,10 +156,11 @@ const settleOrigin =
 
 /**
  * Put a node home in the index, so that a command finds it from a project folder. The error is a sentence that says the
- * index was not updated and why. `indexPath` is null when no variable names a folder. The caller decides what a
- * problem means: `init` undoes its work, and `upgrade` warns.
+ * index was not updated and why. `indexPath` is null when no variable names a folder. A saved entry with a lock file left is
+ * a success, and the warning names the index and the lock file. The caller decides what an error means: `init` undoes its
+ * work, and `upgrade` warns.
  */
-export const recordNode = async (deps: Deps, indexPath: string | null, node: IndexedNode): Promise<Result<void, string>> => {
+export const recordNode = async (deps: Deps, indexPath: string | null, node: IndexedNode): Promise<Result<HomeWrite, string>> => {
   if (indexPath === null) {
     return err(`The ${places.list} was not updated: ${env.stateHome} and ${env.userHome} name no folder.`);
   }
@@ -165,7 +176,8 @@ export const recordNode = async (deps: Deps, indexPath: string | null, node: Ind
     },
     settleOrigin(node),
   );
-  return recorded.ok ? ok(undefined) : err(`The ${places.list} ${indexPath} was not updated: ${recorded.error}`);
+  if (!recorded.ok) return err(`The ${places.list} ${indexPath} was not updated: ${recorded.error}`);
+  return ok({ warning: recorded.value.warning === null ? null : `The ${places.list} ${indexPath}: ${recorded.value.warning}` });
 };
 
 /** The entry of the index that has this home, as it is written or by its real path, or null when no entry has it. */
