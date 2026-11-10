@@ -11,7 +11,7 @@ import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
-import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
+import { entryOfHome, goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
@@ -39,6 +39,7 @@ import {
   files,
   flags,
   flagText,
+  homeIndex,
   keys,
   maxFileBytes,
   overwriteCommand,
@@ -251,6 +252,30 @@ export const checkIndex = async (deps: Deps): Promise<CheckResult> => {
   if (problems.length > 0) return check(checkIds.index, 'warn', problems.join(' '));
   const count = entries.value.length;
   return check(checkIds.index, 'ok', `${count} ${plural(count, 'entry', 'entries')} in the ${places.list}, all present`);
+};
+
+/**
+ * The node id against the other entries of the home index. The session names come from the node id, so two nodes with one id
+ * give their sessions the same names, and the tmux session of one node stops the start of the other. It is a warning, because
+ * the start already stops the second node.
+ */
+export const checkNodeId = async (deps: Deps, home: string, state: DocState<FactoryConfig>): Promise<CheckResult> => {
+  if (state.kind !== 'valid') return notChecked(checkIds.nodeId, `${files.config} is not valid`);
+  const id = state.value.core.node.id;
+  const path = await indexPathOf(deps);
+  if (!path.ok) return notChecked(checkIds.nodeId, path.error.message);
+  if (path.value === null) return check(checkIds.nodeId, 'ok', `no ${places.list} is used, so no other node id is known`);
+  const entries = await readHomeIndex(deps, path.value);
+  if (!entries.ok) return notChecked(checkIds.nodeId, `${path.value} cannot be read`);
+  const own = await entryOfHome(deps, entries.value, home);
+  const others = entries.value.filter((entry) => entry !== own && entry[homeIndex.keys.id] === id).map((entry) => entry[homeIndex.keys.home]);
+  if (others.length === 0) return check(checkIds.nodeId, 'ok', `no other ${program} in the ${places.list} has the node id ${id}`);
+  return check(
+    checkIds.nodeId,
+    'warn',
+    `the ${places.list} also gives the node id ${id} to ${others.join(', ')}. The sessions of these ${roles.node}s get the same names, ` +
+      `so only one of them can run at a time. Give each ${roles.node} its own id.`,
+  );
 };
 
 /** Only the local tracker works in this version of factory. */
@@ -697,6 +722,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     root,
     tempFolder,
     index,
+    nodeId,
     blocks,
     setupText,
     children,
@@ -713,6 +739,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkRoot(deps, home),
     checkTempFolders(deps, home),
     checkIndex(deps),
+    checkNodeId(deps, home, config),
     checkNodeBlocks(deps, home, config),
     checkSetupText(deps, home),
     checkChildren(deps, config, registry),
@@ -734,6 +761,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     root,
     tempFolder,
     index,
+    nodeId,
     blocks,
     setupText,
     checkRoles(config),

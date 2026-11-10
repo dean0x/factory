@@ -1416,6 +1416,8 @@ export const checkIds = {
   root: 'root',
   tempFolder: 'temp-folder',
   index: 'index',
+  /** The node id against the other entries of the factory list: two nodes with one id give their sessions the same names. */
+  nodeId: 'node-id',
   blocks: 'blocks',
   setupText: 'setup-text',
   roles: 'roles',
