@@ -53,6 +53,7 @@ export const commands = {
   item: 'item',
   track: 'track',
   request: 'request',
+  decide: 'decide',
   queue: 'queue',
   self: 'self',
   layout: 'layout',
@@ -231,6 +232,8 @@ export const files = {
   homeIndex: 'homes.json',
   /** The approval records of the user. The per-user state folder holds the file, beside the factory list. */
   ownerRecords: 'owner-records.json',
+  /** The owner decisions of the user: one record for each decision that the owner answered. It has its own lock and its own bounds. */
+  ownerDecisions: 'owner-decisions.json',
   /** The setup acceptances of the user. The per-user state folder holds the file, beside the factory list. */
   setupAcceptances: 'setup-acceptances.json',
 } as const;
@@ -400,6 +403,8 @@ export const env = {
   factoryPrefix: 'FACTORY_',
   home: 'FACTORY_HOME',
   session: 'FACTORY_SESSION',
+  /** The variable that Claude Code sets for each process that it starts. A non-empty value means that a Claude Code session runs this process. */
+  claudeCode: 'CLAUDECODE',
   /** The inbox folder of a worker. Only the launch of a worker sets it. */
   inbox: 'FACTORY_INBOX',
   /** The id of the tmux pane that a process runs in. tmux sets it for each program that it starts in a pane. */
@@ -568,11 +573,13 @@ export const decisionLogKeys = { rows: 'rows', item: 'item', decision: 'decision
 /**
  * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
  * decision log names its decision at the start of its `item` text: the id, then the end of the text or a character that cannot
- * continue the id. The numbers have at most 9 digits.
+ * continue the id. The numbers have at most 9 digits. `canonicalRequest` is the form that a request must have to be answered:
+ * the number has no leading zero, so one decision has one id.
  */
 export const boardIds = {
   item: /^B-[0-9]{1,9}$/,
   request: /^D-[0-9]{1,9}$/,
+  canonicalRequest: /^D-[1-9][0-9]{0,8}$/,
   requestAtStart: /^D-[0-9]{1,9}(?![0-9A-Za-z_-])/,
 } as const;
 
@@ -771,6 +778,39 @@ export const ownerRecords = {
   /** The most items in one scope record, and the most characters in one item, one project id or one version. */
   maxItems: 100,
   maxTextChars: 200,
+} as const;
+
+/**
+ * The owner decisions of the user: the number of the schema, the keys of the file and of a record, and the bounds. One record
+ * stands for one decision of one node and one real root. The file has its own lock and its own bounds, apart from the approval
+ * records.
+ */
+export const ownerDecisions = {
+  schema: 1,
+  keys: {
+    schema: 'schema',
+    records: 'records',
+    node: 'node',
+    root: 'root',
+    id: 'id',
+    option: 'option',
+    hash: 'hash',
+    at: 'at',
+  },
+  /** The file holds at most this many records, and a reader refuses a file over this many bytes. */
+  maxRecords: 1000,
+  maxBytes: maxFileBytes,
+} as const;
+
+/**
+ * The hash of a decision request (AC-39). The canonical text is the JSON of the wrapper `{ tag, version, request }`, with the
+ * whole waiting entry in `request`. The hash is SHA-256 of that text as lowercase hex, and `pattern` is its form.
+ */
+export const requestHash = {
+  tag: 'factory.decision-request',
+  version: 1,
+  keys: { tag: 'tag', version: 'version', request: 'request' },
+  pattern: /^[0-9a-f]{64}$/,
 } as const;
 
 /**
