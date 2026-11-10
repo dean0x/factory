@@ -11,7 +11,8 @@ import { CONFIG_SCHEMA_VERSION, type FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { GIT_ENTRY, gitVersionProblem, hasCommit, hasIdentity, isWorkTreeRoot } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
-import { entryOfHome, goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
+import { goneHomes, indexPathOf, readHomeIndex } from '../core/home-index.js';
+import { folderKeyOf } from '../core/paths.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../core/instruction-files.js';
 import { effectiveModes } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
@@ -267,8 +268,15 @@ export const checkNodeId = async (deps: Deps, home: string, state: DocState<Fact
   if (path.value === null) return check(checkIds.nodeId, 'ok', `no ${places.list} is used, so no other node id is known`);
   const entries = await readHomeIndex(deps, path.value);
   if (!entries.ok) return notChecked(checkIds.nodeId, `${path.value} cannot be read`);
-  const own = await entryOfHome(deps, entries.value, home);
-  const others = entries.value.filter((entry) => entry !== own && entry[homeIndex.keys.id] === id).map((entry) => entry[homeIndex.keys.home]);
+  const ownKey = await folderKeyOf(deps, home);
+  const gone = await goneHomes(deps, entries.value);
+  const others: string[] = [];
+  for (const entry of entries.value) {
+    const other = entry[homeIndex.keys.home];
+    if (entry[homeIndex.keys.id] !== id || gone.includes(other) || others.includes(other)) continue;
+    // An entry for this folder by another path, a link or another case on macOS, is this node.
+    if ((await folderKeyOf(deps, other)) !== ownKey) others.push(other);
+  }
   if (others.length === 0) return check(checkIds.nodeId, 'ok', `no other ${program} in the ${places.list} has the node id ${id}`);
   return check(
     checkIds.nodeId,

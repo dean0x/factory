@@ -1306,11 +1306,32 @@ describe('doctor: the node id in the factory list', () => {
   it('warns when another factory in the list has the node id, and names that factory', async () => {
     const deps = await initialized();
     registerRoot(deps, OTHER, 'demo');
+    deps.seed(`${OTHER}/factory.yaml`, 'schema: 2\n');
     const result = await checkNodeId(deps, HOME, await inspectConfig(deps, HOME));
     expect(result).toMatchObject({ id: 'node-id', level: 'warn' });
     expect(result.text).toContain(OTHER);
     expect(result.text).toContain('demo');
     expect(result.text).not.toContain(`${HOME},`);
+  });
+
+  it('is ok for an entry with the node id whose folder is gone: the index check reports that entry', async () => {
+    const deps = await initialized();
+    registerRoot(deps, OTHER, 'demo');
+    expect(await checkNodeId(deps, HOME, await inspectConfig(deps, HOME))).toMatchObject({ id: 'node-id', level: 'ok' });
+  });
+
+  it('is ok for a second entry of this folder through a link', async () => {
+    const deps = await initialized({ links: { '/link/node': HOME } });
+    registerRoot(deps, '/link/node', 'demo');
+    expect(await checkNodeId(deps, HOME, await inspectConfig(deps, HOME))).toMatchObject({ id: 'node-id', level: 'ok' });
+  });
+
+  it('is ok on macOS for a second entry of this folder in other letter case', async () => {
+    const deps = await initialized({ os: 'darwin' });
+    registerRoot(deps, HOME.toUpperCase(), 'demo');
+    // The fake file system knows case, so the folder in capitals gets a config: the entry is not gone.
+    deps.seed(`${HOME.toUpperCase()}/factory.yaml`, 'schema: 2\n');
+    expect(await checkNodeId(deps, HOME, await inspectConfig(deps, HOME))).toMatchObject({ id: 'node-id', level: 'ok' });
   });
 
   it('does not check when the config is not valid', async () => {

@@ -69,6 +69,21 @@ describe('home: the order', () => {
     expect(error.hint).toContain(`--home ${HOME}`);
   });
 
+  it('takes FACTORY_HOME in a project clone that holds a factory.yaml of its own, which the factory list does not list', async () => {
+    const deps = nodeAt(`${HOME}/web/src`, { FACTORY_HOME: HOME });
+    deps.seed(`${HOME}/web/factory.yaml`, 'schema: 2\n');
+    expect(await located(deps)).toEqual({ home: HOME, source: 'env', unregistered: false });
+  });
+
+  it('stops in the deepest listed factory folder: a child folder inside the folder of FACTORY_HOME', async () => {
+    const deps = nodeAt(`${HOME}/child/deep`, { FACTORY_HOME: HOME });
+    deps.seed(`${HOME}/child/factory.yaml`, 'schema: 2\n');
+    registerRoot(deps, `${HOME}/child`, 'child');
+    const error = await stopped(deps);
+    expect(error.kind).toBe('failure');
+    expect(error.hint).toContain(`--home ${HOME}/child`);
+  });
+
   it('takes the home flag with no stop when FACTORY_HOME and the current folder name different factory folders', async () => {
     const deps = nodeAt(`${HOME}/deep`, { FACTORY_HOME: '/w/parent' });
     expect(await located(deps, HOME)).toEqual({ home: HOME, source: 'flag', unregistered: false });
