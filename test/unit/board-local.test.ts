@@ -9,7 +9,7 @@ import { createLocalBoard, type LocalBoardOptions } from '../../src/board/local.
 import { firstStageOf, requireSettableStage, requireStage, stageShown, stagesOf, UNLISTED_MARK } from '../../src/board/stages.js';
 import { trackIdIssue, trackNameIssue, tracksOf } from '../../src/board/tracks.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
-import { commands, commandText, files as fileNames, stateLock, values } from '../../src/names.js';
+import { commands, commandText, files as fileNames, maxBoardNumber, stateLock, values } from '../../src/names.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { describeBoardContract } from '../contract/board-contract.js';
@@ -830,6 +830,25 @@ describe('the local connector: the ids of a write (TP-88, TP-89)', () => {
     expect(repo.textOf(fileNames.decisionLog)).toBe(jsonOf({ rows: [] }));
   });
 
+  it('M5-1b TP-89 stops an item add when the numbers B-n are used up, with exit 1, and writes nothing', async () => {
+    const board = boardWith([item(`B-${maxBoardNumber}`)]);
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).addItem({ title: 'New', fields: PRIORITY }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('used up');
+    expectUntouched(repo, board);
+  });
+
+  it('M5-1b TP-99 stops a decision when the numbers D-n are used up, with exit 1, and writes nothing', async () => {
+    const waiting = jsonOf({ intro: '', groups: [], items: [{ id: `D-${maxBoardNumber}` }] });
+    const repo = await repoWith(EMPTY_BOARD, { waiting });
+    const error = errorOf(await connectorOf(repo).askDecision(DECISION));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('used up');
+    expect(repo.commits).toEqual([]);
+    expect(repo.textOf(fileNames.waiting)).toBe(waiting);
+  });
+
   it('M5-1b TP-88 stops a decision when the waiting file holds a D-n twice, with exit 1, and writes nothing', async () => {
     const waiting = jsonOf({ intro: '', groups: [], items: [{ id: 'D-1' }, { id: 'D-1' }] });
     const repo = await repoWith(EMPTY_BOARD, { waiting });
@@ -985,6 +1004,15 @@ describe('the local connector: a link to a file of the factory (doc link)', () =
     const doc = valueOf(parseBoard(repo.textOf(fileNames.board) ?? '', QUEUE));
     expect(doc.items[0]?.record['docs']).toEqual(['docs/a.md', DOC_PATH]);
     expect(repo.commits).toHaveLength(1);
+  });
+
+  it('M5-1b TP-24 stops a link when the docs of the item is not a list of text, with exit 1, names the file, and changes nothing', async () => {
+    const board = boardWith([item('B-1', { docs: 'a.md' })]);
+    const repo = await repoWith(board);
+    const error = errorOf(await link(repo, DOC_PATH));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(fileNames.board);
+    expectUntouched(repo, board);
   });
 
   it.each([
