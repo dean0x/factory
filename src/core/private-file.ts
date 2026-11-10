@@ -148,7 +148,7 @@ const writeUnderLock = async (
     const holds = await holdsLock(deps, held.lockPath, held.token);
     if (!holds.ok) return err(`the lock ${held.lockPath} cannot be checked, so nothing was written: ${holds.error}`);
     if (!holds.value) {
-      return err(`another ${program} command took the lock ${held.lockPath} over, so nothing was written. Run the command again.`);
+      return err(`another ${program} command took the lock ${held.lockPath} over, so nothing was written. Wait until that command ends, then try again.`);
     }
   }
   const written = await deps.fs.writeTextAtomic(path, text, dirname(path), privateFile.fileMode);

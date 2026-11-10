@@ -2,13 +2,26 @@ import { z } from 'zod';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
-import { commands, commandText, files, ownerRecords, places, values } from '../names.js';
+import {
+  boardIds,
+  boardLimits,
+  commands,
+  commandText,
+  env,
+  files,
+  ownerDecisions,
+  ownerRecords,
+  places,
+  requestHash,
+  values,
+} from '../names.js';
 import { ownerModes, type ApprovalMode, type ApprovalModes } from '../recipes/index.js';
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
 import { inFactorySession } from './factory-session.js';
 import { comparable, isSameOrInsideFolder } from './paths.js';
 import { changePrivateFile, readPrivateText, STORE_INSIDE_FOLDER_REMEDY, userStatePathOf } from './private-file.js';
+import { requestHashOf } from './request-hash.js';
 import { err, ok, type Result } from './result.js';
 import { describeIssues } from './zod.js';
 
@@ -80,19 +93,25 @@ export const readOwnerRecords = async (deps: Deps, path: string): Promise<Result
 };
 
 /**
- * The store file for a factory folder: in the state folder of the user, and never inside the factory folder. The root is a
- * real path.
+ * A per-user file for a factory folder: in the state folder of the user, and never inside the factory folder (exit 4). The
+ * root is a real path. With no variable that names a state folder, the path is null. `what` names the file in the refusal.
  */
-const storePathOf = async (deps: Deps, root: string): Promise<CliResult<string>> => {
-  const path = await userStatePathOf(deps, files.ownerRecords);
-  if (!path.ok) return path;
-  if (path.value === null) return failure('the approval records have no place: no variable names a state folder');
+const userFilePathOf = async (deps: Deps, root: string, fileName: string, what: string): Promise<CliResult<string | null>> => {
+  const path = await userStatePathOf(deps, fileName);
+  if (!path.ok || path.value === null) return path;
   const inside = await isSameOrInsideFolder(deps, root, path.value);
   if (!inside.ok) return inside;
   if (inside.value) {
-    return safetyRefusal(`the approval records would be ${path.value}, inside the ${places.folder} ${root}`, STORE_INSIDE_FOLDER_REMEDY);
+    return safetyRefusal(`${what} would be ${path.value}, inside the ${places.folder} ${root}`, STORE_INSIDE_FOLDER_REMEDY);
   }
   return ok(path.value);
+};
+
+/** The store file of the approval records for a factory folder. A store with no place is a failure. */
+const storePathOf = async (deps: Deps, root: string): Promise<CliResult<string>> => {
+  const path = await userFilePathOf(deps, root, files.ownerRecords, 'the approval records');
+  if (!path.ok) return path;
+  return path.value === null ? failure('the approval records have no place: no variable names a state folder') : ok(path.value);
 };
 
 /**
@@ -105,6 +124,22 @@ export const requireOwnerChannel = (deps: Deps): CliResult<void> => {
   const remedy = `Run "${commandText(commands.init)}" in a terminal window outside a ${places.session}.`;
   if (inFactorySession(deps)) return safetyRefusal(`a ${places.session} cannot write an approval record`, remedy);
   if (!deps.stdinIsTTY) return safetyRefusal('an approval record needs a terminal window', remedy);
+  return ok(undefined);
+};
+
+/**
+ * The only way to write a decision record: a person types in a terminal window for input and for output, outside a factory
+ * session and outside Claude Code. The checks run in this order: the factory session, a non-empty CLAUDECODE, the input
+ * window, the output window. Like `requireOwnerChannel`, the guard stops a session and its tools. It cannot prove that the
+ * owner acts.
+ */
+export const requireDecideChannel = (deps: Deps): CliResult<void> => {
+  const remedy = `Run "${commandText(commands.decide)}" in your own terminal window, outside Claude Code and outside a ${places.session}.`;
+  if (inFactorySession(deps)) return safetyRefusal(`a ${places.session} cannot record a decision`, remedy);
+  const claudeCode = deps.env[env.claudeCode];
+  if (claudeCode !== undefined && claudeCode !== '') return safetyRefusal('a Claude Code session cannot record a decision', remedy);
+  if (!deps.stdinIsTTY) return safetyRefusal('a decision needs a terminal window for input', remedy);
+  if (!deps.stdoutIsTTY) return safetyRefusal('a decision needs a terminal window for output', remedy);
   return ok(undefined);
 };
 
@@ -151,7 +186,10 @@ const putRecord = async (
   const written = await changePrivateFile(deps, path.value, ownerRecords.maxBytes, async (current) =>
     textWithRecord(deps, path.value, current, record),
   );
-  return written.ok ? ok(undefined) : failure(`The approval records were not updated: ${written.error.message}`);
+  if (written.ok) return ok(undefined);
+  return written.error.writeState === 'saved-lock-left'
+    ? failure(`The approval record is saved: ${written.error.message}`)
+    : failure(`The approval records were not updated: ${written.error.message}`);
 };
 
 /**
@@ -269,3 +307,196 @@ export const delegationReport = async (deps: Deps, root: string, config: Factory
 /** The mode of each approval point (see `delegationReport`). */
 export const effectiveModes = async (deps: Deps, root: string, config: FactoryConfig): Promise<ApprovalModes> =>
   (await delegationReport(deps, root, config)).modes;
+
+/*
+ * The decision records (AC-10, AC-14, AC-41). A per-user file of its own beside the approval records, with its own lock.
+ * A record is the proof that the owner answered a decision request in a terminal window. This file is its only writer.
+ */
+
+const decisionKeys = ownerDecisions.keys;
+
+const decisionSchema = z.strictObject({
+  [decisionKeys.node]: slug,
+  [decisionKeys.root]: absolutePath,
+  [decisionKeys.id]: z.string().regex(boardIds.canonicalRequest),
+  [decisionKeys.option]: z.string().regex(boardLimits.tokenPattern),
+  [decisionKeys.hash]: z.string().regex(requestHash.pattern),
+  [decisionKeys.at]: z.iso.datetime(),
+});
+
+const decisionStoreSchema = z.strictObject({
+  [decisionKeys.schema]: z.literal(ownerDecisions.schema),
+  [decisionKeys.records]: z.array(decisionSchema).max(ownerDecisions.maxRecords),
+});
+
+/** One answer of the owner: the node id, the real root, the D-n, the chosen option, the request hash and the time. */
+export type DecisionRecord = z.infer<typeof decisionSchema>;
+
+/** What the decide command gives the writer. The writer adds the node id and the real root from the place. */
+export type DecisionInput = Omit<DecisionRecord, typeof decisionKeys.node | typeof decisionKeys.root>;
+
+/** The node id, the real root and the decision file of one factory folder. A null path: no variable names a state folder. */
+export interface DecisionPlace {
+  readonly node: string;
+  readonly root: string;
+  readonly path: string | null;
+}
+
+/** The result of the writer. `existing`: the file already holds this answer. A warning names a lock file that stays. */
+export interface DecisionWrite {
+  readonly outcome: 'stored' | 'existing';
+  readonly warning: string | null;
+}
+
+/**
+ * The proof of a decision. Only `record` is a proof, and its option is the only source of the chosen option. `none`,
+ * `mismatch` and `error` each mean no proof. `mismatch` gives the stored option and time for the message only.
+ */
+export type DecisionProof =
+  | {
+      readonly kind: 'record';
+      readonly node: string;
+      readonly root: string;
+      readonly id: string;
+      readonly option: string;
+      readonly at: string;
+    }
+  | { readonly kind: 'none' }
+  | { readonly kind: 'mismatch'; readonly option: string; readonly at: string }
+  | { readonly kind: 'error'; readonly message: string };
+
+/** The key of a decision record. One key holds at most one record. */
+const decisionKeyOf = (deps: Deps, node: string, root: string, id: string): string =>
+  JSON.stringify([node, comparable(deps, root), id]);
+
+/** The records of a decision file text. A file that does not exist holds no record. Two records with one key make the file invalid. */
+const decisionRecordsOf = (deps: Deps, content: string | null): Result<readonly DecisionRecord[], string> => {
+  if (content === null) return ok([]);
+  const json = parseJsonText(content);
+  if (!json.ok) return json;
+  const parsed = decisionStoreSchema.safeParse(json.value);
+  if (!parsed.success) return err(describeIssues(parsed.error));
+  const records = parsed.data[decisionKeys.records];
+  const unique = new Set(records.map((record) => decisionKeyOf(deps, record.node, record.root, record.id)));
+  return unique.size === records.length ? ok(records) : err('the file holds two answers to one decision');
+};
+
+/** The records of the decision file, or the reason that the file cannot be used. The error names the file. */
+const readDecisionRecords = async (deps: Deps, path: string): Promise<Result<readonly DecisionRecord[], string>> => {
+  const content = await readPrivateText(deps, path, ownerDecisions.maxBytes);
+  const records = content.ok ? decisionRecordsOf(deps, content.value) : content;
+  return records.ok ? records : err(`${path} cannot be read: ${records.error}`);
+};
+
+/** The records of the node id and the real root of the place. */
+const recordsOfPlace = (deps: Deps, place: DecisionPlace, records: readonly DecisionRecord[]): readonly DecisionRecord[] => {
+  const root = comparable(deps, place.root);
+  return records.filter((record) => record.node === place.node && comparable(deps, record.root) === root);
+};
+
+/**
+ * The place of the decision file for a factory folder. It runs before any lock. It resolves the real root, and refuses
+ * (exit 4) a decision file inside the factory folder.
+ */
+export const decisionPlaceOf = async (deps: Deps, root: string, node: string): Promise<CliResult<DecisionPlace>> => {
+  const real = await deps.fs.realpath(root);
+  if (!real.ok) return real;
+  const path = await userFilePathOf(deps, real.value, files.ownerDecisions, 'the decision records');
+  return path.ok ? ok({ node, root: real.value, path: path.value }) : path;
+};
+
+/**
+ * The proof that the owner answered request `id` with the request text `requestText`. The call hashes the text itself. It
+ * reads only the decision file, and counts only the records of the node id and the real root of the place. A null path or
+ * no record gives `none`. A record with another hash gives `mismatch`. A file that cannot be used gives `error`, never
+ * `none`. Only `record` is a proof.
+ */
+export const readDecisionProof = async (
+  deps: Deps,
+  place: DecisionPlace,
+  id: string,
+  requestText: string,
+): Promise<DecisionProof> => {
+  if (place.path === null) return { kind: 'none' };
+  const records = await readDecisionRecords(deps, place.path);
+  if (!records.ok) return { kind: 'error', message: records.error };
+  const found = recordsOfPlace(deps, place, records.value).find((record) => record.id === id);
+  if (found === undefined) return { kind: 'none' };
+  if (found.hash !== requestHashOf(requestText)) return { kind: 'mismatch', option: found.option, at: found.at };
+  return { kind: 'record', node: found.node, root: found.root, id: found.id, option: found.option, at: found.at };
+};
+
+/** The D-n of the decision records of this node id and this real root. A null path or an absent file gives an empty list. */
+export const decisionIdsOf = async (deps: Deps, place: DecisionPlace): Promise<Result<readonly string[], string>> => {
+  if (place.path === null) return ok([]);
+  const records = await readDecisionRecords(deps, place.path);
+  return records.ok ? ok(recordsOfPlace(deps, place, records.value).map((record) => record.id)) : records;
+};
+
+const decisionsText = (records: readonly DecisionRecord[]): string =>
+  `${JSON.stringify({ [decisionKeys.schema]: ownerDecisions.schema, [decisionKeys.records]: records }, null, 2)}\n`;
+
+/** The new decision file text and the outcome. The same answer keeps the text. Another answer for the key is an error. */
+const textWithDecision = (
+  deps: Deps,
+  path: string,
+  current: string | null,
+  record: DecisionRecord,
+): Result<{ readonly text: string; readonly outcome: DecisionWrite['outcome'] }, string> => {
+  const known = decisionRecordsOf(deps, current);
+  if (!known.ok) return err(`${path} cannot be read: ${known.error}`);
+  const key = decisionKeyOf(deps, record.node, record.root, record.id);
+  const stored = known.value.find((other) => decisionKeyOf(deps, other.node, other.root, other.id) === key);
+  if (stored !== undefined) {
+    return stored.option === record.option && stored.hash === record.hash
+      ? ok({ text: current ?? decisionsText(known.value), outcome: 'existing' })
+      : err(`${record.id} already has the decision "${stored.option}" from ${stored.at} in ${path}`);
+  }
+  if (known.value.length >= ownerDecisions.maxRecords) {
+    return err(`${path} holds the most decision records that it can: ${ownerDecisions.maxRecords}`);
+  }
+  const text = decisionsText([...known.value, record]);
+  return Buffer.byteLength(text, 'utf8') > ownerDecisions.maxBytes
+    ? err(`${path} would be larger than ${ownerDecisions.maxBytes} bytes`)
+    : ok({ text, outcome: 'stored' });
+};
+
+/**
+ * Write one decision record. The decide command is the only caller, and it gives the time of its run. The channel check
+ * comes first, before the lock. The file never drops a record, and one key never gets a second answer. A change that is
+ * saved with a lock file left is a success with a warning that names the lock file.
+ */
+export const putDecision = async (deps: Deps, place: DecisionPlace, input: DecisionInput): Promise<CliResult<DecisionWrite>> => {
+  const channel = requireDecideChannel(deps);
+  if (!channel.ok) return channel;
+  const path = place.path;
+  if (path === null) return failure('the decision records have no place: no variable names a state folder');
+  const record = decisionSchema.safeParse({
+    [decisionKeys.node]: place.node,
+    [decisionKeys.root]: place.root,
+    [decisionKeys.id]: input.id,
+    [decisionKeys.option]: input.option,
+    [decisionKeys.hash]: input.hash,
+    [decisionKeys.at]: input.at,
+  });
+  if (!record.success) return failure(`the decision record is not valid: ${describeIssues(record.error)}`);
+  let outcome = 'stored' as DecisionWrite['outcome'];
+  // Lock order (M9): the caller holds the state lock (outer). This store lock (inner) covers the write only. No code takes
+  // the two locks in the other order.
+  const written = await changePrivateFile(
+    deps,
+    path,
+    ownerDecisions.maxBytes,
+    async (current) => {
+      const next = textWithDecision(deps, path, current, record.data);
+      if (!next.ok) return next;
+      outcome = next.value.outcome;
+      return ok(next.value.text);
+    },
+    { recheckLock: true },
+  );
+  if (written.ok) return ok({ outcome, warning: null });
+  return written.error.writeState === 'saved-lock-left'
+    ? ok({ outcome, warning: written.error.message })
+    : failure(`The decision was not recorded: ${written.error.message}`);
+};

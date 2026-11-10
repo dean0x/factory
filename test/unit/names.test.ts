@@ -19,6 +19,7 @@ import {
   nodeCommands,
   permissionSkipList,
   program,
+  requestHash,
   reservedRootNames,
   roles,
   schema1,
@@ -760,7 +761,10 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
   const wordRuleHits = (source: string, path: string): string[] =>
     literalsOf(source)
       .filter((literal) => !IMPORT_PATH.test(literal))
-      .filter((literal) => literal !== 'display-message' && !(path === NAMES_FILE && literal === 'request'))
+      .filter(
+        (literal) =>
+          literal !== 'display-message' && !(path === NAMES_FILE && (literal === 'request' || literal === requestHash.tag)),
+      )
       .map((literal) => literal.replace(/pull requests?/gi, ' ').replace(/messages between sessions/gi, ' '))
       .filter((literal) => path !== GLOSSARY_FILE && /(?<![A-Za-z0-9_])(?:requests?|messages?|checkouts?)(?![A-Za-z0-9_])/i.test(literal))
       .map((literal) => `${relative(SRC, path)}: "${literal}"`);
@@ -1061,6 +1065,20 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
 
   it('has the store file of the approval record in one module only: the owner record writer', () => {
     expect(rel(withText(/\bownerRecords\b/))).toEqual(['core/owner-record.ts']);
+  });
+
+  it('M5-1b TP-155 has the owner decision file and its names in one module only: the owner record writer', () => {
+    expect(rel(withText(/\bownerDecisions\b/))).toEqual(['core/owner-record.ts']);
+    expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/owner-record.ts']);
+  });
+
+  it('M5-1b TP-155 lets only the code of decide name the decision writer, and only decide call recordDecision', () => {
+    const decide = 'commands/decide.ts';
+    const callersOf = (pattern: RegExp, owners: readonly string[]): string[] =>
+      rel(withText(pattern)).filter((path) => !owners.includes(path));
+    expect(callersOf(/\bputDecision\b/, ['core/owner-record.ts', decide])).toEqual([]);
+    // The definition in the local board and the type in the contract are no calls.
+    expect(callersOf(/\brecordDecision\(/, ['board/local.ts', 'board/contract.ts', decide])).toEqual([]);
   });
 
   it('has the private file writer in the three modules that own a store, and in no other module', () => {

@@ -1,23 +1,35 @@
+import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { failure } from '../../src/cli/errors.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import {
+  decisionIdsOf,
+  decisionPlaceOf,
   delegationReport,
   effectiveModes,
+  putDecision,
+  readDecisionProof,
   readOwnerRecords,
   recordDelegation,
   recordScope,
+  requireDecideChannel,
+  type DecisionInput,
+  type DecisionPlace,
+  type DecisionRecord,
   type OwnerRecord,
 } from '../../src/core/owner-record.js';
+import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
 import { startSteps } from '../../src/launch/tmux.js';
-import { env, ownerRecords, values } from '../../src/names.js';
+import { commands, env, ownerDecisions, ownerRecords, values } from '../../src/names.js';
 import type { ApprovalMode } from '../../src/recipes/index.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { stripComments } from '../helpers/source-scan.js';
 
 const [owner, delegated] = values.approvalModes;
 const ROOT = '/w/factory-root';
@@ -551,5 +563,492 @@ describe('approval records, with a real file system', () => {
     await recordDelegation(deps, { root, node: NODE, point: 'merge', mode: owner });
     const records = await readOwnerRecords(deps, store);
     expect(records.ok && records.value).toHaveLength(1);
+  });
+});
+
+const DECISIONS = '/state/factory/owner-decisions.json';
+const DECISIONS_LOCK = `${DECISIONS}.lock`;
+const STORE_LOCK = `${STORE}.lock`;
+const ID = 'D-3';
+const ENTRY = {
+  id: ID,
+  title: 'Pick a path',
+  question: 'Which path do we take?',
+  options: [
+    { key: 'a', text: 'One' },
+    { key: 'b', text: 'Two', rec: true },
+  ],
+};
+
+const textOfEntry = (entry: Readonly<Record<string, unknown>>): string => {
+  const text = canonicalRequestText(entry);
+  if (!text.ok) throw new Error(text.error);
+  return text.value;
+};
+
+const TEXT = textOfEntry(ENTRY);
+const HASH = requestHashOf(TEXT);
+const AT = '2030-01-02T03:04:05.678Z';
+
+const decisionRecord = (overrides: Partial<DecisionRecord> = {}): DecisionRecord => ({
+  node: NODE,
+  root: ROOT,
+  id: ID,
+  option: 'a',
+  hash: HASH,
+  at: AT,
+  ...overrides,
+});
+
+const decisionsText = (records: readonly DecisionRecord[]): string =>
+  `${JSON.stringify({ schema: ownerDecisions.schema, records }, null, 2)}\n`;
+
+const seedDecisions = (deps: FakeDeps, records: readonly DecisionRecord[]): void =>
+  deps.seed(DECISIONS, decisionsText(records));
+
+const storedDecisions = (deps: FakeDeps): DecisionRecord[] =>
+  (JSON.parse(deps.files.get(DECISIONS) ?? '{"records":[]}') as { records: DecisionRecord[] }).records;
+
+const placeOf = async (deps: Deps, root = ROOT, node = NODE): Promise<DecisionPlace> => {
+  const place = await decisionPlaceOf(deps, root, node);
+  if (!place.ok) throw new Error(place.error.message);
+  return place.value;
+};
+
+const decisionInput = (overrides: Partial<DecisionInput> = {}): DecisionInput => ({
+  id: ID,
+  option: 'a',
+  hash: HASH,
+  at: AT,
+  ...overrides,
+});
+
+const put = async (deps: Deps, overrides: Partial<DecisionInput> = {}, root = ROOT, node = NODE) =>
+  putDecision(deps, await placeOf(deps, root, node), decisionInput(overrides));
+
+const sessionEnv = { XDG_STATE_HOME: STATE, HOME: '/home/me', [env.session]: 'demo' };
+const claudeEnv = { XDG_STATE_HOME: STATE, HOME: '/home/me', [env.claudeCode]: '1' };
+
+describe('the decide channel (TP-143, TP-144)', () => {
+  it('M5-1b TP-143 lets a person with a terminal window for input and for output through', () => {
+    expect(requireDecideChannel(person())).toEqual({ ok: true, value: undefined });
+  });
+
+  it.each([
+    ['a factory session', { env: sessionEnv }],
+    ['a Claude Code session', { env: claudeEnv }],
+    ['no terminal window for input', { stdinIsTTY: false }],
+    ['no terminal window for output', { stdoutIsTTY: false }],
+  ])('M5-1b TP-143 exits 4 with %s, and the remedy names decide', (_name, options: Options) => {
+    const result = requireDecideChannel(person(options));
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety', hint: expect.stringContaining(`factory ${commands.decide}`) } });
+  });
+
+  it('M5-1b TP-143 checks in order: the factory session, then Claude Code, then input, then output', () => {
+    const both = requireDecideChannel(person({ env: { ...sessionEnv, [env.claudeCode]: '1' }, stdinIsTTY: false, stdoutIsTTY: false }));
+    expect(both).toMatchObject({ ok: false, error: { message: expect.stringContaining('factory session') } });
+    const claude = requireDecideChannel(person({ env: claudeEnv, stdinIsTTY: false, stdoutIsTTY: false }));
+    expect(claude).toMatchObject({ ok: false, error: { message: expect.stringContaining('Claude Code') } });
+    const input = requireDecideChannel(person({ stdinIsTTY: false, stdoutIsTTY: false }));
+    expect(input).toMatchObject({ ok: false, error: { message: expect.stringContaining('input') } });
+  });
+
+  it('M5-1b TP-143 does not count an empty CLAUDECODE as a Claude Code session', () => {
+    expect(requireDecideChannel(person({ env: { ...claudeEnv, [env.claudeCode]: '' } }))).toEqual({ ok: true, value: undefined });
+  });
+
+  it.each([
+    ['CLAUDECODE set', { env: claudeEnv }],
+    ['a factory session', { env: sessionEnv }],
+    ['stdout not a terminal', { stdoutIsTTY: false }],
+    ['stdin not a terminal', { stdinIsTTY: false }],
+  ])('M5-1b TP-144 makes the writer run the same check itself: %s exits 4 and the file stays the same', async (_name, options: Options) => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ id: 'D-9' })]);
+    const before = deps.files.get(DECISIONS);
+    const place = await placeOf(deps);
+    const refused = person(options);
+    refused.seed(DECISIONS, before ?? '');
+    const result = await putDecision(refused, place, decisionInput());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+    expect(refused.files.get(DECISIONS)).toBe(before);
+    expect(refused.atomicWrites).toEqual([]);
+    expect(refused.files.has(DECISIONS_LOCK)).toBe(false);
+  });
+});
+
+describe('the place of the decision file', () => {
+  it('M5-1b TP-150 is a file in the state folder, with the real path of the root and the node id', async () => {
+    const place = await placeOf(person());
+    expect(place).toEqual({ node: NODE, root: ROOT, path: DECISIONS });
+  });
+
+  it('M5-1b TP-152 has a null path when no variable names a state folder', async () => {
+    const place = await placeOf(person({ env: {} }));
+    expect(place.path).toBeNull();
+  });
+
+  it('M5-1b TP-150 refuses a place inside the factory folder, exit 4', async () => {
+    const result = await decisionPlaceOf(person({ env: { XDG_STATE_HOME: `${ROOT}/state`, HOME: '/home/me' } }), ROOT, NODE);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+
+  it('M5-1b TP-152 gives an error for a root that does not exist', async () => {
+    expect(await decisionPlaceOf(person(), '/w/missing', NODE)).toMatchObject({ ok: false });
+  });
+});
+
+describe('the decision writer (TP-150, TP-153, TP-174, TP-175)', () => {
+  it('M5-1b TP-150 writes one record with the node id, the real root, the D-n, the option, the hash and the time, and no note', async () => {
+    const deps = person();
+    expect(await put(deps)).toEqual({ ok: true, value: { outcome: 'stored', warning: null } });
+    expect(storedDecisions(deps)).toEqual([{ node: NODE, root: ROOT, id: ID, option: 'a', hash: HASH, at: AT }]);
+    expect(Object.keys(storedDecisions(deps)[0] ?? {}).sort()).toEqual(['at', 'hash', 'id', 'node', 'option', 'root']);
+    expect(deps.files.get(DECISIONS)).toBe(decisionsText([decisionRecord()]));
+  });
+
+  it('M5-1b TP-150 makes the file with mode 0600 in a folder of mode 0700', async () => {
+    const deps = person();
+    await put(deps);
+    expect(deps.modes.get(DECISIONS)).toBe(0o600);
+    expect(deps.modes.get(FOLDER)).toBe(0o700);
+  });
+
+  it('M5-1b TP-153 changes nothing for the same option and hash, and says existing', async () => {
+    const deps = person();
+    await put(deps);
+    const before = deps.files.get(DECISIONS);
+    expect(await put(deps)).toEqual({ ok: true, value: { outcome: 'existing', warning: null } });
+    expect(deps.files.get(DECISIONS)).toBe(before);
+  });
+
+  it.each([
+    ['another option', { option: 'b' }],
+    ['another hash', { hash: requestHashOf('another text') }],
+  ])('M5-1b TP-153 exits 1 for %s, names the stored option and time, and changes nothing', async (_name, overrides) => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord()]);
+    const before = deps.files.get(DECISIONS);
+    const result = await put(deps, overrides);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    const message = result.ok ? '' : result.error.message;
+    expect([ID, '"a"', AT].filter((part) => !message.includes(part))).toEqual([]);
+    expect(deps.files.get(DECISIONS)).toBe(before);
+  });
+
+  it('M5-1b TP-153 keeps the records of another D-n, another node id and another root next to the new one', async () => {
+    const deps = person();
+    seedDecisions(deps, [
+      decisionRecord({ id: 'D-1' }),
+      decisionRecord({ node: 'other', option: 'b' }),
+      decisionRecord({ root: OTHER_ROOT, option: 'b' }),
+    ]);
+    expect(await put(deps)).toMatchObject({ ok: true, value: { outcome: 'stored' } });
+    expect(storedDecisions(deps)).toHaveLength(4);
+  });
+
+  it('M5-1b TP-174 is a file of its own: the approval records stay as they are, and each file has its own lock', async () => {
+    const deps = person();
+    seedStore(deps, [delegation()]);
+    const approvals = deps.files.get(STORE);
+    deps.seed(STORE_LOCK, 'other\n');
+    expect(await put(deps)).toMatchObject({ ok: true });
+    expect(deps.files.get(STORE)).toBe(approvals);
+    expect(deps.files.get(STORE_LOCK)).toBe('other\n');
+    expect(deps.files.has(DECISIONS_LOCK)).toBe(false);
+  });
+
+  it('M5-1b TP-174 leaves the decision file as it is when an approval record is written', async () => {
+    const deps = person();
+    await put(deps);
+    const decisions = deps.files.get(DECISIONS);
+    await setMode(deps, 'merge', delegated);
+    expect(deps.files.get(DECISIONS)).toBe(decisions);
+  });
+
+  it('M5-1b TP-174 exits 1 with a full file, names the file and the cap, and drops no record', async () => {
+    const deps = person();
+    const full = Array.from({ length: ownerDecisions.maxRecords }, (_, index) => decisionRecord({ id: `D-${index + 10}` }));
+    seedDecisions(deps, full);
+    const before = deps.files.get(DECISIONS);
+    const result = await put(deps);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { kind: 'failure', message: expect.stringContaining(`${DECISIONS}`) },
+    });
+    expect(result).toMatchObject({ error: { message: expect.stringContaining(String(ownerDecisions.maxRecords)) } });
+    expect(deps.files.get(DECISIONS)).toBe(before);
+  });
+
+  it('M5-1b TP-174 still gives existing for a record that the full file holds', async () => {
+    const deps = person();
+    const full = Array.from({ length: ownerDecisions.maxRecords - 1 }, (_, index) => decisionRecord({ id: `D-${index + 10}` }));
+    seedDecisions(deps, [...full, decisionRecord()]);
+    expect(await put(deps)).toMatchObject({ ok: true, value: { outcome: 'existing' } });
+    expect(storedDecisions(deps)).toHaveLength(ownerDecisions.maxRecords);
+  });
+
+  it('M5-1b TP-174 exits 1 when the new text would be over the size cap, names the file and the cap, and drops nothing', async () => {
+    const deps = person();
+    // Roots stay under the 4096-character path cap, so the filler root also fits after the last full record.
+    const roomy = (index: number): DecisionRecord => decisionRecord({ id: `D-${index + 10}`, root: `/${'r'.repeat(3500)}${index}` });
+    const sizeOf = (records: readonly DecisionRecord[]): number => Buffer.byteLength(decisionsText(records), 'utf8');
+    const step = sizeOf([roomy(100), roomy(101)]) - sizeOf([roomy(100)]);
+    const base = Array.from({ length: Math.floor((ownerDecisions.maxBytes - 300) / step) }, (_, index) => roomy(index));
+    const filler = (length: number): DecisionRecord => decisionRecord({ id: 'D-9', node: 'filler', root: `/${'f'.repeat(length)}` });
+    const length = ownerDecisions.maxBytes - 30 - sizeOf([...base, filler(0)]);
+    const records = [...base, filler(length)];
+    expect(sizeOf(records)).toBeLessThanOrEqual(ownerDecisions.maxBytes);
+    expect(sizeOf(records)).toBeGreaterThan(ownerDecisions.maxBytes - 60);
+    seedDecisions(deps, records);
+    const before = deps.files.get(DECISIONS);
+    const result = await put(deps);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining(String(ownerDecisions.maxBytes)) } });
+    expect(result).toMatchObject({ error: { message: expect.stringContaining(DECISIONS) } });
+    expect(deps.files.get(DECISIONS)).toBe(before);
+  });
+
+  it.each([
+    ['bad JSON', '{"schema":1,'],
+    ['a record with a note key', JSON.stringify({ schema: 1, records: [{ ...decisionRecord({ id: 'D-9' }), note: 'x' }] })],
+    ['another schema number', JSON.stringify({ schema: 2, records: [] })],
+    ['a bad option key', JSON.stringify({ schema: 1, records: [decisionRecord({ id: 'D-9', option: 'a b' })] })],
+    ['a hash that is not lower case hex', JSON.stringify({ schema: 1, records: [decisionRecord({ id: 'D-9', hash: HASH.toUpperCase() })] })],
+    ['an id with a leading zero', JSON.stringify({ schema: 1, records: [decisionRecord({ id: 'D-09' })] })],
+    ['a root that is not absolute', JSON.stringify({ schema: 1, records: [decisionRecord({ id: 'D-9', root: 'relative' })] })],
+    ['two records for one D-n', decisionsText([decisionRecord(), decisionRecord({ option: 'b' })])],
+  ])('M5-1b TP-175 exits 1 for a file with %s, and leaves it as it was', async (_name, content) => {
+    const deps = person();
+    deps.seed(DECISIONS, content);
+    const result = await put(deps);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(deps.files.get(DECISIONS)).toBe(content);
+  });
+
+  it.each([
+    ['a file that a group may write', DECISIONS, 0o660],
+    ['a folder that a group may write', FOLDER, 0o770],
+  ])('M5-1b TP-175 refuses %s', async (_name, path, mode) => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ id: 'D-9' })]);
+    deps.modes.set(path, mode);
+    expect(await put(deps)).toMatchObject({ ok: false });
+    expect(storedDecisions(deps)).toHaveLength(1);
+  });
+
+  it.each([
+    ['file', DECISIONS],
+    ['folder', FOLDER],
+  ])('M5-1b TP-175 refuses a %s that another user owns', async (_name, path) => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ id: 'D-9' })]);
+    deps.owners.set(path, 2000);
+    expect(await put(deps)).toMatchObject({ ok: false, error: { message: expect.stringContaining('another user') } });
+    expect(storedDecisions(deps)).toHaveLength(1);
+  });
+
+  it('M5-1b TP-175 writes nothing and exits 1 when another process took the lock over', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ id: 'D-9' })]);
+    const before = deps.files.get(DECISIONS);
+    const place = await placeOf(deps);
+    const taken: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        readTextLimited: async (path, maxBytes) => {
+          const read = await deps.fs.readTextLimited(path, maxBytes);
+          if (path === DECISIONS) deps.files.set(DECISIONS_LOCK, 'other\n');
+          return read;
+        },
+      },
+    };
+    const result = await putDecision(taken, place, decisionInput());
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining(DECISIONS_LOCK) } });
+    expect(deps.files.get(DECISIONS)).toBe(before);
+    expect(deps.files.get(DECISIONS_LOCK)).toBe('other\n');
+  });
+
+  it('M5-1b TP-180 counts a saved change with a left lock file as saved, with a warning that names the lock file', async () => {
+    const deps = person();
+    const place = await placeOf(deps);
+    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    const result = await putDecision(stuck, place, decisionInput());
+    expect(result).toMatchObject({ ok: true, value: { outcome: 'stored', warning: expect.stringContaining(DECISIONS_LOCK) } });
+    expect(storedDecisions(deps)).toEqual([decisionRecord()]);
+  });
+
+  it('M5-1b TP-180 keeps the outcome existing when the lock file is left', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord()]);
+    const place = await placeOf(deps);
+    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    expect(await putDecision(stuck, place, decisionInput())).toMatchObject({
+      ok: true,
+      value: { outcome: 'existing', warning: expect.stringContaining(DECISIONS_LOCK) },
+    });
+  });
+
+  it('M5-1b TP-152 exits 1 and writes nothing when no variable names a state folder', async () => {
+    const deps = person({ env: {} });
+    const result = await put(deps);
+    expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(deps.atomicWrites).toEqual([]);
+  });
+
+  it.each([
+    ['an id with a leading zero', { id: 'D-05' }],
+    ['an option that is not a token', { option: 'a b' }],
+    ['a hash that is not lower case hex', { hash: HASH.toUpperCase() }],
+    ['a time that is not ISO', { at: 'yesterday' }],
+  ])('M5-1b TP-175 refuses %s before it writes, so the file stays readable', async (_name, overrides) => {
+    const deps = person();
+    expect(await put(deps, overrides)).toMatchObject({ ok: false, error: { kind: 'failure' } });
+    expect(deps.files.has(DECISIONS)).toBe(false);
+  });
+});
+
+describe('the proof read (TP-140, TP-151, TP-173, TP-189)', () => {
+  it('M5-1b TP-173 gives a record with the stored option, D-n, node, root and time when the hash of the row text matches', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ option: 'b' })]);
+    const proof = await readDecisionProof(deps, await placeOf(deps), ID, TEXT);
+    expect(proof).toEqual({ kind: 'record', node: NODE, root: ROOT, id: ID, option: 'b', at: AT });
+  });
+
+  it('M5-1b TP-173 hashes the given text itself: the hash of the text as input gives no proof', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord()]);
+    expect(await readDecisionProof(deps, await placeOf(deps), ID, HASH)).toMatchObject({ kind: 'mismatch' });
+  });
+
+  it('M5-1b TP-173 gives a mismatch for an edited row text, with the stored option and time and no proof', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord()]);
+    const edited = TEXT.replace('Which path', 'Which road');
+    expect(await readDecisionProof(deps, await placeOf(deps), ID, edited)).toEqual({ kind: 'mismatch', option: 'a', at: AT });
+  });
+
+  it('M5-1b TP-151 gives a mismatch for a record with another hash', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ hash: requestHashOf('another text') })]);
+    expect(await readDecisionProof(deps, await placeOf(deps), ID, TEXT)).toMatchObject({ kind: 'mismatch' });
+  });
+
+  it('M5-1b TP-189 takes the option only from the record: the result has no field that comes from the row', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ option: 'a' })]);
+    const proof = await readDecisionProof(deps, await placeOf(deps), ID, TEXT);
+    expect(proof).toMatchObject({ kind: 'record', option: 'a' });
+    expect(Object.keys(proof).sort()).toEqual(['at', 'id', 'kind', 'node', 'option', 'root']);
+  });
+
+  it('M5-1b TP-140 gives none, and so no proof, for a D-n that has no record, whatever a log row says', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ id: 'D-9' })]);
+    expect(await readDecisionProof(deps, await placeOf(deps), ID, TEXT)).toEqual({ kind: 'none' });
+  });
+
+  it('M5-1b TP-140 gives none for a missing file and for a null path', async () => {
+    const deps = person();
+    expect(await readDecisionProof(deps, await placeOf(deps), ID, TEXT)).toEqual({ kind: 'none' });
+    const noPlace = person({ env: {} });
+    expect(await readDecisionProof(noPlace, await placeOf(noPlace), ID, TEXT)).toEqual({ kind: 'none' });
+  });
+
+  it('M5-1b TP-140 counts only the records of this node id and this real root', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord({ node: 'other' }), decisionRecord({ root: OTHER_ROOT })]);
+    expect(await readDecisionProof(deps, await placeOf(deps), ID, TEXT)).toEqual({ kind: 'none' });
+    expect(await readDecisionProof(deps, await placeOf(deps, ROOT, 'other'), ID, TEXT)).toMatchObject({ kind: 'record' });
+    expect(await readDecisionProof(deps, await placeOf(deps, OTHER_ROOT), ID, TEXT)).toMatchObject({ kind: 'record' });
+  });
+
+  it('M5-1b TP-140 reads only the decision file: no other file of the user or of the factory folder', async () => {
+    const deps = person();
+    seedDecisions(deps, [decisionRecord()]);
+    seedStore(deps, [delegation()]);
+    deps.seed(`${ROOT}/decision-log.json`, '{"rows":[{"item":"D-3 x","decision":"b","date":"2030-01-01","by":"owner"}]}');
+    const place = await placeOf(deps);
+    const seen = new Set<string>();
+    const watched = withFsWatch(deps, (_method, path) => seen.add(path));
+    await readDecisionProof(watched, place, ID, TEXT);
+    expect([...seen].filter((path) => path !== DECISIONS && path !== FOLDER)).toEqual([]);
+  });
+
+  it('M5-1b TP-140 is not part of the board contract: the contract names no proof read and imports no owner record', () => {
+    const contract = stripComments(readFileSync(join(__dirname, '..', '..', 'src', 'board', 'contract.ts'), 'utf8'));
+    expect(contract).not.toMatch(/readDecisionProof|owner-record/);
+  });
+
+  it.each([
+    ['bad JSON', '{"schema":1,'],
+    ['a schema error', JSON.stringify({ schema: 1, records: [{ node: NODE }] })],
+    ['two records for one D-n', decisionsText([decisionRecord(), decisionRecord({ option: 'b' })])],
+  ])('M5-1b TP-151 gives an error, never none, for a file with %s, and names the file', async (_name, content) => {
+    const deps = person();
+    deps.seed(DECISIONS, content);
+    const proof = await readDecisionProof(deps, await placeOf(deps), ID, TEXT);
+    expect(proof).toMatchObject({ kind: 'error', message: expect.stringContaining(DECISIONS) });
+  });
+
+  it('M5-1b TP-151 gives an error for a file that a group may write, another user owns or that is over the size cap', async () => {
+    for (const break_ of [
+      (deps: FakeDeps) => deps.modes.set(DECISIONS, 0o660),
+      (deps: FakeDeps) => deps.owners.set(DECISIONS, 2000),
+      (deps: FakeDeps) => deps.seed(DECISIONS, ' '.repeat(ownerDecisions.maxBytes + 1)),
+    ]) {
+      const deps = person();
+      seedDecisions(deps, [decisionRecord()]);
+      break_(deps);
+      expect(await readDecisionProof(deps, await placeOf(deps), ID, TEXT)).toMatchObject({ kind: 'error' });
+    }
+  });
+});
+
+describe('the D-n list of the decision records', () => {
+  it('M5-1b TP-160 gives the D-n of this node id and this real root only', async () => {
+    const deps = person();
+    seedDecisions(deps, [
+      decisionRecord({ id: 'D-2' }),
+      decisionRecord({ id: 'D-7', node: 'other' }),
+      decisionRecord({ id: 'D-8', root: OTHER_ROOT }),
+      decisionRecord({ id: 'D-5' }),
+    ]);
+    expect(await decisionIdsOf(deps, await placeOf(deps))).toEqual({ ok: true, value: ['D-2', 'D-5'] });
+  });
+
+  it('M5-1b TP-160 gives an empty list for a missing file and for a null path', async () => {
+    const deps = person();
+    expect(await decisionIdsOf(deps, await placeOf(deps))).toEqual({ ok: true, value: [] });
+    const noPlace = person({ env: {} });
+    expect(await decisionIdsOf(noPlace, await placeOf(noPlace))).toEqual({ ok: true, value: [] });
+  });
+
+  it('M5-1b TP-161 gives an error that names the file and the reason when the file can not be read', async () => {
+    const deps = person();
+    deps.seed(DECISIONS, 'not json');
+    expect(await decisionIdsOf(deps, await placeOf(deps))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(DECISIONS),
+    });
+  });
+});
+
+describe('the approval writer, when the lock file stays (TP-180)', () => {
+  it('M5-1b TP-180 says in its error that the approval record is saved', async () => {
+    const deps = person();
+    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    const result = await setMode(stuck, 'merge', delegated);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('saved') } });
+    expect(result).not.toMatchObject({ error: { message: expect.stringContaining('not updated') } });
+    expect(storedRecords(deps)).toHaveLength(1);
+  });
+
+  it('M5-1b TP-180 keeps the old text when nothing is saved', async () => {
+    const deps = person({ stdinIsTTY: true });
+    deps.seed(STORE, '{"schema":1,');
+    const result = await setMode(deps, 'merge', delegated);
+    expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('The approval records were not updated') } });
   });
 });
