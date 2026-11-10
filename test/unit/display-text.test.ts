@@ -81,6 +81,17 @@ describe('the display helper for the JSON output (AC-36)', () => {
     expect(JSON.parse(text)).toEqual({ schema: 'x/v1', title: 'one\ntwo\tthree' });
   });
 
+  it('M5-1b TP-105 keeps a carriage return in a string value as an escape, so that the line breaks do not change', () => {
+    const text = renderJson({ schema: 'x/v1', title: 'a\r\nb' });
+    expect(text).toContain('"a\\r\\nb"');
+    expect(JSON.parse(text)).toEqual({ schema: 'x/v1', title: 'a\r\nb' });
+  });
+
+  it('M5-1b TP-105 still removes a line separator from a string value that holds a carriage return', () => {
+    const text = renderJson({ schema: 'x/v1', title: `a\r${LINE_SEPARATOR}b` });
+    expect(JSON.parse(text)).toEqual({ schema: 'x/v1', title: 'a\rb' });
+  });
+
   it('M5-1b TP-105 cuts no string to the width', () => {
     const long = 'y'.repeat(maxDisplayWidth * 3);
     expect(JSON.parse(renderJson({ schema: 'x/v1', title: long }))).toEqual({ schema: 'x/v1', title: long });
