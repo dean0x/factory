@@ -127,7 +127,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 **Scope.** `worker new|list|reset|stop|resume|summon|watch`, `shutdown`, `restart`, `reboot`, `status`, `dismiss`, `layout`, `machine` and `self reset`. The workers and view windows (F-8). The last-seen hook and the status line wrapper (F-9). Messages between sessions (D-101). The recovery after a machine restart in `start`. The idle setting `limits.idle_after`. The agent setting `session.agent`.
 
 **Messages between sessions (D-101).** The cross-session messages of Claude Code carry the work:
-- factory starts each session with a name: the coordinator `<node id>`, a worker `<node id>-<worker id>`. The coordinator sends a task with `SendMessage`. A long task is a file in the assignment folder of the worker, and the message names it.
+- factory starts each session with a name: the coordinator `<node id>`, a worker `<node id>_<worker id>`. The coordinator sends a task with `SendMessage`. A long task is a file in the assignment folder of the worker, and the message names it.
 - factory types only constant lines into a pane (`/clear`, `/compact` for `worker reset` and `self reset`), through `src/comms/` (design §4.12).
 - `worker watch` reports what the idle notices of Claude Code do not show: a pane that ended, a worker that waits in a dialog, and a worker that looks stalled.
 - A message from another session carries no authority. `worker relay` (FAC-M5) keeps owner authority in typed input.
