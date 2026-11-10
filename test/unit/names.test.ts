@@ -1081,6 +1081,31 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
     expect(callersOf(/\brecordDecision\(/, ['board/local.ts', 'board/contract.ts', decide])).toEqual([]);
   });
 
+  it('M5-1b TP-155 limits the key of the decisions folder to the state layout, the record path and the local board', () => {
+    expect(rel(withText(/\bprofileDecisions\b/))).toEqual([
+      'board/decision-record.ts',
+      'board/local.ts',
+      'state/layout.ts',
+    ]);
+    expect(rel(withText(/\bdirs\.decisions\b/))).toEqual(['state/layout.ts']);
+  });
+
+  it('M5-1b TP-165 reads the stage key in none of the decide sources', () => {
+    const decideSources = [
+      'commands/decide.ts',
+      'board/decide.ts',
+      'board/decision-record.ts',
+      'core/owner-record.ts',
+      'core/request-hash.ts',
+      'board/local.ts',
+    ];
+    for (const path of decideSources) {
+      const code = textOf(join(SRC, path));
+      expect(code, path).not.toMatch(/\bstage\b/i);
+      expect(code, path).not.toMatch(/\bboardKeys\b/);
+    }
+  });
+
   it('has the private file writer in the three modules that own a store, and in no other module', () => {
     expect(rel(withText(/\bchangePrivateFile\b/))).toEqual(
       rel([HOME_INDEX, OWNER_RECORD, SETUP_ACCEPTANCE, PRIVATE_FILE]),

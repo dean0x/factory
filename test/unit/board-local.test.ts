@@ -1369,10 +1369,13 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
 
   it('M5-1b TP-152 exits 1 before the prompt when no variable names a state folder', async () => {
     const repo = await decideRepo({ env: {} });
+    const before = new Map(repo.deps.files);
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('no variable names a state folder');
     expect(error.hint).toContain(env.stateHome);
+    expect(repo.deps.files).toEqual(before);
+    expect(repo.commits).toEqual([]);
   });
 
   it('M5-1b TP-152 exits 4 when the decision file would be inside the factory folder', async () => {
@@ -1382,10 +1385,13 @@ describe('the local connector: an open request for the owner (TP-141, TP-145, TP
 
   it('M5-1b TP-167 exits 1 and names both files for a number that is in the waiting file and in the log', async () => {
     const repo = await decideRepo({ decisionLog: logOf(closedRow()) });
+    const before = new Map(repo.deps.files);
     const error = errorOf(await localOf(repo.deps).decisionRequest('D-1'));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.waiting);
     expect(error.message).toContain(fileNames.decisionLog);
+    expect(repo.deps.files).toEqual(before);
+    expect(repo.commits).toEqual([]);
   });
 
   it('M5-1b TP-168 exits 1 and names the waiting file for an entry with a key that the strict read refuses', async () => {
