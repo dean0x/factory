@@ -1116,6 +1116,9 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
       'In M5-1b the page only reads the local files. A page answer is a board event. It shows and wakes, and records nothing (D-142 A).',
     );
     expect(migration).not.toContain('A page answer that records through the owner store');
+    const decisions = part(design, '## 9. Decisions', '\n## 10.');
+    expect(decisions).toContain('| D-142 A |');
+    expect(decisions).not.toContain('a page answer that records through the owner store');
     expect(migration).toContain('It does not retire the page (TB-5).');
   });
 
