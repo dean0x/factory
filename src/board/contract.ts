@@ -1,5 +1,4 @@
 import type { CliResult } from '../cli/errors.js';
-import type { DecisionInput, DecisionPlace, DecisionProof, DecisionWrite } from '../core/owner-record.js';
 import type { DecideRequest } from './decide.js';
 
 /**
@@ -7,8 +6,8 @@ import type { DecideRequest } from './decide.js';
  * (`test/contract/board-contract.ts`) runs against each one. The `local` connector keeps the board in the files of the state folder.
  * A hosted tracker kind has no connector in this version: the local connector reads the local files for it and refuses every write.
  *
- * The contract holds no read of a decision answer and no decision writer. The proof read of an owner answer is `readDecisionProof`
- * in `src/core/owner-record.ts`, outside the contract: it reads only the owner decision file. The contract operation `decision read`
+ * The contract holds no read of a decision answer and no decision writer. The proof read of an owner answer is an export of the
+ * owner record module, outside the contract: it reads only the owner decision file. The contract operation `decision read`
  * waits for FAC-M11.
  *
  * A stage and an owner field are display data and never proof. A connector keeps every stored key that it does not own.
@@ -190,7 +189,38 @@ export interface BoardConnector {
  * What the owner decision file holds for an open request: no record, the record of this request text, or a record of another text of
  * the request (`mismatch`). A decision file that cannot be read is no value of this type: the read stops with an error.
  */
-export type DecisionStored = Exclude<DecisionProof, { readonly kind: 'error' }>;
+export type DecisionStored =
+  | {
+      readonly kind: 'record';
+      readonly node: string;
+      readonly root: string;
+      readonly id: string;
+      readonly option: string;
+      readonly at: string;
+    }
+  | { readonly kind: 'none' }
+  | { readonly kind: 'mismatch'; readonly option: string; readonly at: string };
+
+/** The node id, the real root and the decision file of one factory folder. A null path: no variable names a state folder. */
+export interface DecisionPlace {
+  readonly node: string;
+  readonly root: string;
+  readonly path: string | null;
+}
+
+/** What the command of decide gives the writer of the owner record: the D-n, the chosen option, the request hash and the time. */
+export interface DecisionInput {
+  readonly id: string;
+  readonly option: string;
+  readonly hash: string;
+  readonly at: string;
+}
+
+/** The result of the writer. `existing`: the owner decision file already holds this answer. A warning names a lock file that stays. */
+export interface DecisionWrite {
+  readonly outcome: 'stored' | 'existing';
+  readonly warning: string | null;
+}
 
 /** An open request as `decisionRequest` reads it, before the prompt. */
 export interface DecisionRequestRead {
