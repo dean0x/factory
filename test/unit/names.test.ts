@@ -1362,15 +1362,31 @@ describe('the names of the sessions (TP-10)', () => {
     expect(sessionNames.coordinator('demo')).toEqual({ ok: true, value: 'demo' });
   });
 
-  it('names the session of a worker with the id of the node, a hyphen and the id of the worker', () => {
-    expect(sessionNames.worker('demo', 'alpha')).toEqual({ ok: true, value: 'demo-alpha' });
+  it('names the session of a worker with the id of the node, an underscore and the id of the worker', () => {
+    expect(sessionNames.worker('demo', 'alpha')).toEqual({ ok: true, value: 'demo_alpha' });
   });
 
   it('gives a name that is one word for a flag: no space, no control character, no leading hyphen', () => {
     const longest = 'a'.repeat(40);
     for (const name of [valueOf(sessionNames.coordinator(longest)), valueOf(sessionNames.worker(longest, longest))]) {
-      expect(name).toMatch(/^[a-z0-9][a-z0-9-]*$/);
+      expect(name).toMatch(/^[a-z0-9][a-z0-9_-]*$/);
     }
+  });
+
+  // Ids may hold a hyphen. With a hyphen between the two ids, these pairs gave the same name on one machine.
+  it.each([
+    ['a worker of one node and the coordinator of another', valueOf(sessionNames.worker('web', 'api')), valueOf(sessionNames.coordinator('web-api'))],
+    ['the workers of two nodes', valueOf(sessionNames.worker('a', 'b-c')), valueOf(sessionNames.worker('a-b', 'c'))],
+  ])('gives different names to %s', (_, first, second) => {
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first).not.toBe(second);
+  });
+
+  it('gives a worker name that holds no separator of a tmux target, so the name works as a part of a target', () => {
+    const name = valueOf(sessionNames.worker('web-shop', 'api-2'));
+    expect(name).not.toBeNull();
+    expect(name).not.toMatch(/[:.]/);
   });
 
   const NOT_SLUGS = ['', 'Demo', 'a b', '-demo', '../demo', 'demo\n--x', '--dangerously-skip-permissions', '__proto__', 'a'.repeat(41)];

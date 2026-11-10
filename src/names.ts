@@ -1208,9 +1208,11 @@ const refuseSessionId = (what: string): Result<never, string> => err(`the sessio
 
 /**
  * The names of the sessions. The launch gives a name to the agent program with `flag`, so the session has a name in the session
- * list of the program. The coordinator is named with the id of the node. A worker is named with the id of the node, a hyphen and
- * the id of the worker. Each id must be a slug, so a name is one plain word for the flag: no space, no control character and no
- * leading hyphen. A call returns a `Result` and never throws. An error does not repeat the id that it refuses.
+ * list of the program. The coordinator is named with the id of the node. A worker is named with the id of the node, an underscore
+ * and the id of the worker. A slug can hold a hyphen but no underscore, so two nodes with different ids never give the same name: a
+ * worker name never equals the name of a coordinator, or the name of a worker of another node. The name holds no separator of a
+ * tmux target (a colon or a dot). Each id must be a slug, so a name is one plain word for the flag: no space, no control character
+ * and no leading hyphen. A call returns a `Result` and never throws. An error does not repeat the id that it refuses.
  */
 export const sessionNames = {
   /** The flag of the agent program that sets the name of a session. */
@@ -1219,7 +1221,7 @@ export const sessionNames = {
   worker: (node: string, worker: string): Result<string, string> => {
     if (!isSlug(node)) return refuseSessionId('a node id');
     if (!isSlug(worker)) return refuseSessionId('a worker id');
-    return ok(`${node}-${worker}`);
+    return ok(`${node}_${worker}`);
   },
 } as const;
 

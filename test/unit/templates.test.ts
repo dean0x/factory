@@ -445,12 +445,12 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
 
   it('names the session of a worker by the id of the node, and checks with ListAgents that exactly one session has the name', () => {
     const text = coordinatorOf('acme');
-    expect(text).toContain('Each worker session has the name `acme-<id>`.');
+    expect(text).toContain('Each worker session has the name `acme_<id>`.');
     expect(text).toContain(
       'Before your first `SendMessage` to a worker, and after each resume or restart of it, check with `ListAgents` that exactly one session has that name.',
     );
     expect(text).toContain('If no session or more than one session has it, or a send shows `Not sent`, stop and tell the owner.');
-    expect(coordinatorOf('beta')).toContain('`beta-<id>`');
+    expect(coordinatorOf('beta')).toContain('`beta_<id>`');
   });
 
   it('gives a long task as a file in the folder of the worker, and keeps SendMessage free of the authority of the owner', () => {
