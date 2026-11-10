@@ -169,7 +169,7 @@ export const requestStateOf = (waiting: WaitingDoc, log: DecisionLogDoc, id: str
   );
 };
 
-const addNewRemedy = `Add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}".`;
+export const addNewRemedy = `Add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}".`;
 
 /**
  * The state that lets decide go on. An unknown number is exit 2 and a closed number is exit 1. An answered row is never a pass: the

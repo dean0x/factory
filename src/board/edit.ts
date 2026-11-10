@@ -413,6 +413,20 @@ export interface RequestCloseEdit {
 }
 
 /**
+ * The new top objects of the waiting file and of the decision log when a request leaves the waiting file and a row takes its place at
+ * the end of the log. Every other entry of both files stays as it is. A close and an answer of the owner both use it.
+ */
+export const settleRequestIn = (
+  waiting: WaitingDoc,
+  log: DecisionLogDoc,
+  id: string,
+  row: Stored,
+): { readonly waiting: Stored; readonly log: Stored } => ({
+  waiting: { ...waiting.top, [waitingKeys.items]: waiting.items.filter((entry) => entry.id !== id).map((entry) => entry.record) },
+  log: { ...log.top, [decisionLogKeys.rows]: [...listAt(log.top, decisionLogKeys.rows), row] },
+});
+
+/**
  * Take a request off the waiting file and add a row for it to the decision log, so the number of the request stays used. The row
  * holds the id and the title in its `item` text, the closed text and the date. It holds no key that names who answered, so no reader
  * counts it as a decision. A request that is not in the waiting file is a usage error (exit 2). A log that names the id already is
@@ -428,11 +442,7 @@ export const closeRequestIn = (waiting: WaitingDoc, log: DecisionLogDoc, id: str
     [decisionLogKeys.decision]: requestWords.closedDecision,
     [decisionLogKeys.date]: date,
   };
-  return ok({
-    waiting: { ...waiting.top, [waitingKeys.items]: waiting.items.filter((entry) => entry.id !== id).map((entry) => entry.record) },
-    log: { ...log.top, [decisionLogKeys.rows]: [...listAt(log.top, decisionLogKeys.rows), row] },
-    closed: { id, title },
-  });
+  return ok({ ...settleRequestIn(waiting, log, id, row), closed: { id, title } });
 };
 
 /** True when the stored value is a list that holds exactly these ids, in this order. */
