@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
-import type { RunOutput } from '../../src/core/deps.js';
+import type { Deps, RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
 import { commands, files as fileNames, maxFileBytes, stateLock } from '../../src/names.js';
-import { commitBoardChange, readBoardFiles, type BoardChange, type BoardTexts } from '../../src/state/board-commit.js';
+import {
+  commitBoardChange,
+  readBoardFiles,
+  type BoardChange,
+  type BoardCommitError,
+  type BoardTexts,
+} from '../../src/state/board-commit.js';
 import { installGuard } from '../../src/state/guard.js';
 import { layoutOf } from '../../src/state/layout.js';
 import { exited, withFailingWrites, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
@@ -422,6 +428,177 @@ describe('the board commit helper: a write or a commit that fails (TP-13)', () =
     expect(deps.files.has(WAITING)).toBe(false);
     expect(writesOf(seen)).toEqual([]);
     expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+});
+
+/** The error of a call that must fail, with the typed field of the helper. */
+const failureOf = async (deps: Deps, change: BoardChange): Promise<BoardCommitError> => {
+  const result = await commitBoardChange(deps, LAYOUT, change);
+  if (result.ok) throw new Error('the call worked');
+  return result.error;
+};
+
+describe('the board commit helper: the beforeWrite step (TP-176)', () => {
+  const NEXT = board(['B-1', 'B-2', 'B-3']);
+  const adding = (): ReturnType<typeof changing> => changing(ok(texts({ 'board.json': NEXT })));
+
+  /** A step that records what it sees and ends with the given result. */
+  const stepping = (deps: FakeDeps, seen: readonly string[], result: CliResult<void> = ok(undefined)) => {
+    const calls: { updates: BoardTexts; boardText: string | undefined; gitWrites: string[]; locked: boolean }[] = [];
+    const beforeWrite: NonNullable<BoardChange['beforeWrite']> = async (updates) => {
+      calls.push({ updates, boardText: deps.files.get(BOARD), gitWrites: writesOf(seen), locked: deps.files.has(LOCK_FILE) });
+      return result;
+    };
+    return { calls, beforeWrite };
+  };
+
+  it('M5-1b TP-176 runs once, under the lock, with the files that change, before the first file write', async () => {
+    const { deps, seen } = await setup();
+    const { change } = adding();
+    const { calls, beforeWrite } = stepping(deps, seen);
+    const result = await commitBoardChange(deps, LAYOUT, request({ change, beforeWrite }));
+    expect(result).toEqual({ ok: true, value: { committed: true } });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.updates).toEqual(texts({ 'board.json': NEXT }));
+    expect(calls[0]?.boardText).toBe(board(['B-1', 'B-2']));
+    expect(calls[0]?.gitWrites).toEqual([]);
+    expect(calls[0]?.locked).toBe(true);
+    expect(deps.files.get(BOARD)).toBe(NEXT);
+  });
+
+  it('M5-1b TP-176 gives the step only the files that really change', async () => {
+    const { deps, seen } = await setup();
+    deps.seed(WAITING, '{"rows":[]}\n');
+    const { calls, beforeWrite } = stepping(deps, seen);
+    const same = changing(ok(texts({ 'board.json': NEXT, 'waiting.json': '{"rows":[]}\n' })));
+    await commitBoardChange(deps, LAYOUT, request({ touched: ['board.json', 'waiting.json'], change: same.change, beforeWrite }));
+    expect([...(calls[0]?.updates.keys() ?? [])]).toEqual(['board.json']);
+  });
+
+  it('M5-1b TP-176 does not run when the change leaves every file as it was', async () => {
+    const { deps, seen } = await setup();
+    const { calls, beforeWrite } = stepping(deps, seen);
+    const { change } = changing(ok(texts({})));
+    expect(await commitBoardChange(deps, LAYOUT, request({ change, beforeWrite }))).toEqual({ ok: true, value: { committed: false } });
+    expect(calls).toEqual([]);
+  });
+
+  it('M5-1b TP-176 does not run when the change fails', async () => {
+    const { deps, seen } = await setup();
+    const { calls, beforeWrite } = stepping(deps, seen);
+    const { change } = changing(failure('the request changed'));
+    expect((await failureOf(deps, request({ change, beforeWrite }))).message).toBe('the request changed');
+    expect(calls).toEqual([]);
+  });
+
+  it('M5-1b TP-176 does not run when a new text is over the cap', async () => {
+    const { deps, seen } = await setup();
+    const { calls, beforeWrite } = stepping(deps, seen);
+    const { change } = changing(ok(texts({ 'waiting.json': OVER })));
+    const error = await failureOf(deps, request({ touched: ['waiting.json'], change, beforeWrite }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(calls).toEqual([]);
+  });
+
+  it('M5-1b TP-176 does not run when the change loses an item id', async () => {
+    const { deps, seen } = await setup();
+    const { calls, beforeWrite } = stepping(deps, seen);
+    const { change } = changing(ok(texts({ 'board.json': board(['B-1']) })));
+    const error = await failureOf(deps, request({ change, beforeWrite }));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(calls).toEqual([]);
+  });
+
+  it('M5-1b TP-176 stops on a failed step with its error, writes nothing, and lets the lock go', async () => {
+    const { deps, seen } = await setup();
+    const before = stateFiles(deps);
+    const { calls, beforeWrite } = stepping(deps, seen, failure('the owner store is full', 'Free the store.'));
+    const { change } = adding();
+    const error = await failureOf(deps, request({ change, beforeWrite }));
+    expect(error.message).toBe('the owner store is full');
+    expect(error.hint).toBe('Free the store.');
+    expect(calls).toHaveLength(1);
+    expect(stateFiles(deps)).toEqual(before);
+    expect(writesOf(seen)).toEqual([]);
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+    expect(error.commitOutcome).toBeUndefined();
+  });
+
+  it('M5-1b TP-176 leaves a change with no step as it was', async () => {
+    const { deps } = await setup();
+    const { change } = adding();
+    expect(await commitBoardChange(deps, LAYOUT, request({ change }))).toEqual({ ok: true, value: { committed: true } });
+  });
+});
+
+describe('the board commit helper: the typed outcome after the first file write (TP-177, TP-190, TP-191)', () => {
+  const NEXT = board(['B-1', 'B-2', 'B-3']);
+  const adding = (): ReturnType<typeof changing> => changing(ok(texts({ 'board.json': NEXT })));
+
+  it('M5-1b TP-177 says restored when the commit fails and every file is put back', async () => {
+    const { deps } = await setup({ commitExit: 1 });
+    const { change } = adding();
+    const error = await failureOf(deps, request({ change }));
+    expect(error.commitOutcome).toBe('restored');
+    expect(deps.files.get(BOARD)).toBe(board(['B-1', 'B-2']));
+  });
+
+  it('M5-1b TP-177 says restored when a later write fails and every written file is put back', async () => {
+    const { deps } = await setup();
+    const failing = withFailingWrites(deps, (path) => path === WAITING);
+    const { change } = changing(ok(texts({ 'board.json': NEXT, 'waiting.json': '{"rows":[]}\n' })));
+    const error = await failureOf(failing, request({ touched: ['board.json', 'waiting.json'], change }));
+    expect(error.message).toContain('disk full');
+    expect(error.commitOutcome).toBe('restored');
+  });
+
+  it('M5-1b TP-177 says restored when the first write itself fails', async () => {
+    const { deps } = await setup();
+    const failing = withFailingWrites(deps, (path) => path === BOARD);
+    const { change } = adding();
+    expect((await failureOf(failing, request({ change }))).commitOutcome).toBe('restored');
+  });
+
+  it('M5-1b TP-177 says unknown when a file cannot be put back, and the message keeps the reason', async () => {
+    const { deps } = await setup({ commitExit: 1 });
+    // The first write of the board is the new text, the second is the put back.
+    const failing = withFailingWrites(deps, (path, attempt) => path === BOARD && attempt === 2);
+    const { change } = adding();
+    const error = await failureOf(failing, request({ change }));
+    expect(error.commitOutcome).toBe('unknown');
+    expect(error.message).toContain('disk full');
+  });
+
+  it('M5-1b TP-190 says committed when the commit landed in spite of a git error', async () => {
+    const { deps } = await setup({ commitExit: 1, landsAnyway: true });
+    const { change } = adding();
+    const error = await failureOf(deps, request({ change }));
+    expect(error.commitOutcome).toBe('committed');
+    expect(deps.files.get(BOARD)).toBe(NEXT);
+  });
+
+  it('M5-1b TP-191 says unknown when the head cannot be read after a git error, and puts nothing back', async () => {
+    const { deps } = await setup({ commitExit: 1, headFailsAfterCommit: true });
+    const { change } = adding();
+    const error = await failureOf(deps, request({ change }));
+    expect(error.commitOutcome).toBe('unknown');
+    expect(deps.files.get(BOARD)).toBe(NEXT);
+  });
+
+  it('M5-1b TP-177 gives no outcome to a failure that comes before the first file write', async () => {
+    const { deps } = await setup();
+    const sized = changing(ok(texts({ 'waiting.json': OVER })));
+    expect((await failureOf(deps, request({ touched: ['waiting.json'], change: sized.change }))).commitOutcome).toBeUndefined();
+    const lost = changing(ok(texts({ 'board.json': board(['B-1']) })));
+    expect((await failureOf(deps, request({ change: lost.change }))).commitOutcome).toBeUndefined();
+    const failed = changing(failure('the request changed'));
+    expect((await failureOf(deps, request({ change: failed.change }))).commitOutcome).toBeUndefined();
+  });
+
+  it('M5-1b TP-177 does not change the message of the failures that exist', async () => {
+    const { deps } = await setup({ commitExit: 1 });
+    const { change } = adding();
+    expect((await failureOf(deps, request({ change }))).message).toBe('cannot commit the state files: git exited with 1');
   });
 });
 

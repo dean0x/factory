@@ -1,8 +1,8 @@
 import { isAbsolute, join, normalize } from 'node:path';
-import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { commitPaths, GIT_ENTRY, requireStateRepoCommit, stateHeadOf, unstagePaths, type RepoPaths } from '../core/git.js';
-import { err, ok } from '../core/result.js';
+import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, namedItems, shownPath } from '../core/root-paths.js';
 import { commandText, dirs, files, maxFileBytes, type CommandName } from '../names.js';
 import { readCheckedFile, type NamedPath } from '../workers/registry.js';
@@ -36,12 +36,31 @@ export interface BoardChange {
    * helper before any write.
    */
   readonly change: (texts: BoardTexts) => Promise<CliResult<BoardTexts>>;
+  /**
+   * A step that runs inside the state lock, after every check of the helper (the size of each new text and the item ids) and before the
+   * first file write. It gets the files that really change. A failure stops the helper before any file write, and the error reaches the
+   * caller as it is, with no outcome field. The step does not run when no file changes. It calls no step that takes the state lock.
+   */
+  readonly beforeWrite?: (updates: BoardTexts) => Promise<CliResult<void>>;
 }
 
 export interface BoardCommit {
   /** True when the helper made a commit. False when the change left every file as it was. */
   readonly committed: boolean;
 }
+
+/**
+ * Where the files stand after a failure that follows the first file write:
+ * - `restored`: no commit was made, and every written file is back as it was, with the staged changes cleared;
+ * - `committed`: the commit was made although git reported an error, so the files stay changed;
+ * - `unknown`: the helper can not tell, because the last commit is not readable or a file did not go back.
+ */
+export type CommitOutcome = 'restored' | 'committed' | 'unknown';
+
+/** The error of the helper. A failure after the first file write has `commitOutcome`; a failure before it has none. */
+export type BoardCommitError = CliError & { readonly commitOutcome?: CommitOutcome };
+
+export type BoardCommitResult = Result<BoardCommit, BoardCommitError>;
 
 const BOARD = files.board;
 
@@ -187,9 +206,22 @@ const writeUpdates = async (
   return ok(undefined);
 };
 
+/** The result of a put back: the reasons that a step failed, as text for the end of a message (empty when none failed), and whether every file is back. */
+interface PutBack {
+  readonly note: string;
+  readonly complete: boolean;
+}
+
+/** The outcome of a failure with no commit: restored when every file is back, else unknown. */
+const outcomeOfPutBack = (back: PutBack): CommitOutcome => (back.complete ? 'restored' : 'unknown');
+
+/** A failure (exit 1) after the first file write. The caller reads `commitOutcome`, never the text. */
+const failedAfterWrite = (message: string, commitOutcome: CommitOutcome): Err<BoardCommitError> =>
+  err({ kind: 'failure', message, commitOutcome });
+
 /**
- * Put the written files back as they were, and clear their staged changes when a commit was tried. The value is the reasons that a
- * step failed, as text for the end of a message, or an empty text.
+ * Put the written files back as they were, and clear their staged changes when a commit was tried. The value holds the reasons that a
+ * step failed, and whether every file is back: a file that did not go back, or a staged change that stayed, makes the put back partial.
  */
 const putBack = async (
   deps: Deps,
@@ -197,7 +229,7 @@ const putBack = async (
   written: readonly string[],
   before: BoardTexts,
   staged: RepoPaths | null,
-): Promise<string> => {
+): Promise<PutBack> => {
   const notes: string[] = [];
   for (const path of written) {
     const file = join(layout.stateDir, path);
@@ -209,7 +241,7 @@ const putBack = async (
     const unstaged = await unstagePaths(deps, layout.stateDir, staged);
     if (!unstaged.ok) notes.push(unstaged.error.message);
   }
-  return notes.length === 0 ? '' : `. ${notes.join('; ')}`;
+  return { note: notes.length === 0 ? '' : `. ${notes.join('; ')}`, complete: notes.length === 0 };
 };
 
 const commitLocked = async (
@@ -217,7 +249,7 @@ const commitLocked = async (
   layout: Layout,
   request: BoardChange,
   touched: readonly string[],
-): Promise<CliResult<BoardCommit>> => {
+): Promise<BoardCommitResult> => {
   const { command, message } = request;
   const ready = await requireStateRepoCommit(deps, layout.stateDir, touched, 'the board change', command);
   if (!ready.ok) return ready;
@@ -240,12 +272,17 @@ const commitLocked = async (
     const kept = await requireNoLostIds(deps, layout.stateDir, head.value !== null, updates.value.get(BOARD) ?? null, command);
     if (!kept.ok) return kept;
   }
+  if (request.beforeWrite !== undefined) {
+    const prepared = await request.beforeWrite(updates.value);
+    if (!prepared.ok) return prepared;
+  }
 
   const written: string[] = [];
   const wrote = await writeUpdates(deps, layout, updates.value, written);
   if (!wrote.ok) {
+    const back = await putBack(deps, layout, written, now.value, null);
     // The error keeps its kind, so a refused path keeps its exit code.
-    return err({ ...wrote.error, message: `${wrote.error.message}${await putBack(deps, layout, written, now.value, null)}` });
+    return err({ ...wrote.error, message: `${wrote.error.message}${back.note}`, commitOutcome: outcomeOfPutBack(back) });
   }
 
   const paths: RepoPaths = {
@@ -259,17 +296,20 @@ const commitLocked = async (
   const error = committed.error.message;
   const headAfter = await stateHeadOf(deps, layout.stateDir);
   if (!headAfter.ok) {
-    return failure(
+    return failedAfterWrite(
       `${error}. ${headAfter.error.message}, so the files are not put back. ` +
         `Run "git log -1 --stat" in ${dirs.state} to see whether the commit is there.`,
+      'unknown',
     );
   }
   if (headAfter.value !== head.value) {
-    return failure(
+    return failedAfterWrite(
       `${error}. The commit was made in ${dirs.state}, so the files stay changed. Run "git log -1 --stat" in ${dirs.state} to check it.`,
+      'committed',
     );
   }
-  return failure(`${error}${await putBack(deps, layout, written, now.value, paths)}`);
+  const back = await putBack(deps, layout, written, now.value, paths);
+  return failedAfterWrite(`${error}${back.note}`, outcomeOfPutBack(back));
 };
 
 /**
@@ -282,12 +322,14 @@ const commitLocked = async (
  * 4. Each file that changes has a new text of at most `maxFileBytes` bytes, else the call stops with exit 1 and writes nothing.
  * 5. No item id of the board at the last commit is missing from the new board text (exit 4), and a board that can not be read stops
  *    the call (exit 1).
- * 6. The files are written, and one commit holds exactly the files that changed.
+ * 6. The `beforeWrite` step of the caller runs, when there is one. A failure stops the call with that error and writes nothing.
+ * 7. The files are written, and one commit holds exactly the files that changed.
  * A failed write or commit puts the files back and clears the staged changes. A commit that landed although git reported an error
- * stays, and the failure says so. The change of the caller runs inside the lock, which is not re-entrant, so it calls no step that
- * takes the lock.
+ * stays, and the failure says so. Each failure of step 7 has a typed `commitOutcome` (`restored`, `committed` or `unknown`), so a
+ * caller never reads the message text to tell them apart. The change and the step of the caller run inside the lock, which is not
+ * re-entrant, so they call no step that takes the lock.
  */
-export const commitBoardChange = async (deps: Deps, layout: Layout, request: BoardChange): Promise<CliResult<BoardCommit>> => {
+export const commitBoardChange = async (deps: Deps, layout: Layout, request: BoardChange): Promise<BoardCommitResult> => {
   const touched = requirePlainPaths(request.touched);
   if (!touched.ok) return touched;
   return withStateLock(deps, layout, () => commitLocked(deps, layout, request, touched.value));
