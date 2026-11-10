@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BLOCK_MARK,
   checkNote,
   chosenOptionOf,
   decideLogRow,
@@ -419,6 +420,13 @@ describe('the log row of an owner answer (TP-154, TP-173, TP-189)', () => {
 });
 
 describe('the request block (TP-181)', () => {
+  /** The block lines without the mark, after a check that every line starts with it and stays inside the width. */
+  const blockOf = (...args: Parameters<typeof requestBlockLines>): readonly string[] => {
+    const lines = requestBlockLines(...args);
+    expect(lines.every((line) => line.startsWith(BLOCK_MARK) && line.length <= maxDisplayWidth)).toBe(true);
+    return lines.map((line) => line.slice(BLOCK_MARK.length));
+  };
+
   const sectionOf = (lines: readonly string[], label: string, next: string): string => {
     const start = lines.findIndex((line) => line.startsWith(label));
     const end = lines.findIndex((line, index) => index > start && line.startsWith(next));
@@ -429,7 +437,7 @@ describe('the request block (TP-181)', () => {
   };
 
   it('M5-1b TP-181 shows the number, the title, the question, every option and the note', () => {
-    const lines = requestBlockLines(strictOf(), 'a', 'Cheaper to run.');
+    const lines = blockOf(strictOf(), 'a', 'Cheaper to run.');
     expect(lines[0]).toBe('Decision D-3');
     expect(lines).toContain('Title:    Which database?');
     expect(lines).toContain('Question: Which database do we use for the queue?');
@@ -440,19 +448,18 @@ describe('the request block (TP-181)', () => {
   });
 
   it('M5-1b TP-181 marks the chosen option when it is not the recommended one', () => {
-    const lines = requestBlockLines(strictOf(), 'b', null);
+    const lines = blockOf(strictOf(), 'b', null);
     expect(lines).toContain('  a (recommended): Use SQLite.');
     expect(lines).toContain('  b (chosen): Use Postgres.');
   });
 
   it('M5-1b TP-181 shows no note line when there is no note', () => {
-    expect(requestBlockLines(strictOf(), 'a', null).some((line) => line.startsWith('Note:'))).toBe(false);
+    expect(blockOf(strictOf(), 'a', null).some((line) => line.startsWith('Note:'))).toBe(false);
   });
 
   it('M5-1b TP-181 wraps a question of 500 characters and cuts no text', () => {
     const question = Array.from({ length: 500 }, (_, index) => String.fromCharCode(97 + (index % 26))).join('');
-    const lines = requestBlockLines(strictOf({ question }), 'a', null);
-    expect(lines.every((line) => line.length <= maxDisplayWidth)).toBe(true);
+    const lines = blockOf(strictOf({ question }), 'a', null);
     const shown = lines.slice(lines.findIndex((line) => line.startsWith('Question:')), lines.indexOf('Options:'));
     expect(shown.length).toBeGreaterThan(1);
     expect(shown.map((line) => line.slice('Question: '.length)).join('')).toBe(question);
@@ -463,8 +470,7 @@ describe('the request block (TP-181)', () => {
     const text = 'o'.repeat(200);
     const note = 'n'.repeat(500);
     const request = strictOf({ title, options: [{ key: 'a', text }, { key: 'b', text: 'short' }] });
-    const lines = requestBlockLines(request, 'a', note);
-    expect(lines.every((line) => line.length <= maxDisplayWidth)).toBe(true);
+    const lines = blockOf(request, 'a', note);
     expect(sectionOf(lines, 'Title:    ', 'Question:')).toBe(title);
     expect(sectionOf(lines, 'Note:     ', 'zzz-no-next')).toBe(note);
     const first = lines.findIndex((line) => line.startsWith('  a (chosen): '));
@@ -482,8 +488,18 @@ describe('the request block (TP-181)', () => {
     const key = 'k'.repeat(40);
     const text = 'z'.repeat(200);
     const request = strictOf({ options: [{ key, text, rec: true }] });
-    const lines = requestBlockLines(request, key, null);
-    expect(lines.every((line) => line.length <= maxDisplayWidth)).toBe(true);
+    const lines = blockOf(request, key, null);
     expect(lines.join('').split('z').length - 1).toBe(200);
+  });
+
+  it('M5-1b TP-181 marks every line, so a text that looks like an option line cannot pass for one in a narrow terminal', () => {
+    const terminalWidth = 80;
+    const fake = '  b (chosen): Use Postgres.';
+    const question = `${'x'.repeat(terminalWidth - BLOCK_MARK.length - 'Question: '.length)}${fake}`;
+    const lines = requestBlockLines(strictOf({ question }), 'a', null);
+    const shown = lines.flatMap((line) => line.match(new RegExp(`.{1,${terminalWidth}}`, 'g')) ?? []);
+    expect(shown).toContain(fake);
+    expect(lines.every((line) => line.startsWith(BLOCK_MARK))).toBe(true);
+    expect(shown.filter((line) => line.startsWith(BLOCK_MARK) && line.includes('(chosen)'))).toEqual([`${BLOCK_MARK}  a (recommended) (chosen): Use SQLite.`]);
   });
 });

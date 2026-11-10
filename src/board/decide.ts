@@ -259,23 +259,32 @@ const LABEL_TITLE = 'Title:    ';
 const LABEL_QUESTION = 'Question: ';
 const LABEL_NOTE = 'Note:     ';
 
+/**
+ * The mark at the start of each line of the request block. A terminal narrower than the block breaks a long line, and the rest of
+ * that line has no mark. So no text of the request can look like an option line or a mark of the block.
+ */
+export const BLOCK_MARK = '> ';
+
 /** The text after a label, wrapped to the width of a line with no character dropped. A line that goes on is indented as the label is wide. */
 const labeled = (label: string, text: string): readonly string[] =>
-  wrapText(text, maxDisplayWidth - label.length).map((line, index) => `${index === 0 ? label : ' '.repeat(label.length)}${line}`);
+  wrapText(text, maxDisplayWidth - BLOCK_MARK.length - label.length).map(
+    (line, index) => `${index === 0 ? label : ' '.repeat(label.length)}${line}`,
+  );
 
 const optionLabel = (option: DecisionRecordOption, chosen: string): string =>
   `  ${option.key}${option.rec === true ? ' (recommended)' : ''}${option.key === chosen ? ' (chosen)' : ''}: `;
 
 /**
  * The block that decide shows before it asks (AC-42): the number, the title, the full question, every option with its key and its
- * text (the recommended one and the chosen one marked) and the note. A long text wraps and no text is cut. The request passed the
- * strict read, so the display shows exactly the text that the hash covers.
+ * text (the recommended one and the chosen one marked) and the note. A long text wraps and no text is cut. Each line starts with
+ * `BLOCK_MARK`. The request passed the strict read, so the display shows exactly the text that the hash covers.
  */
-export const requestBlockLines = (request: DecisionRecordRequest, chosen: string, note: string | null): readonly string[] => [
-  `Decision ${request.id}`,
-  ...labeled(LABEL_TITLE, request.title),
-  ...labeled(LABEL_QUESTION, request.question),
-  'Options:',
-  ...request.options.flatMap((option) => labeled(optionLabel(option, chosen), option.text)),
-  ...(note === null ? [] : labeled(LABEL_NOTE, note)),
-];
+export const requestBlockLines = (request: DecisionRecordRequest, chosen: string, note: string | null): readonly string[] =>
+  [
+    `Decision ${request.id}`,
+    ...labeled(LABEL_TITLE, request.title),
+    ...labeled(LABEL_QUESTION, request.question),
+    'Options:',
+    ...request.options.flatMap((option) => labeled(optionLabel(option, chosen), option.text)),
+    ...(note === null ? [] : labeled(LABEL_NOTE, note)),
+  ].map((line) => `${BLOCK_MARK}${line}`);

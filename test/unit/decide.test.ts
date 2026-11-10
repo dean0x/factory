@@ -461,7 +461,7 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     valueOf(await decide(atTerminal(repo).deps, { note: 'cheaper to run' }));
     expect(repo.textOf(RECORD_PATH)).toContain('cheaper to run');
     expect(repo.deps.files.get(STORE_PATH)).not.toContain('cheaper');
-    expect(shownOf(repo)).toContain('Note:     cheaper to run');
+    expect(shownOf(repo)).toContain('> Note:     cheaper to run');
   });
 
   it('M5-1b TP-181 writes the request block to stdout before the question: the title, the question, every option, the marks', async () => {
@@ -473,12 +473,12 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     });
     valueOf(await decide(terminal.deps, { words: ['D-1', 'b'] }));
     expect(seen[0]).toEqual([
-      'Decision D-1',
-      'Title:    Pick a plan',
-      'Question: Which plan do we build?',
-      'Options:',
-      '  a (recommended): Plan A',
-      '  b (chosen): Plan B',
+      '> Decision D-1',
+      '> Title:    Pick a plan',
+      '> Question: Which plan do we build?',
+      '> Options:',
+      '>   a (recommended): Plan A',
+      '>   b (chosen): Plan B',
     ]);
   });
 
@@ -487,9 +487,9 @@ describe('decide: a yes answer records the answer (TP-150, TP-154, TP-181)', () 
     const repo = await nodeOf({ waiting: waitingOf({ ...ENTRY, question }) });
     valueOf(await decide(atTerminal(repo).deps));
     const lines = shownOf(repo);
-    const start = lines.findIndex((line) => line.startsWith('Question: '));
-    const end = lines.indexOf('Options:');
-    const shownQuestion = lines.slice(start, end).map((line) => line.slice('Question: '.length)).join('');
+    const start = lines.findIndex((line) => line.startsWith('> Question: '));
+    const end = lines.indexOf('> Options:');
+    const shownQuestion = lines.slice(start, end).map((line) => line.slice('> Question: '.length)).join('');
     expect(shownQuestion).toBe(question);
     expect(end - start).toBeGreaterThan(1);
     expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(120);
@@ -529,7 +529,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
     expect(error.hint).toContain('factory decide D-1 a');
     expect(repo.deps.files).toEqual(before);
     expect(repo.commits).toEqual([]);
-    expect(shownOf(repo)[0]).toBe('Decision D-1');
+    expect(shownOf(repo)[0]).toBe('> Decision D-1');
   });
 
   it('M5-1b TP-146 returns the error of a question that cannot be answered, and writes nothing', async () => {
