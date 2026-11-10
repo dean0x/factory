@@ -116,7 +116,7 @@ Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, ac
 | Worker table | Facts about each worker, written by hand | G | The coordinator must know what each worker does. |
 | Owner queue and decision log | The items that wait on the owner, and the owner's decisions | G (schema), P (names) | A question for the owner must not stay on one worker's screen. |
 | Item detail, log and done list | The detail of each item, a log and a list of removals that only grows | G | A removed item must leave a record. |
-| Briefs | The assignment of each worker | G (shape) | A worker needs a written scope. |
+| Assignments | The written task of each worker | G (shape) | A worker needs a written scope. |
 | Owner view page | A page with the board, the items and the decision forms | G (template), P | The owner answers in one place. |
 | Board writer | The one writer of the board file; it takes a lock and fails closed | G, M | Two sessions must not write the board at the same time. |
 | Worker table writer and tmux helpers | The one writer of the worker table; tmux helpers | G, M | The same reason as the board writer. |
