@@ -47,8 +47,8 @@ import { requestsOf } from './requests.js';
  * The local board has the operations of the contract and four more: the list and the close of the requests, and the list and the
  * write of the queue. A hosted board maps them to the provider (FAC-M3), so they are not in the contract suite.
  *
- * A hosted tracker kind (`github`, `jira` or `linear`) keeps the truth of the board at the provider, and the local files are a cache of
- * it. This version has no provider, so every write of a hosted kind stops with a security stop (exit 4) before the input check and
+ * A hosted tracker kind (`github`, `jira` or `linear`) keeps the truth of the board at the provider. factory still keeps the local
+ * files, and they are the source for the views (design 4.10). This version has no provider, so every write of a hosted kind stops with a security stop (exit 4) before the input check and
  * before the lock: it makes no commit and changes no file. A read of a hosted kind reads the local files, as the kind `local` does.
  */
 
