@@ -4,7 +4,7 @@ import type { Deps } from '../core/deps.js';
 import { commitPaths, GIT_ENTRY, requireStateRepoCommit, stateHeadOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, namedItems, shownPath } from '../core/root-paths.js';
-import { commandText, dirs, files, maxFileBytes, type CommandName } from '../names.js';
+import { commandText, commands, dirs, files, maxFileBytes, type CommandName } from '../names.js';
 import { readCheckedFile, type NamedPath } from '../workers/registry.js';
 import { requireGuardOn } from './guard.js';
 import { BOARD_RESTORE_COMMAND, boardAtHead } from './head-board.js';
@@ -130,6 +130,8 @@ export const readBoardFiles = async (deps: Deps, layout: Layout, paths: readonly
   return currentTexts(deps, layout, plain.value);
 };
 
+const SIZE_REMEDY = `Move old text out of the file. "${commandText(commands.doctor)}" shows how full the board files are.`;
+
 /**
  * Every new text is within `maxFileBytes`, counted in bytes: the reader refuses a larger file, so a write must never make one. A file
  * that the change removes has no text. The check is private: the helper is the one writer, so no caller needs it alone.
@@ -137,7 +139,7 @@ export const readBoardFiles = async (deps: Deps, layout: Layout, paths: readonly
 const requireWithinCap = (updates: BoardTexts): CliResult<void> => {
   for (const [path, text] of updates) {
     if (text !== null && Buffer.byteLength(text, 'utf8') > maxFileBytes) {
-      return failure(`cannot commit ${path}: the new text is larger than ${maxFileBytes} bytes`);
+      return failure(`cannot commit ${path}: the new text is larger than ${maxFileBytes} bytes`, SIZE_REMEDY);
     }
   }
   return ok(undefined);

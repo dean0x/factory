@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { Deps, RunOutput } from '../../src/core/deps.js';
 import { ok } from '../../src/core/result.js';
-import { commands, files as fileNames, maxFileBytes, stateLock } from '../../src/names.js';
+import { commandText, commands, files as fileNames, maxFileBytes, stateLock } from '../../src/names.js';
 import {
   commitBoardChange,
   readBoardFiles,
@@ -12,7 +13,7 @@ import {
   type BoardTexts,
 } from '../../src/state/board-commit.js';
 import { installGuard } from '../../src/state/guard.js';
-import { layoutOf } from '../../src/state/layout.js';
+import { layoutOf, stateRel } from '../../src/state/layout.js';
 import { exited, withFailingWrites, type FakeDeps, type RunCall } from '../helpers/fake-deps.js';
 import { withoutStateWords, type GitFixture } from '../helpers/git-fake.js';
 import { HAND_KINDS, HOME, installed, make, OFF_CASES, STATE } from '../helpers/guard-fixture.js';
@@ -698,6 +699,28 @@ describe('the board commit helper: the size of the new text (TP-85)', () => {
     const { change } = changing(ok(texts({ 'waiting.json': wide })));
     const error = errorOf(await commitBoardChange(deps, LAYOUT, request({ touched: ['waiting.json'], change })));
     expect(error.message).toContain(String(maxFileBytes));
+  });
+});
+
+describe('the board commit helper: a new text over the cap gives the cap and a remedy that names a command (TP-166)', () => {
+  const RECORD = join(stateRel.profileDecisions, '2030-01-02-d-1.md');
+  it.each([
+    ['the waiting text', fileNames.waiting],
+    ['the decision log text', fileNames.decisionLog],
+    ['the profile log text', stateRel.profileLog],
+    ['the profile record text', RECORD],
+  ])('M5-1b TP-166 refuses %s over the cap with exit 1, the file name, the cap and a remedy, and writes nothing', async (_name, file) => {
+    const { deps, seen } = await setup();
+    const before = stateFiles(deps);
+    const { change } = changing(ok(texts({ [file]: OVER })));
+    const error = errorOf(await commitBoardChange(deps, LAYOUT, request({ touched: [file], change })));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(file);
+    expect(error.message).toContain(String(maxFileBytes));
+    expect(error.hint).toContain(`"${commandText(commands.doctor)}"`);
+    expect(error.hint).not.toContain('\n');
+    expect(stateFiles(deps)).toEqual(before);
+    expect(writesOf(seen)).toEqual([]);
   });
 });
 
