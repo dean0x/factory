@@ -27,6 +27,17 @@ describe('the rename of the queue key in the text of the board (TP-30)', () => {
     expect(renamed(`{"qu${escapeOf('0065')}ue": []}`)).toBe('{"merge": []}');
   });
 
+  it.each([
+    ['an escaped quote', '{"a": "\\"", "queue": []}', '{"a": "\\"", "merge": []}'],
+    ['an escaped backslash', '{"a": "x\\\\", "queue": []}', '{"a": "x\\\\", "merge": []}'],
+  ])('M5-1b TP-30 finds the key after a string value with %s, and the data is the old data with the key renamed', (_name, before, after) => {
+    const result = renamed(before);
+    expect(result).toBe(after);
+    const old = JSON.parse(before) as Record<string, unknown>;
+    const withNewKey = Object.fromEntries(Object.entries(old).map(([key, value]) => [key === 'queue' ? 'merge' : key, value]));
+    expect(JSON.parse(result ?? '')).toEqual(withNewKey);
+  });
+
   it('M5-1b TP-30 writes a key with a letter that is not ASCII as an escape, as the writers of the board do', () => {
     expect(renamed('{"queue": []}', 'café')).toBe(`{"caf${escapeOf('00e9')}": []}`);
   });
