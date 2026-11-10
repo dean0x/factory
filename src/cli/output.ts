@@ -150,6 +150,38 @@ export const displayLine = (text: string, width: number = maxDisplayWidth): stri
   return cut.length < clean.length && /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
 };
 
+/**
+ * The same rule as HIDDEN_CHARACTERS, as a copy with no global flag. A global regex keeps `lastIndex` between two calls of `.test`,
+ * so a repeated call can give another answer. The copy has the same source, so the display rule has one owner.
+ */
+const HIDDEN_CHARACTER = new RegExp(HIDDEN_CHARACTERS.source, 'u');
+
+/**
+ * True when the text holds a character that the display removes: a control character other than the newline and the tab, a
+ * format, line or paragraph separator character, or an invisible filler. A caller that must show exactly the text that it hashes
+ * refuses such a text.
+ */
+export const removedByDisplay = (text: string): boolean => HIDDEN_CHARACTER.test(text);
+
+/**
+ * The text as lines of at most `width` code units (at least one), with no character dropped: the lines joined give the text. A
+ * character of two code units is never cut in half, so it takes a line of its own when `width` is smaller than it. An empty text
+ * gives one empty line. The text is one line of text: a line break in it counts as a character.
+ */
+export const wrapText = (text: string, width: number = maxDisplayWidth): readonly string[] => {
+  const limit = Math.max(1, width);
+  const lines: string[] = [];
+  let line = '';
+  for (const character of text) {
+    if (line !== '' && line.length + character.length > limit) {
+      lines.push(line);
+      line = '';
+    }
+    line += character;
+  }
+  return [...lines, line];
+};
+
 /** In JSON, the hidden characters leave the string values. A line break and a carriage return stay as escapes and no string is cut. */
 const withoutHidden = (_key: string, value: unknown): unknown =>
   typeof value === 'string' ? value.replace(HIDDEN_CHARACTERS_IN_JSON, '') : value;
