@@ -1723,3 +1723,124 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
     });
   });
 });
+
+describe('the local connector: request add and request close read the owner decision file (TP-160, TP-161, TP-179, TP-192)', () => {
+  const UNREADABLE: readonly (readonly [string, string])[] = [
+    ['text that is not JSON', 'not json'],
+    ['a file with another schema number', jsonOf({ schema: 2, records: [] })],
+  ];
+
+  it('M5-1b TP-160 numbers a new request above the highest D-n of the store, the waiting file and the log', async () => {
+    const repo = await decideRepo({ decisionLog: logOf(closedRow({ item: 'D-3: Old' })), store: storeOf(storedRecord({ id: 'D-7' })) });
+    expect(valueOf(await localOf(repo.deps).askDecision(DECISION))).toBe('D-8');
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it('M5-1b TP-160 numbers a new request above a stored D-n that the waiting file and the log no longer hold', async () => {
+    const repo = await decideRepo({ waiting: waitingOf(), store: storeOf(storedRecord({ id: 'D-4' })) });
+    expect(valueOf(await localOf(repo.deps).askDecision(DECISION))).toBe('D-5');
+  });
+
+  it.each([
+    ['another node', { node: 'other' }],
+    ['another root', { root: '/h/other' }],
+  ])('M5-1b TP-160 does not count a record of %s', async (_name, overrides) => {
+    const repo = await decideRepo({ store: storeOf(storedRecord({ ...overrides, id: 'D-7' })) });
+    expect(valueOf(await localOf(repo.deps).askDecision(DECISION))).toBe('D-2');
+  });
+
+  it('M5-1b TP-160 counts no record when no variable names a state folder', async () => {
+    const repo = await decideRepo({ env: {}, store: storeOf(storedRecord({ id: 'D-7' })) });
+    expect(valueOf(await localOf(repo.deps).askDecision(DECISION))).toBe('D-2');
+  });
+
+  it('M5-1b TP-160 reads the decision file under the state lock and leaves its lock file alone', async () => {
+    const repo = await decideRepo({ store: storeOf(storedRecord({ id: 'D-7' })) });
+    const before = repo.deps.files.get(DECISIONS_PATH);
+    valueOf(await localOf(repo.deps).askDecision(DECISION));
+    expect(repo.deps.files.get(DECISIONS_PATH)).toBe(before);
+    expect([...repo.deps.files.keys()].filter((path) => path.startsWith(DECISIONS_PATH) && path !== DECISIONS_PATH)).toEqual([]);
+  });
+
+  it.each(UNREADABLE)('M5-1b TP-161 exits 1, names the decision file and writes nothing for a request add with %s', async (_name, store) => {
+    const repo = await decideRepo({ store });
+    const before = new Map(repo.deps.files);
+    const error = errorOf(await localOf(repo.deps).askDecision(DECISION));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(DECISIONS_PATH);
+    expect(error.message).toContain('cannot be read');
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('M5-1b TP-161 exits 4 and writes nothing for a request add when the decision file would be inside the factory folder', async () => {
+    const repo = await decideRepo({ env: { [env.stateHome]: `${HOME}/state`, [env.userHome]: '/home/me' } });
+    const before = new Map(repo.deps.files);
+    expect(exitOf(await localOf(repo.deps).askDecision(DECISION))).toBe(4);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('M5-1b TP-179 refuses to close a request that has a record, says that the owner answered, names decide, and writes nothing', async () => {
+    const repo = await decideRepo({ store: storeOf(storedRecord()) });
+    const before = new Map(repo.deps.files);
+    const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('D-1');
+    expect(error.message).toContain('answered');
+    expect(error.hint).toContain(commandText(commands.decide));
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('M5-1b TP-179 refuses to close a request whose record has another request hash', async () => {
+    const repo = await decideRepo({ store: storeOf(storedRecord({ hash: requestHashOf(requestTextOf(CHANGED_ENTRY)) })) });
+    const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('answered');
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each([
+    ['another D-n', { id: 'D-2' }],
+    ['another node', { node: 'other' }],
+    ['another root', { root: '/h/other' }],
+  ])('M5-1b TP-179 closes a request when the only record is a record of %s', async (_name, overrides) => {
+    const repo = await decideRepo({ store: storeOf(storedRecord(overrides)) });
+    expect(valueOf(await localOf(repo.deps).closeRequest('D-1'))).toEqual({ id: 'D-1', title: 'Pick a plan' });
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it('M5-1b TP-179 closes a request when no variable names a state folder', async () => {
+    const repo = await decideRepo({ env: {}, store: storeOf(storedRecord()) });
+    expect(valueOf(await localOf(repo.deps).closeRequest('D-1')).id).toBe('D-1');
+  });
+
+  it.each(UNREADABLE)('M5-1b TP-179 exits 1, names the decision file and writes nothing for a request close with %s', async (_name, store) => {
+    const repo = await decideRepo({ store });
+    const before = new Map(repo.deps.files);
+    const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(DECISIONS_PATH);
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it('M5-1b TP-179 keeps the message of an answered row for a number that the log holds, with a record in the store', async () => {
+    const repo = await decideRepo({ waiting: waitingOf(), decisionLog: logOf(answerRow()), store: storeOf(storedRecord()) });
+    const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain(fileNames.waiting);
+  });
+
+  it('M5-1b TP-192 names the cap and says not to remove rows when the new text of the decision log is over the cap, and writes nothing', async () => {
+    const repo = await decideRepo({ decisionLog: logOf(closedRow({ item: 'D-9: Big', pad: 'x'.repeat(maxFileBytes - 200) })) });
+    const before = new Map(repo.deps.files);
+    const error = errorOf(await localOf(repo.deps).closeRequest('D-1'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(fileNames.decisionLog);
+    expect(error.message).toContain(String(maxFileBytes));
+    expect(error.hint).toContain('Do not remove rows');
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+});

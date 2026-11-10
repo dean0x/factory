@@ -1,8 +1,9 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runRequest, type RequestOptions } from '../../src/commands/request.js';
-import { commands, commandText, files as fileNames, requestCommands, requestWords } from '../../src/names.js';
+import { commands, commandText, files as fileNames, program, requestCommands, requestWords } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { boardNode, boardText } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
@@ -59,6 +60,28 @@ const FILES = [fileNames.board, fileNames.waiting, fileNames.decisionLog];
 /** The text of the three board files now, for a test that checks that a refused command changed none of them. */
 const filesOf = (repo: BoardRepo): (string | undefined)[] => FILES.map((file) => repo.textOf(file));
 
+const STORE_PATH = join('/state', program, fileNames.ownerDecisions);
+
+/** A record of the owner decision file for the fake node: the node id of the sample config and the root of the board fixture. */
+const storedRecord = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  node: 'demo',
+  root: HOME,
+  id: 'D-1',
+  option: 'a',
+  hash: 'a'.repeat(64),
+  at: '2030-01-02T03:04:05.678Z',
+  ...overrides,
+});
+
+const storeText = (records: readonly Record<string, unknown>[]): string => `${JSON.stringify({ schema: 1, records }, null, 2)}\n`;
+
+/** A fake node with the text of the owner decision file in place. */
+const nodeWithStore = async (store: string, setup: Parameters<typeof boardNode>[0] = {}): Promise<BoardRepo> => {
+  const repo = await boardNode(setup);
+  repo.deps.seed(STORE_PATH, store);
+  return repo;
+};
+
 describe('request add (TP-22, TP-99)', () => {
   it('M5-1b TP-22 stores the decision with the first D-n, prints one line, and makes one commit that holds only the waiting file', async () => {
     const repo = await boardNode();
@@ -110,6 +133,29 @@ describe('request add (TP-22, TP-99)', () => {
     expect(both.every((result) => result.ok)).toBe(true);
     expect(waitingOf(repo).items.map((item) => item['id']).sort()).toEqual(['D-1', 'D-2']);
     expect(repo.commits).toHaveLength(2);
+  });
+});
+
+describe('request add: the owner decision file (TP-160, TP-161)', () => {
+  it('M5-1b TP-160 takes the number after the highest D-n of the decision records of this node and this root', async () => {
+    const store = storeText([
+      storedRecord({ id: 'D-6' }),
+      storedRecord({ id: 'D-20', node: 'other' }),
+      storedRecord({ id: 'D-30', root: '/h/other' }),
+    ]);
+    const repo = await nodeWithStore(store, { waiting: waitingText([entry('D-2')]) });
+    expect(linesOf(await run(repo, ADD))).toEqual(['Added D-7: Pick a plan']);
+    expect(waitingOf(repo).items.map((item) => item['id'])).toEqual(['D-2', 'D-7']);
+  });
+
+  it('M5-1b TP-161 exits 1, names the decision file and writes nothing when the decision file cannot be read', async () => {
+    const repo = await nodeWithStore('not json');
+    const before = filesOf(repo);
+    const error = errorOf(await run(repo, ADD));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(STORE_PATH);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
   });
 });
 
@@ -315,6 +361,32 @@ describe('request close (TP-22, TP-99)', () => {
     const error = errorOf(await run(repo, { words: ['close', 'D-3'] }));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(fileNames.decisionLog);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('M5-1b TP-179 exits 1, says that the owner answered, names decide and writes nothing for a request that has a decision record', async () => {
+    const repo = await nodeWithStore(storeText([storedRecord({ id: 'D-2' })]), { waiting: waitingText([entry('D-1'), entry('D-2')]) });
+    const before = filesOf(repo);
+    const error = errorOf(await run(repo, { words: ['close', 'D-2'] }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('answered');
+    expect(error.hint).toContain(commandText(commands.decide));
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('M5-1b TP-179 closes a request that has no record when the store holds the record of another request', async () => {
+    const repo = await nodeWithStore(storeText([storedRecord({ id: 'D-2' })]), { waiting: waitingText([entry('D-1'), entry('D-2')]) });
+    expect(linesOf(await run(repo, { words: ['close', 'D-1'] }))).toEqual(['Closed D-1: Request D-1']);
+  });
+
+  it('M5-1b TP-179 exits 1, names the decision file and writes nothing when the decision file cannot be read', async () => {
+    const repo = await nodeWithStore('not json', { waiting: waitingText([entry('D-1')]) });
+    const before = filesOf(repo);
+    const error = errorOf(await run(repo, { words: ['close', 'D-1'] }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(STORE_PATH);
     expect(filesOf(repo)).toEqual(before);
     expect(repo.commits).toEqual([]);
   });

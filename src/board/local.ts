@@ -3,10 +3,11 @@ import { failure, safetyRefusal, usageError, type CliError, type CliResult } fro
 import { displayLine } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { decisionPlaceOf, readDecisionProof, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
+import { decisionIdsOf, decisionPlaceOf, readDecisionProof, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
 import { err, ok, type Err, type Result } from '../core/result.js';
 import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
 import {
+  commands,
   commandText,
   dirs,
   env,
@@ -168,7 +169,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   const commit = async <T>(
     touched: readonly string[],
     message: string,
-    apply: (texts: BoardTexts) => CliResult<Applied<T>>,
+    apply: (texts: BoardTexts) => CliResult<Applied<T>> | Promise<CliResult<Applied<T>>>,
     beforeWrite?: (updates: BoardTexts) => Promise<CliResult<void>>,
   ): Promise<Result<T, BoardCommitError>> => {
     const outcome: { current: { readonly value: T } | undefined } = { current: undefined };
@@ -177,7 +178,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       command: options.command,
       message,
       change: async (texts) => {
-        const applied = apply(texts);
+        const applied = await apply(texts);
         if (!applied.ok) return applied;
         outcome.current = { value: applied.value.value };
         return ok(applied.value.texts);
@@ -239,6 +240,22 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     failure(
       `there is no place for the ${roles.owner} store: no variable names a state folder`,
       `Set ${env.stateHome} or ${env.userHome}, then run "${commandText(options.command)}" again.`,
+    );
+
+  /**
+   * The D-n of the owner decision file for this node id and this real root. One read of at most 1 MiB, with no lock of the decision
+   * file, so it runs under the state lock. A file that cannot be read is exit 1 and names the file and the reason.
+   */
+  const storedIdsOf = async (place: DecisionPlace): Promise<CliResult<readonly string[]>> => {
+    const ids = await decisionIdsOf(deps, place);
+    return ids.ok ? ids : failure(ids.error);
+  };
+
+  /** A close of a request that has a record in the owner decision file. The close could remove the board copy path of the answer. */
+  const answeredCannotClose = (id: string): Err<CliError> =>
+    failure(
+      `${requestWords.request} ${shown(id)} was answered by the ${roles.owner}, so ${program} does not close it`,
+      `To finish the board copy of the answer, run "${commandText(commands.decide)} ${id} <option>" again with the same option.`,
     );
 
   /** The refusal of a state that decide does not accept. The state is not open, so `requireOpen` gives the error. */
@@ -485,10 +502,14 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const checked = checkDecision(input);
       if (!checked.ok) return checked;
-      return commit(decisionFiles, commitMessages.askDecision, (texts) => {
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      return commit(decisionFiles, commitMessages.askDecision, async (texts) => {
         const read = decisionDocsOf(texts);
         if (!read.ok) return read;
-        const edited = askIn(read.value.waiting, read.value.log, checked.value);
+        const stored = await storedIdsOf(place.value);
+        if (!stored.ok) return stored;
+        const edited = askIn(read.value.waiting, read.value.log, checked.value, stored.value);
         if (!edited.ok) return edited;
         const written = newText(files.waiting, edited.value.top, parseWaiting);
         if (!written.ok) return written;
@@ -506,15 +527,22 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const valid = checkRequestId(id);
       if (!valid.ok) return valid;
-      return commit(decisionFiles, commitMessages.closeDecision(id), (texts) => {
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      return commit(decisionFiles, commitMessages.closeDecision(id), async (texts) => {
         const read = decisionDocsOf(texts);
         if (!read.ok) return read;
+        const stored = await storedIdsOf(place.value);
+        if (!stored.ok) return stored;
         const edited = closeRequestIn(read.value.waiting, read.value.log, id, deps.now().toISOString().slice(0, DATE_CHARS));
         if (!edited.ok) return edited;
+        if (stored.value.includes(id)) return answeredCannotClose(id);
         const waiting = newText(files.waiting, edited.value.waiting, parseWaiting);
         if (!waiting.ok) return waiting;
         const log = newText(files.decisionLog, edited.value.log, parseDecisionLog);
         if (!log.ok) return log;
+        const room = requireLogRoom(log.value.text);
+        if (!room.ok) return room;
         return ok({
           texts: new Map([
             [files.waiting, waiting.value.text],

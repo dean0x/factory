@@ -386,15 +386,16 @@ export const addTrackIn = (doc: BoardDoc, track: TrackAddInput): CliResult<Edit<
 };
 
 /**
- * Add a decision to the waiting file. Its id is the number after the highest `D-n` of the waiting file and of the decision log,
- * counted on the texts that were read under the lock. The value is the id.
+ * Add a decision to the waiting file. Its id is the number after the highest `D-n` of the waiting file, of the decision log and of
+ * the decision records of the owner (`storeIds`), counted on the texts that were read under the lock. The value is the id.
  */
 export const askIn = (
   waiting: WaitingDoc,
   log: DecisionLogDoc,
   decision: CheckedDecision,
+  storeIds: readonly string[],
 ): CliResult<Edit<string> & { readonly top: Stored }> => {
-  const id = nextId('D-', [...waiting.items.map((entry) => entry.id), ...log.rows.map((row) => row.id)]);
+  const id = nextId('D-', [...waiting.items.map((entry) => entry.id), ...log.rows.map((row) => row.id), ...storeIds]);
   if (!id.ok) return id;
   const stored = {
     [waitingKeys.id]: id.value,
