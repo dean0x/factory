@@ -1,15 +1,17 @@
 import { execFile, spawnSync } from 'node:child_process';
-import { accessSync, constants, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import { mkdir, readFile, readdir, symlink, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { files } from '../../src/names.js';
-import { makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
+import { files, program } from '../../src/names.js';
+import { stateRel } from '../../src/state/layout.js';
+import { runInTerminal, scriptForm } from './fake-terminal.js';
+import { DIST, makeSandbox, removeOpenSandboxes, type RunResult, type Sandbox } from './harness.js';
 
 /**
  * No command needs python3, jq or glow (AC-21). The built program runs with a PATH of one folder. The folder holds links to
  * node, git, sh, grep, script and tmux, and to nothing else. `init`, `item`, `track`, `request`, `queue` and `status` must work,
- * and so must a manual commit that the delete guard reads.
+ * and so must `decide` in a fake terminal, and a manual commit that the delete guard reads.
  */
 
 /** The programs that the PATH of the test holds. */
@@ -21,6 +23,9 @@ const ABSENT_TOOLS = ['python3', 'python', 'jq', 'glow'] as const;
 /** The time that a case may take: `init`, a run of the program for each command, and the git commands. */
 const CASE_MS = 120_000;
 const PROBE_MS = 20_000;
+/** The bounds of a run in the fake terminal: the wait for one prompt and the whole run. */
+const PROMPT_MS = 15_000;
+const TOTAL_MS = 90_000;
 
 /** The path of a program on the PATH of this process, or null. The node of this process is the node of the test. */
 const findTool = (name: string): string | null => {
@@ -145,6 +150,31 @@ describe.skipIf(!hasTools)('the commands with a PATH of node, git, sh, grep, scr
       expect((await mustRun(['queue', 'show'])).stdout).toContain('Docs');
       const status = JSON.parse((await mustRun(['status', '--json'])).stdout) as { schema: string; running: boolean; workers: unknown[] };
       expect(status).toMatchObject({ schema: 'factory.status/v1', running: false, workers: [] });
+    },
+    CASE_MS,
+  );
+
+  it.skipIf(scriptForm() === null)(
+    'M5-1b TP-162 records the answer of decide in a fake terminal, with the PATH of the six programs only',
+    async () => {
+      await makeNode();
+      await mustRun(['request', 'add', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Yes', '--option', 'b=No']);
+      const before = await commitCount();
+
+      const result = await runInTerminal(box, [process.execPath, DIST, 'decide', 'D-1', 'a', '--home', box.node], {
+        env: { PATH: bin },
+        exchanges: [{ prompt: /Record the answer a for D-1\? \[y\/N\] $/, answer: 'y' }],
+        promptMs: PROMPT_MS,
+        totalMs: TOTAL_MS,
+      });
+
+      expect(result.code, result.screen).toBe(0);
+      expect(result.screen).toContain('Recorded the answer a for D-1: Pick');
+      expect(await commitCount()).toBe(before + 1);
+      const decisions = await readdir(join(stateDir(), stateRel.profileDecisions));
+      expect(decisions).toHaveLength(1);
+      expect(decisions[0]).toMatch(/^\d{4}-\d{2}-\d{2}-d-1-pick\.md$/);
+      expect(existsSync(join(box.env['HOME'] ?? '', '.local', 'state', program, files.ownerDecisions))).toBe(true);
     },
     CASE_MS,
   );
