@@ -6,7 +6,7 @@ This roadmap replaces FAC-M2 to FAC-M7 of the v1 roadmap (D-53). FAC-M0 (design)
 
 ## Goal
 
-A team member installs factory on a new macOS or Linux machine. `factory init` and `factory start` give a working node with the `software` recipe and a GitHub board, with no edit to any file. This workspace runs on factory, and its old scripts are retired. The review page of today stays a supported owner view that the owner can choose. It reads the local files, and FAC-M3 does not retire it (design §9, TB-5 to TB-7).
+A team member installs factory on a new macOS or Linux machine. `factory init` and `factory start` give a working node with the `software` recipe and a GitHub board, with no edit to any file. This workspace runs on factory, and its old scripts are retired. The review page of today stays a supported owner view that the owner can choose. It reads the local files. From FAC-M11 it is the `artifact` connector, and no milestone retires it (design §9, TB-5 to TB-7).
 
 ## Rules for this roadmap
 
@@ -20,7 +20,7 @@ A team member installs factory on a new macOS or Linux machine. `factory init` a
 
 ## Milestones
 
-The build order is FAC-M2, M4, M5, M6, M7, M11, M5b, then M3, M8, M10, M9. D-56 sets this order. D-133 A adds FAC-M5b after FAC-M7, and D-139 B adds FAC-M11 after FAC-M7 and before FAC-M5b and FAC-M3. FAC-M11 holds the one board contract, the board plugins, the `artifact` connector and the local change feed. FAC-M5b holds the parts of FAC-M5 that the move of this workspace does not need: the release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script and the usage view. It also holds the review page command, the page answer and the board archive (TB-5, TB-7). The release milestone FAC-M10 comes after FAC-M8 and before FAC-M9, because the Goal needs a release path and does not need Jira or Linear. This workspace moves to factory first, with the `local` board. The board contract and the board plugins come right after the move, and the GitHub board plugin follows them. The sections below are in build order.
+The build order is FAC-M2, M4, M5, M6, M7, M11, M5b, then M3, M8, M10, M9. D-56 sets this order. D-133 A adds FAC-M5b after FAC-M7, and D-139 B adds FAC-M11 after FAC-M7 and before FAC-M5b and FAC-M3. FAC-M11 holds the one board contract, the board plugins, the `artifact` connector, the local change feed and the epics. FAC-M5b holds the parts of FAC-M5 that the move of this workspace does not need: the release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script and the usage view. It also holds the board archive (TB-7) and the live board (TB-8 to TB-10). The `artifact` connector of FAC-M11 renders and publishes the review page (TB-5). The release milestone FAC-M10 comes after FAC-M8 and before FAC-M9, because the Goal needs a release path and does not need Jira or Linear. This workspace moves to factory first, with the `local` board. The board contract and the board plugins come right after the move, and the GitHub board plugin follows them. The sections below are in build order.
 
 | Order | Id | Name | Depends on | Design changes (F-n) |
 |---|---|---|---|---|
@@ -30,7 +30,7 @@ The build order is FAC-M2, M4, M5, M6, M7, M11, M5b, then M3, M8, M10, M9. D-56 
 | 4 | FAC-M6 | devflow setup | FAC-M5 | F-10, F-16 |
 | 5 | FAC-M7 | This workspace adopted (local board) | FAC-M4, FAC-M6 | F-3, F-8 |
 | 6 | FAC-M11 | Provider plugins | FAC-M5, FAC-M7 | D-139, D-140, D-141, D-142 |
-| 7 | FAC-M5b | Release check, copies sync and clean, usage view | FAC-M5, FAC-M7 | F-6, F-22, F-23, F-24 |
+| 7 | FAC-M5b | Release check, copies sync and clean, usage view, live board | FAC-M5, FAC-M7, FAC-M11 | F-6, F-22, F-23, F-24, TB-8 to TB-10 |
 | 8 | FAC-M3 | GitHub board plugin, and the move to it | FAC-M7, FAC-M11 | F-2, F-18, F-19 |
 | 9 | FAC-M8 | Layers and team | FAC-M7 | F-4 |
 | 10 | FAC-M10 | Release and install | FAC-M3, FAC-M8 | D-45 |
@@ -55,7 +55,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `worker adopt` | FAC-M7 |
 | `item`, `request`, `queue`, `decide <D-n> <option>` | FAC-M5 |
 | `track` (add, list, update) | FAC-M5 |
-| `epic` (add, update, list, remove), the option `--epic` of `item add` and `item update` | FAC-M11 (the contract); the epic view of the board pane (`item list --follow`) is FAC-M5b |
+| `epic` (add, update, list, remove), the option `--epic` of `item add`, `item update` and `item list` | FAC-M11 (the contract); the epic view of the board pane (`item list --follow`) is FAC-M5b |
 | `item estimate` | FAC-M5b |
 | `item list --follow` (the board pane of the live board, with the estimate mark) | FAC-M5b |
 | `worker mark`, `worker list --follow` (the columns of the live board) | FAC-M5b |
@@ -355,7 +355,7 @@ The hosted-kind path of M5-1b (local first, then a hosted copy) is a test-double
 - [ ] Record check test. After an edit by hand of `decision-log.json` and of one approval record, the check finds each edit and names the file. After a `factory decide`, the check passes. For a fake public items store, a write whose title holds a value that looks like a password or a token is refused, and the output names the item and never the value.
 - [ ] Config test. In `factory.yaml`, `tracker.kind` loads with `local`, `artifact` and `github`. In `factory.local.yaml`, `tracker.kind` loads with `plugin:<package>` and overrides the shared kind. `plugin:<package>` in `factory.yaml` exits 1 and names `factory.local.yaml`. Any other value fails and names the key. `tracker.options` loads when the plugin schema accepts it, and an unknown key under it fails and names the key.
 
-### FAC-M5b: Release check, copies sync and clean, usage view
+### FAC-M5b: Release check, copies sync and clean, usage view, live board
 
 **Goal.** The release check, `copies sync` and `copies clean`, the extension points for a desk, the acceptance of shared check commands, the token budget script, the usage view and the live board work with the `local` board. The first parts come from FAC-M5. The move of this workspace (FAC-M7) does not need them, so they follow it (D-133 A). The live board comes from the direction TB-8 to TB-10.
 
