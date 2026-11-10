@@ -1628,6 +1628,11 @@ Dean decided D-139 to D-142 for the board contract. The decisions are final unti
 - **The record checks have limits.** The check of the decision log and of the approval records finds an edit by hand or by another tool. It does not find a program that writes a new valid record (§6, D-10 A). The check of item text finds a value that looks like a password or a token. It does not find private facts in plain language.
 - **The renames and the schema 2 migration touch every part.** They come first in the roadmap, before more code uses the old names. The schema 1 → 2 migration has a test, and every name sits in `src/names.ts`.
 - **Scope grows.** The roadmap builds the CLI in stages. Each stage is useful for this workspace before the next one starts. Other recipes and other boards wait until the `software` recipe on GitHub works.
-- **Two copies of the setup during the move.** The adopt is one step with a dry run. The old page and scripts stay as the owner view and read the same `local` files, so there is one source of truth. FAC-M3 retires the old render and board scripts, and a search finds no process that calls them. It does not retire the review page (TB-5).
+- **Two copies of the setup during the move.** The adopt is one step with a dry run. The old page and scripts stay as the owner view until FAC-M11. They read the same `local` files, so there is one source of truth. No milestone retires the page (TB-5): from FAC-M11 it is the `artifact` connector, which the owner can choose. FAC-M3 retires the old render and board scripts, and a search finds no process that calls them.
 - **The status line of the owner is a user setting.** A work copy setting replaces it. The wrapper of §4.6 passes its output through, and a test checks this.
 - **A release publishes by mistake.** The publish job needs a protected environment, a gate script and a recorded decision id (§4.7).
+
+**Open points**
+
+- **One source of truth for the workspace board and the factory board (D-143, TM-10).** Dean wants one shared source of truth. Today the two boards are separate. This design states the goal only. It has no build plan, no milestone and no test for it.
+- **Tracks or epics (§4.10, "Epics").** An item has a track and an epic. Both stay for now. The choice between them is open.
