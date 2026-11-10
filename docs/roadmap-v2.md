@@ -186,7 +186,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 8. **Owner fields on the board (adoption map G-1).** The setup names the owner's own item fields and the allowed values of each, for example a priority, a type, a release flag on a queue row, and the worker. The core has no default field or value; this workspace's values (`P0`, `P1`, `P2` and its type names) come from the sample setup. The connector contract (design §4.10) carries these fields. `item` and `queue` set and show them, and `local` keeps them in its files. FAC-M3 maps each field to a GitHub label or a Projects field.
 9. **Standing delegations as records (adoption map G-4).** A standing delegation is a decision record of the owner with a scope and no end time. The scope is one or more action names from a fixed list in `src/names.ts`, for example "reset a worker". `worker relay` names the action, and accepts the delegation for each action inside its scope. A later owner decision ends it (design §6).
 10. **Tracks and stages (Dean's direction of 2026-11-08, TB-1 to TB-7).** A track is a named stream of work with its own roadmap, and a worker is not a track. Each item has a stage. The recipe gives the list of stages, and the merge flow (M5-2) and the release flow (FAC-M5b) set the stages that only a flow sets. M5-1b builds the keys `tracks`, `track` and `stage`, `track add|list`, `item move --stage`, `item list --track` and the stage column, and the format promise to the review page (design §4.10). M5-1c builds the follow layout with one block for each track, the counts of closed items, the checked stamp (the time of the last check, drawn every 60 seconds with no new read), the titles of the items of a track that holds more than one item, and the rename and remove of a track.
-11. **The review page (TB-5, TB-6).** The review page stays a supported owner view that the owner can choose. It reads the local files, and in M5-1b it only reads. factory always keeps the local board. FAC-M5b adds the page commands and the page answer (see its criteria).
+11. **The review page (TB-5, TB-6).** The review page stays a supported owner view that the owner can choose. It reads the local files, and in M5-1b it only reads. factory always keeps the local board. From FAC-M11 the `artifact` connector renders and publishes the page. A page answer is a board event: it shows and wakes, and records nothing (D-142 A).
 
 **`factory copies` (D-55).** The coordinator's repeated git work across work copies becomes four commands. FAC-M5 builds `list` and `status`. FAC-M5b builds `sync` and `clean`. Workers do their own git work on their own branch.
 - `list`: one row per work copy: project, path, worker, branch, short HEAD.
@@ -198,7 +198,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [ ] Connector contract tests run against `local`. FAC-M3 runs the same set against `github`.
 - [ ] `worker relay` types the owner prefix only for a decision that `factory decide` recorded, or for an action inside the scope of an active standing delegation (test).
 - [ ] `worker recover`: the nudge is a native message (`SendMessage`). The answer to the usage-limit dialog comes after the real-run checks of FAC-M4 PR 3: the pointer sign of each dialog, and how a message from another session shows in the receiver.
-- [ ] With `local`: `changes read` returns nothing, and `factory decide <D-n> <option>` records `by: owner`. `factory decide` refuses (exit 4) with no terminal window, and when `FACTORY_SESSION` is set.
+- [ ] With `local`: `changes read` returns nothing until FAC-M11 adds the local change feed, and `factory decide <D-n> <option>` records `by: owner`. `factory decide` refuses (exit 4) with no terminal window, and when `FACTORY_SESSION` is set.
 - [ ] Decision records for the profile (F-26a). Test: each `factory decide <D-n> <option>` writes one decision record in the format of the decision profile template (the question, the options, the chosen option, `decided_by: owner` and the time) in `.factory/decision-profile/`, and adds its line to the profile log. The coordinator text tells the coordinator to look up these records and the principles before it decides for the owner. A refused `decide` writes no record.
 - [ ] `item`, `request` and `queue` change only the `local` files, and every change is one commit in the state repo (test).
 - [ ] `init` sets `core.hooksPath`. The board commit helper refuses when the guard is off. The guard hooks refuse a commit that removes an item id from `board.json` (tests).
@@ -268,7 +268,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 ### FAC-M7: This workspace adopted (local board)
 
-**Goal.** This workspace runs on factory with the `local` board. The old review page and its scripts stay as the owner view. FAC-M3 does not retire the page (TB-5).
+**Goal.** This workspace runs on factory with the `local` board. The old review page and its scripts stay as the owner view until FAC-M11. No milestone retires the page (TB-5).
 
 **Scope.** `factory adopt` (design §8):
 - a factory folder next to the projects;
@@ -281,7 +281,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 
 The import into GitHub issues is not here: it is FAC-M3.
 
-**Owner view.** The review page and its scripts of today stay in use. They read the `local` files, which have the same format. The owner answers a decision in the page or with `factory decide <D-n> <option>` in a terminal window outside any factory session. FAC-M7 does not retire the scripts. FAC-M3 retires the old render and board scripts, and it does not retire the page (TB-5). The page of this workspace reads a factory board only after FAC-M7.
+**Owner view.** The review page and its scripts of today stay in use until FAC-M11. They read the `local` files, which have the same format. The owner answers in the page as a board event: the answer shows and wakes, and records nothing (D-142 A). The owner enters the decision with `factory decide <D-n> <option>` in a terminal window outside any factory session. FAC-M7 does not retire the scripts. From FAC-M11, the `artifact` render gives the page, and FAC-M3 retires the old render and board scripts. No milestone retires the page (TB-5). The page of this workspace reads a factory board only after FAC-M7.
 
 **Exit criteria.**
 - [ ] `factory adopt --dry-run` prints the plan, and a test checks it against a fixture copy of the workspace. The plan shows the move of the coordinator text.
@@ -516,8 +516,9 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 ## Later (no milestone yet)
 
 - Other recipes, for example research or content (F-10). A user-made setup comes with FAC-M6, and a user-made recipe needs no new milestone: the test recipe of the code PR shows that `init`, the block render, `doctor`, `upgrade` and `start --dry-run` run with a second recipe.
-- No review desk of its own, not even as an option (F-2, F-17). TB-5 changes this in part: the review page stays a supported owner view that the owner can choose. A person who wants another desk builds a reader on an extension point (design §4.14).
+- No review desk of its own, not even as an option (F-2, F-17). TB-5 changes this in part: the review page stays a supported owner view that the owner can choose, and from FAC-M11 it is the `artifact` connector. A person who wants another desk builds a reader on an extension point (design §4.14).
 - A board tool other than `local`, `artifact`, `github`, Jira and Linear has no milestone. A user installs a board plugin for it (design §4.15).
+- One shared source of truth for the workspace board and the factory board (D-143, TM-10). Today the two boards are separate. This line states the goal only. It has no build plan and no milestone (design §10).
 
 ## Decisions needed
 
@@ -525,12 +526,14 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - Answered (D-59, F-14): the glossary words. Dean chose worker, request and coordinator, and queue, check and release check. The rename comes in the design v3 PR, not in FAC-M2.
 - Answered (D-57): the release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope. FAC-M5b builds the check (design §6.2).
 - Before FAC-M3 (after the workspace move in FAC-M7): which private repo holds the decision store of this workspace, and which private git remote holds the state repo (`state.remote`) for a second machine.
+- Before FAC-M3: how the `artifact` and `github` connectors hold an epic (design §4.10, "Epics").
 - Answered (FAC-M4): the bound of `worker watch`: 40 checks of 30 s (`watchPoll` in `src/names.ts`), then `NO CHANGE`.
 - Before the milestone that builds each of the other watch commands (FAC-M11 for `factory watch` with `local` and `artifact`, FAC-M3 for `factory watch` with `github`, FAC-M5 for `pr watch`): the bound of each command. The design gives no value for the number of reads per run of `factory watch` for each connector, and none for the maximum wait of `pr watch`. It also gives no result when the bound or the wait ends. Each value is a named number in `src/names.ts`.
 - Before FAC-M5b builds the usage view (F-22): the source of the usage of a subscription other than Claude Code, for example Codex. `session.agent` accepts only `claude` in FAC-M4. The owner decides the worker agent setting for another agent, and where its token and limit data come from. Until then, the usage view lists the Claude Code subscriptions only.
 - Before FAC-M5b builds the usage view (F-22): FAC-M4 task 2 records which quota or cost fields the real status line data has. If the data has no such field, the owner names the other source. A read under `~/.claude` is not a source (F-9).
 - Before FAC-M10: the old local paths in the git history. The owner decides; the history is not rewritten (D-7 A).
 - Before FAC-M10: the first publish and the public visibility of the repo. The owner writes a decision id in `docs/release-approval.md`.
+- Open: the choice between tracks and epics. An item has a track and an epic, and both stay for now (design §10).
 
 ## Risks
 
@@ -539,4 +542,4 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - **The session-stop test can show that no way is safe.** Then `factory worker stop` keeps the rule "idle session, then `kill -TERM`", and the table records why.
 - **The status line payload can lack the context percent.** FAC-M4 captures real payloads first. If the field is not there, design §4.6 names another source before the hook is built.
 - **GitHub Projects API changes.** The `github` plugin keeps all calls in one module, with recorded-response tests. The contract suite of FAC-M11 runs against it.
-- **The old page and scripts read the `local` files.** A format change in FAC-M5 breaks the owner view of FAC-M7. `scripts/check-owner-view.sh` runs in FAC-M7 and in FAC-M3 until the retirement. The page of this workspace reads a factory board only after FAC-M7, and in M5-1b it only reads.
+- **The old page and scripts read the `local` files.** A format change in FAC-M5 breaks the owner view of FAC-M7. `scripts/check-owner-view.sh` runs in FAC-M7, and in FAC-M3 until it retires the old scripts. From FAC-M11 the page is the `artifact` connector, and no milestone retires it. The page of this workspace reads a factory board only after FAC-M7, and in M5-1b it only reads.
