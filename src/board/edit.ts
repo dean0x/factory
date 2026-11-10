@@ -64,7 +64,7 @@ export interface Edit<T> {
 }
 
 /** Typed text for a message: cleaned, cut and quoted. */
-const shown = (text: string): string => JSON.stringify(displayLine(text, maxEchoChars));
+export const shown = (text: string): string => JSON.stringify(displayLine(text, maxEchoChars));
 
 const NO_STATES = 'the setup declares no item states, so it can not add, move or close an item; see the sample setup in examples/';
 

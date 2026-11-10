@@ -566,9 +566,18 @@ export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', i
 
 /**
  * The keys of the decision log: the list of rows, and the keys of a row. The `item` text of a row starts with the id of a decision.
- * A row that a close of a request writes holds these three keys only: it names no one who answered.
+ * A row that a close of a request writes holds `item`, `decision` and `date` only: it names no one who answered. A row that `decide`
+ * writes holds `by` too, and `request`, the canonical text that the hash of the owner record covers. A row is a display copy: only
+ * the owner record proves an answer.
  */
-export const decisionLogKeys = { rows: 'rows', item: 'item', decision: 'decision', date: 'date' } as const;
+export const decisionLogKeys = {
+  rows: 'rows',
+  item: 'item',
+  decision: 'decision',
+  date: 'date',
+  by: 'by',
+  request: 'request',
+} as const;
 
 /**
  * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
@@ -678,14 +687,15 @@ export const optionKeys = { key: 'key', text: 'text', rec: 'rec' } as const;
 
 /**
  * The limits of the text of a board write. A title, a text, a question and the text of an option are one line each, with at most
- * this many characters. A decision has at most `maxOptions` options. A link from an item to a file is a relative path of at most
- * `maxDocPathChars` characters.
+ * this many characters. A decision has at most `maxOptions` options. The note of an owner answer is one line of at most
+ * `maxNoteChars` characters. A link from an item to a file is a relative path of at most `maxDocPathChars` characters.
  */
 export const boardTextLimits = {
   maxTitleChars: 100,
   maxTextChars: 500,
   maxQuestionChars: 500,
   maxOptionChars: 200,
+  maxNoteChars: 500,
   maxOptions: 9,
   maxDocPathChars: 200,
 } as const;
