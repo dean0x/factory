@@ -1554,7 +1554,7 @@ Dean accepted every recommendation in this table on 2026-11-01 (D-45 A, with the
 | D-52 | This workspace: approved and assigned work merges when the checks pass. Releases are not part of it. factory offers the rule as an owner choice, the value `delegated` of the approval point `merge`. §6.1 lists the proofs. |
 | D-53 | Dean accepted the proposals F-1 to F-10 as a set ("Changes from v1" above). |
 | F-13 | One machine only for now. No `ssh://` transport, no remote readiness check and no remote child. The config refuses any address but `file://`. |
-| D-56 | The build order is FAC-M2, M4, M5, M6, M7, M5b, then M3, M8, M10, M9 (roadmap-v2; FAC-M10 is the release milestone, added after the intent check; FAC-M5b follows FAC-M7: D-133 A). |
+| D-56 | The build order is FAC-M2, M4, M5, M6, M7, M11, M5b, then M3, M8, M10, M9 (roadmap-v2; FAC-M10 is the release milestone, added after the intent check; FAC-M5b follows FAC-M7: D-133 A; FAC-M11 follows FAC-M7 and comes before FAC-M5b and FAC-M3: D-139 B). |
 
 **D-57 is answered (v3).** F-6 asked whether "a-z" includes releases. The release is an approval point of its own, with the values `owner` and `delegated`. The proof for `delegated` is an owner-approved release scope (§6.2). FAC-M5b builds the release check.
 
@@ -1564,13 +1564,13 @@ An independent check of the design against Dean's notes found open points. The O
 
 | Id | Decision |
 |---|---|
-| IF-1 | The review page of today and its scripts stay as the owner view until FAC-M3. FAC-M7 keeps them. FAC-M3 retires them (§4.10, §8). **Changed (2026-11-08):** FAC-M3 does not retire the page (TB-5 to TB-7). |
+| IF-1 | The review page of today and its scripts stay as the owner view until FAC-M3. FAC-M7 keeps them. FAC-M3 retires them (§4.10, §8). **Changed (2026-11-08):** FAC-M3 does not retire the page (TB-5 to TB-7). The page is a connector choice: from FAC-M11 it is the `artifact` connector (D-139 B). |
 | IF-2 | The proofs of approval follow D-52 as written: a decision, an ask or an approved plan. A plan counts only through an ask or decision item answered `approve` by the owner; a commit author is no proof. The assignment is direct or by a decision; an assignee or label is no proof (D-128 A). `check` gives NOT READY while a PR has an open ask or an open request (§6.1). |
 | IF-3 | Releases have their own approval point, `release`, with the values `owner` and `delegated`. D-57 is answered (§6.2). |
 | IF-4 | "Codex" in note F-3: factory starts Claude Code. The config names one agent command for each node, and only `claude` is built (§4.6). |
 | IF-5 | Each layer has its own role template. FAC-M8 adds the template of layer 3. `doctor` warns when a layer has no template (§5.2). |
 | IF-6 | The board connector reads comments, label changes, assignee changes and open or close changes. Card moves stay out for now. `start` starts `watch` (§4.10, §4.11). |
-| IF-7 | The board scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira has `site` and `key` (§4.4, §4.10). |
+| IF-7 | The board scope is a node default plus an override for each project, as in devflow. `tracker set` and `tracker status` exist. Jira is a board plugin (FAC-M9). Its options, for example a site and a key, are plugin options in `factory.local.yaml` (§4.4, §4.15). |
 | IF-8 | The word list of Dean ends with the heading "machinery and automation hardware". A table in §7.1 maps each of his 11 words. |
 | IF-9 | The state repo can push to a private git remote that the owner names. `init --state-from` clones it on a second machine (§4.3). |
 | IF-10 | A board event is never an owner proof, with any account setup. A `factory decide` record from a terminal window outside a factory session is a proof (D-128 A, §4.10, §6.1). |
@@ -1597,10 +1597,22 @@ Dean gave F-14 to F-21, D-59 and D-60. The Gate 1 and Gate 2 answers and the lat
 | D-14 A | A local file that others can write, that another account owns or that is a link stops the command. A mode with read bits only is set to 600 with a notice (§4.4). |
 | D-15 B | A rule that allows a whole tool is a warning. Only a setting that skips permission prompts stops. |
 | D-16 A | A moved factory, and a factory list entry with no origin, count as received. |
-| D-128 A | factory does not care which GitHub account anyone uses. It never takes a GitHub comment, label, assignee or review as an owner approval or proof. Owner approvals come only through `factory decide` (the owner store), and later through a review page. A separate account for the agents is optional, the owner's own GitHub choice (§4.10, §6, §6.1). |
+| D-128 A | factory does not care which GitHub account anyone uses. It never takes a GitHub comment, label, assignee or review as an owner approval or proof. Owner approvals come only through `factory decide` (the owner store). A page answer shows and wakes, and records nothing (D-142 A). A separate account for the agents is optional, the owner's own GitHub choice (§4.10, §6, §6.1). |
 | D-133 A | Dean, 2026-11-08: a new milestone FAC-M5b comes after FAC-M7. It takes ten criteria out of FAC-M5: the release commands (`release check`, `release verify` and `release scope`) with their config test, the extension points for a desk, the acceptance of shared check commands, `copies sync` and `copies clean`, `scripts/budget-check.sh`, and the usage view, the forecast and the token estimate (F-22, F-23, F-24). The move of this workspace (FAC-M7) does not need them (roadmap-v2). |
 | TB-5 to TB-7 | Dean, 2026-11-08, about the board of each track. His words: "I think that every track [...] needs its own mini board. The main review desk, the main board, should have the high level of each one of the tracks. If you zoom in, if I [...] click one of the tracks, I would see the board of that track." "I think it would be good to understand, on each ticket, what stage it is at." "I actually like the artifact. I think I want to keep it supported." "I think a user should be able to choose." "Anyway, regardless, we should maintain the local board." The mark [...] shows a cut. TB-5: the review page stays a supported owner view that the owner can choose. It reads the local files. In M5-1b it only reads, and a page answer that records through the owner store is a FAC-M5b criterion. TB-6: factory always keeps the local board, with any board kind and any owner view. TB-7: the board has tracks, and each item has a stage. The recipe gives the list of stages (§4.10). This row supersedes the part of F-17 (Changes in v3, point 6) and the part of F-2 (Changes from v1, point 2) that say factory has no review desk, not even as an option. factory still builds no desk of its own. IF-1 changes in the same way: FAC-M3 does not retire the page. |
 | R2 | On your own factory, a tracked instruction file or Claude settings file is a warning. On a received factory, the owner accepts such files with the setup text, by one hash (§4.3). |
+
+### Board contract (2026-11-08)
+
+Dean decided D-139 to D-142 for the board contract. The decisions are final until Dean changes them. The last row is a direction, with no build plan yet.
+
+| Id | Decision |
+|---|---|
+| D-139 B | A new milestone FAC-M11 comes after FAC-M7 and before FAC-M5b and FAC-M3. It builds the one board contract, the loader for board plugins, the `artifact` connector and the local change feed. FAC-M3 is the GitHub board plugin. FAC-M9 holds the Jira and Linear plugins. The build order is in D-56. TM-6: the review page is a connector choice. F-17 "no desk" is revised in part. There is still no desk command and no kind named `desk` (§4.10, §4.14). |
+| D-140 | A board plugin is an in-process npm package that exports the contract `factory.board/v1`. The user installs it and names it in `factory.local.yaml`. The install is the trust decision. Factory has no accept command and no hash for a plugin (§4.15). |
+| D-141 B | The board holds the truth, and the local board is the cache. A write goes to the board first. Offline work only reads. There is no queue. `factory decide` works offline (§4.10, "The one rule"). |
+| D-142 A | Only `factory decide <D-n> <option>`, in a terminal window outside a factory session, records a decision. A page answer or a board answer shows and wakes, and records nothing (§4.10, §6.1). |
+| D-143 (TM-10) | Dean, 2026-11-10: "this type of structure would apply also to what we have in the factory, the artifact that we give. I'm trying to build something here. We still don't have one source of truth here, but just keep it in mind." The board contract has epics, and each work item belongs to one epic (§4.10, "Epics"). Tracks stay. The goal is one shared source of truth for the workspace board and the factory board. There is no build plan for that goal yet (§10). |
 
 ## 10. Risks
 
