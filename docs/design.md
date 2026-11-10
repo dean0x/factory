@@ -1084,7 +1084,7 @@ A person with no code skill adds a desk reader as a setup file in FAC-M6. FAC-M5
 
 A plugin adds a part to factory with no change to the package. A plugin is an npm package that exports a contract. The user installs it with npm. FAC-M11 builds the loader (D-140).
 
-**Kinds.** The one kind today is the board connector, with the contract id `factory.board/v1` (§4.10). A new kind needs its own contract id and its own rules here.
+**Kinds.** The first kind is the board connector, with the contract id `factory.board/v1` (§4.10). FAC-M11 builds it, with the loader. No plugin loads before that. A new kind needs its own contract id and its own rules here.
 
 **Find and load.**
 - The user names the package in the `tracker` block of `factory.local.yaml`: `kind: plugin:<package>` and `options` (§4.4). The shared file never names a plugin. A shared file that names one stops the command with exit 1 (§4.3, "Stops and warnings").
