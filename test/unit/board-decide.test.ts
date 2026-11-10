@@ -150,6 +150,9 @@ describe('a character that the display removes (TP-182)', () => {
     ['a tag character', TAG_LETTER],
     ['a variation selector', VARIATION_SELECTOR],
     ['an escape', ESCAPE],
+    ['a combining grapheme joiner', at(0x34f)],
+    ['an unassigned default ignorable code point', at(0x2065)],
+    ['a lone surrogate', at(0xd800)],
   ] as const;
 
   it.each(HIDDEN)('M5-1b TP-182 refuses %s in the title, the question and the text of an option, with exit 1', (_name, hidden) => {

@@ -113,8 +113,26 @@ describe('the visible text keeps its escapes (AC-36)', () => {
   });
 });
 
+/**
+ * Characters that show as nothing or as a replacement mark, and that no control, format or separator class holds: the default
+ * ignorable code points (assigned and unassigned) and a lone surrogate. Each has a code point, so no tool can change it.
+ */
+const SILENT_CHARACTERS: readonly (readonly [string, number])[] = [
+  ['combining grapheme joiner', 0x34f],
+  ['Khmer inherent vowel aq', 0x17b4],
+  ['Khmer inherent vowel aa', 0x17b5],
+  ['unassigned code point U+2065', 0x2065],
+  ['unassigned code point U+FFF0', 0xfff0],
+  ['unassigned code point U+FFF8', 0xfff8],
+  ['unassigned code point U+E0000', 0xe0000],
+  ['unassigned code point U+E0FFF', 0xe0fff],
+  ['lone high surrogate', 0xd800],
+  ['lone low surrogate', 0xdfff],
+];
+
 /** One character of each class that the display removes, with a name for the failure message. */
 const REMOVED_CHARACTERS: readonly (readonly [string, string])[] = [
+  ...SILENT_CHARACTERS.map(([name, code]): readonly [string, string] => [name, at(code)]),
   ['escape', ESC],
   ['null', NUL],
   ['delete', DEL],
@@ -151,6 +169,19 @@ describe('the display predicate (AC-42)', () => {
     expect(removedByDisplay('one\ntwo\tthree')).toBe(false);
     expect(removedByDisplay(`${E_ACUTE}crire ${EMOJI}`)).toBe(false);
     expect(removedByDisplay('')).toBe(false);
+  });
+
+  it.each(SILENT_CHARACTERS)('M5-1b TP-183 shows the %s as an escape in the visible text and removes it from a JSON string', (_name, code) => {
+    const character = at(code);
+    expect(visibleText(`a${character}b`)).toBe(`a\\u{${code.toString(16)}}b`);
+    expect(JSON.parse(renderJson({ schema: 'x/v1', title: `a${character}b` }))).toEqual({ schema: 'x/v1', title: 'ab' });
+  });
+
+  it('M5-1b TP-183 keeps a pair of surrogates that makes one character, and a combining mark that is not default ignorable', () => {
+    const pair = `${EMOJI}${at(0x301)}`;
+    expect(removedByDisplay(pair)).toBe(false);
+    expect(displayLine(pair)).toBe(pair);
+    expect(visibleText(pair)).toBe(pair);
   });
 
   it('M5-1b TP-183 gives the same answer over repeated calls, for a hidden and for a clean text', () => {
