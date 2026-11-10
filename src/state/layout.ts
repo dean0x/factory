@@ -10,6 +10,8 @@ export const stateRel = {
   decisionLog: files.decisionLog,
   profileReadme: join(dirs.profile, files.profileReadme),
   profileIndex: join(dirs.profile, files.profileIndex),
+  profileDecisions: join(dirs.profile, dirs.decisions),
+  profileLog: join(dirs.profile, files.profileLog),
   roadmapsReadme: join(dirs.roadmaps, files.roadmapsReadme),
   ordersKeep: join(dirs.orders, files.ordersKeep),
   gitignore: files.gitignore,
