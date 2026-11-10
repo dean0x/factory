@@ -113,7 +113,7 @@ describe('the parsers of the machine facts', () => {
 
   it.each([
     [''],
-    ['The system has 68719476736 bytes.'],
+    ['The system has 17179869184 bytes.'],
     ['System-wide memory free percentage: lots%'],
     ['System-wide memory free percentage: 101%'],
     ['System-wide memory free percentage: -3%'],
@@ -204,8 +204,8 @@ describe('gatherMachine on the fixtures of both systems (TP-19)', () => {
     expect(report).toEqual([
       { name: 'memory', value: 62, limit: 20, verdict: 'ok', note: null },
       { name: 'disk', value: 300, limit: 20, verdict: 'ok', note: null },
-      { name: 'load', value: 2.2, limit: 10, verdict: 'ok', note: null },
-      { name: 'cpus', value: 10, limit: null, verdict: 'ok', note: null },
+      { name: 'load', value: 2.2, limit: 8, verdict: 'ok', note: null },
+      { name: 'cpus', value: 8, limit: null, verdict: 'ok', note: null },
     ]);
   });
 
@@ -477,8 +477,8 @@ describe('factText', () => {
     expect(report.map(factText)).toEqual([
       '62% free, at least 20% needed',
       '300 GB free, at least 20 GB needed',
-      '2.2 in the last minute, at most 10 allowed',
-      '10',
+      '2.2 in the last minute, at most 8 allowed',
+      '8',
     ]);
   });
 });
@@ -497,8 +497,8 @@ describe('factory machine', () => {
         '[ok] Machine: ok (4 ok, 0 fail, 0 unknown)',
         '[ok] memory  62% free, at least 20% needed',
         '[ok] disk    300 GB free, at least 20 GB needed',
-        '[ok] load    2.2 in the last minute, at most 10 allowed',
-        '[ok] cpus    10',
+        '[ok] load    2.2 in the last minute, at most 8 allowed',
+        '[ok] cpus    8',
         '',
       ].join('\n'),
     );
@@ -518,8 +518,8 @@ describe('factory machine', () => {
         '[FAIL] Machine: fail (2 ok, 1 fail, 1 unknown)',
         '[FAIL] memory  62% free, at least 80% needed',
         '[warn] disk    unknown (no answer from df), at least 20 GB needed',
-        '[ok] load    2.2 in the last minute, at most 10 allowed',
-        '[ok] cpus    10',
+        '[ok] load    2.2 in the last minute, at most 8 allowed',
+        '[ok] cpus    8',
         '',
       ].join('\n'),
     );
