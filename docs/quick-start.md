@@ -94,7 +94,7 @@ Use the tag and the full commit SHA of your build. In each command, replace `N` 
 **Step 1. Check the tag.** Place: a terminal window, in any folder.
 
 ```sh
-git ls-remote git@github.com:dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'
+git ls-remote https://github.com/dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'
 ```
 
 The command must print one line. The `^{}` makes git show the commit that the tag points to. The SHA at the start of the line must equal `<sha>`. Compare all 40 characters.
@@ -103,7 +103,9 @@ If the command prints no line, or prints a different SHA, stop. Do not install. 
 
 Step 3 builds from `<sha>`, not from the tag name. A tag can move, but a commit SHA does not change. So the build is the commit that you checked.
 
-On Path B, use `https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`.
+You take the tag and its SHA from the repo page. So the check proves only that the tag did not move between your read and your install.
+
+On Path A, you can use `git@github.com:dean0x/factory.git` in place of `https://github.com/dean0x/factory.git`.
 
 **Step 2. Remove an earlier link.** Do this step only if you used `npm link` for factory before. Place: a terminal window, in any folder.
 
@@ -122,13 +124,13 @@ cd "$(mktemp -d)"
 Then run this pair of commands in that folder:
 
 ```sh
-npm pack "git+ssh://git@github.com/dean0x/factory.git#<sha>"
+npm pack "git+https://github.com/dean0x/factory.git#<sha>"
 npm install --global ./dean0x-factory-0.2.0.tgz
 ```
 
 npm can not build the program in a one-step global install from git. So this guide builds a package file first, and then installs that file.
 
-On Path B, use `"git+https://github.com/dean0x/factory.git#<sha>"` in the first command.
+On Path A, you can use `"git+ssh://git@github.com/dean0x/factory.git#<sha>"` in the first command.
 
 The first command builds the program from source, at the commit `<sha>`. It takes some seconds, and a minute or more on a slow network. If the build fails, the command stops with an error. Never install from a branch.
 
@@ -151,13 +153,13 @@ The `npm pack` command runs the build script of factory. It also runs the instal
 If you do not want to run these scripts before you read the code, use the clone path. Place: a terminal window, in a folder for your clones.
 
 ```sh
-git clone git@github.com:dean0x/factory.git
+git clone https://github.com/dean0x/factory.git
 cd factory
 git checkout v0.2.0-ea.N
 git rev-parse HEAD
 ```
 
-On Path B, use `https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`.
+On Path A, you can use `git@github.com:dean0x/factory.git` in place of `https://github.com/dean0x/factory.git`.
 
 The command `git rev-parse HEAD` must print the full commit SHA of your build. If it does not, stop and report the problem (part 13). Read the code. Then run these commands in the clone:
 
@@ -308,10 +310,10 @@ The flag `--yes` works only in a terminal window outside the factory session.
 **Step 2. Find the new tag.** Take the newest tag and its full commit SHA from the repo page. To list the tags, run this command in a terminal window:
 
 ```sh
-git ls-remote --tags git@github.com:dean0x/factory.git
+git ls-remote --tags https://github.com/dean0x/factory.git
 ```
 
-On Path B, use `https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`.
+On Path A, you can use `git@github.com:dean0x/factory.git` in place of `https://github.com/dean0x/factory.git`.
 
 To compare two tags, use the compare view on GitHub. Or use a clone of the factory repo, and run these commands in it:
 

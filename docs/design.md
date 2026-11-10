@@ -97,7 +97,7 @@ Engineering note: the program is written in TypeScript on Node 22+, the npm pack
 
 ## 1. Inventory of the current setup
 
-factory packages a setup that runs today by hand: one coordinator session and many worker sessions in tmux, on one machine, for one owner. This section lists the parts of that setup by their job, and tells why a multi-session setup needs each part. It does not name the private files of the setup.
+factory packages a setup that runs today by hand: one coordinator session and many worker sessions in tmux, on one machine, for one owner. This section lists the parts of that setup by their job, and tells why a multi-session setup needs each part.
 
 The example path `~/work/<workspace>` stands for the folder of the workspace.
 Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, accounts, paths), **M** machine-specific.
