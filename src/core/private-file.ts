@@ -2,9 +2,9 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { safetyRefusal, type CliResult } from '../cli/errors.js';
 import { commands, commandText, dirs, env, places, privateFile, program } from '../names.js';
 import type { Deps, PathInfo } from './deps.js';
-import { freeLock, takeLock, type LockPolicy } from './file-lock.js';
+import { freeLock, holdsLock, takeLock, type LockPolicy } from './file-lock.js';
 import { isWrittenInside } from './paths.js';
-import { err, ok, type Result } from './result.js';
+import { err, ok, type Err, type Result } from './result.js';
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -114,31 +114,77 @@ const takeUserFileLock = async (deps: Deps, lockPath: string): Promise<Result<st
 export type PrivateChange = (current: string | null) => Promise<Result<string, string>>;
 
 /**
+ * What a failed change left in the file. `saved-lock-left` is a change that is saved, where only the lock file stays. In every
+ * other failure the file is as it was before the call (`not-saved`). A caller reads this field, never the text of the message.
+ */
+export type WriteState = 'saved-lock-left' | 'not-saved';
+
+/** The error of a change of a per-user file: the reason, and what the failure left in the file. */
+export interface PrivateChangeError {
+  readonly message: string;
+  readonly writeState: WriteState;
+}
+
+export interface PrivateChangeOptions {
+  /**
+   * Check, just before the rename, that the lock file still holds the token of this call. A lock that another process took
+   * over writes nothing. The check makes the window of a stale lock smaller, and does not close it: a pause between the check
+   * and the rename is still possible.
+   */
+  readonly recheckLock?: boolean;
+}
+
+const notSaved = (message: string): Err<PrivateChangeError> => err({ message, writeState: 'not-saved' });
+
+/** The atomic write of the new text. With `recheckLock`, a lock that this call no longer holds, or that cannot be checked, writes nothing. */
+const writeUnderLock = async (
+  deps: Deps,
+  path: string,
+  held: { readonly lockPath: string; readonly token: string },
+  text: string,
+  options: PrivateChangeOptions,
+): Promise<Result<void, string>> => {
+  if (options.recheckLock === true) {
+    const holds = await holdsLock(deps, held.lockPath, held.token);
+    if (!holds.ok) return err(`the lock ${held.lockPath} cannot be checked, so nothing was written: ${holds.error}`);
+    if (!holds.value) {
+      return err(`another ${program} command took the lock ${held.lockPath} over, so nothing was written. Run the command again.`);
+    }
+  }
+  const written = await deps.fs.writeTextAtomic(path, text, dirname(path), privateFile.fileMode);
+  return written.ok ? ok(undefined) : err(written.error.message);
+};
+
+/**
  * Change a per-user file. The call makes the folder ready, takes the lock file beside the file, reads the current text,
  * asks `change` for the new text and writes it atomically with mode 0600. A lock file lets only one process read, change
  * and write at a time, so two runs at once lose no change. A file that cannot be read stays as it is. The lock is taken
- * over once it is older than `privateFile.lockStaleMs`. The error is the reason. When the change is saved and the lock
- * file cannot be removed, the error says so and names the lock file.
+ * over once it is older than `privateFile.lockStaleMs`. The error holds the reason and `writeState`. When the change is saved and
+ * the lock file cannot be removed, the state is `saved-lock-left` and the message names the lock file.
  */
 export const changePrivateFile = async (
   deps: Deps,
   path: string,
   maxBytes: number,
   change: PrivateChange,
-): Promise<Result<void, string>> => {
+  options: PrivateChangeOptions = {},
+): Promise<Result<void, PrivateChangeError>> => {
   const folder = await prepareFolder(deps, path);
-  if (!folder.ok) return folder;
+  if (!folder.ok) return notSaved(folder.error);
   const lockPath = `${path}${privateFile.lockSuffix}`;
   const locked = await takeUserFileLock(deps, lockPath);
-  if (!locked.ok) return locked;
+  if (!locked.ok) return notSaved(locked.error);
 
   const current = await readPrivateText(deps, path, maxBytes);
   const next = current.ok ? await change(current.value) : err(`${path} cannot be read: ${current.error}`);
-  const written = next.ok ? await deps.fs.writeTextAtomic(path, next.value, dirname(path), privateFile.fileMode) : null;
+  const written = next.ok ? await writeUnderLock(deps, path, { lockPath, token: locked.value }, next.value, options) : null;
   const lockGone = await freeLock(deps, lockPath, locked.value);
-  if (!next.ok) return next;
-  if (written?.ok === false) return err(written.error.message);
+  if (!next.ok) return notSaved(next.error);
+  if (written?.ok === false) return notSaved(written.error);
   return lockGone.ok
     ? ok(undefined)
-    : err(`the change is saved, but ${program} cannot remove the lock file ${lockPath}: ${lockGone.error}. Remove that file.`);
+    : err({
+        message: `the change is saved, but ${program} cannot remove the lock file ${lockPath}: ${lockGone.error}. Remove that file.`,
+        writeState: 'saved-lock-left',
+      });
 };

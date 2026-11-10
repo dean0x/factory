@@ -151,7 +151,7 @@ const putRecord = async (
   const written = await changePrivateFile(deps, path.value, ownerRecords.maxBytes, async (current) =>
     textWithRecord(deps, path.value, current, record),
   );
-  return written.ok ? ok(undefined) : failure(`The approval records were not updated: ${written.error}`);
+  return written.ok ? ok(undefined) : failure(`The approval records were not updated: ${written.error.message}`);
 };
 
 /**

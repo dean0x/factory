@@ -109,7 +109,8 @@ export const recordHome = async (
   if (entry[homeIndex.keys.projects].length > homeIndex.maxProjects) {
     return err(`a ${places.folder} can list at most ${homeIndex.maxProjects} projects`);
   }
-  return changePrivateFile(deps, path, homeIndex.maxBytes, (current) => textWithEntry(deps, path, current, entry, settle));
+  const written = await changePrivateFile(deps, path, homeIndex.maxBytes, (current) => textWithEntry(deps, path, current, entry, settle));
+  return written.ok ? written : err(written.error.message);
 };
 
 /**

@@ -457,9 +457,9 @@ export const recordSetupAcceptance = async (
     textWithRecord(deps, path.value, current, valid.data, options),
   );
   if (written.ok) return ok(undefined);
-  return options.fromInitYes === true && written.error === NOT_FIRST
+  return options.fromInitYes === true && written.error.message === NOT_FIRST
     ? safetyRefusal('a setup acceptance without a terminal window is for a first acceptance only', terminalRemedy())
-    : failure(`The setup acceptance was not written: ${written.error}`);
+    : failure(`The setup acceptance was not written: ${written.error.message}`);
 };
 
 /**

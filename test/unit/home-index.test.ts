@@ -730,7 +730,7 @@ describe('home index: two writers at once', () => {
           insideChange.push('second');
           return ok('second\n');
         });
-        expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK) });
+        expect(result).toMatchObject({ ok: false, error: { writeState: 'not-saved', message: expect.stringContaining(LOCK) } });
         expect(insideChange).toEqual(['first']);
         // The lock file holds the pid of the first waiter and its token.
         expect(deps.files.get(LOCK)).toMatch(new RegExp(`^${OTHER}-[0-9a-f]{16}\\n$`));

@@ -116,22 +116,34 @@ export const takeLock = async (deps: Deps, lockPath: string, policy: LockPolicy)
 };
 
 /**
- * Free the lock that a take made with `token`: remove the lock file only when it holds that token. A lock file with another
- * text belongs to another process now (this lock went stale and that process took it over), so it stays, and that is no error. A
- * lock file that is gone, and a lock path that is not a plain file, need nothing. The error is the reason that the file system could
- * not read or remove the lock file of the caller. A caller that has finished its work treats this step as best effort.
+ * True when the lock file holds `token`, so the take that made the token still has the lock. A lock file with another text
+ * belongs to another process now (this lock went stale and that process took it over). A lock file that is gone, and a lock
+ * path that is not a plain file, are not held, and a link is not followed. The error is the reason that the file system could
+ * not read the lock file. This is the one compare of the token: `freeLock` and a check before a write both call it.
  */
-export const freeLock = async (deps: Deps, lockPath: string, token: string): Promise<Result<void, string>> => {
+export const holdsLock = async (deps: Deps, lockPath: string, token: string): Promise<Result<boolean, string>> => {
   const kind = await deps.fs.lstat(lockPath);
   if (!kind.ok) return err(kind.error.message);
-  if (kind.value !== 'file') return ok(undefined);
+  if (kind.value !== 'file') return ok(false);
   const held = await deps.fs.readTextLimited(lockPath, MAX_LOCK_BYTES);
   if (!held.ok) {
-    // The file can go between the two calls: a lock file that is gone needs nothing.
+    // The file can go between the two calls: a lock file that is gone is not held.
     const left = await deps.fs.lstat(lockPath);
-    return left.ok && left.value === null ? ok(undefined) : err(held.error.message);
+    return left.ok && left.value === null ? ok(false) : err(held.error.message);
   }
-  if (held.value !== lockText(token)) return ok(undefined);
+  return ok(held.value === lockText(token));
+};
+
+/**
+ * Free the lock that a take made with `token`: remove the lock file only when it holds that token (see `holdsLock`). A lock file
+ * with another text stays, and that is no error. A lock file that is gone, and a lock path that is not a plain file, need nothing.
+ * The error is the reason that the file system could not read or remove the lock file of the caller. A caller that has finished
+ * its work treats this step as best effort.
+ */
+export const freeLock = async (deps: Deps, lockPath: string, token: string): Promise<Result<void, string>> => {
+  const held = await holdsLock(deps, lockPath, token);
+  if (!held.ok) return held;
+  if (!held.value) return ok(undefined);
   const removed = await deps.fs.remove(lockPath);
   return removed.ok ? ok(undefined) : err(removed.error.message);
 };
