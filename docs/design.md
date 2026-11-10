@@ -1434,7 +1434,7 @@ The workspace of today has 42 manual operations on the board, the requests, the 
 | 32 | Type the go of the owner in the pane of a worker (CLAUDE.md §8) | `factory worker relay <worker> --decision D-n` | Not a connector operation | It types only from a decision that the owner recorded (§4.12). |
 | 33 | Give the status when the owner asks (CLAUDE.md §8) | `factory status` | `item list` | |
 | 34 | Watch `state/lanes-stopped.txt` (CLAUDE.md §11) | `factory worker watch` | Not a connector operation | FAC-M4. |
-| 35 | Refresh the resume file (CLAUDE.md §11) | The worker writes its resume note in its assignment folder. There is no command. | Not a connector operation | FAC-M4. |
+| 35 | Refresh the resume file (CLAUDE.md §11) | Drop | Not a connector operation | The worker writes its resume note in its own assignment folder, and `worker reset` reads it (§4.6). No command is needed. |
 | 36 | Refresh the workers table every 30 seconds (`lanes-table.py`): `Lane`, `Ticket`, `State`, `In phase for` and `Context`. The state comes from the transcript. | `factory worker list --follow` in the slot of the window view | Not a connector operation | The table has the columns `WORKER`, `WORK ITEM`, `STATE`, `IN STAGE` and `CONTEXT`. `STATE` is the stage and one word of a closed list. The word comes from hook events, never from the transcript (§4.11, FAC-M5b). |
 | 37 | Show the tracks block of `board.md` and of the page (`tracklib.py`, `render-board.py`) | `factory track list` | `track list` | The tracks view (§4.11, FAC-M5b). |
 | 38 | Show the board pane: `md-view.sh` shows `board.md` with `glow` | The slot of the window view runs `factory item list --follow` | `item list` | The board pane (§4.11, FAC-M5b). |
