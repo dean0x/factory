@@ -265,7 +265,7 @@ export const checkNodeId = async (deps: Deps, home: string, state: DocState<Fact
   const id = state.value.core.node.id;
   const path = await indexPathOf(deps);
   if (!path.ok) return notChecked(checkIds.nodeId, path.error.message);
-  if (path.value === null) return check(checkIds.nodeId, 'ok', `no ${places.list} is used, so no other node id is known`);
+  if (path.value === null) return check(checkIds.nodeId, 'ok', `no ${places.list} is used, so no other ${roles.node} id is known`);
   const entries = await readHomeIndex(deps, path.value);
   if (!entries.ok) return notChecked(checkIds.nodeId, `${path.value} cannot be read`);
   const ownKey = await folderKeyOf(deps, home);
@@ -277,11 +277,11 @@ export const checkNodeId = async (deps: Deps, home: string, state: DocState<Fact
     // An entry for this folder by another path, a link or another case on macOS, is this node.
     if ((await folderKeyOf(deps, other)) !== ownKey) others.push(other);
   }
-  if (others.length === 0) return check(checkIds.nodeId, 'ok', `no other ${program} in the ${places.list} has the node id ${id}`);
+  if (others.length === 0) return check(checkIds.nodeId, 'ok', `no other ${program} in the ${places.list} has the ${roles.node} id ${id}`);
   return check(
     checkIds.nodeId,
     'warn',
-    `the ${places.list} also gives the node id ${id} to ${others.join(', ')}. The sessions of these ${roles.node}s get the same names, ` +
+    `the ${places.list} also gives the ${roles.node} id ${id} to ${others.join(', ')}. The sessions of these ${roles.node}s get the same names, ` +
       `so only one of them can run at a time. Give each ${roles.node} its own id.`,
   );
 };

@@ -230,7 +230,7 @@ const sameFolder = async (deps: Deps, first: string, second: string): Promise<bo
  * folder that holds the current folder counts, so a `factory.yaml` in a project clone does not. A list that cannot be read
  * stops the command. In the folder of Claude Code nothing is compared, because the file system gets no call there.
  */
-const envHome = async (deps: Deps, home: string): Promise<CliResult<{ readonly home: string; readonly source: HomeSource }>> => {
+const envHome = async (deps: Deps, home: string, command: CommandName): Promise<CliResult<{ readonly home: string; readonly source: HomeSource }>> => {
   const source: HomeSource = home === resolve(deps.cwd) ? 'cwd' : 'env';
   if (isInUserClaudeFolder(deps, home) || isInUserClaudeFolder(deps, deps.cwd)) return ok({ home, source });
   const indexPath = await indexPathOf(deps);
@@ -243,7 +243,7 @@ const envHome = async (deps: Deps, home: string): Promise<CliResult<{ readonly h
   if (holder.value === null || (await sameFolder(deps, home, holder.value))) return ok({ home, source });
   return failure(
     `${env.home} names the ${places.folder} ${home}, but the current folder is in the ${places.folder} ${holder.value}`,
-    `Name the ${places.folder} with ${flagText(flags.home)} ${holder.value} or ${flagText(flags.home)} ${home}.`,
+    `Run "${commandText(command)}" again with ${flagText(flags.home)} ${holder.value} or ${flagText(flags.home)} ${home}.`,
   );
 };
 
@@ -254,7 +254,7 @@ const chosenHome = async (
 ): Promise<CliResult<{ readonly home: string; readonly source: HomeSource }>> => {
   if (homeFlag !== undefined) return ok({ home: resolve(deps.cwd, homeFlag), source: 'flag' });
   const fromEnv = deps.env[env.home];
-  if (fromEnv !== undefined && fromEnv !== '') return envHome(deps, resolve(deps.cwd, fromEnv));
+  if (fromEnv !== undefined && fromEnv !== '') return envHome(deps, resolve(deps.cwd, fromEnv), command);
   // The walk asks about the current folder and every folder above it, so it never starts in the folder of Claude Code.
   const outside = requireOutsideUserClaudeFolder(deps, deps.cwd, commands.doctor);
   if (!outside.ok) return outside;
