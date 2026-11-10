@@ -1145,17 +1145,18 @@ factory has two kinds of files. The **core** is the metal: the code, and the fix
 
 ### 4.14 Extension points
 
-factory has no review desk of its own, not even as an option (F-2, F-17). TB-5 changes this in part: the review page stays a supported owner view that the owner can choose (§4.10). A person who wants another desk builds a reader on one of these extension points. Each point has a milestone.
+factory has no review desk of its own, not even as an option (F-2, F-17). TB-5 changes this in part: the review page stays a supported owner view that the owner can choose. From FAC-M11 it is the `artifact` connector (§4.10, D-139 B). There is no desk command and no board kind named `desk`. A person who wants another desk builds a reader on one of these extension points. Each point has a milestone.
 
 | Extension point | What it gives | Milestone |
 |---|---|---|
-| Board connector contract | The operations of §4.10: item, decision, doc and changes. A new board kind implements it. | FAC-M3 (GitHub), FAC-M9 (Jira, Linear) |
+| Board connector contract | The operations of §4.10: item, track, epic, decision, doc and changes, with `describe` and `check`. A new board kind implements it. | FAC-M11 (the contract, `local` and `artifact`), FAC-M3 (GitHub plugin), FAC-M9 (Jira and Linear plugins) |
+| Board plugin (npm package) | A board connector that a user adds as an npm package. The package exports the contract. The user installs it and names it in `factory.local.yaml`. The install is the trust decision (§4.15). | FAC-M11 (the loader and `plugin test`), FAC-M9 (Jira and Linear) |
 | Event file | The digest of the node in `.factory/outbox/`, written by script (§5.4). A reader follows it. | FAC-M5 (the file and the §5.4 keys); FAC-M5b (the §4.14 fields and the sample reader) |
 | `report --json` | The digest on demand, in the same format (§5.4). | FAC-M5 (the command and the §5.4 keys); FAC-M5b (the §4.14 fields and the sample reader) |
 | Recipe registration | A recipe is registered in the recipe registry. This is a code path. A new recipe needs no change to the core (§4.9). | FAC-M6 |
 | Setup files | A script and one line in the setup list. The owner accepts each file (§4.13). | FAC-M6 |
 | Owner hooks | A setup script that runs after an event, with the event on stdin (§4.13). | FAC-M6 |
-| Review page | A factory command that renders or publishes the review page from the local files (§4.10). The page escapes every string, builds its links by a fixed rule, has no write path, and listens on a local address only when it serves. The secret check of `doctor` runs before a publish. | FAC-M5b |
+| Review page | The `artifact` connector (§4.10). A script renders the review page from the local files, and factory prints one `PUBLISH:` line. The page escapes every string, builds its links by a fixed rule and has no write path. Its data holds no password, no token and no machine path. | FAC-M11 |
 
 The event file and `report --json` hold these fields (§5.4): the node id, the layer, the factory version, the report schema version, the cursor, the state of each worker, the board counts by state and by each owner field (for example a priority), the items in progress, the milestone events, each request with its origin path, and the reports of the child nodes.
 
@@ -1443,7 +1444,7 @@ Dean found 11 words for the physical layout of a factory. The list ends with the
 
 ### 8.1 Parity table
 
-Each part of the setup of today (§1.1) has an owner in factory: a command, a milestone, or "retired, because X". The column Status is `planned` until the milestone ends. Then it is `done` or `retired`. A row is due at the last milestone that it names, in build order. `scripts/check-parity.sh <milestone>` reads this table and fails on any due row whose Status is not `done` or `retired`. At the end of FAC-M7 it must pass for FAC-M7. At the end of FAC-M3 it must pass for all rows.
+Each part of the setup of today (§1.1, §8.2) has an owner in factory: a command, a milestone, or "retired, because X". The column Status is `planned` until the milestone ends. Then it is `done` or `retired`. A row is due at the last milestone that it names, in build order. `scripts/check-parity.sh <milestone>` reads this table and fails on any due row whose Status is not `done` or `retired`. At the end of FAC-M7 it must pass for FAC-M7. At the end of FAC-M3 it must pass for all rows.
 
 | Part (§1.1) | In factory | Milestone | Status |
 |---|---|---|---|
@@ -1453,13 +1454,13 @@ Each part of the setup of today (§1.1) has an owner in factory: a command, a mi
 | `respawn-map.md` | The last-seen files, `factory reboot` and the restore of §4.11 | FAC-M4 | done |
 | `orchestrator-resume.md` | `.factory/resume/` and `factory self reset` | FAC-M4 | done |
 | `roadmaps/` | `.factory/roadmaps/`; `adopt` moves the files | FAC-M2, FAC-M7 | planned |
-| `board.json`, `board.md`, page | The `local` board files and `factory item`; then the board items | FAC-M5, FAC-M3 | planned |
+| `board.json`, `board.md`, page | The `local` board files and `factory item`; the page as the `artifact` connector (FAC-M11); then the items on the board of a hosted kind, and the `local` files stay as the cache (D-141 B) | FAC-M5, FAC-M11, FAC-M3 | planned |
 | `lanes.json` | The last-seen files and `factory worker list` | FAC-M4 | done |
 | `on-dean.json`, `decision-log.json`, `on-dean.md` | `factory request`, `factory decide` and `.factory/decision-log.json` | FAC-M5 | planned |
 | `board-detail.md`, `board-log-*.md`, `done.md` | The item body and its comments on the board; `item close` records the reason in the state repo | FAC-M5 | planned |
 | `briefs/` | Assignments in `.factory/orders/`; `worker new --assignment` | FAC-M2, FAC-M4 | done |
-| `review/dean-review.html`, `review/README-decision-pages.md` | Kept as a supported owner view that the owner can choose (TB-5). It reads the local files. A factory command that renders or publishes it comes in FAC-M5b | FAC-M7, FAC-M5b | planned |
-| `boardlib.py`, `render-board.py`, `render-dean.py` | Kept for the `local` period. Retired: `factory item` and the board UI replace them | FAC-M3 | planned |
+| `review/dean-review.html`, `review/README-decision-pages.md` | Kept as a supported owner view that the owner can choose (TB-5). It reads the local files. From FAC-M11 it is the `artifact` connector: factory renders the page and prints the `PUBLISH:` line (§4.10) | FAC-M7, FAC-M11 | planned |
+| `boardlib.py`, `render-board.py`, `render-dean.py` | Kept for the `local` period. Retired: `factory item`, the board UI and the render script of the `artifact` connector replace them. The review page stays (TB-5) | FAC-M11, FAC-M3 | planned |
 | `board-set.sh` | `factory item add|update|move|close` | FAC-M5 | planned |
 | `lane-set.sh`, `lane-lib.sh` | `factory worker` commands and the last-seen files | FAC-M4 | done |
 | `state-commit.sh`, `git-hooks/pre-commit` | The board commit helper and the delete-guard hooks that `init` and `upgrade` install | FAC-M5 | planned |
@@ -1474,6 +1475,8 @@ Each part of the setup of today (§1.1) has an owner in factory: a command, a mi
 | `decision-profile/` | `.factory/decision-profile/`; `adopt` moves the content | FAC-M2, FAC-M7 | planned |
 | `state/`, `locks/` | `.factory/state/`, `.factory/locks/`; `factory lock run` | FAC-M2, FAC-M5 | planned |
 | Global rules in `~/.claude/rules/devflow/` | Retired as a part of the setup, because devflow installs them and factory never writes there (§2.1). The role templates hold factory's own short rules | FAC-M2 | planned |
+| `usage-collect.sh`, `usage-pass.py`, `live_usage.py` (the token meter of §8.2, rows 40 to 42) | The token meter package collects. `factory status --usage` and `factory item estimate` read the result (§4.11). No `usage collect` command exists | FAC-M5b | planned |
+| `tracklib.py` and the tracks block of `render-board.py` (§8.2, row 37) | `factory track list` and the tracks view of the board pane (§4.11) | FAC-M5b | planned |
 
 ### 8.2 Manual operations and their commands
 
