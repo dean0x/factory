@@ -14,6 +14,7 @@ import {
   env,
   files as fileNames,
   maxEchoChars,
+  maxFileBytes,
   privateFile,
   program,
   schemaIds,
@@ -260,7 +261,7 @@ describe('decide: the owner check, the hosted kind and the guard come before the
     const error = errorOf(await decide(terminal.deps));
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain('FAC-M3 (provider plugin)');
-    expect(error.hint).toBeDefined();
+    expect(error.hint).toContain('then run "factory decide" again');
     expectNothingDone(repo, before, terminal);
   });
 });
@@ -387,6 +388,41 @@ describe('decide: the record of the store for an open request (TP-153, TP-177, T
     expect(repo.textOf(join(stateRel.profileDecisions, '2029-12-30-d-1-pick-a-plan.md'))).toContain('time: 2029-12-30T10:00:00.000Z');
     expect(output.json).toMatchObject({ outcome: 'existing' });
     expect(plainText(output)).toContain('Finished the board copy');
+  });
+
+  it('M5-1b TP-177 exits 1 and commits no board copy when another run stored the same answer with another time during the question', async () => {
+    const repo = await nodeOf();
+    const otherAt = '2029-12-30T10:00:00.000Z';
+    const terminal = atTerminal(repo, () => {
+      repo.deps.seed(STORE_PATH, storeOf(storedRecord({ at: otherAt })));
+      return ok('y');
+    });
+    const error = errorOf(await decide(terminal.deps));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(otherAt);
+    expect(error.hint).toContain('"factory decide D-1 a"');
+    expect(repo.commits).toEqual([]);
+    expect(waitingIds(repo)).toEqual(['D-1']);
+    expect(repo.deps.files.has(join(LAYOUT.stateDir, RECORD_PATH))).toBe(false);
+    expect(storedRecords(repo)).toEqual([storedRecord({ at: otherAt })]);
+    expect(repo.deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('M5-1b TP-177 finishes the board copy with the stored time when the same command runs again after that stop', async () => {
+    const repo = await nodeOf();
+    const otherAt = '2029-12-30T10:00:00.000Z';
+    errorOf(
+      await decide(
+        atTerminal(repo, () => {
+          repo.deps.seed(STORE_PATH, storeOf(storedRecord({ at: otherAt })));
+          return ok('y');
+        }).deps,
+      ),
+    );
+    const again = valueOf(await decide(atTerminal(repo).deps));
+    expect(again.json).toMatchObject({ outcome: 'existing' });
+    expect(waitingIds(repo)).toEqual([]);
+    expect(repo.textOf(join(stateRel.profileDecisions, '2029-12-30-d-1-pick-a-plan.md'))).toContain(`time: ${otherAt}`);
   });
 });
 
@@ -597,12 +633,15 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     expect(next.message).toContain('answered by the owner on "2030-01-02"');
   });
 
-  it('M5-1b TP-191 prints the git check line and no retry line when the state of the commit is not known', async () => {
+  it('M5-1b TP-191 says that the answer is saved, prints the git check line and no retry line when the state of the commit is not known', async () => {
     const repo = await nodeOf();
     const error = errorOf(await decide(committing(atTerminal(repo), repo, 'lost-head')));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('git log -1 --stat');
-    expect(error.hint).toBeUndefined();
+    expect(error.hint).toContain('saved in the owner store');
+    expect(error.hint).toContain('git log -1 --stat');
+    expect(error.hint).not.toContain('again');
+    expect(storedRecords(repo)).toEqual([storedRecord()]);
   });
 
   it('M5-1b TP-180 counts a saved store change with a left lock file as saved: the board copy is written, and a warning names the lock file', async () => {
@@ -618,6 +657,17 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     expect(storedRecords(repo)).toEqual([storedRecord()]);
     expect(repo.commits).toHaveLength(1);
     expect(waitingIds(repo)).toEqual([]);
+  });
+
+  it('M5-1b TP-166 names the cap and says to run decide again when the new text of log.md is over the cap, and writes no store record', async () => {
+    const repo = await nodeOf();
+    repo.deps.seed(join(LAYOUT.stateDir, stateRel.profileLog), `# Decision log\n\n${'x'.repeat(maxFileBytes - 20)}`);
+    const error = errorOf(await decide(atTerminal(repo).deps));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(String(maxFileBytes));
+    expect(error.hint).toContain('then run "factory decide" again');
+    expect(repo.deps.files.has(STORE_PATH)).toBe(false);
+    expect(repo.commits).toEqual([]);
   });
 
   it('M5-1b TP-174 exits 1 and names the decision file when it is full, and changes no board file', async () => {

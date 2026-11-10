@@ -23,7 +23,7 @@ import {
   type CommandName,
 } from '../names.js';
 import type { RecipeBoard } from '../recipes/entry.js';
-import { commitBoardChange, readBoardFiles, type BoardCommitError, type BoardTexts, type CommitOutcome } from '../state/board-commit.js';
+import { commitBoardChange, GIT_CHECK_LINE, readBoardFiles, type BoardCommitError, type BoardTexts, type CommitOutcome } from '../state/board-commit.js';
 import { requireGuardOn } from '../state/guard.js';
 import { stateRel, type Layout } from '../state/layout.js';
 import type {
@@ -384,12 +384,25 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     });
   };
 
-  /** The line for a failure that follows the write of the owner record, by the typed outcome of the commit helper. No line for an unknown state. */
+  /**
+   * The line for a failure that follows the write of the owner record, by the typed outcome of the commit helper. An unknown state
+   * gets the git check line and no retry line, because a rerun could find board files in a state that it does not expect.
+   */
   const savedLineOf = (outcome: CommitOutcome | undefined, id: string, option: string): string | null => {
-    if (outcome === 'restored') {
-      return `The answer is saved in the ${roles.owner} store. Run "${commandText(commands.decide)} ${id} ${option}" again to finish the board copy.`;
+    switch (outcome) {
+      case 'restored':
+        return `The answer is saved in the ${roles.owner} store. Run "${commandText(commands.decide)} ${id} ${option}" again to finish the board copy.`;
+      case 'committed':
+        return 'The answer is recorded and the commit is made.';
+      case 'unknown':
+        return `The answer is saved in the ${roles.owner} store. Check the board files with git. ${GIT_CHECK_LINE}`;
+      case undefined:
+        return null;
+      default: {
+        const unreachable: never = outcome;
+        return unreachable;
+      }
     }
-    return outcome === 'committed' ? 'The answer is recorded and the commit is made.' : null;
   };
 
   /**

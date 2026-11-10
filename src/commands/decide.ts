@@ -1,9 +1,9 @@
-import type { DecisionRecorded, DecisionStored } from '../board/contract.js';
+import type { DecisionPlace, DecisionRecorded, DecisionStored } from '../board/contract.js';
 import { checkNote, chosenOptionOf, requestBlockLines, type DecideRequest } from '../board/decide.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, printable, type CommandOutput, type OutLine } from '../cli/output.js';
 import { ACCEPT_ANSWER, type Deps } from '../core/deps.js';
-import { putDecision, requireDecideChannel } from '../core/owner-record.js';
+import { putDecision, readDecisionProof, requireDecideChannel } from '../core/owner-record.js';
 import { ok } from '../core/result.js';
 import {
   boardIds,
@@ -92,6 +92,25 @@ const orphanTimeOf = (stored: DecisionStored, id: string, option: string): CliRe
   }
 };
 
+/**
+ * The check after the writer gave `existing`: another run stored this answer while this run waited at the question. The board copies
+ * carry the time of the record, so a copy with the time of this run is not committed. The run stops (exit 1) and a rerun reads the
+ * record before the question and uses its time, as it does for an orphan record. The time comes from a fresh read of the record, never
+ * from a display copy.
+ */
+const requireStoredTime = async (deps: Deps, place: DecisionPlace, request: DecideRequest, option: string, at: string): Promise<CliResult<void>> => {
+  const proof = await readDecisionProof(deps, place, request.id, request.canonical);
+  if (proof.kind === 'record' && proof.at === at) return ok(undefined);
+  const rerun = `Run "${commandText(`${commands.decide} ${request.id} ${option}`)}" again to write the board copy with the time of the record.`;
+  if (proof.kind === 'error') return failure(proof.message, rerun);
+  return failure(
+    proof.kind === 'record'
+      ? `another run saved the ${roles.owner} answer for ${request.id} at ${shown(proof.at)}, so this run does not write the board copy with its own time`
+      : `the ${roles.owner} decision file no longer holds the answer for ${request.id}, so this run does not write the board copy`,
+    rerun,
+  );
+};
+
 const textLine = (text: string): OutLine => ({ level: 'text', text });
 
 const answerOf = (request: DecideRequest, recorded: DecisionRecorded): CommandOutput => {
@@ -139,6 +158,11 @@ export const runDecide = async (deps: Deps, options: DecideOptions, registry: Re
     );
   }
   const at = orphanAt.value ?? deps.now().toISOString();
-  const recorded = await connector.recordDecision({ request, option, note, at }, (input) => putDecision(deps, place, input));
+  const recorded = await connector.recordDecision({ request, option, note, at }, async (input) => {
+    const written = await putDecision(deps, place, input);
+    if (!written.ok || written.value.outcome !== 'existing') return written;
+    const kept = await requireStoredTime(deps, place, request, option, at);
+    return kept.ok ? written : kept;
+  });
   return recorded.ok ? ok(answerOf(request, recorded.value)) : recorded;
 };

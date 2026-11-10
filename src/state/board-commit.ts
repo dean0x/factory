@@ -217,6 +217,9 @@ interface PutBack {
 /** The outcome of a failure with no commit: restored when every file is back, else unknown. */
 const outcomeOfPutBack = (back: PutBack): CommitOutcome => (back.complete ? 'restored' : 'unknown');
 
+/** The line for a state of the commit that the helper cannot tell: the person looks at the state repo with git. */
+export const GIT_CHECK_LINE = `Run "git log -1 --stat" in ${dirs.state} to see whether the commit is there.`;
+
 /** A failure (exit 1) after the first file write. The caller reads `commitOutcome`, never the text. */
 const failedAfterWrite = (message: string, commitOutcome: CommitOutcome): Err<BoardCommitError> =>
   err({ kind: 'failure', message, commitOutcome });
@@ -298,11 +301,7 @@ const commitLocked = async (
   const error = committed.error.message;
   const headAfter = await stateHeadOf(deps, layout.stateDir);
   if (!headAfter.ok) {
-    return failedAfterWrite(
-      `${error}. ${headAfter.error.message}, so the files are not put back. ` +
-        `Run "git log -1 --stat" in ${dirs.state} to see whether the commit is there.`,
-      'unknown',
-    );
+    return failedAfterWrite(`${error}. ${headAfter.error.message}, so the files are not put back. ${GIT_CHECK_LINE}`, 'unknown');
   }
   if (headAfter.value !== head.value) {
     return failedAfterWrite(

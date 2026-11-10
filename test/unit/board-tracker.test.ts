@@ -6,7 +6,7 @@ import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.
 import type { Deps } from '../../src/core/deps.js';
 import type { DecisionInput } from '../../src/core/owner-record.js';
 import { ok } from '../../src/core/result.js';
-import { commands, commandText, files as fileNames, stateLock, values } from '../../src/names.js';
+import { commands, commandText, files as fileNames, stateLock, values, type CommandName } from '../../src/names.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { boardRepo, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
 import { withFsWatch } from '../helpers/fake-deps.js';
@@ -45,12 +45,15 @@ const repoWith = async (): Promise<BoardRepo> => {
   return repo;
 };
 
-const connectorOf = (deps: Deps, tracker: string): LocalBoard =>
+/** The command that `connectorOf` gives the connector, which the remedy line of a refusal names. */
+const PASSED_COMMAND = commands.start;
+
+const connectorOf = (deps: Deps, tracker: string, command: CommandName = PASSED_COMMAND): LocalBoard =>
   createLocalBoard(deps, LAYOUT, {
     queueKey: QUEUE,
     recipe: softwareBoard,
     config: sampleBoard(),
-    command: commands.start,
+    command,
     tracker,
     node: 'demo',
   });
@@ -123,9 +126,16 @@ describe('a hosted tracker kind: each board write refuses with exit 4 and one li
   it('M5-1b TP-67 names the command to run again in the remedy line, and the local tracker kind', async () => {
     const repo = await repoWith();
     const error = errorOf(await connectorOf(repo.deps, 'github').addItem({ title: 'Second', fields: { priority: 'P1' } }));
-    expect(error.hint).toContain(commandText(commands.start));
+    expect(error.hint).toContain(commandText(PASSED_COMMAND));
     expect(error.hint).toContain(values.trackerLocal);
     expect(error.hint).not.toContain('\n');
+  });
+
+  it('M5-1b TP-67 names the command that the connector was given, and no other, in the remedy line', async () => {
+    const repo = await repoWith();
+    const error = errorOf(await connectorOf(repo.deps, 'github', commands.decide).addItem({ title: 'Second', fields: { priority: 'P1' } }));
+    expect(error.hint).toContain(`"${commandText(commands.decide)}"`);
+    expect(error.hint).not.toContain(commandText(commands.start));
   });
 
   it.each(BAD_WRITES)('M5-1b TP-67 %s with bad input exits 4 too, because the refusal comes before the input check', async (_name, write) => {
@@ -189,7 +199,7 @@ describe('a hosted tracker kind: the decision operations refuse before any read 
     expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain(kind);
     expect(error.message).toContain(HOSTED_LINE);
-    expect(error.hint).toContain(commandText(commands.start));
+    expect(error.hint).toContain(commandText(PASSED_COMMAND));
     expect(touched).toEqual([]);
     expect(repo.gitCommands()).toEqual([]);
     expect(writerCalls).toEqual([]);

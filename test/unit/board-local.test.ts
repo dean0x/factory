@@ -32,12 +32,13 @@ import {
   maxFileBytes,
   stateLock,
   values,
+  type CommandName,
 } from '../../src/names.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { layoutOf, stateRel } from '../../src/state/layout.js';
 import { describeBoardContract } from '../contract/board-contract.js';
 import { boardRepo, type BoardRepo } from '../helpers/board-repo.js';
-import { createFakeDeps, exited } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, withFailingWrites } from '../helpers/fake-deps.js';
 import { HOOK, linkAt } from '../helpers/guard-fixture.js';
 import { publishBoard } from '../helpers/publish-recipe.js';
 import { sampleBoard } from '../helpers/sample-config.js';
@@ -1214,12 +1215,15 @@ const decideRepo = async (setup: DecideSetup = {}): Promise<BoardRepo> => {
   return repo;
 };
 
-const localOf = (deps: Deps): LocalBoard =>
+/** The command that `localOf` gives the connector, which the remedy line of a stop names. */
+const PASSED_COMMAND = commands.start;
+
+const localOf = (deps: Deps, command: CommandName = PASSED_COMMAND): LocalBoard =>
   createLocalBoard(deps, LAYOUT, {
     queueKey: QUEUE,
     recipe: softwareBoard,
     config: sampleBoard(),
-    command: commands.start,
+    command,
     tracker: values.trackerLocal,
     node: NODE,
   });
@@ -1551,7 +1555,31 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       const error = errorOf(await localOf(repo.deps).recordDecision(callOf(), proofSpy().writer));
       expect(error.message).toContain(String(maxFileBytes));
       expect(error.hint).toContain('Move old lines');
-      expect(error.hint).toContain(commandText(commands.start));
+      expect(error.hint).toContain(commandText(PASSED_COMMAND));
+    });
+
+    const REMEDIES: readonly (readonly [string, DecideSetup, (board: LocalBoard, repo: BoardRepo) => Promise<CliResult<unknown>>])[] = [
+      [
+        'the profile log is over the cap',
+        { profileLog: `# Decision log\n\n${'x'.repeat(maxFileBytes - 20)}` },
+        (board) => board.recordDecision(callOf(), proofSpy().writer),
+      ],
+      [
+        'the record path has text already',
+        {},
+        (board, repo) => {
+          repo.deps.seed(RECORD_FILE, 'older text\n');
+          return board.recordDecision(callOf(), proofSpy().writer);
+        },
+      ],
+      ['no variable names a state folder', { env: {} }, (board) => board.decisionRequest('D-1')],
+    ];
+
+    it.each(REMEDIES)('M5-1b TP-152 names the command that the connector was given, and no other, when %s', async (_name, setup, run) => {
+      const repo = await decideRepo(setup);
+      const error = errorOf(await run(localOf(repo.deps, commands.decide), repo));
+      expect(error.hint).toContain(`"${commandText(commands.decide)}"`);
+      expect(error.hint).not.toContain(commandText(commands.start));
     });
 
     it('M5-1b TP-192 names the cap and says not to remove rows, for the text of the decision log', async () => {
@@ -1722,12 +1750,27 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       expect(repo.commits).toHaveLength(1);
     });
 
-    it('M5-1b TP-191 keeps the git check line of the helper and adds no retry line when the state of the commit is not known', async () => {
+    it('M5-1b TP-191 says that the answer is saved, gives the git check line and adds no retry line when the head cannot be read', async () => {
       const repo = await decideRepo();
       const error = errorOf(await localOf(committing(repo, 'lost-head')).recordDecision(callOf(), proofSpy().writer));
       expect(exitCodeOf[error.kind]).toBe(1);
       expect(error.message).toContain('git log -1 --stat');
-      expect(error.hint).toBeUndefined();
+      expect(error.hint).toContain(SAVED);
+      expect(error.hint).toContain('git log -1 --stat');
+      expect(error.hint).not.toContain('again');
+    });
+
+    it('M5-1b TP-191 says that the answer is saved, gives the git check line and adds no retry line when a file cannot be put back', async () => {
+      const repo = await decideRepo();
+      // The first write of the waiting file is the new text, the second is the put back after the failed commit.
+      const waitingFile = join(LAYOUT.stateDir, fileNames.waiting);
+      const failing = withFailingWrites(committing(repo, 'fails'), (path, attempt) => path === waitingFile && attempt === 2);
+      const error = errorOf(await localOf(failing).recordDecision(callOf(), proofSpy().writer));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('disk full');
+      expect(error.hint).toContain(SAVED);
+      expect(error.hint).toContain('git log -1 --stat');
+      expect(error.hint).not.toContain('again');
     });
 
     it('M5-1b TP-177 adds no saved line to a failure that comes before the store write', async () => {
