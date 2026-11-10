@@ -95,7 +95,8 @@ const foundHomeOption: FlagOption = {
   type: 'string',
   placeholder: 'DIR',
   description:
-    `The ${places.folder}. Default: ${env.home}, else the folder of the nearest config file ` +
+    `The ${places.folder}. Default: ${env.home}, which stops when the current folder is in another listed ${places.folder}, ` +
+    `else the folder of the nearest config file ` +
     `above the current folder, else the ${places.folder} that the ${places.list} gives for the current folder.`,
 };
 

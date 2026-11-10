@@ -57,7 +57,7 @@ The factory folder
 The factory list and the registration
 
 - `init` writes the factory folder into the factory list: `$XDG_STATE_HOME/factory/homes.json`, or `~/.local/state/factory/homes.json`. The list is never under `~/.claude`. The check resolves links, and on macOS it ignores the case of letters.
-- A command with `FACTORY_HOME` and no `--home` stops with exit code 1 when the current folder is inside another factory folder. The message names both folders and the `--home` remedy. A hook always uses `FACTORY_HOME`.
+- A command with `FACTORY_HOME` and no `--home` stops with exit code 1 when the current folder is inside another factory folder of the factory list. A `factory.yaml` in a project clone does not count. The message names both folders and the `--home` remedy. A hook always uses `FACTORY_HOME`.
 - `doctor` warns with the new check `node-id` when another factory in the factory list has the same node id, because the sessions of both nodes then get the same names.
 - The list file has mode 600, and its folder has mode 700. `factory` refuses a list file or list folder that another user owns or that a group or other user can write. The error names the path.
 - Two `init` runs at the same time both keep their entry. A lock file `homes.json.lock` beside the list lets one run write at a time. A run tries 20 times, 50 ms apart, then stops with an error. A lock older than 5 seconds is taken over.
@@ -134,7 +134,7 @@ Git 2.26 and the state lock
 
 `doctor`
 
-- `factory doctor` runs 28 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `setup-text`, `roles`, `tracker`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls`, `agent-version`, `state-guard` and `board-size`.
+- `factory doctor` runs 29 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `node-id`, `setup-text`, `roles`, `tracker`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls`, `agent-version`, `state-guard` and `board-size`.
 - `board-size` warns when `board.json`, `waiting.json` or `decision-log.json` reaches 80 percent of the read cap of 1 MiB, and names the file. A file that is not there is no fault.
 - `delegations` shows the mode of each approval point. A `delegated` mode with no matching approval record warns, and the point counts as `owner`.
 - `instruction-files` warns when the factory folder, or a folder above it, holds a file that an agent loads as an instruction.
@@ -177,7 +177,7 @@ The local board
 Messages between sessions
 
 - New commands: `factory worker reset ID --clear|--compact`, `factory worker watch [ID]...`, `factory self reset` and `factory worker new ID --project PROJECT --assignment FILE`. The flags `--clear`, `--compact` and `--assignment` exit with code 2 on every other `worker` command.
-- Each session starts with a name: the coordinator `<node id>`, a worker `<node id>_<id>`. An id can not hold an underscore, so two nodes with different ids never give the same name. A coordinator gives work with the cross-session messages of Claude Code (`SendMessage` and `ListAgents`, version 2.1.224 or newer). A long task is a file in the assignment folder of the worker. There is no inbox and no doorbell.
+- Each session starts with a name: the coordinator `<node id>`, a worker `<node id>_<id>`. An id can not hold an underscore, so two nodes with different ids never give the same name. From 0.2.0-ea.1, which used a hyphen: run `factory upgrade`, then restart each worker. A coordinator gives work with the cross-session messages of Claude Code (`SendMessage` and `ListAgents`, version 2.1.224 or newer). A long task is a file in the assignment folder of the worker. There is no inbox and no doorbell.
 - `worker reset` types `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and checks that it happened. `self reset` queues a `/compact` for the coordinator after its resume file exists. `worker watch` checks the workers every 30 seconds, at most 40 times, and exits at the first change. See the README, "Give work to a worker".
 - The hook settings hold two more events, `Notification` and `PreToolUse`, so there are 6. `worker list` and `status` show the new state `waits`, and `dismiss` refuses a worker that waits. `factory upgrade` adds the events to existing work copies and to the coordinator settings. Then run `factory reboot`, so that each session gets its name and the new events.
 - The role texts say that a message from another session is a work direction only and carries no authority of the owner. The block `worker` has version 2, and the block `coordinator` has version 3. `upgrade` renders them again.

@@ -118,7 +118,7 @@ The recipe lists the approval points. The points of the `software` recipe are `m
 A command finds the factory folder in this order:
 
 1. The flag `--home DIR`.
-2. The environment variable `FACTORY_HOME`. If the current folder is inside another factory folder, the command stops with exit code 1. It names both folders and the `--home` remedy. A hook always uses `FACTORY_HOME`.
+2. The environment variable `FACTORY_HOME`. If the current folder is inside another factory folder of the factory list, the command stops with exit code 1. It names both folders and the `--home` remedy. A hook always uses `FACTORY_HOME`.
 3. The nearest `factory.yaml` above the current folder (at most 64 levels).
 4. The factory list.
 

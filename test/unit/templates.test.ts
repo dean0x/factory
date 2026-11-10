@@ -789,7 +789,7 @@ describe('the node id in the values of the role texts (TP-37)', () => {
   });
 
   it('puts the node id into a text in place of its placeholder', () => {
-    expect(fillTemplate(['The name is `{{nodeId}}-<id>`.'], workerValuesFor(input))).toBe('The name is `acme-<id>`.');
+    expect(fillTemplate(['The name is `{{nodeId}}_<id>`.'], workerValuesFor(input))).toBe('The name is `acme_<id>`.');
     expect(fillTemplate(['The name is `{{nodeId}}`.'], coordinatorValuesFor(input))).toBe('The name is `acme`.');
   });
 });
