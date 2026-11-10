@@ -313,7 +313,8 @@ factory worker summon <worker> [--for 15m]  # show the pane of the worker in the
 factory worker watch [<worker>...] | recover | adopt <name>   # watch: exits at the first change of a worker, or after 20 minutes (§4.6); recover: FAC-M5; adopt: FAC-M7
 factory layout                              # make the window workers if it is missing, tile it, and put the board back in the slot (§4.6, §4.11)
 
-factory item add|update|move|close|list|note|doc|import ...   # work items: the board; list shows one line for each track, --track shows one track, --follow draws the list again at each change; note adds a note to an item, doc attaches a file to an item (§4.10); import: FAC-M3
+factory item add|update|move|close|list|note|doc|import ...   # work items: the board; list shows one line for each track, --track shows one track, --follow draws the list again at each change; note adds a note to an item, doc attaches a file to an item; --epic <E-n> sets the epic of an item, and item add needs it (§4.10, FAC-M11); import: FAC-M3
+factory epic add|update|list|remove ...     # the epics of the board: each work item belongs to one epic (§4.10, FAC-M11)
 factory request add|list|update|close ...   # items that wait for the owner; add --options FILE asks a decision, as a decision item in the decision store; close ends one with no answer (§4.10)
 factory decide read [<D-n>] [--from FILE]   # read the answers on the board with no model use, and show them; --from reads the data file of the page (FAC-M11); it records nothing (§4.10)
 factory decide <D-n> <option> [--note T] [--principle ID]   # the owner enters the decision in a terminal window, with every board kind; the decision log and the profile get it (§4.10)

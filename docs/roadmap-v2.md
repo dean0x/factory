@@ -55,6 +55,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `worker adopt` | FAC-M7 |
 | `item`, `request`, `queue`, `decide <D-n> <option>` | FAC-M5 |
 | `track` (add, list, update) | FAC-M5 |
+| `epic` (add, update, list, remove), the option `--epic` of `item add` and `item update` | FAC-M11 (the contract); the epic view of the board pane (`item list --follow`) is FAC-M5b |
 | `item estimate` | FAC-M5b |
 | `item list --follow` (the board pane of the live board, with the estimate mark) | FAC-M5b |
 | `worker mark`, `worker list --follow` (the columns of the live board) | FAC-M5b |
