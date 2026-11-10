@@ -1616,7 +1616,7 @@ Dean decided D-139 to D-142 for the board contract. The decisions are final unti
 | D-140 | A board plugin is an in-process npm package that exports the contract `factory.board/v1`. The user installs it and names it in `factory.local.yaml`. The install is the trust decision. Factory has no accept command and no hash for a plugin (§4.15). |
 | D-141 B | The board holds the truth, and the local board is the cache. A write goes to the board first. Offline work only reads. There is no queue. `factory decide` works offline (§4.10, "The one rule"). |
 | D-142 A | Only `factory decide <D-n> <option>`, in a terminal window outside a factory session, records a decision. A page answer or a board answer shows and wakes, and records nothing (§4.10, §6.1). |
-| D-143 (TM-10) | Dean, 2026-11-10: "this type of structure would apply also to what we have in the factory, the artifact that we give. I'm trying to build something here. We still don't have one source of truth here, but just keep it in mind." The board contract has epics, and each work item belongs to one epic (§4.10, "Epics"). Tracks stay. The goal is one shared source of truth for the workspace board and the factory board. There is no build plan for that goal yet (§10). |
+| TM-10 (Dean direction 2026-11-10) | Dean, 2026-11-10: "this type of structure would apply also to what we have in the factory, the artifact that we give. I'm trying to build something here. We still don't have one source of truth here, but just keep it in mind." The board contract has epics, and each work item belongs to one epic (§4.10, "Epics"). Tracks stay. The goal is one shared source of truth for the workspace board and the factory board. There is no build plan for that goal yet (§10). |
 
 ## 10. Risks
 
@@ -1638,5 +1638,5 @@ Dean decided D-139 to D-142 for the board contract. The decisions are final unti
 
 **Open points**
 
-- **One source of truth for the workspace board and the factory board (D-143, TM-10).** Dean wants one shared source of truth. Today the two boards are separate. This design states the goal only. It has no build plan, no milestone and no test for it.
+- **One source of truth for the workspace board and the factory board (TM-10).** Dean wants one shared source of truth. Today the two boards are separate. This design states the goal only. It has no build plan, no milestone and no test for it.
 - **Tracks or epics (§4.10, "Epics").** An item has a track and an epic. Both stay for now. The choice between them is open.

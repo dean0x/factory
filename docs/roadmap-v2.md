@@ -515,7 +515,7 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
 - Other recipes, for example research or content (F-10). A user-made setup comes with FAC-M6, and a user-made recipe needs no new milestone: the test recipe of the code PR shows that `init`, the block render, `doctor`, `upgrade` and `start --dry-run` run with a second recipe.
 - No review desk of its own, not even as an option (F-2, F-17). TB-5 changes this in part: the review page stays a supported owner view that the owner can choose, and from FAC-M11 it is the `artifact` connector. A person who wants another desk builds a reader on an extension point (design §4.14).
 - A board tool other than `local`, `artifact`, `github`, Jira and Linear has no milestone. A user installs a board plugin for it (design §4.15).
-- One shared source of truth for the workspace board and the factory board (D-143, TM-10). Today the two boards are separate. This line states the goal only. It has no build plan and no milestone (design §10).
+- One shared source of truth for the workspace board and the factory board (TM-10). Today the two boards are separate. This line states the goal only. It has no build plan and no milestone (design §10).
 
 ## Decisions needed
 
