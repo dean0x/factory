@@ -1682,9 +1682,18 @@ describe('the local connector: record the answer of the owner (TP-150, TP-153, T
       const error = errorOf(await localOf(committing(repo, 'fails')).recordDecision(callOf(), proofSpy().writer));
       expect(exitCodeOf[error.kind]).toBe(1);
       expect(error.hint).toContain(SAVED);
-      expect(error.hint).toContain(commandText(commands.start));
+      expect(error.hint).toContain(`"${commandText(commands.decide)} D-1 a"`);
       expect(repo.textOf(fileNames.waiting)).toBe(waitingOf(ENTRY));
       expect(repo.deps.files.has(RECORD_FILE)).toBe(false);
+    });
+
+    it('M5-1b TP-180 adds the warning of the writer to the hint after the saved line, when the commit fails after the store write', async () => {
+      const repo = await decideRepo();
+      const writer = proofSpy(ok({ outcome: 'stored', warning: 'the lock file stays' })).writer;
+      const error = errorOf(await localOf(committing(repo, 'fails')).recordDecision(callOf(), writer));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.hint).toContain(SAVED);
+      expect(error.hint?.endsWith('the lock file stays')).toBe(true);
     });
 
     it('M5-1b TP-177 finishes with exit 0 when the same command runs again after the files were put back', async () => {

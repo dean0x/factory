@@ -385,17 +385,20 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
   };
 
   /** The line for a failure that follows the write of the owner record, by the typed outcome of the commit helper. No line for an unknown state. */
-  const savedLineOf = (outcome: CommitOutcome | undefined): string | null => {
+  const savedLineOf = (outcome: CommitOutcome | undefined, id: string, option: string): string | null => {
     if (outcome === 'restored') {
-      return `The answer is saved in the ${roles.owner} store. Run "${commandText(options.command)}" again to finish the board copy.`;
+      return `The answer is saved in the ${roles.owner} store. Run "${commandText(commands.decide)} ${id} ${option}" again to finish the board copy.`;
     }
     return outcome === 'committed' ? 'The answer is recorded and the commit is made.' : null;
   };
 
-  /** The error of a commit that failed after the owner record was saved: the same error, and a remedy line by the outcome. */
-  const afterStoreWrite = (error: BoardCommitError): CliError => {
-    const line = savedLineOf(error.commitOutcome);
-    return line === null ? error : { ...error, hint: error.hint === undefined ? line : `${error.hint} ${line}` };
+  /**
+   * The error of a commit that failed after the owner record was saved: the same error, a remedy line by the outcome,
+   * and then the warning of the store write, so a left lock file is named.
+   */
+  const afterStoreWrite = (error: BoardCommitError, id: string, option: string, warning: string | null): CliError => {
+    const lines = [error.hint, savedLineOf(error.commitOutcome, id, option), warning].filter((line): line is string => line !== undefined && line !== null);
+    return lines.length === 0 ? error : { ...error, hint: lines.join(' ') };
   };
 
   const itemIn = (doc: BoardDoc, id: string): CliResult<BoardItem> => {
@@ -633,7 +636,9 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
           return ok(undefined);
         },
       );
-      if (!done.ok) return written.current === undefined ? done : err(afterStoreWrite(done.error));
+      if (!done.ok) {
+        return written.current === undefined ? done : err(afterStoreWrite(done.error, request.id, input.option, written.current.warning));
+      }
       if (written.current === undefined) return failure(`the board change did not write the ${roles.owner} record`);
       return ok({ id: request.id, option: input.option, path: done.value, outcome: written.current.outcome, warning: written.current.warning });
     },
