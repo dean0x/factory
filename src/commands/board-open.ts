@@ -45,6 +45,7 @@ export const openBoard = async (
     config: config.core.board,
     command,
     tracker: config.core.tracker.kind,
+    node: config.core.node.id,
   });
   return ok({ home, config, connector });
 };

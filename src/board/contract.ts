@@ -1,12 +1,15 @@
 import type { CliResult } from '../cli/errors.js';
+import type { DecisionInput, DecisionPlace, DecisionProof, DecisionWrite } from '../core/owner-record.js';
+import type { DecideRequest } from './decide.js';
 
 /**
  * The board connector contract (design 4.10). Every board connector gives these operations, and the contract suite
  * (`test/contract/board-contract.ts`) runs against each one. The `local` connector keeps the board in the files of the state folder.
  * A hosted tracker kind has no connector in this version: the local connector reads the local files for it and refuses every write.
  *
- * The contract holds no read of a decision answer in this change, and no decision writer: a decision item is asked, and the owner
- * answers it outside the connector.
+ * The contract holds no read of a decision answer and no decision writer. The proof read of an owner answer is `readDecisionProof`
+ * in `src/core/owner-record.ts`, outside the contract: it reads only the owner decision file. The contract operation `decision read`
+ * waits for FAC-M11.
  *
  * A stage and an owner field are display data and never proof. A connector keeps every stored key that it does not own.
  */
@@ -184,6 +187,49 @@ export interface BoardConnector {
 }
 
 /**
+ * What the owner decision file holds for an open request: no record, the record of this request text, or a record of another text of
+ * the request (`mismatch`). A decision file that cannot be read is no value of this type: the read stops with an error.
+ */
+export type DecisionStored = Exclude<DecisionProof, { readonly kind: 'error' }>;
+
+/** An open request as `decisionRequest` reads it, before the prompt. */
+export interface DecisionRequestRead {
+  /** The request, read strictly, with its canonical text and its hash. */
+  readonly request: DecideRequest;
+  /** The record of the owner decision file for this request. Its option is the only source of a chosen option. */
+  readonly stored: DecisionStored;
+  /** The node id, the real root and the decision file. */
+  readonly place: DecisionPlace;
+}
+
+/** The input of `recordDecision`: the request that the owner saw, the option, the note, and the time of the answer. */
+export interface DecisionRecordCall {
+  /** The request as `decisionRequest` gave it. Its hash is checked again under the lock. */
+  readonly request: DecideRequest;
+  /** The key of the chosen option. */
+  readonly option: string;
+  /** The reason of the owner, checked by the caller, or null for none. */
+  readonly note: string | null;
+  /** The time of the answer: an ISO time in UTC, read once after the owner said yes. */
+  readonly at: string;
+}
+
+/** The writer of the owner record. The command of decide gives it. The connector never names the owner decision file. */
+export type DecisionProofWriter = (input: DecisionInput) => Promise<CliResult<DecisionWrite>>;
+
+/** What `recordDecision` did. */
+export interface DecisionRecorded {
+  readonly id: string;
+  readonly option: string;
+  /** The profile record file, relative to the state folder. */
+  readonly path: string;
+  /** `stored`: a new record. `existing`: the owner decision file held this answer already. */
+  readonly outcome: DecisionWrite['outcome'];
+  /** A line for the person when the owner record is saved and a lock file stays, else null. */
+  readonly warning: string | null;
+}
+
+/**
  * The local board: the contract, and the operations of the owner's board that PR A has for the local files only. A hosted board maps
  * a request and a queue to the provider (FAC-M3), so these operations are not in the contract suite. Each write of them refuses a
  * hosted tracker kind first, as a write of the contract does.
@@ -200,4 +246,16 @@ export interface LocalBoard extends BoardConnector {
   listQueue(): Promise<CliResult<readonly QueueRow[]>>;
   /** Add a row to the queue, change a row, or move it. */
   setQueueRow(input: QueueRowInput): Promise<CliResult<QueueRowSet>>;
+  /**
+   * Read an open request for the owner, before the prompt and with no lock. A hosted tracker kind, a guard that is off, a number that
+   * is unknown or closed or answered, a request that fails the strict read and an owner decision file that cannot be read each stop
+   * with an error. A row of the log with an owner key is no answer unless the owner decision file holds the record of its request text.
+   */
+  decisionRequest(id: string): Promise<CliResult<DecisionRequestRead>>;
+  /**
+   * Record the owner answer: the owner record first, then the board copies in one commit. The state lock holds the checks, the
+   * folder of the records, the call of `writeProof` and the commit. A failure after `writeProof` says in its remedy line whether the
+   * answer is saved, so the same command finishes the copies. The caller gives the time once, after the owner said yes.
+   */
+  recordDecision(input: DecisionRecordCall, writeProof: DecisionProofWriter): Promise<CliResult<DecisionRecorded>>;
 }
