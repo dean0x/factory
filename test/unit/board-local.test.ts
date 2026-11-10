@@ -892,18 +892,30 @@ describe('the local connector: a file that cannot be read (TP-51)', () => {
     expect(repo.commits).toEqual([]);
   });
 
-  it('M5-1b TP-51 stops a write on a board file that is a link, names the file, and writes nothing', async () => {
-    const repo = await repoWith(EMPTY_BOARD);
-    const linked = createLocalBoard(linkAt(repo.deps, join(LAYOUT.stateDir, fileNames.board)), LAYOUT, {
+  const linkedConnector = (repo: BoardRepo, file: string): BoardConnector =>
+    createLocalBoard(linkAt(repo.deps, join(LAYOUT.stateDir, file)), LAYOUT, {
       queueKey: QUEUE,
       recipe: softwareBoard,
       config: sampleBoard(),
       command: commands.start,
       tracker: values.trackerLocal,
     });
-    const error = errorOf(await linked.addItem({ title: 'New', fields: PRIORITY }));
-    expect([1, 4]).toContain(exitCodeOf[error.kind]);
+
+  it('M5-1b TP-51 stops a write on a board file that is a link with exit 4, names the file, and writes nothing', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const error = errorOf(await linkedConnector(repo, fileNames.board).addItem({ title: 'New', fields: PRIORITY }));
+    expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain(fileNames.board);
+    expect(error.hint).toContain('Replace the link');
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('M5-1b TP-51 stops a decision when the waiting file is a link with exit 4, names the file, and writes nothing', async () => {
+    const repo = await repoWith(EMPTY_BOARD);
+    const error = errorOf(await linkedConnector(repo, fileNames.waiting).askDecision(DECISION));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(fileNames.waiting);
+    expect(error.hint).toContain('Replace the link');
     expect(repo.commits).toEqual([]);
   });
 });

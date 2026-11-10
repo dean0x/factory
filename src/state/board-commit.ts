@@ -3,7 +3,7 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { commitPaths, GIT_ENTRY, requireStateRepoCommit, stateHeadOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { err, ok } from '../core/result.js';
-import { namedItems, shownPath } from '../core/root-paths.js';
+import { LINK_REMEDY, namedItems, shownPath } from '../core/root-paths.js';
 import { commandText, dirs, files, maxFileBytes, type CommandName } from '../names.js';
 import { readCheckedFile, type NamedPath } from '../workers/registry.js';
 import { requireGuardOn } from './guard.js';
@@ -67,9 +67,9 @@ const requirePlainPaths = (paths: readonly string[]): CliResult<readonly string[
 };
 
 /**
- * The text of one touched file as it is on disk, or null when the file is not there. A link, a folder, a large file and a file that
- * is not UTF-8 are failures. The decode is strict: the helper writes the text back, so a byte that a lenient decode would change must
- * stop the call instead of changing the file.
+ * The text of one touched file as it is on disk, or null when the file is not there. A link is a security stop (exit 4). A folder, a
+ * large file and a file that is not UTF-8 are failures. The decode is strict: the helper writes the text back, so a byte that a lenient
+ * decode would change must stop the call instead of changing the file.
  */
 const currentTextOf = async (deps: Deps, layout: Layout, path: string): Promise<CliResult<string | null>> => {
   const parts = path.split('/');
@@ -81,7 +81,11 @@ const currentTextOf = async (deps: Deps, layout: Layout, path: string): Promise<
   const read = await readCheckedFile(deps, folders, { path: join(layout.stateDir, path), what: path }, maxFileBytes, 'fatal');
   if (!read.ok) return read;
   if (read.value.state === 'absent') return ok(null);
-  if (read.value.state === 'invalid') return failure(`cannot read ${path}: ${read.value.reason}`);
+  if (read.value.state === 'invalid') {
+    return read.value.cause === 'link'
+      ? safetyRefusal(`cannot read ${path}: ${read.value.reason}`, LINK_REMEDY)
+      : failure(`cannot read ${path}: ${read.value.reason}`);
+  }
   return ok(read.value.text);
 };
 
@@ -98,8 +102,8 @@ const currentTexts = async (deps: Deps, layout: Layout, paths: readonly string[]
 /**
  * Read the files of the work tree that hold the board, with no lock. The state lock is not re-entrant, so a reader never takes it:
  * a read does not wait for a writer, and it can mix the files of two commits (a writer replaces each file whole). The paths are plain
- * paths below the state folder. A file that is not there has the text null. A link, a folder, a file above `maxFileBytes` and a file
- * that is not UTF-8 are failures that name the file.
+ * paths below the state folder. A file that is not there has the text null. A link is a security stop (exit 4). A folder, a file above
+ * `maxFileBytes` and a file that is not UTF-8 are failures that name the file.
  */
 export const readBoardFiles = async (deps: Deps, layout: Layout, paths: readonly string[]): Promise<CliResult<BoardTexts>> => {
   const plain = requirePlainPaths(paths);

@@ -337,12 +337,14 @@ describe('the board commit helper: a change that stops before any write', () => 
     expect(writesOf(seen)).toEqual([]);
   });
 
-  it('stops when a touched file is a link, before the change runs', async () => {
+  it('stops with exit 4 and a remedy when a touched file is a link, before the change runs', async () => {
     const { deps } = await setup();
     const linked = { ...deps, fs: { ...deps.fs, lstat: async (path: string) => (path === BOARD ? ok('link' as const) : deps.fs.lstat(path)) } };
     const { change, got } = changing(ok(texts({})));
     const error = errorOf(await commitBoardChange(linked, LAYOUT, request({ change })));
+    expect(exitCodeOf[error.kind]).toBe(4);
     expect(error.message).toContain('board.json is a link');
+    expect(error.hint).toContain('Replace the link');
     expect(got).toEqual([]);
   });
 });
@@ -590,6 +592,15 @@ describe('the board commit helper: the read with no lock (TP-93)', () => {
     const error = errorOf(await readBoardFiles(deps, LAYOUT, ['board.json']));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain(BOARD);
+  });
+
+  it('M5-1b TP-51 fails with exit 4 and a remedy, and names the file, when the file is a link', async () => {
+    const { deps } = await setup();
+    const linked = { ...deps, fs: { ...deps.fs, lstat: async (path: string) => (path === BOARD ? ok('link' as const) : deps.fs.lstat(path)) } };
+    const error = errorOf(await readBoardFiles(linked, LAYOUT, ['board.json']));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain('board.json is a link');
+    expect(error.hint).toContain('Replace the link');
   });
 
   it('M5-1b TP-93 reads no file for a path that is not a plain path below the state folder', async () => {
