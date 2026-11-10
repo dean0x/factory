@@ -978,9 +978,9 @@ Every new event wakes the coordinator, whatever account wrote it. An event only 
 - **Stopped has one meaning.** Stopped means an API error, and the table shows it as `Stopped: API error`. A worker with no live pane, no work copy folder or no last-seen line shows its hold word, Parked or On hold, when it has one, else `—`. It never shows Stopped for that case. `status` and the live board use the same words.
 - **A hold word** replaces the hook state while it is set. A mark is not an approval: it gives no consent and counts for no approval point (§6).
 - **A permission prompt** is not a state of this table. `worker watch` still reports a worker that waits in a dialog (§4.6).
-- **Stage.** `STAGE` is the stage of the open work item of the worker, from the work item port of `status`. The recipe names the stages (§4.9). The item holds the time of its last stage change, and `IN STAGE` is the time since that change. A worker with no open work item shows `—` in both columns.
+- **Stage.** `STAGE` is the stage of the open work item of the worker, from the work item port of `status`. The recipe gives the list of stages. A stage is where a work item is on the board. It is not a step of the work cycle (§4.9). The item holds the time of its last stage change, and `IN STAGE` is the time since that change. A worker with no open work item shows `—` in both columns.
 
-Software recipe: the stages are `plan`, `build`, `review`, `fix` and `release`.
+Software recipe: the stages are `ticket`, `plan-approved`, `building`, `review`, `fixes`, `merged` and `released`. The stages `merged` and `released` belong to a done item. The live board shows a stage name with a capital first letter, for example `Plan-approved`.
 
 - **Context.** `CONTEXT` is the context percent of §4.6. Its source is `context_window.used_percentage` of the status line. It shows `?` when unknown.
 - **Two gaps.** First, Claude Code documents no end event for a background shell command, so factory can not tell a long background shell command from a stall. Second, Working between a prompt and the first tool call is inferred: `UserPromptSubmit` came and no `Stop` followed. No event marks the model turn itself.
