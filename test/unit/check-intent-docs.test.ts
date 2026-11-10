@@ -1103,15 +1103,17 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
     const connector = part(design, '### 4.10 Board connector', '\n### 4.11');
     expect(connector).toContain('The review desk page of today is a supported owner view, and the owner can choose it.');
     expect(connector).toContain(
-      'In M5-1b the page only reads. A page answer that records through the owner store is a FAC-M5b criterion.',
+      'In M5-1b the page only reads. A page answer is a board event. It shows and wakes, and records nothing (D-142 A).',
     );
+    expect(connector).not.toContain('A page answer that records through the owner store');
   });
 
   it('TP-94: says in step 4 of the migration that the page only reads the local files, and that FAC-M3 keeps the page', () => {
     const migration = part(design, '## 8. Migration of this workspace', '\n## 9. Decisions');
     expect(migration).toContain(
-      'In M5-1b the page only reads the local files. A page answer that records through the owner store is a FAC-M5b criterion.',
+      'In M5-1b the page only reads the local files. A page answer is a board event. It shows and wakes, and records nothing (D-142 A).',
     );
+    expect(migration).not.toContain('A page answer that records through the owner store');
     expect(migration).toContain('It does not retire the page (TB-5).');
   });
 
