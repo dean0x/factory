@@ -260,16 +260,18 @@ export interface DecisionRecorded {
 }
 
 /**
- * The local board: the contract, and the operations of the owner's board that PR A has for the local files only. A hosted board maps
- * a request and a queue to the provider (FAC-M3), so these operations are not in the contract suite. Each write of them refuses a
- * hosted tracker kind first, as a write of the contract does.
+ * The local board: the contract, and the operations of the owner's board for the local files only: the requests, the queue and the
+ * answer of the owner. A hosted board maps a request and a queue to the provider (FAC-M3), so these operations are not in the contract
+ * suite. Each write of them, and the read of a request for the owner, refuses a hosted tracker kind first, as a write of the contract
+ * does.
  */
 export interface LocalBoard extends BoardConnector {
   /** The requests of the waiting file, in file order. */
   listRequests(): Promise<CliResult<readonly BoardRequest[]>>;
   /**
    * Take a request off the waiting file and add a row for it to the decision log, in one commit. The row names no one who answered,
-   * so it counts as no decision, and the number of the request is never given again.
+   * so it counts as no decision, and the number of the request is never given again. A request that has a record in the owner decision
+   * file is refused, and so is a decision file that can not be read.
    */
   closeRequest(id: string): Promise<CliResult<RequestClosed>>;
   /** The rows of the queue, in file order. */
