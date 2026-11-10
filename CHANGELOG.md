@@ -191,11 +191,12 @@ Platforms and help
 
 Install
 
-- A developer with read access installs factory from a private early-access tag `v0.2.0-ea.N` of the git repo. The install has two steps. `npm pack "git+ssh://git@github.com/dean0x/factory.git#<sha>"` builds a package file with the new script `prepare`, and `npm install --global ./dean0x-factory-0.2.0.tgz` installs it. `<sha>` is the full 40-character commit SHA of the hand-over. The guide first checks with `git ls-remote` that the tag points to `<sha>`, so the build is the commit that was checked and not the tag name. npm can not build the program in a one-step global install from git.
+- You install factory from an early-access tag `v0.2.0-ea.N` of the git repo. The install has two steps. `npm pack "git+https://github.com/dean0x/factory.git#<sha>"` builds a package file with the new script `prepare`, and `npm install --global ./dean0x-factory-0.2.0.tgz` installs it. `<sha>` is the full 40-character commit SHA of the tag. The guide first checks with `git ls-remote` that the tag points to `<sha>`, so the build is the commit that was checked and not the tag name. npm can not build the program in a one-step global install from git.
 - `package.json` now has `"private": true` and keeps `publishConfig`. FAC-M10 removes `private` after the owner writes the decision id.
 - The package now holds the guide `docs/quick-start.md`. It lists the prerequisites with their checks, the install, the update, the tmux keys and the known limits.
-- A private `v0.2.0-ea.N` tag is no release. There is no GitHub Release and no npm publish. `factory version` prints `0.2.0` for every build, so the tag and the commit SHA name the build.
+- A `v0.2.0-ea.N` tag is no release. There is no GitHub Release and no npm publish. `factory version` prints `0.2.0` for every build, so the tag and the commit SHA name the build.
 - CI proves the install from git on Linux and on macOS with `npm run install-check`.
+- The README has a section for outside users: the status of the project, what the ids in `docs/` mean, and how to report a problem. The guide `docs/quick-start.md` now installs from the public repo, with no login.
 
 Security
 

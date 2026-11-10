@@ -6,10 +6,10 @@ A node is a folder with a config file, a layer and an owner. A node on layer 1 o
 
 ## Install
 
-factory is in early access. It is not on the npm registry. A developer with read access to the private repo installs it from a private tag `v0.2.0-ea.N`. The owner gives you the number `N` and the commit SHA. `<sha>` is the full 40-character commit SHA of the tag. First check with `git ls-remote` that the tag points to `<sha>`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run this pair of commands in a new empty folder:
+factory is in early access. It is not on the npm registry. Install it from a tag `v0.2.0-ea.N` of this repo. Use the newest tag on the repo page. `<sha>` is the full 40-character commit SHA of the tag. First check with `git ls-remote` that the tag points to `<sha>`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run this pair of commands in a new empty folder:
 
 ```sh
-npm pack "git+ssh://git@github.com/dean0x/factory.git#<sha>"
+npm pack "git+https://github.com/dean0x/factory.git#<sha>"
 npm install --global ./dean0x-factory-0.2.0.tgz
 ```
 
@@ -636,6 +636,14 @@ The integration tests, the exit check and the install check use `dist/factory.js
 The install check pushes the commit of this checkout into a throw-away bare repo. Then `npm pack` builds that commit with `prepare`, and `npm install --global` installs the tarball in a throw-away prefix. The check compares the installed `dist/factory.js` with the build. It runs the install scripts of the packages, and it needs the npm registry. It never writes the real `HOME`, the real npm prefix or this repo.
 
 `npm run check:docs` checks that the design documents agree with each other.
+
+## Status and project notes
+
+factory is in early access. The commands and the config files can change before 1.0.
+
+The folder `docs/` holds the design, the roadmap, the plans and the review summaries of the project. They describe the setup of the author as the first user. Their ids, for example `F-12`, `D-49` or `TB-5`, point to the notes of the author. You do not need these ids to use factory.
+
+To report a problem, open an issue on GitHub. The guide [docs/quick-start.md](docs/quick-start.md), part 13, tells what to put in it.
 
 ## License
 

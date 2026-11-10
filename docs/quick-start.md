@@ -1,6 +1,6 @@
 # Quick start for early access
 
-This guide takes you from the hand-over of a build to your first worker. It covers the early-access builds of factory 0.2.0.
+This guide takes you from the choice of a build to your first worker. It covers the early-access builds of factory 0.2.0.
 
 Each step names its place:
 
@@ -8,19 +8,19 @@ Each step names its place:
 - **The factory folder.** Make it the current folder, then run the command.
 - **Ask the coordinator.** Type the request in the pane of the coordinator.
 
-In the examples, `~/work/web` is your own project repo. `~/work/web-factory` is your own factory folder. `v0.2.0-ea.N` is the tag of your hand-over, and N is a number. `<sha>` is the full 40-character commit SHA of your hand-over.
+In the examples, `~/work/web` is your own project repo. `~/work/web-factory` is your own factory folder. `v0.2.0-ea.N` is the tag of the build that you install, and N is a number. `<sha>` is the full 40-character commit SHA of that tag.
 
 ## 1. What early access is
 
 Factory is in early access. It is not on the npm registry. Do not install it from the registry.
 
-The code is in the private GitHub repo `dean0x/factory`. The owner marks each build with a private annotated tag. A tag has the form `v0.2.0-ea.N`.
+The code is in the public GitHub repo `dean0x/factory`. The owner marks each build with an annotated tag. A tag has the form `v0.2.0-ea.N`.
 
-The owner pushes a tag only after the owner decides to hand it over. A tag has no GitHub Release, and nobody publishes the package. The owner never moves, deletes or reuses a tag. A fix gets the next number.
+The owner pushes a tag only after the build passes its checks. A tag has no GitHub Release, and nobody publishes the package. The owner never moves, deletes or reuses a tag. A fix gets the next number.
 
 Each build prints `0.2.0` for `factory version`. The version does not tell the builds apart. The tag and its commit tell them apart.
 
-The owner gives you a hand-over for each build. It holds the tag name and the full commit SHA that the tag points to. Keep both. You need them to install, to update and to report a problem.
+Use the newest tag. The tags are on the repo page on GitHub. Write down the tag name and the full commit SHA that the tag points to. Keep both. You need them to install, to update and to report a problem.
 
 ## 2. What you need
 
@@ -42,7 +42,7 @@ Native Windows does not work. Every command exits with code 1 and says to use WS
 
 Factory sessions talk to each other with the cross-session messages of Claude Code (`SendMessage`). These messages need Claude Code 2.1.224 or newer.
 
-**Your own login and subscription.** Use your own Claude Code account on your own subscription. Use one login on this machine. The plan must allow auto mode, because factory starts all its sessions in auto mode. This guide gives no command for this check. Start `claude` in a terminal window. Read the account and the plan that it shows. If you can not tell, ask the owner before you go on.
+**Your own login and subscription.** Use your own Claude Code account on your own subscription. Use one login on this machine. The plan must allow auto mode, because factory starts all its sessions in auto mode. This guide gives no command for this check. Start `claude` in a terminal window. Read the account and the plan that it shows. If you can not tell, stop and check your plan first.
 
 ## 3. Credentials
 
@@ -50,9 +50,11 @@ Never use `sudo` for a command in this guide. Use a Node install that your user 
 
 Choose one path to GitHub.
 
+The factory repo is public, so the install of factory needs no login. A path gives you access to your project repos, which can be private.
+
 **Path A: an SSH key.** Place: a terminal window. Read this rule first. Run the command below before any other command that uses an SSH URL.
 
-The first time, ssh shows the host key fingerprint of github.com and asks if you trust it. Compare the fingerprint with the list "GitHub's SSH key fingerprints" on docs.github.com. Answer `yes` only if the fingerprint is on that list. If it is not on the list, answer `no` and tell the owner.
+The first time, ssh shows the host key fingerprint of github.com and asks if you trust it. Compare the fingerprint with the list "GitHub's SSH key fingerprints" on docs.github.com. Answer `yes` only if the fingerprint is on that list. If it is not on the list, answer `no` and stop.
 
 Then run this once:
 
@@ -79,15 +81,15 @@ Place: a terminal window. Do these checks after you finish your path. Each check
 
 | You need | Check | The check shows |
 | --- | --- | --- |
-| Path A: read access to the factory repo | `git ls-remote git@github.com:dean0x/factory.git HEAD` | one line |
-| Path B: read access to the factory repo | `git ls-remote https://github.com/dean0x/factory.git HEAD` | one line |
+| Path A: access to the factory repo | `git ls-remote git@github.com:dean0x/factory.git HEAD` | one line |
+| Path B: access to the factory repo | `git ls-remote https://github.com/dean0x/factory.git HEAD` | one line |
 | Read access to each project repo | `git ls-remote <url> HEAD` | one line |
 
 In the last row, replace `<url>` with the URL of your project repo.
 
 ## 4. Install
 
-Use the tag and the full commit SHA of your hand-over. In each command, replace `N` and `<sha>` with your values.
+Use the tag and the full commit SHA of your build. In each command, replace `N` and `<sha>` with your values.
 
 **Step 1. Check the tag.** Place: a terminal window, in any folder.
 
@@ -97,7 +99,7 @@ git ls-remote git@github.com:dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'
 
 The command must print one line. The `^{}` makes git show the commit that the tag points to. The SHA at the start of the line must equal `<sha>`. Compare all 40 characters.
 
-If the command prints no line, or prints a different SHA, stop. Do not install. Tell the owner.
+If the command prints no line, or prints a different SHA, stop. Do not install. Report the problem (part 13).
 
 Step 3 builds from `<sha>`, not from the tag name. A tag can move, but a commit SHA does not change. So the build is the commit that you checked.
 
@@ -138,7 +140,7 @@ First, look at the list under `Tarball Contents` that `npm pack` printed in that
 factory version
 ```
 
-It must print `0.2.0`. If a check fails, stop and tell the owner. An install can succeed and still leave no `factory` command, when the build did not run.
+It must print `0.2.0`. If a check fails, stop and report the problem (part 13). An install can succeed and still leave no `factory` command, when the build did not run.
 
 If your shell does not find `factory`, check that the folder `bin` inside the output of `npm prefix --global` is in your PATH.
 
@@ -157,7 +159,7 @@ git rev-parse HEAD
 
 On Path B, use `https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`.
 
-The command `git rev-parse HEAD` must print the full commit SHA of the hand-over. If it does not, stop and tell the owner. Read the code. Then run these commands in the clone:
+The command `git rev-parse HEAD` must print the full commit SHA of your build. If it does not, stop and report the problem (part 13). Read the code. Then run these commands in the clone:
 
 ```sh
 npm ci
@@ -171,7 +173,7 @@ The script `prepare` is the build, so `npm run build` builds a second time. Keep
 
 ### The installed commit
 
-The installed program does not record its commit. See part 12. Keep the tag and the full commit SHA of the hand-over.
+The installed program does not record its commit. See part 12. Keep the tag and the full commit SHA of your build.
 
 ## 5. Make your factory
 
@@ -303,7 +305,7 @@ The flag `--yes` works only in a terminal window outside the factory session.
 
 **Step 1. Push the work.** Place: the pane of each worker, or ask the coordinator. The reboot in Step 5 stops every worker. Ask each worker to push its work. A dry run of `factory dismiss ID` prints a line that starts with `STUCK:` when the work is not pushed.
 
-**Step 2. Find the new tag.** The owner gives you the new tag and its full commit SHA. To list the tags, run this command in a terminal window:
+**Step 2. Find the new tag.** Take the newest tag and its full commit SHA from the repo page. To list the tags, run this command in a terminal window:
 
 ```sh
 git ls-remote --tags git@github.com:dean0x/factory.git
@@ -320,7 +322,7 @@ git log <old-tag>..<new-tag>
 
 **Step 3. Install the new build.** Do Step 1 to Step 4 of part 4 again, with the new tag and the new `<sha>`. Start with the `git ls-remote` check. Use a new empty folder. If you used `npm link` before, run `npm rm -g @dean0x/factory` first.
 
-On the clone path, run these commands in the clone instead. The command `git rev-parse HEAD` must print the full commit SHA of the hand-over. The link to the clone stays, so you need no new `npm link`.
+On the clone path, run these commands in the clone instead. The command `git rev-parse HEAD` must print the full commit SHA of your build. The link to the clone stays, so you need no new `npm link`.
 
 ```sh
 git fetch --tags
@@ -357,14 +359,14 @@ The command stops every worker and starts each one again with its session id. Ou
 - **Work items.** `factory status` shows the id of the open item of a worker only when the factory has a `board` block that names a worker field. Without that block, it shows `unknown` as the work item of each worker, and `no` as its idle state. Then `factory dismiss --idle` lists nothing.
 - **Authority of the owner.** A message between sessions carries no authority of the owner. To give a worker the authority of the owner, type in its pane. Start the text with the owner prefix. The prefix is in `factory.local.yaml`.
 - **devflow.** Factory has no devflow setup yet. If you want devflow, install it as a normal Claude Code plugin.
-- **The installed commit.** No `npm ls` form shows the commit of an install from a package file. The command `npm ls --global @dean0x/factory` shows the version only. Every build prints `0.2.0` for `factory version`. Keep the tag and the full commit SHA of the hand-over, and give both in a problem report. The command `git ls-remote` shows the commit that a tag has now. It does not show the commit that you installed.
+- **The installed commit.** No `npm ls` form shows the commit of an install from a package file. The command `npm ls --global @dean0x/factory` shows the version only. Every build prints `0.2.0` for `factory version`. Keep the tag and the full commit SHA of your build, and give both in a problem report. The command `git ls-remote` shows the commit that a tag has now. It does not show the commit that you installed.
 - **The npm version.** The install commands of this guide were tested with npm 10.9.8.
 
 ## 13. Report a problem
 
-Tell the owner:
+Open an issue in the repo `dean0x/factory` on GitHub. Give:
 
-- The tag and the full commit SHA of your hand-over.
+- The tag and the full commit SHA of your build.
 - The command that you ran, and the text that it printed.
 - The output of `factory version` and `factory doctor`. Place: a terminal window, in the factory folder.
 - The output of `node --version`, `npm --version`, `claude --version` and `tmux -V`.
