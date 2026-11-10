@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { absolutePath, branchName, isSlug, slug } from '../config/primitives.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
-import type { Deps } from '../core/deps.js';
+import type { Deps, TextDecode } from '../core/deps.js';
 import { ok } from '../core/result.js';
 import { LINK_REMEDY } from '../core/safe-write.js';
 import { describeIssues } from '../core/zod.js';
@@ -137,13 +137,15 @@ export interface NamedPath {
  * Read a file below a chain of folders. The folders are checked from the top down, then the file: a part that is a link or of
  * the wrong kind is invalid, and a part that is missing is absent. The read never follows a link and caps the bytes. The reason
  * never holds a part of the file. An invalid value has a cause (`link`, `kind` or `size`), so a caller can give a link another exit code
- * than a file of the wrong kind. The failure is a fault of the file system only.
+ * than a file of the wrong kind. The text is read with the lenient decode, unless the caller names `fatal`: then a byte sequence that
+ * is not UTF-8 is a failure that names the file. The failure is a fault of the file system, or of the bytes of a `fatal` read.
  */
 export const readCheckedFile = async (
   deps: Deps,
   folders: readonly NamedPath[],
   file: NamedPath,
   maxBytes: number,
+  decode: TextDecode = 'lenient',
 ): Promise<CliResult<CheckedFileRead>> => {
   const parts = [
     ...folders.map((folder) => ({ ...folder, kind: 'dir' as const })),
@@ -162,7 +164,7 @@ export const readCheckedFile = async (
   if (!info.ok) return info;
   if (info.value === null) return ok({ state: 'absent' });
   if (info.value.size > maxBytes) return ok({ state: 'invalid', reason: `larger than ${maxBytes} bytes`, cause: 'size' });
-  const text = await deps.fs.readTextLimited(file.path, maxBytes);
+  const text = await deps.fs.readTextLimited(file.path, maxBytes, decode);
   return text.ok ? ok({ state: 'text', text: text.value }) : text;
 };
 

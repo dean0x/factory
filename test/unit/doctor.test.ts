@@ -6,6 +6,7 @@ import { failure } from '../../src/cli/errors.js';
 import {
   checkAgentVersion,
   checkBlocks,
+  checkBoardSize,
   checkConfig,
   checkConfigVersion,
   checkIndex,
@@ -33,7 +34,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { checkIds, instructionFiles } from '../../src/names.js';
+import { boardWarnPercent, checkIds, files, instructionFiles, maxFileBytes } from '../../src/names.js';
 import { inspectState } from '../../src/state/load.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, registerRoot, withFsWatch, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
@@ -1479,6 +1480,91 @@ describe('doctor: the delete guard of the state repository (TP-14)', () => {
   });
 });
 
+describe('doctor: the size of the board files (TP-48, TP-87)', () => {
+  const STATE = `${HOME}/.factory`;
+  const PATHS = {
+    board: `${STATE}/${files.board}`,
+    waiting: `${STATE}/${files.waiting}`,
+    decisionLog: `${STATE}/${files.decisionLog}`,
+  } as const;
+  /** The first size that reaches the share of the cap, and the last size below it. */
+  const WARN_AT = Math.ceil((maxFileBytes * boardWarnPercent) / 100);
+  const bytes = (size: number): string => 'x'.repeat(size);
+
+  it('M5-1b TP-48 passes with the board files that init made', async () => {
+    const deps = await initialized();
+    expect(await checkBoardSize(deps, HOME)).toMatchObject({ id: 'board-size', level: 'ok' });
+  });
+
+  it('M5-1b TP-48 passes for a board file one byte below 80 percent of the cap', async () => {
+    const deps = await initialized();
+    deps.files.set(PATHS.board, bytes(WARN_AT - 1));
+    expect(await checkBoardSize(deps, HOME)).toMatchObject({ level: 'ok' });
+  });
+
+  it('M5-1b TP-48 warns for a board file at 80 percent of the cap, and names it', async () => {
+    const deps = await initialized();
+    deps.files.set(PATHS.board, bytes(WARN_AT));
+    const result = await checkBoardSize(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(`${files.board} is ${WARN_AT} bytes (80 percent of the cap)`);
+    expect(result.text).not.toContain(files.waiting);
+    expect(result.text).not.toContain(files.decisionLog);
+  });
+
+  it.each([
+    ['the waiting file', 'waiting', files.waiting],
+    ['the decision log', 'decisionLog', files.decisionLog],
+  ] as const)('M5-1b TP-87 warns for %s at 80 percent of the cap, and names only that file', async (_label, key, name) => {
+    const deps = await initialized();
+    deps.files.set(PATHS[key], bytes(WARN_AT));
+    const result = await checkBoardSize(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(name);
+    expect(result.text.match(/\.json/g)).toHaveLength(1);
+  });
+
+  it('M5-1b TP-87 names each of the three files that reach 80 percent of the cap', async () => {
+    const deps = await initialized();
+    for (const path of Object.values(PATHS)) deps.files.set(path, bytes(WARN_AT));
+    const result = await checkBoardSize(deps, HOME);
+    expect(result.level).toBe('warn');
+    for (const name of [files.board, files.waiting, files.decisionLog]) expect(result.text).toContain(name);
+  });
+
+  it('M5-1b TP-87 warns for a board file above the cap, which no command can read', async () => {
+    const deps = await initialized();
+    deps.files.set(PATHS.board, bytes(maxFileBytes + 1));
+    const result = await checkBoardSize(deps, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(`${files.board} is ${maxFileBytes + 1} bytes`);
+  });
+
+  it('M5-1b TP-87 passes for a factory with no board files', async () => {
+    const deps = await initialized();
+    for (const path of Object.values(PATHS)) expect((await deps.fs.remove(path)).ok).toBe(true);
+    expect(await checkBoardSize(deps, HOME)).toMatchObject({ level: 'ok' });
+  });
+
+  it('M5-1b TP-87 warns that it did not check, and does not fail, when the size of a file cannot be read', async () => {
+    const deps = await initialized();
+    const broken: Deps = { ...deps, fs: { ...deps.fs, statInfo: async () => failure('cannot read the size: EACCES') } };
+    const result = await checkBoardSize(broken, HOME);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain('not checked');
+    expect(result.text).toContain('EACCES');
+  });
+
+  it('M5-1b TP-87 shows as a warning in the command, and the command is not failed', async () => {
+    const deps = await initialized();
+    deps.files.set(PATHS.board, bytes(WARN_AT));
+    const output = await doctor(deps);
+    expect(levelOf(output.json['checks'] as CheckResult[], 'board-size')).toBe('warn');
+    expect(output.json).toMatchObject({ summary: { fail: 0 } });
+    expect(output.failed).toBe(false);
+  });
+});
+
 describe('doctor: projects', () => {
   const withProject = (deps: FakeDeps) => {
     writeConfig(deps, sampleConfig());
@@ -1767,10 +1853,11 @@ describe('doctor: the command', () => {
       'agent-version',
       'state-repo',
       'state-guard',
+      'board-size',
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('27 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('28 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1793,7 +1880,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(27);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(28);
   });
 
   it('finds the node by walking up from the current folder', async () => {

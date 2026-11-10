@@ -1,24 +1,30 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { boardWorkItems } from '../../src/board/work-items.js';
 import { failure } from '../../src/cli/errors.js';
-import type { CommandOutput } from '../../src/cli/output.js';
+import { renderJson, type CommandOutput } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { runStatus, type StatusOptions } from '../../src/commands/status.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import type { PaneRow } from '../../src/launch/tmux.js';
-import { schemaIds, type HookEvent } from '../../src/names.js';
+import { files, schemaIds, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
+import { layoutOf } from '../../src/state/layout.js';
 import { writeLastSeen, writeWorkerSession, type LastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord, type WorkerRecord } from '../../src/workers/registry.js';
 import { buildStatus, type LineRead, type StatusInput } from '../../src/workers/status.js';
-import { unknownWorkItems, type WorkItem, type WorkItemPort } from '../../src/workers/work-items.js';
+import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
+import { boardText, itemRecord } from '../helpers/board-node.js';
+import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
-import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { sampleConfig, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
+import { unknownPort } from '../helpers/unknown-port.js';
 
 const HOME = '/w/node';
 const NODE = sampleConfig().core.node.id;
@@ -309,7 +315,7 @@ const portOf = (items: Readonly<Record<string, WorkItem>>): { readonly port: Wor
 
 const options = (change: Partial<StatusOptions> = {}): StatusOptions => ({ home: HOME, ...change });
 
-const statusOf = async (made: Made, port: WorkItemPort = unknownWorkItems, change: Partial<StatusOptions> = {}): Promise<CommandOutput> => {
+const statusOf = async (made: Made, port: WorkItemPort = unknownPort, change: Partial<StatusOptions> = {}): Promise<CommandOutput> => {
   const result = await runStatus(made.deps, options(change), recipes, port);
   if (!result.ok) throw new Error(`${result.error.message} ${result.error.hint ?? ''}`);
   return result.value;
@@ -464,14 +470,6 @@ describe('status: the stub of the work item port (TP-49)', () => {
     ]);
   });
 
-  it('answers unknown for every id that it is asked about', async () => {
-    const answers = await unknownWorkItems.itemsOf(createFakeDeps(), HOME, ['alpha', 'beta']);
-    expect(answers.ok && [...answers.value]).toEqual([
-      ['alpha', UNKNOWN],
-      ['beta', UNKNOWN],
-    ]);
-  });
-
   it('asks the port once, with the ids of all the workers', async () => {
     const made = await make({ workers: [{ id: 'alpha' }, { id: 'beta' }, { id: 'gamma' }], panes: [pane('alpha')] });
     const { port, asked } = portOf({});
@@ -556,7 +554,7 @@ describe('status: the panes (TP-50)', () => {
 
   it('refuses a session of the same name that belongs to another factory folder, and lists no pane', async () => {
     const made = await make({ tmux: { sessions: { [NODE]: '/elsewhere' } }, workers: [{ id: 'alpha' }] });
-    const result = await runStatus(made.deps, options(), recipes);
+    const result = await runStatus(made.deps, options(), recipes, unknownPort);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe('safety');
     expect(listCalls(made)).toEqual([]);
@@ -584,8 +582,8 @@ describe('status: the output is short (TP-63, TP-64)', () => {
   it('has a short first line and few lines for three workers, for a run with no session, and for a run with no worker (TP-63)', async () => {
     const shapes: readonly (readonly [Made, WorkItemPort])[] = [
       [await make(fleet), portOf(items).port],
-      [await make({ workers, tmux: { sessions: {} } }), unknownWorkItems],
-      [await make(), unknownWorkItems],
+      [await make({ workers, tmux: { sessions: {} } }), unknownPort],
+      [await make(), unknownPort],
     ];
     for (const [made, port] of shapes) expectShortOutput(plainText(await statusOf(made, port)));
   });
@@ -679,5 +677,114 @@ describe('status: the folder (TP-51, TP-52)', () => {
     expect(await runCli(['status'], made.deps, sink)).toBe(2);
     expect(sink.errors.join('')).toContain('factory init');
     expect(sink.out.join('')).toBe('');
+  });
+});
+
+describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () => {
+  const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
+  const WORKERS = [
+    { id: 'alpha', line: { event: 'Stop', percent: 5 } },
+    { id: 'beta', line: { event: 'Stop', percent: 6 } },
+    { id: 'gamma', line: { event: 'Stop', percent: 7 } },
+  ] as const;
+  const BOARD = boardText([
+    itemRecord('B-1', { status: 'doing', lane: 'alpha' }),
+    itemRecord('B-2', { status: 'done', lane: 'gamma' }),
+  ]);
+
+  /** A factory with the three workers, a long quiet time, and the board file `text` (none: no board file). */
+  const withBoard = async (text: string | undefined, config: FactoryConfig = sampleConfigWithBoard()): Promise<Made> => {
+    const made = await make({ workers: WORKERS, panes: WORKERS.map((worker) => pane(worker.id)), config });
+    if (text !== undefined) made.deps.seed(BOARD_FILE, text);
+    made.deps.advance(24 * 60 * MINUTE);
+    return made;
+  };
+
+  it('M5-1b TP-43 shows the item in progress of a worker, and idle yes for a worker with no open work', async () => {
+    const made = await withBoard(BOARD);
+    const output = await statusOf(made, boardWorkItems(recipes));
+    expect(rowsOf(output)).toMatchObject([
+      { id: 'alpha', workItem: 'B-1', idle: 'no' },
+      { id: 'beta', workItem: 'none', idle: 'yes' },
+      { id: 'gamma', workItem: 'none', idle: 'yes' },
+    ]);
+    expect(jsonOf(output).workers.map((worker) => worker.workItem)).toEqual([busyWith('B-1'), NONE, NONE]);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('M5-1b TP-43 gives the board to the command line: status through runCli shows the item in progress', async () => {
+    const made = await withBoard(BOARD);
+    const sink = captureSink();
+    expect(await runCli(['status', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
+    expect(JSON.parse(sink.out.join(''))).toMatchObject({
+      workers: [
+        { id: 'alpha', workItem: busyWith('B-1'), idle: false },
+        { id: 'beta', workItem: NONE, idle: true },
+        { id: 'gamma', workItem: NONE, idle: true },
+      ],
+    });
+  });
+
+  it('M5-1b TP-44 shows every worker as unknown and none as idle when the setup has no board block', async () => {
+    const made = await withBoard(BOARD, sampleConfig());
+    const output = await statusOf(made, boardWorkItems(recipes));
+    expect(rowsOf(output).map((row) => [row.workItem, row.idle])).toEqual([
+      ['unknown', 'no'],
+      ['unknown', 'no'],
+      ['unknown', 'no'],
+    ]);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it.each([
+    ['a board file that is not there', undefined],
+    ['a board file that is not JSON', 'not json'],
+  ])('M5-1b TP-44 shows every worker as unknown and none as idle, with a warning, for %s', async (_name, text) => {
+    const made = await withBoard(text);
+    const output = await statusOf(made, boardWorkItems(recipes));
+    expect(rowsOf(output).map((row) => [row.workItem, row.idle])).toEqual([
+      ['unknown', 'no'],
+      ['unknown', 'no'],
+      ['unknown', 'no'],
+    ]);
+    expect(output.warnings).toHaveLength(1);
+    expect(output.warnings[0]).toContain(files.board);
+  });
+
+  it('M5-1b TP-64 reads the board file once, and the config and the board of a status run change no file', async () => {
+    const made = await withBoard(BOARD);
+    const before = snapshot(made.deps);
+    const counted = countReadsOf(made.deps, BOARD_FILE);
+    const result = await runStatus(counted.deps, options(), recipes, boardWorkItems(recipes));
+    expect(result.ok).toBe(true);
+    expect(counted.count()).toBe(1);
+    expect(snapshot(made.deps)).toBe(before);
+  });
+});
+
+describe('status: the text of a work item prints clean (TP-91, TP-105)', () => {
+  const BIDI = String.fromCodePoint(0x202e);
+  const LONG = `B-${'x'.repeat(300)}`;
+  const WORKERS = [
+    { id: 'alpha', line: { event: 'Stop', percent: 5 } },
+    { id: 'beta', line: { event: 'Stop', percent: 6 } },
+  ] as const;
+  const dirty = { alpha: busyWith(`B-1${BIDI}\n9`), beta: busyWith(LONG) };
+  const fleet = (): Promise<Made> => make({ workers: WORKERS, panes: WORKERS.map((worker) => pane(worker.id)) });
+
+  it('M5-1b TP-91 prints a work item with a line break and a bidi mark as one clean cell', async () => {
+    const output = await statusOf(await fleet(), portOf(dirty).port);
+    const text = plainText(output);
+    expect(text).not.toContain(BIDI);
+    expect(output.lines.every((line) => !/[\n\r\t]/.test(line.text))).toBe(true);
+    expect(rowsOf(output).map((row) => row.workItem)).toEqual(['B-1 9', LONG.slice(0, 120)]);
+  });
+
+  it('M5-1b TP-105 removes only the hidden characters from the string values of the JSON, and cuts no string', async () => {
+    const output = await statusOf(await fleet(), portOf(dirty).port);
+    const text = renderJson(output.json);
+    expect(text).not.toContain(BIDI);
+    expect(text).toContain('B-1\\n9');
+    expect(JSON.parse(text).workers.map((worker: JsonWorker) => worker.workItem)).toEqual([busyWith('B-1\n9'), busyWith(LONG)]);
   });
 });

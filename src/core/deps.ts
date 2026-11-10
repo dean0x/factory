@@ -26,6 +26,13 @@ export interface FileDigest {
   readonly text: string | null;
 }
 
+/**
+ * How a read decodes the bytes of a file. `lenient` turns each byte sequence that is not UTF-8 into U+FFFD. `fatal` fails the read
+ * for such a sequence, so a caller that writes the text back never writes a changed file. A byte order mark stays in the text in
+ * both modes.
+ */
+export type TextDecode = 'lenient' | 'fatal';
+
 export interface Fs {
   readText(path: string): Promise<CliResult<string>>;
   /**
@@ -35,8 +42,11 @@ export interface Fs {
    * null for a file with more than `maxBytes` bytes, and the rest stays unread.
    */
   digestFile(path: string, textLimit: number, maxBytes: number): Promise<CliResult<FileDigest | null>>;
-  /** Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. */
-  readTextLimited(path: string, maxBytes: number): Promise<CliResult<string>>;
+  /**
+   * Read a file as text. It reads at most `maxBytes` plus one byte: a larger file is an error, and the rest stays unread. The
+   * decode is `lenient` when the call names none.
+   */
+  readTextLimited(path: string, maxBytes: number, decode?: TextDecode): Promise<CliResult<string>>;
   writeText(path: string, text: string): Promise<CliResult<void>>;
   /**
    * Create a file that does not exist, with `mode`, and write the text. The value is true when this call created the
@@ -153,6 +163,22 @@ export interface Deps {
   readonly stdinIsTTY: boolean;
   /** True when a person reads the output of this process on a terminal. */
   readonly stdoutIsTTY: boolean;
+  /**
+   * True when stdout is a terminal now. Each call asks the system again, so a program that runs for a long time sees the change when
+   * its terminal goes. `stdoutIsTTY` is the value at the start and never changes.
+   */
+  stdoutIsTerminal(): boolean;
+  /**
+   * The id of the parent process of this process, as the system gives it now. A process whose parent has ended gets a new parent, so
+   * the id changes: a long program that runs under a pane or a shell uses this to see that its owner has gone.
+   */
+  parentPid(): number;
+  /**
+   * Write the text to stdout, and wait until the system has taken it. A write that fails (EPIPE for a pipe whose reader has gone, EIO
+   * for a terminal that has gone) is a failure that names the code. A text of zero length makes no system call, so it can not show
+   * that the reader has gone.
+   */
+  writeStdout(text: string): Promise<CliResult<void>>;
   /**
    * Read the standard input of this process to its end, as UTF-8 text. It reads at most `maxBytes` plus one byte: an input
    * of more than `maxBytes` bytes is an error, and the rest stays unread. An input that is not whole after a fixed time

@@ -210,11 +210,25 @@ describe('init: the files', () => {
     const { deps } = setup();
     await runInit(deps, options());
     const read = (name: string): unknown => JSON.parse(deps.files.get(`${HOME}/.factory/${name}`) ?? 'null');
-    expect(read('board.json')).toEqual({ queue: [], items: [] });
+    expect(read('board.json')).toEqual({ merge: [], items: [], tracks: [] });
     expect(read('waiting.json')).toEqual({ intro: '', groups: [], items: [] });
     expect(read('decision-log.json')).toEqual({ rows: [] });
     expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\n');
     expect(deps.files.get(`${HOME}/.factory/orders/.gitkeep`)).toBe('');
+  });
+
+  it('M5-1b TP-29 seeds the board with the queue key of the software recipe', async () => {
+    const { deps } = setup();
+    await runInit(deps, options());
+    const board = JSON.parse(deps.files.get(`${HOME}/.factory/board.json`) ?? 'null') as Record<string, unknown>;
+    expect(Object.keys(board)).toEqual(['merge', 'items', 'tracks']);
+  });
+
+  it('M5-1b TP-70 seeds the tracks of the board as an empty list', async () => {
+    const { deps } = setup();
+    await runInit(deps, options());
+    const board = JSON.parse(deps.files.get(`${HOME}/.factory/board.json`) ?? 'null') as Record<string, unknown>;
+    expect(board['tracks']).toEqual([]);
   });
 
   it('holds none of the denied words in any generated file', async () => {

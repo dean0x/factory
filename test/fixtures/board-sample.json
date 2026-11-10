@@ -1,0 +1,208 @@
+{
+  "merge": [
+    {
+      "name": "Board connector",
+      "items": [
+        "B-3",
+        "B-4"
+      ],
+      "release": true,
+      "note": "Merge after the review"
+    },
+    {
+      "name": "Docs",
+      "items": [],
+      "note": "Caf\u00e9 notes and \u65e5\u672c\u8a9e"
+    }
+  ],
+  "items": [
+    {
+      "id": "B-1",
+      "title": "Set up the state folder",
+      "status": "done",
+      "stage": "merged",
+      "priority": "P0",
+      "issues": [
+        "#12",
+        "#15"
+      ],
+      "zeta": 1,
+      "alpha": 2
+    },
+    {
+      "id": "B-2",
+      "title": "Guard the board commit",
+      "status": "done",
+      "stage": "released",
+      "track": "core",
+      "priority": "P1",
+      "docs": [
+        "docs/design.md"
+      ]
+    },
+    {
+      "id": "B-3",
+      "title": "Local board connector",
+      "status": "doing",
+      "stage": "building",
+      "track": "board",
+      "priority": "P0",
+      "type": "feature",
+      "lane": "w-12",
+      "owner": {
+        "name": "Zo\u00eb",
+        "since": 2024,
+        "ratio": 0.75,
+        "tags": [
+          "a",
+          "b"
+        ]
+      },
+      "labels": [],
+      "meta": {},
+      "gone": null,
+      "archived": false,
+      "count": 3
+    },
+    {
+      "id": "B-4",
+      "title": "Stage list from the recipe",
+      "status": "open",
+      "stage": "plan-approved",
+      "track": "board",
+      "priority": "P1",
+      "text": "Read the stages from the recipe data."
+    },
+    {
+      "id": "B-5",
+      "title": "Display helper for text output",
+      "status": "done",
+      "stage": "merged",
+      "track": "board",
+      "priority": "P2"
+    },
+    {
+      "id": "B-7",
+      "title": "Follow loop for the view slot",
+      "status": "blocked",
+      "stage": "review",
+      "track": "board",
+      "priority": "P1",
+      "note": "Waits for D-4",
+      "history": [
+        {
+          "at": "2026-11-01",
+          "by": "w-3",
+          "what": "started"
+        },
+        {
+          "at": "2026-11-03",
+          "by": "w-3",
+          "what": "blocked"
+        }
+      ]
+    },
+    {
+      "id": "B-8",
+      "title": "Doctor warning for a large board",
+      "status": "open",
+      "priority": "P2",
+      "type": "chore"
+    },
+    {
+      "id": "B-9",
+      "title": "R\u00e9sum\u00e9 of the quarter",
+      "status": "open",
+      "track": "docs",
+      "priority": "P2",
+      "text": "Write the r\u00e9sum\u00e9 with the \u201cbest\u201d results.",
+      "emoji": "\ud83d\ude00"
+    },
+    {
+      "id": "B-10",
+      "title": "Upgrade renames the queue key",
+      "status": "doing",
+      "stage": "fixes",
+      "track": "core",
+      "priority": "P1",
+      "lane": "w-7",
+      "docs": [
+        "docs/design.md",
+        "docs/roadmap-v2.md"
+      ],
+      "issues": []
+    },
+    {
+      "id": "B-11",
+      "title": "Examples folder with the sample setup",
+      "status": "open",
+      "track": "docs",
+      "priority": "P2",
+      "type": "chore",
+      "extra": {
+        "deep": {
+          "deeper": {
+            "list": [
+              1,
+              2,
+              3
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "B-12",
+      "title": "No-python check in the integration tests",
+      "status": "open",
+      "priority": "P2",
+      "type": "bug",
+      "weight": 1.5,
+      "ok": true
+    },
+    {
+      "id": "B-14",
+      "title": "Coordinator text for stages",
+      "status": "open",
+      "stage": "ticket",
+      "track": "docs",
+      "priority": "P1",
+      "text": "Say that a stage is never an approval."
+    },
+    {
+      "id": "B-15",
+      "title": "Work-item port for status",
+      "status": "doing",
+      "stage": "building",
+      "track": "board",
+      "priority": "P0",
+      "lane": "w-9"
+    },
+    {
+      "id": "B-16",
+      "title": "Release notes",
+      "status": "open",
+      "track": "docs",
+      "priority": "P2",
+      "text": "Line one\nLine two\ttabbed \"quoted\" and a back\\slash"
+    }
+  ],
+  "tracks": [
+    {
+      "id": "core",
+      "name": "Core",
+      "roadmap": true,
+      "colour": "blue"
+    },
+    {
+      "id": "board",
+      "name": "Local board",
+      "roadmap": true
+    },
+    {
+      "id": "docs",
+      "name": "Documents",
+      "roadmap": false
+    }
+  ]
+}

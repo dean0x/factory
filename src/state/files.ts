@@ -1,9 +1,11 @@
 import { err, ok, type Result } from '../core/result.js';
-import { dirs, files, marker, shareListLabel } from '../names.js';
+import { boardKeys, dirs, files, marker, shareListLabel } from '../names.js';
 
 export const jsonText = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
-export const initialBoardText = (): string => jsonText({ queue: [], items: [] });
+/** The board of a new factory: an empty queue under the key that the caller gives, no items and no tracks. */
+export const initialBoardText = (queueKey: string): string =>
+  jsonText({ [queueKey]: [], [boardKeys.items]: [], [boardKeys.tracks]: [] });
 
 export const initialWaitingText = (): string => jsonText({ intro: '', groups: [], items: [] });
 

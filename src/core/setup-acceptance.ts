@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
+import { INVISIBLE_FILLER, visibleText } from '../cli/output.js';
 import { absolutePath, slug } from '../config/primitives.js';
 import { commandText, commands, files, places, program, roles, setupAcceptance, trackedFiles } from '../names.js';
 import { parseJsonText } from '../state/load.js';
@@ -129,25 +130,8 @@ const tooManyFiles = (): CliResult<never> =>
     `Remove the files that the ${places.folder} does not need, then run "${commandText(commands.init)}" again.`,
   );
 
-/**
- * The characters that show as nothing and that no control or format class holds: the variation selectors, the Hangul
- * fillers and the Mongolian free variation selectors.
- */
-const INVISIBLE_FILLER = /[\u{115f}\u{1160}\u{180b}-\u{180d}\u{180f}\u{3164}\u{fe00}-\u{fe0f}\u{ffa0}\u{e0100}-\u{e01ef}]/u;
-
 /** True when the text holds a character of `INVISIBLE_FILLER`. */
 export const holdsInvisibleFiller = (value: string): boolean => INVISIBLE_FILLER.test(value);
-
-/** Every control character, apart from the newline and the tab, every character that only formats text, and every filler. */
-const HIDDEN_CHARACTERS = new RegExp(`(?![\\n\\t])(?:[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]|${INVISIBLE_FILLER.source})`, 'gu');
-
-const escapeOf = (character: string): string => {
-  const code = character.codePointAt(0) ?? 0;
-  return code <= 0xff ? `\\x${code.toString(16).padStart(2, '0')}` : `\\u{${code.toString(16)}}`;
-};
-
-/** The text with each control character shown as an escape, so that the screen shows the text of the bytes. */
-export const visibleText = (value: string): string => value.replace(HIDDEN_CHARACTERS, escapeOf);
 
 /** A path as one line of text: every control character shows as an escape, the line break and the tab among them. */
 export const visiblePath = (path: string): string => visibleText(path).replaceAll('\n', '\\n').replaceAll('\t', '\\t');

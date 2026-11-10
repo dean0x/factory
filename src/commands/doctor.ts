@@ -30,6 +30,7 @@ import { blockRenamesOf, fileSteps } from '../migrate/files.js';
 import type { DocState } from '../migrate/inspect.js';
 import {
   blockNames,
+  boardWarnPercent,
   checkIds,
   commandText,
   commands,
@@ -615,6 +616,26 @@ export const checkStateGuard = async (deps: Deps, home: string): Promise<CheckRe
     : check(checkIds.stateGuard, 'warn', warning);
 };
 
+/**
+ * The size of the board, the waiting file and the decision log against the read cap. A file that reaches `boardWarnPercent` of
+ * `maxFileBytes` is a warning that names it: a command refuses to read a file above the cap, and a write that would make one is
+ * refused. A file that is not there is no fault. The check is a warning at most, and it writes nothing.
+ */
+export const checkBoardSize = async (deps: Deps, home: string): Promise<CheckResult> => {
+  const stateDir = layoutOf(home).stateDir;
+  const near: string[] = [];
+  for (const name of [files.board, files.waiting, files.decisionLog]) {
+    const info = await deps.fs.statInfo(join(stateDir, name));
+    if (!info.ok) return notChecked(checkIds.boardSize, `${dirs.state}/${name}: ${info.error.message}`);
+    if (info.value === null || info.value.size * 100 < maxFileBytes * boardWarnPercent) continue;
+    const percent = Math.floor((info.value.size * 100) / maxFileBytes);
+    near.push(`${dirs.state}/${name} is ${info.value.size} bytes (${percent} percent of the cap)`);
+  }
+  return near.length === 0
+    ? check(checkIds.boardSize, 'ok', `the board files are below ${boardWarnPercent} percent of the cap of ${maxFileBytes} bytes`)
+    : check(checkIds.boardSize, 'warn', `${near.join('; ')}. A file above ${maxFileBytes} bytes cannot be read.`);
+};
+
 export const checkProjects = async (
   deps: Deps,
   home: string,
@@ -685,6 +706,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     agentVersion,
     stateRepo,
     stateGuard,
+    boardSize,
     projects,
     localFile,
   ] = await Promise.all([
@@ -700,6 +722,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkAgentVersion(deps, config),
     checkStateRepo(deps, home),
     checkStateGuard(deps, home),
+    checkBoardSize(deps, home),
     checkProjects(deps, home, config),
     checkLocalFile(deps, home),
   ]);
@@ -725,6 +748,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     agentVersion,
     stateRepo,
     stateGuard,
+    boardSize,
     projects,
     ...checkProjectUrls(config),
   ];

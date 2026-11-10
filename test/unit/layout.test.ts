@@ -89,7 +89,8 @@ describe('layout: the windows (TP-33)', () => {
 
   it('makes the same two windows as start: a session that start made keeps both, and its workers window is tiled', async () => {
     const made = await makeSlot({ tmux: { sessions: {} } });
-    for (const step of startSteps({ id: NODE, home: HOME, coordinatorDir: COORDINATOR_DIR, launch: ['claude'] })) {
+    const program = ['/opt/bin/node', '/opt/lib/factory.js'] as const;
+    for (const step of startSteps({ id: NODE, home: HOME, coordinatorDir: COORDINATOR_DIR, launch: ['claude'], program })) {
       expect(made.serverCall(step).exitCode).toBe(0);
     }
     expect(windowNames(made)).toEqual(['view', 'workers']);

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   address,
@@ -15,6 +15,7 @@ import {
   keys,
   marker,
   maxFileBytes,
+  maxTrackLines,
   nodeCommands,
   permissionSkipList,
   program,
@@ -46,6 +47,7 @@ import { gitHandler } from '../helpers/git-fake.js';
 import { OLD_WORD_ENDINGS, OLD_WORD_LIST, oldWordsIn } from '../helpers/old-words.js';
 import { runInit } from '../helpers/package-registry.js';
 import { JARGON_ERE, JARGON_PATTERNS, jargonIn } from '../helpers/plain-words.js';
+import { MAX_OUTPUT_LINES } from '../helpers/short-output.js';
 import { allSourceFiles, callsOf, importPathsOf, literalsOf, shellValue, stripComments } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
@@ -66,6 +68,13 @@ const sourceFiles = (dir: string): string[] =>
 
 const flat = (...groups: readonly Record<string, unknown>[]): string[] =>
   groups.flatMap((group) => Object.values(group).flatMap((value) => (typeof value === 'string' ? [value] : [])));
+
+/**
+ * Flags that are plain words too, which the source uses for other things: `text` is the level of a line of output, and `title`
+ * and `stage` are keys of an item. A literal that equals one of them is no breach. A literal that holds the flag with its two
+ * dashes (`--text`) still is one: the check of the flags below has no such exemption.
+ */
+const PLAIN_WORD_FLAGS: ReadonlySet<string> = new Set([flags.text, flags.title, flags.stage]);
 
 /** Names that a string literal must never equal outside names.ts. */
 const EXACT_NAMES = new Set([
@@ -88,7 +97,7 @@ const EXACT_NAMES = new Set([
     stateKeys,
     schema1.keys,
     { windowView: tmuxNames.windowView, windowWorkers: tmuxNames.windowWorkers, slotBoard: tmuxNames.slotBoard },
-  ),
+  ).filter((name) => !PLAIN_WORD_FLAGS.has(name)),
   ...values.approvalModes,
 ]);
 
@@ -151,7 +160,7 @@ const violationsInText = (source: string, path: string): string[] => {
     if (!GIT_VOCABULARY_FILES.has(path)) {
       if (EXACT_NAMES.has(literal)) found.push(`"${literal}" is a name`);
       for (const flag of flat(flags)) {
-        if (literal.includes(`--${flag}`)) found.push(`"${literal}" holds the flag --${flag}`);
+        if (new RegExp(`--${flag}(?![A-Za-z0-9-])`).test(literal)) found.push(`"${literal}" holds the flag --${flag}`);
       }
     }
     for (const word of WORD_NAMES) {
@@ -191,6 +200,21 @@ describe('names', () => {
     expect(violationsInText("const a = 'plain words';", path)).toEqual([]);
   });
 
+  it('leaves a flag that is a plain word alone as a word, and reports it with its two dashes', () => {
+    const path = join(SRC, 'sample.ts');
+    for (const flag of PLAIN_WORD_FLAGS) {
+      expect(violationsInText(`const a = '${flag}';`, path)).toEqual([]);
+      expect(violationsInText(`const a = 'use --${flag} here';`, path)).toEqual([`sample.ts: "use --${flag} here" holds the flag --${flag}`]);
+    }
+    expect(violationsInText(`const a = '${flags.home}';`, path)).toEqual([`sample.ts: "${flags.home}" is a name`]);
+  });
+
+  it('reports a flag only as a whole flag, so the git flag --staged is not the flag --stage', () => {
+    const path = join(SRC, 'sample.ts');
+    expect(violationsInText("const a = 'git restore --staged';", path)).toEqual([]);
+    expect(violationsInText(`const a = 'git restore --${flags.home}=x';`, path)).toHaveLength(1);
+  });
+
   it('reads the string literals of a text, and leaves out comments, template expressions and placeholders', () => {
     const sample = (text: string): string[] => literalsOf(text);
     expect(sample("const a = 'factory.yaml';")).toEqual(['factory.yaml']);
@@ -217,6 +241,13 @@ const propertyNamesOf = (tree: Readonly<Record<string, unknown>>): string[] =>
     name,
     ...(typeof value === 'object' && value !== null ? propertyNamesOf(value as Record<string, unknown>) : []),
   ]);
+
+describe('the limits of the track list', () => {
+  it('M5-1b TP-83 holds the track lines to the output cap minus the summary line, the table heading and the more-tracks line', () => {
+    expect(maxTrackLines).toBe(MAX_OUTPUT_LINES - 3);
+    expect(maxTrackLines).toBe(17);
+  });
+});
 
 describe('the role words and the terms', () => {
   /** The words that decision D-59 replaced in the roles and the terms. */
@@ -664,6 +695,7 @@ describe('the install check', () => {
 describe('the old words and the jargon words in the text of the source (TP-60)', () => {
   /** The folders that print text, and the top files of src. */
   const TEXT_FOLDERS = [
+    'board',
     'commands',
     'cli',
     'config',
@@ -1080,6 +1112,92 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
       expect(textOf(path), relative(SRC, path)).toMatch(/\binFactorySession\(/);
       expect(textOf(path), relative(SRC, path)).toMatch(/\bstdinIsTTY\b/);
     }
+  });
+});
+
+describe('the layers of the board source (TP-104)', () => {
+  const BOARD_DIR = join(SRC, 'board');
+  const LOWER_FOLDERS = ['state', 'core', 'workers'];
+
+  /** The files that a source text imports from the board folder, from a file at `file`. */
+  const boardImportsOf = (file: string, source: string): string[] =>
+    importPathsOf(source)
+      .filter((path) => path.startsWith('.'))
+      .map((path) => resolve(dirname(file), path))
+      .filter((target) => target === BOARD_DIR || target.startsWith(`${BOARD_DIR}${sep}`))
+      .map((target) => relative(SRC, target));
+
+  it('M5-1b TP-104 has a board folder with the files of the connector core, and scans it', () => {
+    const scanned = allSourceFiles(BOARD_DIR).map((path) => relative(BOARD_DIR, path)).sort();
+    expect(scanned).toEqual(expect.arrayContaining(['contract.ts', 'fields.ts', 'files.ts', 'stages.ts', 'tracks.ts']));
+  });
+
+  it('M5-1b TP-104 lets no file of src/state, src/core or src/workers import the board folder', () => {
+    const found = LOWER_FOLDERS.flatMap((folder) => allSourceFiles(join(SRC, folder))).flatMap((path) =>
+      boardImportsOf(path, readFileSync(path, 'utf8')).map((target) => `${relative(SRC, path)} imports ${target}`),
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('M5-1b TP-104 finds each form of import of the board folder from a lower folder', () => {
+    const file = join(SRC, 'state', 'sample.ts');
+    const source = [
+      "import { a } from '../board/local.js';",
+      "export { b } from '../board/files';",
+      "const c = await import('../board/stages.js');",
+      "import '../board/tracks.js';",
+      "import { d } from '../board/index.js';",
+      "import { e } from './layout.js';",
+      "import { f } from 'zod';",
+    ].join('\n');
+    expect(boardImportsOf(file, source)).toEqual([
+      join('board', 'local.js'),
+      join('board', 'files'),
+      join('board', 'stages.js'),
+      join('board', 'tracks.js'),
+      join('board', 'index.js'),
+    ]);
+  });
+
+  it('M5-1b TP-104 lets a board file import the work item port type of src/workers', () => {
+    const file = join(BOARD_DIR, 'local.ts');
+    expect(boardImportsOf(file, "import type { WorkItemPort } from '../workers/work-items.js';")).toEqual([]);
+    expect(boardImportsOf(file, "import { a } from './files.js';")).toEqual([join('board', 'files.js')]);
+  });
+
+  it('M5-1b TP-104 parses JSON in the board folder with parseJsonText only', () => {
+    const found = allSourceFiles(BOARD_DIR).filter((path) => /\bJSON\.parse\b/.test(stripComments(readFileSync(path, 'utf8'))));
+    expect(found.map((path) => relative(SRC, path))).toEqual([]);
+  });
+});
+
+describe('the work item port is a required parameter (TP-64, TP-77)', () => {
+  const COMMANDS = ['status.ts', 'dismiss.ts', 'worker-list.ts'].map((file) => join(SRC, 'commands', file));
+  const codeOf = (path: string): string => stripComments(readFileSync(path, 'utf8'));
+
+  it('M5-1b TP-64 holds no name of the unknown default in any source file', () => {
+    const found = allSourceFiles(SRC).filter((path) => /\bunknownWorkItems\b/.test(codeOf(path)));
+    expect(found.map((path) => relative(SRC, path))).toEqual([]);
+  });
+
+  it.each(COMMANDS)('M5-1b TP-64 gives the port parameter of %s no default', (path) => {
+    expect(codeOf(path)).toMatch(/\bworkItems:\s*WorkItemPort\b/);
+    expect(codeOf(path)).not.toMatch(/\bworkItems:\s*WorkItemPort\s*=/);
+  });
+
+  it('M5-1b TP-64 passes the port of the board at each call of status, dismiss and worker list', () => {
+    const lastArguments = (file: string, name: string): (string | undefined)[] =>
+      callsOf(readFileSync(join(SRC, file), 'utf8'), name).map((args) => args.at(-1)?.trim());
+    expect(lastArguments('cli/table.ts', 'runStatus')).toEqual(['boardWorkItems(registry)']);
+    expect(lastArguments('cli/table.ts', 'runDismiss')).toEqual(['boardWorkItems(registry)']);
+    expect(lastArguments('commands/worker.ts', 'runWorkerList')).toEqual(['boardWorkItems(registry)']);
+  });
+
+  it('M5-1b TP-77 sets no flow-only mark in a command, and the port never reads the stage', () => {
+    const files = allSourceFiles(join(SRC, 'commands')).concat(join(SRC, 'board', 'work-items.ts'));
+    const found = files.flatMap((path) => literalsOf(readFileSync(path, 'utf8')).filter((literal) => /^(merged|released)$/i.test(literal)));
+    expect(found).toEqual([]);
+    expect(codeOf(join(SRC, 'board', 'work-items.ts'))).not.toMatch(/\bstage\b/i);
   });
 });
 

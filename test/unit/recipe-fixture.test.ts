@@ -108,6 +108,12 @@ describe('the fixture recipe: init (TP-98)', () => {
     expect(config.value.entry).toBe(publishRecipe);
   });
 
+  it('M5-1b TP-29 seeds the board with the queue key of the recipe, and no software word', async () => {
+    const { deps } = await initialized();
+    expect(JSON.parse(fileOf(deps, '.factory/board.json'))).toEqual({ proofs: [], items: [], tracks: [] });
+    expect(wordsOfAllFiles(deps)).toEqual([]);
+  });
+
   it('refuses a recipe id that the registry does not hold, and names the ids that it holds', async () => {
     const deps = make();
     const result = await runInit(deps, options({ recipe: 'software' }), publishRegistry);

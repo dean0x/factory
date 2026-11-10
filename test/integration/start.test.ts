@@ -192,9 +192,13 @@ describe.skipIf(!hasTmux)('factory start (built binary, separate tmux server)', 
     expect(result.stdout).toContain('Session demo runs. Attach with: tmux attach -t demo');
 
     expect(await waitForLaunch()).toEqual(['launched']);
-    // The launch is the start command of the first pane only. The slot pane and the workers window run the shell.
+    // The launch is the start command of the first pane only. The slot pane runs the follow view of the board, and the workers window runs the shell.
     const starts = await tmux(['list-panes', '-s', '-t', '=demo', '-F', '#{pane_start_command}']);
     expect(starts.stdout.trim().split('\n').filter((command) => command.includes('claude'))).toHaveLength(1);
+    const slot = await tmux(['display-message', '-p', '-t', '=demo:view.{right}', '#{pane_start_command}']);
+    expect(slot.stdout).toContain(DIST);
+    expect(slot.stdout).toMatch(/item list --follow --home /);
+    expect(slot.stdout).toContain(box.node);
     expect((await tmux(['has-session', '-t', '=demo'])).code).toBe(0);
     const windows = await tmux(['list-windows', '-t', '=demo', '-F', '#{window_name}']);
     expect(windows.stdout.trim().split('\n')).toEqual(['view', 'workers']);

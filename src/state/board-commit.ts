@@ -3,7 +3,7 @@ import { failure, safetyRefusal, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { commitPaths, GIT_ENTRY, requireStateRepoCommit, stateHeadOf, unstagePaths, type RepoPaths } from '../core/git.js';
 import { err, ok } from '../core/result.js';
-import { namedItems, shownPath } from '../core/root-paths.js';
+import { LINK_REMEDY, namedItems, shownPath } from '../core/root-paths.js';
 import { commandText, dirs, files, maxFileBytes, type CommandName } from '../names.js';
 import { readCheckedFile, type NamedPath } from '../workers/registry.js';
 import { requireGuardOn } from './guard.js';
@@ -14,8 +14,9 @@ import { withStateLock } from './state-lock.js';
 
 /**
  * The board commit helper: the one way that a command changes files of the state repo that hold the board. It checks that the delete
- * guard is on, runs the change of the caller on the text that it commits, checks in the process that no item id is lost, writes the
- * files and makes exactly one commit of them. The caller does not write or commit these files by itself.
+ * guard is on, runs the change of the caller on the text that it commits, checks that each new text is within the size cap and that
+ * no item id is lost, writes the files and makes exactly one commit of them. The caller does not write or commit these files by
+ * itself. A reader of these files uses `readBoardFiles`, which takes no lock.
  */
 
 /** The text of each file of a change, by its path relative to the state folder. A file that is not there has the text null. */
@@ -48,7 +49,7 @@ const BOARD = files.board;
  * A path in the change is a plain path below the state folder: no folder above it, no empty or dotted part, and no part that is
  * a git folder. The git folder is compared in lower case, because a disk that ignores case gives `.GIT` the same folder as `.git`.
  */
-const isPlainPath = (path: string): boolean => {
+export const isPlainPath = (path: string): boolean => {
   const parts = path.split('/');
   return (
     path !== '' &&
@@ -65,7 +66,11 @@ const requirePlainPaths = (paths: readonly string[]): CliResult<readonly string[
   return ok([...new Set(paths)]);
 };
 
-/** The text of one touched file as it is on disk, or null when the file is not there. A link, a folder and a large file are failures. */
+/**
+ * The text of one touched file as it is on disk, or null when the file is not there. A link is a security stop (exit 4). A folder, a
+ * large file and a file that is not UTF-8 are failures. The decode is strict: the helper writes the text back, so a byte that a lenient
+ * decode would change must stop the call instead of changing the file.
+ */
 const currentTextOf = async (deps: Deps, layout: Layout, path: string): Promise<CliResult<string | null>> => {
   const parts = path.split('/');
   const folders: NamedPath[] = [{ path: layout.stateDir, what: dirs.state }];
@@ -73,10 +78,14 @@ const currentTextOf = async (deps: Deps, layout: Layout, path: string): Promise<
     const folder = parts.slice(0, at).join('/');
     folders.push({ path: join(layout.stateDir, folder), what: folder });
   }
-  const read = await readCheckedFile(deps, folders, { path: join(layout.stateDir, path), what: path }, maxFileBytes);
+  const read = await readCheckedFile(deps, folders, { path: join(layout.stateDir, path), what: path }, maxFileBytes, 'fatal');
   if (!read.ok) return read;
   if (read.value.state === 'absent') return ok(null);
-  if (read.value.state === 'invalid') return failure(`cannot read ${path}: ${read.value.reason}`);
+  if (read.value.state === 'invalid') {
+    return read.value.cause === 'link'
+      ? safetyRefusal(`cannot read ${path}: ${read.value.reason}`, LINK_REMEDY)
+      : failure(`cannot read ${path}: ${read.value.reason}`);
+  }
   return ok(read.value.text);
 };
 
@@ -88,6 +97,31 @@ const currentTexts = async (deps: Deps, layout: Layout, paths: readonly string[]
     texts.set(path, text.value);
   }
   return ok(texts);
+};
+
+/**
+ * Read the files of the work tree that hold the board, with no lock. The state lock is not re-entrant, so a reader never takes it:
+ * a read does not wait for a writer, and it can mix the files of two commits (a writer replaces each file whole). The paths are plain
+ * paths below the state folder. A file that is not there has the text null. A link is a security stop (exit 4). A folder, a file above
+ * `maxFileBytes` and a file that is not UTF-8 are failures that name the file.
+ */
+export const readBoardFiles = async (deps: Deps, layout: Layout, paths: readonly string[]): Promise<CliResult<BoardTexts>> => {
+  const plain = requirePlainPaths(paths);
+  if (!plain.ok) return plain;
+  return currentTexts(deps, layout, plain.value);
+};
+
+/**
+ * Every new text is within `maxFileBytes`, counted in bytes: the reader refuses a larger file, so a write must never make one. A file
+ * that the change removes has no text. The check is private: the helper is the one writer, so no caller needs it alone.
+ */
+const requireWithinCap = (updates: BoardTexts): CliResult<void> => {
+  for (const [path, text] of updates) {
+    if (text !== null && Buffer.byteLength(text, 'utf8') > maxFileBytes) {
+      return failure(`cannot commit ${path}: the new text is larger than ${maxFileBytes} bytes`);
+    }
+  }
+  return ok(undefined);
 };
 
 /**
@@ -107,8 +141,9 @@ const updatesOf = (now: BoardTexts, changed: BoardTexts): CliResult<BoardTexts> 
  * No item id of the board at the last commit may be missing from the new board text. A closed item keeps its id. A board that can
  * not be read, on either side, stops the change: the check fails closed. The remedy for a board at the last commit that can not be
  * read is a normal commit of a repair: the delete guard accepts a repair that keeps every item id of the last board that it can read.
+ * `upgrade` calls this check itself, because it holds the state lock already and so can not call `commitBoardChange`.
  */
-const requireNoLostIds = async (
+export const requireNoLostIds = async (
   deps: Deps,
   stateDir: string,
   hasCommit: boolean,
@@ -199,6 +234,8 @@ const commitLocked = async (
   const updates = updatesOf(now.value, changed.value);
   if (!updates.ok) return updates;
   if (updates.value.size === 0) return ok({ committed: false });
+  const sized = requireWithinCap(updates.value);
+  if (!sized.ok) return sized;
   if (updates.value.has(BOARD)) {
     const kept = await requireNoLostIds(deps, layout.stateDir, head.value !== null, updates.value.get(BOARD) ?? null, command);
     if (!kept.ok) return kept;
@@ -242,9 +279,10 @@ const commitLocked = async (
  * 2. The delete guard is on, else the call stops with exit 4 and writes nothing. This refusal is only here: the other commands that
  *    commit to the state repo keep working in a repo whose guard is off.
  * 3. The change of the caller runs on the text of the touched files, as they are now.
- * 4. No item id of the board at the last commit is missing from the new board text (exit 4), and a board that can not be read stops
+ * 4. Each file that changes has a new text of at most `maxFileBytes` bytes, else the call stops with exit 1 and writes nothing.
+ * 5. No item id of the board at the last commit is missing from the new board text (exit 4), and a board that can not be read stops
  *    the call (exit 1).
- * 5. The files are written, and one commit holds exactly the files that changed.
+ * 6. The files are written, and one commit holds exactly the files that changed.
  * A failed write or commit puts the files back and clears the staged changes. A commit that landed although git reported an error
  * stays, and the failure says so. The change of the caller runs inside the lock, which is not re-entrant, so it calls no step that
  * takes the lock.

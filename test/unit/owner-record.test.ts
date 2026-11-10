@@ -125,7 +125,8 @@ describe('approval records: who may write', () => {
   });
 
   it('refuses with the session marker that the start steps put in the environment of the session (TP-80)', async () => {
-    const steps = startSteps({ id: NODE, home: ROOT, coordinatorDir: `${ROOT}/coordinator`, launch: ['claude'] });
+    const program = ['/opt/bin/node', '/opt/lib/factory.js'] as const;
+    const steps = startSteps({ id: NODE, home: ROOT, coordinatorDir: `${ROOT}/coordinator`, launch: ['claude'], program });
     const call = steps.find((step) => step.includes('set-environment') && step.includes(env.session));
     expect(call).toBeDefined();
     const at = (call ?? []).indexOf(env.session);

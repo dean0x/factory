@@ -5,6 +5,8 @@ import {
   LOCAL_SCHEMA_VERSION,
   localOf,
   sharedOf,
+  type BoardConfig,
+  type BoardField,
   type FactoryConfig,
   type LinkConfig,
   type LocalConfig,
@@ -78,6 +80,41 @@ const trackerLines = (tracker: TrackerConfig): string[] =>
         entry(1, keys.tracker.watchInterval, tracker.watch_interval),
       ];
 
+/** A token of the `board` block: plain when a YAML reader takes it for a string, else double-quoted. */
+const tokenText = (value: string): string =>
+  /^[A-Za-z][A-Za-z0-9._-]*$/.test(value) && !YAML_WORDS.test(value.toLowerCase()) ? value : JSON.stringify(value);
+
+const tokenList = (list: readonly string[]): string => `[${list.map(tokenText).join(', ')}]`;
+
+const [valuesKind] = values.boardKinds;
+
+const boardFieldLines = (field: BoardField): string[] => [
+  itemEntry(2, keys.boardField.name, tokenText(field.name)),
+  entry(3, keys.boardField.target, field.target),
+  entry(3, keys.boardField.kind, field.kind),
+  ...(field.kind === valuesKind ? [entry(3, keys.boardField.values, tokenList(field.values))] : []),
+  entry(3, keys.boardField.required, String(field.required)),
+];
+
+const boardFieldsLines = (fields: readonly BoardField[]): string[] =>
+  fields.length === 0
+    ? [entry(1, keys.board.fields, '[]')]
+    : [`${pad(1)}${keys.board.fields}:`, ...fields.flatMap(boardFieldLines)];
+
+/** The `board` block. A key that the block does not hold is left out, so an empty block is `board: {}`. */
+const boardLines = (board: BoardConfig): string[] => {
+  const lines = [
+    ...(board.states === undefined ? [] : [entry(1, keys.board.states, tokenList(board.states))]),
+    ...(board.in_progress === undefined ? [] : [entry(1, keys.board.inProgress, tokenText(board.in_progress), 'a declared state')]),
+    ...(board.closed === undefined ? [] : [entry(1, keys.board.closed, tokenText(board.closed), 'a declared state')]),
+    ...(board.worker_field === undefined
+      ? []
+      : [entry(1, keys.board.workerField, tokenText(board.worker_field), 'a declared field of an item')]),
+    ...(board.fields === undefined ? [] : boardFieldsLines(board.fields)),
+  ];
+  return lines.length === 0 ? [`${keys.root.board}: {}`] : [`${keys.root.board}:`, ...lines];
+};
+
 /** The `recipe` block. The entry of the recipe names the keys that a project holds besides the keys of the core. */
 const recipeLines = (recipeEntry: RecipeEntry, recipe: RecipeConfig): string[] => [
   `${keys.root.recipe}:`,
@@ -146,6 +183,7 @@ export const renderSharedConfig = (shared: SharedConfig): string => {
     `${keys.root.tracker}:`,
     ...trackerLines(core.tracker),
     '',
+    ...(core.board === undefined ? [] : [...boardLines(core.board), '']),
     ...recipeLines(recipeEntry, recipe),
   ];
   return `${lines.join('\n')}\n`;

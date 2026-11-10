@@ -149,6 +149,13 @@ describe('init: a received factory (TP-29, TP-30)', () => {
     expect(log.calls.filter((call) => call.args[1] === ROOT && ['init', 'add', 'commit'].includes(call.args[2] ?? ''))).toEqual([]);
   });
 
+  it('M5-1b TP-29 seeds the board of a received factory with the queue key of its recipe', async () => {
+    const { deps } = received({}, terminal);
+    expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
+    const board = JSON.parse(deps.files.get(`${ROOT}/.factory/board.json`) ?? 'null') as Record<string, unknown>;
+    expect(board).toEqual({ merge: [], items: [], tracks: [] });
+  });
+
   it('writes the delete guard into the state repo that it makes, with the setting for the final path (TP-2)', async () => {
     const { deps, log } = received({}, terminal);
     expect((await runInit(deps, options({ yes: true }))).ok).toBe(true);
