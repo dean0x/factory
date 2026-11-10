@@ -50,6 +50,10 @@ export const commands = {
   doctor: 'doctor',
   machine: 'machine',
   worker: 'worker',
+  item: 'item',
+  track: 'track',
+  request: 'request',
+  queue: 'queue',
   self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
@@ -83,6 +87,8 @@ export const terms = [
   'session reset',
   'queue',
   'check',
+  'track',
+  'stage',
 ] as const;
 
 /** The layers of a node, from the bottom: the workers, the coordinator, the manager, and the highest layer. */
@@ -102,6 +108,18 @@ export const workerCommands = {
   watch: 'watch',
 } as const;
 
+/** The subcommands of `item`. */
+export const itemCommands = { add: 'add', update: 'update', move: 'move', close: 'close', list: 'list' } as const;
+
+/** The subcommands of `track`. The command has no remove subcommand. */
+export const trackCommands = { add: 'add', list: 'list' } as const;
+
+/** The subcommands of `request`. The command has no subcommand that changes the options of a request that is open. */
+export const requestCommands = { add: 'add', list: 'list', close: 'close' } as const;
+
+/** The subcommands of `queue`. */
+export const queueCommands = { set: 'set', show: 'show' } as const;
+
 /** The subcommands of `self`. */
 export const selfCommands = { reset: 'reset' } as const;
 
@@ -117,6 +135,18 @@ export const commandLines = {
   workerSummon: `${commands.worker} ${workerCommands.summon}`,
   workerReset: `${commands.worker} ${workerCommands.reset}`,
   workerWatch: `${commands.worker} ${workerCommands.watch}`,
+  itemAdd: `${commands.item} ${itemCommands.add}`,
+  itemUpdate: `${commands.item} ${itemCommands.update}`,
+  itemMove: `${commands.item} ${itemCommands.move}`,
+  itemClose: `${commands.item} ${itemCommands.close}`,
+  itemList: `${commands.item} ${itemCommands.list}`,
+  trackAdd: `${commands.track} ${trackCommands.add}`,
+  trackList: `${commands.track} ${trackCommands.list}`,
+  requestAdd: `${commands.request} ${requestCommands.add}`,
+  requestList: `${commands.request} ${requestCommands.list}`,
+  requestClose: `${commands.request} ${requestCommands.close}`,
+  queueSet: `${commands.queue} ${queueCommands.set}`,
+  queueShow: `${commands.queue} ${queueCommands.show}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
   stateGuard: `${commands.state} ${stateCommands.guard}`,
 } as const;
@@ -139,6 +169,21 @@ export const flags = {
   clear: 'clear',
   compact: 'compact',
   assignment: 'assignment',
+  field: 'field',
+  title: 'title',
+  text: 'text',
+  track: 'track',
+  state: 'state',
+  stage: 'stage',
+  all: 'all',
+  follow: 'follow',
+  roadmap: 'roadmap',
+  question: 'question',
+  option: 'option',
+  recommend: 'recommend',
+  item: 'item',
+  note: 'note',
+  position: 'position',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -428,6 +473,9 @@ export const trafficEnvNames = [
 /** The most bytes that factory reads from one config, state or index file. A larger file is refused. */
 export const maxFileBytes = 1_048_576;
 
+/** The share of `maxFileBytes`, in percent, at which `doctor` warns about the board, the waiting file or the decision log. */
+export const boardWarnPercent = 80;
+
 /**
  * The rules for the source file of an assignment (`worker new --assignment`). The file is read only from the factory folder or from the
  * git work tree of the working folder. No path part below that top starts with `dotMark`, except the orders folder below the factory
@@ -487,8 +535,207 @@ export const trackedFiles = { maxCount: 2_000, maxFileBytes } as const;
 /** The lowest version of git that factory runs with: the read of the git config of the state folder (`--show-scope`) needs it. */
 export const minGitVersion = '2.26';
 
-/** The keys of `board.json` that the reader of item ids uses: the list of items, and the id of one item. */
-export const boardKeys = { items: 'items', id: 'id' } as const;
+/**
+ * The keys of `board.json`. The top keys are the queue (its key comes from the recipe), the list of items and the list of
+ * tracks. `defaultQueue` is the key of the queue when the recipe gives none. The other keys belong to an item (`id`, `title`,
+ * `status`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`).
+ */
+export const boardKeys = {
+  items: 'items',
+  id: 'id',
+  title: 'title',
+  status: 'status',
+  tracks: 'tracks',
+  track: 'track',
+  stage: 'stage',
+  name: 'name',
+  roadmap: 'roadmap',
+  text: 'text',
+  docs: 'docs',
+  note: 'note',
+  defaultQueue: 'queue',
+} as const;
+
+/** The keys of the waiting file: the top keys, and the id of a waiting item. */
+export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', id: 'id' } as const;
+
+/**
+ * The keys of the decision log: the list of rows, and the keys of a row. The `item` text of a row starts with the id of a decision.
+ * A row that a close of a request writes holds these three keys only: it names no one who answered.
+ */
+export const decisionLogKeys = { rows: 'rows', item: 'item', decision: 'decision', date: 'date' } as const;
+
+/**
+ * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
+ * decision log names its decision at the start of its `item` text: the id, then the end of the text or a character that cannot
+ * continue the id. The numbers have at most 9 digits.
+ */
+export const boardIds = {
+  item: /^B-[0-9]{1,9}$/,
+  request: /^D-[0-9]{1,9}$/,
+  requestAtStart: /^D-[0-9]{1,9}(?![0-9A-Za-z_-])/,
+} as const;
+
+/**
+ * The limits of a track. An id starts with a lowercase letter and holds lowercase letters, digits and hyphens, up to `maxIdChars`.
+ * A name is one line of at most `maxNameChars` characters. A factory has at most `maxTracks` tracks.
+ */
+export const trackLimits = { idPattern: /^[a-z][a-z0-9-]*$/, maxIdChars: 32, maxNameChars: 60, maxTracks: 30 } as const;
+
+/**
+ * The most track lines that `item list` prints. The output holds at most 20 lines (`MAX_OUTPUT_LINES` in
+ * `test/helpers/short-output.ts`). Of them, one is the summary line, one is the heading line of the table (`tableLines` in
+ * `src/cli/output.ts`) and one is the more-tracks line. 20 - 3 is 17. The list of the items of one track, the list of the requests
+ * and the queue hold at most this many rows, by the same count.
+ */
+export const maxTrackLines = 17;
+
+/**
+ * The wait of the follow loop of `item list --follow` between two ticks, in milliseconds (the poll rule of Gate 1). The bound: at each
+ * tick the loop checks its reader and reads the status of the board file once, and it reads the text of the file only after a change
+ * of the time or the size of the file. So the loop makes at most one status read and one text read in each 2 seconds. The loop has no
+ * time limit, as a view must run until its terminal goes. It ends on a signal (SIGHUP or SIGTERM), on a failed write, when its parent
+ * process changes, and when stdout is not a terminal.
+ */
+export const followPollMs = 2_000;
+
+/**
+ * The words and the limits of the output of `item` and `track`. A text from the board file is cut to the width of its cell
+ * (`maxCellChars`) before it goes into a table. A field is given as `NAME` and `fieldSeparator` and the value.
+ */
+export const itemWords = {
+  item: 'item',
+  items: 'items',
+  track: 'track',
+  tracks: 'tracks',
+  columns: { id: 'ID', stage: 'STAGE', status: 'STATUS', title: 'TITLE' },
+  trackColumns: { track: 'TRACK', items: 'ITEMS', stages: 'STAGES' },
+  trackListColumns: { id: 'ID', name: 'NAME', roadmap: 'ROADMAP' },
+  /** What a table shows for the items on no listed track, for an item with no stage, and for an empty part. */
+  noTrack: '(no track)',
+  noStage: 'no stage',
+  empty: '-',
+  roadmapYes: 'yes',
+  roadmapNo: 'no',
+  fieldSeparator: '=',
+  maxCellChars: 60,
+  maxFieldChars: 30,
+  maxStatusChars: 20,
+} as const;
+
+/**
+ * The words of the output of `request`. A request is a decision item that waits for the owner. An option is given as its key,
+ * `optionSeparator` and its text. A request that a person closes with no answer gets a row in the decision log with the text
+ * `closedDecision`, so its number is never given again.
+ */
+export const requestWords = {
+  request: commands.request,
+  requests: `${commands.request}s`,
+  columns: { id: 'ID', title: 'TITLE', options: 'OPTIONS' },
+  optionSeparator: '=',
+  optionKeySeparator: ',',
+  closedDecision: 'closed with no answer',
+  maxCellChars: 60,
+  maxOptionsChars: 30,
+} as const;
+
+/** The words of the output of `queue`. The columns of the owner fields of a row come between the items and the note. */
+export const queueWords = {
+  queue: commands.queue,
+  row: 'row',
+  rows: 'rows',
+  columns: { position: 'NO', name: 'NAME', items: 'ITEMS', note: 'NOTE' },
+  itemSeparator: ' ',
+  maxCellChars: 60,
+} as const;
+
+/**
+ * The most characters of one line of text output. The first line of the output of a job command holds at most 120
+ * characters (`MAX_FIRST_LINE_CHARS` in `test/helpers/short-output.ts`). `displayLine` in `src/cli/output.ts` cuts to it.
+ */
+export const maxDisplayWidth = 120;
+
+/** The most characters of typed text that a message repeats: a field name, a stage or a key. A longer text is cut. */
+export const maxEchoChars = 40;
+
+/** The highest number of an id of the form `B-n` or `D-n`: the forms in `boardIds` take at most 9 digits. */
+export const maxBoardNumber = 999_999_999;
+
+/**
+ * The keys of a decision for the owner in the waiting file, and of one of its options. A decision holds an id (`waitingKeys.id`),
+ * a title, a question and a list of options. An option holds a key that the owner types, a text, and a mark for the option that the
+ * asker recommends.
+ */
+export const decisionKeys = { title: 'title', question: 'question', options: 'options' } as const;
+export const optionKeys = { key: 'key', text: 'text', rec: 'rec' } as const;
+
+/**
+ * The limits of the text of a board write. A title, a text, a question and the text of an option are one line each, with at most
+ * this many characters. A decision has at most `maxOptions` options. A link from an item to a file is a relative path of at most
+ * `maxDocPathChars` characters.
+ */
+export const boardTextLimits = {
+  maxTitleChars: 100,
+  maxTextChars: 500,
+  maxQuestionChars: 500,
+  maxOptionChars: 200,
+  maxOptions: 9,
+  maxDocPathChars: 200,
+} as const;
+
+/**
+ * The limits of the queue. A row of the queue holds at most `maxRowItems` item ids, and the queue holds at most `maxRows` rows. A
+ * write that would pass a limit is a usage error. A board that a person edited by hand and that passes a limit still reads.
+ */
+export const queueLimits = { maxRows: 30, maxRowItems: 30, positionPattern: /^[1-9][0-9]{0,2}$/ } as const;
+
+/**
+ * The stop of a board write with a hosted tracker kind. The provider holds the truth of a hosted board, and the local board is a
+ * cache of it, so a write goes to the provider first. This version has no provider, so the write stops before the lock, with one line.
+ */
+export const hostedBoardLine = (kind: string): string =>
+  `The ${kind} board is not in this version. Hosted boards come in FAC-M3 (provider plugin).`;
+
+/**
+ * The names that an owner field can not take: the keys that an item, a queue row, a track or a decision record already
+ * holds, and the track and stage keys. A field never replaces a key that the core owns, and never replaces a key that is
+ * part of the proof of a decision.
+ */
+export const reservedFieldNames: readonly string[] = [
+  boardKeys.id,
+  'title',
+  'text',
+  'status',
+  'issues',
+  'docs',
+  'result',
+  'by',
+  'who',
+  'decided_by',
+  'answer',
+  boardKeys.name,
+  boardKeys.note,
+  boardKeys.items,
+  boardKeys.tracks,
+  boardKeys.track,
+  boardKeys.stage,
+];
+
+/**
+ * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to `maxTokenChars` letters, digits,
+ * dots, underscores or hyphens, and the first character is a letter or a digit. The cap is the length of the longest worker id (a
+ * slug of at most 40 characters, `slug` in `src/config/primitives.ts`), so a worker field can hold any worker id. The counts are
+ * the most states in the block, the most owner fields, and the most values of one field.
+ */
+const maxTokenChars = 40;
+
+export const boardLimits = {
+  maxTokenChars,
+  tokenPattern: new RegExp(`^[A-Za-z0-9][A-Za-z0-9._-]{0,${maxTokenChars - 1}}$`),
+  maxStates: 20,
+  maxFields: 20,
+  maxValues: 30,
+} as const;
 
 /** The first commit of the root repo, which `init` and `upgrade` make: the branch, the message and the notice of a missing identity. */
 export const rootRepo = {
@@ -647,7 +894,12 @@ export const keys = {
     children: 'children',
     sources: 'sources',
     state: 'state',
+    board: 'board',
   },
+  /** The `board` block: the item states, the two states that carry a meaning, the owner field of a worker, and the owner fields. */
+  board: { states: 'states', inProgress: 'in_progress', closed: 'closed', workerField: 'worker_field', fields: 'fields' },
+  /** One owner field of the `board` block. */
+  boardField: { name: 'name', target: 'target', kind: 'kind', values: 'values', required: 'required' },
   node: { id: 'id', layer: 'layer' },
   owner: { display: 'display', github: 'github', prefix: 'prefix' },
   session: {
@@ -1110,6 +1362,10 @@ export const values = {
   approvalModes: [roles.owner, 'delegated'],
   trackerLocal: 'local',
   trackerHosted: ['github', 'jira', 'linear'],
+  /** Where an owner field lives: on an item, or on a queue row. */
+  boardTargets: ['item', 'row'],
+  /** What an owner field holds: one value of a list, a flag, or one free token. */
+  boardKinds: ['values', 'flag', 'token'],
   defaultWatchInterval: '5m',
   /** A worker with no activity for this time, and no open work, is idle. */
   defaultIdleAfter: '2h',
@@ -1182,6 +1438,8 @@ export const checkIds = {
   stateRepo: 'state-repo',
   /** The delete guard of the state repo: a warning when it is off, with the remedy. */
   stateGuard: 'state-guard',
+  /** The size of the board, the waiting file and the decision log against the read cap: a warning from `boardWarnPercent` on. */
+  boardSize: 'board-size',
   projects: 'projects',
   projectUrls: 'project-urls',
 } as const;
@@ -1254,6 +1512,14 @@ export const schemaIds = {
   layout: `${program}.layout/v1`,
   upgrade: `${program}.upgrade/v1`,
   hook: `${program}.hook/v1`,
+  item: `${program}.item/v1`,
+  itemList: `${program}.item-list/v1`,
+  track: `${program}.track/v1`,
+  trackList: `${program}.track-list/v1`,
+  request: `${program}.${commands.request}/v1`,
+  requestList: `${program}.${commands.request}-list/v1`,
+  queue: `${program}.${commands.queue}/v1`,
+  queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
@@ -1377,6 +1643,11 @@ export const templateValues: Readonly<Record<string, string>> = {
   workerWatchCommand: workerCommandText(workerCommands.watch),
   workerResetCommand: workerCommandText(workerCommands.reset),
   selfResetCommand: commandText(`${commands.self} ${selfCommands.reset}`),
+  itemCommand: commandText(commands.item),
+  trackCommand: commandText(commands.track),
+  requestCommand: commandText(commands.request),
+  queueCommand: commandText(commands.queue),
+  itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
   clearFlag: flagText(flags.clear),
   compactFlag: flagText(flags.compact),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),

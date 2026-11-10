@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { slug } from '../../src/config/primitives.js';
-import { approvalLines, type ApprovalPoint, type RecipeEntry, type RecipeRegistry, type RecipeRoles } from '../../src/recipes/entry.js';
+import {
+  approvalLines,
+  type ApprovalPoint,
+  type RecipeBoard,
+  type RecipeEntry,
+  type RecipeRegistry,
+  type RecipeRoles,
+} from '../../src/recipes/entry.js';
 import { blockNames, keys, layers, values } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { coordinatorValuesFor, fillTemplate } from '../../src/templates/fill.js';
@@ -64,6 +71,16 @@ const publishRoles: RecipeRoles = {
   homeBlockNames: [blockNames.coordinator],
 };
 
+/**
+ * The board data of the publishing recipe. It has its own queue key, its own stages and a flow name that differs from the
+ * flow names of the software recipe, so a test can prove that the core prints the flow name of the recipe.
+ */
+export const publishBoard: RecipeBoard = {
+  queueKey: 'proofs',
+  stages: ['draft', 'proof', 'approved', 'printed'],
+  flowOnly: { printed: 'press flow' },
+};
+
 export const publishRecipe: RecipeEntry = {
   id: publishRecipeId,
   schema: publishSchema,
@@ -75,6 +92,7 @@ export const publishRecipe: RecipeEntry = {
   projectDefaults: {},
   initProjectKeys: [],
   roles: publishRoles,
+  board: publishBoard,
 };
 
 /** The registry of a package that holds the publishing recipe only. */

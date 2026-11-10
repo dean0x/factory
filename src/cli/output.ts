@@ -1,3 +1,4 @@
+import { maxDisplayWidth } from '../names.js';
 import type { CliError } from './errors.js';
 
 export type LineLevel = 'text' | 'heading' | 'ok' | 'warn' | 'fail';
@@ -112,4 +113,45 @@ export const tableLines = (title: readonly string[], rows: readonly (readonly st
 export const renderWarnings = (warnings: readonly string[]): string =>
   warnings.map((warning) => `warning: ${printable(warning)}\n`).join('');
 
-export const renderJson = (doc: JsonDoc): string => `${JSON.stringify(doc, null, 2)}\n`;
+/**
+ * The characters that show as nothing and that no control or format class holds: the variation selectors, the Hangul
+ * fillers and the Mongolian free variation selectors.
+ */
+export const INVISIBLE_FILLER = /[\u{115f}\u{1160}\u{180b}-\u{180d}\u{180f}\u{3164}\u{fe00}-\u{fe0f}\u{ffa0}\u{e0100}-\u{e01ef}]/u;
+
+/** Every control character, apart from the characters in `kept` (a regex class body), every character that only formats text, and every filler. */
+const hiddenCharactersExcept = (kept: string): RegExp =>
+  new RegExp(`(?![${kept}])(?:[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]|${INVISIBLE_FILLER.source})`, 'gu');
+
+/** For terminal text: the newline and the tab stay. A raw carriage return never reaches the screen. */
+const HIDDEN_CHARACTERS = hiddenCharactersExcept('\\n\\t');
+
+/** For JSON text: a carriage return stays too, because JSON writes it as an escape and a string value keeps its line breaks. */
+const HIDDEN_CHARACTERS_IN_JSON = hiddenCharactersExcept('\\n\\t\\r');
+
+const escapeOf = (character: string): string => {
+  const code = character.codePointAt(0) ?? 0;
+  return code <= 0xff ? `\\x${code.toString(16).padStart(2, '0')}` : `\\u{${code.toString(16)}}`;
+};
+
+/** The text with each control character shown as an escape, so that the screen shows the text of the bytes. */
+export const visibleText = (value: string): string => value.replace(HIDDEN_CHARACTERS, escapeOf);
+
+const LINE_BREAKS_AND_TABS = /[\n\r\t]/g;
+
+/**
+ * Stored text as one clean line of text output: a line break, a carriage return and a tab each become one space, the hidden
+ * characters (control, bidi, format and invisible) are removed, and the line is cut to `width` characters. A pair of code
+ * units that make one character is never cut in half.
+ */
+export const displayLine = (text: string, width: number = maxDisplayWidth): string => {
+  const clean = text.replace(LINE_BREAKS_AND_TABS, ' ').replace(HIDDEN_CHARACTERS, '');
+  const cut = clean.slice(0, Math.max(0, width));
+  return cut.length < clean.length && /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
+};
+
+/** In JSON, the hidden characters leave the string values. A line break and a carriage return stay as escapes and no string is cut. */
+const withoutHidden = (_key: string, value: unknown): unknown =>
+  typeof value === 'string' ? value.replace(HIDDEN_CHARACTERS_IN_JSON, '') : value;
+
+export const renderJson = (doc: JsonDoc): string => `${JSON.stringify(doc, withoutHidden, 2)}\n`;

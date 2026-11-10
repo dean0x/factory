@@ -1,16 +1,19 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import type { WorkerOptions } from '../../src/commands/worker.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
-import { schemaIds, type HookEvent } from '../../src/names.js';
-import { workerPathsOf } from '../../src/state/layout.js';
+import { files, schemaIds, type HookEvent } from '../../src/names.js';
+import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
 import { readOwnLastSeen, writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
+import { boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { runWorker } from '../helpers/package-registry.js';
-import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { countReadsOf } from '../helpers/read-count.js';
+import { sampleConfig, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
@@ -597,5 +600,79 @@ describe('worker list: the command line', () => {
     expect(await runCli(['worker', 'list', '--home', HOME], made.deps, sink)).toBe(0);
     expect(sink.out.join('')).toContain('alpha');
     expect(sink.errors.join('')).toMatch(/^warning: .*broken/);
+  });
+});
+
+describe('worker list: the board port (TP-44, TP-64)', () => {
+  const BOARD_FILE = join(layoutOf(HOME).stateDir, files.board);
+  const WORKERS = [
+    { id: 'alpha', line: { event: 'Stop', percent: 5 } },
+    { id: 'beta', line: { event: 'Stop', percent: 6 } },
+  ] as const;
+  const BOARD = boardText([itemRecord('B-1', { status: 'doing', lane: 'alpha' })]);
+
+  /** A factory with two workers and a board block (or none), and the board file `text` (none: no board file). */
+  const withBoard = async (text: string | undefined, config: FactoryConfig = sampleConfigWithBoard()): Promise<Made> => {
+    const made = await make({ workers: WORKERS, config });
+    if (text !== undefined) made.deps.seed(BOARD_FILE, text);
+    return made;
+  };
+
+  it('M5-1b TP-44 lists the workers with no warning when the board is whole', async () => {
+    const output = await listed(await withBoard(BOARD));
+    expect(rowsOf(output).map((row) => row.id)).toEqual(['alpha', 'beta']);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it('M5-1b TP-44 lists the workers with no warning when the setup has no board block', async () => {
+    const output = await listed(await withBoard(BOARD, sampleConfig()));
+    expect(rowsOf(output).map((row) => row.id)).toEqual(['alpha', 'beta']);
+    expect(output.warnings).toEqual([]);
+  });
+
+  it.each([
+    ['a board file that is not there', undefined],
+    ['a board file that is not JSON', 'not json'],
+  ])('M5-1b TP-44 lists the workers, with one warning that names the board file, for %s', async (_name, text) => {
+    const output = await listed(await withBoard(text));
+    expect(rowsOf(output).map((row) => row.id)).toEqual(['alpha', 'beta']);
+    expect(output.warnings).toHaveLength(1);
+    expect(output.warnings[0]).toContain(files.board);
+    expect(output.failed).toBe(false);
+  });
+
+  it('M5-1b TP-64 reads the board file once, and changes no file', async () => {
+    const made = await withBoard(BOARD);
+    const before = snapshot(made.deps);
+    const counted = countReadsOf(made.deps, BOARD_FILE);
+    const result = await runWorker(counted.deps, options());
+    expect(result.ok).toBe(true);
+    expect(counted.count()).toBe(1);
+    expect(snapshot(made.deps)).toBe(before);
+  });
+});
+
+describe('worker list: the name of a folder prints clean (TP-91, TP-105)', () => {
+  const BIDI = String.fromCodePoint(0x202e);
+  const NAME = `bad${BIDI}na\nme`;
+
+  it('M5-1b TP-91 shows the name of a folder with a bidi mark and a line break as one clean text in the warning', async () => {
+    const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop', percent: 5 } }] });
+    made.deps.seed(`/w/node/.factory/workers/${NAME}/worker.json`, '{}');
+    const output = await listed(made);
+    expect(output.warnings).toHaveLength(1);
+    expect(output.warnings[0]).toContain('"badna\\nme"');
+    expect(output.warnings[0]).not.toMatch(/[\n\r\t]/);
+    expect(output.warnings[0]).not.toContain(BIDI);
+  });
+
+  it('M5-1b TP-105 prints no hidden character in the JSON, for the name of a folder that has some', async () => {
+    const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop', percent: 5 } }] });
+    made.deps.seed(`/w/node/.factory/workers/${NAME}/worker.json`, '{}');
+    const sink = captureSink();
+    expect(await runCli(['worker', 'list', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
+    const text = sink.out.join('');
+    expect(text).not.toContain(BIDI);
+    expect(JSON.parse(text).invalid).toEqual([{ name: '"badna\\nme"', reason: expect.any(String) }]);
   });
 });

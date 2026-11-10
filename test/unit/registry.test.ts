@@ -581,6 +581,29 @@ describe('readCheckedFile: the cause of a file that is not valid (TP-21)', () =>
     expect(await readOfDeps(deps)).toMatchObject({ state: 'text' });
   });
 
+  it('M5-1b TP-51 reads a file that is not UTF-8 as a failure that names the file, when the read is strict', async () => {
+    const deps = make();
+    deps.seed(FILE, 'a�b');
+    deps.invalidUtf8.add(FILE);
+    const result = await readCheckedFile(deps, folders, file, MAX, 'fatal');
+    const error = errorOf(result);
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain(FILE);
+  });
+
+  it('M5-1b TP-98 reads a file that is not UTF-8 with the lenient decode, when the read names no decode', async () => {
+    const deps = make();
+    deps.seed(FILE, 'a�b');
+    deps.invalidUtf8.add(FILE);
+    expect(await readOfDeps(deps)).toEqual({ state: 'text', text: 'a�b' });
+  });
+
+  it('M5-1b TP-51 gives the text of a valid file when the read is strict', async () => {
+    const deps = make();
+    deps.seed(FILE, 'resume');
+    expect(valueOf(await readCheckedFile(deps, folders, file, MAX, 'fatal'))).toEqual({ state: 'text', text: 'resume' });
+  });
+
   it('TP-21: the read of a worker file with an id that is not a slug keeps its reason and has no cause', async () => {
     const read = valueOf(
       await readWorkerFile(make(), HOME, '../escape', { of: 'recordFile', what: 'the record', maxBytes: MAX }),

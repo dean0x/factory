@@ -47,8 +47,10 @@ export interface FakeOptions {
   readonly uid?: number | null;
   /** A person types at the process. Default: false. */
   readonly stdinIsTTY?: boolean;
-  /** A person reads the output on a terminal. Default: false. */
+  /** A person reads the output on a terminal. Default: false. It is the start value of `stdoutIsTerminal`, and `setStdoutTerminal` changes that one. */
   readonly stdoutIsTTY?: boolean;
+  /** The id of the parent process at the start. Default: 500. `setParentPid` changes it. */
+  readonly parentPid?: number;
   /** The text on the standard input, as `readStdin` reads it. A terminal gives no text. Default: empty. */
   readonly stdin?: string;
   /** The answer to a question. Default: no answer. */
@@ -91,8 +93,19 @@ export interface FakeDeps extends Deps {
   readonly owners: Map<string, number>;
   /** The time of the last write of a file, in milliseconds, by path. A file that is not in the map changed just now. */
   readonly mtimes: Map<string, number>;
+  /**
+   * The paths whose bytes are not UTF-8. The text in `files` is what a lenient read gives (it holds U+FFFD for the bad bytes), and a
+   * read with the `fatal` decode fails for the path.
+   */
+  readonly invalidUtf8: Set<string>;
   /** The waits of `sleep`, in order. */
   readonly sleeps: number[];
+  /** The texts that `writeStdout` took, in order. */
+  readonly written: string[];
+  /** Change the parent process id that `parentPid` gives from now on. */
+  setParentPid(pid: number): void;
+  /** Change the value that `stdoutIsTerminal` gives from now on. */
+  setStdoutTerminal(value: boolean): void;
   /** The pids that `terminate` got, in order. The fake sends no signal to a real process. The call has no other signal. */
   readonly terminated: number[];
   /** The pids that `isRunning` got, in order. */
@@ -118,6 +131,7 @@ export const FAKE_PROGRAM_ARGV: readonly string[] = ['/opt/fake/bin/node', '/opt
 
 const DEFAULT_NOW = new Date('2030-01-02T03:04:05.678Z');
 const DEFAULT_UID = 1000;
+const DEFAULT_PARENT_PID = 500;
 const PRIVATE_FILE_MODE = 0o600;
 const PRIVATE_DIR_MODE = 0o700;
 
@@ -136,7 +150,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const modes = new Map<string, number>();
   const owners = new Map<string, number>();
   const mtimes = new Map<string, number>();
+  const invalidUtf8 = new Set<string>();
   const sleeps: number[] = [];
+  const written: string[] = [];
+  let parentPid = options.parentPid ?? DEFAULT_PARENT_PID;
+  let stdoutTerminal = options.stdoutIsTTY ?? false;
   const terminated: number[] = [];
   const checked: number[] = [];
   const randomTexts: string[] = [];
@@ -181,7 +199,15 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     modes,
     owners,
     mtimes,
+    invalidUtf8,
     sleeps,
+    written,
+    setParentPid: (pid) => {
+      parentPid = pid;
+    },
+    setStdoutTerminal: (value) => {
+      stdoutTerminal = value;
+    },
     terminated,
     checked,
     randomTexts,
@@ -225,10 +251,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         const text = files.get(path);
         return text === undefined ? enoent('read', path) : ok(text);
       },
-      readTextLimited: async (path, maxBytes) => {
+      readTextLimited: async (path, maxBytes, decode = 'lenient') => {
         const text = files.get(path);
         if (text === undefined) return enoent('read', path);
-        return Buffer.byteLength(text, 'utf8') > maxBytes ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text);
+        if (Buffer.byteLength(text, 'utf8') > maxBytes) return failure(`cannot read ${path}: larger than ${maxBytes} bytes`);
+        // The fake keeps decoded text, so the paths in `invalidUtf8` stand for bytes that only a lenient decode can read.
+        return decode === 'fatal' && invalidUtf8.has(path) ? failure(`cannot read ${path}: the bytes are not valid UTF-8`) : ok(text);
       },
       digestFile: async (path, textLimit, maxBytes) => {
         const text = files.get(path);
@@ -373,6 +401,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
     },
     stdinIsTTY: options.stdinIsTTY ?? false,
     stdoutIsTTY: options.stdoutIsTTY ?? false,
+    stdoutIsTerminal: () => stdoutTerminal,
+    parentPid: () => parentPid,
+    writeStdout: async (text) => {
+      written.push(text);
+      return ok(undefined);
+    },
     readStdin: async (maxBytes) => {
       // The same results as the real read: a terminal gives empty text, and an input over the limit is an error.
       if (options.stdinIsTTY === true) return ok('');

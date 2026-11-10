@@ -126,6 +126,11 @@ const planStart = async (
   answers: ProxyAnswers,
 ): Promise<CliResult<StartPlan>> => {
   const { coordinatorDir, stateDir } = layoutOf(home);
+  // The slot pane starts this program. A path that is not known gives no pane that works, and a made-up path starts another program.
+  const [programFile, ...programRest] = deps.programArgv;
+  if (programFile === undefined) {
+    return failure(`${program} does not know the path of its own program, so it cannot start the board pane`);
+  }
   const proxy = await chooseProxy(deps, config, sessionProxyWish(config), answers);
   if (!proxy.ok) return proxy;
   const { core, recipe } = config;
@@ -147,7 +152,9 @@ const planStart = async (
       projects: projects.value.folders,
       ...(resume.resumeId === null ? {} : { resumeId: resume.resumeId }),
     });
-    return launch.ok ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value })) : failure(launch.error);
+    return launch.ok
+      ? ok(startSteps({ id: core.node.id, home, coordinatorDir, launch: launch.value, program: [programFile, ...programRest] }))
+      : failure(launch.error);
   };
   const steps = stepsFor(proxy.value.baseUrl);
   if (!steps.ok) return steps;

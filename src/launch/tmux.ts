@@ -1,6 +1,6 @@
 import { err, ok, type Result } from '../core/result.js';
 import { toolNames } from '../core/tools.js';
-import { env, summonLimits, tmuxNames } from '../names.js';
+import { commands as programCommands, env, flags, flagText, itemCommands, summonLimits, tmuxNames } from '../names.js';
 
 export type TmuxArgs = readonly string[];
 
@@ -553,15 +553,27 @@ export const newWindowArgs = (id: string, name: string, cwd: string): TmuxArgs =
  * Each call names the session and never the server: other sessions keep their environment.
  * Every word goes through `call`, so a path or a value that ends in a semicolon stays one word.
  * Every window starts in the coordinator folder. The session option holds the home, the root of the config repo.
+ * The slot pane runs the follow view of the board: the words of `program`, then `item list --follow --home <home>`. They are
+ * separate words after the separator, so no shell reads them. The pane gets no keys, and a pane that ended is not started again.
  */
 export const startSteps = (input: {
   readonly id: string;
   readonly home: string;
   readonly coordinatorDir: string;
   readonly launch: readonly string[];
+  /** The node program and the path of the script (`Deps.programArgv`), at least one word. */
+  readonly program: readonly [string, ...(readonly string[])];
 }): readonly TmuxArgs[] => {
-  const { id, home, coordinatorDir, launch } = input;
+  const { id, home, coordinatorDir, launch, program } = input;
   const view = windowTarget(id, tmuxNames.windowView);
+  const board = [
+    ...program,
+    programCommands.item,
+    itemCommands.list,
+    flagText(flags.follow),
+    flagText(flags.home),
+    home,
+  ];
   return [
     chainedArgs([
       ['new-session', '-d', '-s', id, '-n', tmuxNames.windowView, '-c', coordinatorDir, '--', ...launch],
@@ -571,7 +583,7 @@ export const startSteps = (input: {
     call('set-environment', '-t', sessionTarget(id), env.session, id),
     call('set-option', '-p', '-t', coordinatorPane(id), tmuxNames.optionNode, id),
     call('set-option', '-t', windowTarget(id, ''), tmuxNames.optionHome, home),
-    call('split-window', '-d', '-h', '-t', view, '-c', coordinatorDir),
+    call('split-window', '-d', '-h', '-t', view, '-c', coordinatorDir, '--', ...board),
     call('set-option', '-p', '-t', `${view}.${RIGHT_PANE}`, tmuxNames.optionSlot, tmuxNames.slotBoard),
     newWindowArgs(id, tmuxNames.windowWorkers, coordinatorDir),
   ];

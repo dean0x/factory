@@ -274,6 +274,16 @@ factory worker resume alpha
 
 `factory worker stop alpha` ends the program of the pane and closes the pane. `factory worker resume alpha` starts a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen record belongs to that worker.
 
+The work items are on the local board. Place: the factory folder.
+
+```sh
+factory track add web --name "The web shop"
+factory item add --title "Fix the login page" --track web --field priority=P1
+factory item list
+```
+
+The command `item add` needs a `board` block in `factory.yaml`. The package holds a sample with that block, `examples/factory.board.yaml`, in the folder of the installed package. Copy the block into your `factory.yaml`. The sample makes the field `priority` required. No command needs python3, jq or glow. See [Use the local board](../README.md#use-the-local-board).
+
 ## 10. Dismiss a worker
 
 Dismiss a worker when its work is pushed. Place: the factory folder.
@@ -343,8 +353,8 @@ The command stops every worker and starts each one again with its session id. Ou
 
 ## 12. Known limits
 
-- **No board yet.** The right pane of the window `view` is a plain shell.
-- **Work items.** `factory status` shows `unknown` as the work item of each worker, and `no` as its idle state. So `factory dismiss --idle` lists nothing.
+- **The board pane.** The right pane of the window `view` runs `factory item list --follow`, so it shows the board. If that program ends, the pane stays as it is, and nothing starts it again.
+- **Work items.** `factory status` shows the id of the open item of a worker only when the factory has a `board` block that names a worker field. Without that block, it shows `unknown` as the work item of each worker, and `no` as its idle state. Then `factory dismiss --idle` lists nothing.
 - **Authority of the owner.** A message between sessions carries no authority of the owner. To give a worker the authority of the owner, type in its pane. Start the text with the owner prefix. The prefix is in `factory.local.yaml`.
 - **devflow.** Factory has no devflow setup yet. If you want devflow, install it as a normal Claude Code plugin.
 - **The installed commit.** No `npm ls` form shows the commit of an install from a package file. The command `npm ls --global @dean0x/factory` shows the version only. Every build prints `0.2.0` for `factory version`. Keep the tag and the full commit SHA of the hand-over, and give both in a problem report. The command `git ls-remote` shows the commit that a tag has now. It does not show the commit that you installed.

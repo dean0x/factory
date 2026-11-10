@@ -11,7 +11,7 @@ import { parseYamlText } from '../../src/config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../../src/config/schema.js';
 import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { setStateConfig, stateConfigValue, unsetStateConfig } from '../../src/core/git.js';
-import { commands, env, hookNames, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
+import { boardKeys, commands, env, hookNames, setupBlockNames, stateGuard, stateLock } from '../../src/names.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import type { Migration } from '../../src/migrate/runner.js';
@@ -20,7 +20,9 @@ import { guardHookText } from '../../src/state/guard.js';
 import { parseJsonText } from '../../src/state/load.js';
 import { STATE_SCHEMA_VERSION } from '../../src/state/schema.js';
 import { backup, restore, writeAll, type Written } from '../../src/upgrade/apply.js';
-import { isChange, planBlock } from '../../src/upgrade/plan.js';
+import { softwareQueueKey } from '../../src/recipes/software/words.js';
+import { layoutOf } from '../../src/state/layout.js';
+import { isChange, planBlock, planBoardQueueKey } from '../../src/upgrade/plan.js';
 import { writeBlockPlans } from '../../src/upgrade/render.js';
 import { finisher, type UpgradeFile, type UpgradeSpec } from '../../src/upgrade/spec.js';
 import { currentSpec, parseConfigTexts, runInit, runUpgrade } from '../helpers/package-registry.js';
@@ -170,7 +172,7 @@ const withBlock = (name: string, body: string): readonly BlockTemplate[] =>
 
 /** The blocks that the spec gives for every config, whatever its layer. */
 const fixedBlocks = (templates: readonly BlockTemplate[]): Pick<UpgradeSpec, 'blocksOf'> => ({
-  blocksOf: async () => ok({ templates, renames: [] }),
+  blocksOf: async () => ok({ templates, renames: [], queueKey: softwareQueueKey }),
 });
 
 const blocksSpec = (templates: readonly BlockTemplate[]): UpgradeSpec => ({ ...currentSpec, ...fixedBlocks(templates) });
@@ -921,6 +923,192 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
     expect(commits[0]).toContain('.gitignore');
     expect(commits[0]).toContain('node.json');
     expect(commits[1]).toBe(COMMIT);
+  });
+});
+
+describe('upgrade: the queue key of the board (TP-30, TP-100, TP-101)', () => {
+  const BOARD = `${HOME}/.factory/board.json`;
+  const BOARD_BACKUP = `${BACKUP}/.factory/board.json`;
+  const LOCK_FILE = `${HOME}/.factory/locks/${stateLock.name}${stateLock.lock.suffix}`;
+  const COMMIT = '-c commit.gpgsign=false commit -q -m chore: upgrade the state';
+  const NEW_WORKER_TEXT = blocksSpec(withBlock('worker', 'New worker text.'));
+  /** The text of one unicode escape, built so that no source line holds the escape itself. */
+  const ESCAPE = `${'\\'}u00e9`;
+
+  /** A board in the form of the writers: a queue under `key`, the items with the ids, and no track. */
+  const boardWith = (key: string, ids: readonly string[]): string =>
+    `${JSON.stringify({ [key]: [], items: ids.map((id) => ({ id, title: 'A title', status: 'open' })), tracks: [] }, null, 2)}\n`;
+
+  /** A board with a layout of its own: spaces, a number written as 1.50, an escaped letter, and the old key as a value and as a nested key. */
+  const handmade = (key: string): string =>
+    [
+      '{',
+      `   "${key}" :   [ {"id": "B-1", "release": true} ],`,
+      `  "items": [{"id": "B-1", "title": "caf${ESCAPE}", "weight": 1.50, "note": "\\"queue\\""}],`,
+      '  "tracks": [],',
+      '  "keep": {"queue": 1}',
+      '}',
+      '',
+    ].join('\n');
+
+  const HEAD_BLOB = 'feedface'.repeat(5);
+
+  /** A fake git whose last commit holds `headText` as board.json. */
+  const withHeadBoard =
+    (headText: string) =>
+    (inner: RunHandler): RunHandler =>
+    (call) => {
+      const command = withoutStateWords(call.args).slice(2).join(' ');
+      if (command === 'rev-parse -q --verify HEAD') return exited(0, 'c0ffee\n');
+      if (command === 'ls-tree -z -l HEAD -- board.json') {
+        const size = String(Buffer.byteLength(headText, 'utf8')).padStart(7, ' ');
+        return exited(0, `100644 blob ${HEAD_BLOB} ${size}\tboard.json\0`);
+      }
+      if (command === `cat-file blob ${HEAD_BLOB}`) return exited(0, headText);
+      return inner(call);
+    };
+
+  const stagesAndCommits = (git: readonly string[]): string[] => git.filter((command) => command.startsWith('add') || command.includes('commit'));
+
+  it('M5-1b TP-30 renames the old queue key and keeps the key order and every other byte', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(BOARD, handmade('queue'));
+    const output = success(await upgrade(deps));
+    expect(text(deps, BOARD)).toBe(handmade(softwareQueueKey));
+    expect(Object.keys(JSON.parse(text(deps, BOARD)) as object)).toEqual([softwareQueueKey, 'items', 'tracks', 'keep']);
+    expect(output.json).toMatchObject({ changed: true, boardQueueKey: 'rename', committed: true });
+    expect(text(deps, BOARD_BACKUP)).toBe(handmade('queue'));
+  });
+
+  it.each([false, true])('M5-1b TP-30 stops with exit 1 and names the file when the board has both keys (dry run: %s)', async (dryRun) => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(BOARD, `{ "queue": [], "${softwareQueueKey}": [], "items": [] }\n`);
+    const before = wholeState(deps);
+    const error = refusal(await upgrade(deps, currentSpec, { dryRun }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('board.json');
+    expect(error.hint).toContain('factory upgrade');
+    expect(wholeState(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+  });
+
+  it('M5-1b TP-30 names the rename in a dry run and writes nothing', async () => {
+    const { deps, gitSince } = await makeNode();
+    deps.files.set(BOARD, handmade('queue'));
+    const before = wholeState(deps);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output)).toContain(`.factory/board.json: rename the queue key "queue" to "${softwareQueueKey}". Your other text stays.`);
+    expect(output.json).toMatchObject({ changed: true, dryRun: true, boardQueueKey: 'rename', committed: false });
+    expect(wholeState(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+  });
+
+  it('M5-1b TP-30 has nothing to upgrade for a board with the key of the recipe, and for a factory with no board file', async () => {
+    const { deps } = await makeNode();
+    const current = success(await upgrade(deps));
+    expect(current.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(current.json).toMatchObject({ changed: false, boardQueueKey: 'current' });
+    deps.files.delete(BOARD);
+    const none = success(await upgrade(deps));
+    expect(none.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+    expect(none.json).toMatchObject({ changed: false, boardQueueKey: 'current' });
+    expect(deps.files.has(BOARD)).toBe(false);
+  });
+
+  it('M5-1b TP-30 reads nothing and plans no rename when the key of the recipe is the default of the core', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(BOARD, 'not json{');
+    const plan = await planBoardQueueKey(deps, layoutOf(HOME), boardKeys.defaultQueue);
+    expect(plan).toEqual({ ok: true, value: { action: 'current', filePath: BOARD, queueKey: boardKeys.defaultQueue, text: null } });
+  });
+
+  it.each([
+    ['is not JSON', (deps: FakeDeps) => deps.files.set(BOARD, 'not json{')],
+    ['is not a JSON object', (deps: FakeDeps) => deps.files.set(BOARD, '[1, 2]\n')],
+    ['is not UTF-8', (deps: FakeDeps) => deps.invalidUtf8.add(BOARD)],
+  ])('M5-1b TP-30 stops with exit 1 before any change when the board %s', async (_name, spoil) => {
+    const { deps, gitSince } = await makeNode();
+    spoil(deps);
+    const before = wholeState(deps);
+    const error = refusal(await upgrade(deps, NEW_WORKER_TEXT));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('board.json');
+    expect(wholeState(deps)).toEqual(before);
+    expect(gitWrites(gitSince())).toEqual([]);
+  });
+
+  it('M5-1b TP-100 renames the key in the one commit of the other upgrade files, and does not wait for its own lock', async () => {
+    const { deps, gitSince } = await makeNode({ run: withHeadBoard(boardWith('queue', ['B-1', 'B-2'])) });
+    deps.files.set(BOARD, boardWith('queue', ['B-1', 'B-2']));
+    const slept = deps.sleeps.length;
+    const output = success(await upgrade(deps, NEW_WORKER_TEXT));
+    expect(output.json).toMatchObject({ committed: true, boardQueueKey: 'rename' });
+    expect(text(deps, BOARD)).toBe(boardWith(softwareQueueKey, ['B-1', 'B-2']));
+    expect(text(deps, WORKER)).toContain('New worker text.');
+    const [stage, ...commits] = stagesAndCommits(gitSince());
+    expect(stage).toContain('board.json');
+    expect(stage).toContain('roles/worker.md');
+    expect(commits).toEqual([COMMIT]);
+    expect(deps.sleeps.slice(slept)).toEqual([]);
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('M5-1b TP-100 builds the new board text from a read inside the state lock', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(BOARD, boardWith('queue', ['B-1']));
+    const lockHeld: boolean[] = [];
+    const watching: FakeDeps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        readTextLimited: async (path, maxBytes, decode) => {
+          const read = await deps.fs.readTextLimited(path, maxBytes, decode);
+          if (path === BOARD) {
+            lockHeld.push(deps.files.has(LOCK_FILE));
+            // A person adds an item between the read of the plan and the lock.
+            if (lockHeld.length === 1) deps.files.set(BOARD, boardWith('queue', ['B-1', 'B-2']));
+          }
+          return read;
+        },
+      },
+    };
+    success(await upgrade(watching));
+    expect(lockHeld).toEqual([false, true]);
+    expect(text(deps, BOARD)).toBe(boardWith(softwareQueueKey, ['B-1', 'B-2']));
+  });
+
+  it('M5-1b TP-100 puts the old board back when the commit fails, and keeps it in the backup', async () => {
+    const { deps } = await makeNode({ run: (inner) => (call) => (call.args.includes('commit') ? exited(1) : inner(call)) });
+    deps.files.set(BOARD, handmade('queue'));
+    const error = refusal(await upgrade(deps));
+    expect(error.message).toContain('cannot commit the state files');
+    expect(text(deps, BOARD)).toBe(handmade('queue'));
+    expect(text(deps, BOARD_BACKUP)).toBe(handmade('queue'));
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('M5-1b TP-101 stops with exit 4 and changes no file when the new board text drops an item id that the last commit holds', async () => {
+    const { deps, gitSince } = await makeNode({ run: withHeadBoard(boardWith('queue', ['B-1', 'B-2'])) });
+    deps.files.set(BOARD, boardWith('queue', ['B-1']));
+    const before = wholeState(deps);
+    const error = refusal(await upgrade(deps, NEW_WORKER_TEXT));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toBe('this change removes the item id B-2 from board.json');
+    expect(error.hint).toBe('Mark the item closed, never remove it, then run "factory upgrade" again.');
+    expect(wholeState(deps)).toEqual(before);
+    expect(stagesAndCommits(gitSince())).toEqual([]);
+    expect(deps.files.has(LOCK_FILE)).toBe(false);
+  });
+
+  it('M5-1b TP-101 stops with exit 1 when the board of the last commit cannot be read, and changes no file', async () => {
+    const { deps, gitSince } = await makeNode({ run: withHeadBoard('not json{') });
+    deps.files.set(BOARD, boardWith('queue', ['B-1']));
+    const before = wholeState(deps);
+    const error = refusal(await upgrade(deps));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toBe('cannot read board.json of the last commit: the text is not valid JSON');
+    expect(wholeState(deps)).toEqual(before);
+    expect(stagesAndCommits(gitSince())).toEqual([]);
   });
 });
 

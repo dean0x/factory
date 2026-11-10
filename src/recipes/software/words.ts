@@ -22,6 +22,9 @@ export const softwareWordList = [
 export const softwareProjectKeys = { mergeMethod: 'merge_method' } as const;
 export const mergeMethods = ['squash', 'merge', 'rebase'] as const;
 
+/** The key of the queue in `board.json`: the merge word, because the queue holds the merge order. */
+export const softwareQueueKey = 'merge';
+
 /**
  * The glossary of the software recipe. `docs/glossary.md` has the same text in the part "Words of the software recipe",
  * and a unit test keeps them equal. The words that names.ts owns are placeholders.

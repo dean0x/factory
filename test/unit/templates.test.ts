@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
 import { effectiveModes, recordDelegation } from '../../src/core/owner-record.js';
 import {
+  commandLines,
   commandText,
   commands,
   coordinatorResumeFile,
@@ -10,12 +11,14 @@ import {
   files,
   flags,
   flagText,
+  program,
   selfCommands,
   templateValues,
   values,
   workerCommands,
 } from '../../src/names.js';
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
+import { softwareStages } from '../../src/recipes/software/board.js';
 import { blockInputOf, blockTemplatesFor, fileTemplates, roleBlockRenames } from '../../src/templates/index.js';
 import { coordinatorValuesFor, fillTemplate, workerValuesFor } from '../../src/templates/fill.js';
 import type { BlockTemplate } from '../../src/templates/types.js';
@@ -137,7 +140,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 75],
+    ['coordinator', 40, 85],
     ['manager', 20, 40],
     ['safety', 12, 25],
     ['worker', 40, 59],
@@ -497,6 +500,50 @@ describe('the coordinator text: the board (TP-54)', () => {
   it('tells the coordinator to mark an item closed and never to remove it from the board', () => {
     const text = layer1Blocks.find((template) => template.name === 'coordinator')?.body ?? '';
     expect(text).toContain('the list of all open work. Mark an item closed. Never remove an item from it.');
+  });
+});
+
+describe('the coordinator text: the board commands and the stages (M5-1b TP-50)', () => {
+  const coordinator = (): string => layer1Blocks.find((template) => template.name === 'coordinator')?.body ?? '';
+  /** The part of the coordinator text under the heading `## Board`. */
+  const boardPart = (): string => coordinator().split('\n## ').find((part) => part.startsWith('Board\n')) ?? '';
+  const stateFile = (file: string): string => `../${dirs.state}/${file}`;
+  const itemMove = `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`;
+
+  it('M5-1b TP-50 has a Board section', () => {
+    expect(boardPart()).not.toBe('');
+  });
+
+  it.each([commands.item, commands.track, commands.request, commands.queue])(
+    'M5-1b TP-50 names the %s command next to the other board commands',
+    (command) => {
+      expect(boardPart()).toContain(`\`${commandText(command)}\``);
+    },
+  );
+
+  it('M5-1b TP-50 says that board files change only through the commands, and that nobody edits them by hand', () => {
+    const text = boardPart();
+    expect(text).toContain(`Board files change only through the ${program} commands:`);
+    expect(text).toContain(`Never edit \`${stateFile(files.board)}\` or \`${stateFile(files.waiting)}\` by hand.`);
+  });
+
+  it('M5-1b TP-50 says that the coordinator moves the stage at each milestone event, with the item move command', () => {
+    expect(boardPart()).toContain(`The coordinator moves the stage at each milestone event, with \`${itemMove}\`.`);
+  });
+
+  it('M5-1b TP-50 says that a stage is never an approval, and that only the owner approves', () => {
+    expect(boardPart()).toContain('A stage is never an approval. Only the owner approves, at an approval point.');
+  });
+
+  it('M5-1b TP-50 lists the stages of the recipe in order, and names the two flows that set the last two stages', () => {
+    const stages = softwareStages.map((stage) => `\`${stage}\``).join(', ');
+    expect(boardPart()).toContain(`The stages of an item, in order, are ${stages}.`);
+    expect(boardPart()).toContain('The command refuses `merged` and `released`. Only the merge flow and the release flow set them.');
+  });
+
+  it('M5-1b TP-50 has no decide text and no decision text in the Board section', () => {
+    expect(boardPart().length).toBeGreaterThan(0);
+    expect(boardPart()).not.toMatch(/decid|decision/i);
   });
 });
 

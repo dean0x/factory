@@ -1,5 +1,5 @@
 import { renderConfig } from '../../src/config/render.js';
-import { splitConfigValue, type FactoryConfig } from '../../src/config/schema.js';
+import { splitConfigValue, type BoardConfig, type FactoryConfig } from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
 import { files } from '../../src/names.js';
 import { ownerModes, recipes } from '../../src/recipes/index.js';
@@ -46,6 +46,26 @@ export const sampleConfig = (): FactoryConfig => ({
   },
   entry: recipes[0],
 });
+
+/** The `board` block of a setup that declares its states and its owner fields. The sample config has no board block. */
+export const sampleBoard = (): BoardConfig => ({
+  states: ['open', 'doing', 'blocked', 'done'],
+  in_progress: 'doing',
+  closed: 'done',
+  worker_field: 'lane',
+  fields: [
+    { name: 'priority', target: 'item', kind: 'values', values: ['P0', 'P1', 'P2'], required: true },
+    { name: 'type', target: 'item', kind: 'values', values: ['bug', 'feature', 'chore'], required: false },
+    { name: 'lane', target: 'item', kind: 'token', required: false },
+    { name: 'release', target: 'row', kind: 'flag', required: false },
+  ],
+});
+
+/** The sample config with the sample `board` block. */
+export const sampleConfigWithBoard = (board: BoardConfig = sampleBoard()): FactoryConfig => {
+  const sample = sampleConfig();
+  return { ...sample, core: { ...sample.core, board } };
+};
 
 /**
  * The document as a person writes it when both config files are in one mapping: the keys of the shared file and of

@@ -38,7 +38,8 @@ const fakeTmux = (fixture?: TmuxFixture) => {
     return listed.value;
   };
   const startSession = (id: string): void => {
-    for (const step of startSteps({ id, home: '/w/node', coordinatorDir: '/w/node/coordinator', launch: ['claude'] })) {
+    const program = ['/opt/bin/node', '/opt/lib/factory.js'] as const;
+    for (const step of startSteps({ id, home: '/w/node', coordinatorDir: '/w/node/coordinator', launch: ['claude'], program })) {
       expect(run(step).exitCode).toBe(0);
     }
   };

@@ -21,6 +21,7 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { setTimeout as wait } from 'node:timers/promises';
+import { isatty } from 'node:tty';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
 import { hookNames } from '../names.js';
@@ -68,8 +69,8 @@ const guard = async <T>(action: string, path: string, work: () => Promise<T>): P
 const DEFAULT_FILE_MODE = 0o666;
 const TEMPORARY_SUFFIX_BYTES = 8;
 
-/** The text of the file, or null when the file holds more than `maxBytes`. At most `maxBytes` plus one byte is read. */
-const readBounded = async (path: string, maxBytes: number): Promise<string | null> => {
+/** The bytes of the file, or null when the file holds more than `maxBytes`. At most `maxBytes` plus one byte is read. */
+const readBounded = async (path: string, maxBytes: number): Promise<Buffer | null> => {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of createReadStream(path, { start: 0, end: maxBytes })) {
@@ -77,7 +78,19 @@ const readBounded = async (path: string, maxBytes: number): Promise<string | nul
     chunks.push(bytes);
     size += bytes.length;
   }
-  return size > maxBytes ? null : Buffer.concat(chunks).toString('utf8');
+  return size > maxBytes ? null : Buffer.concat(chunks);
+};
+
+/**
+ * The text of the bytes, or a failure when a byte sequence is not UTF-8. A byte order mark stays in the text (`ignoreBOM`), so the
+ * text is the same one that the lenient decode gives for every input that is UTF-8.
+ */
+const decodeStrict = (path: string, bytes: Buffer): CliResult<string> => {
+  try {
+    return ok(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes));
+  } catch {
+    return failure(`cannot read ${path}: the bytes are not valid UTF-8`);
+  }
 };
 
 /**
@@ -282,10 +295,11 @@ const createExclusive = async (path: string, text: string, mode: number): Promis
 
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
-  readTextLimited: async (path, maxBytes) => {
-    const text = await guard('read', path, () => readBounded(path, maxBytes));
-    if (!text.ok) return text;
-    return text.value === null ? failure(`cannot read ${path}: larger than ${maxBytes} bytes`) : ok(text.value);
+  readTextLimited: async (path, maxBytes, decode = 'lenient') => {
+    const bytes = await guard('read', path, () => readBounded(path, maxBytes));
+    if (!bytes.ok) return bytes;
+    if (bytes.value === null) return failure(`cannot read ${path}: larger than ${maxBytes} bytes`);
+    return decode === 'fatal' ? decodeStrict(path, bytes.value) : ok(bytes.value.toString('utf8'));
   },
   digestFile: (path, textLimit, maxBytes) => guard('read', path, () => digestBytes(path, textLimit, maxBytes)),
   writeText: (path, text) => guard('write', path, () => writeFile(path, text, 'utf8')),
@@ -517,6 +531,30 @@ export const programArgvOf = (execPath: string, script: string | undefined): rea
   }
 };
 
+/** The descriptor of standard output. The check of the terminal asks the system about this descriptor at each call. */
+const STDOUT_FD = 1;
+
+/**
+ * Write the text to stdout and wait for the write. A failed write gives the callback an error, and then the stream emits it too: a
+ * stream with no listener for that event ends the process. So a listener stays until the event has passed (the event comes in the
+ * same turn as the callback, before the next macrotask).
+ */
+const writeStdoutText = (text: string): Promise<CliResult<void>> =>
+  new Promise((resolve) => {
+    const out = process.stdout;
+    const failed = (error: Error): void => resolve(failure(`cannot write to the output: ${errorCode(error)}`));
+    out.once('error', failed);
+    out.write(text, (error) => {
+      if (error === null || error === undefined) {
+        out.off('error', failed);
+        resolve(ok(undefined));
+        return;
+      }
+      failed(error);
+      setImmediate(() => out.off('error', failed));
+    });
+  });
+
 export const createNodeDeps = (): Deps => ({
   fs: nodeFs,
   run: (command, args, options) =>
@@ -533,6 +571,9 @@ export const createNodeDeps = (): Deps => ({
     }),
   stdinIsTTY: stdinIsTerminal(),
   stdoutIsTTY: process.stdout.isTTY === true,
+  stdoutIsTerminal: () => isatty(STDOUT_FD),
+  parentPid: () => process.ppid,
+  writeStdout: writeStdoutText,
   readStdin,
   prompt: (question) =>
     new Promise((resolve) => {

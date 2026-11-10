@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { keys, values } from '../names.js';
+import { boardKeys, keys, values } from '../names.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
 /** The mode of an approval point: `owner` or `delegated`. */
@@ -67,6 +67,19 @@ export interface RecipeRoles {
 }
 
 /**
+ * How a recipe sets up the board of items. The core holds no word of a recipe: it reads these values.
+ * - `queueKey` is the key of the queue in `board.json`. Without it the key is the default of the core (`queueKeyOf`).
+ * - `stages` lists the stages of an item, in order. A new item gets the first one. Without it the recipe has no stages.
+ * - `flowOnly` maps a stage that only a flow sets to the name of that flow. Each key is a listed stage.
+ *   No board command sets such a stage.
+ */
+export interface RecipeBoard {
+  readonly queueKey?: string | undefined;
+  readonly stages?: readonly string[] | undefined;
+  readonly flowOnly?: Readonly<Record<string, string>> | undefined;
+}
+
+/**
  * What the core needs from a recipe. The core reads no other file of a recipe: it gets the entry from the registry.
  * - `schema` parses the `recipe` block of the shared file.
  * - `approvalPoints` lists the steps that need an approval.
@@ -77,6 +90,7 @@ export interface RecipeRoles {
  * - `projectDefaults` gives the value of each of those keys for a new project.
  * - `initProjectKeys` names the keys of the core that `init` writes into a new project. A project of the recipe holds no other.
  * - `roles` sets the role of each layer.
+ * - `board` sets the queue key and the stages of the board.
  */
 export interface RecipeEntry {
   readonly id: string;
@@ -89,7 +103,11 @@ export interface RecipeEntry {
   readonly projectDefaults: Readonly<Record<string, string>>;
   readonly initProjectKeys: readonly InitProjectKey[];
   readonly roles: RecipeRoles;
+  readonly board: RecipeBoard;
 }
+
+/** The key of the queue in `board.json`: the key of the recipe, or the default of the core when the recipe gives none. */
+export const queueKeyOf = (recipe: RecipeEntry): string => recipe.board.queueKey ?? boardKeys.defaultQueue;
 
 /** The recipes of a package, in the order of their ids. The first one is the default. */
 export type RecipeRegistry = readonly [RecipeEntry, ...RecipeEntry[]];

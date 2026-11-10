@@ -34,7 +34,7 @@ import {
   schemaIds,
   values,
 } from '../names.js';
-import { ownerModes, type ApprovalModes, type ApprovalPoint, type RecipeRegistry } from '../recipes/index.js';
+import { ownerModes, queueKeyOf, type ApprovalModes, type ApprovalPoint, type RecipeRegistry } from '../recipes/index.js';
 import { parseProxyUrl, proxyLabel } from '../safety/proxy.js';
 import {
   guardFolderLabel,
@@ -336,7 +336,7 @@ const localChangeOf = async (
 const stateFilesFor = (config: FactoryConfig, rendered: SetupTexts, points: readonly ApprovalPoint[]): CliResult<readonly StateFile[]> => {
   const templates = blockTemplatesFor(blockInputOf(config, rendered, ownerModes(points)));
   const worker = workerTextOf(templates);
-  return worker.ok ? stateFilesOf(templates, worker.value) : worker;
+  return worker.ok ? stateFilesOf(templates, worker.value, queueKeyOf(config.entry)) : worker;
 };
 
 const markerTextOf = (stateFiles: readonly StateFile[]): CliResult<string> => {

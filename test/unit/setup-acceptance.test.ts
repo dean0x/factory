@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { visibleText } from '../../src/cli/output.js';
 import {
   acceptanceState,
   acceptPromptText,
@@ -12,7 +13,6 @@ import {
   manifestOf,
   readAcceptances,
   recordSetupAcceptance,
-  visibleText,
   type AcceptanceInput,
   type Collected,
   type ManifestEntry,
@@ -329,12 +329,12 @@ describe('setup acceptance: the manifest and its hash (TP-171)', () => {
 });
 
 describe('setup acceptance: the visible text', () => {
-  it('shows each control character apart from the newline and the tab as an escape', () => {
+  it('M5-1b TP-92 shows each control character apart from the newline and the tab as an escape', () => {
     expect(visibleText(`a${ESC}[2Jb${at(0)}c${at(13)}d${at(0x7f)}e${NEXT_LINE}f`)).toBe('a\\x1b[2Jb\\x00c\\x0dd\\x7fe\\x85f');
     expect(visibleText('line\n\tindent')).toBe('line\n\tindent');
   });
 
-  it('shows the characters that only format text as an escape', () => {
+  it('M5-1b TP-92 shows the characters that only format text as an escape', () => {
     const text = `a${RIGHT_TO_LEFT_OVERRIDE}b${ZERO_WIDTH_SPACE}c${BYTE_ORDER_MARK}d${LINE_SEPARATOR}e`;
     expect(visibleText(text)).toBe('a\\u{202e}b\\u{200b}c\\u{feff}d\\u{2028}e');
   });
@@ -396,7 +396,7 @@ describe('setup acceptance: the accept prompt (TP-161, TP-162)', () => {
     expect(text).toContain(`Hash of the files that you accepted before: ${manifestHash(accepted)}`);
   });
 
-  it('shows a control character of a file text and of a file name as an escape, and no raw one', () => {
+  it('M5-1b TP-92 shows a control character of a file text and of a file name as an escape, and no raw one', () => {
     const current = collectedOf({ [`odd${ESC}.md`]: `before${ESC}[31mred${at(7)}${RIGHT_TO_LEFT_OVERRIDE}after` });
     const text = acceptPromptText({ root: ROOT, node: NODE, current, accepted: null });
     expect(text).toContain('before\\x1b[31mred\\x07\\u{202e}after');

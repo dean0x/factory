@@ -35,7 +35,7 @@ import {
 } from '../core/setup-acceptance.js';
 import { describeIssues } from '../core/zod.js';
 import { refuse } from '../migrate/inspect.js';
-import type { RecipeRegistry } from '../recipes/index.js';
+import { queueKeyOf, type RecipeRegistry } from '../recipes/index.js';
 import {
   commands,
   commandText,
@@ -601,7 +601,7 @@ const planReceived = async (deps: Deps, input: ReceivedInput): Promise<CliResult
   const templates = blockTemplatesFor(blockInputOf(forBlocks.value, input.rendered, modes));
   const blocks = await blockTexts(deps, root.layout.claudeMd, templates);
   if (!blocks.ok) return blocks;
-  const stateFiles = stateFilesOf(templates, blocks.value.workerText);
+  const stateFiles = stateFilesOf(templates, blocks.value.workerText, queueKeyOf(forBlocks.value.entry));
   if (!stateFiles.ok) return stateFiles;
   const config = configOf(root.shared, owner, approvals);
   if (!config.ok) return config;

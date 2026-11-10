@@ -1,3 +1,9 @@
+import { softwareBoard, softwareStages } from '../board.js';
+
+const inCode = (words: readonly string[]): string[] => words.map((word) => `\`${word}\``);
+
+const flowOnly = Object.entries(softwareBoard.flowOnly ?? {});
+
 /**
  * The lines of the coordinator block. `approval` holds the approval point lines of the recipe, one for each point.
  * The block lives in the coordinator folder, so every path in it is written from that folder.
@@ -59,6 +65,15 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   '- `{{ordersDir}}`: the tasks that the {{owner}} wrote. Copy a task into the folder of the {{worker}} before you give it.',
   '',
   'Read the state files at the start of each session. Verify them against the live state, because they can be out of date.',
+  '',
+  '## Board',
+  '',
+  '- Board files change only through the {{program}} commands: `{{itemCommand}}`, `{{trackCommand}}`, `{{requestCommand}}` and `{{queueCommand}}`. Never edit `{{boardFile}}` or `{{waitingFile}}` by hand.',
+  '- `{{itemCommand}}` adds, changes, moves and closes an item, and lists items. `{{trackCommand}}` adds a track and lists tracks. A track groups items.',
+  '- `{{requestCommand}}` puts a question for the {{owner}} in `{{waitingFile}}`. `{{queueCommand}}` sets the order of the finished work that waits for an approval point.',
+  `- The stages of an item, in order, are ${inCode(softwareStages).join(', ')}. The {{coordinator}} moves the stage at each milestone event, with \`{{itemMoveCommand}}\`.`,
+  `- The command refuses ${inCode(flowOnly.map(([stage]) => stage)).join(' and ')}. Only ${flowOnly.map(([, flow]) => `the ${flow}`).join(' and ')} set them.`,
+  '- A stage shows where the work is. A stage is never an approval. Only the {{owner}} approves, at an approval point.',
   '',
   '## Start of a session',
   '',

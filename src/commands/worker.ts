@@ -1,4 +1,5 @@
 import { join, relative, resolve } from 'node:path';
+import { boardWorkItems } from '../board/work-items.js';
 import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import type { CommandOutput, OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
@@ -717,7 +718,7 @@ export const runWorker = async (
       return runWatch(deps, options, args, registry);
     case workerCommands.list:
       return args.length === 0
-        ? runWorkerList(deps, { home: options.home }, registry)
+        ? runWorkerList(deps, { home: options.home }, registry, boardWorkItems(registry))
         : needsUsage(`${workerCommands.list} takes no argument`);
     default:
       return needsUsage(`unknown subcommand ${JSON.stringify(subcommand)}. The subcommands are: ${SUBCOMMANDS}`);

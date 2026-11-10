@@ -18,7 +18,7 @@ import type { Migration } from '../migrate/runner.js';
 import { stateMigrations } from '../migrate/state.js';
 import { jsonText } from '../state/files.js';
 import { STATE_SPEC, parseJsonText } from '../state/load.js';
-import type { ApprovalModes, RecipeRegistry } from '../recipes/index.js';
+import { queueKeyOf, type ApprovalModes, type RecipeRegistry } from '../recipes/index.js';
 import { nodeStateSchema } from '../state/schema.js';
 import { blockInputOf, blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
 import type { BlockTemplate, SetupTexts } from '../templates/types.js';
@@ -32,11 +32,13 @@ export interface UpgradeFile {
   finish(raw: unknown): CliResult<string>;
 }
 
-/** The managed blocks of one node. */
+/** The managed blocks of one node, and the key of the queue in its board file: the recipe of the config gives both. */
 export interface BlockSet {
   readonly templates: readonly BlockTemplate[];
   /** Role blocks that the node may hold under the name of another layer. Each one is renamed when found. */
   readonly renames: readonly BlockRename[];
+  /** The key of the queue in `board.json` (`queueKeyOf`). */
+  readonly queueKey: string;
 }
 
 export interface UpgradeSpec {
@@ -81,7 +83,11 @@ const blocksOfNode =
     const parsed = parseConfig(shared, local, registry);
     if (!parsed.success) return failure(describeIssues(parsed.error));
     const input = blockInputOf(parsed.data, setup, await modesOf(parsed.data));
-    return ok({ templates: blockTemplatesFor(input), renames: roleBlockRenames(parsed.data.entry, input.layer) });
+    return ok({
+      templates: blockTemplatesFor(input),
+      renames: roleBlockRenames(parsed.data.entry, input.layer),
+      queueKey: queueKeyOf(parsed.data.entry),
+    });
   };
 
 /** A migrated value holds the keys of both files. The shared file takes its part of them. */

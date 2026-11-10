@@ -1,6 +1,7 @@
 import { chmod, lstat, mkdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { boardWarnPercent, files, maxFileBytes } from '../../src/names.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { makeSandbox, removeOpenSandboxes, writeFakeAgent, type Sandbox } from './harness.js';
 
@@ -82,9 +83,25 @@ describe('factory doctor (built binary)', () => {
       expect.arrayContaining(['root', 'temp-folder', 'tracker', 'children']),
     );
     expect(document.checks.map((check) => check.id)).not.toContain('home');
-    for (const id of ['root', 'temp-folder', 'tracker', 'children']) {
+    for (const id of ['root', 'temp-folder', 'tracker', 'children', 'board-size']) {
       expect(document.checks.find((check) => check.id === id)?.level).toBe('ok');
     }
+  });
+
+  it('M5-1b TP-48 warns, and still exits 0, when a board file reaches 80 percent of the read cap, and names the file', async () => {
+    await initNode();
+    const size = Math.ceil((maxFileBytes * boardWarnPercent) / 100);
+    await writeFile(join(box.node, '.factory', files.waiting), 'x'.repeat(size));
+    const result = await box.run(['doctor', '--home', box.node]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toMatch(new RegExp(`board-size\\s+.*${files.waiting} is ${size} bytes \\(80 percent of the cap\\)`));
+    const json = JSON.parse((await box.run(['doctor', '--home', box.node, '--json'])).stdout) as {
+      checks: { id: string; level: string; text: string }[];
+    };
+    const check = json.checks.find((entry) => entry.id === 'board-size');
+    expect(check?.level).toBe('warn');
+    expect(check?.text).not.toContain(files.board);
+    expect(check?.text).not.toContain(files.decisionLog);
   });
 
   it('warns about an edited block and still exits 0', async () => {

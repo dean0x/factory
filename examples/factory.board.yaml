@@ -1,0 +1,63 @@
+# factory.board.yaml: a sample factory.yaml with a board block.
+# Copy the board block into the factory.yaml of your own factory. The other keys show where the block goes.
+schema: 2
+
+node:
+  id: demo    # also the name of the tmux session
+  layer: 1    # the layer sets the role: layer 1 is the coordinator of the workers
+
+session:
+  permission_mode: auto    # the only accepted value
+  agent: claude    # the only accepted value
+  effort: high
+  model: default
+
+limits:
+  memory_free_min_pct: 20
+  disk_free_min_gb: 20
+  load_max: cpu_count
+  context_prepare_pct: 30
+  context_max_pct: 40
+  idle_after: 2h    # from 1m to 24h: a worker with no activity for this time may be idle
+
+tracker:
+  kind: local    # the items and the decisions stay in the state folder
+
+# The board block says what an item and a queue row can hold. Every key is optional.
+board:
+  states: [open, doing, blocked, done]
+  in_progress: doing    # a declared state
+  closed: done    # a declared state
+  worker_field: worker    # a declared field of an item
+  fields:
+    # A field with the target item belongs to an item. A field with the target row belongs to a queue row.
+    - name: priority
+      target: item
+      kind: values
+      values: [P0, P1, P2]
+      required: true
+    - name: type
+      target: item
+      kind: values
+      values: [bug, feature, chore]
+      required: false
+    - name: worker
+      target: item
+      kind: token
+      required: false
+    - name: release
+      target: row
+      kind: flag
+      required: false
+
+recipe:
+  id: software
+  variant: plain    # the default setup for every project
+  # Each project path is relative to this folder.
+  projects:
+    - id: web
+      url: "https://github.com/acme/web.git"
+      path: "web"
+      default_branch: "main"
+      merge_method: squash
+      gate: { checks: [] }

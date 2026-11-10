@@ -1,4 +1,5 @@
 import { failure, type CliResult } from '../cli/errors.js';
+import { displayLine } from '../cli/output.js';
 import { durationMinutes } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
@@ -97,7 +98,9 @@ export const readStatus = async (deps: Deps, request: StatusRequest): Promise<Cl
     idleAfterMinutes,
     limits: config.core.limits,
   });
-  const invalid = records.value.invalid.map((item) => `cannot use the folder ${item.name} of the ${roles.worker}s: ${item.reason}`);
+  const invalid = records.value.invalid.map(
+    (item) => `cannot use the folder ${displayLine(item.name)} of the ${roles.worker}s: ${item.reason}`,
+  );
   return ok({
     entries: built.entries,
     invalid: records.value.invalid,
