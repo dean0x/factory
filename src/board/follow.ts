@@ -70,13 +70,20 @@ export const followBoard = async (deps: Deps, input: FollowInput): Promise<CliRe
   const parent = deps.parentPid();
   let stopped = false;
   let wake: () => void = () => undefined;
-  const woken = new Promise<void>((resolve) => {
-    wake = resolve;
-  });
   const onSignal = (): void => {
     stopped = true;
     wake();
   };
+
+  /**
+   * One wait of one tick. The poll sleep or a signal settles it, whichever comes first. Each tick makes its own promise, so no
+   * promise gains a reaction at each tick and the memory of a long session does not grow.
+   */
+  const tickWait = (): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      wake = resolve;
+      deps.sleep(followPollMs).then(resolve, reject);
+    });
 
   const readerGone = (): boolean => deps.parentPid() !== parent || !deps.stdoutIsTerminal();
   const ending = (): boolean => stopped || readerGone();
@@ -95,7 +102,7 @@ export const followBoard = async (deps: Deps, input: FollowInput): Promise<CliRe
     if (!first.ok && first.error.kind === 'usage') return first;
     if (!(await show(first))) return ok(undefined);
     while (!ending()) {
-      await Promise.race([deps.sleep(followPollMs), woken]);
+      await tickWait();
       if (ending()) break;
       if (!(await deps.writeStdout(READER_CHECK)).ok) break;
       const now = await signatureOf(deps, boardPath);

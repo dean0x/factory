@@ -435,6 +435,25 @@ describe('item list --follow', () => {
       expect(run.deps.sleeps).toEqual([followPollMs, followPollMs, followPollMs, followPollMs]);
     });
 
+    it('M5-1b TP-65 keeps no promise that gains one more reaction at each tick, over 1000 ticks that end on a signal', async () => {
+      const repo = await boardNode({ board: BOARD });
+      // A promise that the loop waits on at every tick keeps one reaction for each tick, and the memory grows for the whole session.
+      const reactions = new Map<object, number>();
+      const original = Promise.prototype.then;
+      Promise.prototype.then = function (this: Promise<unknown>, ...args: Parameters<typeof original>) {
+        reactions.set(this, (reactions.get(this) ?? 0) + 1);
+        return original.apply(this, args);
+      } as typeof original;
+      const run = await follow(repo, { afterWait: endAt(repo, 1000) }).finally(() => {
+        Promise.prototype.then = original;
+      });
+      expect(run.result.ok).toBe(true);
+      expect(run.deps.sleeps).toHaveLength(1000);
+      expect(repo.deps.signals.listenerCount('SIGTERM')).toBe(0);
+      const most = [...reactions.values()].reduce((largest, count) => Math.max(largest, count), 0);
+      expect(most).toBeLessThanOrEqual(4);
+    });
+
     it('M5-1b TP-65 reads the status of the file at each tick, and rereads it only after a change of the time or the size', async () => {
       const repo = await boardNode({ board: BOARD });
       const run = await follow(repo, {
