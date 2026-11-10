@@ -5,7 +5,7 @@ import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import type { Deps } from './deps.js';
 import { entryOfHome, findHomeInIndex, homeHoldingFolder, indexPathOf, readHomeIndex } from './home-index.js';
-import { realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
+import { comparable, realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
 import { ok, type Err, type Result } from './result.js';
 
 const MAX_WALK_LEVELS = 64;
@@ -219,6 +219,32 @@ const rootProblemOf = async (deps: Deps, home: string, readNodeId: NodeIdReader)
   return markerProblemOf(deps, home);
 };
 
+/** True when the two paths name one folder: the same real path, or the same path when a real path is not known. */
+const sameFolder = async (deps: Deps, first: string, second: string): Promise<boolean> => {
+  const [a, b] = await Promise.all([realPathOf(deps, first), realPathOf(deps, second)]);
+  return comparable(deps, a.ok ? a.value : first) === comparable(deps, b.ok ? b.value : second);
+};
+
+/**
+ * The home that FACTORY_HOME names. A session of a node has the variable, and a command in it acts on that node. When the
+ * current folder is inside another factory folder, for example a node that a person runs inside the session of a parent node,
+ * the command stops: it does not act on a node that the person did not mean. In the folder of Claude Code the walk does not
+ * run, so there is nothing to compare.
+ */
+const envHome = async (deps: Deps, home: string): Promise<CliResult<{ readonly home: string; readonly source: HomeSource }>> => {
+  const source: HomeSource = home === resolve(deps.cwd) ? 'cwd' : 'env';
+  if (!requireOutsideUserClaudeFolder(deps, deps.cwd, commands.doctor).ok) return ok({ home, source });
+  const found = await findNearestConfig(deps, deps.cwd);
+  if (!found.ok) return found;
+  if (found.value === null) return ok({ home, source });
+  const nearest = dirname(found.value);
+  if (await sameFolder(deps, home, nearest)) return ok({ home, source });
+  return failure(
+    `${env.home} names the ${places.folder} ${home}, but the current folder is in the ${places.folder} ${nearest}`,
+    `Name the ${places.folder} with ${flagText(flags.home)} ${nearest} or ${flagText(flags.home)} ${home}.`,
+  );
+};
+
 const chosenHome = async (
   deps: Deps,
   homeFlag: string | undefined,
@@ -226,10 +252,7 @@ const chosenHome = async (
 ): Promise<CliResult<{ readonly home: string; readonly source: HomeSource }>> => {
   if (homeFlag !== undefined) return ok({ home: resolve(deps.cwd, homeFlag), source: 'flag' });
   const fromEnv = deps.env[env.home];
-  if (fromEnv !== undefined && fromEnv !== '') {
-    const home = resolve(deps.cwd, fromEnv);
-    return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'env' });
-  }
+  if (fromEnv !== undefined && fromEnv !== '') return envHome(deps, resolve(deps.cwd, fromEnv));
   // The walk asks about the current folder and every folder above it, so it never starts in the folder of Claude Code.
   const outside = requireOutsideUserClaudeFolder(deps, deps.cwd, commands.doctor);
   if (!outside.ok) return outside;

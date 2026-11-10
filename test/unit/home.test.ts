@@ -48,9 +48,38 @@ describe('home: the order', () => {
     expect(await located(deps, '/flag')).toEqual({ home: '/flag', source: 'flag', unregistered: false });
   });
 
-  it('takes FACTORY_HOME second, before the folders above the current folder', async () => {
-    const deps = nodeAt(`${HOME}/deep`, { FACTORY_HOME: '/elsewhere' });
+  it('takes FACTORY_HOME second, when no factory folder is above the current folder', async () => {
+    const deps = nodeAt('/w/plain', { FACTORY_HOME: '/elsewhere' });
     expect(await located(deps)).toEqual({ home: '/elsewhere', source: 'env', unregistered: false });
+  });
+
+  it('takes FACTORY_HOME when the current folder is inside that factory folder', async () => {
+    const deps = nodeAt(`${HOME}/work-copies/alpha`, { FACTORY_HOME: HOME });
+    expect(await located(deps)).toEqual({ home: HOME, source: 'env', unregistered: false });
+  });
+
+  it('stops with exit 1 when the current folder is inside another factory folder, and names both folders and the remedy', async () => {
+    const deps = nodeAt(`${HOME}/deep`, { FACTORY_HOME: '/w/parent' });
+    deps.seed('/w/parent/factory.yaml', 'schema: 2\n');
+    const error = await stopped(deps);
+    expect(error.kind).toBe('failure');
+    expect(error.message).toContain('FACTORY_HOME');
+    expect(error.message).toContain('/w/parent');
+    expect(error.message).toContain(HOME);
+    expect(error.hint).toContain(`--home ${HOME}`);
+  });
+
+  it('takes the home flag with no stop when FACTORY_HOME and the current folder name different factory folders', async () => {
+    const deps = nodeAt(`${HOME}/deep`, { FACTORY_HOME: '/w/parent' });
+    expect(await located(deps, HOME)).toEqual({ home: HOME, source: 'flag', unregistered: false });
+  });
+
+  it('compares real paths: a FACTORY_HOME through a link to the factory folder of the current folder passes', async () => {
+    const deps = createFakeDeps({ cwd: `${HOME}/deep`, env: { XDG_STATE_HOME: '/state', FACTORY_HOME: '/link/node' }, links: { '/link/node': HOME } });
+    deps.seed(`${HOME}/factory.yaml`, 'schema: 2\n');
+    deps.seedDir(`${HOME}/deep`);
+    registerRoot(deps, '/link/node', 'demo');
+    expect(await located(deps)).toMatchObject({ home: '/link/node', source: 'env' });
   });
 
   it('resolves a relative FACTORY_HOME against the current folder', async () => {
