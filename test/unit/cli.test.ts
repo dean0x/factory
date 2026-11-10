@@ -10,7 +10,7 @@ import {
 } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, parseFlags } from '../../src/cli/table.js';
-import { commands, itemCommands, queueCommands, requestCommands, selfCommands, trackCommands, workerCommands } from '../../src/names.js';
+import { commands, flags, itemCommands, queueCommands, requestCommands, selfCommands, trackCommands, workerCommands } from '../../src/names.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
@@ -627,8 +627,8 @@ describe('the item and track commands in the command line', () => {
     expect(result.out).toMatch(/--field NAME=VALUE\s+With add and update: set a field of the owner on the item/);
   });
 
-  it('M5-1b TP-22 names no decide command in the help of item, of track or of the program', async () => {
-    for (const argv of [['help'], ['item', '--help'], ['track', '--help']]) {
+  it('M5-1b TP-22 names no decide command in the help of item or of track', async () => {
+    for (const argv of [['item', '--help'], ['track', '--help']]) {
       expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');
     }
   });
@@ -697,10 +697,40 @@ describe('the item and track commands in the command line', () => {
     expect(queue.out).toMatch(/--position N\s+With set: the place of the row in the queue/);
   });
 
-  it('M5-1b TP-22 names no decide command in the help of request, of queue or of the program', async () => {
-    for (const argv of [['help'], ['request', '--help'], ['queue', '--help']]) {
+  it('M5-1b TP-22 names no decide command in the help of request or of queue', async () => {
+    for (const argv of [['request', '--help'], ['queue', '--help']]) {
       expect((await run(argv)).out.toLowerCase(), argv.join(' ')).not.toContain('decide');
     }
+  });
+
+  it('M5-1b TP-188 lists decide in the help and shows its usage and its two flags in its own help', async () => {
+    expect((await run(['help'])).out).toMatch(/\n {2}decide {2,}\S/);
+    const asked = await run(['decide', '--help']);
+    expect(asked.code).toBe(0);
+    expect(asked.out).toContain('factory decide ID OPTION [--note TEXT] [--home DIR]');
+    expect(asked.out).toMatch(/--note TEXT\s+The reason for the answer/);
+  });
+
+  it('M5-1b TP-188 gives the decide command no flag that skips the question: only home and note, and the flags of every command', () => {
+    const decide = commandTable.find((command) => command.name === commands.decide);
+    expect(Object.keys(decide?.options ?? {}).sort()).toEqual([flags.home, flags.note].sort());
+  });
+
+  it('M5-1b TP-187 routes decide read and the json flag to exit 2, and a run with no terminal window to exit 4', async () => {
+    const repo = await boardNode({ board: boardText([], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    const read = await runBoard(['decide', 'read', 'D-1']);
+    expect(read.code).toBe(2);
+    expect(read.err).toContain('not in this version');
+    expect((await runBoard(['decide', 'D-1', 'a', '--json'])).code).toBe(2);
+    const noTerminal = await runBoard(['decide', 'D-1', 'a']);
+    expect(noTerminal.code).toBe(4);
+    expect(noTerminal.err).toContain('terminal window');
+    expect(repo.commits).toEqual([]);
   });
 
   it('M5-1b TP-22 runs request add, request list, request close, queue set and queue show from the command line, with the flags in any place', async () => {
