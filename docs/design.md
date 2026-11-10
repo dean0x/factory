@@ -937,7 +937,7 @@ factory does not build its own review desk. The board, the requests and the deci
 **One connector contract.** Every board connector speaks the contract `factory.board/v1` (§4.15). The contract has 18 operations, and `describe` and `check`:
 - item: add, update, move (change the state or the stage), close, list, note;
 - track: add, list, update;
-- epic: add, update, list, remove (see "Epics (TM-10)");
+- epic: add, update, list, remove (see "Epics (TM-14)");
 - decision: ask (an item with the options, made by `request add --option KEY=TEXT`), read (the answers);
 - doc: link (attach a file, or link a repo file), unlink;
 - changes: read comments, label changes, assignee changes and open or close changes since a cursor, each with its author;
@@ -963,7 +963,7 @@ The intro of §8.2 lists the 18 operations. Each command of that table calls one
 - **Flow-only stages.** The software recipe marks merged and released as stages that only a flow sets. `item move` refuses them (exit 2) before it takes the state lock, and the message names the flow that the recipe gives for that stage. The merge flow (M5-2) and the release flow (FAC-M5b) set them later. No M5-1b command sets either mark. The core source holds no stage word and no flow word.
 - **A stage is display data and never a proof.** The status of an item alone decides open, closed and idle. A stage move keeps the status, and a close keeps the stage. A stored merged or released value shows as data and counts for nothing. The work item port never reads the stage key. The coordinator moves the stage at milestone events, and its text says that a stage is never an approval.
 
-**Epics (TM-10).** An epic groups work items under one goal of the owner. FAC-M11 builds the epic operations. FAC-M5b builds the epic view of the board pane (§4.11).
+**Epics (TM-14).** An epic groups work items under one goal of the owner. FAC-M11 builds the epic operations. FAC-M5b builds the epic view of the board pane (§4.11).
 - **The record.** An epic has an `id` (`E-<n>`), a `title`, a `project` (a project id of this factory) and a `priority` (`P0`, `P1` or `P2`). It has no description. The owner sets its priority, and no rule derives it from the items.
 - **The items.** Each work item belongs to exactly one epic. The item field `epic` holds the id of an existing epic. On the board view, the work items of an epic are its stories. This design keeps the word work item.
 - **The column.** The items of an epic give its column. Any item in progress gives In progress. Else any next item gives Next. Else any open item gives Later. Else an epic with items is Done. An epic with no items is in Later. The `board` block (§4.4) has the keys `in_progress` and `closed`, and it has no key for next or later. So the state `in_progress` gives In progress, the state `closed` gives Done, and each other state gives Later. A key that names the state for Next is a FAC-M11 decision.
@@ -1072,7 +1072,7 @@ Software recipe: the stages are `ticket`, `plan-approved`, `building`, `review`,
 - **The hook.** The hook of §4.6 gets the events `PostToolUse`, `StopFailure`, `SubagentStart` and `SubagentStop`, and it adds `idle_prompt` to the `Notification` types that it writes. The last-seen line holds the event name, the time and the few fields that the table names. Factory never reads `transcript_path`. Before the build, FAC-M5b checks the field lists of `Stop`, `StopFailure` and the status line against the Claude Code pages, and it captures one payload of each new event (§4.6).
 - **The tracks view.** The tracks view is `track list`. It prints one line for each track: the name, the current milestone, the workers of the track, the number of open work items for each stage, and the number of merged and of released work items since a set date. The milestone comes from the roadmap of the track, and it is a fixed text when the roadmap is missing or can not be read. A worker shows as `worker (stage)`, or as `worker (stage, Parked)` or `worker (stage, On hold)` for a held worker. A worker with no stage shows `—` in place of the stage, and a track with no worker shows `No worker`. The view shows no word of the live list and no time, so it needs no hook event.
 - **The other views.** The board pane is `item list --follow`. The boxes are `request list` and `machine`. `--follow` repeats at a fixed interval and stops after a fixed number of redraws. A view prints at most a fixed number of lines, and past that number its last line says "more than <cap>". The interval, the redraw count and the line cap are named numbers in `src/names.ts`.
-- **The epic view (TM-10).** The board pane groups the epics under the columns In progress, Next, Later and Done (§4.10, "Epics"). Each epic is one line: the title, the project, the priority, a text progress bar of its items by stage, and "done/total". Epics sort by priority, then title.
+- **The epic view (TM-14).** The board pane groups the epics under the columns In progress, Next, Later and Done (§4.10, "Epics"). Each epic is one line: the title, the project, the priority, a text progress bar of its items by stage, and "done/total". Epics sort by priority, then title.
   - `item list --epic <E-n>` shows the items of one epic with the title, priority, type and stage. They sort by priority, then by the most advanced stage. Done items come last.
   - On the `artifact` page (FAC-M11), the epics are cards. A click on an epic shows the same item list. A click on an item shows the current item panel: documents, type, priority, status, stage, and the issue and PR links.
 - **The estimate.** Each open item in the board pane shows an estimate mark: the token range of `item estimate`, or `NO BASIS`. `status --usage` is the usage view.
@@ -1616,7 +1616,7 @@ Dean decided D-139 to D-142 for the board contract. The decisions are final unti
 | D-140 | A board plugin is an in-process npm package that exports the contract `factory.board/v1`. The user installs it and names it in `factory.local.yaml`. The install is the trust decision. Factory has no accept command and no hash for a plugin (§4.15). |
 | D-141 B | The board holds the truth, and the local board is the cache. A write goes to the board first. Offline work only reads. There is no queue. `factory decide` works offline (§4.10, "The one rule"). |
 | D-142 A | Only `factory decide <D-n> <option>`, in a terminal window outside a factory session, records a decision. A page answer or a board answer shows and wakes, and records nothing (§4.10, §6.1). |
-| TM-10 (Dean direction 2026-11-10) | Dean, 2026-11-10: "this type of structure would apply also to what we have in the factory, the artifact that we give. I'm trying to build something here. We still don't have one source of truth here, but just keep it in mind." The board contract has epics, and each work item belongs to one epic (§4.10, "Epics"). Tracks stay. The goal is one shared source of truth for the workspace board and the factory board. There is no build plan for that goal yet (§10). |
+| TM-14 (Dean direction 2026-11-10) | Dean, 2026-11-10: "this type of structure would apply also to what we have in the factory, the artifact that we give. I'm trying to build something here. We still don't have one source of truth here, but just keep it in mind." The board contract has epics, and each work item belongs to one epic (§4.10, "Epics"). Tracks stay. The goal is one shared source of truth for the workspace board and the factory board. There is no build plan for that goal yet (§10). |
 
 ## 10. Risks
 
@@ -1638,5 +1638,5 @@ Dean decided D-139 to D-142 for the board contract. The decisions are final unti
 
 **Open points**
 
-- **One source of truth for the workspace board and the factory board (TM-10).** Dean wants one shared source of truth. Today the two boards are separate. This design states the goal only. It has no build plan, no milestone and no test for it.
+- **One source of truth for the workspace board and the factory board (TM-14).** Dean wants one shared source of truth. Today the two boards are separate. This design states the goal only. It has no build plan, no milestone and no test for it.
 - **Tracks or epics (§4.10, "Epics").** An item has a track and an epic. Both stay for now. The choice between them is open.
