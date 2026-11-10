@@ -1703,6 +1703,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   itemCommand: commandText(commands.item),
   trackCommand: commandText(commands.track),
   requestCommand: commandText(commands.request),
+  decideCommand: commandText(commands.decide),
   queueCommand: commandText(commands.queue),
   itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
   clearFlag: flagText(flags.clear),
