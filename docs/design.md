@@ -980,26 +980,26 @@ The 14 operations are the column "Board operation" of §8.2. Each command of tha
 
 **Decisions.**
 - A decision is an item with the `decision` label. Its body has the question, the options and a recommendation.
-- The owner can write the answer on the item as a comment `/choose <option>`, or as a label `choose:<option>`. A comment or a label only shows the answer and wakes the coordinator. It records nothing.
+- The owner can write the answer on the item as a comment `/choose <option>`, or as a label `choose:<option>`. A comment or a label only shows the answer and wakes the coordinator. It records nothing. A page answer is a board event. It shows and wakes, and records nothing.
 - `factory decide read` reads these answers with a script, not with model tokens. It shows each answer with its author and the link, and it records nothing.
-- `factory decide <D-n> <option>` records the decision with `by: owner` in `decision-log.json`, with every board kind. With `github`, it also adds a comment to the item that says the answer came from the CLI. That comment is a record, not a proof. The command needs a terminal window, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). The remedy is to run `factory decide <D-n> <option>` in a terminal window outside a factory session. This guard stops a session from answering by accident. The owner's permission settings are the second guard. A review page is a later way to record the same decision.
+- `factory decide <D-n> <option>` records the decision with `by: owner` in `decision-log.json`, with every board kind. It writes the decision log first, and it works offline (the one rule). With a hosted board, it then adds a comment to the item that says the answer came from the CLI. A failed comment is a warning, and the record stays. That comment is a record, not a proof. The command needs a terminal window, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). The remedy is to run `factory decide <D-n> <option>` in a terminal window outside a factory session. This guard stops a session from answering by accident. The owner's permission settings are the second guard. Only this command records a decision (D-142 A).
 - An *ask* is a decision item for one PR or one work item. The owner answers `approve` or `refuse` with `factory decide`. §6.1 says which answers count as an approval.
 
 **Board accounts (D-128 A).** factory does not look at which account anyone uses on the board. The owner, the coordinator and the workers can share one account, or use more than one. A separate account for the agents is optional, and it is the owner's own GitHub choice. factory has no setting for it and no check of it.
 - A board event is never a proof, with any account setup. A comment, a label, an assignee change and a review do not count as an owner approval, and they do not count as an assignment.
 - A `factory decide` record is a proof. It needs a terminal window outside a factory session.
-- With `local`, there are no board events, so only `factory decide` counts in every case.
+- A feed event of `local` is a board event: its author is `session` or `terminal`, never `owner`. Only `factory decide` counts in every case.
 - A board event can wake the coordinator and show an answer. It records nothing.
 - Designs and plans: the `doc` operation links the repo file (GitHub shows Markdown), or attaches it.
 
-**Changes and wake-up (F-2).** There is no live push to a local session without a webhook server. So `factory watch` calls `changes read` with the board CLI at a fixed interval (`tracker.watch_interval`), with a bound on the number of reads per run. The coordinator reads these board events:
+**Changes and wake-up (F-2).** There is no live push to a local session without a webhook server. So `factory watch` calls `changes read` at a fixed interval (`tracker.watch_interval`), with a bound on the number of reads per run. With a hosted board, it calls the board CLI. With `local` and `artifact`, it reads the local change feed at a fixed default interval, and it calls no CLI. `watch` also refreshes the cache (the one rule). The coordinator reads these board events:
 - a comment `/choose <option>`, and a mention of the coordinator;
 - a label added or removed, for example `choose:<option>` or `ready` (a work item is ready);
 - an issue or item opened or closed.
 
-Every new event wakes the coordinator, whatever account wrote it. An event only wakes the coordinator and shows what was written. It is never a proof (see "Board accounts"). An assignee change is read, but it assigns nothing (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new event, it writes one record (FAC-M3 sets its format) and types one constant wake line through `src/comms/` (§4.12). `factory start` starts `factory watch` in the window `ops` (§4.11).
+Every new event wakes the coordinator, whatever account wrote it. An event only wakes the coordinator and shows what was written. It is never a proof (see "Board accounts"). An assignee change is read, but it assigns nothing (§6.1). A card moved on a Projects board is not read for now; the owner uses a label for that signal. `watch` calls no model. For each new event, it writes one record (FAC-M3 sets its format) and types one constant wake line through `src/comms/` (§4.12). From FAC-M11, `factory start` starts `factory watch` in the window `ops` for every kind of board (§4.11).
 
-**Privacy.** An issue in a public repo is public. Decision items can hold private facts. So the default decision store is a private repo, or private draft items in a private Project. `factory doctor` fails when the decision store is public, and warns when it is not set. The `local` store is private: it is the node's own state repo, with no remote.
+**Privacy.** An issue in a public repo is public. Decision items can hold private facts. So the default decision store is a private repo, or private draft items in a private Project. `factory doctor` fails when the decision store is public, and warns when it is not set. The `local` store is private: it is the node's own state repo, with no remote. The `artifact` page counts as the decision store, so factory asks the owner to confirm that it is private (see "Board connectors").
 
 ### 4.11 Sessions in tmux: workers, view and the lifecycle
 
