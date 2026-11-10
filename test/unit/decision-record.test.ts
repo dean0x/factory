@@ -251,6 +251,26 @@ describe('hostile text in the record (TP-185)', () => {
     expect(text).toContain('Note: "\\u005bx\\u005d"');
   });
 
+  it('M5-1b TP-185 writes the six-character escape for each angle bracket, so no autolink and no raw HTML stays live', () => {
+    const autolink = '<https://x>';
+    const markup = '<b>bold</b>';
+    const { text } = built({
+      request: { ...REQUEST, title: autolink, question: markup, options: [{ key: 'a', text: `${autolink} ${markup}` }] },
+      note: `${autolink} ${markup}`,
+    });
+    expect(text).not.toMatch(/[<>]/);
+    expect(text).toContain('Title: "\\u003chttps://x\\u003e"');
+    expect(text).toContain('Question: "\\u003cb\\u003ebold\\u003c/b\\u003e"');
+  });
+
+  it('M5-1b TP-185 keeps a text with angle brackets whole: a reader that decodes the JSON string gets the stored text back', () => {
+    const stored = '<https://x> and <b>bold</b> and a < b > c';
+    const { text } = built({ note: stored });
+    const label = 'Note: ';
+    const line = text.split('\n').find((candidate) => candidate.startsWith(label)) ?? '';
+    expect(JSON.parse(line.slice(label.length))).toBe(stored);
+  });
+
   it('M5-1b TP-185 holds only the date, the D-n, the option key and the file name in the log line', () => {
     const { log, path } = hostile();
     const name = path.split('/').pop() ?? '';

@@ -12,9 +12,10 @@ import { stateRel } from '../state/layout.js';
  * texts with the board files. The profile record is a display copy. The proof of an owner answer is only the record in the owner store.
  *
  * Every text of the request and the note come from the person or from a stored file, so none of them can change the shape of the
- * record. Each goes into the body as a JSON string after a fixed label. The brackets of the text are written as the six-character JSON
- * escapes, so a text can not make a link, and the separators of lines that JSON leaves as they are are escaped too, so a text stays on
- * its line in a reader that counts them as breaks. The frontmatter holds only values that the builder makes from a checked input.
+ * record. Each goes into the body as a JSON string after a fixed label. The square brackets and the angle brackets of the text are
+ * written as the six-character JSON escapes, so a text can not make a link, an autolink or a tag of raw HTML, and the separators of
+ * lines that JSON leaves as they are are escaped too, so a text stays on its line in a reader that counts them as breaks. The
+ * frontmatter holds only values that the builder makes from a checked input.
  */
 
 /** One option of the request, as the waiting entry holds it. */
@@ -63,10 +64,10 @@ const DATE_CHARS = 10;
 const MD_SUFFIX = '.md';
 
 /**
- * The characters that a JSON string leaves as they are and that a reader of the text can still take for a bracket or for the end of a
- * line: the brackets, the next-line character, the line separator and the paragraph separator.
+ * The characters that a JSON string leaves as they are and that a reader of the text can still take for a link, for a tag or for the
+ * end of a line: the square brackets, the angle brackets, the next-line character, the line separator and the paragraph separator.
  */
-const ESCAPED = /[[\]\u0085\p{Zl}\p{Zp}]/gu;
+const ESCAPED = /[[\]<>\u0085\p{Zl}\p{Zp}]/gu;
 
 /** The text as a JSON string literal on one line, with each bracket and each separator of lines as a six-character escape. */
 const jsonText = (text: string): string =>
