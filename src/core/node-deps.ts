@@ -17,6 +17,7 @@ import {
   writeFile,
   type FileHandle,
 } from 'node:fs/promises';
+import { constants as osConstants } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
@@ -29,6 +30,8 @@ import { isSameOrInside } from './paths.js';
 import { ok } from './result.js';
 import {
   MAX_ANSWER_CHARS,
+  type AttachedEnd,
+  type AttachedOptions,
   type Deps,
   type FileDigest,
   type Fs,
@@ -451,6 +454,74 @@ const runInGroup = (command: string, args: readonly string[], options: RunOption
     feedInput(child.stdin, options.input);
   });
 
+/** The signals that a held run forwards to the process group of its program. */
+const FORWARDED_SIGNALS: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+
+const attachedEndOf = (code: number | null, signal: NodeJS.Signals | null): AttachedEnd => {
+  if (code !== null) return { kind: 'code', code };
+  if (signal === null) return { kind: 'spawn', code: 'error' };
+  return { kind: 'signal', signal, number: osConstants.signals[signal] };
+};
+
+/**
+ * Run the program with the terminal of this process (`Deps.runAttached`). A held run starts the program as the leader of a new
+ * process group with no standard input. While it runs, INT, TERM and HUP go on to that group only, and the handlers are removed at
+ * every end. At `maxMs` the group gets TERM, then KILL after `killGraceMs`; the run ends `GROUP_STOP_GRACE_MS` after the KILL, also
+ * when the first process has not ended. A run that is not held has no group, no handler and no limit.
+ */
+const runAttachedProgram = (command: string, args: readonly string[], options: AttachedOptions = {}): Promise<AttachedEnd> =>
+  new Promise((resolve) => {
+    const held = options.held === true;
+    const child = spawn(command, [...args], {
+      stdio: held ? ['ignore', 'inherit', 'inherit'] : 'inherit',
+      detached: held,
+      windowsHide: true,
+      ...(options.extraEnv === undefined ? {} : { env: { ...process.env, ...options.extraEnv } }),
+    });
+    const timers: { limit?: NodeJS.Timeout; kill?: NodeJS.Timeout; end?: NodeJS.Timeout } = {};
+    let limited = false;
+    let settled = false;
+
+    const toGroup = (signal: NodeJS.Signals): void => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        // The group has no process left (ESRCH): there is nothing to signal.
+      }
+    };
+    const forwarders = held ? FORWARDED_SIGNALS.map((signal) => ({ signal, handler: () => toGroup(signal) })) : [];
+
+    const settle = (end: AttachedEnd): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timers.limit);
+      clearTimeout(timers.kill);
+      clearTimeout(timers.end);
+      for (const { signal, handler } of forwarders) process.off(signal, handler);
+      child.off('close', onClose);
+      // After the limit the first process may still run. Then the run does not wait for it.
+      child.unref();
+      resolve(end);
+    };
+    const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (!limited) settle(attachedEndOf(code, signal));
+    };
+    const stopAtLimit = (): void => {
+      limited = true;
+      toGroup('SIGTERM');
+      timers.kill = setTimeout(() => {
+        toGroup('SIGKILL');
+        timers.end = setTimeout(() => settle({ kind: 'limit' }), GROUP_STOP_GRACE_MS);
+      }, options.killGraceMs ?? GROUP_STOP_GRACE_MS);
+    };
+
+    for (const { signal, handler } of forwarders) process.on(signal, handler);
+    if (held && options.maxMs !== undefined) timers.limit = setTimeout(stopAtLimit, options.maxMs);
+    child.once('error', (error) => settle({ kind: 'spawn', code: errorCode(error) }));
+    child.on('close', onClose);
+  });
+
 /** The largest pid of a 32-bit pid_t. A pid of 0 or 1, or a negative pid, names a process group or every process. */
 const MAX_PID = 2_147_483_647;
 const FIRST_SIGNALLED_PID = 2;
@@ -561,14 +632,7 @@ export const createNodeDeps = (): Deps => ({
     options?.processGroup === true && process.platform !== NATIVE_WINDOWS
       ? runInGroup(command, args, options)
       : runPlain(command, args, options),
-  runAttached: (command, args) =>
-    new Promise((resolve) => {
-      const child = spawn(command, [...args], { stdio: 'inherit', windowsHide: true });
-      child.once('error', (error) => resolve(failure(`cannot run ${command}: ${errorCode(error)}`)));
-      child.once('close', (code, signal) =>
-        resolve(code === null ? failure(`${command} was stopped by ${String(signal)}`) : ok(code)),
-      );
-    }),
+  runAttached: runAttachedProgram,
   stdinIsTTY: stdinIsTerminal(),
   stdoutIsTTY: process.stdout.isTTY === true,
   stdoutIsTerminal: () => isatty(STDOUT_FD),

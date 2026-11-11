@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { posix } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
-import type { Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
+import type { AttachedEnd, AttachedOptions, Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
 import { isSameOrInside } from '../../src/core/paths.js';
 import { ok } from '../../src/core/result.js';
 import { dirs, env, files as fileNames, homeIndex, privateFile, program, stateKeys } from '../../src/names.js';
@@ -29,7 +29,14 @@ export type RunHandler = (call: RunCall) => CliResult<RunOutput>;
 export type FetchHandler = (url: string) => CliResult<FetchStatus>;
 
 export type PromptHandler = (question: string) => CliResult<string>;
-export type AttachedHandler = (call: RunCall) => CliResult<number>;
+/** One run with the terminal. `options` is what the caller gave, and it is absent when the call gave none. */
+export interface AttachedCall {
+  readonly command: string;
+  readonly args: readonly string[];
+  readonly options?: AttachedOptions;
+}
+
+export type AttachedHandler = (call: AttachedCall) => AttachedEnd;
 
 export interface FakeOptions {
   readonly cwd?: string;
@@ -55,7 +62,7 @@ export interface FakeOptions {
   readonly stdin?: string;
   /** The answer to a question. Default: no answer. */
   readonly prompt?: PromptHandler;
-  /** The result of a program that uses the terminal. Default: exit code 0. */
+  /** How a program that uses the terminal ends. Default: exit code 0. */
   readonly runAttached?: AttachedHandler;
   /** Links: a path under a key resolves to the same path under the value. `lstat` gives `link` for a key itself. */
   readonly links?: Readonly<Record<string, string>>;
@@ -75,8 +82,8 @@ export interface FakeDeps extends Deps {
   readonly files: Map<string, string>;
   readonly dirs: Set<string>;
   readonly calls: RunCall[];
-  /** The programs that ran with the terminal, in order. */
-  readonly attached: RunCall[];
+  /** The programs that ran with the terminal, in order, with the options of each call. */
+  readonly attached: AttachedCall[];
   /** The questions that were asked, in order. */
   readonly prompts: string[];
   /** The warnings that were printed at once, before the command returned, in order. */
@@ -142,7 +149,7 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
   const files = new Map<string, string>();
   const dirs = new Set<string>(['/']);
   const calls: RunCall[] = [];
-  const attached: RunCall[] = [];
+  const attached: AttachedCall[] = [];
   const prompts: string[] = [];
   const warned: string[] = [];
   const fetched: string[] = [];
@@ -394,10 +401,10 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
       }
       return result;
     },
-    runAttached: async (command: string, args: readonly string[]) => {
-      const call: RunCall = { command, args, cwd: undefined };
+    runAttached: async (command: string, args: readonly string[], attachedOptions?: AttachedOptions) => {
+      const call: AttachedCall = { command, args, ...(attachedOptions === undefined ? {} : { options: attachedOptions }) };
       attached.push(call);
-      return (options.runAttached ?? (() => ok(0)))(call);
+      return (options.runAttached ?? (() => ({ kind: 'code', code: 0 })))(call);
     },
     stdinIsTTY: options.stdinIsTTY ?? false,
     stdoutIsTTY: options.stdoutIsTTY ?? false,

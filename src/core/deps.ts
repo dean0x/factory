@@ -150,15 +150,42 @@ export interface SignalSource {
   off(signal: NodeJS.Signals, handler: () => void): unknown;
 }
 
+/** How `runAttached` runs a program. Every part is optional, and a call with no options runs the program as a plain child. */
+export interface AttachedOptions {
+  /**
+   * True to hold the run: the program is the leader of a new process group, it gets no standard input, and this process
+   * forwards INT, TERM and HUP to that group only (no other process gets them). The forward handlers stay until the run ends.
+   */
+  readonly held?: true;
+  /** With `held`: when the program runs this long, the run stops its group with TERM, then with KILL after `killGraceMs`. */
+  readonly maxMs?: number;
+  /** With `held` and `maxMs`: the wait between TERM and KILL, in milliseconds. By default a short wait of 200 ms. */
+  readonly killGraceMs?: number;
+  /** Variables for the environment of the program, on top of the environment of this process. This process keeps its own. */
+  readonly extraEnv?: Readonly<Record<string, string>>;
+}
+
+/**
+ * How a run of `runAttached` ended. A caller reads the kind and the fields, and never the text of a message.
+ * `code`: the program ended with this exit code. `signal`: a signal ended the program (`number` is the number of the signal).
+ * `limit`: the run stopped the program at `AttachedOptions.maxMs`. `spawn`: the program did not start, and `code` is the code of
+ * the error, for example ENOENT.
+ */
+export type AttachedEnd =
+  | { readonly kind: 'code'; readonly code: number }
+  | { readonly kind: 'signal'; readonly signal: NodeJS.Signals; readonly number: number }
+  | { readonly kind: 'limit' }
+  | { readonly kind: 'spawn'; readonly code: string };
+
 export interface Deps {
   readonly fs: Fs;
   /** Run a program. It never uses a shell. A non-zero exit code is not an error. */
   run(command: string, args: readonly string[], options?: RunOptions): Promise<CliResult<RunOutput>>;
   /**
    * Run a program with the terminal of this process: it reads the keys and draws on the screen.
-   * It never uses a shell. The result is the exit code of the program.
+   * It never uses a shell. The call never fails: the value tells how the run ended.
    */
-  runAttached(command: string, args: readonly string[]): Promise<CliResult<number>>;
+  runAttached(command: string, args: readonly string[], options?: AttachedOptions): Promise<AttachedEnd>;
   /** True when a person types at this process. */
   readonly stdinIsTTY: boolean;
   /** True when a person reads the output of this process on a terminal. */
