@@ -203,6 +203,25 @@ describe('TP-33: a good source gives its text', () => {
     expect(valueOf(await read(made.deps, `${HOME}/.factory/orders/task.md`))).toBe(TEXT);
   });
 
+  it('TP-33: reads a path that starts with the orders folder from the factory folder, also from a folder below it', async () => {
+    const made = make({ files: { [`${HOME}/.factory/orders/task.md`]: TEXT }, cwd: `${HOME}/coordinator`, workTree: false });
+    made.deps.seedDir(`${HOME}/coordinator`);
+    expect(valueOf(await read(made.deps, '.factory/orders/task.md'))).toBe(TEXT);
+    expect(valueOf(await read(made.deps, './.factory/orders/task.md'))).toBe(TEXT);
+  });
+
+  it('TP-33: reads a path that starts with the orders folder from the factory folder when the working folder is a work tree', async () => {
+    const made = make({ files: { [`${HOME}/.factory/orders/task.md`]: TEXT } });
+    expect(valueOf(await read(made.deps, '.factory/orders/task.md'))).toBe(TEXT);
+  });
+
+  it('TP-33: a path that only looks like the orders folder after a climb resolves from the working folder', async () => {
+    const made = make({ files: { [`${HOME}/.factory/orders/task.md`]: TEXT }, cwd: `${HOME}/coordinator`, workTree: false });
+    made.deps.seedDir(`${HOME}/coordinator`);
+    expect(codeOf(await read(made.deps, 'x/../.factory/orders/missing.md'))).toBe(2);
+    expect(errorOf(await read(made.deps, '.factory/orders/../orders-copy/task.md')).message).toContain(`${HOME}/coordinator/`);
+  });
+
   it('TP-33: reads a file below a folder of the orders folder', async () => {
     const made = make({ files: { [`${HOME}/.factory/orders/web/task.md`]: TEXT } });
     expect(valueOf(await read(made.deps, `${HOME}/.factory/orders/web/task.md`))).toBe(TEXT);

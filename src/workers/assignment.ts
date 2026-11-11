@@ -1,4 +1,4 @@
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from 'node:path';
 import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps } from '../core/deps.js';
 import { workTreeTop } from '../core/git.js';
@@ -30,7 +30,10 @@ const NUL = '\0';
 export interface AssignmentRequest {
   /** The factory folder. */
   readonly home: string;
-  /** The path as the person wrote it. A path that is not absolute starts at the working folder. */
+  /**
+   * The path as the person wrote it. A path that is not absolute starts at the working folder, except a path whose first parts are
+   * the orders folder, with no climb: it starts at the factory folder.
+   */
   readonly path: string;
   /** The command to run again, without the program name: for example `worker new alpha --project web --assignment FILE`. */
   readonly again: string;
@@ -127,6 +130,20 @@ const placeOf = async (
   return safetyRefusal(`cannot use ${source}: it is not inside the ${places.folder} or the work tree of the working folder`, copy);
 };
 
+/**
+ * The absolute path of the file. A relative path whose first parts are the orders folder names a file of the orders folder of the
+ * factory folder, from any working folder: the help and the coordinator block name it so. Every other relative path starts at the
+ * working folder. The parts are compared after `normalize`, so a path that only reaches the orders folder by a climb (`x/..`)
+ * starts at the working folder too.
+ */
+const sourceOf = (deps: Deps, home: string, path: string): string => {
+  if (isAbsolute(path)) return resolve(path);
+  const parts = normalize(path).split(sep);
+  const orders = assignmentSource.ordersParts;
+  const inOrders = parts.length > orders.length && orders.every((part, index) => sameName(deps, parts[index] ?? '', part));
+  return inOrders && !path.split(sep).includes('..') ? resolve(home, path) : resolve(deps.cwd, path);
+};
+
 const changed = (source: string, again: string): CliResult<never> =>
   safetyRefusal(`cannot use ${source}: it changed while it was read`, `Check who changes the file. Then run "${commandText(again)}" again.`);
 
@@ -137,7 +154,7 @@ export const readAssignment = async (deps: Deps, request: AssignmentRequest): Pr
   const { path, again } = request;
   const line = commandText(again);
   if (path === '') return usageError('the path of the assignment file is empty', `Name a file. Then run "${line}".`);
-  const source = resolve(deps.cwd, path);
+  const source = sourceOf(deps, request.home, path);
   const kind = await deps.fs.lstat(source);
   if (!kind.ok) return kind;
   if (kind.value === null) return usageError(`the assignment file ${source} does not exist`, `Check the path. Then run "${line}".`);
