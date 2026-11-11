@@ -30,7 +30,7 @@ export interface ContextLimits {
 export interface BlockInput {
   readonly recipe: RecipeEntry;
   readonly layer: number;
-  /** The id of the node. The session of the coordinator has this name, and the session of a worker has `<node id>-<worker id>`. */
+  /** The id of the node. The session of the coordinator has this name, and the session of a worker has `<node id>_<worker id>`. */
   readonly nodeId: string;
   readonly modes: ApprovalModes;
   readonly ownerPrefix: string;

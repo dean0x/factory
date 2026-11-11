@@ -4,8 +4,8 @@ import { commands, commandText, env, files, flags, flagText, places, program, ro
 import { layoutOf } from '../state/layout.js';
 import { inspectState, STATE_LABEL } from '../state/load.js';
 import type { Deps } from './deps.js';
-import { entryOfHome, findHomeInIndex, homeHoldingFolder, indexPathOf, readHomeIndex } from './home-index.js';
-import { realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
+import { deepestListedRootOf, entryOfHome, findHomeInIndex, homeHoldingFolder, indexPathOf, readHomeIndex } from './home-index.js';
+import { folderKeyOf, isInUserClaudeFolder, realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
 import { ok, type Err, type Result } from './result.js';
 
 const MAX_WALK_LEVELS = 64;
@@ -219,6 +219,34 @@ const rootProblemOf = async (deps: Deps, home: string, readNodeId: NodeIdReader)
   return markerProblemOf(deps, home);
 };
 
+/** True when the two paths name one folder: the same real path, or the same path when a real path is not known. */
+const sameFolder = async (deps: Deps, first: string, second: string): Promise<boolean> =>
+  (await folderKeyOf(deps, first)) === (await folderKeyOf(deps, second));
+
+/**
+ * The home that FACTORY_HOME names. A session of a node has the variable, and a command in it acts on that node. When the
+ * current folder is inside another factory folder of the factory list, for example a node that a person runs inside the
+ * session of a parent node, the command stops: it does not act on a node that the person did not mean. The deepest listed
+ * folder that holds the current folder counts, so a `factory.yaml` in a project clone does not. A list that cannot be read
+ * stops the command. In the folder of Claude Code nothing is compared, because the file system gets no call there.
+ */
+const envHome = async (deps: Deps, home: string, command: CommandName): Promise<CliResult<{ readonly home: string; readonly source: HomeSource }>> => {
+  const source: HomeSource = home === resolve(deps.cwd) ? 'cwd' : 'env';
+  if (isInUserClaudeFolder(deps, home) || isInUserClaudeFolder(deps, deps.cwd)) return ok({ home, source });
+  const indexPath = await indexPathOf(deps);
+  if (!indexPath.ok) return indexPath;
+  if (indexPath.value === null) return ok({ home, source });
+  const entries = await readHomeIndex(deps, indexPath.value);
+  if (!entries.ok) return failure(`${indexPath.value} cannot be read: ${entries.error}`);
+  const holder = await deepestListedRootOf(deps, entries.value, deps.cwd);
+  if (!holder.ok) return holder;
+  if (holder.value === null || (await sameFolder(deps, home, holder.value))) return ok({ home, source });
+  return failure(
+    `${env.home} names the ${places.folder} ${home}, but the current folder is in the ${places.folder} ${holder.value}`,
+    `Run "${commandText(command)}" again with ${flagText(flags.home)} ${holder.value} or ${flagText(flags.home)} ${home}.`,
+  );
+};
+
 const chosenHome = async (
   deps: Deps,
   homeFlag: string | undefined,
@@ -226,10 +254,7 @@ const chosenHome = async (
 ): Promise<CliResult<{ readonly home: string; readonly source: HomeSource }>> => {
   if (homeFlag !== undefined) return ok({ home: resolve(deps.cwd, homeFlag), source: 'flag' });
   const fromEnv = deps.env[env.home];
-  if (fromEnv !== undefined && fromEnv !== '') {
-    const home = resolve(deps.cwd, fromEnv);
-    return ok({ home, source: home === resolve(deps.cwd) ? 'cwd' : 'env' });
-  }
+  if (fromEnv !== undefined && fromEnv !== '') return envHome(deps, resolve(deps.cwd, fromEnv), command);
   // The walk asks about the current folder and every folder above it, so it never starts in the folder of Claude Code.
   const outside = requireOutsideUserClaudeFolder(deps, deps.cwd, commands.doctor);
   if (!outside.ok) return outside;
