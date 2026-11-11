@@ -30,7 +30,7 @@ import {
   stateGuard,
 } from '../names.js';
 import { readBoardFiles } from '../state/board-commit.js';
-import { locateShareList, WORKERS_GITIGNORE_LINE } from '../state/files.js';
+import { locateShareList } from '../state/files.js';
 import { rootGitignoreOf, stateGitignoreOf } from '../state/gitignore.js';
 import { guardFolderLabel, guardPlanOf, guardPlanWarnings, type GuardPlan } from '../state/guard.js';
 import type { Layout } from '../state/layout.js';
@@ -272,14 +272,16 @@ export const planRoot = async (deps: Deps, layout: Layout): Promise<CliResult<Ro
   });
 };
 
-/** What the run does to the `.gitignore` of the state repo: make the file, add the line for the workers folder, or nothing. */
+/** What the run does to the `.gitignore` of the state repo: make the file, add the lines that are missing, or nothing. */
 export type StateGitignoreAction = 'create' | 'add' | 'current';
 
 export interface StateGitignorePlan {
   readonly action: StateGitignoreAction;
   readonly filePath: string;
-  /** The text to write. It is null when the file holds the line already. */
+  /** The text to write. It is null when the file holds the lines already. */
   readonly text: string | null;
+  /** The lines that the run adds to an existing file, in the order of the list. Empty for the other actions. */
+  readonly added: readonly string[];
 }
 
 const stateGitignoreActionOf = (original: string | null, text: string): StateGitignoreAction => {
@@ -288,18 +290,18 @@ const stateGitignoreActionOf = (original: string | null, text: string): StateGit
 };
 
 /**
- * The plan for the `.gitignore` of the state repo. A state repo from before the registry of the workers lacks the line for
- * the workers folder: the plan adds it and keeps every other line as it is. A link at the path stops the plan (exit 4),
- * and a path that is not a file stops it too (exit 1). The plan reads only.
+ * The plan for the `.gitignore` of the state repo. A state repo from before the registry of the workers or before the inbox
+ * lacks a line: the plan adds each missing line and keeps every other line as it is. A link at the path stops the plan
+ * (exit 4), and a path that is not a file stops it too (exit 1). The plan reads only.
  */
 export const planStateGitignore = async (deps: Deps, layout: Layout): Promise<CliResult<StateGitignorePlan>> => {
   const plain = await requireNoLinks(deps, layout.home, [layout.stateGitignoreFile]);
   if (!plain.ok) return plain;
   const current = await stateGitignoreOf(deps, layout, commands.upgrade);
   if (!current.ok) return current;
-  const { original, text } = current.value;
+  const { original, text, added } = current.value;
   const action = stateGitignoreActionOf(original, text);
-  return ok({ action, filePath: layout.stateGitignoreFile, text: action === 'current' ? null : text });
+  return ok({ action, filePath: layout.stateGitignoreFile, text: action === 'current' ? null : text, added });
 };
 
 /** What the run does to the queue key of the board file: rename it to the key of the recipe (`rename`), or nothing (`current`). */
@@ -491,12 +493,12 @@ const rootLines = (root: RootPlan): OutLine[] => {
   return [...gitignore[root.gitignore.action], ...repo].map((text): OutLine => ({ level: 'text', text }));
 };
 
-/** The line for the `.gitignore` of the state repo. A current file gives no line. */
+/** The lines for the `.gitignore` of the state repo: one for each added line. A current file gives no line. */
 const stateGitignoreLines = (plan: StateGitignorePlan): OutLine[] => {
   const path = join(dirs.state, files.gitignore);
   const lines: Readonly<Record<StateGitignoreAction, readonly string[]>> = {
     create: [`${path}: new file, with the lines of a new state repo`],
-    add: [`${path}: add the line ${WORKERS_GITIGNORE_LINE}. Your lines stay as they are.`],
+    add: plan.added.map((line) => `${path}: add the line ${line}. Your lines stay as they are.`),
     current: [],
   };
   return lines[plan.action].map((text): OutLine => ({ level: 'text', text }));

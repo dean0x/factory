@@ -11,24 +11,54 @@ export const initialWaitingText = (): string => jsonText({ intro: '', groups: []
 
 export const initialDecisionLogText = (): string => jsonText({ rows: [] });
 
-/** The runtime folders, the backups and the registry of the workers are not part of the state repository. */
-export const STATE_GITIGNORE: string = [dirs.runtime, dirs.locks, dirs.backups, dirs.workers].map((dir) => `${dir}/\n`).join('');
-
-/** The line of `STATE_GITIGNORE` that a state repo from before the registry of the workers lacks. */
-export const WORKERS_GITIGNORE_LINE = `${dirs.workers}/`;
-
-const hasWorkersLine = (text: string): boolean => text.split('\n').some((line) => line.trimEnd() === WORKERS_GITIGNORE_LINE);
+/** The folders that every state repo has ignored from the start. */
+const FIRST_IGNORED_DIRS: readonly string[] = [dirs.runtime, dirs.locks, dirs.backups];
 
 /**
- * The text of the state `.gitignore` with the line for the workers folder. A missing file gets the lines of a new state
- * repo. A file that has the line stays as it is. Else the line goes to the end, after a line break when the last line has
- * none, so the old text is the start of the new text and every old line stays as it is.
+ * The lines that a later version added to `STATE_GITIGNORE`: the registry of the workers, and the inbox of the messages from a
+ * parent node. A state repo from before lacks them, and `upgrade` adds each one that is missing. A later version adds its line
+ * to this list.
  */
-export const withWorkersLine = (existing: string | null): string => {
-  if (existing === null) return STATE_GITIGNORE;
-  if (hasWorkersLine(existing)) return existing;
+export const ADDED_GITIGNORE_LINES: readonly string[] = [dirs.workers, dirs.inbox].map((dir) => `${dir}/`);
+
+/** The runtime folders, the backups, the registry of the workers and the inbox are not part of the state repository. */
+export const STATE_GITIGNORE: string = [...FIRST_IGNORED_DIRS.map((dir) => `${dir}/`), ...ADDED_GITIGNORE_LINES]
+  .map((line) => `${line}\n`)
+  .join('');
+
+/**
+ * True when git ignores the path of `line` by this text: the last line that is `line` or the negation of `line` decides, as in
+ * git. A comment, a longer name and the name inside another line do not count. Trailing blanks and a CR are not part of a line.
+ */
+export const ignoresLine = (text: string, line: string): boolean => {
+  const negated = `!${line}`;
+  let ignored = false;
+  for (const candidate of text.split('\n')) {
+    const trimmed = candidate.trimEnd();
+    if (trimmed === line) ignored = true;
+    else if (trimmed === negated) ignored = false;
+  }
+  return ignored;
+};
+
+/** The text of the state `.gitignore` and the lines that were added to it. */
+export interface StateGitignoreText {
+  readonly text: string;
+  /** The lines of `ADDED_GITIGNORE_LINES` that the text did not hold. Empty for a new file and for a current file. */
+  readonly added: readonly string[];
+}
+
+/**
+ * The text of the state `.gitignore` with each line of `ADDED_GITIGNORE_LINES` that is missing. A missing file gets the lines
+ * of a new state repo. A file that has every line stays as it is. Else the lines go to the end, after a line break when the
+ * last line has none, so the old text is the start of the new text and every old line stays as it is.
+ */
+export const withAddedLines = (existing: string | null): StateGitignoreText => {
+  if (existing === null) return { text: STATE_GITIGNORE, added: [] };
+  const added = ADDED_GITIGNORE_LINES.filter((line) => !ignoresLine(existing, line));
+  if (added.length === 0) return { text: existing, added };
   const lineEnd = existing === '' || existing.endsWith('\n') ? '' : '\n';
-  return `${existing}${lineEnd}${WORKERS_GITIGNORE_LINE}\n`;
+  return { text: `${existing}${lineEnd}${added.map((line) => `${line}\n`).join('')}`, added };
 };
 
 const markerLine = (kind: string): string => `# ${marker.prefix}${kind} ${shareListLabel}`;

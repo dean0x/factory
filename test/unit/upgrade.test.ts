@@ -747,8 +747,39 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
   const STATE_IGNORE = `${STATE_DIR}/.gitignore`;
   /** The lines that a state repo from before the registry of the workers holds. */
   const BEFORE_WORKERS = 'state/\nlocks/\nbackups/\n';
-  const LINE = 'workers/\n';
+  /** The two lines that upgrade adds to a state repo that holds neither. */
+  const LINE = 'workers/\ninbox/\n';
   const COMMIT = '-c commit.gpgsign=false commit -q -m chore: upgrade the state';
+
+  it('adds only the inbox line to a state repo that has the workers line, and lists that one line', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(STATE_IGNORE, `${BEFORE_WORKERS}workers/\n`);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output).filter((line) => line.startsWith('.factory/.gitignore'))).toEqual([
+      '.factory/.gitignore: add the line inbox/. Your lines stay as they are.',
+    ]);
+    success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${BEFORE_WORKERS}workers/\ninbox/\n`);
+  });
+
+  it('lists each added line in the preview, and keeps the plan action as add', async () => {
+    const { deps } = await makeNode();
+    deps.files.set(STATE_IGNORE, BEFORE_WORKERS);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output).filter((line) => line.startsWith('.factory/.gitignore'))).toEqual([
+      '.factory/.gitignore: add the line workers/. Your lines stay as they are.',
+      '.factory/.gitignore: add the line inbox/. Your lines stay as they are.',
+    ]);
+    expect(output.json).toMatchObject({ stateGitignore: 'add' });
+  });
+
+  it('adds the inbox line again when a later line of the person takes the folder back into the repo', async () => {
+    const { deps } = await makeNode();
+    const mine = `${BEFORE_WORKERS}workers/\ninbox/\n!inbox/\n`;
+    deps.files.set(STATE_IGNORE, mine);
+    success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${mine}inbox/\n`);
+  });
 
   it('adds the workers line to a state repo that has none, and commits the file', async () => {
     const { deps, gitSince } = await makeNode();
@@ -802,11 +833,12 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
   });
 
   it.each([
-    ['in the middle of other lines', `state/\nworkers/\n*.tmp\nlocks/\n`],
-    ['with trailing blanks', 'state/\nworkers/  \n'],
-    ['in a file with CRLF line ends', 'state/\r\nworkers/\r\n'],
-    ['as the last line with no line break', 'state/\nworkers/'],
-  ])('writes nothing when the line is there already, %s', async (_name, mine) => {
+    ['in the middle of other lines', `state/\nworkers/\n*.tmp\ninbox/\nlocks/\n`],
+    ['with trailing blanks', 'state/\nworkers/  \ninbox/ \n'],
+    ['in a file with CRLF line ends', 'state/\r\nworkers/\r\ninbox/\r\n'],
+    ['as the last line with no line break', 'state/\nworkers/\ninbox/'],
+    ['with a line of the person that takes the folder back and a later line that ignores it again', 'workers/\n!inbox/\ninbox/\n'],
+  ])('writes nothing when the lines are there already, %s', async (_name, mine) => {
     const { deps, gitSince } = await makeNode();
     deps.files.set(STATE_IGNORE, mine);
     const writes = deps.atomicWrites.length;
@@ -2390,7 +2422,7 @@ describe('upgrade: a node of schema 1', () => {
       blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
     });
 
-    expect(text(deps, `${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\n');
+    expect(text(deps, `${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\n');
     expect(output.lines.at(-1)?.text).toBe('Changed 11 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S }, stateGitignore: 'add' });
     expect(gitWrites(gitSince())).toEqual([
