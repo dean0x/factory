@@ -1712,6 +1712,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
   clearFlag: flagText(flags.clear),
   compactFlag: flagText(flags.compact),
+  yesFlag: flagText(flags.yes),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,

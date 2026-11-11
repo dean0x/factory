@@ -463,8 +463,14 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
   });
 
   it('sends one SendMessage that names the copied file after a worker starts with an assignment', () => {
-    const create = `${workerCommand(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`;
+    const create = `${workerCommand(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE ${flagText(flags.yes)}`;
     expect(coordinatorOf('acme')).toContain(`After \`${create}\`, send one \`SendMessage\` that names the copied file.`);
+  });
+
+  it('names the yes flag of worker new as the consent of a new work copy with no settings file, and the owner step for the other case', () => {
+    expect(coordinatorOf('acme')).toContain(
+      `In this session, \`${flagText(flags.yes)}\` is the consent to the hook settings of a new work copy. It counts only when the work copy has no settings file. Else the command stops, and the owner runs it in a terminal window.`,
+    );
   });
 
   it('runs the watch as a background task, and runs it again without a worker whose cause stays', () => {
