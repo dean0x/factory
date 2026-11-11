@@ -572,6 +572,39 @@ describe('node deps: fs', () => {
     });
   });
 
+  describe('a folder read with a limit', () => {
+    const folderOf = async (name: string, count: number): Promise<string> => {
+      const folder = fresh(name);
+      await mkdir(folder);
+      for (let index = 0; index < count; index += 1) await writeFile(join(folder, `f${index}`), '', 'utf8');
+      return folder;
+    };
+
+    it('gives all names of a folder that holds fewer than the limit', async () => {
+      const result = await deps.fs.listLimited(await folderOf('limited-few', 3), 5);
+      expect(result.ok && [...result.value].sort()).toEqual(['f0', 'f1', 'f2']);
+    });
+
+    it('gives as many names as the limit, and no more, for a folder that holds more', async () => {
+      const result = await deps.fs.listLimited(await folderOf('limited-many', 8), 5);
+      expect(result.ok && result.value.length).toBe(5);
+    });
+
+    it('gives no name for a limit of zero', async () => {
+      expect(await deps.fs.listLimited(await folderOf('limited-zero', 2), 0)).toEqual({ ok: true, value: [] });
+    });
+
+    it.each([-1, 1.5, Number.NaN])('refuses the limit %s', async (limit) => {
+      expect((await deps.fs.listLimited(await folderOf(`limited-bad-${limit}`, 1), limit)).ok).toBe(false);
+    });
+
+    it('returns an error with the code for a missing folder', async () => {
+      const result = await deps.fs.listLimited(fresh('limited-missing'), 5);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.message).toContain('ENOENT');
+    });
+  });
+
   describe('a read with a strict decode', () => {
     /** The byte 0xff never occurs in UTF-8. A lenient decode turns it into U+FFFD. */
     const BAD_BYTES = Buffer.from([0x61, 0xff, 0x62]);

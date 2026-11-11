@@ -6,7 +6,7 @@ import { failure, type CliResult } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
-import { withFolderLock, writeInFolder, type FolderLock, type FolderTarget } from '../../src/core/safe-write.js';
+import { createInFolder, withFolderLock, writeInFolder, type FolderLock, type FolderTarget } from '../../src/core/safe-write.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 
 const PARENT = '/h/state';
@@ -191,6 +191,46 @@ describe('safe write: with the fake file system', () => {
   });
 });
 
+describe('safe create: with the fake file system', () => {
+  it('creates the folder and a new file with the modes, and gives the path of the file', async () => {
+    const deps = fakeWithParent();
+    const result = await createInFolder(deps, { ...TARGET, folderMode: 0o700 }, 'first\n');
+    expect(result).toEqual({ ok: true, value: FILE });
+    expect(deps.files.get(FILE)).toBe('first\n');
+    expect(deps.modes.get(FILE)).toBe(0o600);
+    expect(deps.modes.get(FOLDER)).toBe(0o700);
+    expect([...deps.files.keys()]).toEqual([FILE]);
+  });
+
+  it('never replaces a file that exists, and keeps its text', async () => {
+    const deps = fakeWithParent();
+    deps.seed(FILE, 'old\n');
+    const error = errorOf(await createInFolder(deps, TARGET, 'new\n'));
+    expect(error.kind).toBe('failure');
+    expect(deps.files.get(FILE)).toBe('old\n');
+  });
+
+  it('never writes through a file that is a link, and keeps the target of the link', async () => {
+    const deps = fakeWithParent({ links: { [FILE]: '/h/elsewhere/victim' } });
+    deps.seedDir(FOLDER);
+    expect(errorOf(await createInFolder(deps, TARGET, 'new\n')).kind).toBe('failure');
+    expect([...deps.files.keys()]).toEqual([]);
+  });
+
+  it('refuses a folder that is a link, with a security stop, and writes nothing', async () => {
+    const deps = fakeWithParent({ links: { [FOLDER]: '/h/elsewhere' } });
+    deps.seedDir(FOLDER);
+    expect(errorOf(await createInFolder(deps, TARGET, 'new\n')).kind).toBe('safety');
+    expect([...deps.files.keys()]).toEqual([]);
+  });
+
+  it('refuses a name that is not a plain name', async () => {
+    const deps = fakeWithParent();
+    expect(errorOf(await createInFolder(deps, { ...TARGET, name: '../escape' }, 'x')).kind).toBe('failure');
+    expect([...deps.files.keys()]).toEqual([]);
+  });
+});
+
 describe('safe lock: with the fake file system', () => {
   const lockFile = `${FILE}.lock`;
   const done = async (): Promise<CliResult<string>> => ok('done');
@@ -349,6 +389,24 @@ describe('safe write: with the real file system', () => {
     await writeInFolder(deps, target, 'two\n');
     expect(await readFile(join(folder, NAME), 'utf8')).toBe('two\n');
     expect(await readdir(folder)).toEqual([NAME]);
+  });
+
+  it('creates a new file with the modes, and gives its real path; a second create keeps the first text', async () => {
+    const { folder, target } = await fresh();
+    expect(await createInFolder(deps, target, 'one\n')).toEqual({ ok: true, value: join(folder, NAME) });
+    expect((await lstat(join(folder, NAME))).mode & 0o777).toBe(0o600);
+    expect((await lstat(folder)).mode & 0o777).toBe(0o700);
+    expect(errorOf(await createInFolder(deps, target, 'two\n')).kind).toBe('failure');
+    expect(await readFile(join(folder, NAME), 'utf8')).toBe('one\n');
+  });
+
+  it('never writes through a file that is a link to a path that does not exist', async () => {
+    const { parent, folder, target } = await fresh();
+    await mkdir(folder);
+    const missing = join(parent, 'missing.txt');
+    await symlink(missing, join(folder, NAME));
+    expect(errorOf(await createInFolder(deps, target, 'text\n')).kind).toBe('failure');
+    expect(await readdir(parent)).not.toContain('missing.txt');
   });
 
   it('refuses a folder that is a link and leaves the folder behind the link as it was', async () => {

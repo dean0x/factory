@@ -329,6 +329,11 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         }
         return ok([...names].sort());
       },
+      listLimited: async (path, limit) => {
+        if (!Number.isInteger(limit) || limit < 0) return failure(`cannot list ${path}: the limit ${limit} is not a whole number, 0 or more`);
+        const names = await fake.fs.list(path);
+        return names.ok ? ok(names.value.slice(0, limit)) : names;
+      },
       rename: async (from, to) => {
         if (kindOf(from) === null) return enoent('rename', from);
         if (dirs.has(to) && treeKeys(to).files.length > 0) return failure(`cannot rename ${from}: ENOTEMPTY`);

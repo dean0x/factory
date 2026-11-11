@@ -7,6 +7,7 @@ import {
   lstat,
   mkdir,
   open,
+  opendir,
   readdir,
   readFile,
   realpath,
@@ -293,6 +294,22 @@ const createExclusive = async (path: string, text: string, mode: number): Promis
   }
 };
 
+/** The first `limit` names of the folder. The folder handle reads one entry at a time, so the rest of the folder stays unread. */
+const readNames = async (path: string, limit: number): Promise<string[]> => {
+  const folder = await opendir(path);
+  const names: string[] = [];
+  try {
+    while (names.length < limit) {
+      const entry = await folder.read();
+      if (entry === null) break;
+      names.push(entry.name);
+    }
+    return names;
+  } finally {
+    await folder.close().catch(() => undefined);
+  }
+};
+
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   readTextLimited: async (path, maxBytes, decode = 'lenient') => {
@@ -316,6 +333,10 @@ const nodeFs: Fs = {
   mkdir: (path, mode) =>
     guard('create', path, async () => void (await mkdir(path, mode === undefined ? { recursive: true } : { recursive: true, mode }))),
   list: (path) => guard('list', path, async () => (await readdir(path)).sort()),
+  listLimited: async (path, limit) => {
+    if (!Number.isInteger(limit) || limit < 0) return failure(`cannot list ${path}: the limit ${limit} is not a whole number, 0 or more`);
+    return guard('list', path, () => readNames(path, limit));
+  },
   rename: (from, to) => guard('rename', from, () => rename(from, to)),
   remove: (path) => guard('remove', path, () => rm(path, { recursive: true, force: true })),
   removeEmptyDir: async (path) => {

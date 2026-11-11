@@ -101,6 +101,22 @@ export const writeInFolder = async (deps: Deps, target: FolderTarget, text: stri
   return failure(`cannot write ${file}: no free temporary name`);
 };
 
+/**
+ * Create a new file in the folder with the text, and give the real path of the file. The folder is checked and made as for
+ * `writeInFolder`: it is never a link, and its real path is inside the real path of the parent. The file must not exist: a
+ * file, a folder or a link at that path is never replaced and never followed, and the call is a failure (exit 1). A refusal of
+ * a link or of a folder outside the parent is a security stop (exit 4). A failed write leaves no part of the file.
+ */
+export const createInFolder = async (deps: Deps, target: FolderTarget, text: string): Promise<CliResult<string>> => {
+  if (!isPlainName(target.name)) return notPlainName(target);
+  const folder = await realFolderOf(deps, target);
+  if (!folder.ok) return folder;
+  const file = join(folder.value, target.name);
+  const created = await deps.fs.writeTextExclusive(file, text, target.mode);
+  if (!created.ok) return created;
+  return created.value ? ok(file) : failure(`cannot write ${file}: it exists already`);
+};
+
 /** The bounds of a lock beside a file, and the end of its name: the lock file is the name of the file and the suffix. */
 export interface FolderLock extends LockPolicy {
   readonly suffix: string;
