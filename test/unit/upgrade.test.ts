@@ -1747,16 +1747,24 @@ describe('upgrade: the blocks of a layer', () => {
     });
     expect(output.json).toMatchObject({ committed: true });
     expect(gitSince().some((command) => command.endsWith('chore: upgrade the state'))).toBe(true);
-    expect((await inspectBlocks(deps, HOME, layer2Blocks)).map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
+    expect((await inspectBlocks(deps, HOME, layer2Blocks)).map((status) => status.kind)).toEqual([
+      'intact',
+      'intact',
+      'intact',
+      'intact',
+      'intact',
+    ]);
   });
 
-  it('lists the safety and setup blocks only when the layer is 3, which has no role template', async () => {
+  it('lists the safety, worker and setup blocks when the layer is 3, which has no role template', async () => {
     const { deps } = await makeNode();
     setLayer(deps, 3);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
     expect(lineTexts(output).filter((line) => line.startsWith('block '))).toEqual([
       `block safety: version ${versionOf('safety')} is current`,
+      `block worker: version ${versionOf('worker')} is current`,
       `block setup: version ${versionOf('setup')} is current`,
+      `block setup-worker: version ${versionOf('setup-worker')} is current`,
     ]);
   });
 
@@ -1809,12 +1817,28 @@ describe('upgrade: the blocks of a layer', () => {
     expect(blocksOfState(deps)).not.toHaveProperty('coordinator');
   });
 
-  it('knows the blocks of the layer: it rejects the worker block on layer 2 and lists the others', async () => {
+  it('knows the blocks of the layer: it rejects an unknown block on layer 2 and lists the blocks of the layer', async () => {
     const { deps } = await makeNode();
     setLayer(deps, 2);
-    const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
+    const error = refusal(await upgrade(deps, currentSpec, { overwrite: ['planner'] }));
     expect(error.kind).toBe('usage');
-    expect(error.hint).toBe('The blocks are: manager, safety, setup.');
+    expect(error.hint).toBe('The blocks are: manager, safety, worker, setup, setup-worker.');
+  });
+
+  it('adds the worker file of a node on layer 2 from before when the worker block is named, with the manager as the contact', async () => {
+    const { deps } = await makeNode();
+    setLayer(deps, 2);
+    deps.files.delete(WORKER);
+    success(await upgrade(deps, currentSpec, { overwrite: ['worker'] }));
+    expect(deps.files.has(WORKER)).toBe(true);
+    expect(text(deps, WORKER)).toContain('The manager is the single contact of the owner.');
+    expect((await inspectBlocks(deps, HOME, layer2Blocks)).map((status) => status.kind)).toEqual([
+      'intact',
+      'intact',
+      'intact',
+      'intact',
+      'intact',
+    ]);
   });
 
   it('fails and names the key when the layer of the config is not valid', async () => {

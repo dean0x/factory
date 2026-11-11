@@ -1,4 +1,4 @@
-import { capitalize, coordinatorTemplateValues, templateValues } from '../names.js';
+import { capitalize, coordinatorTemplateValues, layers, roles, templateValues } from '../names.js';
 import type { BlockInput } from './types.js';
 
 const PLACEHOLDER = /\{\{([A-Za-z]+)\}\}/g;
@@ -19,12 +19,18 @@ export const fillTemplate = (
     return lower === name ? value : capitalize(value);
   });
 
+/** The role word of the session that holds the workers: the manager on the manager layer, and the coordinator on any other layer. */
+const contactWordOf = (holderLayer: number | undefined): string =>
+  holderLayer === layers.manager ? roles.manager : roles.coordinator;
+
 /**
  * The values for the text of a worker: the paths are written from the factory folder, and the id of the node is filled in.
- * A value is put in the text as it is, and it is not read again for placeholders.
+ * The word `coordinator` is the role word of the session that the worker reports to, which follows the layer of the node that
+ * holds the worker. A value is put in the text as it is, and it is not read again for placeholders.
  */
 export const workerValuesFor = (input: BlockInput): Readonly<Record<string, string>> => ({
   ...templateValues,
+  coordinator: contactWordOf(input.holderLayer),
   nodeId: input.nodeId,
 });
 

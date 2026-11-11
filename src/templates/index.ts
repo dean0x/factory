@@ -37,16 +37,19 @@ const setupBlock = (name: string, target: BlockTemplate['target'], text: string 
   text === null ? [] : [{ name, version: 1, target, body: text }];
 
 /**
- * The managed blocks of a node on this layer: its role block, the safety block, and, on layer 1, the worker
- * block. A worker has no home, so the node just above the workers holds the instructions that the workers follow.
- * A layer with no role template has the safety block only. After the core blocks come the blocks of the setup texts:
- * the coordinator text goes into the coordinator file, and the worker text goes into the worker file of a node that has
- * one. The text of the blocks follows `input`.
+ * The managed blocks of a node on this layer: its role block, the safety block, and, on layer 1 and above, the worker
+ * block. A worker has no home, so the node that holds the workers has the instructions that the workers follow. A node
+ * on layer 2 or above can hold workers and child nodes at the same time. A layer with no role template has the safety block
+ * and the worker block. After the core blocks come the blocks of the setup texts: the coordinator text goes into the
+ * coordinator file, and the worker text goes into the worker file of a node that has one. The text of the blocks follows
+ * `input`.
  */
 export const blockTemplatesFor = (input: BlockInput): readonly BlockTemplate[] => {
   const role = input.recipe.roles.templateFor(input);
   const worker =
-    input.layer === COORDINATOR_LAYER ? input.recipe.roles.templateFor({ ...input, layer: WORKER_LAYER }) : null;
+    input.layer >= COORDINATOR_LAYER
+      ? input.recipe.roles.templateFor({ ...input, layer: WORKER_LAYER, holderLayer: input.layer })
+      : null;
   const core = [role, safetyFor(input), worker].filter((template): template is BlockTemplate => template !== null);
   const hasWorkerFile = core.some((template) => template.target === 'workerFile');
   return [

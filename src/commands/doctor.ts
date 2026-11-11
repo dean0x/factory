@@ -371,7 +371,7 @@ export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
       );
 };
 
-/** The layer of the node sets its role. A layer with no role template gets the safety block only. */
+/** The layer of the node sets its role. A layer with no role template has the safety block only in `CLAUDE.md`. */
 export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
   if (state.kind !== 'valid') return notChecked(checkIds.roles, `${files.config} is not valid`);
   const { layer } = state.value.core.node;

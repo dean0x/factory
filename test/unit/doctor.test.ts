@@ -346,17 +346,38 @@ describe('doctor: the blocks of a layer', () => {
     expect(result.text).toContain('needs the block manager');
   });
 
-  it('is ok for the blocks of layer 2: manager, safety and setup', async () => {
+  const WORKER_FILE = `${HOME}/.factory/roles/worker.md`;
+
+  /** The text of the file that holds the blocks of this target, as `init` writes it. */
+  const fileOf = (target: 'claudeFile' | 'workerFile'): string => {
+    const blocks = layer2Blocks
+      .filter((block) => block.target === target)
+      .map((block) => {
+        const rendered = renderBlock(block);
+        if (!rendered.ok) throw new Error(rendered.error.message);
+        return rendered.value;
+      });
+    return `${blocks.join('\n\n')}\n`;
+  };
+
+  it('is ok for the blocks of layer 2: manager, safety, worker, setup and setup-worker', async () => {
     const deps = await initialized();
     setLayer(deps, 2);
-    const path = CLAUDE_MD;
-    const blocks = layer2Blocks.map((block) => {
-      const rendered = renderBlock(block);
-      if (!rendered.ok) throw new Error(rendered.error.message);
-      return rendered.value;
-    });
-    deps.files.set(path, `${blocks.join('\n\n')}\n`);
-    expect(await nodeBlocks(deps)).toMatchObject({ level: 'ok', text: '3 managed blocks are intact' });
+    deps.files.set(CLAUDE_MD, fileOf('claudeFile'));
+    deps.files.set(WORKER_FILE, fileOf('workerFile'));
+    expect(await nodeBlocks(deps)).toMatchObject({ level: 'ok', text: '5 managed blocks are intact' });
+  });
+
+  it('warns that a node on layer 2 from before has no worker file, and names the commands that add it', async () => {
+    const deps = await initialized();
+    setLayer(deps, 2);
+    deps.files.set(CLAUDE_MD, fileOf('claudeFile'));
+    deps.files.delete(WORKER_FILE);
+    const result = await nodeBlocks(deps);
+    expect(result.level).toBe('warn');
+    expect(result.text).toContain(`worker (missing, in ${WORKER_FILE})`);
+    expect(result.text).toContain('Run "factory upgrade --overwrite worker" to add it.');
+    expect(result.text).toContain('Run "factory upgrade".');
   });
 
   it('does not check the blocks when the config is not valid', async () => {

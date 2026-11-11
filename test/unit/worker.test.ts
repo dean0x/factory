@@ -447,6 +447,20 @@ describe('worker new: the work, in order (TP-5)', () => {
   });
 });
 
+describe('worker new: a node on a layer of 2 or more holds workers (AC-1)', () => {
+  const layerOf = (layer: number): FactoryConfig => {
+    const config = sampleConfig();
+    return { ...config, core: { ...config.core, node: { ...config.core.node, layer } } };
+  };
+
+  it.each([1, 2, 3])('makes a worker on a node on layer %i', async (layer) => {
+    const made = make({ config: layerOf(layer) });
+    await succeeded(made);
+    expect(recordOf(made)).toMatchObject({ project: 'web', branch: BRANCH });
+    expect(indexOf(made, 'tmux split-window')).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe('worker new: the output is short (TP-63)', () => {
   it('has a short first line and few lines, also with warnings', async () => {
     const made = make({ machine: { memory: 'System-wide memory free percentage: 5%\n', disk: null } });

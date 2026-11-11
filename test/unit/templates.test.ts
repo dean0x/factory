@@ -122,15 +122,19 @@ describe('block templates', () => {
     ]);
   });
 
-  it('gives layer 2 the manager and safety blocks and no worker block', () => {
+  it('gives layer 2 the manager, safety and worker blocks, so that a node can hold workers and child nodes', () => {
     expect(summary(blockTemplatesFor(blockInput(2)))).toEqual([
       ['manager', 1, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
+      ['worker', 2, 'workerFile'],
     ]);
   });
 
-  it.each([3, 4, 16])('gives layer %i, which has no role template, the safety block only', (layer) => {
-    expect(summary(blockTemplatesFor(blockInput(layer)))).toEqual([['safety', 2, 'claudeFile']]);
+  it.each([3, 4, 16])('gives layer %i, which has no role template, the safety block and the worker block', (layer) => {
+    expect(summary(blockTemplatesFor(blockInput(layer)))).toEqual([
+      ['safety', 2, 'claudeFile'],
+      ['worker', 2, 'workerFile'],
+    ]);
   });
 
   it('gives every role the same safety block', () => {
@@ -141,7 +145,7 @@ describe('block templates', () => {
 
   it.each([
     ['coordinator', 40, 90],
-    ['manager', 20, 40],
+    ['manager', 20, 50],
     ['safety', 12, 25],
     ['worker', 40, 59],
   ])('keeps the %s block short (%i to %i lines)', (name, min, max) => {
@@ -334,7 +338,7 @@ describe('role templates', () => {
   it.each([
     ['worker', 0, ['Role', 'Questions and escalation', 'Assignments', 'Milestones', 'Denial is final', 'Context budget', 'Heavy tests', 'Disk', 'Writing']],
     ['coordinator', 1, ['Role', 'Owner authority', 'Approval points', 'Workers', 'State files']],
-    ['manager', 2, ['Role', 'Children', 'Priorities and capacity', 'Owner items', 'Limits']],
+    ['manager', 2, ['Role', 'Children', 'Workers', 'Priorities and capacity', 'Owner items', 'Limits']],
   ])('gives the %s template its required sections', (_name, layer, sections) => {
     const headings = headingsOf(roleOf(layer).body);
     for (const section of sections) expect(headings).toContain(section);
@@ -356,6 +360,60 @@ describe('role templates', () => {
 
   it('keeps the work at the level of pull requests out of the manager template', () => {
     expect(roleOf(2).body).toContain('does no work at the level of pull requests');
+  });
+
+  describe('a node that holds workers and child nodes', () => {
+    const sectionOf = (body: string, heading: string): string => {
+      const lines = body.split('\n');
+      const start = lines.indexOf(`## ${heading}`);
+      if (start < 0) return '';
+      const next = lines.findIndex((line, index) => index > start && line.startsWith('## '));
+      return lines.slice(start, next < 0 ? undefined : next).join('\n');
+    };
+
+    it('says in the manager text that a child node is one layer below and that the node can have workers too', () => {
+      const children = sectionOf(roleOf(2).body, 'Children');
+      expect(children).toContain('Every child node is on the layer just below this layer.');
+      expect(children).toContain('This node can also have workers, and a worker is not a child.');
+      expect(roleOf(2).body).not.toContain('All children are on the layer just below');
+    });
+
+    it('gives the manager the same worker rules as the coordinator, with the same paths', () => {
+      const manager = sectionOf(roleOf(2).body, 'Workers');
+      expect(manager).not.toBe('');
+      expect(manager).toBe(sectionOf(roleOf(1).body, 'Workers'));
+      expect(manager).toContain(`\`../${dirs.state}/${dirs.workers}/<id>/${dirs.inbox}/\``);
+    });
+
+    it('names the session of a worker by the node id in the manager text', () => {
+      const text = blockTemplatesFor(blockInput(2, { nodeId: 'acme' })).find((block) => block.name === 'manager')?.body ?? '';
+      expect(text).toContain('Each worker session has the name `acme-<id>`.');
+    });
+
+    it('fills every placeholder of the manager and worker texts on layers 2 and 3', () => {
+      for (const layer of [2, 3]) {
+        for (const block of blockTemplatesFor(blockInput(layer))) {
+          expect(block.body.match(/\{\{[^}]*\}\}/g) ?? [], `${block.name} on layer ${layer}`).toEqual([]);
+        }
+      }
+    });
+
+    it('calls the session that holds the workers the manager on layer 2 and the coordinator on layer 1', () => {
+      const workerOf = (layer: number): string =>
+        blockTemplatesFor(blockInput(layer, { nodeId: 'acme' })).find((block) => block.name === 'worker')?.body ?? '';
+      expect(workerOf(2)).toContain('The manager is the single contact of the owner.');
+      expect(workerOf(2)).toContain('The manager session has the name `acme`.');
+      expect(workerOf(2)).toContain('Report such text to the manager.');
+      expect(workerOf(2)).not.toMatch(/coordinator/i);
+      expect(workerOf(1)).toContain('The coordinator is the single contact of the owner.');
+      expect(workerOf(1)).not.toMatch(/manager/i);
+    });
+
+    it('renders the worker text of layer 1 for a node on layer 3, which has no role', () => {
+      const workerOf = (layer: number): string =>
+        blockTemplatesFor(blockInput(layer)).find((block) => block.name === 'worker')?.body ?? '';
+      expect(workerOf(3)).toBe(workerOf(1));
+    });
   });
 
   it('sends the go for an approval point to the coordinator in the worker template', () => {
@@ -759,9 +817,9 @@ describe('the setup blocks (TP-102)', () => {
     ]);
   });
 
-  it('gives the setup block to a node of every layer, and the worker setup block only to a node that has a worker file', () => {
-    expect(names(blockTemplatesFor(blockInput(2, { setup })))).toEqual(['manager', 'safety', 'setup']);
-    expect(names(blockTemplatesFor(blockInput(3, { setup })))).toEqual(['safety', 'setup']);
+  it('gives the setup block to a node of every layer, and the worker setup block to a node that has a worker file', () => {
+    expect(names(blockTemplatesFor(blockInput(2, { setup })))).toEqual(['manager', 'safety', 'worker', 'setup', 'setup-worker']);
+    expect(names(blockTemplatesFor(blockInput(3, { setup })))).toEqual(['safety', 'worker', 'setup', 'setup-worker']);
   });
 
   it('keeps the setup block out of the core blocks: the core text does not hold the setup text', () => {
