@@ -47,7 +47,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `init`, `start`, `doctor`, `upgrade`, `help` (with `help words`) | FAC-M2 |
 | `init --tracker --items --decisions --state-from`; `upgrade` rule for a dirty state repo | FAC-M3 |
 | `node children`, `node add-child`, `node remove-child` | FAC-M2 |
-| `node tree` | FAC-M8 |
+| `node send` | B-207 (from FAC-M8) |
+| `node tree` | B-207 (from FAC-M8) |
 | `machine`, `layout`, `self`, `hook` | FAC-M4 |
 | `shutdown`, `restart`, `reboot`, `status` (the worker states, the work item, the unused state), `dismiss` (with `--idle`; FAC-M5b names it `--unused`) | FAC-M4 |
 | `worker` (new, list, reset, stop, resume, summon, watch) | FAC-M4 |
@@ -62,9 +63,9 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `check`, `pr`, `issues`, `copies` (list, status), `lock` | FAC-M5 |
 | `state` (guard) | FAC-M5 |
 | `release` (check, verify, scope), `copies` (sync, clean) | FAC-M5b |
-| `status` (the digest for the owner), `report` (the digest of one node) | FAC-M5 |
+| `status` (the digest for the owner), `report` (the digest of one node, with a row for each direct child) | B-207 (the core); the events and `--since` stay in FAC-M5 |
 | `status --usage` | FAC-M5b |
-| `report` (the rollup over children) | FAC-M8 |
+| `report` (the rollup over children) | B-207 (the rows for the children); the inherit list, the decision relay and the `director` template stay in FAC-M8 |
 | `recipe` (show, variant), `project` (add, remove, list) | FAC-M6 |
 | `adopt` | FAC-M7 |
 | `plugin` (test) | FAC-M11 |
@@ -179,7 +180,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 1. **Local board (F-2).** The `local` connector (files in `.factory/`; also the test double of later connectors), on the operations that FAC-M11 makes the one connector contract (design §4.10). The commands `item`, `request`, `decide <D-n> <option>` (for `local`; FAC-M3 adds `github`) and `queue`. The decision log and the decision profile tools. The board commit helper and the delete-guard hooks. Every write of a board file goes through the board commit helper.
 2. **Check (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `pr watch`, `issues audit`. The dismiss idle window (M5-2): `dismiss --idle` reads the board again just before each stop, and not once before all stops. M5-1b reads the board once to list the idle workers and once more after the pick, so a worker can get an item after the second read and before its stop. M5-1b states this as a limit.
 3. **`factory copies list|status` (D-55).**
-4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. The rollup over children stays in FAC-M8. `lock run`. The view slot shows `factory item list`.
+4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. B-207 builds the report core without the events. The events stay in FAC-M5. B-207 also gives the rows for the direct children. The rest of the rollup stays in FAC-M8. `lock run`. The view slot shows `factory item list`.
 5. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
 6. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
 7. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
@@ -224,7 +225,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   - With any account setup, a board event is never a proof: an owner comment `approve`, an assignee change, a `worker:<id>` label and a review are each refused, and the message says that a board event is no proof. A decision from `factory decide` on a fake terminal window with no `FACTORY_SESSION` is accepted, and `pr merge` merges.
 - [ ] `copies list` and `copies status` give the right rows and counts on fixture repos with linked worktrees: clean, dirty, unpushed, branch not on the remote. They ask git, never a `.git` folder test.
 - [ ] A dirty, diverged or off-default work copy shows `STUCK:`, and no command changes it (test).
-- [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`.
+- [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`. B-207 (PR B1) will meet the keys test and the static test. The `--since` test and the two event tests stay open.
 - [ ] `lock run` tests: with a fake platform `darwin` it uses `lockf`, and with `linux` it uses `flock`. A second run waits and stops at its bound with exit 3. The exit code of the inner command passes through.
 - [ ] A tmux test: the view slot pane shows the item titles of a fixture `local` board.
 - [ ] Template test: the coordinator role text and the fixed rules follow the approval setting. With `merge: owner`, the text says that every merge waits for the owner. With `merge: delegated`, it names the proofs of design §6.1 and does not say that every merge waits.
@@ -464,7 +465,7 @@ In M5-1b a hosted kind has no connector. Every write stops (exit 4), and a read 
 - [ ] Integration test: a child factory folder that factory cannot read shows "unknown" in the rollup, never "dead".
 - [ ] A record from a parent with a different owner arrives as a message, and carries no authority (test).
 - [ ] Concurrent use. Test: two machines that use one factory do not write the same state file at the same time, or the second `start` stops with the name of the active machine. This follows the one-active-machine warning of FAC-M4.
-- [ ] `node tree` prints one line for each entry of `children[]` and reads only the folders that the entries name. A test with an extra node folder shows that it is not listed. A child entry whose folder has another node id shows `mismatch`, and `deliver` to it exits 4.
+- [ ] `node tree` prints one line for each entry of `children[]` and reads only the folders that the entries name. A test with an extra node folder shows that it is not listed. A child entry whose folder has another node id shows `mismatch`, and `node send` to it exits 4.
 - [ ] A parent that has owner, accounts and session settings in its config passes to a child only the keys of the inherit list (limits, writing style, safety rules). A test compares the child config.
 
 ### FAC-M10: Release and install
