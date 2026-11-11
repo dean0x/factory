@@ -1503,4 +1503,9 @@ describe('the names of node send', () => {
     expect(coordinatorTemplateValues['nodeInboxDir']).toBe(`../${dirs.state}/${dirs.inbox}/`);
     expect(coordinatorTemplateValues['nodeSendCommand']).toBe(templateValues['nodeSendCommand']);
   });
+
+  it('gives the note of the header to the template texts, so that no text outside names.ts holds the word of the note', () => {
+    expect(templateValues['inboxNotice']).toBe(messageHeader.notice);
+    expect(coordinatorTemplateValues['inboxNotice']).toBe(messageHeader.notice);
+  });
 });

@@ -18,6 +18,7 @@ export const MANAGER_LINES: readonly string[] = [
   '',
   '- The children are the {{node}}s that `{{childrenKey}}` lists in `{{configFile}}`.',
   '- Every child {{node}} is on the layer just below this layer. This {{node}} can also have {{worker}}s, and a {{worker}} is not a child.',
+  '- To give a task to a child, write the task in a file. Run `{{nodeSendCommand}}`. The command puts the file in the inbox of the child and prints the session name of the child. Check with `ListAgents` that exactly one session has that name. Then send one `SendMessage` that names the file. The file carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}.',
   '- A child that you cannot read is unknown. Say so. Do not guess its state.',
   '- Never type into the session of a grandchild. Go through the child that owns it.',
   '',

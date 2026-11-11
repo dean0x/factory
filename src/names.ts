@@ -1467,7 +1467,8 @@ export const address = { scheme: 'file://' } as const;
  * The fixed header of a message file that `node send` writes into the inbox of a child. The file is a message and carries no
  * authority of the owner. The header has four lines, in this order: the id of the sender, the address of the sender, the id
  * of the target, and the note. `messageHeaderLines` builds them, so the order has one owner. The note is plain text, because
- * the text rules of the source treat the word "message" as a name of this one use.
+ * the text rules of the source treat the word "message" as a name of this one use. The texts of the safety block reach the
+ * note through the template value `inboxNotice`, so that no other text of the source holds the word.
  */
 export const messageHeader = {
   senderId: `Sender ${roles.node} id: `,
@@ -1758,6 +1759,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   workerWatchCommand: workerCommandText(workerCommands.watch),
   workerResetCommand: workerCommandText(workerCommands.reset),
   nodeSendCommand: `${commandText(commandLines.nodeSend)} <id> ${flagText(flags.file)} FILE`,
+  inboxNotice: messageHeader.notice,
   selfResetCommand: commandText(`${commands.self} ${selfCommands.reset}`),
   itemCommand: commandText(commands.item),
   trackCommand: commandText(commands.track),
