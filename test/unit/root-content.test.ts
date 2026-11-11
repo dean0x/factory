@@ -619,7 +619,7 @@ describe('root files: tokens (TP-45, TP-134)', () => {
 
   it('is ok for a tracked text file with plain prose and paths', async () => {
     const deps = make({ tracked: ['docs/notes.md'] });
-    deps.seed(`${HOME}/docs/notes.md`, 'Plain words.\nSee /var/folders/fn/xhrkn4ys4d37t9fd8kfmd4rw0000gn/T/Work/payments-team-factory-2.\n');
+    deps.seed(`${HOME}/docs/notes.md`, 'Plain words.\nSee /var/folders/zz/c0d1e2f3g4h5j6k7m8n9p0q10000gn/T/Work/payments-team-factory-2.\n');
     expect(of(await scan(deps), checkIds.rootFiles)).toEqual([]);
   });
 
