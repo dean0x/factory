@@ -6,6 +6,8 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
+import { workerPathsOf } from '../../src/state/layout.js';
+import { writeWorkerRecord } from '../../src/workers/registry.js';
 
 const HOME = '/w/mgr';
 const CONFIG_PATH = `${HOME}/factory.yaml`;
@@ -207,6 +209,54 @@ describe('node add-child', () => {
       expect(result.error.hint).toContain('Change the id in the factory.yaml of the child');
     }
     expect(deps.files.get(LOCAL_PATH)).toBe(before);
+  });
+
+  describe('one id space for workers and children (AC-2)', () => {
+    const workerOf = (id: string) => ({
+      id,
+      project: 'web',
+      workCopy: `${HOME}/work-copies/web/${id}`,
+      branch: `worker/${id}`,
+    });
+
+    const expectRefused = async (deps: FakeDeps): Promise<void> => {
+      const before = deps.files.get(LOCAL_PATH);
+      const result = await node(deps, 'add-child', '/w/web-factory');
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      if (!result.ok) {
+        expect(result.error.message).toBe('the child has the id web, which is the id of a worker of this node');
+        expect(result.error.hint).toContain('Then run "factory node add-child" again.');
+      }
+      expect(deps.files.get(LOCAL_PATH)).toBe(before);
+    };
+
+    it('fails for a child whose id is the id of a worker with a record, and changes nothing', async () => {
+      const deps = make({ homes: webHome });
+      const written = await writeWorkerRecord(deps, HOME, workerOf('web'));
+      expect(written.ok).toBe(true);
+      await expectRefused(deps);
+    });
+
+    it('fails for a child whose id is a key of the workers in the config', async () => {
+      const deps = make({ homes: webHome });
+      const config = configOf('mgr', 2);
+      seedConfig(deps, HOME, { ...config, core: { ...config.core, workers: { web: { proxy: 'none' } } } });
+      await expectRefused(deps);
+    });
+
+    it('fails for a child whose id is the name of a worker folder with a record that is not valid', async () => {
+      const deps = make({ homes: webHome });
+      deps.seed(workerPathsOf(HOME, 'web').recordFile, 'not json');
+      await expectRefused(deps);
+    });
+
+    it('adds a child when only another id is the id of a worker', async () => {
+      const deps = make({ homes: webHome });
+      const written = await writeWorkerRecord(deps, HOME, workerOf('alpha'));
+      expect(written.ok).toBe(true);
+      const output = await succeeded(deps, 'add-child', '/w/web-factory');
+      expect(output.lines[0]).toEqual({ level: 'text', text: 'Added the child web (layer 1).' });
+    });
   });
 
   it('fails for a child whose folder does not exist, says why and tells to start the child', async () => {

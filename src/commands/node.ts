@@ -13,6 +13,7 @@ import { err, ok, type Result } from '../core/result.js';
 import { commands, commandText, files, flags, flagText, maxFileBytes, nodeCommands, places, program, roles, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
+import { workerHasId } from '../workers/registry.js';
 
 export interface NodeOptions {
   readonly home: string | undefined;
@@ -192,6 +193,14 @@ const runAddChild = async (
   if (answer.id === config.core.node.id) {
     return failure(
       `the child has the id ${answer.id}, which is the id of this ${roles.node}`,
+      `Change the id in the ${files.config} of the child. ${ADD_AGAIN}`,
+    );
+  }
+  const taken = await workerHasId(deps, home, config, answer.id);
+  if (!taken.ok) return taken;
+  if (taken.value) {
+    return failure(
+      `the child has the id ${answer.id}, which is the id of a ${roles.worker} of this ${roles.node}`,
       `Change the id in the ${files.config} of the child. ${ADD_AGAIN}`,
     );
   }

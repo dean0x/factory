@@ -713,6 +713,25 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     expectNothingChanged(made);
   });
 
+  it('exits 2 for the id of a child (AC-2), names a remedy, and changes nothing', async () => {
+    const config = sampleConfig();
+    const made = make({
+      config: {
+        ...config,
+        core: {
+          ...config.core,
+          node: { ...config.core.node, layer: 2 },
+          children: [{ id: 'alpha', address: 'file:///w/alpha-factory' }],
+        },
+      },
+    });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe('the id alpha is the id of a child of this node');
+    expect(error.hint).toContain('factory worker new');
+    expectNothingChanged(made);
+  });
+
   it('exits 2 for an id that has a record (TP-7), and changes nothing more', async () => {
     const made = make();
     await succeeded(made);

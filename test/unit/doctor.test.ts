@@ -35,7 +35,9 @@ import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
 import { boardWarnPercent, checkIds, files, instructionFiles, maxFileBytes } from '../../src/names.js';
+import { workerPathsOf } from '../../src/state/layout.js';
 import { inspectState } from '../../src/state/load.js';
+import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { layer1Blocks, layer2Blocks } from '../helpers/blocks.js';
 import { createFakeDeps, exited, registerRoot, withFsWatch, type FakeDeps, type FetchHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
@@ -1351,7 +1353,7 @@ describe('doctor: the children', () => {
     seedConfig(deps, path, { ...config, core: { ...config.core, node: { id, layer } } });
   };
 
-  const probe = async (deps: FakeDeps) => checkChildren(deps, await inspectConfig(deps, HOME));
+  const probe = async (deps: FakeDeps) => checkChildren(deps, HOME, await inspectConfig(deps, HOME));
 
   it('is ok for a node without children', async () => {
     const deps = await initialized();
@@ -1405,6 +1407,58 @@ describe('doctor: the children', () => {
     const deps = makeDeps();
     deps.seed(`${HOME}/factory.yaml`, 'x: 1\n');
     expect((await probe(deps)).level).toBe('warn');
+  });
+
+  describe('one id space for workers and children (AC-2)', () => {
+    const webChild = [{ id: 'web', address: 'file:///w/web-factory' }];
+
+    it('fails for a child with the id of a worker that has a record, and names the id', async () => {
+      const deps = makeDeps();
+      writeConfig(deps, layer2With(webChild));
+      childAt(deps, '/w/web-factory', 'web', 1);
+      const written = await writeWorkerRecord(deps, HOME, {
+        id: 'web',
+        project: 'web',
+        workCopy: `${HOME}/work-copies/web/web`,
+        branch: 'worker/web',
+      });
+      expect(written.ok).toBe(true);
+      expect(await probe(deps)).toEqual({
+        id: 'children',
+        level: 'fail',
+        text: 'id overlap: web is the id of a child and of a worker',
+      });
+    });
+
+    it('fails for a child with the id of a worker that the config names', async () => {
+      const deps = makeDeps();
+      const config = layer2With(webChild);
+      writeConfig(deps, { ...config, core: { ...config.core, workers: { web: { proxy: 'none' } } } });
+      childAt(deps, '/w/web-factory', 'web', 1);
+      expect(await probe(deps)).toMatchObject({ level: 'fail', text: 'id overlap: web is the id of a child and of a worker' });
+    });
+
+    it('fails for a child with the name of a worker folder that holds a record that is not valid', async () => {
+      const deps = makeDeps();
+      writeConfig(deps, layer2With(webChild));
+      childAt(deps, '/w/web-factory', 'web', 1);
+      deps.seed(workerPathsOf(HOME, 'web').recordFile, 'not json');
+      expect((await probe(deps)).level).toBe('fail');
+    });
+
+    it('stays ok when the worker ids and the child ids differ', async () => {
+      const deps = makeDeps();
+      writeConfig(deps, layer2With(webChild));
+      childAt(deps, '/w/web-factory', 'web', 1);
+      const written = await writeWorkerRecord(deps, HOME, {
+        id: 'alpha',
+        project: 'web',
+        workCopy: `${HOME}/work-copies/web/alpha`,
+        branch: 'worker/alpha',
+      });
+      expect(written.ok).toBe(true);
+      expect((await probe(deps)).level).toBe('ok');
+    });
   });
 });
 

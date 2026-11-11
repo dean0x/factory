@@ -147,6 +147,12 @@ const planNew = async (
       `Choose another id. Then run "${newLine('ID', projectId)}" again.`,
     );
   }
+  if (config.core.children.some((child) => child.id === id)) {
+    return usageError(
+      `the id ${id} is the id of a child of this ${roles.node}`,
+      `Choose another id. Then run "${newLine('ID', projectId)}" again.`,
+    );
+  }
   const project = config.recipe.projects.find((candidate) => candidate.id === projectId);
   if (project === undefined) {
     const listed = config.recipe.projects.map((candidate) => candidate.id);

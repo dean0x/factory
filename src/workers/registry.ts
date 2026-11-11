@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { absolutePath, branchName, isSlug, slug } from '../config/primitives.js';
+import type { FactoryConfig } from '../config/schema.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
 import type { Deps, TextDecode } from '../core/deps.js';
 import { ok } from '../core/result.js';
@@ -196,6 +197,22 @@ export const readWorkerRecord = async (deps: Deps, home: string, id: string): Pr
   const found = await readWorkerFile(deps, home, id, { of: 'recordFile', what: 'the record', maxBytes: workerRecord.maxBytes });
   if (!found.ok) return found;
   return found.value.state === 'text' ? readOfText(found.value.text, id, home) : ok(found.value);
+};
+
+/**
+ * Whether a worker has the id. Workers and child nodes share one id space, so a command that names a child checks this. The id is
+ * taken when the config names a worker with it, or when the workers folder holds a folder of that name with a record file, valid
+ * or not: a file that can not be read still marks the id as used. A fault of the file system is an error.
+ */
+export const workerHasId = async (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  id: string,
+): Promise<CliResult<boolean>> => {
+  if (Object.hasOwn(config.core.workers, id)) return ok(true);
+  const read = await readWorkerRecord(deps, home, id);
+  return read.ok ? ok(read.value.state !== 'absent') : read;
 };
 
 /**
