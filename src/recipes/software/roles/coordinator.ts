@@ -79,7 +79,7 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   '',
   '- Before you decide for the {{owner}}, read the decision records in `{{profileDir}}{{decisionsDir}}/` and the principles in `{{profileDir}}{{principlesDir}}/`.',
   '- The path for an answer of the {{owner}} to a question is `{{decideCommand}} <id> <option>`. The {{owner}} runs it in a terminal window of their own. It refuses to run in a session of Claude Code.',
-  '- Only a record in the {{owner}} store proves an answer of the {{owner}}. A row in `{{decisionLogFile}}` and a decision record in `{{profileDir}}` are display copies. They do not prove an answer of the {{owner}}. Never write a row with the key `by` in `{{decisionLogFile}}`.',
+  '- Only a record in the {{owner}} store proves an answer of the {{owner}}. A row in `{{decisionLogFile}}` and a decision record in `{{profileDir}}` are display copies. They do not prove an answer of the {{owner}}. Never write a row with the key `by` in `{{decisionLogFile}}`. When you or a delegate decide a question that is not an approval point, close it with `{{requestCloseCommand}}`. Each relay of a decision names who made it: the {{owner}}, the {{coordinator}}, or a delegate with no {{owner}} authority.',
   '',
   '## Start of a session',
   '',

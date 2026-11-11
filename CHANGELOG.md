@@ -186,6 +186,8 @@ Messages between sessions
 - `worker new --assignment` reads a relative path that starts with `.factory/orders/` from the factory folder, from any folder. Before, it read the path from the current folder, so `.factory/orders/FILE` failed from `coordinator/`.
 - `worker watch --ready ID` also watches a worker that waits for the owner, for example at a dialog. It reports `ready` when that worker is at its prompt or busy. Before, nothing reported a worker that became ready after a block. The coordinator block tells the coordinator to use it, and to run the watch again after each end.
 - The coordinator block shows `--yes` in the `worker new` line, and says when it counts: for a new work copy with no settings file. The consent rule does not change.
+- `request close ID --made-by coordinator|delegate --decision TEXT` closes a request that the coordinator or a delegate decided, when it is not an approval point. The log row holds the decision and the key `decider`, and it has no `by`, so it has no owner authority. `factory.request/v1` gets the field `decider`, null for a close with no answer. The coordinator and worker texts say that each relay of a decision names who made it.
+- `worker new` prints one more line: if Claude Code asks to trust the folder, the owner answers once in the pane that the line names, then runs `worker watch --ready ID`. The trust of the factory folder does not cover a work copy, because a work copy is a git repository of its own.
 
 Platforms and help
 

@@ -593,6 +593,23 @@ describe('the coordinator text and the profile README: decisions and the owner p
     expect(decisionsPart()).toContain(`Never write a row with the key \`by\` in \`${decisionLog}\`.`);
   });
 
+  it('B-212 G-g closes a question that the coordinator or a delegate decided with request close and the made-by flag', () => {
+    expect(decisionsPart()).toContain(
+      'When you or a delegate decide a question that is not an approval point, close it with ' +
+        `\`${commandText(commandLines.requestClose)} <id> ${flagText(flags.madeBy)} coordinator|delegate ${flagText(flags.decision)} TEXT\`.`,
+    );
+  });
+
+  it('B-212 G-g says that each relay of a decision names who made it', () => {
+    expect(decisionsPart()).toContain('Each relay of a decision names who made it: the owner, the coordinator, or a delegate with no owner authority.');
+  });
+
+  it('B-212 G-g tells a worker to name who made a decision, and that a decision of the coordinator is never one of the owner', () => {
+    const worker = layer1Blocks.find((template) => template.name === 'worker')?.body ?? '';
+    expect(worker).toContain('When a report or a public text gives a decision, name who made it: the owner, the coordinator, or a delegate.');
+    expect(worker).toContain('A decision of the coordinator or of a delegate is never a decision of the owner.');
+  });
+
   it('M5-1b TP-163 README step 1 says that decide writes the record of an owner decision, and the coordinator writes one only for its own', () => {
     expect(stepOf(1)).toContain(`For a decision of the owner, \`${decide}\` writes the decision record in \`${dirs.decisions}/\`.`);
     expect(stepOf(1)).toContain('For your own decision, write the record and set `decided_by`.');

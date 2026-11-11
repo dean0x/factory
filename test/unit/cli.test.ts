@@ -704,7 +704,7 @@ describe('the item and track commands in the command line', () => {
     const asked = await run(['request', '--help']);
     expect(asked.code).toBe(0);
     expect(asked.out).toContain('factory request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY] [--home DIR]');
-    expect(asked.out).toContain('factory request close ID [--home DIR]');
+    expect(asked.out).toContain('factory request close ID [--made-by WHO --decision TEXT] [--home DIR]');
     expect(asked.out).toMatch(/--option KEY=TEXT\s+With add: one answer that the owner can give/);
     const queue = await run(['queue', '--help']);
     expect(queue.code).toBe(0);

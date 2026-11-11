@@ -171,6 +171,8 @@ export const flags = {
   compact: 'compact',
   assignment: 'assignment',
   ready: 'ready',
+  madeBy: 'made-by',
+  decision: 'decision',
   field: 'field',
   title: 'title',
   text: 'text',
@@ -578,7 +580,16 @@ export const decisionLogKeys = {
   date: 'date',
   by: 'by',
   request: 'request',
+  /** Who decided a request that `request close --made-by` closed: a value of `requestDeciders`. Never the owner, never `by`. */
+  decider: 'decider',
 } as const;
+
+/**
+ * The deciders of a request that is not an approval point and that the owner did not answer: the coordinator itself, or a delegate,
+ * for example another session that decides for the owner with no owner authority. The owner answers with `decide`, so `owner` is
+ * not a value. A row with a decider is a display copy: it is never an owner answer.
+ */
+export const requestDeciders = { coordinator: roles.coordinator, delegate: 'delegate' } as const;
 
 /**
  * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
@@ -1710,6 +1721,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   trackCommand: commandText(commands.track),
   requestCommand: commandText(commands.request),
   decideCommand: commandText(commands.decide),
+  requestCloseCommand: `${commandText(commandLines.requestClose)} <id> ${flagText(flags.madeBy)} ${Object.values(requestDeciders).join('|')} ${flagText(flags.decision)} TEXT`,
   queueCommand: commandText(commands.queue),
   itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
   clearFlag: flagText(flags.clear),

@@ -1864,7 +1864,7 @@ describe('the local connector: request add and request close read the owner deci
     ['another root', { root: '/h/other' }],
   ])('M5-1b TP-179 closes a request when the only record is a record of %s', async (_name, overrides) => {
     const repo = await decideRepo({ store: storeOf(storedRecord(overrides)) });
-    expect(valueOf(await localOf(repo.deps).closeRequest('D-1'))).toEqual({ id: 'D-1', title: 'Pick a plan' });
+    expect(valueOf(await localOf(repo.deps).closeRequest('D-1'))).toEqual({ id: 'D-1', title: 'Pick a plan', decider: null });
     expect(repo.commits).toHaveLength(1);
   });
 

@@ -371,6 +371,10 @@ const runNew = async (
     lines: [
       text(`Made the ${roles.worker} ${id} in ${relative(home, workCopy)} on the branch ${branch}.`),
       text(`It runs in the pane ${made.value.paneId} of the window ${tmuxNames.windowWorkers}.`),
+      text(
+        `If Claude Code asks to trust the folder, the ${roles.owner} answers once in the pane ${made.value.paneId}. ` +
+          `Then run "${commandText(commandLines.workerWatch)} ${flagText(flags.ready)} ${id}".`,
+      ),
       ...(copy === null ? [] : [text(`Copied the assignment to ${relative(home, copy)}.`)]),
     ],
     json: {

@@ -22,7 +22,7 @@ export const WORKER_LINES: readonly string[] = [
   '',
   'Report each milestone to the {{coordinator}}. Do not wait for a question.',
   'The milestones are: pull request open, ready to merge, merged (give the commit), released (give the version), validated, and blocked.',
-  'In each report, name every open follow-up and every decision that you could not make. If there are none, say so.',
+  'In each report, name every open follow-up and every decision that you could not make. If there are none, say so. When a report or a public text gives a decision, name who made it: the {{owner}}, the {{coordinator}}, or a delegate. A decision of the {{coordinator}} or of a delegate is never a decision of the {{owner}}.',
   '',
   '## Denial is final',
   '',

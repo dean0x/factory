@@ -42,6 +42,7 @@ import {
   queueCommands,
   queueLimits,
   requestCommands,
+  requestDeciders,
   requestWords,
   roles,
   schemaIds,
@@ -551,11 +552,11 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.request,
-    summary: `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, or close a ${requestWords.request} with no answer.`,
+    summary: `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, or close a ${requestWords.request} with no answer or with a decision that the ${requestDeciders.coordinator} or a ${requestDeciders.delegate} made.`,
     usage: [
       `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestList)} [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.requestClose)} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestClose)} ID [${flagText(flags.madeBy)} WHO ${flagText(flags.decision)} TEXT] [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -583,6 +584,18 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         placeholder: 'KEY',
         description: `With ${requestCommands.add}: the key of the answer that you recommend.`,
       },
+      [flags.madeBy]: {
+        type: 'string',
+        placeholder: 'WHO',
+        description:
+          `With ${requestCommands.close}: who made the decision, when the ${requestWords.request} is not an approval point: ${Object.values(requestDeciders).join(' or ')}. ` +
+          `The row of the log names who made it, and it has no ${roles.owner} authority. It is never an answer of the ${roles.owner}.`,
+      },
+      [flags.decision]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `With ${requestCommands.close} and ${flagText(flags.madeBy)}: the decision. One line of at most ${boardTextLimits.maxTextChars} characters.`,
+      },
     },
     run: (given, deps) =>
       runRequest(
@@ -594,6 +607,8 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           question: given.string(flags.question),
           options: given.strings(flags.option),
           recommend: given.string(flags.recommend),
+          decider: given.string(flags.madeBy),
+          decision: given.string(flags.decision),
         },
         registry,
       ),

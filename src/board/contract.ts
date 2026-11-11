@@ -1,4 +1,5 @@
 import type { CliResult } from '../cli/errors.js';
+import type { requestDeciders } from '../names.js';
 import type { DecideRequest } from './decide.js';
 
 /**
@@ -130,6 +131,17 @@ export interface BoardRequest {
 export interface RequestClosed {
   readonly id: string;
   readonly title: string | null;
+  /** Who decided the request, or null for a close with no answer. */
+  readonly decider: RequestDecider | null;
+}
+
+/** Who decided a request that the owner did not answer: a value of `requestDeciders`. The owner answers with `decide`. */
+export type RequestDecider = (typeof requestDeciders)[keyof typeof requestDeciders];
+
+/** The decision of a request that is not an approval point, and who made it. The text is one line. */
+export interface RequestSettlement {
+  readonly decider: RequestDecider;
+  readonly decision: string;
 }
 
 /**
@@ -269,11 +281,12 @@ export interface LocalBoard extends BoardConnector {
   /** The requests of the waiting file, in file order. */
   listRequests(): Promise<CliResult<readonly BoardRequest[]>>;
   /**
-   * Take a request off the waiting file and add a row for it to the decision log, in one commit. The row names no one who answered,
-   * so it counts as no decision, and the number of the request is never given again. A request that has a record in the owner decision
-   * file is refused, and so is a decision file that can not be read.
+   * Take a request off the waiting file and add a row for it to the decision log, in one commit. The row names no owner who answered,
+   * so it is no owner answer, and the number of the request is never given again. With a settlement, the row holds the decision text
+   * and the decider (the coordinator or a delegate). Without one, it says that the request closed with no answer. A request that has a
+   * record in the owner decision file is refused, and so is a decision file that can not be read.
    */
-  closeRequest(id: string): Promise<CliResult<RequestClosed>>;
+  closeRequest(id: string, settlement?: RequestSettlement): Promise<CliResult<RequestClosed>>;
   /** The rows of the queue, in file order. */
   listQueue(): Promise<CliResult<readonly QueueRow[]>>;
   /** Add a row to the queue, change a row, or move it. */
