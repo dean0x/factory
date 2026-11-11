@@ -308,7 +308,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerReset)} ID ${flagText(flags.clear)}|${flagText(flags.compact)} [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.ready)} ID]... [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -326,6 +326,14 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           `FILE is in ${assignmentSource.ordersShown} of the ${places.folder}, or in the git work tree of the working folder. ` +
           `A relative path that starts with ${assignmentSource.ordersShown} names that folder of the ${places.folder}, from any folder. ` +
           `It is a plain text file of at most 1 MiB, and no other part of its path starts with a dot.`,
+      },
+      [flags.ready]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'ID',
+        description:
+          `With ${workerCommands.watch}: also watch this ${roles.worker}, which waits for an answer of the ${roles.owner}, for example at a dialog. ` +
+          `The watch reports it when it is ready: at its prompt or busy. Repeat the flag for more ${roles.worker}s.`,
       },
       [flags.for]: {
         type: 'string',
@@ -365,6 +373,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           clear: given.bool(flags.clear),
           compact: given.bool(flags.compact),
           assignment: given.string(flags.assignment),
+          ready: given.strings(flags.ready),
         },
         registry,
       ),

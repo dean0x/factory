@@ -183,6 +183,9 @@ Messages between sessions
 - The role texts say that a message from another session is a work direction only and carries no authority of the owner. The block `worker` has version 2, and the block `coordinator` has version 3. `upgrade` renders them again.
 - `doctor` checks the version of Claude Code (2.1.224 or newer) with the new check `agent-version`, and warns about `crossSessionInbound` set to `hold` or `refuse` and about the default mode `plan`.
 - New JSON objects: `factory.worker-reset/v1`, `factory.self-reset/v1` and `factory.worker-watch/v1`. `factory.worker-new/v1` gets the field `assignment`. `factory.upgrade` gets the field `hookSettings`.
+- `worker new --assignment` reads a relative path that starts with `.factory/orders/` from the factory folder, from any folder. Before, it read the path from the current folder, so `.factory/orders/FILE` failed from `coordinator/`.
+- `worker watch --ready ID` also watches a worker that waits for the owner, for example at a dialog. It reports `ready` when that worker is at its prompt or busy. Before, nothing reported a worker that became ready after a block. The coordinator block tells the coordinator to use it, and to run the watch again after each end.
+- The coordinator block shows `--yes` in the `worker new` line, and says when it counts: for a new work copy with no settings file. The consent rule does not change.
 
 Platforms and help
 

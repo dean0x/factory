@@ -439,7 +439,7 @@ describe('the reset, watch and self commands in the command line', () => {
     const result = await run(['worker', '--help']);
     expect(result.code).toBe(0);
     expect(result.out).toContain('factory worker reset ID --clear|--compact [--home DIR]');
-    expect(result.out).toContain('factory worker watch [ID]... [--home DIR]');
+    expect(result.out).toContain('factory worker watch [ID]... [--ready ID]... [--home DIR]');
     expect(result.out).toMatch(/--clear\s+With reset: clear the session of the worker/);
     expect(result.out).toMatch(/--compact\s+With reset: compact the session of the worker/);
   });
@@ -512,6 +512,21 @@ describe('the reset, watch and self commands in the command line', () => {
     const result = await runOn(deps, [...argv, '--assignment', 'task.md', '--home', HOME]);
     expect(result.code).toBe(2);
     expect(result.err).toContain('--assignment belongs to new only');
+    expect(deps.calls).toEqual([]);
+  });
+
+  it.each([
+    ['worker new', ['worker', 'new', 'alpha', '--project', 'web']],
+    ['worker stop', ['worker', 'stop', 'alpha']],
+    ['worker resume', ['worker', 'resume', 'alpha']],
+    ['worker summon', ['worker', 'summon', 'alpha']],
+    ['worker reset', ['worker', 'reset', 'alpha', '--clear']],
+    ['worker list', ['worker', 'list']],
+  ])('exits 2 for %s with --ready, names watch, and runs no program', async (_name, argv) => {
+    const { deps } = made();
+    const result = await runOn(deps, [...argv, '--ready', 'alpha', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--ready belongs to watch only');
     expect(deps.calls).toEqual([]);
   });
 

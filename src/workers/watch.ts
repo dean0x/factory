@@ -15,7 +15,7 @@ import { listWorkerRecords, requireRecord } from './registry.js';
  * reads. It never types, never sends a signal and never writes, and its output holds fixed words and worker ids only. In order:
  *  1. the tmux session of the node runs and belongs to this factory folder (exit 3, exit 4);
  *  2. the workers: each id of the command line has a valid record that the program wrote (exit 2, exit 4), or, with no id, every
- *     recorded worker;
+ *     recorded worker. The ids of `--ready` are watched too, and each has such a record;
  *  3. one list of the panes. A worker with no pane is not checked, and it is not a change. With no worker to check, the watch ends
  *     at once with `no-worker`;
  *  4. a check of every checked worker at the baseline, and then at most `watchPoll.attempts` checks, each after a wait of
@@ -29,6 +29,10 @@ import { listWorkerRecords, requireRecord } from './registry.js';
  * A worker that is new has no line yet, so a missing line is not a change in the first `watchPoll.lineGraceChecks` checks, the
  * baseline included. A missing line is a change from that check on, and at once for a worker whose valid line was seen at an
  * earlier check. A line that does not belong to the worker is a change at once.
+ * A worker of `--ready ID` waits out a block, for example a dialog that only the owner answers. It is watched with the other workers,
+ * and its pane changes and a line that does not belong to it stay changes. Its other change is `ready`: a valid line of its own at the
+ * prompt or busy. A missing line, a line that is not valid and a dialog that waits are no change for it. The bound of the checks is
+ * the same.
  */
 
 /** The command that a person runs again after a fix, with the program name. */
@@ -42,6 +46,11 @@ export interface WatchRequest {
   readonly config: FactoryConfig;
   /** The ids of the workers to watch. Empty: every recorded worker. */
   readonly workerIds: readonly string[];
+  /**
+   * The ids of the workers that wait to be ready after a block (`--ready ID`). They are watched too. For each of them, a block (a dialog
+   * that waits, or no valid line yet) is no change, and a valid line of its own at the prompt or busy is the change `ready`.
+   */
+  readonly readyIds: readonly string[];
 }
 
 /** What changed for one worker. */
@@ -65,6 +74,8 @@ export type WatchOutcome =
 interface Target {
   readonly workerId: string;
   readonly paneIds: readonly string[];
+  /** True for a worker of `--ready`: the watch waits until it is ready. */
+  readonly waitsForReady: boolean;
 }
 
 /** The first pane that does not run the launch of its worker. */
@@ -108,6 +119,17 @@ const lineChange = (read: OwnSessionRead, nowMs: number, missingIsChange: boolea
   }
 };
 
+/**
+ * What the last-seen line says for a worker that waits to be ready. A line that is not owned stays a change. A valid line of its own
+ * at the prompt or busy is `ready`. Every other line is the block that the worker waits out: no line yet, a line that is not valid,
+ * a dialog that waits, or a line with no event.
+ */
+const readyChange = (read: OwnSessionRead): WatchKind | null => {
+  if (read.state === 'unknown') return read.why === 'not-owned' ? 'lineNotOwned' : null;
+  const state = promptStateOf(read.line);
+  return state === 'prompt' || state === 'busy' ? 'readyAfterBlock' : null;
+};
+
 /** What a check found for one worker: its change, or null, and whether the check read a valid line of the worker. */
 interface Finding {
   readonly change: WatchKind | null;
@@ -129,7 +151,8 @@ const changeOf = async (deps: Deps, home: string, target: Target, missingIsChang
   if (pane !== null) return ok({ change: pane, lineSeen: false });
   const line = await readOwnLastSeen(deps, home, target.workerId);
   if (!line.ok) return line;
-  return ok({ change: lineChange(line.value, deps.now().getTime(), missingIsChange), lineSeen: line.value.state === 'valid' });
+  const change = target.waitsForReady ? readyChange(line.value) : lineChange(line.value, deps.now().getTime(), missingIsChange);
+  return ok({ change, lineSeen: line.value.state === 'valid' });
 };
 
 /** What one check of every target found: the change of each worker that changed, and the workers whose valid line has been seen so far. */
@@ -162,25 +185,41 @@ const check = async (
   return ok({ changes, seen: seenNow });
 };
 
-/** The ids to watch: the ids of the command line, each once and each with a record that the program wrote, or every recorded worker. */
-const idsToWatch = async (deps: Deps, home: string, workerIds: readonly string[]): Promise<CliResult<readonly string[]>> => {
-  if (workerIds.length === 0) {
-    const listed = await listWorkerRecords(deps, home);
-    return listed.ok ? ok(listed.value.workers.map((record) => record.id)) : listed;
-  }
-  const unique = [...new Set(workerIds)];
-  for (const workerId of unique) {
+/** Each id has a record that the program wrote (exit 2, exit 4 from `requireRecord`). */
+const requireRecords = async (deps: Deps, home: string, ids: readonly string[]): Promise<CliResult<void>> => {
+  for (const workerId of new Set(ids)) {
     const record = await requireRecord(deps, home, workerId, AGAIN);
     if (!record.ok) return record;
   }
-  return ok(unique);
+  return ok(undefined);
+};
+
+/**
+ * The ids to watch: the ids of the command line, or every recorded worker when it names none, and the ids of `--ready`. Each id is
+ * once in the list, and each id that the command line names has a record that the program wrote.
+ */
+const idsToWatch = async (
+  deps: Deps,
+  home: string,
+  workerIds: readonly string[],
+  readyIds: readonly string[],
+): Promise<CliResult<readonly string[]>> => {
+  if (workerIds.length === 0) {
+    const listed = await listWorkerRecords(deps, home);
+    if (!listed.ok) return listed;
+    const missing = await requireRecords(deps, home, readyIds);
+    return missing.ok ? ok([...new Set([...listed.value.workers.map((record) => record.id), ...readyIds])]) : missing;
+  }
+  const unique = [...new Set([...workerIds, ...readyIds])];
+  const checked = await requireRecords(deps, home, unique);
+  return checked.ok ? ok(unique) : checked;
 };
 
 /** The workers that have a pane, each with its panes. A worker with no pane is left out. */
-const targetsOf = (workerIds: readonly string[], rows: readonly PaneRow[]): readonly Target[] =>
+const targetsOf = (workerIds: readonly string[], readyIds: readonly string[], rows: readonly PaneRow[]): readonly Target[] =>
   workerIds.flatMap((workerId) => {
     const paneIds = rows.filter((row) => row.worker === workerId).map((row) => row.paneId);
-    return paneIds.length === 0 ? [] : [{ workerId, paneIds }];
+    return paneIds.length === 0 ? [] : [{ workerId, paneIds, waitsForReady: readyIds.includes(workerId) }];
   });
 
 /**
@@ -188,15 +227,15 @@ const targetsOf = (workerIds: readonly string[], rows: readonly PaneRow[]): read
  * any, `no-change` after `watchPoll.attempts` checks that found none, or `no-worker` when no recorded worker has a pane.
  */
 export const watchWorkers = async (deps: Deps, request: WatchRequest): Promise<CliResult<WatchOutcome>> => {
-  const { home, config, workerIds } = request;
+  const { home, config, workerIds, readyIds } = request;
   const nodeId = config.core.node.id;
   const session = await requireSession(deps, nodeId, home, AGAIN);
   if (!session.ok) return session;
-  const ids = await idsToWatch(deps, home, workerIds);
+  const ids = await idsToWatch(deps, home, workerIds, readyIds);
   if (!ids.ok) return ids;
   const rows = await listPanes(deps, nodeId);
   if (!rows.ok) return rows;
-  const targets = targetsOf(ids.value, rows.value);
+  const targets = targetsOf(ids.value, readyIds, rows.value);
   if (targets.length === 0) return ok({ kind: 'no-worker' });
 
   let seen: ReadonlySet<string> = new Set();

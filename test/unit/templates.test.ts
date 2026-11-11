@@ -473,11 +473,11 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
     );
   });
 
-  it('runs the watch as a background task, and runs it again without a worker whose cause stays', () => {
+  it('runs the watch as a background task, waits for a blocked worker with --ready, and runs the watch again after each end', () => {
     const text = coordinatorOf('acme');
     expect(text).toContain(`Run \`${watch}\` as a background task.`);
     expect(text).toContain(
-      `When the watch reports a worker, deal with the report. If the cause stays, for example a dialog that waits for the owner, run the watch again with the ids of the other workers only: \`${watch} <id>...\`.`,
+      `When the watch reports a worker, deal with the report. If the cause stays, for example a dialog that waits for the owner, ask the owner. Then run \`${watch} ${flagText(flags.ready)} <id>\` in the background: it reports the worker when it is ready, and it watches the other workers as before. The watch ends at its first report, or after its checks with no change. Then run it again.`,
     );
   });
 

@@ -70,6 +70,8 @@ export interface WorkerOptions {
   readonly compact?: boolean;
   /** The path of the assignment file of a new worker. Only `new` reads it. Absent: the worker has no assignment. */
   readonly assignment?: string | undefined;
+  /** The ids of `--ready`: workers that the watch waits for after a block. Only `watch` reads them. Absent: none. */
+  readonly ready?: readonly string[];
 }
 
 const SUBCOMMANDS = Object.values(workerCommands).join(', ');
@@ -666,7 +668,7 @@ const runWatch = async (
   const home = located.value;
   const loaded = await loadConfig(deps, home, registry);
   if (!loaded.ok) return loaded;
-  const watched = await watchWorkers(deps, { home, config: loaded.value, workerIds: args });
+  const watched = await watchWorkers(deps, { home, config: loaded.value, workerIds: args, readyIds: options.ready ?? [] });
   return watched.ok ? ok(watchOutput(watched.value)) : watched;
 };
 
@@ -681,10 +683,16 @@ const requireNoResetFlags = (options: WorkerOptions): CliResult<void> => {
 const requireNoAssignment = (options: WorkerOptions): CliResult<void> =>
   options.assignment === undefined ? ok(undefined) : needsUsage(`${flagText(flags.assignment)} belongs to ${workerCommands.new} only`);
 
+/** The flag `--ready` belongs to `watch`. Another subcommand refuses it (exit 2), so no flag is taken and then ignored. */
+const requireNoReady = (options: WorkerOptions): CliResult<void> =>
+  (options.ready ?? []).length === 0 ? ok(undefined) : needsUsage(`${flagText(flags.ready)} belongs to ${workerCommands.watch} only`);
+
 /** The flags that belong to one subcommand only. Every other subcommand refuses them. */
 const requireOwnFlags = (subcommand: string, options: WorkerOptions): CliResult<void> => {
   const stray = subcommand === workerCommands.reset ? ok(undefined) : requireNoResetFlags(options);
   if (!stray.ok) return stray;
+  const ready = subcommand === workerCommands.watch ? ok(undefined) : requireNoReady(options);
+  if (!ready.ok) return ready;
   return subcommand === workerCommands.new ? ok(undefined) : requireNoAssignment(options);
 };
 

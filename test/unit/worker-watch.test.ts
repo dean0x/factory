@@ -57,7 +57,7 @@ interface World {
   readonly breakReads: () => void;
   /** From now on, the read of a last-seen line file fails: the file system does not answer. */
   readonly breakLineReads: () => void;
-  readonly watch: (ids?: readonly string[], program?: Program) => Promise<CliResult<WatchOutcome>>;
+  readonly watch: (ids?: readonly string[], program?: Program, readyIds?: readonly string[]) => Promise<CliResult<WatchOutcome>>;
 }
 
 const BIND_FACTS = 7;
@@ -155,11 +155,12 @@ const make = async (setup: Setup = {}): Promise<World> => {
     breakLineReads: () => {
       lineReadsBroken = true;
     },
-    watch: (workerIds = [], program) =>
+    watch: (workerIds = [], program, readyIds = []) =>
       watchWorkers(program === undefined ? watchDeps : withProgram(watchDeps, tmux.log, program), {
         home: HOME,
         config: sampleConfig(),
         workerIds,
+        readyIds,
       }),
   };
 };
@@ -341,6 +342,73 @@ describe('TP-30: the baseline of the watch', () => {
   it('TP-30: an id that stands twice on the command line is checked once', async () => {
     const world = await make();
     expect(valueOf(await world.watch([ALPHA, ALPHA]))).toEqual({ kind: 'no-change', workerIds: [ALPHA], checks: 40 });
+  });
+});
+
+describe('TP-30: a worker of --ready waits out its block', () => {
+  it('TP-30: a worker with no line that gets a line at its prompt at check 3 is ready at that check', async () => {
+    const world = await make({ events: { [ALPHA]: null } });
+    const outcome = changedOf(valueOf(await world.watch([], atWait(3, () => writesEvent(world.deps, ALPHA, 'SessionStart')), [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
+    expect(outcome.checks).toBe(3);
+    expect(world.deps.sleeps).toHaveLength(3);
+  });
+
+  it('TP-30: a worker at a dialog that turns busy is ready, and the dialog is no change for it', async () => {
+    const world = await make({ events: { [ALPHA]: 'Notification' } });
+    const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, ALPHA, 'UserPromptSubmit')), [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
+    expect(outcome.checks).toBe(2);
+  });
+
+  it('TP-30: a worker that stays blocked gives no change after the 40 checks, also past the grace of a missing line', async () => {
+    const world = await make({ events: { [ALPHA]: null } });
+    expect(valueOf(await world.watch([], undefined, [ALPHA]))).toEqual({ kind: 'no-change', workerIds: [ALPHA], checks: 40 });
+    expect(world.deps.sleeps).toHaveLength(40);
+  });
+
+  it('TP-30: a worker that is already at its prompt is ready at the baseline, with no sleep', async () => {
+    const world = await make();
+    const outcome = changedOf(valueOf(await world.watch([], undefined, [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
+    expect(world.deps.sleeps).toEqual([]);
+  });
+
+  it('TP-30: the end of the pane of a blocked worker stays a change', async () => {
+    const world = await make({ events: { [ALPHA]: null } });
+    const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => world.end(PANE_OF[ALPHA] ?? '')), [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'ended' }]);
+  });
+
+  it('TP-30: a line of another session stays a change for a worker of --ready', async () => {
+    const world = await make();
+    world.deps.seed(lineFile(SESSION_OF[ALPHA] ?? ''), foreignLineText(world.deps));
+    const outcome = changedOf(valueOf(await world.watch([], undefined, [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'lineNotOwned' }]);
+  });
+
+  it('TP-30: the other workers keep their rules while one worker waits to be ready', async () => {
+    const world = await make({ workers: [ALPHA, BETA], events: { [ALPHA]: null } });
+    const outcome = changedOf(valueOf(await world.watch([], atWait(1, () => writesEvent(world.deps, BETA, 'Notification')), [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: BETA, kind: 'waits' }]);
+  });
+
+  it('TP-30: a worker of --ready is watched also when the command line names other workers only', async () => {
+    const world = await make({ workers: [ALPHA, BETA], events: { [ALPHA]: null } });
+    const outcome = changedOf(valueOf(await world.watch([BETA], atWait(1, () => writesEvent(world.deps, ALPHA, 'Stop')), [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
+  });
+
+  it('TP-30: an id of --ready with no record is refused before any wait', async () => {
+    const world = await make();
+    const error = errorOf(await world.watch([], undefined, ['ghost']));
+    expect(codeOf(error)).toBe(2);
+    expect(world.deps.sleeps).toEqual([]);
+  });
+
+  it('TP-30: the report of a ready worker is one line with fixed words and the id', () => {
+    const output = watchOutput({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'readyAfterBlock' }], checks: 3 });
+    expect(output.lines).toEqual([{ level: 'warn', text: `${watchWords.changed} ${ALPHA} ${watchWords.kinds.readyAfterBlock}` }]);
   });
 });
 

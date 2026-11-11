@@ -170,6 +170,7 @@ export const flags = {
   clear: 'clear',
   compact: 'compact',
   assignment: 'assignment',
+  ready: 'ready',
   field: 'field',
   title: 'title',
   text: 'text',
@@ -1206,6 +1207,7 @@ export const watchWords = {
     lineNotOwned: 'line not owned',
     waits: workerListWords.states.waits,
     stalled: 'stalled?',
+    readyAfterBlock: 'ready',
   },
 } as const;
 
@@ -1713,6 +1715,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   clearFlag: flagText(flags.clear),
   compactFlag: flagText(flags.compact),
   yesFlag: flagText(flags.yes),
+  readyFlag: flagText(flags.ready),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,
