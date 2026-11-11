@@ -59,7 +59,7 @@ describe('textHasToken (TP-45)', () => {
   });
 
   it.each([
-    ['a long path with upper case, lower case and digits', 'See /var/folders/fn/xhrkn4ys4d37t9fd8kfmd4rw0000gn/T/Work/payments-team-factory-2 for it.'],
+    ['a long path with upper case, lower case and digits', 'See /var/folders/zz/c0d1e2f3g4h5j6k7m8n9p0q10000gn/T/Work/payments-team-factory-2 for it.'],
     ['a long URL', 'https://github.com/Payments-Team-Org/payments-team-factory-service-2'],
     ['a long absolute path with no hyphen', 'Folder: /Users/example/Sandbox/Project2024/docs/DesignNotes2'],
     ['plain prose', 'The quick brown fox jumps over the lazy dog and keeps running.'],
@@ -90,7 +90,7 @@ describe('findTokenPaths', () => {
   });
 
   describe('the local source and the clone URL of a project', () => {
-    const LONG_FOLDER = '/var/folders/fn/xhrkn4ys4d37t9fd8kfmd4rw0000gn/T/Work/payments-team-factory-2';
+    const LONG_FOLDER = '/var/folders/zz/c0d1e2f3g4h5j6k7m8n9p0q10000gn/T/Work/payments-team-factory-2';
     const LONG_URL = 'https://github.com/Payments-Team-Org/payments-team-factory-service-2';
 
     it('is not a token when it is a long path with upper case, lower case and digits', () => {

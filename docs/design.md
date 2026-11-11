@@ -97,58 +97,54 @@ Engineering note: the program is written in TypeScript on Node 22+, the npm pack
 
 ## 1. Inventory of the current setup
 
-This section describes the workspace setup as it is today. It uses the names of the files of this workspace (the Orchestrator, On Dean and the `lane` files), because those are the names in the files.
+factory packages a setup that runs today by hand: one coordinator session and many worker sessions in tmux, on one machine, for one owner. This section lists the parts of that setup by their job, and tells why a multi-session setup needs each part.
 
-Paths are relative to `~/work/<workspace>/.devflow/` unless they start with `~/` or `/`. The example path `~/work/<workspace>` stands for the folder of the workspace.
+The example path `~/work/<workspace>` stands for the folder of the workspace.
 Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, accounts, paths), **M** machine-specific.
 
 ### 1.1 Parts
 
-| Part | Job | Class | What ties it (file:line) |
+| Part | Job | Class | Why a multi-session setup needs it |
 |---|---|---|---|
-| `~/work/<workspace>/CLAUDE.md` | Orchestrator rules §1–§13 | G, D, P, M | "Dean", `dean0x` §13; founder prefix §12; `~/work/<workspace>/.devflow` (`--add-dir`); session names `orchestrator:lanes`, `orchestrator:bench`; "10 CPUs, 64 GB", `lockf`, `pbcopy`, `sysctl`, `memory_pressure`; `/devflow:*` in §5 and §7 |
-| `docs/orchestration/protocol.md` | Worker protocol: escalation, test lock, disk, context, PRs, style | G, D, P, M | `~/work/<workspace>/.devflow/...` (L19–34); Node 24 and `/opt/homebrew/bin` (L34, devflow tests only); `vitest` (L25); devflow timeout rule (L54) |
-| `docs/orchestration/status.md` | Status layout | G, P | "Waiting on Dean" (L42) |
-| `docs/orchestration/respawn-map.md` | Worker, pane, folder and session-id table, plus the restart steps | G (steps), P, M (data) | pane ids, UUIDs, `--add-dir` path (L14), reads `~/.claude/sessions` (L16) |
-| `docs/orchestration/orchestrator-resume.md` | The Orchestrator's resume block | instance data | devflow PR numbers |
-| `roadmaps/README.md` and track roadmaps | Track arcs and their template | G (README); instance data | paths on line 2 of each track file |
-| `board.json` → `board.md`, page | Board source of truth | G (schema), P (links) | `dean0x` issue links via boardlib |
-| `lanes.json` | Hand-written worker facts | G | none |
-| `on-dean.json`, `decision-log.json` → `on-dean.md` | Items that wait on the founder, and his decisions | G (schema), P (names) | file names, "# On Dean", artifact URL in the intro |
-| `board-detail.md`, `board-log-<yyyy-mm>.md`, `done.md` | Item detail, log, append-only removals | G | none |
-| `briefs/brief-<track>-<date>.md` | Assignments for workers | G (shape) | paths and repos inside |
-| `review/dean-review.html` | Review page: board, items, decision forms, docs drawer | G (template), P | "Dean" (L8); `dean0x` URLs in the data block |
-| `review/README-decision-pages.md` | How the page and its database work | G, P | live artifact URL (L3) |
-| `scripts/boardlib.py`, `render-board.py` | Board schema check, sort, release groups, render | G, P | `github.com/dean0x/{repo}` (boardlib L241), default repo `devflow` (L240), env `DEAN_DIR` |
-| `scripts/render-dean.py` | On Dean file, page data block, `files.json` | G, P | `PR_URL = .../dean0x/devflow/pull/{}` (L69), "# On Dean" (L237) |
-| `scripts/board-set.sh` | Only writer of `board.json`; locked; fails closed | G, P, M | `BOARD_REPO:-dean0x/devflow` (L91); `/usr/bin/lockf` (L35) |
-| `scripts/lane-set.sh`, `lane-lib.sh` | Only writer of `lanes.json`; tmux helpers | G, M | `lockf`; session name `orchestrator` (`lane-lib` L3) |
-| `scripts/state-commit.sh`, `git-hooks/pre-commit` | Commit helper; ID delete guard; `done.md` append-only | G | needs `core.hooksPath=scripts/git-hooks` |
-| `scripts/layout.sh`, `lane-summon.sh`, `md-view.sh` | View and worker windows, pinned summon, glow viewer | G, M | session `orchestrator`; `/bin/zsh`; `glow` |
-| `scripts/lanes-refresh.sh`, `lanes-table.py`, `live_boxes.py` | Live worker table every 30 s; machine box | G, M | reads `~/.claude/projects/*.jsonl` (`lanes-table` L64); status-line regex `Context\s+\S+\s+(\d{1,3})%` (L82); `memory_pressure`, `pmset` (live_boxes L105–106); `pyenv` |
-| `scripts/tmux-save-map.sh`, `tmux-restore-lanes.sh` | tmux-resurrect hooks: save the pane map, resume workers | G, M | reads `~/.claude/sessions/*.json` (save-map L14); restore forces `--permission-mode auto` and `env -u ANTHROPIC_BASE_URL` (restore L20, L58) |
-| `scripts/tmux.conf` | Mouse, worker names on borders, resurrect, continuum | P, M | absolute paths in the user folder (L2, L3, L25, L26, L32) |
-| `scripts/test-*` | Tests with fixtures and a separate tmux server | G | none |
-| `priorities/apply-labels.sh` | One-time label script | P | `R=dean0x/devflow`; fixed issue list |
-| `decision-profile/` | Founder decision wiki: index, format, log, principles, records | G (format), P (content) | "Dean" throughout; some principles scoped `devflow` |
-| `state/`, `locks/` | Locks, caches, logs (names only read) | M, gitignored | none |
-| Global rules in `~/.claude/rules/devflow/` | Engineering, quality, STE writing style | D | installed by devflow, not by the setup |
+| Coordinator rules (`~/work/<workspace>/CLAUDE.md`) | The rules of the coordinator: who has authority, how a worker gets work, when a PR merges, the writing style | G, D, P, M | One session must keep the plan and be the one path to the owner. The text holds the owner's name and account, the paths and the machine limits, so a package must make them config. |
+| Worker protocol | The rules of each worker: questions, escalation, the test lock, disk, context, PRs, style | G, D, P, M | Workers share one machine and one owner. Without shared rules, they block each other and ask the owner directly. |
+| Status layout | The shape of the status report | G, P | The owner reads one short status, not each worker. |
+| Restart map | The worker, pane, folder and session id of each worker, plus the restart steps | G (steps), P, M (data) | A reboot or a crash must not lose the workers or their conversations. |
+| Coordinator resume file | The resume block of the coordinator | instance data | The coordinator must continue after a clear or a compact. |
+| Track roadmaps | The arc of each track, and a template | G (template); instance data | A long piece of work needs a plan that outlives one session. |
+| Board files and their render | The source of truth of the board, the schema check, the sort and the render | G (schema), P (links) | The coordinator and the owner need one list of the work. |
+| Worker table | Facts about each worker, written by hand | G | The coordinator must know what each worker does. |
+| Owner queue and decision log | The items that wait on the owner, and the owner's decisions | G (schema), P (names) | A question for the owner must not stay on one worker's screen. |
+| Item detail, log and done list | The detail of each item, a log and a list of removals that only grows | G | A removed item must leave a record. |
+| Assignments | The written task of each worker | G (shape) | A worker needs a written scope. |
+| Owner view page | A page with the board, the items and the decision forms | G (template), P | The owner answers in one place. |
+| Board writer | The one writer of the board file; it takes a lock and fails closed | G, M | Two sessions must not write the board at the same time. |
+| Worker table writer and tmux helpers | The one writer of the worker table; tmux helpers | G, M | The same reason as the board writer. |
+| Commit helper and pre-commit hook | Commits of the state; an ID delete guard; the done list only grows | G | A wrong edit must not delete an item. |
+| Layout and summon scripts | The view and worker windows; a pinned summon of one worker | G, M | The owner sees each worker on request. |
+| Live worker table | A worker table every 30 s, and a box with the machine facts | G, M | The coordinator sees a stalled worker and a full machine. Today the table reads Claude Code's private session files and the text of the status line. |
+| tmux save and restore hooks | Save the pane map and resume the workers | G, M | The same reason as the restart map. |
+| tmux config | Mouse, worker names on the pane borders, save and restore plugins | P, M | It holds absolute paths in the user folder. |
+| Tests | Tests with fixtures and a separate tmux server | G | The scripts change often. |
+| Decision profile | The owner's principles and decision records | G (format), P (content) | A worker can predict a decision and ask less. |
+| State and locks | Locks, caches and logs | M, not tracked | The scripts need a place for run data. |
+| Global rules from devflow | Engineering, quality and writing rules | D | devflow installs them, not the setup. |
 
 ### 1.2 Dependencies on tools
 
 Required: `tmux` (with TPM, resurrect, continuum), `git`, `gh`, `jq`, `python3` (stdlib only), Bash 3.2+, `glow`, Claude Code.
 macOS only: `/usr/bin/lockf`, `memory_pressure`, `pmset`, `pbcopy`, `sysctl`.
-Private Claude Code layout: `~/.claude/projects/<cwd>/*.jsonl` (worker activity), `~/.claude/sessions/<pid>.json` (session ids), and the text of Dean's status line (context percent).
+Private Claude Code layout: `~/.claude/projects/<cwd>/*.jsonl` (worker activity), `~/.claude/sessions/<pid>.json` (session ids), and the text of the owner's status line (context percent).
 
 ### 1.3 Conflicts to fix before packaging
 
-I checked each of these on the file. factory takes one answer for each.
+I checked each of these in the files of the setup. factory takes one answer for each.
 1. **Merge authority.** D-46 B (2026-11-01) said that every merge waits for the owner's go. D-52 (2026-11-02) replaced it for this workspace: approved and assigned work merges when the gates pass. factory makes the rule an owner choice (F-6, §6).
-2. **How to stop a session.** `respawn-map.md` said "press Ctrl+C twice". CLAUDE.md §12 says that Ctrl+C quits only the client, and uses `kill -TERM`. factory tests the ways first (F-7, §4.11).
-3. **Where workers live.** The respawn map put workers in the view window. CLAUDE.md §12 puts them in the tmux window `bench`. factory uses the worker window `workers` (F-8, §4.11). The respawn map line is fixed.
-4. **Context budget.** `protocol.md` used 250k/350k tokens. CLAUDE.md §12 uses 30–35% and 40% of the window. factory uses the percent rule, because it works for every window size.
-5. **Reads under `~/.claude`.** CLAUDE.md §1 told workers to avoid them, but three scripts read there. factory replaces every read with the last-seen hook (F-9, §4.6).
-6. **The coordinator instructions reach every worker.** Claude Code loads every CLAUDE.md from the session folder up to the top of the file system. The Orchestrator instructions are in `~/work/<workspace>/CLAUDE.md`, and every worker folder is under `~/work/<workspace>`. So each worker also loads them. factory keeps the coordinator text in the coordinator folder, and the top of the factory folder holds no instruction file (F-3, D-60, §4.3).
+2. **How to stop a session.** The restart map said "press Ctrl+C twice". The coordinator rules say that Ctrl+C quits only the client, and use `kill -TERM`. factory tests the ways first (F-7, §4.11).
+3. **Where workers live.** The restart map put workers in the view window. The coordinator rules put them in a separate tmux window. factory uses the worker window `workers` (F-8, §4.11). The restart map is fixed.
+4. **Context budget.** The worker protocol used 250k/350k tokens. The coordinator rules use 30–35% and 40% of the window. factory uses the percent rule, because it works for every window size.
+5. **Reads under `~/.claude`.** The coordinator rules told workers to avoid them, but three scripts read there. factory replaces every read with the last-seen hook (F-9, §4.6).
+6. **The coordinator instructions reach every worker.** Claude Code loads every CLAUDE.md from the session folder up to the top of the file system. The coordinator instructions are in `~/work/<workspace>/CLAUDE.md`, and every worker folder is under `~/work/<workspace>`. So each worker also loads them. factory keeps the coordinator text in the coordinator folder, and the top of the factory folder holds no instruction file (F-3, D-60, §4.3).
 
 ## 2. The devflow connection
 
@@ -158,22 +154,22 @@ devflow (npm `devflow-kit`, MIT) installs commands, agents, skills, hooks and ru
 
 | Tie | Where | Default in factory |
 |---|---|---|
-| Cycle plan → implement → code-review → resolve | CLAUDE.md §5.2; protocol L47 | Stage ids `plan`, `build`, `review`, `fix`. The plain setup uses plain Claude Code: plan mode, edits, a review subagent, fixes. |
-| "code-review is for software; else a multi-lens audit" | CLAUDE.md §5.2 | Keep the rule. Each stage declares `applies_to: code | prose | any`. |
-| Review and resolution summaries posted on the PR | CLAUDE.md §5.3, §5.4 | An evidence contract: one PR comment per stage, found by a marker. The plain markers are `<!-- factory:review -->` and `<!-- factory:fix -->`. |
-| One evidence comment per head | CLAUDE.md §5.2 | Optional. The plain setup needs CI plus the review comment. |
-| `/devflow:release` | CLAUDE.md §7 | A `release` stage. The plain setup uses the repo's own release script, named in `factory.yaml`. |
-| Triage words (FIX_NOW, ESCALATED, CHANGES REQUESTED) | board-detail.md | Neutral words `blocker`, `fix`, `defer`, `ask`, `ready`. A setup maps its words to them. |
-| Agent types Code, Validate, Test | protocol L32 | Agent kinds: implementer, verifier, tester, reviewer. A setup maps them to its agent types. ("Role" now means the role of a layer, §5.) |
-| State folder named `.devflow` | CLAUDE.md §11–§12; respawn-map | `.factory/`. Proof of the clash: devflow already wrote `~/work/<workspace>/.devflow/.devflow/{curation,docs,features,memory}`. |
-| `--add-dir ~/work/<workspace>/.devflow` | CLAUDE.md §12; restore L20 | `--add-dir <node home>/.factory`, from the config. |
-| Worker name examples `devflow-*` | CLAUDE.md §4 | Keep the `<project>-<track>` form for workers; use neutral examples. |
-| Default repo `dean0x/devflow` | board-set L91; boardlib L13, L240; render-dean L69 | `recipe.projects[].repo` in `factory.yaml`. A bare issue number is refused when the node has more than one project. |
-| Rules in `~/.claude/rules/devflow/` (STE, read economy, quality) | HOME CLAUDE.md | factory writes its own short rules into the role templates. It never writes to `~/.claude/rules/`. |
-| Profile seeded from devflow `preference-profile.md` | decision-profile/README-format.md:64 | factory comes with an empty profile and its format. A setup may give a seed command. |
-| devflow memory and curation hooks | protocol L19 | Resume files plus Claude Code auto-memory. No ledger by default. |
-| devflow-repo rules inside the generic protocol | protocol L34 (Node 24), L54 (timeouts), L62 (standalone) | Move them to the worker addendum of the devflow setup or the devflow repo's CLAUDE.md. |
-| Repo checks in the gate routine (Independent audit, ceiling diff) | orchestrator-resume.md:14 | A per-project `gate.checks` list in `factory.yaml`. |
+| Cycle plan → implement → code-review → resolve | Coordinator rules; worker protocol | Stage ids `plan`, `build`, `review`, `fix`. The plain setup uses plain Claude Code: plan mode, edits, a review subagent, fixes. |
+| "code-review is for software; else a multi-lens audit" | Coordinator rules | Keep the rule. Each stage declares `applies_to: code | prose | any`. |
+| Review and resolution summaries posted on the PR | Coordinator rules | An evidence contract: one PR comment per stage, found by a marker. The plain markers are `<!-- factory:review -->` and `<!-- factory:fix -->`. |
+| One evidence comment per head | Coordinator rules | Optional. The plain setup needs CI plus the review comment. |
+| `/devflow:release` | Coordinator rules | A `release` stage. The plain setup uses the repo's own release script, named in `factory.yaml`. |
+| Triage words (FIX_NOW, ESCALATED, CHANGES REQUESTED) | Item detail | Neutral words `blocker`, `fix`, `defer`, `ask`, `ready`. A setup maps its words to them. |
+| Agent types Code, Validate, Test | Worker protocol | Agent kinds: implementer, verifier, tester, reviewer. A setup maps them to its agent types. ("Role" now means the role of a layer, §5.) |
+| State folder named `.devflow` | Coordinator rules; restart map | `.factory/`. Proof of the clash: devflow already wrote `~/work/<workspace>/.devflow/.devflow/{curation,docs,features,memory}`. |
+| `--add-dir ~/work/<workspace>/.devflow` | Coordinator rules; tmux restore hook | `--add-dir <node home>/.factory`, from the config. |
+| Worker name examples `devflow-*` | Coordinator rules | Keep the `<project>-<track>` form for workers; use neutral examples. |
+| Default repo `dean0x/devflow` | Board writer; board render | `recipe.projects[].repo` in `factory.yaml`. A bare issue number is refused when the node has more than one project. |
+| Rules in `~/.claude/rules/devflow/` (STE, read economy, quality) | Home CLAUDE.md | factory writes its own short rules into the role templates. It never writes to `~/.claude/rules/`. |
+| Profile seeded from devflow `preference-profile.md` | Decision profile format | factory comes with an empty profile and its format. A setup may give a seed command. |
+| devflow memory and curation hooks | Worker protocol | Resume files plus Claude Code auto-memory. No ledger by default. |
+| devflow-repo rules inside the generic protocol | Worker protocol (Node 24, timeouts, standalone) | Move them to the worker addendum of the devflow setup or the devflow repo's CLAUDE.md. |
+| Repo checks in the gate routine (Independent audit, ceiling diff) | Coordinator resume file | A per-project `gate.checks` list in `factory.yaml`. |
 
 The gate-level words `full`, `standard` and `lean` are not in the setup itself. They appear only in devflow product work, so there is no tie to replace.
 
@@ -210,7 +206,7 @@ proxy_presets:                             # optional; copied into `proxies` on 
 
 The triage words `FIX_NOW`, `ESCALATED` and `CHANGES REQUESTED` are devflow ties (§2.1). They appear only in this setup file. The deny list of the tests finds them in any other template or generated file.
 
-The dependency goes one way: factory knows devflow's public surface (commands, markers, paths). devflow never knows factory. This keeps the founder rule "devflow stays standalone" (CLAUDE.md §8; `decision-profile/principles/devflow-standalone.md`).
+The dependency goes one way: factory knows devflow's public surface (commands, markers, paths). devflow never knows factory. This keeps the owner's rule "devflow stays standalone".
 
 ## 3. Scripts that save tokens
 
@@ -365,7 +361,7 @@ Exit codes: `0` success, `1` failure, `2` usage error, `3` "not ready" (a check 
 ### 4.3 Factory folder layout
 
 > **Receiving a factory.** You get the config repo of a factory from another person, or from another machine of yours.
-> You need the `factory` program first. Until FAC-M10, a developer with read access installs it from a private early-access tag (D-49). See `docs/quick-start.md`.
+> You need the `factory` program first. Until FAC-M10, you install it from an early-access tag of the repo (D-49). See `docs/quick-start.md`.
 > 1. Clone the config repo into a new folder: `git clone <url> <folder>`.
 > 2. In a terminal window, run `factory init` in that folder. `init` clones each project and registers the factory on this machine.
 > 3. Answer the prompts of `init`, in this order:
@@ -827,9 +823,9 @@ children: []                 # nodes this node manages, each { id, address } (§
 - **Platforms: macOS and Linux only (F-5).** factory needs tmux, git and a POSIX shell. On native Windows, `factory doctor` refuses with the remedy line `Use WSL, then run "factory doctor" there`. Every other command refuses with a line of the same form that names that command.
 - **External tools:** `tmux`, `git`, `claude`, and the CLI of the board tool (`gh` for GitHub). factory replaces `jq`, `python3` and `glow` with its own code, so a new machine needs fewer tools. `doctor` checks the versions. The minimum `git` version is 2.26, because the check of the state repo reads `git config --list --show-scope`. The check `tools` of `doctor` fails for a `git` older than 2.26, and when it can not read the `git` version. With an older `git`, each state step that reads that list stops with exit 1, and the message names `git` 2.26. `start` reads the `git` version and that list right after its tool check, before it makes or looks at a session. `reboot` outside the session reads them before its first stop (§4.11). `upgrade`, `init` and the board commit helper stop before they change the state repo. A dry run of `start` shows the problem as a warning.
 - **Portable parts:** the heavy-test lock uses `lockf` on macOS and `flock` on Linux. `factory machine` reads memory and load on both systems. The owner's clipboard command is a config value with a platform default. CI runs the full suite on an Ubuntu and a macOS runner. Tests of `lock run` and `machine` run both system paths with fixtures.
-- **Install:** `npm i -g @dean0x/factory`, or `npx @dean0x/factory init`, plus a Homebrew formula in `dean0x/homebrew-tap`. An `install.sh` for curl, with a SHA256 check (mars has none). The repo is private now (D-49), so none of these is public yet. FAC-M10 builds them.
+- **Install:** `npm i -g @dean0x/factory`, or `npx @dean0x/factory init`, plus a Homebrew formula in `dean0x/homebrew-tap`. An `install.sh` for curl, with a SHA256 check (mars has none). None of these exists yet. FAC-M10 builds them.
 - **Release:** one `v*` tag runs the tests, checks that the version is the same in every place, makes the GitHub Release, publishes to npm and updates the tap (from mars `release.yml`). The version lives in one file only. An early-access tag (`v*-ea.*`, D-49) is no release. The release trigger skips it (for example `tags: ['v*', '!v*-ea.*']`).
-- **The publish is gated (D-45).** The publish job runs in a protected environment (`npm-publish`) whose required reviewer is the owner. The job starts with a gate script. The script fails unless `docs/release-approval.md` holds a line `Decision: D-<n>` and the tag version equals the version in `package.json`. So a tag alone never publishes. The repo stays private until the owner writes a decision id in `docs/release-approval.md`. FAC-M10 tests the workflow with a script and checks the environment with a read-only `gh api` call.
+- **The publish is gated (D-45).** The publish job runs in a protected environment (`npm-publish`) whose required reviewer is the owner. The job starts with a gate script. The script fails unless `docs/release-approval.md` holds a line `Decision: D-<n>` and the tag version equals the version in `package.json`. So a tag alone never publishes. The package stays off the npm registry until the owner writes a decision id in `docs/release-approval.md`. FAC-M10 tests the workflow with a script and checks the environment with a read-only `gh api` call.
 
 ### 4.8 What factory takes from mars and from firstmate
 

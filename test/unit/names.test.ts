@@ -885,8 +885,8 @@ describe('the install command builds the commit of the hand-over, not the tag na
 
   it('keeps the check of the tag with git ls-remote in the guide, for both paths', () => {
     const guide = textOf('docs/quick-start.md');
-    expect(guide).toContain("git ls-remote git@github.com:dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'");
-    expect(guide).toContain('`https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`');
+    expect(guide).toContain("git ls-remote https://github.com/dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'");
+    expect(guide).toContain('`git@github.com:dean0x/factory.git` in place of `https://github.com/dean0x/factory.git`');
   });
 });
 
