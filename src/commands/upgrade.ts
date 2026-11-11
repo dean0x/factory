@@ -117,7 +117,7 @@ const indexUpgraded = async (
     origin,
   });
   return recorded.ok
-    ? []
+    ? warn(recorded.value.warning === null ? [] : [recorded.value.warning])
     : warn([`${recorded.error} Run "${commandText(commands.init)}" in the ${places.folder} ${home} to register it.`]);
 };
 
@@ -231,6 +231,12 @@ const lockedBoardText = async (deps: Deps, layout: Layout, plan: BoardQueueKeyPl
 
 const NO_SETUP_TEXTS: SetupTexts = { coordinator: null, worker: null };
 
+/** The setup texts that the run may render, and the warnings of the accept step. */
+interface AcceptedSetup {
+  readonly texts: SetupTexts;
+  readonly warnings: readonly string[];
+}
+
 /**
  * The setup texts that this run may render. The text goes into session instructions, so it needs the owner's acceptance
  * before the run renders it. The check comes before any plan or write, also in a dry run. A first acceptance belongs to
@@ -245,14 +251,14 @@ const acceptedSetupTexts = async (
   unregistered: boolean,
   dryRun: boolean,
   registry: RecipeRegistry,
-): Promise<CliResult<SetupTexts>> => {
+): Promise<CliResult<AcceptedSetup>> => {
   const identity = await readNodeIdentity(deps, home, registry);
-  if (!identity.ok) return ok(NO_SETUP_TEXTS);
+  if (!identity.ok) return ok({ texts: NO_SETUP_TEXTS, warnings: [] });
   const node = identity.value.id;
   const received = !unregistered && (await originOfHome(deps, home)) === homeIndex.origins.received;
   const check = await checkRootSetup(deps, { home, node, received });
   const settled = await settleSetup(deps, { home, node, check, dryRun, reason: acceptReason(commands.upgrade) });
-  return settled.ok ? ok(settled.value.texts) : settled;
+  return settled.ok ? ok({ texts: settled.value.texts, warnings: settled.value.warnings }) : settled;
 };
 
 export const runUpgrade = async (
@@ -303,7 +309,7 @@ export const runUpgrade = async (
   if (!root.ok) return root;
   const stateGitignore = await planStateGitignore(deps, layout);
   if (!stateGitignore.ok) return stateGitignore;
-  const blockSet = await planBlockSet(config.value, local.value, upgrade, setup.value, (parsed) =>
+  const blockSet = await planBlockSet(config.value, local.value, upgrade, setup.value.texts, (parsed) =>
     effectiveModes(deps, home, parsed),
   );
   if (!blockSet.ok) return blockSet;
@@ -364,6 +370,7 @@ export const runUpgrade = async (
   const lines: OutLine[] = [
     ...planLines(config.value, local.value, state.value, files, stateGitignore.value, boardKey.value, guard.value, root.value, blocks, upgrade),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
+    ...setup.value.warnings.map((text): OutLine => ({ level: 'warn', text })),
   ];
   const warnings = lines.filter((line) => line.level === 'warn').map((line) => line.text);
   const summary = {

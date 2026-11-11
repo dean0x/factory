@@ -468,6 +468,8 @@ export const runStart = async (
     ? await settleSetup(deps, { home, node: id, check: scan.setup, dryRun, reason: acceptReason(commands.start) })
     : null;
   if (settled !== null && !settled.ok) return settled;
+  // A saved acceptance with a lock file left is no stop: the run goes on, and the warning names the lock file to remove.
+  for (const warning of settled?.value.warnings ?? []) deps.warn(warning);
   const clean = requireRootClean(settled === null ? scan : withSetupAccepted(scan));
   if (!clean.ok) return clean;
   // The safety block comes after the root checks and before any tool check, proxy request or launch, also in a dry run.

@@ -23,6 +23,7 @@ import {
   exited,
   FAKE_PROGRAM_ARGV,
   registerRoot,
+  withFailingRemoves,
   withFailingWrites,
   type FakeDeps,
   type FakeOptions,
@@ -264,6 +265,27 @@ describe('init: a registered root, the checks and the acceptance (TP-181)', () =
     expect((await runInit(deps, options())).ok).toBe(true);
     const writes = deps.atomicWrites.filter((path) => [INDEX, ACCEPTANCES].includes(path));
     expect(writes).toEqual([INDEX, ACCEPTANCES]);
+  });
+
+  it('counts the entry as saved when only its lock file stays: no rollback, exit 0, and a warning that names the lock file', async () => {
+    const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person() });
+    const result = await runInit(withFailingRemoves(deps, (path) => path === `${INDEX}.lock`), options());
+    expect(result.ok).toBe(true);
+    expect(entryOf(deps)).toMatchObject({ id: 'demo' });
+    expect(acceptancesOf(deps)).toEqual([expect.objectContaining({ hash: SETUP_HASH })]);
+    expect(warningsOf(result).join('\n')).toContain(`${INDEX}.lock`);
+    expect(warningsOf(result).join('\n')).not.toContain('was not updated');
+  });
+
+  it('counts the acceptance as saved when only its lock file stays: accepted, a warning that names the lock file, no advice to run init', async () => {
+    const { deps } = existing({ unaccepted: true }, { ...terminal, prompt: person() });
+    const result = await runInit(withFailingRemoves(deps, (path) => path === `${ACCEPTANCES}.lock`), options());
+    expect(result.ok).toBe(true);
+    expect(acceptancesOf(deps)).toEqual([expect.objectContaining({ hash: SETUP_HASH })]);
+    expect(result.ok && result.value.json['accepted']).toBe(true);
+    expect(warningsOf(result).join('\n')).toContain(`${ACCEPTANCES}.lock`);
+    expect(warningsOf(result).join('\n')).not.toContain('was not written');
+    expect(warningsOf(result).join('\n')).not.toContain('Run "factory init" in a terminal window');
   });
 
   it('exits 4 with the yes flag and no terminal window for a setup text with no acceptance, names the command, and writes nothing', async () => {

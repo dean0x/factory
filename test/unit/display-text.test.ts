@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { displayLine, renderJson, visibleText } from '../../src/cli/output.js';
+import { displayLine, removedByDisplay, renderJson, visibleText, wrapText } from '../../src/cli/output.js';
 import { maxDisplayWidth } from '../../src/names.js';
 
 /** Characters that the source of this file does not hold as they are. */
@@ -110,5 +110,116 @@ describe('the display helper for the JSON output (AC-36)', () => {
 describe('the visible text keeps its escapes (AC-36)', () => {
   it('M5-1b TP-92 keeps a newline and a tab, and shows each hidden character as an escape', () => {
     expect(visibleText(`a${ESC}b\n\tc${RIGHT_TO_LEFT_OVERRIDE}d`)).toBe('a\\x1bb\n\tc\\u{202e}d');
+  });
+});
+
+/**
+ * Characters that show as nothing or as a replacement mark, and that no control, format or separator class holds: the default
+ * ignorable code points (assigned and unassigned) and a lone surrogate. Each has a code point, so no tool can change it.
+ */
+const SILENT_CHARACTERS: readonly (readonly [string, number])[] = [
+  ['combining grapheme joiner', 0x34f],
+  ['Khmer inherent vowel aq', 0x17b4],
+  ['Khmer inherent vowel aa', 0x17b5],
+  ['unassigned code point U+2065', 0x2065],
+  ['unassigned code point U+FFF0', 0xfff0],
+  ['unassigned code point U+FFF8', 0xfff8],
+  ['unassigned code point U+E0000', 0xe0000],
+  ['unassigned code point U+E0FFF', 0xe0fff],
+  ['lone high surrogate', 0xd800],
+  ['lone low surrogate', 0xdfff],
+];
+
+/** One character of each class that the display removes, with a name for the failure message. */
+const REMOVED_CHARACTERS: readonly (readonly [string, string])[] = [
+  ...SILENT_CHARACTERS.map(([name, code]): readonly [string, string] => [name, at(code)]),
+  ['escape', ESC],
+  ['null', NUL],
+  ['delete', DEL],
+  ['next line (C1 control)', NEXT_LINE],
+  ['carriage return', at(0x0d)],
+  ['right-to-left override', RIGHT_TO_LEFT_OVERRIDE],
+  ['left-to-right isolate', LEFT_TO_RIGHT_ISOLATE],
+  ['zero width space', ZERO_WIDTH_SPACE],
+  ['byte order mark', BYTE_ORDER_MARK],
+  ['line separator', LINE_SEPARATOR],
+  ['paragraph separator', at(0x2029)],
+  ['tag character', at(0xe0041)],
+  ['variation selector', VARIATION_SELECTOR],
+  ['variation selector supplement', at(0xe0100)],
+  ['Hangul filler', HANGUL_FILLER],
+  ['Mongolian free variation selector', at(0x180b)],
+];
+
+describe('the display predicate (AC-42)', () => {
+  it.each(REMOVED_CHARACTERS)('M5-1b TP-183 is true for a text with the %s', (_name, character) => {
+    expect(removedByDisplay(`a${character}b`)).toBe(true);
+  });
+
+  it.each(REMOVED_CHARACTERS.filter(([name]) => name !== 'carriage return'))(
+    'M5-1b TP-183 agrees with displayLine: the %s is a character that displayLine removes',
+    (_name, character) => {
+      expect(displayLine(`a${character}b`)).toBe('ab');
+      expect(removedByDisplay(`a${character}b`)).toBe(true);
+    },
+  );
+
+  it('M5-1b TP-183 is false for clean text, a newline, a tab, non-ASCII text and an emoji', () => {
+    expect(removedByDisplay('Pick the plan for the release.')).toBe(false);
+    expect(removedByDisplay('one\ntwo\tthree')).toBe(false);
+    expect(removedByDisplay(`${E_ACUTE}crire ${EMOJI}`)).toBe(false);
+    expect(removedByDisplay('')).toBe(false);
+  });
+
+  it.each(SILENT_CHARACTERS)('M5-1b TP-183 shows the %s as an escape in the visible text and removes it from a JSON string', (_name, code) => {
+    const character = at(code);
+    expect(visibleText(`a${character}b`)).toBe(`a\\u{${code.toString(16)}}b`);
+    expect(JSON.parse(renderJson({ schema: 'x/v1', title: `a${character}b` }))).toEqual({ schema: 'x/v1', title: 'ab' });
+  });
+
+  it('M5-1b TP-183 keeps a pair of surrogates that makes one character, and a combining mark that is not default ignorable', () => {
+    const pair = `${EMOJI}${at(0x301)}`;
+    expect(removedByDisplay(pair)).toBe(false);
+    expect(displayLine(pair)).toBe(pair);
+    expect(visibleText(pair)).toBe(pair);
+  });
+
+  it('M5-1b TP-183 gives the same answer over repeated calls, for a hidden and for a clean text', () => {
+    const hidden = `a${ZERO_WIDTH_SPACE}b`;
+    const answers = [1, 2, 3, 4].map(() => [removedByDisplay(hidden), removedByDisplay(hidden), removedByDisplay('clean')]);
+    expect(answers).toEqual(Array.from({ length: 4 }, () => [true, true, false]));
+  });
+});
+
+describe('the wrap helper (AC-42)', () => {
+  it('M5-1b TP-181 shows a text of 500 characters in full, in lines of at most the width cap', () => {
+    const text = `${'word '.repeat(100)}`;
+    const lines = wrapText(text);
+    expect(lines.join('')).toBe(text);
+    expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(maxDisplayWidth);
+    expect(lines).toHaveLength(Math.ceil(text.length / maxDisplayWidth));
+  });
+
+  it('M5-1b TP-181 gives one line for a text that fits, also an empty text', () => {
+    expect(wrapText('abcd', 4)).toEqual(['abcd']);
+    expect(wrapText('')).toEqual(['']);
+  });
+
+  it('M5-1b TP-181 splits at the width the caller gives and drops no character', () => {
+    expect(wrapText('abcdefghij', 4)).toEqual(['abcd', 'efgh', 'ij']);
+  });
+
+  it('M5-1b TP-181 does not cut a character of two code units in half', () => {
+    const lines = wrapText(`ab${EMOJI}cd`, 3);
+    expect(lines).toEqual(['ab', `${EMOJI}c`, 'd']);
+    expect(lines.join('')).toBe(`ab${EMOJI}cd`);
+  });
+
+  it('M5-1b TP-181 gives a whole character its own line when the width is smaller than the character, and ends', () => {
+    expect(wrapText(`${EMOJI}${EMOJI}`, 1)).toEqual([EMOJI, EMOJI]);
+  });
+
+  it('M5-1b TP-181 treats a width below one as one', () => {
+    expect(wrapText('abc', 0)).toEqual(['a', 'b', 'c']);
   });
 });

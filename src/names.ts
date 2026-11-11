@@ -53,6 +53,7 @@ export const commands = {
   item: 'item',
   track: 'track',
   request: 'request',
+  decide: 'decide',
   queue: 'queue',
   self: 'self',
   layout: 'layout',
@@ -231,6 +232,8 @@ export const files = {
   homeIndex: 'homes.json',
   /** The approval records of the user. The per-user state folder holds the file, beside the factory list. */
   ownerRecords: 'owner-records.json',
+  /** The owner decisions of the user: one record for each decision that the owner answered. It has its own lock and its own bounds. */
+  ownerDecisions: 'owner-decisions.json',
   /** The setup acceptances of the user. The per-user state folder holds the file, beside the factory list. */
   setupAcceptances: 'setup-acceptances.json',
 } as const;
@@ -400,6 +403,8 @@ export const env = {
   factoryPrefix: 'FACTORY_',
   home: 'FACTORY_HOME',
   session: 'FACTORY_SESSION',
+  /** The variable that Claude Code sets for each process that it starts. A non-empty value means that a Claude Code session runs this process. */
+  claudeCode: 'CLAUDECODE',
   /** The inbox folder of a worker. Only the launch of a worker sets it. */
   inbox: 'FACTORY_INBOX',
   /** The id of the tmux pane that a process runs in. tmux sets it for each program that it starts in a pane. */
@@ -561,18 +566,29 @@ export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', i
 
 /**
  * The keys of the decision log: the list of rows, and the keys of a row. The `item` text of a row starts with the id of a decision.
- * A row that a close of a request writes holds these three keys only: it names no one who answered.
+ * A row that a close of a request writes holds `item`, `decision` and `date` only: it names no one who answered. A row that `decide`
+ * writes holds `by` too, and `request`, the canonical text that the hash of the owner record covers. A row is a display copy: only
+ * the owner record proves an answer.
  */
-export const decisionLogKeys = { rows: 'rows', item: 'item', decision: 'decision', date: 'date' } as const;
+export const decisionLogKeys = {
+  rows: 'rows',
+  item: 'item',
+  decision: 'decision',
+  date: 'date',
+  by: 'by',
+  request: 'request',
+} as const;
 
 /**
  * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
  * decision log names its decision at the start of its `item` text: the id, then the end of the text or a character that cannot
- * continue the id. The numbers have at most 9 digits.
+ * continue the id. The numbers have at most 9 digits. `canonicalRequest` is the form that a request must have to be answered:
+ * the number has no leading zero, so one decision has one id.
  */
 export const boardIds = {
   item: /^B-[0-9]{1,9}$/,
   request: /^D-[0-9]{1,9}$/,
+  canonicalRequest: /^D-[1-9][0-9]{0,8}$/,
   requestAtStart: /^D-[0-9]{1,9}(?![0-9A-Za-z_-])/,
 } as const;
 
@@ -639,6 +655,12 @@ export const requestWords = {
   maxOptionsChars: 30,
 } as const;
 
+/**
+ * The words of `decide`. `read` is the word of a subcommand that this version does not have: the contract operation `decision read`
+ * waits for FAC-M11, so `decide read` is a usage error.
+ */
+export const decideWords = { read: 'read' } as const;
+
 /** The words of the output of `queue`. The columns of the owner fields of a row come between the items and the note. */
 export const queueWords = {
   queue: commands.queue,
@@ -671,14 +693,15 @@ export const optionKeys = { key: 'key', text: 'text', rec: 'rec' } as const;
 
 /**
  * The limits of the text of a board write. A title, a text, a question and the text of an option are one line each, with at most
- * this many characters. A decision has at most `maxOptions` options. A link from an item to a file is a relative path of at most
- * `maxDocPathChars` characters.
+ * this many characters. A decision has at most `maxOptions` options. The note of an owner answer is one line of at most
+ * `maxNoteChars` characters. A link from an item to a file is a relative path of at most `maxDocPathChars` characters.
  */
 export const boardTextLimits = {
   maxTitleChars: 100,
   maxTextChars: 500,
   maxQuestionChars: 500,
   maxOptionChars: 200,
+  maxNoteChars: 500,
   maxOptions: 9,
   maxDocPathChars: 200,
 } as const;
@@ -771,6 +794,39 @@ export const ownerRecords = {
   /** The most items in one scope record, and the most characters in one item, one project id or one version. */
   maxItems: 100,
   maxTextChars: 200,
+} as const;
+
+/**
+ * The owner decisions of the user: the number of the schema, the keys of the file and of a record, and the bounds. One record
+ * stands for one decision of one node and one real root. The file has its own lock and its own bounds, apart from the approval
+ * records.
+ */
+export const ownerDecisions = {
+  schema: 1,
+  keys: {
+    schema: 'schema',
+    records: 'records',
+    node: 'node',
+    root: 'root',
+    id: 'id',
+    option: 'option',
+    hash: 'hash',
+    at: 'at',
+  },
+  /** The file holds at most this many records, and a reader refuses a file over this many bytes. */
+  maxRecords: 1000,
+  maxBytes: maxFileBytes,
+} as const;
+
+/**
+ * The hash of a decision request (AC-39). The canonical text is the JSON of the wrapper `{ tag, version, request }`, with the
+ * whole waiting entry in `request`. The hash is SHA-256 of that text as lowercase hex, and `pattern` is its form.
+ */
+export const requestHash = {
+  tag: 'factory.decision-request',
+  version: 1,
+  keys: { tag: 'tag', version: 'version', request: 'request' },
+  pattern: /^[0-9a-f]{64}$/,
 } as const;
 
 /**
@@ -1518,6 +1574,7 @@ export const schemaIds = {
   trackList: `${program}.track-list/v1`,
   request: `${program}.${commands.request}/v1`,
   requestList: `${program}.${commands.request}-list/v1`,
+  decide: `${program}.${commands.decide}/v1`,
   queue: `${program}.${commands.queue}/v1`,
   queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
@@ -1646,6 +1703,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   itemCommand: commandText(commands.item),
   trackCommand: commandText(commands.track),
   requestCommand: commandText(commands.request),
+  decideCommand: commandText(commands.decide),
   queueCommand: commandText(commands.queue),
   itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
   clearFlag: flagText(flags.clear),

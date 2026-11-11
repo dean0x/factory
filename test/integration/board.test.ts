@@ -97,15 +97,61 @@ describe('the board commands with the delete guard off (TP-59)', () => {
   );
 });
 
-describe('the board commands that run at the same time (TP-61, TP-99)', () => {
+/** The text that the state lock wait of the product puts in stderr when another process still holds the lock at the end of the wait. */
+const LOCK_HELD_TEXT = 'holds the lock';
+
+/** The most times that a process runs again after it did not get the lock (T-S1, AC-44). */
+const MAX_RERUNS = 2;
+
+/** True for a run that failed only because another process held the state lock for the whole wait: exit 1 with the lock text in stderr. */
+const didNotGetLock = (result: RunResult): boolean => result.code === 1 && result.stderr.includes(LOCK_HELD_TEXT);
+
+/**
+ * Run a process, and run it again only when it did not get the state lock, at most `maxReruns` more times. Five processes of a loaded
+ * machine can need more than the wait of the product for the lock. The bounds of the product stay as they are. Such a run wrote
+ * nothing, so a second run is safe. Any other result, a fault included, is the result of the process.
+ */
+const rerunOnLockWait = async (run: () => Promise<RunResult>, maxReruns: number = MAX_RERUNS): Promise<RunResult> => {
+  let result = await run();
+  for (let rerun = 0; rerun < maxReruns && didNotGetLock(result); rerun += 1) result = await run();
+  return result;
+};
+
+describe('the board commands that run at the same time (TP-61, TP-99, TP-186)', () => {
   const PARALLEL = [1, 2, 3, 4, 5] as const;
+
+  it(
+    'M5-1b TP-186 runs a process again only after exit 1 with "holds the lock" in stderr, and at most two more times',
+    async () => {
+      const lockHeld: RunResult = { code: 1, stdout: '', stderr: `cannot write board.json: another process ${LOCK_HELD_TEXT} /state/locks/state.lock\n` };
+      const cases: readonly { name: string; resultOf: (call: number) => RunResult; calls: number; code: number }[] = [
+        { name: 'a lock wait that never ends', resultOf: () => lockHeld, calls: 3, code: 1 },
+        { name: 'a lock wait that ends with a good run', resultOf: (call) => (call < 3 ? lockHeld : { code: 0, stdout: '', stderr: '' }), calls: 3, code: 0 },
+        { name: 'a good run', resultOf: () => ({ code: 0, stdout: '', stderr: '' }), calls: 1, code: 0 },
+        { name: 'exit 1 with another message', resultOf: () => ({ code: 1, stdout: '', stderr: 'cannot write board.json: no space\n' }), calls: 1, code: 1 },
+        { name: 'another exit code with the lock text', resultOf: () => ({ ...lockHeld, code: 4 }), calls: 1, code: 4 },
+        { name: 'a run that did not start', resultOf: () => ({ ...lockHeld, code: -1 }), calls: 1, code: -1 },
+      ];
+      for (const { name, resultOf, calls, code } of cases) {
+        let started = 0;
+        const result = await rerunOnLockWait(async () => {
+          started += 1;
+          return resultOf(started);
+        });
+        expect({ name, started, code: result.code }, name).toEqual({ name, started: calls, code });
+      }
+    },
+    CASE_MS,
+  );
 
   it(
     'M5-1b TP-61 makes five state commits, each of the board file only, for five item move calls that run at the same time',
     async () => {
       for (const number of PARALLEL) await mustRun(['item', 'add', '--title', `Item ${number}`]);
       const before = await commitCount();
-      const results = await Promise.all(PARALLEL.map((number) => factory(['item', 'move', `B-${number}`, '--state', 'doing'])));
+      const results = await Promise.all(
+        PARALLEL.map((number) => rerunOnLockWait(() => factory(['item', 'move', `B-${number}`, '--state', 'doing']))),
+      );
       for (const [at, result] of results.entries()) expect(result.code, `move B-${at + 1}: ${result.stderr}`).toBe(0);
       expect(await commitCount()).toBe(before + PARALLEL.length);
       expect(await filesOfLastCommits(PARALLEL.length)).toEqual(PARALLEL.map(() => files.board));
@@ -120,7 +166,9 @@ describe('the board commands that run at the same time (TP-61, TP-99)', () => {
     async () => {
       const before = await commitCount();
       const results = await Promise.all(
-        PARALLEL.map((number) => factory(['request', 'add', '--title', `Request ${number}`, '--question', 'Which?', '--option', 'a=Yes'])),
+        PARALLEL.map((number) =>
+          rerunOnLockWait(() => factory(['request', 'add', '--title', `Request ${number}`, '--question', 'Which?', '--option', 'a=Yes'])),
+        ),
       );
       for (const [at, result] of results.entries()) expect(result.code, `add ${at + 1}: ${result.stderr}`).toBe(0);
       const numbers = results.map((result) => /Added (D-\d+):/.exec(result.stdout)?.[1]).sort();

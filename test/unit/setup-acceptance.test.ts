@@ -18,12 +18,13 @@ import {
   type ManifestEntry,
 } from '../../src/core/setup-acceptance.js';
 import { env, maxSetupTextBytes, setupAcceptance, trackedFiles } from '../../src/names.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, withFailingRemoves, withFailingWrites, type FakeDeps } from '../helpers/fake-deps.js';
 
 const ROOT = '/w/root';
 const STATE = '/state';
 const FOLDER = '/state/factory';
 const STORE = '/state/factory/setup-acceptances.json';
+const LOCK = `${STORE}.lock`;
 const APPROVAL_STORE = '/state/factory/owner-records.json';
 const NODE = 'demo';
 const SETUP = 'setup/coordinator.md';
@@ -347,7 +348,7 @@ describe('setup acceptance: the visible text', () => {
   );
 
   it('leaves the characters next to those ranges as they are', () => {
-    const text = `a${at(0x3163)}b${at(0xfe10)}c${at(0xffa1)}d${at(0xe01f0)}e`;
+    const text = `a${at(0x3163)}b${at(0xfe10)}c${at(0xffa1)}d`;
     expect(visibleText(text)).toBe(text);
   });
 
@@ -523,7 +524,7 @@ describe('setup acceptance: the accept step', () => {
     const deps = person({ answer: 'y' });
     const current = await collect(deps);
     const result = await acceptSetup(deps, { root: ROOT, node: NODE, file: SETUP, current, reason: 'accepted at the prompt' });
-    expect(result).toEqual({ ok: true, value: true });
+    expect(result).toEqual({ ok: true, value: { accepted: true, warning: null } });
     expect(deps.prompts).toHaveLength(1);
     expect(deps.prompts[0]).toContain('Write tests first.');
     expect(stored(deps).acceptances).toEqual([
@@ -531,18 +532,30 @@ describe('setup acceptance: the accept step', () => {
     ]);
   });
 
+  it('counts the acceptance as accepted when only the lock file stays, with a warning that names the lock file', async () => {
+    const deps = person({ answer: 'y' });
+    const current = await collect(deps);
+    const stuck = withFailingRemoves(deps, (path) => path === LOCK);
+    const result = await acceptSetup(stuck, { root: ROOT, node: NODE, file: SETUP, current, reason: 'accepted at the prompt' });
+    expect(result).toMatchObject({ ok: true, value: { accepted: true, warning: expect.stringContaining(LOCK) } });
+    expect(stored(deps).acceptances).toEqual([expect.objectContaining({ hash: current.manifest.hash })]);
+  });
+
   it.each(['', 'n', 'no', 'maybe', ' '])('writes nothing for the answer "%s"', async (answer) => {
     const deps = person({ answer });
     const current = await collect(deps);
     const result = await acceptSetup(deps, { root: ROOT, node: NODE, file: SETUP, current, reason: 'a test' });
-    expect(result).toEqual({ ok: true, value: false });
+    expect(result).toEqual({ ok: true, value: { accepted: false, warning: null } });
     expect(deps.files.has(STORE)).toBe(false);
   });
 
   it('accepts "yes" in any case with spaces around it', async () => {
     const deps = person({ answer: '  YES ' });
     const current = await collect(deps);
-    expect(await acceptSetup(deps, { root: ROOT, node: NODE, file: SETUP, current, reason: 'a test' })).toEqual({ ok: true, value: true });
+    expect(await acceptSetup(deps, { root: ROOT, node: NODE, file: SETUP, current, reason: 'a test' })).toEqual({
+      ok: true,
+      value: { accepted: true, warning: null },
+    });
   });
 
   it('passes on a failure to read the answer, and writes nothing', async () => {
@@ -593,7 +606,7 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
     it('writes the root, the node id, the file, the version, the manifest, the hash, the reason and the time', async () => {
       const deps = person();
       const collected = await collect(deps);
-      expect(await recordSetupAcceptance(deps, inputOf(collected))).toEqual({ ok: true, value: undefined });
+      expect(await recordSetupAcceptance(deps, inputOf(collected))).toEqual({ ok: true, value: { warning: null } });
       expect(stored(deps)).toEqual({
         schema: 1,
         acceptances: [
@@ -651,7 +664,7 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
       const deps = person({ stdinIsTTY: false, stdoutIsTTY: false });
       const collected = await collect(deps);
       const result = await recordSetupAcceptance(deps, inputOf(collected, { reason: 'init with yes' }), { fromInitYes: true });
-      expect(result).toEqual({ ok: true, value: undefined });
+      expect(result).toEqual({ ok: true, value: { warning: null } });
       expect(stored(deps).acceptances).toEqual([expect.objectContaining({ root: ROOT, node: NODE, file: SETUP, hash: collected.manifest.hash })]);
     });
 
@@ -660,7 +673,7 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
       deps.seed(`${ROOT}/${WORKER_SETUP}`, 'Worker text.\n');
       const collected = await collect(deps, [SETUP, WORKER_SETUP]);
       const result = await recordSetupAcceptance(deps, inputOf(collected, { reason: 'init with yes' }), { fromInitYes: true });
-      expect(result).toEqual({ ok: true, value: undefined });
+      expect(result).toEqual({ ok: true, value: { warning: null } });
       expect(stored(deps).acceptances[0]?.['manifest'].map((entry: ManifestEntry) => entry.path)).toEqual([SETUP, WORKER_SETUP]);
     });
 
@@ -801,6 +814,32 @@ describe('setup acceptance: the writer (TP-144, TP-184)', () => {
     const result = await recordSetupAcceptance(deps, inputOf(await collect(deps), { reason: 'a\nb' }));
     expect(result).toMatchObject({ ok: false });
     expect(deps.files.has(STORE)).toBe(false);
+  });
+
+  describe('the lock file that stays after the write', () => {
+    it.each([
+      ['a person in a terminal window', {}, {}],
+      ['init with yes and no terminal window', { stdinIsTTY: false, stdoutIsTTY: false }, { fromInitYes: true as const }],
+    ])('counts the acceptance as saved, with a warning that names the lock file, for %s', async (_name, options, writer) => {
+      const deps = person(options);
+      const stuck = withFailingRemoves(deps, (path) => path === LOCK);
+      const result = await recordSetupAcceptance(stuck, inputOf(await collect(deps)), writer);
+      expect(result).toMatchObject({ ok: true, value: { warning: expect.stringContaining(LOCK) } });
+      expect(result).toMatchObject({ value: { warning: expect.stringContaining('EBUSY') } });
+      expect(result).not.toMatchObject({ value: { warning: expect.stringContaining('was not written') } });
+      expect(stored(deps).acceptances).toHaveLength(1);
+    });
+
+    it('keeps the error that says the acceptance was not written when the lock file stays and the write fails', async () => {
+      const deps = person();
+      const failing = withFailingWrites(
+        withFailingRemoves(deps, (path) => path === LOCK),
+        (path) => path === STORE,
+      );
+      const result = await recordSetupAcceptance(failing, inputOf(await collect(deps)));
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('The setup acceptance was not written') } });
+      expect(deps.files.has(STORE)).toBe(false);
+    });
   });
 
   describe('the size cap of the store', () => {
