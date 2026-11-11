@@ -1176,6 +1176,24 @@ export const paneElapsed = {
   etime: /^ *(?:(?:([0-9]{1,5})-)?([0-9]{2}):)?([0-9]{2}):([0-9]{2}) *\n?$/,
 } as const;
 
+/**
+ * The start time of a process for the token lock. The lock asks `ps` for `lstart`, which is a point in time, so a slow `ps` call
+ * does not move it. `timeoutMs` bounds the call. `lstart` is the one form of the answer that the read accepts: spaces at the ends
+ * and one new line at the end, a day name, a month name, the day of the month in two places (a space before a one-digit day), the
+ * time with 2 digits for each part, and the year with 4 digits. The groups are the month, the day, the hour, the minute, the second
+ * and the year. The time is in local time, and `months` gives the number of a month by its place.
+ */
+export const processStart = {
+  timeoutMs: 5_000,
+  months: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+  lstart:
+    /^ *(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) ([ 0-3][0-9]) ([0-9]{2}):([0-9]{2}):([0-9]{2}) ([0-9]{4}) *\n?$/,
+} as const;
+
+/** The warning of a take-over of a lock file that is no lock and is older than the stale age of its policy. */
+export const lockStaleWarning = (lockPath: string): string =>
+  `the lock file ${lockPath} holds no valid lock and is old: its lock is taken over`;
+
 /** The words of `worker list`: the titles of the columns, the pane column, the state of a worker and the mark of its context. */
 export const workerListWords = {
   columns: { id: 'ID', project: 'PROJECT', pane: 'PANE', state: 'STATE', context: 'CONTEXT', mark: 'MARK' },
