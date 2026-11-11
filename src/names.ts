@@ -1518,6 +1518,12 @@ export const nodeSendReasons = {
   removeFailed: 'the file could not be removed',
 } as const;
 
+/**
+ * The tools of the agent program that the output of `node send` names. The command writes the file only. The sender checks the
+ * session of the child with `listAgents`, and sends a message that names the file with `sendMessage`.
+ */
+export const sendTools = { listAgents: 'ListAgents', sendMessage: 'SendMessage' } as const;
+
 /** The ids of the checks that the doctor command runs. */
 export const checkIds = {
   config: 'config',

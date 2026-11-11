@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { exitCodeOf, failure } from '../../src/cli/errors.js';
 import type { NodeOptions } from '../../src/commands/node.js';
-import { parseConfigTexts, runNode } from '../helpers/package-registry.js';
+import { fileTransport, parseConfigTexts, runNode } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import type { Deps } from '../../src/core/deps.js';
+import { env, nodeInbox, nodeSendReasons } from '../../src/names.js';
+import { STATE_GITIGNORE } from '../../src/state/files.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
 import { workerPathsOf } from '../../src/state/layout.js';
@@ -29,11 +34,12 @@ const make = (
     readonly localText?: string;
     readonly cwd?: string;
     readonly links?: Readonly<Record<string, string>>;
+    readonly env?: Readonly<Record<string, string>>;
   } = {},
 ): FakeDeps => {
   const deps = createFakeDeps({
     cwd: options.cwd ?? '/w',
-    env: { XDG_STATE_HOME: '/state' },
+    env: { XDG_STATE_HOME: '/state', ...options.env },
     ...(options.links === undefined ? {} : { links: options.links }),
   });
   seedConfig(deps, HOME, configOf('mgr', options.layer ?? 2, options.children));
@@ -555,5 +561,260 @@ describe('node: the registration check', () => {
     deps.files.delete('/state/factory/homes.json');
     const result = await runNode(deps, { home: undefined, words: ['children'] });
     expect(result).toMatchObject({ ok: false, error: { kind: 'safety' } });
+  });
+});
+
+describe('node send', () => {
+  const CHILD = '/w/web-factory';
+  const INBOX = `${CHILD}/.factory/inbox`;
+  const TASK = `${HOME}/.factory/orders/task.md`;
+  const SENT = `${INBOX}/2030-01-02T03-04-05-678Z-mgr-00000001.md`;
+  const HEADER = ['Sender node id: mgr', `Sender node address: file://${HOME}`, 'Target node id: web', 'Message, no owner authority.'];
+
+  interface Setup extends NonNullable<Parameters<typeof make>[0]> {
+    /** The text of the task file. */
+    readonly task?: string;
+    /** False: the state repo of the child has no .gitignore yet. */
+    readonly ignored?: boolean;
+  }
+
+  /** A node with one child that is ready for a send, and a task file in the orders folder of the node. */
+  const sendable = ({ task = 'Build the page.\n', ignored = true, ...options }: Setup = {}): FakeDeps => {
+    const deps = make({ children: [{ id: 'web', address: `file://${CHILD}` }], homes: webHome, ...options });
+    if (ignored) deps.seed(`${CHILD}/.factory/.gitignore`, STATE_GITIGNORE);
+    deps.seed(TASK, task);
+    return deps;
+  };
+
+  const sendOf = (deps: Deps, words: readonly string[] = ['send', 'web'], file: string | undefined = TASK) =>
+    runNode(deps, { home: HOME, words, file });
+
+  const sent = async (deps: Deps) => {
+    const result = await sendOf(deps);
+    if (!result.ok) throw new Error(result.error.message);
+    return result.value;
+  };
+
+  const refused = async (deps: Deps, words?: readonly string[], file?: string) => {
+    const result = await sendOf(deps, words, file);
+    if (result.ok) throw new Error('the send was not refused');
+    return result.error;
+  };
+
+  const inboxFiles = (deps: FakeDeps): string[] => [...deps.files.keys()].filter((path) => path.startsWith(`${INBOX}/`));
+
+  it('TP-3: writes the task as a new file with mode 600, the fixed header and a name that the program made', async () => {
+    const deps = sendable();
+    const output = await sent(deps);
+    expect(deps.files.get(SENT)).toBe(`${HEADER.join('\n')}\n\nBuild the page.\n`);
+    expect(deps.modes.get(SENT)).toBe(0o600);
+    expect(inboxFiles(deps)).toEqual([SENT]);
+    expect(output.failed).toBe(false);
+  });
+
+  it('TP-3: prints the file, the name of the session, the ListAgents check line and the SendMessage line', async () => {
+    const output = await sent(sendable());
+    const text = plainText(output);
+    expectShortOutput(text);
+    expect(output.lines[0]).toEqual({ level: 'ok', text: 'Wrote the task for web as a new file in its inbox.' });
+    expect(text).toContain(`File: ${SENT}`);
+    expect(text).toContain('Session: web');
+    expect(text).toMatch(/Check with ListAgents that exactly one session has the name web\./);
+    expect(text).toMatch(/Then send one SendMessage to web that names the file\./);
+    expect(output.json).toMatchObject({ schema: 'factory.node-send/v1', home: HOME, id: 'web', session: 'web', file: SENT });
+    expect(output.json['steps']).toEqual([expect.stringContaining('ListAgents'), expect.stringContaining('SendMessage')]);
+  });
+
+  it('TP-3: never replaces a file that has the name, and exits 1', async () => {
+    const deps = sendable();
+    deps.seed(SENT, 'old\n');
+    const error = await refused(deps);
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(deps.files.get(SENT)).toBe('old\n');
+  });
+
+  it('TP-26: works inside a session of the program, where the session marker is set', async () => {
+    const deps = sendable({ env: { [env.session]: 'mgr' } });
+    await sent(deps);
+    expect(deps.files.has(SENT)).toBe(true);
+  });
+
+  it('TP-26: exits 3 and names factory upgrade when the state repo of the child does not ignore the inbox yet', async () => {
+    const deps = sendable({ ignored: false });
+    const error = await refused(deps);
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain(nodeSendReasons.notIgnored);
+    expect(error.hint).toContain('factory upgrade');
+    expect(deps.dirs.has(INBOX)).toBe(false);
+  });
+
+  it('sends the text with LF line ends when the file has CRLF, and accepts a tab', async () => {
+    const deps = sendable({ task: 'one\r\n\ttwo\r\n' });
+    await sent(deps);
+    expect(deps.files.get(SENT)).toBe(`${HEADER.join('\n')}\n\none\n\ttwo\n`);
+  });
+
+  it.each([
+    ['a C0 control character', 'a\u0001b'],
+    ['an escape character', 'a\u001b[31mb'],
+    ['a DEL character', 'a\u007fb'],
+    ['a C1 control character', 'a\u0085b'],
+    ['a carriage return that is no part of CRLF', 'a\rb'],
+    ['a bidi control character', 'a‮b'],
+    ['a bidi isolate', 'a⁦b'],
+    ['a zero width space', 'a​b'],
+    ['a line separator', 'a b'],
+    ['a byte order mark', '﻿a'],
+  ])('TP-6: exits 2 for %s in the task, and writes nothing', async (_name, task) => {
+    const deps = sendable({ task });
+    const error = await refused(deps);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain(nodeSendReasons.controlChars);
+    expect(deps.dirs.has(INBOX)).toBe(false);
+  });
+
+  it('TP-6: exits 4 for token-shaped text, and no output repeats the value', async () => {
+    const deps = sendable({ task: `Push with ${FAKE_GITHUB_TOKEN} now.\n` });
+    const error = await refused(deps);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(nodeSendReasons.token);
+    expect(JSON.stringify(error)).not.toContain('a'.repeat(20));
+    expect(deps.dirs.has(INBOX)).toBe(false);
+  });
+
+  it('TP-6: exits 3 when the inbox of the child holds the most files', async () => {
+    const deps = sendable();
+    for (let index = 0; index < nodeInbox.maxFiles; index += 1) deps.seed(`${INBOX}/old-${index}.md`, 'x');
+    const error = await refused(deps);
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain(nodeSendReasons.full);
+    expect(inboxFiles(deps)).toHaveLength(nodeInbox.maxFiles);
+  });
+
+  it('TP-23: exits 3 with a fixed reason for a child whose config does not parse, and shows no text of the parse', async () => {
+    const deps = sendable({ homes: { [CHILD]: 'key: [unclosed\n' } });
+    const ping = await fileTransport(deps).ping(`file://${CHILD}`);
+    if (ping.kind !== 'unknown') throw new Error('the config must not parse');
+    const error = await refused(deps);
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain(nodeSendReasons.notAnswering);
+    const shown = `${error.message}\n${error.hint ?? ''}`;
+    expect(shown).not.toContain(ping.reason.slice(ping.reason.indexOf(': ') + 2));
+    expect(shown).not.toContain('parse');
+    expect(deps.dirs.has(INBOX)).toBe(false);
+  });
+
+  it('shows the fixed reason, and no text of the ping, for a child whose config is of an older schema', async () => {
+    const error = await refused(sendable({ homes: { [CHILD]: 'schema: 1\n' } }));
+    expect(error.message).toContain(nodeSendReasons.notAnswering);
+    expect(`${error.message}${error.hint}`).not.toContain('schema 1');
+  });
+
+  it('exits 4 for a child that shows another layer than the layer below, and writes nothing', async () => {
+    const deps = sendable({ homes: { [CHILD]: configOf('web', 2) } });
+    const error = await refused(deps);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(nodeSendReasons.mismatch);
+    expect(deps.dirs.has(INBOX)).toBe(false);
+  });
+
+  it('TP-5: removes the file and exits 4 when the child shows another id after the write', async () => {
+    const deps = sendable();
+    const racing: Deps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        writeTextExclusive: async (path, text, mode) => {
+          const made = await deps.fs.writeTextExclusive(path, text, mode);
+          deps.seed(`${CHILD}/factory.yaml`, renderConfig(configOf('other', 1)).shared);
+          return made;
+        },
+      },
+    };
+    const error = await refused(racing);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(nodeSendReasons.mismatch);
+    expect(inboxFiles(deps)).toEqual([]);
+  });
+
+  it('TP-5: exits 4 and names the file and the delete step when the removal fails', async () => {
+    const deps = sendable();
+    const racing: Deps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        writeTextExclusive: async (path, text, mode) => {
+          const made = await deps.fs.writeTextExclusive(path, text, mode);
+          deps.seed(`${CHILD}/factory.yaml`, renderConfig(configOf('other', 1)).shared);
+          return made;
+        },
+        remove: async () => failure('cannot remove: EIO'),
+      },
+    };
+    const error = await refused(racing);
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(nodeSendReasons.removeFailed);
+    expect(error.message).toContain(SENT);
+    expect(error.hint).toContain(`rm ${SENT}`);
+    expect(deps.files.has(SENT)).toBe(true);
+  });
+
+  const CASES: readonly (readonly [string, number, string | null, () => { deps: Deps; words?: readonly string[]; file?: string }])[] = [
+    ['the name of the file is taken', 1, nodeSendReasons.io, () => {
+      const deps = sendable();
+      deps.seed(SENT, 'old\n');
+      return { deps };
+    }],
+    ['an id that is not a child', 2, nodeSendReasons.notChild, () => ({ deps: sendable(), words: ['send', 'nobody'] })],
+    ['a task file that does not exist', 2, null, () => ({ deps: sendable(), file: `${HOME}/.factory/orders/none.md` })],
+    ['a control character in the task', 2, nodeSendReasons.controlChars, () => ({ deps: sendable({ task: 'a\u0001b' }) })],
+    ['a child that does not answer', 3, nodeSendReasons.notAnswering, () => ({ deps: sendable({ homes: { [CHILD]: null } }) })],
+    ['a full inbox', 3, nodeSendReasons.full, () => {
+      const deps = sendable();
+      for (let index = 0; index < nodeInbox.maxFiles; index += 1) deps.seed(`${INBOX}/old-${index}.md`, 'x');
+      return { deps };
+    }],
+    ['a state repo that does not ignore the inbox', 3, nodeSendReasons.notIgnored, () => ({ deps: sendable({ ignored: false }) })],
+    ['another id in the child', 4, nodeSendReasons.mismatch, () => ({ deps: sendable({ homes: { [CHILD]: configOf('other', 1) } }) })],
+    ['a link as the inbox', 4, nodeSendReasons.unsafe, () => {
+      const deps = sendable({ links: { [INBOX]: '/elsewhere' } });
+      deps.seedDir(INBOX);
+      return { deps };
+    }],
+    ['a child folder that another user owns', 4, nodeSendReasons.unsafe, () => {
+      const deps = sendable();
+      deps.owners.set(CHILD, 0);
+      return { deps };
+    }],
+    ['a token in the task', 4, nodeSendReasons.token, () => ({ deps: sendable({ task: `${FAKE_GITHUB_TOKEN}\n` }) })],
+  ];
+
+  it.each(CASES)('TP-7: exits with the right code for %s, and the remedy names a command', async (_name, code, reason, build) => {
+    const { deps, words, file } = build();
+    const error = await refused(deps, words, file);
+    expect(exitCodeOf[error.kind]).toBe(code);
+    expect(error.hint).toMatch(/"[a-z]+ [^"]+"/);
+    if (reason !== null) expect(error.message).toContain(reason);
+  });
+
+  it('TP-7: exits 2 for a missing id, a missing --file and an extra word', async () => {
+    const deps = sendable();
+    const options: readonly NodeOptions[] = [
+      { home: HOME, words: ['send'], file: TASK },
+      { home: HOME, words: ['send', 'web'] },
+      { home: HOME, words: ['send', 'web', 'extra'], file: TASK },
+    ];
+    for (const option of options) {
+      expect(await runNode(deps, option)).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    }
+    expect(deps.dirs.has(INBOX)).toBe(false);
+  });
+
+  it('refuses --file for the other subcommands with exit 2', async () => {
+    const deps = sendable();
+    for (const words of [['children'], ['add-child', CHILD], ['remove-child', 'web']]) {
+      expect(await sendOf(deps, words)).toMatchObject({ ok: false, error: { kind: 'usage' } });
+    }
+    expect(deps.atomicWrites).toEqual([]);
   });
 });
