@@ -47,7 +47,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `init`, `start`, `doctor`, `upgrade`, `help` (with `help words`) | FAC-M2 |
 | `init --tracker --items --decisions --state-from`; `upgrade` rule for a dirty state repo | FAC-M3 |
 | `node children`, `node add-child`, `node remove-child` | FAC-M2 |
-| `node tree` | FAC-M8 |
+| `node send` | B-207 (from FAC-M8) |
+| `node tree` | B-207 (from FAC-M8) |
 | `machine`, `layout`, `self`, `hook` | FAC-M4 |
 | `shutdown`, `restart`, `reboot`, `status` (the worker states, the work item, the unused state), `dismiss` (with `--idle`; FAC-M5b names it `--unused`) | FAC-M4 |
 | `worker` (new, list, reset, stop, resume, summon, watch) | FAC-M4 |
@@ -62,9 +63,9 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `check`, `pr`, `issues`, `copies` (list, status), `lock` | FAC-M5 |
 | `state` (guard) | FAC-M5 |
 | `release` (check, verify, scope), `copies` (sync, clean) | FAC-M5b |
-| `status` (the digest for the owner), `report` (the digest of one node) | FAC-M5 |
+| `status` (the digest for the owner), `report` (the digest of one node, with a row for each direct child) | B-207 (the core); the events and `--since` stay in FAC-M5 |
 | `status --usage` | FAC-M5b |
-| `report` (the rollup over children) | FAC-M8 |
+| `report` (the rollup over children) | B-207 (the rows for the children); the inherit list, the decision relay and the `director` template stay in FAC-M8 |
 | `recipe` (show, variant), `project` (add, remove, list) | FAC-M6 |
 | `adopt` | FAC-M7 |
 | `plugin` (test) | FAC-M11 |
@@ -127,7 +128,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 **Scope.** `worker new|list|reset|stop|resume|summon|watch`, `shutdown`, `restart`, `reboot`, `status`, `dismiss`, `layout`, `machine` and `self reset`. The workers and view windows (F-8). The last-seen hook and the status line wrapper (F-9). Messages between sessions (D-101). The recovery after a machine restart in `start`. The idle setting `limits.idle_after`. The agent setting `session.agent`.
 
 **Messages between sessions (D-101).** The cross-session messages of Claude Code carry the work:
-- factory starts each session with a name: the coordinator `<node id>`, a worker `<node id>-<worker id>`. The coordinator sends a task with `SendMessage`. A long task is a file in the assignment folder of the worker, and the message names it.
+- factory starts each session with a name: the coordinator `<node id>`, a worker `<node id>_<worker id>`. The coordinator sends a task with `SendMessage`. A long task is a file in the assignment folder of the worker, and the message names it.
 - factory types only constant lines into a pane (`/clear`, `/compact` for `worker reset` and `self reset`), through `src/comms/` (design §4.12).
 - `worker watch` reports what the idle notices of Claude Code do not show: a pane that ended, a worker that waits in a dialog, and a worker that looks stalled.
 - A message from another session carries no authority. `worker relay` (FAC-M5) keeps owner authority in typed input.
@@ -157,7 +158,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 - [x] Settings consent test (fake terminal window and none): `worker new` and `start` print the exact hook and status line change and its target file before any write. With no terminal window and no `--yes`, they write nothing and exit 2. With `--yes`, they write only `.claude/settings.local.json` in the factory folder or the work copy. A test HOME shows that no file under `$HOME/.claude` changes. With `session.statusline` set by the owner, the status line command still prints its output through the wrapper (end-to-end test).
 - [x] Static test: no source file opens a path under `~/.claude`, and no template contains such a path.
 - [x] Hook state. The managed hook settings hold `Notification` (only for a permission prompt or an input dialog) and `PreToolUse`. The hook writes `Notification` only for the notification types `permission_prompt` and `elicitation_dialog`. `Notification` gives the state `waits`, and `PreToolUse` gives `busy`. `worker list` and `status` show `waits`, and `dismiss` refuses a worker that waits. `factory upgrade` adds the two events to the hook settings of each work copy that holds the hook of factory and to the coordinator settings, with the consent rule of design §4.6 (tests).
-- [x] Session names. The worker argument list holds `--name <node id>-<worker id>` once, and the coordinator argument list holds `--name <node id>` once. One function in `src/names.ts` makes both names. The name is not a word of the pane binding, so a pane that an older version started without it still binds (unit tests).
+- [x] Session names. The worker argument list holds `--name <node id>_<worker id>` once, and the coordinator argument list holds `--name <node id>` once. One function in `src/names.ts` makes both names. The name is not a word of the pane binding, so a pane that an older version started without it still binds (unit tests).
 - [x] `worker new --assignment F` copies F to `assignment.md` in the assignment folder of the worker before the launch. Before any write, it refuses: a file outside the factory folder and outside the git work tree of the caller, a link in the path, a path part below its root that starts with a dot (except `.factory/orders/`), `factory.local.yaml`, or a file that changes during the check (exit 4); a path that is not a regular file, a file over 1 MiB, or a file that is not UTF-8 or holds NUL (exit 2) (tests).
 - [x] `worker reset <w> --clear|--compact` runs only from the coordinator pane. It refuses each case of design §4.6 "Session reset" with its exit code: a worker that is busy or waits, a state line older than the pane process, hook settings without the new events, a missing `$FACTORY_INBOX/resume.md`, unpushed work, a summoned pane, and a screen that shows a numbered option list. It types `C-u`, the literal command and `Enter` in one tmux run through `src/comms/`. It confirms the reset by `SessionStart` (clear) or `PreCompact` (compact) within 10 checks of 1 s, else exit 3 (fake tmux tests).
 - [x] `self reset` runs only from the coordinator pane, which it binds by its start command. It exits 3 and names the file when `.factory/resume/<node id>.md` is missing. It exits 3 when its own state line shows `waits`, or when the coordinator settings lack one of the hook events. With the file, it types `/compact` through `src/comms/` and exits 0 with one line that says the compact runs after the current turn (fake tmux tests).
@@ -179,7 +180,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 1. **Local board (F-2).** The `local` connector (files in `.factory/`; also the test double of later connectors), on the operations that FAC-M11 makes the one connector contract (design §4.10). The commands `item`, `request`, `decide <D-n> <option>` (for `local`; FAC-M3 adds `github`) and `queue`. The decision log and the decision profile tools. The board commit helper and the delete-guard hooks. Every write of a board file goes through the board commit helper.
 2. **Check (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `pr watch`, `issues audit`. The dismiss idle window (M5-2): `dismiss --idle` reads the board again just before each stop, and not once before all stops. M5-1b reads the board once to list the idle workers and once more after the pick, so a worker can get an item after the second read and before its stop. M5-1b states this as a limit.
 3. **`factory copies list|status` (D-55).**
-4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. The rollup over children stays in FAC-M8. `lock run`. The view slot shows `factory item list`.
+4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. B-207 builds the report core without the events. The events stay in FAC-M5. B-207 also gives the rows for the direct children. The rest of the rollup stays in FAC-M8. `lock run`. The view slot shows `factory item list`.
 5. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
 6. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
 7. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
@@ -224,7 +225,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   - With any account setup, a board event is never a proof: an owner comment `approve`, an assignee change, a `worker:<id>` label and a review are each refused, and the message says that a board event is no proof. A decision from `factory decide` on a fake terminal window with no `FACTORY_SESSION` is accepted, and `pr merge` merges.
 - [ ] `copies list` and `copies status` give the right rows and counts on fixture repos with linked worktrees: clean, dirty, unpushed, branch not on the remote. They ask git, never a `.git` folder test.
 - [ ] A dirty, diverged or off-default work copy shows `STUCK:`, and no command changes it (test).
-- [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`.
+- [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`. B-207 (PR B1) will meet the keys test and the static test. The `--since` test and the two event tests stay open.
 - [ ] `lock run` tests: with a fake platform `darwin` it uses `lockf`, and with `linux` it uses `flock`. A second run waits and stops at its bound with exit 3. The exit code of the inner command passes through.
 - [ ] A tmux test: the view slot pane shows the item titles of a fixture `local` board.
 - [ ] Template test: the coordinator role text and the fixed rules follow the approval setting. With `merge: owner`, the text says that every merge waits for the owner. With `merge: delegated`, it names the proofs of design §6.1 and does not say that every merge waits.
@@ -464,7 +465,7 @@ In M5-1b a hosted kind has no connector. Every write stops (exit 4), and a read 
 - [ ] Integration test: a child factory folder that factory cannot read shows "unknown" in the rollup, never "dead".
 - [ ] A record from a parent with a different owner arrives as a message, and carries no authority (test).
 - [ ] Concurrent use. Test: two machines that use one factory do not write the same state file at the same time, or the second `start` stops with the name of the active machine. This follows the one-active-machine warning of FAC-M4.
-- [ ] `node tree` prints one line for each entry of `children[]` and reads only the folders that the entries name. A test with an extra node folder shows that it is not listed. A child entry whose folder has another node id shows `mismatch`, and `deliver` to it exits 4.
+- [ ] `node tree` prints one line for each entry of `children[]` and reads only the folders that the entries name. A test with an extra node folder shows that it is not listed. A child entry whose folder has another node id shows `mismatch`, and `node send` to it exits 4.
 - [ ] A parent that has owner, accounts and session settings in its config passes to a child only the keys of the inherit list (limits, writing style, safety rules). A test compares the child config.
 
 ### FAC-M10: Release and install

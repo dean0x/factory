@@ -308,7 +308,7 @@ describe('the worker launch argument list (TP-10)', () => {
       '--effort',
       'high',
       '--name',
-      'demo-web-search',
+      'demo_web-search',
       '--add-dir',
       INBOX,
     ]);
@@ -410,11 +410,11 @@ describe('the name of the session (TP-9)', () => {
     expect(at).toBeLessThan(argv.indexOf('--add-dir'));
   });
 
-  it('gives a worker the id of the node, a hyphen and the id of the worker as its name, once, after --resume and before the --add-dir', () => {
+  it('gives a worker the id of the node, an underscore and the id of the worker as its name, once, after --resume and before the --add-dir', () => {
     const argv = workerArgvOf({ model: 'opus', resumeId: SESSION_ID, nodeId: 'node-7', workerId: 'api-fix' });
     const [at] = flagAt(argv);
     expect(flagAt(argv)).toHaveLength(1);
-    expect(argv[(at ?? -1) + 1]).toBe('node-7-api-fix');
+    expect(argv[(at ?? -1) + 1]).toBe('node-7_api-fix');
     expect(at).toBeGreaterThan(argv.indexOf('--resume') + 1);
     expect(at).toBeGreaterThan(argv.indexOf('--model'));
     expect(at).toBeLessThan(argv.indexOf('--add-dir'));
@@ -423,12 +423,12 @@ describe('the name of the session (TP-9)', () => {
   it('puts the name in a launch with no model and no resume id directly after the effort', () => {
     const after = (argv: readonly string[]): readonly string[] => argv.slice(argv.indexOf('--effort'), argv.indexOf('--effort') + 4);
     expect(after(argvOf())).toEqual(['--effort', 'high', '--name', 'demo']);
-    expect(after(workerArgvOf())).toEqual(['--effort', 'high', '--name', 'demo-web-search']);
+    expect(after(workerArgvOf())).toEqual(['--effort', 'high', '--name', 'demo_web-search']);
   });
 
   it('keeps the name out of the words that bind a pane to its worker', () => {
     const marks = workerLaunchMarks('/w/demo-factory', 'web-search');
-    expect([...marks.variables, marks.folder].filter((word) => word.includes('--name') || word.includes('demo-web-search'))).toEqual([]);
+    expect([...marks.variables, marks.folder].filter((word) => word.includes('--name') || word.includes('demo_web-search'))).toEqual([]);
   });
 
   it.each([

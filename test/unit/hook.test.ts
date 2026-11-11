@@ -39,6 +39,8 @@ interface MakeOptions {
   readonly stdin?: string;
   readonly os?: string;
   readonly links?: Readonly<Record<string, string>>;
+  /** Default: /w, a folder outside every factory folder. */
+  readonly cwd?: string;
   /** Default: the folder is in the factory list, so the registration check passes. */
   readonly registered?: boolean;
 }
@@ -46,7 +48,7 @@ interface MakeOptions {
 /** A registered factory folder on a fake file system, with the environment of a hook of its coordinator. */
 const make = (options: MakeOptions = {}): FakeDeps => {
   const deps = createFakeDeps({
-    cwd: '/w',
+    cwd: options.cwd ?? '/w',
     env: { ...IN_FACTORY, ...options.env },
     ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
     ...(options.os === undefined ? {} : { os: options.os }),
@@ -90,6 +92,14 @@ describe('factory hook: the last-seen line of each captured payload (TP-5)', () 
       session_marker: NODE_ID,
     });
     expect([...deps.files.keys()].filter((path) => path.startsWith(`${FOLDER}/`))).toEqual([FILE]);
+  });
+
+  it('writes the line in the factory folder of FACTORY_HOME when the current folder is inside another factory folder', async () => {
+    const deps = make({ stdin: payload('Stop'), cwd: '/w/child/deep' });
+    deps.seed('/w/child/factory.yaml', 'schema: 2\n');
+    deps.seedDir('/w/child/deep');
+    expect(await runHook(deps, ['Stop'])).toEqual({ ok: true, value: undefined });
+    expect(lineOf(deps)).toMatchObject({ event: 'Stop', session_marker: NODE_ID });
   });
 
   it('keeps the stored percent and its time', async () => {

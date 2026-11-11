@@ -46,7 +46,7 @@ You need:
 | `factory track add ID --name TEXT [--roadmap]`, `factory track list` | Add a track to the board, or list the tracks. A track is a named stream of work. See "Use the local board". |
 | `factory request add\|list\|close` | Put a question for the owner in the waiting file, list the open requests, or close one with no answer. See "Use the local board". |
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. See "Use the local board". |
-| `factory doctor` | Run 28 checks. See "Doctor". |
+| `factory doctor` | Run 29 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `PreToolUse` and `Notification`. It records `Notification` only for the types `permission_prompt` and `elicitation_dialog`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
@@ -119,7 +119,7 @@ The recipe lists the approval points. The points of the `software` recipe are `m
 A command finds the factory folder in this order:
 
 1. The flag `--home DIR`.
-2. The environment variable `FACTORY_HOME`.
+2. The environment variable `FACTORY_HOME`. If the current folder is inside another factory folder of the factory list, the command stops with exit code 1. It names both folders and the `--home` remedy. A hook always uses `FACTORY_HOME`.
 3. The nearest `factory.yaml` above the current folder (at most 64 levels).
 4. The factory list.
 
@@ -243,7 +243,7 @@ Then it does these steps in order:
 3. It adds the line `/.claude/settings.local.json` to `info/exclude` in the git folder of the clone, once. Git then shows the work copy as clean when it holds only the hook settings.
 4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
-6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its assignment folder (`.factory/workers/<id>/inbox/`), and the session name `<node id>-<id>`. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
+6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its assignment folder (`.factory/workers/<id>/inbox/`), and the session name `<node id>_<id>`. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
 
 If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. After the branch is pushed, `factory dismiss ID` frees the worker (see "Dismiss a worker"). A branch with a commit that no remote branch holds stops `dismiss`, so the steps by hand are the way for it.
 
@@ -433,7 +433,7 @@ factory self reset
 
 The sessions of one factory talk with the cross-session messages of Claude Code (`SendMessage` and `ListAgents`, version 2.1.224 or newer). factory has no inbox of its own. It adds these parts:
 
-- **Session names.** `start` and `worker new` start each session with `--name`. The coordinator gets the node id. A worker gets `NODE_ID-ID`. A name is an address, not a proof, because any session can take any name. So the coordinator checks with `ListAgents` that exactly one session has the name of a worker, before its first send and after each resume of that worker. The name is not a word of the pane binding, so a pane that an older version started without a name still binds.
+- **Session names.** `start` and `worker new` start each session with `--name`. The coordinator gets the node id. A worker gets the node id, an underscore and the worker id, for example `demo_alpha`. An id can not hold an underscore, so two nodes with different ids never give the same name. A name is an address, not a proof, because any session can take any name. So the coordinator checks with `ListAgents` that exactly one session has the name of a worker, before its first send and after each resume of that worker. The name is not a word of the pane binding, so a pane that an older version started without a name still binds.
 - **Assignment files.** The assignment folder of a worker is `.factory/workers/ID/inbox/`, and the variable `FACTORY_INBOX` names it. A long task is a file in that folder, and the message names the file. The worker acts on a task file only when its real path is in that folder and it is not a link. The file is the durable copy of the task, because a message has no read receipt and no store.
 - **`--assignment FILE`.** `worker new` copies the file to `assignment.md` in the assignment folder before the worker starts. Before it writes anything, it checks the file. The real path must be inside the factory folder or inside the git work tree of the folder where you run the command, else the exit code is 4. A link in the path, a path part below that root that starts with a dot (except `.factory/orders/` in the factory folder), the file `factory.local.yaml` and a file that changes during the check also exit with code 4. A file that is not a regular file, is larger than 1 MiB, is not UTF-8 or holds a NUL byte exits with code 2. If the copy fails, the command exits with code 1, keeps the worker and does not start it. The message names the copy by hand to `.factory/workers/ID/inbox/assignment.md`, then `factory worker resume ID`. The output has one more line, and `--json` has the field `assignment`. The flags `--assignment`, `--clear` and `--compact` exit with code 2 on the other `worker` commands.
 - **`worker watch [ID]...`.** It watches every recorded worker, or the workers that you name. A worker with no pane at the start is not checked, and when no worker has a pane the command prints `NO WORKER: no worker has a pane to watch` and exits. Else it checks every 30 seconds, at most 40 times (20 minutes), and exits at the first change: a pane that ended, is gone or is not the launch of the worker; a last-seen line that is not valid or does not belong to the worker (a worker that has no line yet gets two checks, the first check included, to write one; after that, or once a valid line was seen, a missing line is a change; a line of another session is a change at once); the state `waits`; or `stalled?` (the state is `busy` and the last event or percent is older than 15 minutes). A change from `busy` to `at prompt` is not a change. The output is `CHANGED: ID what`, `NO CHANGE: IDs` or `NO WORKER: ...`, and the exit code is 0 for all three. No tmux session is exit code 3, a session of another factory folder is 4, a read fault is 1, an unknown worker id is 2, and a record that factory did not write is 4. It never types, signals or writes. `--json` prints `factory.worker-watch/v1`. Run it as a background task of the coordinator.
@@ -541,12 +541,13 @@ Every failure prints `cannot send to ID: REASON` and one remedy line that names 
 
 ### Doctor
 
-`factory doctor` runs 28 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 17 checks are new:
+`factory doctor` runs 29 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 18 checks are new:
 
 - `local-file`: the mode, the owner and the type of `factory.local.yaml`.
 - `root`: the factory folder is the top folder of its own git work tree and holds an intact share list. This is a warning.
 - `temp-folder`: a temp folder that a stopped `init` left. This is a warning.
 - `index`: the factory list lists the factory folder, and each listed folder exists. This is a warning.
+- `node-id`: no other factory in the factory list has the node id. Two nodes with one id give their sessions the same names. This is a warning.
 - `setup-text`: text outside the managed blocks that the setup files do not hold. This is a warning.
 - `roles`: the layer has a role template.
 - `tracker`: the kind of the board. A kind other than `local` warns, because its connector comes later.

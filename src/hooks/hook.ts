@@ -94,7 +94,8 @@ export interface SessionIdentity {
  */
 export const sessionIdentityOf = async (deps: Deps, registry: RecipeRegistry): Promise<CliResult<SessionIdentity>> => {
   const readNodeId = (readDeps: Deps, home: string) => readNodeIdentity(readDeps, home, registry);
-  const located = await locateHomeFolder(deps, undefined, readNodeId, commands.hook);
+  // The hook belongs to the session that FACTORY_HOME names, also when the current folder is inside another factory folder.
+  const located = await locateHomeFolder(deps, deps.env[env.home], readNodeId, commands.hook);
   if (!located.ok) return located;
   const { home } = located.value;
   const identity = await readNodeId(deps, home);

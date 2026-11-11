@@ -35,7 +35,7 @@ export interface BlockInput {
    * The worker text names the session that it reports to by this layer. It is absent when the input is the input of a node.
    */
   readonly holderLayer?: number | undefined;
-  /** The id of the node. The session of the coordinator has this name, and the session of a worker has `<node id>-<worker id>`. */
+  /** The id of the node. The session of the coordinator has this name, and the session of a worker has `<node id>_<worker id>`. */
   readonly nodeId: string;
   readonly modes: ApprovalModes;
   readonly ownerPrefix: string;

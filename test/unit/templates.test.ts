@@ -388,7 +388,7 @@ describe('role templates', () => {
 
     it('names the session of a worker by the node id in the manager text', () => {
       const text = blockTemplatesFor(blockInput(2, { nodeId: 'acme' })).find((block) => block.name === 'manager')?.body ?? '';
-      expect(text).toContain('Each worker session has the name `acme-<id>`.');
+      expect(text).toContain('Each worker session has the name `acme_<id>`.');
     });
 
     it('fills every placeholder of the manager and worker texts on layers 2 and 3', () => {
@@ -562,12 +562,12 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
 
   it('names the session of a worker by the id of the node, and checks with ListAgents that exactly one session has the name', () => {
     const text = coordinatorOf('acme');
-    expect(text).toContain('Each worker session has the name `acme-<id>`.');
+    expect(text).toContain('Each worker session has the name `acme_<id>`.');
     expect(text).toContain(
       'Before your first `SendMessage` to a worker, and after each resume or restart of it, check with `ListAgents` that exactly one session has that name.',
     );
     expect(text).toContain('If no session or more than one session has it, or a send shows `Not sent`, stop and tell the owner.');
-    expect(coordinatorOf('beta')).toContain('`beta-<id>`');
+    expect(coordinatorOf('beta')).toContain('`beta_<id>`');
   });
 
   it('gives a long task as a file in the folder of the worker, and keeps SendMessage free of the authority of the owner', () => {
@@ -961,7 +961,7 @@ describe('the node id in the values of the role texts (TP-37)', () => {
   });
 
   it('puts the node id into a text in place of its placeholder', () => {
-    expect(fillTemplate(['The name is `{{nodeId}}-<id>`.'], workerValuesFor(input))).toBe('The name is `acme-<id>`.');
+    expect(fillTemplate(['The name is `{{nodeId}}_<id>`.'], workerValuesFor(input))).toBe('The name is `acme_<id>`.');
     expect(fillTemplate(['The name is `{{nodeId}}`.'], coordinatorValuesFor(input))).toBe('The name is `acme`.');
   });
 });

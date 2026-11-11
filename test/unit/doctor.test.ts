@@ -10,6 +10,7 @@ import {
   checkConfig,
   checkConfigVersion,
   checkIndex,
+  checkNodeId,
   checkInstructionFiles,
   checkLocalFile,
   checkNodeBlocks,
@@ -1312,6 +1313,67 @@ describe('doctor: the home index', () => {
   });
 });
 
+describe('doctor: the node id in the factory list', () => {
+  const OTHER = '/w/other-node';
+
+  it('is ok when no other factory in the list has the node id', async () => {
+    const deps = await initialized();
+    registerRoot(deps, OTHER, 'web');
+    expect(await checkNodeId(deps, HOME, await inspectConfig(deps, HOME))).toEqual({
+      id: 'node-id',
+      level: 'ok',
+      text: 'no other factory in the factory list has the node id demo',
+    });
+  });
+
+  it('warns when another factory in the list has the node id, and names that factory', async () => {
+    const deps = await initialized();
+    registerRoot(deps, OTHER, 'demo');
+    deps.seed(`${OTHER}/factory.yaml`, 'schema: 2\n');
+    const result = await checkNodeId(deps, HOME, await inspectConfig(deps, HOME));
+    expect(result).toMatchObject({ id: 'node-id', level: 'warn' });
+    expect(result.text).toContain(OTHER);
+    expect(result.text).toContain('demo');
+    expect(result.text).not.toContain(`${HOME},`);
+  });
+
+  it('is ok for an entry with the node id whose folder is gone: the index check reports that entry', async () => {
+    const deps = await initialized();
+    registerRoot(deps, OTHER, 'demo');
+    expect(await checkNodeId(deps, HOME, await inspectConfig(deps, HOME))).toMatchObject({ id: 'node-id', level: 'ok' });
+  });
+
+  it('is ok for a second entry of this folder through a link', async () => {
+    const deps = await initialized({ links: { '/link/node': HOME } });
+    registerRoot(deps, '/link/node', 'demo');
+    expect(await checkNodeId(deps, HOME, await inspectConfig(deps, HOME))).toMatchObject({ id: 'node-id', level: 'ok' });
+  });
+
+  it('is ok on macOS for a second entry of this folder in other letter case', async () => {
+    const deps = await initialized({ os: 'darwin' });
+    registerRoot(deps, HOME.toUpperCase(), 'demo');
+    // The fake file system knows case, so the folder in capitals gets a config: the entry is not gone.
+    deps.seed(`${HOME.toUpperCase()}/factory.yaml`, 'schema: 2\n');
+    expect(await checkNodeId(deps, HOME, await inspectConfig(deps, HOME))).toMatchObject({ id: 'node-id', level: 'ok' });
+  });
+
+  it('does not check when the config is not valid', async () => {
+    const deps = await initialized();
+    deps.seed(`${HOME}/factory.yaml`, 'schema: [\n');
+    expect(await checkNodeId(deps, HOME, await inspectConfig(deps, HOME))).toMatchObject({
+      id: 'node-id',
+      level: 'warn',
+      text: expect.stringContaining('not checked'),
+    });
+  });
+
+  it('is ok when no variable names a folder for the list', async () => {
+    const deps = await initialized();
+    const bare = { ...deps, env: { ...deps.env, XDG_STATE_HOME: undefined, HOME: undefined } };
+    expect(await checkNodeId(bare, HOME, await inspectConfig(deps, HOME))).toMatchObject({ id: 'node-id', level: 'ok' });
+  });
+});
+
 describe('doctor: the tracker', () => {
   const hosted = (kind: 'github' | 'jira'): FactoryConfig => {
     const config = sampleConfig();
@@ -1910,6 +1972,7 @@ describe('doctor: the command', () => {
       'root',
       'temp-folder',
       'index',
+      'node-id',
       'blocks',
       'setup-text',
       'roles',
@@ -1932,7 +1995,7 @@ describe('doctor: the command', () => {
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('28 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('29 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -1955,7 +2018,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(28);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(29);
   });
 
   it('finds the node by walking up from the current folder', async () => {

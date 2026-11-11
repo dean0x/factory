@@ -258,7 +258,7 @@ describe.skipIf(!hasTmux)('factory worker new (built binary, separate tmux serve
     await waitForLaunches(2);
     const argv = (await outOf('argv')).split('\n');
     expect(argv.filter((arg) => arg === '--name')).toHaveLength(1);
-    expect(argv[argv.indexOf('--name') + 1]).toBe('demo-alpha');
+    expect(argv[argv.indexOf('--name') + 1]).toBe('demo_alpha');
     expect(argv.indexOf('--name')).toBeLessThan(argv.indexOf('--add-dir'));
   });
 

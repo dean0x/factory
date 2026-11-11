@@ -193,7 +193,7 @@ describe('the launch of a worker: the pane and the argument list', () => {
       '--effort',
       'high',
       '--name',
-      'demo-alpha',
+      'demo_alpha',
       '--add-dir',
       INBOX,
     ]);
@@ -237,7 +237,7 @@ describe('the launch of a worker: the pane and the argument list', () => {
       '--model',
       'opus',
       '--name',
-      'demo-alpha',
+      'demo_alpha',
       '--add-dir',
       INBOX,
     ]);
@@ -719,7 +719,7 @@ describe('the launch of a worker: a launch with a resume id (TP-128)', () => {
     await launched(made, { proxy: null }, { resumeId: UUID });
     const words = wordsOf(made.tmux);
     expect(words.filter((word) => word === '--name')).toHaveLength(1);
-    expect(words[words.indexOf('--name') + 1]).toBe('demo-alpha');
+    expect(words[words.indexOf('--name') + 1]).toBe('demo_alpha');
     expect(words.indexOf('--name')).toBeGreaterThan(words.indexOf('--resume') + 1);
     expect(words.indexOf('--name')).toBeLessThan(words.indexOf('--add-dir'));
   });

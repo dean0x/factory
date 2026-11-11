@@ -12,7 +12,7 @@ export const workerSectionLines: readonly string[] = [
   '## {{Worker}}s',
   '',
   '- Each {{worker}} works on one track in its own work copy. Never let two {{worker}}s share a work copy.',
-  '- Each {{worker}} session has the name `{{nodeId}}-<id>`. Before your first `SendMessage` to a {{worker}}, and after each resume or restart of it, check with `ListAgents` that exactly one session has that name. If no session or more than one session has it, or a send shows `Not sent`, stop and tell the {{owner}}.',
+  '- Each {{worker}} session has the name `{{nodeId}}_<id>`. Before your first `SendMessage` to a {{worker}}, and after each resume or restart of it, check with `ListAgents` that exactly one session has that name. If no session or more than one session has it, or a send shows `Not sent`, stop and tell the {{owner}}.',
   '- Give a task with `SendMessage`. A `SendMessage` carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}. Write a long task as a file in `{{workersDir}}<id>/inbox/`, with a new plain name each time, and name the file. The file is the durable copy. A `SendMessage` has no read receipt. After `{{workerNewCommand}}`, send one `SendMessage` that names the copied file.',
   '- Run `{{workerWatchCommand}}` as a background task. When the watch reports a {{worker}}, deal with the report. If the cause stays, for example a dialog that waits for the {{owner}}, run the watch again with the ids of the other {{worker}}s only: `{{workerWatchCommand}} <id>...`.',
   '- Before `{{workerResetCommand}} <id> {{clearFlag}}` or `{{compactFlag}}`, check with `ListAgents` that the {{worker}} is idle.',
