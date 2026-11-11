@@ -97,58 +97,54 @@ Engineering note: the program is written in TypeScript on Node 22+, the npm pack
 
 ## 1. Inventory of the current setup
 
-This section describes the workspace setup as it is today. It uses the names of the files of this workspace (the Orchestrator, On Dean and the `lane` files), because those are the names in the files.
+factory packages a setup that runs today by hand: one coordinator session and many worker sessions in tmux, on one machine, for one owner. This section lists the parts of that setup by their job, and tells why a multi-session setup needs each part.
 
-Paths are relative to `~/work/<workspace>/.devflow/` unless they start with `~/` or `/`. The example path `~/work/<workspace>` stands for the folder of the workspace.
+The example path `~/work/<workspace>` stands for the folder of the workspace.
 Classes: **G** generic, **D** devflow-specific, **P** person-specific (names, accounts, paths), **M** machine-specific.
 
 ### 1.1 Parts
 
-| Part | Job | Class | What ties it (file:line) |
+| Part | Job | Class | Why a multi-session setup needs it |
 |---|---|---|---|
-| `~/work/<workspace>/CLAUDE.md` | Orchestrator rules §1–§13 | G, D, P, M | "Dean", `dean0x` §13; founder prefix §12; `~/work/<workspace>/.devflow` (`--add-dir`); session names `orchestrator:lanes`, `orchestrator:bench`; "10 CPUs, 64 GB", `lockf`, `pbcopy`, `sysctl`, `memory_pressure`; `/devflow:*` in §5 and §7 |
-| `docs/orchestration/protocol.md` | Worker protocol: escalation, test lock, disk, context, PRs, style | G, D, P, M | `~/work/<workspace>/.devflow/...` (L19–34); Node 24 and `/opt/homebrew/bin` (L34, devflow tests only); `vitest` (L25); devflow timeout rule (L54) |
-| `docs/orchestration/status.md` | Status layout | G, P | "Waiting on Dean" (L42) |
-| `docs/orchestration/respawn-map.md` | Worker, pane, folder and session-id table, plus the restart steps | G (steps), P, M (data) | pane ids, UUIDs, `--add-dir` path (L14), reads `~/.claude/sessions` (L16) |
-| `docs/orchestration/orchestrator-resume.md` | The Orchestrator's resume block | instance data | devflow PR numbers |
-| `roadmaps/README.md` and track roadmaps | Track arcs and their template | G (README); instance data | paths on line 2 of each track file |
-| `board.json` → `board.md`, page | Board source of truth | G (schema), P (links) | `dean0x` issue links via boardlib |
-| `lanes.json` | Hand-written worker facts | G | none |
-| `on-dean.json`, `decision-log.json` → `on-dean.md` | Items that wait on the founder, and his decisions | G (schema), P (names) | file names, "# On Dean", artifact URL in the intro |
-| `board-detail.md`, `board-log-<yyyy-mm>.md`, `done.md` | Item detail, log, append-only removals | G | none |
-| `briefs/brief-<track>-<date>.md` | Assignments for workers | G (shape) | paths and repos inside |
-| `review/dean-review.html` | Review page: board, items, decision forms, docs drawer | G (template), P | "Dean" (L8); `dean0x` URLs in the data block |
-| `review/README-decision-pages.md` | How the page and its database work | G, P | live artifact URL (L3) |
-| `scripts/boardlib.py`, `render-board.py` | Board schema check, sort, release groups, render | G, P | `github.com/dean0x/{repo}` (boardlib L241), default repo `devflow` (L240), env `DEAN_DIR` |
-| `scripts/render-dean.py` | On Dean file, page data block, `files.json` | G, P | `PR_URL = .../dean0x/devflow/pull/{}` (L69), "# On Dean" (L237) |
-| `scripts/board-set.sh` | Only writer of `board.json`; locked; fails closed | G, P, M | `BOARD_REPO:-dean0x/devflow` (L91); `/usr/bin/lockf` (L35) |
-| `scripts/lane-set.sh`, `lane-lib.sh` | Only writer of `lanes.json`; tmux helpers | G, M | `lockf`; session name `orchestrator` (`lane-lib` L3) |
-| `scripts/state-commit.sh`, `git-hooks/pre-commit` | Commit helper; ID delete guard; `done.md` append-only | G | needs `core.hooksPath=scripts/git-hooks` |
-| `scripts/layout.sh`, `lane-summon.sh`, `md-view.sh` | View and worker windows, pinned summon, glow viewer | G, M | session `orchestrator`; `/bin/zsh`; `glow` |
-| `scripts/lanes-refresh.sh`, `lanes-table.py`, `live_boxes.py` | Live worker table every 30 s; machine box | G, M | reads `~/.claude/projects/*.jsonl` (`lanes-table` L64); status-line regex `Context\s+\S+\s+(\d{1,3})%` (L82); `memory_pressure`, `pmset` (live_boxes L105–106); `pyenv` |
-| `scripts/tmux-save-map.sh`, `tmux-restore-lanes.sh` | tmux-resurrect hooks: save the pane map, resume workers | G, M | reads `~/.claude/sessions/*.json` (save-map L14); restore forces `--permission-mode auto` and `env -u ANTHROPIC_BASE_URL` (restore L20, L58) |
-| `scripts/tmux.conf` | Mouse, worker names on borders, resurrect, continuum | P, M | absolute paths in the user folder (L2, L3, L25, L26, L32) |
-| `scripts/test-*` | Tests with fixtures and a separate tmux server | G | none |
-| `priorities/apply-labels.sh` | One-time label script | P | `R=dean0x/devflow`; fixed issue list |
-| `decision-profile/` | Founder decision wiki: index, format, log, principles, records | G (format), P (content) | "Dean" throughout; some principles scoped `devflow` |
-| `state/`, `locks/` | Locks, caches, logs (names only read) | M, gitignored | none |
-| Global rules in `~/.claude/rules/devflow/` | Engineering, quality, STE writing style | D | installed by devflow, not by the setup |
+| Coordinator rules (`~/work/<workspace>/CLAUDE.md`) | The rules of the coordinator: who has authority, how a worker gets work, when a PR merges, the writing style | G, D, P, M | One session must keep the plan and be the one path to the owner. The text holds the owner's name and account, the paths and the machine limits, so a package must make them config. |
+| Worker protocol | The rules of each worker: questions, escalation, the test lock, disk, context, PRs, style | G, D, P, M | Workers share one machine and one owner. Without shared rules, they block each other and ask the owner directly. |
+| Status layout | The shape of the status report | G, P | The owner reads one short status, not each worker. |
+| Restart map | The worker, pane, folder and session id of each worker, plus the restart steps | G (steps), P, M (data) | A reboot or a crash must not lose the workers or their conversations. |
+| Coordinator resume file | The resume block of the coordinator | instance data | The coordinator must continue after a clear or a compact. |
+| Track roadmaps | The arc of each track, and a template | G (template); instance data | A long piece of work needs a plan that outlives one session. |
+| Board files and their render | The source of truth of the board, the schema check, the sort and the render | G (schema), P (links) | The coordinator and the owner need one list of the work. |
+| Worker table | Facts about each worker, written by hand | G | The coordinator must know what each worker does. |
+| Owner queue and decision log | The items that wait on the owner, and the owner's decisions | G (schema), P (names) | A question for the owner must not stay on one worker's screen. |
+| Item detail, log and done list | The detail of each item, a log and a list of removals that only grows | G | A removed item must leave a record. |
+| Assignments | The written task of each worker | G (shape) | A worker needs a written scope. |
+| Owner view page | A page with the board, the items and the decision forms | G (template), P | The owner answers in one place. |
+| Board writer | The one writer of the board file; it takes a lock and fails closed | G, M | Two sessions must not write the board at the same time. |
+| Worker table writer and tmux helpers | The one writer of the worker table; tmux helpers | G, M | The same reason as the board writer. |
+| Commit helper and pre-commit hook | Commits of the state; an ID delete guard; the done list only grows | G | A wrong edit must not delete an item. |
+| Layout and summon scripts | The view and worker windows; a pinned summon of one worker | G, M | The owner sees each worker on request. |
+| Live worker table | A worker table every 30 s, and a box with the machine facts | G, M | The coordinator sees a stalled worker and a full machine. Today the table reads Claude Code's private session files and the text of the status line. |
+| tmux save and restore hooks | Save the pane map and resume the workers | G, M | The same reason as the restart map. |
+| tmux config | Mouse, worker names on the pane borders, save and restore plugins | P, M | It holds absolute paths in the user folder. |
+| Tests | Tests with fixtures and a separate tmux server | G | The scripts change often. |
+| Decision profile | The owner's principles and decision records | G (format), P (content) | A worker can predict a decision and ask less. |
+| State and locks | Locks, caches and logs | M, not tracked | The scripts need a place for run data. |
+| Global rules from devflow | Engineering, quality and writing rules | D | devflow installs them, not the setup. |
 
 ### 1.2 Dependencies on tools
 
 Required: `tmux` (with TPM, resurrect, continuum), `git`, `gh`, `jq`, `python3` (stdlib only), Bash 3.2+, `glow`, Claude Code.
 macOS only: `/usr/bin/lockf`, `memory_pressure`, `pmset`, `pbcopy`, `sysctl`.
-Private Claude Code layout: `~/.claude/projects/<cwd>/*.jsonl` (worker activity), `~/.claude/sessions/<pid>.json` (session ids), and the text of Dean's status line (context percent).
+Private Claude Code layout: `~/.claude/projects/<cwd>/*.jsonl` (worker activity), `~/.claude/sessions/<pid>.json` (session ids), and the text of the owner's status line (context percent).
 
 ### 1.3 Conflicts to fix before packaging
 
-I checked each of these on the file. factory takes one answer for each.
+I checked each of these in the files of the setup. factory takes one answer for each.
 1. **Merge authority.** D-46 B (2026-11-01) said that every merge waits for the owner's go. D-52 (2026-11-02) replaced it for this workspace: approved and assigned work merges when the gates pass. factory makes the rule an owner choice (F-6, §6).
-2. **How to stop a session.** `respawn-map.md` said "press Ctrl+C twice". CLAUDE.md §12 says that Ctrl+C quits only the client, and uses `kill -TERM`. factory tests the ways first (F-7, §4.11).
-3. **Where workers live.** The respawn map put workers in the view window. CLAUDE.md §12 puts them in the tmux window `bench`. factory uses the worker window `workers` (F-8, §4.11). The respawn map line is fixed.
-4. **Context budget.** `protocol.md` used 250k/350k tokens. CLAUDE.md §12 uses 30–35% and 40% of the window. factory uses the percent rule, because it works for every window size.
-5. **Reads under `~/.claude`.** CLAUDE.md §1 told workers to avoid them, but three scripts read there. factory replaces every read with the last-seen hook (F-9, §4.6).
-6. **The coordinator instructions reach every worker.** Claude Code loads every CLAUDE.md from the session folder up to the top of the file system. The Orchestrator instructions are in `~/work/<workspace>/CLAUDE.md`, and every worker folder is under `~/work/<workspace>`. So each worker also loads them. factory keeps the coordinator text in the coordinator folder, and the top of the factory folder holds no instruction file (F-3, D-60, §4.3).
+2. **How to stop a session.** The restart map said "press Ctrl+C twice". The coordinator rules say that Ctrl+C quits only the client, and use `kill -TERM`. factory tests the ways first (F-7, §4.11).
+3. **Where workers live.** The restart map put workers in the view window. The coordinator rules put them in a separate tmux window. factory uses the worker window `workers` (F-8, §4.11). The restart map is fixed.
+4. **Context budget.** The worker protocol used 250k/350k tokens. The coordinator rules use 30–35% and 40% of the window. factory uses the percent rule, because it works for every window size.
+5. **Reads under `~/.claude`.** The coordinator rules told workers to avoid them, but three scripts read there. factory replaces every read with the last-seen hook (F-9, §4.6).
+6. **The coordinator instructions reach every worker.** Claude Code loads every CLAUDE.md from the session folder up to the top of the file system. The coordinator instructions are in `~/work/<workspace>/CLAUDE.md`, and every worker folder is under `~/work/<workspace>`. So each worker also loads them. factory keeps the coordinator text in the coordinator folder, and the top of the factory folder holds no instruction file (F-3, D-60, §4.3).
 
 ## 2. The devflow connection
 
@@ -158,22 +154,22 @@ devflow (npm `devflow-kit`, MIT) installs commands, agents, skills, hooks and ru
 
 | Tie | Where | Default in factory |
 |---|---|---|
-| Cycle plan → implement → code-review → resolve | CLAUDE.md §5.2; protocol L47 | Stage ids `plan`, `build`, `review`, `fix`. The plain setup uses plain Claude Code: plan mode, edits, a review subagent, fixes. |
-| "code-review is for software; else a multi-lens audit" | CLAUDE.md §5.2 | Keep the rule. Each stage declares `applies_to: code | prose | any`. |
-| Review and resolution summaries posted on the PR | CLAUDE.md §5.3, §5.4 | An evidence contract: one PR comment per stage, found by a marker. The plain markers are `<!-- factory:review -->` and `<!-- factory:fix -->`. |
-| One evidence comment per head | CLAUDE.md §5.2 | Optional. The plain setup needs CI plus the review comment. |
-| `/devflow:release` | CLAUDE.md §7 | A `release` stage. The plain setup uses the repo's own release script, named in `factory.yaml`. |
-| Triage words (FIX_NOW, ESCALATED, CHANGES REQUESTED) | board-detail.md | Neutral words `blocker`, `fix`, `defer`, `ask`, `ready`. A setup maps its words to them. |
-| Agent types Code, Validate, Test | protocol L32 | Agent kinds: implementer, verifier, tester, reviewer. A setup maps them to its agent types. ("Role" now means the role of a layer, §5.) |
-| State folder named `.devflow` | CLAUDE.md §11–§12; respawn-map | `.factory/`. Proof of the clash: devflow already wrote `~/work/<workspace>/.devflow/.devflow/{curation,docs,features,memory}`. |
-| `--add-dir ~/work/<workspace>/.devflow` | CLAUDE.md §12; restore L20 | `--add-dir <node home>/.factory`, from the config. |
-| Worker name examples `devflow-*` | CLAUDE.md §4 | Keep the `<project>-<track>` form for workers; use neutral examples. |
-| Default repo `dean0x/devflow` | board-set L91; boardlib L13, L240; render-dean L69 | `recipe.projects[].repo` in `factory.yaml`. A bare issue number is refused when the node has more than one project. |
-| Rules in `~/.claude/rules/devflow/` (STE, read economy, quality) | HOME CLAUDE.md | factory writes its own short rules into the role templates. It never writes to `~/.claude/rules/`. |
-| Profile seeded from devflow `preference-profile.md` | decision-profile/README-format.md:64 | factory comes with an empty profile and its format. A setup may give a seed command. |
-| devflow memory and curation hooks | protocol L19 | Resume files plus Claude Code auto-memory. No ledger by default. |
-| devflow-repo rules inside the generic protocol | protocol L34 (Node 24), L54 (timeouts), L62 (standalone) | Move them to the worker addendum of the devflow setup or the devflow repo's CLAUDE.md. |
-| Repo checks in the gate routine (Independent audit, ceiling diff) | orchestrator-resume.md:14 | A per-project `gate.checks` list in `factory.yaml`. |
+| Cycle plan → implement → code-review → resolve | Coordinator rules; worker protocol | Stage ids `plan`, `build`, `review`, `fix`. The plain setup uses plain Claude Code: plan mode, edits, a review subagent, fixes. |
+| "code-review is for software; else a multi-lens audit" | Coordinator rules | Keep the rule. Each stage declares `applies_to: code | prose | any`. |
+| Review and resolution summaries posted on the PR | Coordinator rules | An evidence contract: one PR comment per stage, found by a marker. The plain markers are `<!-- factory:review -->` and `<!-- factory:fix -->`. |
+| One evidence comment per head | Coordinator rules | Optional. The plain setup needs CI plus the review comment. |
+| `/devflow:release` | Coordinator rules | A `release` stage. The plain setup uses the repo's own release script, named in `factory.yaml`. |
+| Triage words (FIX_NOW, ESCALATED, CHANGES REQUESTED) | Item detail | Neutral words `blocker`, `fix`, `defer`, `ask`, `ready`. A setup maps its words to them. |
+| Agent types Code, Validate, Test | Worker protocol | Agent kinds: implementer, verifier, tester, reviewer. A setup maps them to its agent types. ("Role" now means the role of a layer, §5.) |
+| State folder named `.devflow` | Coordinator rules; restart map | `.factory/`. Proof of the clash: devflow already wrote `~/work/<workspace>/.devflow/.devflow/{curation,docs,features,memory}`. |
+| `--add-dir ~/work/<workspace>/.devflow` | Coordinator rules; tmux restore hook | `--add-dir <node home>/.factory`, from the config. |
+| Worker name examples `devflow-*` | Coordinator rules | Keep the `<project>-<track>` form for workers; use neutral examples. |
+| Default repo `dean0x/devflow` | Board writer; board render | `recipe.projects[].repo` in `factory.yaml`. A bare issue number is refused when the node has more than one project. |
+| Rules in `~/.claude/rules/devflow/` (STE, read economy, quality) | Home CLAUDE.md | factory writes its own short rules into the role templates. It never writes to `~/.claude/rules/`. |
+| Profile seeded from devflow `preference-profile.md` | Decision profile format | factory comes with an empty profile and its format. A setup may give a seed command. |
+| devflow memory and curation hooks | Worker protocol | Resume files plus Claude Code auto-memory. No ledger by default. |
+| devflow-repo rules inside the generic protocol | Worker protocol (Node 24, timeouts, standalone) | Move them to the worker addendum of the devflow setup or the devflow repo's CLAUDE.md. |
+| Repo checks in the gate routine (Independent audit, ceiling diff) | Coordinator resume file | A per-project `gate.checks` list in `factory.yaml`. |
 
 The gate-level words `full`, `standard` and `lean` are not in the setup itself. They appear only in devflow product work, so there is no tie to replace.
 
@@ -210,7 +206,7 @@ proxy_presets:                             # optional; copied into `proxies` on 
 
 The triage words `FIX_NOW`, `ESCALATED` and `CHANGES REQUESTED` are devflow ties (§2.1). They appear only in this setup file. The deny list of the tests finds them in any other template or generated file.
 
-The dependency goes one way: factory knows devflow's public surface (commands, markers, paths). devflow never knows factory. This keeps the founder rule "devflow stays standalone" (CLAUDE.md §8; `decision-profile/principles/devflow-standalone.md`).
+The dependency goes one way: factory knows devflow's public surface (commands, markers, paths). devflow never knows factory. This keeps the owner's rule "devflow stays standalone".
 
 ## 3. Scripts that save tokens
 
@@ -317,7 +313,7 @@ factory item add|update|move|close|list|note|doc|import ...   # work items: the 
 factory epic add|update|list|remove ...     # the epics of the board: each work item belongs to one epic (§4.10, FAC-M11)
 factory request add|list|update|close ...   # items that wait for the owner; add --option KEY=TEXT... asks a decision, as a decision item in the decision store; close ends one with no answer (§4.10)
 factory decide read [<D-n>] [--from FILE]   # read the answers on the board with no model use, and show them; --from reads the data file of the page (FAC-M11); it records nothing (§4.10)
-factory decide <D-n> <option> [--note T] [--principle ID]   # the owner enters the decision in a terminal window, with every board kind; the decision log and the profile get it (§4.10)
+factory decide <D-n> <option> [--note T]   # the owner enters the decision in a terminal window, for `local`; a hosted kind refuses until FAC-M11 and FAC-M3; the owner store record is the proof, and the decision log and the profile get a display copy (§4.10)
 factory queue set|show                      # the order of the finished work that waits for an approval point; set finds a row by its exact name (§4.10)
 factory watch                               # read the new board changes, the local change feed included, a limited number of times; wake the coordinator (§4.10)
 factory item estimate <id>                  # the token range of one work item, from closed items with measured tokens; NO BASIS when there are too few (§4.11, FAC-M5b)
@@ -365,7 +361,7 @@ Exit codes: `0` success, `1` failure, `2` usage error, `3` "not ready" (a check 
 ### 4.3 Factory folder layout
 
 > **Receiving a factory.** You get the config repo of a factory from another person, or from another machine of yours.
-> You need the `factory` program first. Until FAC-M10, a developer with read access installs it from a private early-access tag (D-49). See `docs/quick-start.md`.
+> You need the `factory` program first. Until FAC-M10, you install it from an early-access tag of the repo (D-49). See `docs/quick-start.md`.
 > 1. Clone the config repo into a new folder: `git clone <url> <folder>`.
 > 2. In a terminal window, run `factory init` in that folder. `init` clones each project and registers the factory on this machine.
 > 3. Answer the prompts of `init`, in this order:
@@ -502,7 +498,7 @@ A received factory is a trust boundary, so its checks are stops. The lighter rul
 | Error: a proxy does not answer | Before each start of a session; `doctor`; `status` (§4.6) | Start the proxy, or set `proxy: none` for the worker. |
 | Stop (exit 4): the tmux session of that name belongs to another factory, or has no `@factory_home` option | `start`, `shutdown`, `restart`, `reboot` (§4.11) | Run `factory shutdown` in the factory folder that owns the session, or end that session by hand. Then run `factory <command>` again, with the command that stopped. |
 | Error (exit 1): `dismiss` of a busy worker, of a worker whose state is not known, or of a worker whose work is not pushed (`STUCK:`) | `dismiss`, `dismiss --unused` (§4.11) | Wait until the worker waits at its prompt, finish the work item or give it to another worker, or push the branch of the worker and clean its work copy. Then run `factory dismiss <worker>` again. |
-| Stop (exit 4): `decide <D-n> <option>`, `dismiss <worker> --yes` or the pick step of `dismiss --unused` inside a factory session | `decide`, `dismiss`, `dismiss --unused` (§4.10, §4.11) | Run `factory decide <D-n> <option>`, `factory dismiss <worker> --yes` or `factory dismiss --unused` in a terminal window outside a factory session. |
+| Stop (exit 4): `decide <D-n> <option>`, `dismiss <worker> --yes` or the pick step of `dismiss --unused` inside a factory session, or `decide` when `CLAUDECODE` is set | `decide`, `dismiss`, `dismiss --unused` (§4.10, §4.11) | Run `factory decide <D-n> <option>`, `factory dismiss <worker> --yes` or `factory dismiss --unused` in a terminal window outside a factory session. Run `factory decide` in your own terminal window, and not inside Claude Code. |
 | Stop (exit 4): `dismiss` of a worker whose work copy is outside `work-copies/`, whose path holds a link, or whose `.git` file does not name the git folder that the clone keeps for it | `dismiss`, `dismiss --unused` (§4.11) | Check the record of the worker, the links in the path of its work copy and the `.git` file in it. Then run `factory dismiss <worker>` again. |
 | Stop (exit 4): a release check with `release: delegated` and no owner-approved release scope for the version | `release check` (§6.2) | Run `factory release scope <project> <version>` in a terminal window outside a factory session. Then run `factory release check <project> <version>` again. |
 | Stop (exit 4): the decision store is public | `init`, `tracker set` (§4.10). `doctor` fails on it. | `factory tracker set <id> --decisions <private repo>`, then `factory tracker status`. |
@@ -549,7 +545,7 @@ A received factory is a trust boundary, so its checks are stops. The lighter rul
 | Error (exit 1): the new text of a board file would be larger than the size cap of 1048576 bytes, or a board file is larger than the cap when a command reads it. The message names the file and the cap. A write changes no file. | `item`, `track`, `request` and `queue` (writes); every command that reads the board | Shorten the text of the file, or restore a smaller version of it from an earlier commit of `.factory/`. Then run the command again. |
 | Error (exit 1): `board.json`, `waiting.json` or `decision-log.json` is not valid UTF-8, is not valid JSON of the right shape, or holds a repeated item id or request number. The message names the file, and the id when there is one. A write changes no file. | Every command that reads the board files | Restore the file from the last good commit of `.factory/` (`git -C .factory restore --source=<commit> --staged --worktree -- <file>`), then run the command again. |
 | Error (exit 1): `board.json` still has the old queue key `queue`. | Every command that reads the board | `factory upgrade` |
-| Stop (exit 4): a board write with a tracker kind other than `local`. The board holds the truth in that case (D-141 B), and hosted boards come in FAC-M3. The command makes no commit. | `item add\|update\|move\|close`, `track add`, `request add\|close`, `queue set` (§4.10). Reads show the local files. | Set the tracker kind to `local` in `factory.yaml`, then run the command again. |
+| Stop (exit 4): a board write with a tracker kind other than `local`. The board holds the truth in that case (D-141 B), and hosted boards come in FAC-M3. The command makes no commit. | `item add\|update\|move\|close`, `track add`, `request add\|close`, `queue set`, `decide` (§4.10). Reads show the local files. | Set the tracker kind to `local` in `factory.yaml`, then run the command again. |
 
 A factory folder under a linked parent folder works. The link rule checks only the paths below the real folder.
 
@@ -675,7 +671,7 @@ children: []                 # nodes this node manages, each { id, address } (§
 
 - `tracker.kind: local` takes no other tracker key: the items and the decisions stay in `.factory/` (§4.10). The schema refuses `items`, `decisions` or `watch_interval` with `local`. The change feed of `local` has a fixed default interval, so it has no new key. From FAC-M11, `tracker.kind: artifact` takes no other tracker key either: its items stay in the local files, and its page is a view (§4.10). `github` needs `items` and `decisions`.
 - **The kind of the board in each file (FAC-M11).** In the shared file, `tracker.kind` takes only `local`, `artifact` or `github`. A board plugin is an npm package that the user installed (§4.15). The user names it only in `factory.local.yaml`, in a `tracker` block with `kind` and `options`. On this node, that block overrides the kind of the shared file. `factory tracker set plugin:<package>` writes the local file. `items` and `decisions` stay in the shared file. A shared file that names a plugin kind stops the command with exit 1, and the message names `factory.local.yaml` (§4.3, "Stops and warnings"). The plugin checks its `options` with its own schema, and an unknown key under `options` fails and names the key. A plugin such as `jira` or `linear` has the options `site` and `key` (FAC-M9).
-- **Page privacy and the records stay out of the shared file (FAC-M11).** The answer of the owner about the privacy of the `artifact` page is kept for each node, outside the shared file (§4.10). The decision log and the approval records are never a cache of the board. They stay in the owner store for every kind (§6).
+- **Page privacy and the records stay out of the shared file (FAC-M11).** The answer of the owner about the privacy of the `artifact` page is kept for each node, outside the shared file (§4.10). The decision log and the approval records are never a cache of the board. The approval records and the owner decision records stay in the owner store for every kind (§6). The owner store means only the per-user record files. The decision log stays in the state folder as a display copy.
 - A project can name its own `tracker` with `kind` and `items`. The kind is `local`, `artifact` or `github`. A project that uses a board plugin names it in `factory.local.yaml` too, never in the shared file. The decision store stays the one of the node, so the owner answers in one place. A project with no `tracker` uses the one of the node. The `tracker.decisions` key names a place, not the records, so it stays shared (D-9). With the `local` board the records stay in the private `.factory/`.
 - `session.agent` (FAC-M4) is the program that factory starts for a session. Only `claude` is accepted. All starts of the agent use this value (§4.6). Before FAC-M4, the schema has no such key, and factory starts `claude`.
 - `approval` maps each approval point of the recipe to `owner` or `delegated`. A point that the file does not name is `owner`. The schema refuses a point that the recipe does not list. §6 says what each value means and what proves `delegated`.
@@ -827,9 +823,9 @@ children: []                 # nodes this node manages, each { id, address } (§
 - **Platforms: macOS and Linux only (F-5).** factory needs tmux, git and a POSIX shell. On native Windows, `factory doctor` refuses with the remedy line `Use WSL, then run "factory doctor" there`. Every other command refuses with a line of the same form that names that command.
 - **External tools:** `tmux`, `git`, `claude`, and the CLI of the board tool (`gh` for GitHub). factory replaces `jq`, `python3` and `glow` with its own code, so a new machine needs fewer tools. `doctor` checks the versions. The minimum `git` version is 2.26, because the check of the state repo reads `git config --list --show-scope`. The check `tools` of `doctor` fails for a `git` older than 2.26, and when it can not read the `git` version. With an older `git`, each state step that reads that list stops with exit 1, and the message names `git` 2.26. `start` reads the `git` version and that list right after its tool check, before it makes or looks at a session. `reboot` outside the session reads them before its first stop (§4.11). `upgrade`, `init` and the board commit helper stop before they change the state repo. A dry run of `start` shows the problem as a warning.
 - **Portable parts:** the heavy-test lock uses `lockf` on macOS and `flock` on Linux. `factory machine` reads memory and load on both systems. The owner's clipboard command is a config value with a platform default. CI runs the full suite on an Ubuntu and a macOS runner. Tests of `lock run` and `machine` run both system paths with fixtures.
-- **Install:** `npm i -g @dean0x/factory`, or `npx @dean0x/factory init`, plus a Homebrew formula in `dean0x/homebrew-tap`. An `install.sh` for curl, with a SHA256 check (mars has none). The repo is private now (D-49), so none of these is public yet. FAC-M10 builds them.
+- **Install:** `npm i -g @dean0x/factory`, or `npx @dean0x/factory init`, plus a Homebrew formula in `dean0x/homebrew-tap`. An `install.sh` for curl, with a SHA256 check (mars has none). None of these exists yet. FAC-M10 builds them.
 - **Release:** one `v*` tag runs the tests, checks that the version is the same in every place, makes the GitHub Release, publishes to npm and updates the tap (from mars `release.yml`). The version lives in one file only. An early-access tag (`v*-ea.*`, D-49) is no release. The release trigger skips it (for example `tags: ['v*', '!v*-ea.*']`).
-- **The publish is gated (D-45).** The publish job runs in a protected environment (`npm-publish`) whose required reviewer is the owner. The job starts with a gate script. The script fails unless `docs/release-approval.md` holds a line `Decision: D-<n>` and the tag version equals the version in `package.json`. So a tag alone never publishes. The repo stays private until the owner writes a decision id in `docs/release-approval.md`. FAC-M10 tests the workflow with a script and checks the environment with a read-only `gh api` call.
+- **The publish is gated (D-45).** The publish job runs in a protected environment (`npm-publish`) whose required reviewer is the owner. The job starts with a gate script. The script fails unless `docs/release-approval.md` holds a line `Decision: D-<n>` and the tag version equals the version in `package.json`. So a tag alone never publishes. The package stays off the npm registry until the owner writes a decision id in `docs/release-approval.md`. FAC-M10 tests the workflow with a script and checks the environment with a read-only `gh api` call.
 
 ### 4.8 What factory takes from mars and from firstmate
 
@@ -975,7 +971,7 @@ The intro of §8.2 lists the 18 operations. Each command of that table calls one
 - **Items.** `item add --title TEXT [--text TEXT] [--track ID] [--field NAME=VALUE]...` adds an item. It gets the next id `B-n` above the highest one, the first state of the `board` block, and the first stage. `item update ID`, `item move ID --state STATE | --stage STAGE` and `item close ID` change one item. A close keeps the item and its id.
 - **The list.** `item list` prints a header and one line for each track, with the counts by stage. A track with one item shows that item and its stage on its line. Items with no track show under a no-track label. `item list --track ID` lists the items of one track, with a stage column. `--all` shows the closed items too. The output has at most 20 lines. It shows at most 17 track lines. When there are more tracks, one more-tracks line says how many tracks are not shown and names the track flag. `item list` has no JSON output.
 - **The follow loop.** `item list --follow` draws the list again at each change of the board file. It polls every 2 seconds. A signal (SIGHUP or SIGTERM), a failed write, a change of the parent process, or a stdout that is not a terminal ends it, and each of these is checked at every tick. It is the one loop with no count bound. The view slot of the window `view` runs it (§4.11).
-- **Requests and the queue.** `request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY]` puts a request in `waiting.json`. It gets the next number `D-n` above the highest number in the waiting file and the decision log. `request list` shows the open requests. `request close ID` takes a request out of the waiting file and writes a log row "closed with no answer" with no `by` and no `who`. A log row with no `by` is no decision, and the number is never given again. No request command changes the options of an open request. `queue set NAME [--item ID]... [--note TEXT] [--field NAME=VALUE]... [--position N]` finds a row by its exact name, and makes a new row at the end when no row has the name. `--item` replaces the whole list of items of the row. The queue has at most 30 rows, and a row has at most 30 items. The other stored keys of a row stay. `queue show` shows the rows.
+- **Requests and the queue.** `request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY]` puts a request in `waiting.json`. It gets the next number `D-n` above the highest number in the waiting file, in the decision log, and in the owner decision records of this node and this real root. `request list` shows the open requests. `request close ID` takes a request out of the waiting file and writes a log row "closed with no answer" with no `by` and no `who`. A log row with no `by` is no decision, and the number is never given again. `request close` refuses a D-n that has an owner decision record. `request add` and `request close` exit 1 when the owner decision file cannot be read. No request command changes the options of an open request. `queue set NAME [--item ID]... [--note TEXT] [--field NAME=VALUE]... [--position N]` finds a row by its exact name, and makes a new row at the end when no row has the name. `--item` replaces the whole list of items of the row. The queue has at most 30 rows, and a row has at most 30 items. The other stored keys of a row stay. `queue show` shows the rows.
 - **Writes.** Each write command takes the state lock once, and makes one commit of the state repo through the board commit helper (§6). Before the commit, the helper checks the new text of each of the three files against the cap of 1 MiB. A text over the cap is exit 1, and nothing is written. A write with a board kind other than `local` is refused before the lock (exit 4), and it makes no commit. With a hosted kind, the board holds the truth and the local board is the cache (the one rule above). Board-first writes come in FAC-M11 and FAC-M3. Until then, the reads show the local files.
 - **Reads.** `item list`, `track list`, `request list`, `queue show` and the work item port read the board with no lock. A read can show a mix of two commits until the next redraw corrects the view. A file that is corrupt, is not valid UTF-8, or holds a repeated id is exit 1 and the message names the file. A link in the path is exit 4. A read of any other file keeps the lenient decode.
 - **Text.** A command that prints a stored title, track name, stage, question or field value removes control, bidi and invisible characters, turns a line break or a tab into one space, and cuts the line to 120 characters. A request question with a line break is exit 1 and names the file.
@@ -998,7 +994,8 @@ The intro of §8.2 lists the 18 operations. Each command of that table calls one
 - A decision is an item with the `decision` label. Its body has the question, the options and a recommendation.
 - The owner can write the answer on the item as a comment `/choose <option>`, or as a label `choose:<option>`. A comment or a label only shows the answer and wakes the coordinator. It records nothing. A page answer is a board event. It shows and wakes, and records nothing.
 - `factory decide read` reads these answers with a script, not with model tokens. It shows each answer with its author and the link, and it records nothing.
-- `factory decide <D-n> <option>` records the decision in the owner store, with every board kind. It writes the owner store record first, and it works offline (the one rule). The owner store record is the proof. The log row with `by: owner` in `decision-log.json` is a copy. A second `factory decide` on the same id with another option exits 1, and the first record stays. A change of a decision is a new decision that names the old id. With a hosted board, it then adds a comment to the item that says the answer came from the CLI. A failed comment is a warning, and the record stays. That comment is a record, not a proof. The command needs a terminal window, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch). The remedy is to run `factory decide <D-n> <option>` in a terminal window outside a factory session. This guard stops a session from answering by accident. The owner's permission settings are the second guard. Only this command records a decision (D-142 A).
+- `factory decide <D-n> <option>` records the decision in the owner store, for the `local` board. It writes the owner store record first, and it works offline (the one rule). The owner store record is the proof, and the only source of the option. The log row with `by: owner` in `decision-log.json` is a display copy. The profile record in `decision-profile/decisions/` is a second display copy. A second `factory decide` on the same id with another option exits 1, and the first record stays. A change of a decision is a new decision that names the old id. With a hosted board, it then adds a comment to the item that says the answer came from the CLI. A failed comment is a warning, and the record stays. That comment is a record, not a proof. The command needs a terminal window, and it refuses (exit 4) inside a session that factory started (factory sets `FACTORY_SESSION` at each launch) and inside Claude Code (`CLAUDECODE` is set). The remedy is to run `factory decide <D-n> <option>` in your own terminal window outside a factory session, and not as a paste into a session. This guard stops a session from answering by accident. The owner's permission settings are the second guard. Only this command records a decision (D-142 A).
+- Until FAC-M11 and FAC-M3, `decide` with a hosted kind refuses (exit 4), as every board write does.
 - An *ask* is a decision item for one PR or one work item. The owner answers `approve` or `refuse` with `factory decide`. §6.1 says which answers count as an approval.
 
 **Board accounts (D-128 A).** factory does not look at which account anyone uses on the board. The owner, the coordinator and the workers can share one account, or use more than one. A separate account for the agents is optional, and it is the owner's own GitHub choice. factory has no setting for it and no check of it.
@@ -1291,7 +1288,7 @@ Engineering note: the permission mode is auto mode. `session.permission_mode` ac
 
 Engineering note: the relay server is a proxy. Every launch clears `ANTHROPIC_BASE_URL`, then sets it only from `proxies` in the local config. The answer check is a health check; on failure the default is `stop`, and `direct` is the explicit choice. For a config in a parent folder, `doctor` sends no request and warns to run with `--home DIR`. For a factory folder that fails the registration check, `doctor` sends no request and the check fails. `doctor` warns when the variable is set in the shell. Output never shows user info, query strings or headers of the base URL.
 
-Engineering note: the denied commands are a `denied` list in the state folder. Owner input is the owner prefix, typed only for a record in `decision-log.json` with `by: owner`. `decide read` records nothing. Only `factory decide` records `by: owner`, with every board kind, and the account of a board event does not matter (D-128 A). "No team board" is the `local` board.
+Engineering note: the denied commands are a `denied` list in the state folder. Owner input is the owner prefix, typed only for a decision that `factory decide` recorded in the owner store. `decide read` records nothing. Only `factory decide` records `by: owner`, and the account of a board event does not matter (D-128 A). "No team board" is the `local` board.
 
 Engineering note: no command prints env values. A shared file is a file that the config repo tracks. Process lists show only pid, elapsed time and command name.
 
@@ -1352,7 +1349,7 @@ The same limit (D-10 A) covers a board plugin. It runs inside factory with the r
 ### 6.1 Software recipe: what counts as approval and assignment (D-52)
 
 With `merge: delegated`, `pr merge` needs two proofs: the owner approved the work, and the owner assigned it to a worker or a track. The proof of approval is one of three forms:
-1. **A decision.** A record in `decision-log.json` with `by: owner` that approves the work. The record names the work: a PR, an item or a track.
+1. **A decision.** A record in the owner store, which `factory decide` writes, that approves the work. The record names the work: a PR, an item or a track. The log row with `by: owner` is a display copy and proves nothing. A consumer gives the request text of the log row to the proof read. The proof read hashes it again, and a mismatch gives no proof. The option, the D-n and the node come only from the store record. A display copy that names another option is wrong, and the record is never wrong.
 2. **An ask.** An ask item (§4.10) for the PR or the work item, with the answer `approve` recorded by `factory decide <D-n> approve`. The owner types it in a terminal window outside any factory session.
 3. **An approved plan.** An ask or a decision item that names the plan file (its path and its commit SHA), answered `approve` with `factory decide` in the same way. The plan text itself proves nothing.
 
@@ -1503,7 +1500,7 @@ The workspace of today has 42 manual operations on the board, the requests, the 
 | 16 | Add or remove a doc of a waiting item (`dean-set.sh`) | `factory item doc`, `factory item doc --remove` | `doc link`, `doc unlink` | |
 | 17 | Render `on-dean.md` and the data block of the page (`render-dean.py`) | Drop | None | The board tool or the `artifact` connector shows the waiting items. |
 | 18 | Write a row of `decision-log.json` by hand (CLAUDE.md §11) | `factory decide <D-n> <option>`, in a terminal window outside a factory session | Not a connector operation | The command records the decision. `decide read` shows answers and records nothing (§4.10). |
-| 19 | Write a decision record and link a principle (CLAUDE.md §11) | `factory decide <D-n> <option> --principle ID` | Not a connector operation | The wording of the principle stays model work. |
+| 19 | Write a decision record and link a principle (CLAUDE.md §11) | `factory decide <D-n> <option> --principle ID` | Not a connector operation | The wording of the principle stays model work. `--principle` is not in this version. |
 | 20 | Publish the review page (CLAUDE.md §8) | The `artifact` connector prints one `PUBLISH:` line, only when the page changed, at most once for each interval | Internal to the `artifact` connector | The line names a file path. The page text never goes into model tokens. |
 | 21 | Read the answers of the review page (CLAUDE.md §8) | `factory decide read --from FILE` | `decision read` of the `artifact` connector | The command shows the answers and records nothing. A page answer is a board event, not a proof. To record it, the owner runs `factory decide`. |
 | 22 | A comment on the page with `@claude` wakes the coordinator (CLAUDE.md §8) | `factory watch`, with no doorbell (D-101) | `changes read` | |

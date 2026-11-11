@@ -1,5 +1,6 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { boardWorkItems } from '../board/work-items.js';
+import { runDecide } from '../commands/decide.js';
 import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
 import { runHook } from '../hooks/hook.js';
@@ -584,6 +585,26 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           options: given.strings(flags.option),
           recommend: given.string(flags.recommend),
         },
+        registry,
+      ),
+  },
+  {
+    name: commands.decide,
+    summary: `Record the answer of the ${roles.owner} to an open ${requestWords.request}. It asks you to confirm, so run it in your own terminal window.`,
+    usage: `${commandText(commands.decide)} ID OPTION [${flagText(flags.note)} TEXT] [${flagText(flags.home)} DIR]`,
+    positionals: true,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.note]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `The reason for the answer. One line of 1 to ${boardTextLimits.maxNoteChars} characters. It goes into the profile record only.`,
+      },
+    },
+    run: (given, deps) =>
+      runDecide(
+        deps,
+        { home: given.string(flags.home), words: given.positionals(), note: given.string(flags.note), json: given.bool(flags.json) },
         registry,
       ),
   },

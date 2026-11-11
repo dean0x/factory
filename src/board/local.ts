@@ -1,15 +1,43 @@
 import { join } from 'node:path';
-import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { failure, safetyRefusal, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import { displayLine } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { ok } from '../core/result.js';
-import { requireNoLinks } from '../core/root-paths.js';
-import { commandText, files, hostedBoardLine, maxEchoChars, places, values, type CommandName } from '../names.js';
+import { decisionIdsOf, decisionPlaceOf, readDecisionProof, type DecisionPlace, type DecisionWrite } from '../core/owner-record.js';
+import { err, ok, type Err, type Result } from '../core/result.js';
+import { LINK_REMEDY, requireNoLinks } from '../core/root-paths.js';
+import {
+  commands,
+  commandText,
+  dirs,
+  env,
+  files,
+  hostedBoardLine,
+  maxEchoChars,
+  maxFileBytes,
+  places,
+  program,
+  requestWords,
+  roles,
+  values,
+  type CommandName,
+} from '../names.js';
 import type { RecipeBoard } from '../recipes/entry.js';
-import { commitBoardChange, type BoardTexts } from '../state/board-commit.js';
-import type { Layout } from '../state/layout.js';
-import type { BoardItem, BoardTrack, ChangesRead, ItemMoved, LocalBoard, QueueRowSet } from './contract.js';
+import { commitBoardChange, GIT_CHECK_LINE, readBoardFiles, type BoardCommitError, type BoardTexts, type CommitOutcome } from '../state/board-commit.js';
+import { requireGuardOn } from '../state/guard.js';
+import { stateRel, type Layout } from '../state/layout.js';
+import type {
+  BoardItem,
+  BoardTrack,
+  ChangesRead,
+  DecisionRecordCall,
+  DecisionRequestRead,
+  ItemMoved,
+  LocalBoard,
+  QueueRowSet,
+} from './contract.js';
+import { addNewRemedy, decideLogRow, recheckRequest, requestStateOf, requireLogRoom, requireOpen, strictRequestOf, type RequestState } from './decide.js';
+import { buildDecisionRecord, decisionRecordPath } from './decision-record.js';
 import {
   addItemIn,
   addTrackIn,
@@ -31,6 +59,8 @@ import {
   moveItemIn,
   requireTrack,
   setRowIn,
+  settleRequestIn,
+  shown,
   type BoardSetup,
   type Edit,
 } from './edit.js';
@@ -63,6 +93,8 @@ export interface LocalBoardOptions {
   readonly command: CommandName;
   /** The tracker kind of the setup: `tracker.kind` of the config. Every kind but `local` refuses each write. */
   readonly tracker: string;
+  /** The id of the node: `core.node.id` of the config. The owner decision file keeps the node id of each answer. */
+  readonly node: string;
 }
 
 const commitMessages = {
@@ -74,6 +106,7 @@ const commitMessages = {
   addTrack: (id: string): string => `chore: add track ${id}`,
   askDecision: 'chore: add a decision to the board',
   closeDecision: (id: string): string => `chore: close decision ${id}`,
+  recordDecision: (id: string): string => `chore: record decision ${id}`,
   setQueueRow: 'chore: change the queue',
 } as const;
 
@@ -82,6 +115,12 @@ const decisionFiles = [files.waiting, files.decisionLog, files.board] as const;
 
 /** The date of a row of the decision log is the first 10 characters of an ISO time: `2030-01-02`. */
 const DATE_CHARS = 10;
+
+/**
+ * The request text of a read of the owner decision file when no text of the request is known. No text of a request hashes to a stored
+ * hash, so a stored record gives `mismatch`, which still gives the stored option and time.
+ */
+const NO_REQUEST_TEXT = '';
 
 /** The text of one touched file, else a failure that names the file. */
 const textIn = (texts: BoardTexts, file: string): CliResult<string> => {
@@ -122,23 +161,29 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
           `Set the tracker kind to ${values.trackerLocal} in the config, then run "${commandText(options.command)}" again.`,
         );
 
-  /** One `commitBoardChange` call. The value of the change reaches the caller through the closure, because the helper gives back only whether it committed. */
+  /**
+   * One `commitBoardChange` call. The value of the change reaches the caller through the closure, because the helper gives back only
+   * whether it committed. The error keeps the typed outcome of the helper, and a `beforeWrite` step runs after every check and before
+   * the first file write.
+   */
   const commit = async <T>(
     touched: readonly string[],
     message: string,
-    apply: (texts: BoardTexts) => CliResult<Applied<T>>,
-  ): Promise<CliResult<T>> => {
+    apply: (texts: BoardTexts) => CliResult<Applied<T>> | Promise<CliResult<Applied<T>>>,
+    beforeWrite?: (updates: BoardTexts) => Promise<CliResult<void>>,
+  ): Promise<Result<T, BoardCommitError>> => {
     const outcome: { current: { readonly value: T } | undefined } = { current: undefined };
     const done = await commitBoardChange(deps, layout, {
       touched,
       command: options.command,
       message,
       change: async (texts) => {
-        const applied = apply(texts);
+        const applied = await apply(texts);
         if (!applied.ok) return applied;
         outcome.current = { value: applied.value.value };
         return ok(applied.value.texts);
       },
+      ...(beforeWrite === undefined ? {} : { beforeWrite }),
     });
     if (!done.ok) return done;
     return outcome.current === undefined ? failure('the board change did not run') : ok(outcome.current.value);
@@ -189,6 +234,184 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
     if (!logText.ok) return logText;
     const log = parseDecisionLog(logText.value);
     return log.ok ? ok({ waiting: waiting.value, log: log.value }) : log;
+  };
+
+  const noPlace = (): Err<CliError> =>
+    failure(
+      `there is no place for the ${roles.owner} store: no variable names a state folder`,
+      `Set ${env.stateHome} or ${env.userHome}, then run "${commandText(options.command)}" again.`,
+    );
+
+  /**
+   * The D-n of the owner decision file for this node id and this real root. One read of at most 1 MiB, with no lock of the decision
+   * file, so it runs under the state lock. A file that cannot be read is exit 1 and names the file and the reason.
+   */
+  const storedIdsOf = async (place: DecisionPlace): Promise<CliResult<readonly string[]>> => {
+    const ids = await decisionIdsOf(deps, place);
+    return ids.ok ? ids : failure(ids.error);
+  };
+
+  /** A close of a request that has a record in the owner decision file. The close could remove the board copy path of the answer. */
+  const answeredCannotClose = (id: string): Err<CliError> =>
+    failure(
+      `${requestWords.request} ${shown(id)} was answered by the ${roles.owner}, so ${program} does not close it`,
+      `To finish the board copy of the answer, run "${commandText(commands.decide)} ${id} <option>" again with the same option.`,
+    );
+
+  /** The refusal of a state that decide does not accept. The state is not open, so `requireOpen` gives the error. */
+  const refused = (state: RequestState, id: string): Err<CliError> => {
+    const open = requireOpen(state, id);
+    return open.ok ? failure(`${requestWords.request} ${shown(id)} is not open`) : open;
+  };
+
+  /** A number that the waiting file and the log do not hold. The owner decision file can hold it (exit 1). Else it is unknown (exit 2). */
+  const unknownRequest = async (place: DecisionPlace, state: RequestState, id: string): Promise<Err<CliError>> => {
+    if (place.path === null) return refused(state, id);
+    const proof = await readDecisionProof(deps, place, id, NO_REQUEST_TEXT);
+    if (proof.kind === 'error') return failure(proof.message);
+    if (proof.kind === 'none') return refused(state, id);
+    return failure(
+      `${files.waiting} has no ${requestWords.request} ${shown(id)}, but the ${roles.owner} decision file holds an answer from ${shown(proof.at)}`,
+      addNewRemedy,
+    );
+  };
+
+  /**
+   * A row of the log with a `by` key. The row is a display copy. Only the record in the owner decision file for the request text of
+   * the row proves the answer, and a record never lets the number start again, so this is always exit 1.
+   */
+  const answeredRequest = async (place: DecisionPlace, id: string, requestText: string | null): Promise<Err<CliError>> => {
+    const proof = await readDecisionProof(deps, place, id, requestText ?? NO_REQUEST_TEXT);
+    if (proof.kind === 'error') return failure(proof.message);
+    if (proof.kind === 'record') {
+      return failure(
+        `${requestWords.request} ${shown(id)} was answered by the ${roles.owner} on ${shown(proof.at.slice(0, DATE_CHARS))}`,
+        addNewRemedy,
+      );
+    }
+    return failure(
+      `${files.decisionLog}: the row of ${requestWords.request} ${shown(id)} has no ${roles.owner} record, so it is not an ${roles.owner} answer`,
+      addNewRemedy,
+    );
+  };
+
+  /** An open request: the strict read, and the record that the owner decision file holds for its canonical text. */
+  const openRequest = async (place: DecisionPlace, waiting: WaitingDoc, id: string): Promise<CliResult<DecisionRequestRead>> => {
+    const request = strictRequestOf(waiting, id);
+    if (!request.ok) return request;
+    const proof = await readDecisionProof(deps, place, id, request.value.canonical);
+    return proof.kind === 'error' ? failure(proof.message) : ok({ request: request.value, stored: proof, place });
+  };
+
+  /** The folder must be a folder and not a link, as `lstat` sees it. A link is a security stop (exit 4). */
+  const requireFolder = async (path: string, what: string): Promise<CliResult<void>> => {
+    const kind = await deps.fs.lstat(path);
+    if (!kind.ok) return kind;
+    if (kind.value === 'link') return safetyRefusal(`${what} is a link, so ${program} does not use it`, LINK_REMEDY);
+    return kind.value === 'dir' ? ok(undefined) : failure(`${what} is not a folder`);
+  };
+
+  /**
+   * Make the folder of the profile records. It runs under the state lock, after every check and before the owner record is written.
+   * It looks at the state folder and at the profile folder, makes the one folder `decisions` (its parent is there), and looks at the
+   * new folder again, because a path can change after a check.
+   */
+  const prepareDecisionsFolder = async (): Promise<CliResult<void>> => {
+    const state = await requireFolder(layout.stateDir, dirs.state);
+    if (!state.ok) return state;
+    const profile = await requireFolder(join(layout.stateDir, dirs.profile), dirs.profile);
+    if (!profile.ok) return profile;
+    const folder = join(layout.stateDir, stateRel.profileDecisions);
+    const made = await deps.fs.mkdir(folder);
+    if (!made.ok) return made;
+    return requireFolder(folder, stateRel.profileDecisions);
+  };
+
+  /** The new text of `log.md` must fit in the cap of a file. The remedy is to move old lines out. */
+  const requireProfileLogRoom = (text: string): CliResult<void> =>
+    Buffer.byteLength(text, 'utf8') > maxFileBytes
+      ? failure(
+          `${stateRel.profileLog} would be larger than the cap of ${maxFileBytes} bytes`,
+          `Move old lines from ${stateRel.profileLog} to another file, commit it, then run "${commandText(options.command)}" again.`,
+        )
+      : ok(undefined);
+
+  /**
+   * The change of an owner answer, under the state lock. It asks nothing and makes no folder. The request is read again and its hash
+   * must be the hash that the owner saw. The new texts are the waiting file without the request, the log with the row, the profile
+   * record and `log.md`. The value is the path of the profile record.
+   */
+  const answerChange = (texts: BoardTexts, input: DecisionRecordCall, recordPath: string): CliResult<Applied<string>> => {
+    const read = decisionDocsOf(texts);
+    if (!read.ok) return read;
+    const { id, hash } = input.request;
+    const request = recheckRequest(read.value.waiting, read.value.log, id, hash);
+    if (!request.ok) return request;
+    if ((texts.get(recordPath) ?? null) !== null) {
+      return failure(
+        `${recordPath} has text already. ${program} does not write over a file`,
+        `Rename that file, then run "${commandText(options.command)}" again.`,
+      );
+    }
+    const row = decideLogRow(request.value, input.option, input.at.slice(0, DATE_CHARS));
+    if (!row.ok) return row;
+    const settled = settleRequestIn(read.value.waiting, read.value.log, id, row.value);
+    const waiting = newText(files.waiting, settled.waiting, parseWaiting);
+    if (!waiting.ok) return waiting;
+    const log = newText(files.decisionLog, settled.log, parseDecisionLog);
+    if (!log.ok) return log;
+    const room = requireLogRoom(log.value.text);
+    if (!room.ok) return room;
+    const built = buildDecisionRecord({
+      node: options.node,
+      request: request.value,
+      option: input.option,
+      at: input.at,
+      note: input.note,
+      log: texts.get(stateRel.profileLog) ?? null,
+    });
+    if (!built.ok) return built;
+    const profileRoom = requireProfileLogRoom(built.value.log);
+    if (!profileRoom.ok) return profileRoom;
+    return ok({
+      texts: new Map([
+        [files.waiting, waiting.value.text],
+        [files.decisionLog, log.value.text],
+        [built.value.path, built.value.text],
+        [stateRel.profileLog, built.value.log],
+      ]),
+      value: built.value.path,
+    });
+  };
+
+  /**
+   * The line for a failure that follows the write of the owner record, by the typed outcome of the commit helper. An unknown state
+   * gets the git check line and no retry line, because a rerun could find board files in a state that it does not expect.
+   */
+  const savedLineOf = (outcome: CommitOutcome | undefined, id: string, option: string): string | null => {
+    switch (outcome) {
+      case 'restored':
+        return `The answer is saved in the ${roles.owner} store. Run "${commandText(commands.decide)} ${id} ${option}" again to finish the board copy.`;
+      case 'committed':
+        return 'The answer is recorded and the commit is made.';
+      case 'unknown':
+        return `The answer is saved in the ${roles.owner} store. Check the board files with git. ${GIT_CHECK_LINE}`;
+      case undefined:
+        return null;
+      default: {
+        const unreachable: never = outcome;
+        return unreachable;
+      }
+    }
+  };
+
+  /**
+   * The error of a commit that failed after the owner record was saved: the same error, a remedy line by the outcome,
+   * and then the warning of the store write, so a left lock file is named.
+   */
+  const afterStoreWrite = (error: BoardCommitError, id: string, option: string, warning: string | null): CliError => {
+    const lines = [error.hint, savedLineOf(error.commitOutcome, id, option), warning].filter((line): line is string => line !== undefined && line !== null);
+    return lines.length === 0 ? error : { ...error, hint: lines.join(' ') };
   };
 
   const itemIn = (doc: BoardDoc, id: string): CliResult<BoardItem> => {
@@ -295,10 +518,14 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const checked = checkDecision(input);
       if (!checked.ok) return checked;
-      return commit(decisionFiles, commitMessages.askDecision, (texts) => {
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      return commit(decisionFiles, commitMessages.askDecision, async (texts) => {
         const read = decisionDocsOf(texts);
         if (!read.ok) return read;
-        const edited = askIn(read.value.waiting, read.value.log, checked.value);
+        const stored = await storedIdsOf(place.value);
+        if (!stored.ok) return stored;
+        const edited = askIn(read.value.waiting, read.value.log, checked.value, stored.value);
         if (!edited.ok) return edited;
         const written = newText(files.waiting, edited.value.top, parseWaiting);
         if (!written.ok) return written;
@@ -316,15 +543,22 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!local.ok) return local;
       const valid = checkRequestId(id);
       if (!valid.ok) return valid;
-      return commit(decisionFiles, commitMessages.closeDecision(id), (texts) => {
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      return commit(decisionFiles, commitMessages.closeDecision(id), async (texts) => {
         const read = decisionDocsOf(texts);
         if (!read.ok) return read;
+        const stored = await storedIdsOf(place.value);
+        if (!stored.ok) return stored;
         const edited = closeRequestIn(read.value.waiting, read.value.log, id, deps.now().toISOString().slice(0, DATE_CHARS));
         if (!edited.ok) return edited;
+        if (stored.value.includes(id)) return answeredCannotClose(id);
         const waiting = newText(files.waiting, edited.value.waiting, parseWaiting);
         if (!waiting.ok) return waiting;
         const log = newText(files.decisionLog, edited.value.log, parseDecisionLog);
         if (!log.ok) return log;
+        const room = requireLogRoom(log.value.text);
+        if (!room.ok) return room;
         return ok({
           texts: new Map([
             [files.waiting, waiting.value.text],
@@ -362,6 +596,64 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       const file = await requireDocFile(path.value);
       if (!file.ok) return file;
       return itemWrite(commitMessages.linkDoc(input.id), (doc) => linkDocIn(doc, input.id, path.value));
+    },
+
+    async decisionRequest(id) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const guarded = await requireGuardOn(deps, layout.stateDir);
+      if (!guarded.ok) return guarded;
+      const read = await readBoardFiles(deps, layout, decisionFiles);
+      if (!read.ok) return read;
+      const docs = decisionDocsOf(read.value);
+      if (!docs.ok) return docs;
+      const state = requestStateOf(docs.value.waiting, docs.value.log, id);
+      if (!state.ok) return state;
+      const current = state.value;
+      if (current.kind === 'closed') return refused(current, id);
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      if (place.value.path === null && current.kind !== 'unknown') return noPlace();
+      switch (current.kind) {
+        case 'unknown':
+          return unknownRequest(place.value, current, id);
+        case 'answered':
+          return answeredRequest(place.value, id, current.request);
+        case 'open':
+          return openRequest(place.value, docs.value.waiting, id);
+        default: {
+          const unreachable: never = current;
+          return unreachable;
+        }
+      }
+    },
+
+    async recordDecision(input, writeProof) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const { request } = input;
+      const path = decisionRecordPath({ id: request.id, title: request.title, at: input.at });
+      if (!path.ok) return path;
+      const written: { current: DecisionWrite | undefined } = { current: undefined };
+      const done = await commit(
+        [...decisionFiles, path.value, stateRel.profileLog],
+        commitMessages.recordDecision(request.id),
+        (texts) => answerChange(texts, input, path.value),
+        async () => {
+          const folder = await prepareDecisionsFolder();
+          if (!folder.ok) return folder;
+          // Lock order (M9): the state lock is held by the helper. The writer takes the store lock inside it and frees it first.
+          const proof = await writeProof({ id: request.id, option: input.option, hash: request.hash, at: input.at });
+          if (!proof.ok) return proof;
+          written.current = proof.value;
+          return ok(undefined);
+        },
+      );
+      if (!done.ok) {
+        return written.current === undefined ? done : err(afterStoreWrite(done.error, request.id, input.option, written.current.warning));
+      }
+      if (written.current === undefined) return failure(`the board change did not write the ${roles.owner} record`);
+      return ok({ id: request.id, option: input.option, path: done.value, outcome: written.current.outcome, warning: written.current.warning });
     },
 
     async readChanges(): Promise<CliResult<ChangesRead>> {

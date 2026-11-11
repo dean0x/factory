@@ -1,10 +1,12 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { DecisionAskInput, LocalBoard } from '../../src/board/contract.js';
+import type { DecisionAskInput, DecisionProofWriter, DecisionRecordCall, LocalBoard } from '../../src/board/contract.js';
 import { createLocalBoard } from '../../src/board/local.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
-import { commands, commandText, files as fileNames, stateLock, values } from '../../src/names.js';
+import type { DecisionInput } from '../../src/core/owner-record.js';
+import { ok } from '../../src/core/result.js';
+import { commands, commandText, files as fileNames, stateLock, values, type CommandName } from '../../src/names.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { boardRepo, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
 import { withFsWatch } from '../helpers/fake-deps.js';
@@ -43,8 +45,32 @@ const repoWith = async (): Promise<BoardRepo> => {
   return repo;
 };
 
-const connectorOf = (deps: Deps, tracker: string): LocalBoard =>
-  createLocalBoard(deps, LAYOUT, { queueKey: QUEUE, recipe: softwareBoard, config: sampleBoard(), command: commands.start, tracker });
+/** The command that `connectorOf` gives the connector, which the remedy line of a refusal names. */
+const PASSED_COMMAND = commands.start;
+
+const connectorOf = (deps: Deps, tracker: string, command: CommandName = PASSED_COMMAND): LocalBoard =>
+  createLocalBoard(deps, LAYOUT, {
+    queueKey: QUEUE,
+    recipe: softwareBoard,
+    config: sampleBoard(),
+    command,
+    tracker,
+    node: 'demo',
+  });
+
+/** The input of a decision record, from a request of the waiting file. The writer is never called by a refused write. */
+const RECORD_CALL: DecisionRecordCall = {
+  request: { id: 'D-1', title: 'Open', question: 'Why?', options: [{ key: 'a', text: 'Yes' }], canonical: '{}', hash: 'f'.repeat(64) },
+  option: 'a',
+  note: null,
+  at: '2030-01-02T03:04:05.678Z',
+};
+
+const writerCalls: DecisionInput[] = [];
+const WRITER: DecisionProofWriter = async (input) => {
+  writerCalls.push(input);
+  return ok({ outcome: 'stored', warning: null });
+};
 
 type Write = (connector: LocalBoard) => Promise<CliResult<unknown>>;
 
@@ -73,6 +99,14 @@ const BAD_WRITES: readonly (readonly [string, Write])[] = [
   ['decision ask', (c) => c.askDecision({ title: '', question: '', options: [] })],
   ['request close', (c) => c.closeRequest('nope')],
   ['queue set', (c) => c.setQueueRow({ name: ' ' })],
+  ['decision request', (c) => c.decisionRequest('nope')],
+  ['decision record', (c) => c.recordDecision({ ...RECORD_CALL, at: 'yesterday' }, WRITER)],
+];
+
+/** The decision operations of the local board. A hosted kind refuses both. */
+const DECISION_OPS: readonly (readonly [string, Write])[] = [
+  ['decision request', (c) => c.decisionRequest('D-1')],
+  ['decision record', (c) => c.recordDecision(RECORD_CALL, WRITER)],
 ];
 
 const FILES = [fileNames.board, fileNames.waiting, fileNames.decisionLog];
@@ -92,9 +126,16 @@ describe('a hosted tracker kind: each board write refuses with exit 4 and one li
   it('M5-1b TP-67 names the command to run again in the remedy line, and the local tracker kind', async () => {
     const repo = await repoWith();
     const error = errorOf(await connectorOf(repo.deps, 'github').addItem({ title: 'Second', fields: { priority: 'P1' } }));
-    expect(error.hint).toContain(commandText(commands.start));
+    expect(error.hint).toContain(commandText(PASSED_COMMAND));
     expect(error.hint).toContain(values.trackerLocal);
     expect(error.hint).not.toContain('\n');
+  });
+
+  it('M5-1b TP-67 names the command that the connector was given, and no other, in the remedy line', async () => {
+    const repo = await repoWith();
+    const error = errorOf(await connectorOf(repo.deps, 'github', commands.decide).addItem({ title: 'Second', fields: { priority: 'P1' } }));
+    expect(error.hint).toContain(`"${commandText(commands.decide)}"`);
+    expect(error.hint).not.toContain(commandText(commands.start));
   });
 
   it.each(BAD_WRITES)('M5-1b TP-67 %s with bad input exits 4 too, because the refusal comes before the input check', async (_name, write) => {
@@ -142,6 +183,36 @@ describe('a hosted tracker kind: a refused write changes nothing (TP-68)', () =>
     expect(FILES.map((file) => repo.textOf(file))).toEqual(before);
     expect(repo.textOf(fileNames.board)).toBe(START_BOARD);
     expect(repo.commits).toEqual([]);
+  });
+});
+
+describe('a hosted tracker kind: the decision operations refuse before any read (TP-164)', () => {
+  const CASES = values.trackerHosted.flatMap((kind) => DECISION_OPS.map(([name, op]) => [kind, name, op] as const));
+
+  it.each(CASES)('M5-1b TP-164 %s: %s exits 4 with the hosted line, reads and writes no file, runs no git and never calls the writer', async (kind, _name, op) => {
+    const repo = await repoWith();
+    const before = new Map(repo.deps.files);
+    const touched: string[] = [];
+    const watched = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
+    writerCalls.length = 0;
+    const error = errorOf(await op(connectorOf(watched, kind)));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(kind);
+    expect(error.message).toContain(HOSTED_LINE);
+    expect(error.hint).toContain(commandText(PASSED_COMMAND));
+    expect(touched).toEqual([]);
+    expect(repo.gitCommands()).toEqual([]);
+    expect(writerCalls).toEqual([]);
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it.each(DECISION_OPS)('M5-1b TP-164 %s exits 4 for the hosted kind when the delete guard is off, because the refusal comes first', async (_name, op) => {
+    const repo = await repoWith();
+    repo.deps.files.delete(HOOK);
+    const error = errorOf(await op(connectorOf(repo.deps, 'github')));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(error.message).toContain(HOSTED_LINE);
   });
 });
 

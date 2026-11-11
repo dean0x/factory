@@ -499,6 +499,15 @@ export const withFsWatch = <T extends Deps>(deps: T, seen: (method: string, path
 };
 
 /**
+ * A copy of the deps whose removal of a file fails for the paths that `fails` names. The lock file of a private file that
+ * stays after a saved change is the case: the change is written, and only the removal of the lock file fails.
+ */
+export const withFailingRemoves = <T extends Deps>(deps: T, fails: (path: string) => boolean, message = 'EBUSY'): T => ({
+  ...deps,
+  fs: { ...deps.fs, remove: async (path) => (fails(path) ? failure(`cannot remove ${path}: ${message}`) : deps.fs.remove(path)) },
+});
+
+/**
  * A copy of the deps whose writes fail. `fails` gets the path and the number of the write to that path, from 1.
  * The plain write and the atomic write fail in the same way.
  */

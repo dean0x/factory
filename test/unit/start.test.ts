@@ -24,6 +24,7 @@ import {
   exited,
   FAKE_PROGRAM_ARGV,
   registerRoot,
+  withFailingRemoves,
   withFailingWrites,
   withFsWatch,
   type FakeDeps,
@@ -2279,6 +2280,17 @@ describe('start:the setup text needs the owner (TP-128, TP-145, TP-151, TP-152, 
       expect(question).toContain('Second rules.');
       expect(recordsOf(made.deps)).toEqual([expect.objectContaining({ node: 'demo', hash: newHash })]);
       expect(newHash).not.toBe(oldHash);
+    });
+
+    it('counts the acceptance as saved when only its lock file stays: it goes on and warns with the lock file', async () => {
+      const made = await changed({ tty: true, prompt: yes });
+      const newHash = await hashOf(made.deps, [SETUP_PATH]);
+      const output = await succeeded(withFailingRemoves(made.deps, (path) => path === `${ACCEPTANCES}.lock`));
+      expect(output.json).toMatchObject({ started: true });
+      expect(recordsOf(made.deps)).toEqual([expect.objectContaining({ node: 'demo', hash: newHash })]);
+      expect(made.deps.files.get(CLAUDE_FILE)).toContain('Second rules.');
+      expect(made.deps.warned.join('\n')).toContain(`${ACCEPTANCES}.lock`);
+      expect(made.deps.warned.join('\n')).not.toContain('was not written');
     });
 
     it('asks no more after the yes: the next start has nothing to accept', async () => {

@@ -140,7 +140,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 85],
+    ['coordinator', 40, 90],
     ['manager', 20, 40],
     ['safety', 12, 25],
     ['worker', 40, 59],
@@ -524,7 +524,9 @@ describe('the coordinator text: the board commands and the stages (M5-1b TP-50)'
   it('M5-1b TP-50 says that board files change only through the commands, and that nobody edits them by hand', () => {
     const text = boardPart();
     expect(text).toContain(`Board files change only through the ${program} commands:`);
-    expect(text).toContain(`Never edit \`${stateFile(files.board)}\` or \`${stateFile(files.waiting)}\` by hand.`);
+    expect(text).toContain(
+      `Never edit \`${stateFile(files.board)}\`, \`${stateFile(files.waiting)}\` or \`${stateFile(files.decisionLog)}\` by hand.`,
+    );
   });
 
   it('M5-1b TP-50 says that the coordinator moves the stage at each milestone event, with the item move command', () => {
@@ -541,9 +543,62 @@ describe('the coordinator text: the board commands and the stages (M5-1b TP-50)'
     expect(boardPart()).toContain('The command refuses `merged` and `released`. Only the merge flow and the release flow set them.');
   });
 
-  it('M5-1b TP-50 has no decide text and no decision text in the Board section', () => {
-    expect(boardPart().length).toBeGreaterThan(0);
-    expect(boardPart()).not.toMatch(/decid|decision/i);
+});
+
+describe('the coordinator text and the profile README: decisions and the owner path (M5-1b TP-163)', () => {
+  const coordinator = (): string => layer1Blocks.find((template) => template.name === 'coordinator')?.body ?? '';
+  /** The part of a text under the heading `## <heading>`. */
+  const sectionOf = (text: string, heading: string): string =>
+    text.split('\n## ').find((part) => part.startsWith(`${heading}\n`)) ?? '';
+  const decisionsPart = (): string => sectionOf(coordinator(), 'Decisions');
+  const procedure = (): string => sectionOf(fileTemplates.profileReadme, 'Update procedure');
+  const stepOf = (number: number): string => procedure().split('\n').find((line) => line.startsWith(`${number}. `)) ?? '';
+  const profile = `../${dirs.state}/${dirs.profile}/`;
+  const decisionLog = `../${dirs.state}/${files.decisionLog}`;
+  const decide = commandText(commands.decide);
+
+  it('M5-1b TP-163 has a Decisions section', () => {
+    expect(decisionsPart()).not.toBe('');
+  });
+
+  it('M5-1b TP-163 tells the coordinator to read the decision records and the principles before it decides for the owner', () => {
+    expect(decisionsPart()).toContain(
+      `Before you decide for the owner, read the decision records in \`${profile}${dirs.decisions}/\` and the principles in \`${profile}${dirs.principles}/\`.`,
+    );
+  });
+
+  it('M5-1b TP-163 names decide as the owner path, in a terminal window of the owner, and says it refuses inside Claude Code', () => {
+    const text = decisionsPart();
+    expect(text).toContain(`The path for an answer of the owner to a question is \`${decide} <id> <option>\`.`);
+    expect(text).toContain('The owner runs it in a terminal window of their own. It refuses to run in a session of Claude Code.');
+  });
+
+  it('M5-1b TP-163 says that only a record in the owner store proves an answer of the owner', () => {
+    expect(decisionsPart()).toContain('Only a record in the owner store proves an answer of the owner.');
+  });
+
+  it('M5-1b TP-163 says that a log row and a profile record are display copies', () => {
+    expect(decisionsPart()).toContain(
+      `A row in \`${decisionLog}\` and a decision record in \`${profile}\` are display copies. They do not prove an answer of the owner.`,
+    );
+  });
+
+  it('M5-1b TP-163 says never to write a log row with the by key', () => {
+    expect(decisionsPart()).toContain(`Never write a row with the key \`by\` in \`${decisionLog}\`.`);
+  });
+
+  it('M5-1b TP-163 README step 1 says that decide writes the record of an owner decision, and the coordinator writes one only for its own', () => {
+    expect(stepOf(1)).toContain(`For a decision of the owner, \`${decide}\` writes the decision record in \`${dirs.decisions}/\`.`);
+    expect(stepOf(1)).toContain('For your own decision, write the record and set `decided_by`.');
+  });
+
+  it('M5-1b TP-163 README step 2 says that decide adds the log line of an owner decision, and the coordinator adds one only for its own', () => {
+    expect(stepOf(2)).toContain(`For a decision of the owner, \`${decide}\` adds one line to the top of \`${files.profileLog}\`.`);
+    expect(stepOf(2)).toContain('For your own decision, add that line.');
+  });
+
+  it('M5-1b TP-163 README record frontmatter has a time line after the date line', () => {
+    expect(fileTemplates.profileReadme).toContain('date: yyyy-mm-dd\ntime: yyyy-mm-ddThh:mm:ss.sssZ');
   });
 });
 

@@ -119,9 +119,14 @@ export const renderWarnings = (warnings: readonly string[]): string =>
  */
 export const INVISIBLE_FILLER = /[\u{115f}\u{1160}\u{180b}-\u{180d}\u{180f}\u{3164}\u{fe00}-\u{fe0f}\u{ffa0}\u{e0100}-\u{e01ef}]/u;
 
-/** Every control character, apart from the characters in `kept` (a regex class body), every character that only formats text, and every filler. */
+/**
+ * Every control character, apart from the characters in `kept` (a regex class body), every character that only formats text,
+ * every line or paragraph separator, every default ignorable code point (the fillers, the combining grapheme joiner and the code
+ * points that Unicode reserves to be ignored, assigned or not) and every lone surrogate, which the screen shows as nothing or as a
+ * replacement mark.
+ */
 const hiddenCharactersExcept = (kept: string): RegExp =>
-  new RegExp(`(?![${kept}])(?:[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]|${INVISIBLE_FILLER.source})`, 'gu');
+  new RegExp(`(?![${kept}])[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\p{Cs}\\p{Default_Ignorable_Code_Point}]`, 'gu');
 
 /** For terminal text: the newline and the tab stay. A raw carriage return never reaches the screen. */
 const HIDDEN_CHARACTERS = hiddenCharactersExcept('\\n\\t');
@@ -141,13 +146,45 @@ const LINE_BREAKS_AND_TABS = /[\n\r\t]/g;
 
 /**
  * Stored text as one clean line of text output: a line break, a carriage return and a tab each become one space, the hidden
- * characters (control, bidi, format and invisible) are removed, and the line is cut to `width` characters. A pair of code
+ * characters (control, bidi, format, invisible and lone surrogate) are removed, and the line is cut to `width` characters. A pair of code
  * units that make one character is never cut in half.
  */
 export const displayLine = (text: string, width: number = maxDisplayWidth): string => {
   const clean = text.replace(LINE_BREAKS_AND_TABS, ' ').replace(HIDDEN_CHARACTERS, '');
   const cut = clean.slice(0, Math.max(0, width));
   return cut.length < clean.length && /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut;
+};
+
+/**
+ * The same rule as HIDDEN_CHARACTERS, as a copy with no global flag. A global regex keeps `lastIndex` between two calls of `.test`,
+ * so a repeated call can give another answer. The copy has the same source, so the display rule has one owner.
+ */
+const HIDDEN_CHARACTER = new RegExp(HIDDEN_CHARACTERS.source, 'u');
+
+/**
+ * True when the text holds a character that the display removes: a control character other than the newline and the tab, a
+ * format, line or paragraph separator character, a default ignorable code point, or a lone surrogate. A caller that must show
+ * exactly the text that it hashes refuses such a text.
+ */
+export const removedByDisplay = (text: string): boolean => HIDDEN_CHARACTER.test(text);
+
+/**
+ * The text as lines of at most `width` code units (at least one), with no character dropped: the lines joined give the text. A
+ * character of two code units is never cut in half, so it takes a line of its own when `width` is smaller than it. An empty text
+ * gives one empty line. The text is one line of text: a line break in it counts as a character.
+ */
+export const wrapText = (text: string, width: number = maxDisplayWidth): readonly string[] => {
+  const limit = Math.max(1, width);
+  const lines: string[] = [];
+  let line = '';
+  for (const character of text) {
+    if (line !== '' && line.length + character.length > limit) {
+      lines.push(line);
+      line = '';
+    }
+    line += character;
+  }
+  return [...lines, line];
 };
 
 /** In JSON, the hidden characters leave the string values. A line break and a carriage return stay as escapes and no string is cut. */

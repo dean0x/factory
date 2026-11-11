@@ -23,7 +23,7 @@ import { createNodeDeps } from '../../src/core/node-deps.js';
 import { changePrivateFile } from '../../src/core/private-file.js';
 import { ok } from '../../src/core/result.js';
 import { commands } from '../../src/names.js';
-import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, withFailingRemoves, withFailingWrites, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 
 const INDEX = '/state/factory/homes.json';
 const HOME_A = '/w/web-factory';
@@ -356,7 +356,7 @@ describe('home index: recording a home', () => {
   it('writes the file atomically with mode 0600, in a folder of mode 0700', async () => {
     const deps = fresh();
     const result = await recordHome(deps, INDEX, entry(HOME_A, ['/w/web']));
-    expect(result).toEqual({ ok: true, value: undefined });
+    expect(result).toEqual({ ok: true, value: { warning: null } });
     expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_A, ['/w/web'])] });
     expect(deps.atomicWrites).toEqual([INDEX]);
     expect(deps.modes.get(INDEX)).toBe(0o600);
@@ -663,12 +663,12 @@ describe('home index: two writers at once', () => {
       fs: { ...deps.fs, remove: async (path) => (path === LOCK ? failure(`cannot remove ${path}: EACCES`) : deps.fs.remove(path)) },
     });
 
-    it('stops with an error that names the lock file and the reason, and the change is saved', async () => {
+    it('counts the change as saved, with a warning that names the lock file and the reason', async () => {
       const deps = fresh();
       const result = await recordHome(refusesToRemoveLock(deps), INDEX, entry(HOME_A, []));
-      expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK) });
-      expect(result).toMatchObject({ error: expect.stringContaining('EACCES') });
-      expect(result).toMatchObject({ error: expect.stringContaining('saved') });
+      expect(result).toMatchObject({ ok: true, value: { warning: expect.stringContaining(LOCK) } });
+      expect(result).toMatchObject({ value: { warning: expect.stringContaining('EACCES') } });
+      expect(result).toMatchObject({ value: { warning: expect.stringContaining('Remove that file') } });
       expect(stored(deps)).toEqual({ schema: 1, homes: [entry(HOME_A, [])] });
     });
 
@@ -730,7 +730,7 @@ describe('home index: two writers at once', () => {
           insideChange.push('second');
           return ok('second\n');
         });
-        expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK) });
+        expect(result).toMatchObject({ ok: false, error: { writeState: 'not-saved', message: expect.stringContaining(LOCK) } });
         expect(insideChange).toEqual(['first']);
         // The lock file holds the pid of the first waiter and its token.
         expect(deps.files.get(LOCK)).toMatch(new RegExp(`^${OTHER}-[0-9a-f]{16}\\n$`));
@@ -908,8 +908,27 @@ describe('home index: recording a node', () => {
   it('writes the real path of the root and the folder of each project, and gives ok', async () => {
     const deps = fresh();
     const result = await recordNode(deps, INDEX, { home: HOME_A, id: 'web', projects: ['web', 'api'], origin: 'own' });
-    expect(result).toEqual({ ok: true, value: undefined });
+    expect(result).toEqual({ ok: true, value: { warning: null } });
     expect(stored(deps)).toEqual({ schema: 1, homes: [own(HOME_A, [`${HOME_A}/web`, `${HOME_A}/api`])] });
+  });
+
+  it('counts the entry as saved when only the lock file stays, with a warning that names the index and the lock file', async () => {
+    const deps = fresh();
+    const stuck = withFailingRemoves(deps, (path) => path === `${INDEX}.lock`);
+    const result = await recordNode(stuck, INDEX, { home: HOME_A, id: 'web', projects: [], origin: 'own' });
+    expect(result).toMatchObject({ ok: true, value: { warning: expect.stringContaining(`${INDEX}.lock`) } });
+    expect(result).toMatchObject({ value: { warning: expect.stringContaining(`The factory list ${INDEX}`) } });
+    expect(result).not.toMatchObject({ value: { warning: expect.stringContaining('was not updated') } });
+    expect(stored(deps)).toEqual({ schema: 1, homes: [own(HOME_A, [])] });
+  });
+
+  it('keeps the error that says the index was not updated when the lock file stays and the write fails', async () => {
+    const deps = fresh();
+    const stuck = withFailingRemoves(deps, (path) => path === `${INDEX}.lock`);
+    const failing = withFailingWrites(stuck, (path) => path === INDEX);
+    const result = await recordNode(failing, INDEX, { home: HOME_A, id: 'web', projects: [], origin: 'own' });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(`The factory list ${INDEX} was not updated`) });
+    expect(deps.files.has(INDEX)).toBe(false);
   });
 
   it('gives an error that says the index was not updated when no variable names a folder', async () => {

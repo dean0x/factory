@@ -11,7 +11,7 @@ import {
 } from '../../src/commands/setup-check.js';
 import { collectSetup } from '../../src/commands/init-received.js';
 import { commands, env, maxSetupTextBytes, trackedFiles } from '../../src/names.js';
-import { createFakeDeps, type FakeDeps, type PromptHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, withFailingRemoves, withFailingWrites, type FakeDeps, type PromptHandler } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
 import { ACCEPTANCES, acceptFiles } from '../helpers/setup-acceptance.js';
 
@@ -265,22 +265,50 @@ describe('setup check: settle the setup text before a command renders it', () =>
 
   it('needs nothing for an empty subject, and gives the accepted texts for an accepted one', async () => {
     const deps = make({ tty: true, prompt: yes });
-    expect(await settle(deps)).toEqual(ok({ texts: { coordinator: null, worker: null }, accepted: false }));
+    expect(await settle(deps)).toEqual(ok({ texts: { coordinator: null, worker: null }, accepted: false, warnings: [] }));
     deps.seed(`${HOME}/${COORDINATOR}`, 'Rules.\n');
     await acceptFiles(deps, HOME, NODE, [COORDINATOR]);
-    expect(await settle(deps)).toEqual(ok({ texts: { coordinator: 'Rules.\n', worker: null }, accepted: false }));
+    expect(await settle(deps)).toEqual(ok({ texts: { coordinator: 'Rules.\n', worker: null }, accepted: false, warnings: [] }));
     expect(deps.prompts).toEqual([]);
   });
 
   it('writes the acceptance of a change after a yes, and gives the texts of the bytes that it hashed', async () => {
     const deps = await changed({ tty: true, prompt: yes });
     const settled = await settle(deps);
-    expect(settled).toEqual(ok({ texts: { coordinator: 'Second rules.\n', worker: null }, accepted: true }));
+    expect(settled).toEqual(ok({ texts: { coordinator: 'Second rules.\n', worker: null }, accepted: true, warnings: [] }));
     expect(deps.prompts).toHaveLength(1);
     const set = await collectSetup(deps, HOME, [COORDINATOR], commands.init);
     expect(JSON.parse(storeOf(deps)).acceptances).toEqual([
       expect.objectContaining({ node: NODE, hash: set.ok ? set.value.collected.manifest.hash : '', reason }),
     ]);
+  });
+
+  it('counts a change as accepted when only the lock file stays, and gives a warning that names the lock file', async () => {
+    const deps = await changed({ tty: true, prompt: yes });
+    const settled = await settleSetup(withFailingRemoves(deps, (path) => path === `${ACCEPTANCES}.lock`), {
+      home: HOME,
+      node: NODE,
+      check: await own(deps),
+      dryRun: false,
+      reason,
+    });
+    expect(settled).toMatchObject({
+      ok: true,
+      value: { texts: { coordinator: 'Second rules.\n' }, accepted: true, warnings: [expect.stringContaining(`${ACCEPTANCES}.lock`)] },
+    });
+    expect(JSON.parse(storeOf(deps)).acceptances).toEqual([expect.objectContaining({ node: NODE, reason })]);
+  });
+
+  it('stops with the old failure text when the lock file stays and the write fails', async () => {
+    const deps = await changed({ tty: true, prompt: yes });
+    const failing = withFailingWrites(
+      withFailingRemoves(deps, (path) => path === `${ACCEPTANCES}.lock`),
+      (path) => path === ACCEPTANCES,
+    );
+    const before = storeOf(deps);
+    const settled = await settleSetup(failing, { home: HOME, node: NODE, check: await own(deps), dryRun: false, reason });
+    expect(settled).toMatchObject({ ok: false, error: { kind: 'failure', message: expect.stringContaining('The setup acceptance was not written') } });
+    expect(storeOf(deps)).toBe(before);
   });
 
   it('stops with the accept command after a no, and writes nothing', async () => {

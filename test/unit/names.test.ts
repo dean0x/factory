@@ -19,6 +19,7 @@ import {
   nodeCommands,
   permissionSkipList,
   program,
+  requestHash,
   reservedRootNames,
   roles,
   schema1,
@@ -760,7 +761,10 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
   const wordRuleHits = (source: string, path: string): string[] =>
     literalsOf(source)
       .filter((literal) => !IMPORT_PATH.test(literal))
-      .filter((literal) => literal !== 'display-message' && !(path === NAMES_FILE && literal === 'request'))
+      .filter(
+        (literal) =>
+          literal !== 'display-message' && !(path === NAMES_FILE && (literal === 'request' || literal === requestHash.tag)),
+      )
       .map((literal) => literal.replace(/pull requests?/gi, ' ').replace(/messages between sessions/gi, ' '))
       .filter((literal) => path !== GLOSSARY_FILE && /(?<![A-Za-z0-9_])(?:requests?|messages?|checkouts?)(?![A-Za-z0-9_])/i.test(literal))
       .map((literal) => `${relative(SRC, path)}: "${literal}"`);
@@ -885,8 +889,8 @@ describe('the install command builds the commit of the hand-over, not the tag na
 
   it('keeps the check of the tag with git ls-remote in the guide, for both paths', () => {
     const guide = textOf('docs/quick-start.md');
-    expect(guide).toContain("git ls-remote git@github.com:dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'");
-    expect(guide).toContain('`https://github.com/dean0x/factory.git` in place of `git@github.com:dean0x/factory.git`');
+    expect(guide).toContain("git ls-remote https://github.com/dean0x/factory.git 'refs/tags/v0.2.0-ea.N^{}'");
+    expect(guide).toContain('`git@github.com:dean0x/factory.git` in place of `https://github.com/dean0x/factory.git`');
   });
 });
 
@@ -1061,6 +1065,45 @@ describe('the writers of the approval record and of the setup acceptance (TP-39,
 
   it('has the store file of the approval record in one module only: the owner record writer', () => {
     expect(rel(withText(/\bownerRecords\b/))).toEqual(['core/owner-record.ts']);
+  });
+
+  it('M5-1b TP-155 has the owner decision file and its names in one module only: the owner record writer', () => {
+    expect(rel(withText(/\bownerDecisions\b/))).toEqual(['core/owner-record.ts']);
+    expect(rel(withText(/\bfiles\.ownerDecisions\b/))).toEqual(['core/owner-record.ts']);
+  });
+
+  it('M5-1b TP-155 lets only the code of decide name the decision writer, and only decide call recordDecision', () => {
+    const decide = 'commands/decide.ts';
+    const callersOf = (pattern: RegExp, owners: readonly string[]): string[] =>
+      rel(withText(pattern)).filter((path) => !owners.includes(path));
+    expect(callersOf(/\bputDecision\b/, ['core/owner-record.ts', decide])).toEqual([]);
+    // The definition in the local board and the type in the contract are no calls.
+    expect(callersOf(/\brecordDecision\(/, ['board/local.ts', 'board/contract.ts', decide])).toEqual([]);
+  });
+
+  it('M5-1b TP-155 limits the key of the decisions folder to the state layout, the record path and the local board', () => {
+    expect(rel(withText(/\bprofileDecisions\b/))).toEqual([
+      'board/decision-record.ts',
+      'board/local.ts',
+      'state/layout.ts',
+    ]);
+    expect(rel(withText(/\bdirs\.decisions\b/))).toEqual(['state/layout.ts']);
+  });
+
+  it('M5-1b TP-165 reads the stage key in none of the decide sources', () => {
+    const decideSources = [
+      'commands/decide.ts',
+      'board/decide.ts',
+      'board/decision-record.ts',
+      'core/owner-record.ts',
+      'core/request-hash.ts',
+      'board/local.ts',
+    ];
+    for (const path of decideSources) {
+      const code = textOf(join(SRC, path));
+      expect(code, path).not.toMatch(/\bstage\b/i);
+      expect(code, path).not.toMatch(/\bboardKeys\b/);
+    }
   });
 
   it('has the private file writer in the three modules that own a store, and in no other module', () => {

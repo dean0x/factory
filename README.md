@@ -6,10 +6,10 @@ A node is a folder with a config file, a layer and an owner. A node on layer 1 o
 
 ## Install
 
-factory is in early access. It is not on the npm registry. A developer with read access to the private repo installs it from a private tag `v0.2.0-ea.N`. The owner gives you the number `N` and the commit SHA. `<sha>` is the full 40-character commit SHA of the tag. First check with `git ls-remote` that the tag points to `<sha>`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run this pair of commands in a new empty folder:
+factory is in early access. It is not on the npm registry. Install it from a tag `v0.2.0-ea.N` of this repo. Use the newest tag on the repo page. `<sha>` is the full 40-character commit SHA of the tag. First check with `git ls-remote` that the tag points to `<sha>`, as the guide [docs/quick-start.md](docs/quick-start.md) says. Then run this pair of commands in a new empty folder:
 
 ```sh
-npm pack "git+ssh://git@github.com/dean0x/factory.git#<sha>"
+npm pack "git+https://github.com/dean0x/factory.git#<sha>"
 npm install --global ./dean0x-factory-0.2.0.tgz
 ```
 
@@ -110,7 +110,7 @@ The recipe lists the approval points. The points of the `software` recipe are `m
 - A `delegated` mode in `factory.local.yaml` with no matching approval record counts as `owner`. `doctor` and `start` warn about it, and show the points with the mode `delegated`.
 - A delegation counts only for work that the owner approved and assigned.
 - The list of points travels with the recipe. The mode of each point stays in `factory.local.yaml`, because a delegation is owner authority.
-- To change a mode later, run `factory init` again in the factory folder (see "Run `init` again"). The command `factory decide` comes in FAC-M5. It answers decisions, and it sets no approval mode.
+- To change a mode later, run `factory init` again in the factory folder (see "Run `init` again"). The command `factory decide` answers decisions, and it sets no approval mode. See "Answer a decision".
 - On a new factory, run `factory upgrade` after a recorded delegation to render the text of the coordinator again. A second `init` that changes a mode renders it by itself.
 
 ### Find the factory folder
@@ -309,7 +309,26 @@ factory queue show
 - **The queue.** `queue set NAME` finds a row by its exact name, and makes a new row at the end when no row has that name. `--item` replaces the whole list of items of the row. The queue has at most 30 rows, and a row has at most 30 items.
 - **Limits.** A text over 1 MiB for one of the three files is refused with exit code 1, and nothing is written. `doctor` warns when a file reaches 80 percent of that cap. A file that is corrupt, is not valid UTF-8 or holds a repeated id stops the command with exit code 1 and names the file. A command that prints a stored text removes control, bidi and invisible characters, turns a line break or a tab into one space, and cuts the line to 120 characters.
 
-No command needs python3, jq or glow. The format of the three files is a promise, so a view outside the core can read them. In M5-1b such a view only reads. A page answer that records through the owner store is a later step (FAC-M5b).
+No command needs python3, jq or glow. The format of the three files is a promise, so a view outside the core can read them. In M5-1b such a view only reads.
+
+### Answer a decision
+
+An open request waits in `waiting.json` until you answer it. Answer it with `factory decide`:
+
+```sh
+factory decide D-1 a --note "Tool A costs less."
+```
+
+The command is `factory decide <D-n> <option> [--note TEXT] [--home DIR]`. It shows the whole request and asks you to confirm with `y`. Any other answer exits with code 2 and writes nothing.
+
+- **Where to run it.** Run it in your own terminal window. `decide` refuses with exit code 4 inside a Claude Code session (`CLAUDECODE` is set), inside a factory session (`FACTORY_SESSION` is set), and when input or output is not a terminal window. Do not paste it into a Claude Code session as a `!` command. The session sets `CLAUDECODE`, so `decide` refuses.
+- **The proof.** The record in the owner store is the only proof. It is the file `owner-decisions.json` of the user in the state folder, beside the factory list, and it is outside the factory folder. The log row and the profile record are display copies. They show the answer, and they prove nothing.
+- **What it writes.** It writes the owner store record first. Then it writes one row in `decision-log.json`, one profile record `decision-profile/decisions/<yyyy-mm-dd>-d-<n>[-<slug>].md` and one line at the top of `decision-profile/log.md`, in one commit in the state repo. The note is one line of 1 to 500 characters. It goes into the profile record only.
+- **A second answer.** A request has one answer. `decide` with another option on a request that has a record exits with code 1 and changes nothing. To change an answer, add a new request. If a stop came after the owner store record and before the commit, run the same command again to finish the copies.
+- **The next number.** `request add` counts the records of this node and this real root in the owner decision file. `request close` refuses a request that has a record. `request add` and `request close` exit with code 1 when the owner decision file cannot be read.
+- **Other limits.** A board kind other than `local` refuses `decide` with exit code 4 until FAC-M11 and FAC-M3. `factory decide read` is not in this version and exits with code 2.
+
+The review desk page only reads. A page answer is a board event: it shows and wakes, and it records nothing. Only `factory decide` records a decision.
 
 ### Dismiss a worker
 
@@ -637,6 +656,14 @@ The integration tests, the exit check and the install check use `dist/factory.js
 The install check pushes the commit of this checkout into a throw-away bare repo. Then `npm pack` builds that commit with `prepare`, and `npm install --global` installs the tarball in a throw-away prefix. The check compares the installed `dist/factory.js` with the build. It runs the install scripts of the packages, and it needs the npm registry. It never writes the real `HOME`, the real npm prefix or this repo.
 
 `npm run check:docs` checks that the design documents agree with each other.
+
+## Status and project notes
+
+factory is in early access. The commands and the config files can change before 1.0.
+
+The folder `docs/` holds the design, the roadmap, the plans and the review summaries of the project. They describe the setup of the author as the first user. Their ids, for example `F-12`, `D-49` or `TB-5`, point to the notes of the author. You do not need these ids to use factory.
+
+To report a problem, open an issue on GitHub. The guide [docs/quick-start.md](docs/quick-start.md), part 13, tells what to put in it.
 
 ## License
 
