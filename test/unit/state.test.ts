@@ -147,6 +147,7 @@ describe('layout', () => {
       workerMd: '/h/node/.factory/roles/worker.md',
       backupsDir: '/h/node/.factory/backups',
       workersDir: '/h/node/.factory/workers',
+      inboxDir: '/h/node/.factory/inbox',
       runtimeDir: '/h/node/.factory/state',
       heartbeatDir: '/h/node/.factory/state/heartbeat',
       coordinatorLastSessionFile: '/h/node/.factory/state/coordinator-last-session',

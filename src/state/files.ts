@@ -14,12 +14,15 @@ export const initialDecisionLogText = (): string => jsonText({ rows: [] });
 /** The folders that every state repo has ignored from the start. */
 const FIRST_IGNORED_DIRS: readonly string[] = [dirs.runtime, dirs.locks, dirs.backups];
 
+/** The line that keeps the inbox of a node out of its state repo. */
+export const INBOX_GITIGNORE_LINE = `${dirs.inbox}/`;
+
 /**
  * The lines that a later version added to `STATE_GITIGNORE`: the registry of the workers, and the inbox of the messages from a
  * parent node. A state repo from before lacks them, and `upgrade` adds each one that is missing. A later version adds its line
  * to this list.
  */
-export const ADDED_GITIGNORE_LINES: readonly string[] = [dirs.workers, dirs.inbox].map((dir) => `${dir}/`);
+export const ADDED_GITIGNORE_LINES: readonly string[] = [`${dirs.workers}/`, INBOX_GITIGNORE_LINE];
 
 /** The runtime folders, the backups, the registry of the workers and the inbox are not part of the state repository. */
 export const STATE_GITIGNORE: string = [...FIRST_IGNORED_DIRS.map((dir) => `${dir}/`), ...ADDED_GITIGNORE_LINES]

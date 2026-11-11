@@ -23,7 +23,7 @@ export interface StateGitignoreTexts extends GitignoreTexts {
  * The text of a `.gitignore`, or null when the file is not there. `label` names the file for a person. A path that is not
  * a file and a file that is too large are errors (exit 1) with a remedy line.
  */
-const readGitignore = async (
+export const readGitignore = async (
   deps: Deps,
   path: string,
   label: string,
