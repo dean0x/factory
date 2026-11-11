@@ -302,7 +302,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'string',
         placeholder: 'FILE',
         description:
-`With ${nodeCommands.send}: write the text of FILE as a new file in the inbox folder of the child. ` +
+          `With ${nodeCommands.send}: write the text of FILE as a new file in the inbox folder of the child. ` +
           `FILE is in ${assignmentSource.ordersShown} of the ${places.folder}, or in the git work tree of the working folder. ` +
           `The new file carries no authority of the ${roles.owner}.`,
       },

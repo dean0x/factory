@@ -130,7 +130,7 @@ export const stateCommands = { guard: 'guard' } as const;
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
   nodeSend: `${commands.node} ${nodeCommands.send}`,
-  workerNew:`${commands.worker} ${workerCommands.new}`,
+  workerNew: `${commands.worker} ${workerCommands.new}`,
   workerList: `${commands.worker} ${workerCommands.list}`,
   workerStop: `${commands.worker} ${workerCommands.stop}`,
   workerResume: `${commands.worker} ${workerCommands.resume}`,
