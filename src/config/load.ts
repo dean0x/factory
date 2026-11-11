@@ -1,5 +1,6 @@
 import { LineCounter, parseDocument } from 'yaml';
 import { safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { accessFaultOf } from '../core/access.js';
 import type { Deps } from '../core/deps.js';
 import type { NodeIdentity } from '../core/home.js';
 import { err, ok, type Result } from '../core/result.js';
@@ -128,10 +129,11 @@ export const localFileAccess = async (deps: Deps, home: string): Promise<CliResu
   if (!info.ok) return info;
   if (info.value === null) return ok({ kind: 'absent' });
   if (info.value.kind !== 'file') return safetyRefusal(`${files.localConfig} is not a file`, LOCAL_FILE_REMEDY);
-  if (deps.uid !== null && info.value.uid !== deps.uid) {
+  const fault = accessFaultOf(deps, info.value);
+  if (fault === 'otherOwner') {
     return safetyRefusal(`${files.localConfig} belongs to another account, so ${program} does not read it`, LOCAL_FILE_REMEDY);
   }
-  if ((info.value.mode & localFileModes.groupOtherWrite) !== 0) {
+  if (fault === 'writableByOthers') {
     return safetyRefusal(
       `${files.localConfig} can be changed by other accounts (mode ${info.value.mode.toString(8)}), so ${program} does not read it`,
       LOCAL_FILE_REMEDY,
