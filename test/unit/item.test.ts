@@ -6,7 +6,6 @@ import type { CommandOutput } from '../../src/cli/output.js';
 import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { toolNames } from '../../src/core/tools.js';
-import { launchArgv } from '../../src/launch/argv.js';
 import { boardKeys, commands, commandText, files as fileNames, mergeCheck, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import type { RecipeRegistry } from '../../src/recipes/entry.js';
@@ -14,13 +13,13 @@ import { softwareBoard } from '../../src/recipes/software/board.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { branchOf, workCopyOf, writeWorkerRecord } from '../../src/workers/registry.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
+import { inPane } from '../helpers/coordinator-pane.js';
 import { BOARD_PATH, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
 import { exited, missingProgram, withFsWatch, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { HOME } from '../helpers/guard-fixture.js';
 import { publishBoard, publishRecipe, publishRegistry } from '../helpers/publish-recipe.js';
 import { sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
-import { tmuxHandler } from '../helpers/tmux-fake.js';
 
 const BASE: ItemOptions = {
   home: HOME,
@@ -347,7 +346,6 @@ describe('item with a hosted tracker kind (TP-67)', () => {
 const MERGE_SHA = 'a'.repeat(40);
 const HEAD_SHA = 'b'.repeat(40);
 const WORKER = 'alpha';
-const NODE = sampleConfigWithBoard().core.node.id;
 
 /** What `gh pr view --json` gives for PR 12 of the sample project, merged into main from the branch of the worker. */
 const goodPr = (change: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -642,38 +640,6 @@ describe('item update: the worker field of an item that has a worker (AC-4)', ()
 
 describe('item unassign: take the worker off an item (AC-3)', () => {
   const BOARD = boardText([itemRecord('B-1', { status: 'doing', stage: 'review', lane: WORKER }), itemRecord('B-2')], TRACKS);
-
-  /** The program words of the coordinator pane, as the launch of the coordinator gives them. */
-  const coordinatorWords = (): readonly string[] => {
-    const argv = launchArgv({
-      effort: 'high',
-      model: 'default',
-      proxyBaseUrl: null,
-      path: '/bin',
-      agent: 'claude',
-      home: HOME,
-      coordinatorDir: LAYOUT.coordinatorDir,
-      stateDir: LAYOUT.stateDir,
-      sessionId: NODE,
-      projects: [],
-    });
-    if (!argv.ok) throw new Error(argv.error);
-    return argv.value;
-  };
-
-  /** The deps of a caller in a pane of a running session of the node. The pane `%0` is the pane of the coordinator. */
-  const inPane = (deps: FakeDeps, pane: string, tmuxCalls: (readonly string[])[] = []): FakeDeps => {
-    const { handler } = tmuxHandler({ sessions: { [NODE]: HOME }, coordinatorCommands: { [NODE]: coordinatorWords() } });
-    return {
-      ...deps,
-      env: { ...deps.env, TMUX_PANE: pane, FACTORY_SESSION: NODE },
-      run: async (command, args, options) => {
-        if (command !== toolNames.tmux) return deps.run(command, args, options);
-        tmuxCalls.push(args);
-        return handler({ command, args, cwd: options?.cwd });
-      },
-    };
-  };
 
   const unassign = (deps: FakeDeps, id = 'B-1'): Promise<CliResult<CommandOutput>> => runItem(deps, { ...BASE, words: ['unassign', id] }, recipes);
 
