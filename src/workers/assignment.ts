@@ -133,8 +133,10 @@ const placeOf = async (
 /**
  * The absolute path of the file. A relative path whose first parts are the orders folder names a file of the orders folder of the
  * factory folder, from any working folder: the help and the coordinator block name it so. Every other relative path starts at the
- * working folder. The parts are compared after `normalize`, so a path that only reaches the orders folder by a climb (`x/..`)
- * starts at the working folder too.
+ * working folder. Each step has one job. `normalize` makes `./.factory/orders/x` the same as `.factory/orders/x`; it also folds a
+ * climb, so it can not stop one. The check of the raw path for a `..` part stops it: a relative path that has no `..` part and starts
+ * with the orders folder resolves from the factory folder, and a path with a `..` part starts at the working folder, also when the
+ * climb ends in the orders folder.
  */
 const sourceOf = (deps: Deps, home: string, path: string): string => {
   if (isAbsolute(path)) return resolve(path);

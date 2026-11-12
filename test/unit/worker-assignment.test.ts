@@ -218,8 +218,11 @@ describe('TP-33: a good source gives its text', () => {
   it('TP-33: a path that only looks like the orders folder after a climb resolves from the working folder', async () => {
     const made = make({ files: { [`${HOME}/.factory/orders/task.md`]: TEXT }, cwd: `${HOME}/coordinator`, workTree: false });
     made.deps.seedDir(`${HOME}/coordinator`);
-    expect(codeOf(await read(made.deps, 'x/../.factory/orders/missing.md'))).toBe(2);
-    expect(errorOf(await read(made.deps, '.factory/orders/../orders-copy/task.md')).message).toContain(`${HOME}/coordinator/`);
+    for (const path of ['x/../.factory/orders/task.md', '.factory/orders/../orders/task.md']) {
+      const result = await read(made.deps, path);
+      expect(codeOf(result)).toBe(2);
+      expect(errorOf(result).message).toContain(`${HOME}/coordinator/.factory/orders/task.md`);
+    }
   });
 
   it('TP-33: reads a file below a folder of the orders folder', async () => {
