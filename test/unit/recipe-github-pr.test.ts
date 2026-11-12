@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { RunOutput } from '../../src/core/deps.js';
-import { githubRepoOf, parsePrNumber, readMergedPr, type MergedRead } from '../../src/board/github-pr.js';
+import { githubRepoOf, mergeCheck, parsePrNumber, readMergedPr, type MergedRead } from '../../src/recipes/software/github-pr.js';
 import { ghTimeoutMs } from '../../src/names.js';
 import { createFakeDeps, exited, missingProgram, type RunHandler } from '../helpers/fake-deps.js';
 
@@ -39,6 +39,36 @@ const errorOf = async (result: Promise<CliResult<MergedRead>>): Promise<CliError
 };
 
 const textOf = (error: CliError): string => `${error.message} ${error.hint ?? ''}`;
+
+describe('mergeCheck', () => {
+  it('reads a PR number of one to nine digits with no leading zero', () => {
+    for (const text of ['1', '12', '999999999']) expect(mergeCheck.prPattern.test(text)).toBe(true);
+    for (const text of ['', '0', '01', '1234567890', '-1', '1.5', ' 1', '1\n']) expect(mergeCheck.prPattern.test(text)).toBe(false);
+  });
+
+  it('reads a sha as exactly 40 lowercase hex digits', () => {
+    expect(mergeCheck.shaPattern.test('0123456789abcdef'.repeat(2) + '01234567')).toBe(true);
+    for (const text of ['', 'a'.repeat(39), 'a'.repeat(41), 'A'.repeat(40), `${'a'.repeat(40)}\n`, 'g'.repeat(40)]) {
+      expect(mergeCheck.shaPattern.test(text)).toBe(false);
+    }
+  });
+
+  it('asks gh for the nine fields of the PR in one comma list, and accepts the state MERGED on github.com', () => {
+    expect(mergeCheck.fieldList.split(',')).toEqual([
+      'number',
+      'state',
+      'mergedAt',
+      'mergeCommit',
+      'headRefName',
+      'headRefOid',
+      'baseRefName',
+      'isCrossRepository',
+      'url',
+    ]);
+    expect(mergeCheck.mergedState).toBe('MERGED');
+    expect(mergeCheck.host).toBe('github.com');
+  });
+});
 
 describe('parsePrNumber', () => {
   it('reads a whole number of one to nine digits with no leading zero', async () => {

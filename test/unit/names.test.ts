@@ -23,7 +23,6 @@ import {
   markLimits,
   maxFileBytes,
   maxTrackLines,
-  mergeCheck,
   messageFile,
   messageHeader,
   messageHeaderLines,
@@ -1536,8 +1535,8 @@ describe('the names of node send', () => {
 });
 
 describe('the names of the board records', () => {
-  it('gives the merge, unassign and log commands a name for the remedy lines', () => {
-    expect(commandLines.itemMerged).toBe(`${commands.item} ${itemCommands.merged}`);
+  it('gives the record, unassign and log commands a name for the remedy lines', () => {
+    expect(commandLines.itemRecord).toBe(`${commands.item} ${itemCommands.record}`);
     expect(commandLines.itemUnassign).toBe(`${commands.item} ${itemCommands.unassign}`);
     expect(commandLines.requestLog).toBe(`${commands.request} ${requestCommands.log}`);
   });
@@ -1546,12 +1545,12 @@ describe('the names of the board records', () => {
     expect(Object.values(requestCommands)).toEqual(['add', 'list', 'close', 'log']);
   });
 
-  it('adds the merged and unassign subcommands of item after the five older ones', () => {
-    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'merged', 'unassign']);
+  it('adds the record and unassign subcommands of item after the five older ones', () => {
+    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'record', 'unassign']);
   });
 
-  it('names the flags of the merge record and of the relayed close', () => {
-    expect(flags.pr).toBe('pr');
+  it('names the flags of the record and of the relayed close', () => {
+    expect(flags.ref).toBe('ref');
     expect(flags.relayed).toBe('relayed');
   });
 
@@ -1573,26 +1572,7 @@ describe('the names of the board records', () => {
     expect(markLimits.maxFormerWorkers).toBe(30);
   });
 
-  it('reads a PR number of one to nine digits with no leading zero', () => {
-    for (const text of ['1', '12', '999999999']) expect(mergeCheck.prPattern.test(text)).toBe(true);
-    for (const text of ['', '0', '01', '1234567890', '-1', '1.5', ' 1', '1\n']) expect(mergeCheck.prPattern.test(text)).toBe(false);
-  });
-
-  it('reads a sha as exactly 40 lowercase hex digits', () => {
-    expect(mergeCheck.shaPattern.test('0123456789abcdef'.repeat(2) + '01234567')).toBe(true);
-    for (const text of ['', 'a'.repeat(39), 'a'.repeat(41), 'A'.repeat(40), `${'a'.repeat(40)}\n`, 'g'.repeat(40)]) {
-      expect(mergeCheck.shaPattern.test(text)).toBe(false);
-    }
-  });
-
-  it('asks gh for the nine fields of the merge check in one comma list, and accepts the state MERGED on github.com', () => {
-    expect(mergeCheck.fieldList.split(',')).toHaveLength(9);
-    expect(mergeCheck.fieldList.split(',')).toEqual(Object.values(mergeCheck.fields));
-    expect(mergeCheck.mergedState).toBe('MERGED');
-    expect(mergeCheck.host).toBe('github.com');
-  });
-
-  it('gives the gh time limit that init and the merge check share', () => {
+  it('gives the gh time limit that init and the record check of the software recipe share', () => {
     expect(ghTimeoutMs).toBe(10_000);
   });
 });

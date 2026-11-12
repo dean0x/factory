@@ -109,14 +109,17 @@ export const workerCommands = {
   watch: 'watch',
 } as const;
 
-/** The subcommands of `item`. `merged` records a merged PR and `unassign` takes the worker off an item. */
+/**
+ * The subcommands of `item`. `record` runs the record check of the recipe and records its result, and `unassign` takes the worker
+ * off an item.
+ */
 export const itemCommands = {
   add: 'add',
   update: 'update',
   move: 'move',
   close: 'close',
   list: 'list',
-  merged: 'merged',
+  record: 'record',
   unassign: 'unassign',
 } as const;
 
@@ -153,7 +156,7 @@ export const commandLines = {
   itemMove: `${commands.item} ${itemCommands.move}`,
   itemClose: `${commands.item} ${itemCommands.close}`,
   itemList: `${commands.item} ${itemCommands.list}`,
-  itemMerged: `${commands.item} ${itemCommands.merged}`,
+  itemRecord: `${commands.item} ${itemCommands.record}`,
   itemUnassign: `${commands.item} ${itemCommands.unassign}`,
   trackAdd: `${commands.track} ${trackCommands.add}`,
   trackList: `${commands.track} ${trackCommands.list}`,
@@ -188,7 +191,7 @@ export const flags = {
   ready: 'ready',
   madeBy: 'made-by',
   decision: 'decision',
-  pr: 'pr',
+  ref: 'ref',
   relayed: 'relayed',
   file: 'file',
   field: 'field',
@@ -564,9 +567,9 @@ export const minGitVersion = '2.26';
 /**
  * The keys of `board.json`. The top keys are the queue (its key comes from the recipe), the list of items and the list of
  * tracks. `defaultQueue` is the key of the queue when the recipe gives none. The other keys belong to an item (`id`, `title`,
- * `status`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`). `mergedPrHead` is the head sha of the merged PR that
- * `item merged` records, and `unassignedFrom` is the list of the workers that `item unassign` took off the item. Both are
- * reserved field names, so no owner field can take their place.
+ * `status`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`). `mergedPrHead` is the head sha that the record check of the
+ * recipe gave when `item record` recorded the item, and `unassignedFrom` is the list of the workers that `item unassign` took off
+ * the item. Both are reserved field names, so no owner field can take their place.
  */
 export const boardKeys = {
   items: 'items',
@@ -788,9 +791,6 @@ export const reservedFieldNames: readonly string[] = [
   boardKeys.unassignedFrom,
 ];
 
-/** The stage that a merge record sets on an item. The recipe must list it. */
-export const mergedStage = 'merged';
-
 /** The most workers that the list of former workers of one item (`boardKeys.unassignedFrom`) holds. */
 export const markLimits = { maxFormerWorkers: 30 } as const;
 
@@ -805,37 +805,6 @@ export const workerFieldGuard = {
 
 /** The time limit of one run of `gh`, in milliseconds. */
 export const ghTimeoutMs = 10_000;
-
-/** The fields of a PR that `gh pr view --json` gives, under the name that the merge check uses for each. */
-const prFields = {
-  number: 'number',
-  state: 'state',
-  mergedAt: 'mergedAt',
-  mergeCommit: 'mergeCommit',
-  headBranch: 'headRefName',
-  headSha: 'headRefOid',
-  baseBranch: 'baseRefName',
-  crossRepository: 'isCrossRepository',
-  url: 'url',
-} as const;
-
-/**
- * The merge check, which reads one PR with `gh pr view`. The PR number has one to nine digits and no leading zero. A sha has 40
- * lowercase hex digits. `fields` are the names that `gh` gives in its JSON, `fieldList` is the list that the `--json` option takes,
- * and `mergeCommitSha` is the key of the commit inside `mergeCommit`. `words` are the arguments of `gh`. Only a PR in the state
- * `mergedState` on `host` passes. `maxOutputChars` bounds the output that is read.
- */
-export const mergeCheck = {
-  host: 'github.com',
-  mergedState: 'MERGED',
-  prPattern: /^[1-9][0-9]{0,8}$/,
-  shaPattern: /^[0-9a-f]{40}$/,
-  maxOutputChars: 16_384,
-  fields: prFields,
-  fieldList: Object.values(prFields).join(','),
-  mergeCommitSha: 'oid',
-  words: { group: 'pr', verb: 'view', repoFlag: '--repo', jsonFlag: '--json', endOfFlags: '--' },
-} as const;
 
 /**
  * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to `maxTokenChars` letters, digits,

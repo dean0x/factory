@@ -719,13 +719,15 @@ describe('the item and track commands in the command line', () => {
     expect(result.err).toContain('--follow is not for');
   });
 
-  it('shows the merge record and the release of a worker in the help of item, with their flags', async () => {
+  it('shows the record and the release of a worker in the help of item, with their flags, and the words of the recipe', async () => {
     const result = await run(['item', '--help']);
     expect(result.code).toBe(0);
-    expect(result.out).toContain('factory item merged ID --pr N [--project PROJECT] [--home DIR]');
+    expect(result.out).toContain('factory item record ID --ref REF [--project PROJECT] [--home DIR]');
     expect(result.out).toContain('factory item unassign ID [--home DIR]');
-    expect(result.out).toMatch(/--pr N\s+With merged: the number of the PR\./);
-    expect(result.out).toMatch(/--project PROJECT\s+With merged: the id of the project of the PR\./);
+    expect(result.out).toContain('record a merged PR, and take the worker off an item');
+    expect(result.out).toMatch(/--ref REF\s+With record: the reference that the check of the recipe reads\./);
+    expect(result.out).toMatch(/In the software recipe: the number of the PR\./);
+    expect(result.out).toMatch(/--project PROJECT\s+With record: the id of the project of the work\./);
   });
 
   it('says in the help of item that the worker field changes only through unassign', async () => {
@@ -733,17 +735,17 @@ describe('the item and track commands in the command line', () => {
     expect(result.out).toMatch(/The worker field of an item that names a worker changes only through\s+unassign\./);
   });
 
-  it('passes the PR flag and the project flag of item merged to the command', async () => {
+  it('passes the reference flag and the project flag of item record to the command', async () => {
     const repo = await boardNode({ board: boardText([itemRecord('B-1', { stage: 'review' })], []) });
     const runBoard = async (argv: readonly string[]) => {
       const sink = captureSink();
       const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
       return { code, err: sink.errors.join('') };
     };
-    const badNumber = await runBoard(['item', 'merged', 'B-1', '--pr', '012']);
+    const badNumber = await runBoard(['item', 'record', 'B-1', '--ref', '012']);
     expect(badNumber.code).toBe(2);
-    expect(badNumber.err).toContain('--pr: must be a whole number');
-    const unknownProject = await runBoard(['item', 'merged', 'B-1', '--pr', '12', '--project', 'nope']);
+    expect(badNumber.err).toContain('--ref: must be a whole number');
+    const unknownProject = await runBoard(['item', 'record', 'B-1', '--ref', '12', '--project', 'nope']);
     expect(unknownProject.code).toBe(2);
     expect(unknownProject.err).toContain('the project "nope" is not in the config');
     expect(repo.commits).toEqual([]);

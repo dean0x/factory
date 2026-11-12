@@ -1,15 +1,17 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
+import { exitCodeOf, failure, usageError, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
+import { ok } from '../../src/core/result.js';
 import { toolNames } from '../../src/core/tools.js';
-import { boardKeys, commands, commandText, files as fileNames, mergeCheck, stateLock } from '../../src/names.js';
+import { boardKeys, commands, commandText, files as fileNames, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
-import type { RecipeRegistry } from '../../src/recipes/entry.js';
+import type { CheckedRecord, RecipeRegistry, RecordCheck, RecordCheckInput } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
+import { mergeCheck } from '../../src/recipes/software/github-pr.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { branchOf, workCopyOf, writeWorkerRecord } from '../../src/workers/registry.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
@@ -32,7 +34,7 @@ const BASE: ItemOptions = {
   stage: undefined,
   all: false,
   follow: false,
-  pr: undefined,
+  ref: undefined,
   project: undefined,
   json: false,
 };
@@ -270,7 +272,7 @@ describe('item add and update with a track (TP-79, TP-81, TP-89)', () => {
 describe('item: the words and the flags are checked before the node is read (exit 2)', () => {
   const BAD: readonly (readonly [string, Partial<ItemOptions>, string])[] = [
     ['no subcommand', { words: [] }, 'needs a subcommand'],
-    ['an unknown subcommand', { words: ['remove', 'B-1'] }, 'add, update, move, close, list, merged, unassign'],
+    ['an unknown subcommand', { words: ['remove', 'B-1'] }, 'add, update, move, close, list, record, unassign'],
     ['add with no title', { words: ['add'] }, '--title'],
     ['add with an id', { words: ['add', 'B-9'], title: 'New' }, 'takes no argument'],
     ['update with no id', { words: ['update'], title: 'x' }, 'the id of an item'],
@@ -284,15 +286,13 @@ describe('item: the words and the flags are checked before the node is read (exi
     ['add with the flag to follow', { words: ['add'], title: 'New', follow: true }, '--follow is not for'],
     ['move with the flag to follow', { words: ['move', 'B-1'], stage: 'building', follow: true }, '--follow is not for'],
     ['close with the flag to follow', { words: ['close', 'B-1'], follow: true }, '--follow is not for'],
-    ['merged with no id', { words: ['merged'], pr: '12' }, 'the id of an item'],
-    ['merged with no PR number', { words: ['merged', 'B-1'] }, 'needs --pr'],
-    ['merged with a PR number that has a leading zero', { words: ['merged', 'B-1'], pr: '012' }, '--pr: must be a whole number'],
-    ['merged with a PR number that is not a number', { words: ['merged', 'B-1'], pr: 'abc' }, '--pr: must be a whole number'],
-    ['merged with a flag of another subcommand', { words: ['merged', 'B-1'], pr: '12', title: 'x' }, '--title is not for'],
-    ['close with the PR flag', { words: ['close', 'B-1'], pr: '12' }, '--pr is not for'],
+    ['record with no id', { words: ['record'], ref: '12' }, 'the id of an item'],
+    ['record with no reference', { words: ['record', 'B-1'] }, 'needs --ref'],
+    ['record with a flag of another subcommand', { words: ['record', 'B-1'], ref: '12', title: 'x' }, '--title is not for'],
+    ['close with the reference flag', { words: ['close', 'B-1'], ref: '12' }, '--ref is not for'],
     ['update with the project flag', { words: ['update', 'B-1'], title: 'x', project: 'web' }, '--project is not for'],
     ['unassign with no id', { words: ['unassign'] }, 'the id of an item'],
-    ['unassign with a flag of another subcommand', { words: ['unassign', 'B-1'], pr: '12' }, '--pr is not for'],
+    ['unassign with a flag of another subcommand', { words: ['unassign', 'B-1'], ref: '12' }, '--ref is not for'],
   ];
 
   it.each(BAD)('M5-1b TP-22 %s exits 2 and touches no file', async (_name, overrides, message) => {
@@ -429,9 +429,9 @@ const mergeWorld = async (setup: MergeSetup = {}): Promise<MergeWorld> => {
 };
 
 const runMerge = (world: MergeWorld, overrides: Partial<ItemOptions> = {}, registry: RecipeRegistry = recipes): Promise<CliResult<CommandOutput>> =>
-  runItem(world.gh.deps, { ...BASE, words: ['merged', 'B-1'], pr: '12', ...overrides }, registry);
+  runItem(world.gh.deps, { ...BASE, words: ['record', 'B-1'], ref: '12', ...overrides }, registry);
 
-describe('item merged: the record of a merge (AC-1)', () => {
+describe('item record with the software recipe: the record of a merge (AC-1)', () => {
   it('records the stage, the closed state and the PR head in one commit of the board file, and takes the item out of the queue', async () => {
     const world = await mergeWorld();
     const text = outputOf(await runMerge(world));
@@ -452,7 +452,7 @@ describe('item merged: the record of a merge (AC-1)', () => {
     valueOf(await runMerge(world));
     expect(world.gh.calls).toHaveLength(1);
     const [args] = world.gh.calls;
-    expect(args?.slice(0, 2)).toEqual([mergeCheck.words.group, mergeCheck.words.verb]);
+    expect(args?.slice(0, 2)).toEqual(['pr', 'view']);
     expect(args).toContain(`${mergeCheck.host}/acme/web`);
     expect(args?.slice(-2)).toEqual([mergeCheck.words.endOfFlags, '12']);
   });
@@ -461,7 +461,7 @@ describe('item merged: the record of a merge (AC-1)', () => {
     const world = await mergeWorld();
     valueOf(await runMerge(world));
     const again = outputOf(await runMerge(world));
-    expect(again.trimEnd().split('\n')).toEqual(['B-1: PR 12 already recorded']);
+    expect(again.trimEnd().split('\n')).toEqual([`B-1: PR 12, merge commit ${MERGE_SHA} already recorded`]);
     expect(world.repo.commits).toHaveLength(1);
   });
 
@@ -487,11 +487,19 @@ describe('item merged: the record of a merge (AC-1)', () => {
   it('prints the document for the JSON flag', async () => {
     const world = await mergeWorld();
     const output = valueOf(await runMerge(world, { json: true }));
-    expect(output.json).toMatchObject({ action: 'merged', id: 'B-1', pr: 12, commit: MERGE_SHA, changed: true });
+    expect(output.json).toMatchObject({
+      action: 'record',
+      id: 'B-1',
+      stage: 'merged',
+      ref: '12',
+      head: HEAD_SHA,
+      summary: `PR 12, merge commit ${MERGE_SHA}`,
+      changed: true,
+    });
   });
 });
 
-describe('item merged: the check fails closed (AC-2)', () => {
+describe('item record with the software recipe: the check fails closed (AC-2)', () => {
   const FAULTS: readonly (readonly [string, Partial<MergeSetup>, string])[] = [
     ['gh is not installed', { answer: () => missingProgram(toolNames.gh) }, 'gh could not read PR 12'],
     ['gh exits with an error', { answer: () => exited(1, '', 'not signed in') }, 'gh could not read PR 12'],
@@ -545,15 +553,20 @@ describe('item merged: the check fails closed (AC-2)', () => {
     expectUntouched(world.repo, MERGE_BOARD);
   });
 
-  it.each(['0', '012', '-1', '1.5', '1e3', ' 12', '12abc', '1234567890'])('exits 2 for the PR number %j before any call of gh and any file', async (pr) => {
-    const world = await mergeWorld();
-    const touched: string[] = [];
-    const watched = withFsWatch(world.gh.deps, (method, path) => touched.push(`${method} ${path}`));
-    const error = errorOf(await runItem(watched, { ...BASE, words: ['merged', 'B-1'], pr }, recipes));
-    expect(exitCodeOf[error.kind]).toBe(2);
-    expect(world.gh.calls).toEqual([]);
-    expect(touched).toEqual([]);
-  });
+  it.each(['0', '012', '-1', '1.5', '1e3', ' 12', '12abc', '1234567890', 'abc'])(
+    'exits 2 for the PR number %j before any call of gh, any read of the board file and any read of a worker record',
+    async (ref) => {
+      const world = await mergeWorld();
+      const touched: string[] = [];
+      const watched = withFsWatch(world.gh.deps, (method, path) => touched.push(`${method} ${path}`));
+      const error = errorOf(await runItem(watched, { ...BASE, words: ['record', 'B-1'], ref }, recipes));
+      expect(exitCodeOf[error.kind]).toBe(2);
+      expect(error.message).toContain('--ref: must be a whole number');
+      expect(world.gh.calls).toEqual([]);
+      expect(touched.filter((path) => path.includes(BOARD_PATH) || path.includes(LAYOUT.workersDir))).toEqual([]);
+      expectUntouched(world.repo, MERGE_BOARD);
+    },
+  );
 
   it('keeps the refusal of item move --stage merged', async () => {
     const world = await mergeWorld();
@@ -563,10 +576,10 @@ describe('item merged: the check fails closed (AC-2)', () => {
   });
 });
 
-describe('item merged: the local checks come before any call of gh', () => {
+describe('item record with the software recipe: the local checks come before any call of gh', () => {
   const REFUSED: readonly (readonly [string, Partial<MergeSetup>, Partial<ItemOptions>, number])[] = [
-    ['an item that is not on the board', {}, { words: ['merged', 'B-9'] }, 2],
-    ['an id that is not an item id', {}, { words: ['merged', 'not-an-id'] }, 2],
+    ['an item that is not on the board', {}, { words: ['record', 'B-9'] }, 2],
+    ['an id that is not an item id', {}, { words: ['record', 'not-an-id'] }, 2],
     ['a setup with no board block', { config: sampleConfig() }, {}, 2],
     ['a project that the config does not list', { record: false }, { project: 'nope' }, 2],
     ['a project that is not the project of the worker', {}, { project: 'other' }, 2],
@@ -580,7 +593,7 @@ describe('item merged: the local checks come before any call of gh', () => {
     expectUntouched(world.repo, MERGE_BOARD);
   });
 
-  it('stops for a recipe with no merged stage and runs no gh', async () => {
+  it('stops for a recipe that does not list the stage of its check and runs no gh', async () => {
     const world = await mergeWorld();
     const bare: RecipeRegistry = [{ ...recipes[0], board: { ...recipes[0].board, stages: ['ticket', 'review'] } }];
     expect(exitOf(await runMerge(world, {}, bare))).toBe(2);
@@ -686,7 +699,7 @@ describe('item unassign: take the worker off an item (AC-3)', () => {
   });
 });
 
-describe('item merged: the base branch of a project that names none', () => {
+describe('item record with the software recipe: the base branch of a project that names none', () => {
   /** A registry whose recipe lets a project leave out its default branch, which the software recipe does not. */
   const loose: RecipeRegistry = [
     {
@@ -708,5 +721,109 @@ describe('item merged: the base branch of a project that names none', () => {
     expect(error.message).toContain('names no default branch');
     expect(world.gh.calls).toEqual([]);
     expectUntouched(world.repo, MERGE_BOARD);
+  });
+});
+
+describe('item record: the record check belongs to the recipe of the node', () => {
+  const PROOF_BOARD = boardText([itemRecord('B-1', { status: 'doing', stage: 'proof' })], []).replace('"merge"', `"${publishBoard.queueKey}"`);
+
+  const publishConfig = (): FactoryConfig => {
+    const base = sampleConfigWithBoard();
+    return {
+      ...base,
+      core: { ...base.core, approval: { publish: 'owner', send: 'owner' } },
+      recipe: { id: publishRecipe.id, variant: 'plain', projects: [{ id: 'web', path: 'web' }] },
+      entry: publishRecipe,
+    };
+  };
+
+  const checkCalls: RecordCheckInput[] = [];
+  const parseCalls: string[] = [];
+
+  /** The record check of the publishing recipe: it reads no GitHub, and it keeps the head `proof-1`. */
+  const proofCheck = (verdict: 'pass' | 'fail' = 'pass'): RecordCheck => ({
+    stage: 'approved',
+    summary: 'record a signed proof',
+    refHelp: 'the number of the proof',
+    parseRef: (text) => {
+      parseCalls.push(text);
+      return /^[0-9]+$/.test(text) ? ok(text) : usageError('the reference must be a number');
+    },
+    check: async (_deps, input) => {
+      checkCalls.push(input);
+      return verdict === 'pass'
+        ? ok({ stage: 'approved', ref: input.ref, head: 'proof-1', summary: `proof ${input.ref} signed` } as CheckedRecord)
+        : failure('the proof is not signed');
+    },
+  });
+
+  const registryWith = (check: RecordCheck): RecipeRegistry => [{ ...publishRecipe, recordCheck: check }];
+
+  const recording = (overrides: Partial<ItemOptions> = {}): Partial<ItemOptions> => ({ words: ['record', 'B-1'], ref: '7', project: 'web', ...overrides });
+
+  it('is a usage error with no write for a recipe that has no record check', async () => {
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const touched: string[] = [];
+    const watched = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
+    const error = errorOf(await runItem(watched, { ...BASE, ...recording() }, publishRegistry));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain(publishRecipe.id);
+    expect(error.message).toContain('has no check');
+    expect(touched.filter((path) => path.includes(BOARD_PATH))).toEqual([]);
+    expectUntouched(repo, PROOF_BOARD);
+  });
+
+  it('writes the stage and the head that the check of the recipe gives, with the output line of the check, and calls no gh', async () => {
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const gh = withGh(repo.deps, () => failure('no gh in this recipe'));
+    checkCalls.length = 0;
+    const text = plainText(valueOf(await runItem(gh.deps, { ...BASE, ...recording() }, registryWith(proofCheck()))));
+    expect(text.trimEnd().split('\n')).toEqual(['Recorded B-1: proof 7 signed']);
+    expect(itemIn(repo, 'B-1')).toMatchObject({ stage: 'approved', status: 'done', [boardKeys.mergedPrHead]: 'proof-1' });
+    expect(repo.commits).toHaveLength(1);
+    expect(repo.commits[0]?.message).toContain('approved');
+    expect(repo.commits[0]?.message).toContain('proof 7 signed');
+    expect(checkCalls).toHaveLength(1);
+    expect(checkCalls[0]).toMatchObject({ ref: '7', project: { id: 'web' }, cloneDir: join(HOME, 'web'), branch: undefined });
+    expect(gh.calls).toEqual([]);
+  });
+
+  it('reruns with no second commit and says that the record is made already', async () => {
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const registry = registryWith(proofCheck());
+    valueOf(await runItem(repo.deps, { ...BASE, ...recording() }, registry));
+    const again = plainText(valueOf(await runItem(repo.deps, { ...BASE, ...recording() }, registry)));
+    expect(again.trimEnd().split('\n')).toEqual(['B-1: proof 7 signed already recorded']);
+    expect(repo.commits).toHaveLength(1);
+  });
+
+  it('exits 1 with no write when the check fails', async () => {
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const error = errorOf(await runItem(repo.deps, { ...BASE, ...recording() }, registryWith(proofCheck('fail'))));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expectUntouched(repo, PROOF_BOARD);
+  });
+
+  it('exits 2 for a reference that the recipe refuses, before the item is read and before the check runs', async () => {
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    const touched: string[] = [];
+    const watched = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
+    checkCalls.length = 0;
+    parseCalls.length = 0;
+    const error = errorOf(await runItem(watched, { ...BASE, ...recording({ ref: 'not-a-number' }) }, registryWith(proofCheck())));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(parseCalls).toEqual(['not-a-number']);
+    expect(checkCalls).toEqual([]);
+    expect(touched.filter((path) => path.includes(BOARD_PATH))).toEqual([]);
+    expectUntouched(repo, PROOF_BOARD);
+  });
+
+  it('exits 2 with no write when the recipe does not list the stage of its check', async () => {
+    const repo = await boardNode({ board: PROOF_BOARD, config: publishConfig() });
+    checkCalls.length = 0;
+    const error = errorOf(await runItem(repo.deps, { ...BASE, ...recording() }, registryWith({ ...proofCheck(), stage: 'unlisted' })));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(checkCalls).toEqual([]);
+    expectUntouched(repo, PROOF_BOARD);
   });
 });

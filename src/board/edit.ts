@@ -17,7 +17,6 @@ import {
   markLimits,
   maxBoardNumber,
   maxEchoChars,
-  mergedStage,
   optionKeys,
   places,
   queueLimits,
@@ -29,7 +28,7 @@ import {
   waitingKeys,
   workerFieldGuard,
 } from '../names.js';
-import type { RecipeBoard } from '../recipes/entry.js';
+import type { CheckedRecord, RecipeBoard } from '../recipes/entry.js';
 import { isPlainPath } from '../state/board-commit.js';
 import type {
   BoardItem,
@@ -49,7 +48,6 @@ import type {
 } from './contract.js';
 import { declaredFields, itemTarget, resolveFields, rowTarget, type FieldInput } from './fields.js';
 import type { BoardDoc, DecisionLogDoc, WaitingDoc } from './files.js';
-import type { MergedPr } from './github-pr.js';
 import { rowItemsOf, rowNameOf } from './queue.js';
 import { requestTitleOf } from './requests.js';
 import { firstStageOf, requireSettableStage, requireStage } from './stages.js';
@@ -396,13 +394,29 @@ export const closeItemIn = (doc: BoardDoc, id: string, closed: string): CliResul
   return ok({ top: next.changed ? withItem(doc, id, next.record) : null, value: id });
 };
 
-/** The stage and the closed state that a merge record sets: the merged stage must be in the recipe, and the setup must name a closed state. */
-export const checkMergeSetup = (setup: BoardSetup): CliResult<{ readonly stage: string; readonly closed: string }> => {
-  const stage = requireStage(setup.recipe, mergedStage);
+/**
+ * The stage and the closed state that a record sets: the stage of the record check must be in the recipe (also one that only a flow
+ * sets), and the setup must name a closed state.
+ */
+export const checkRecordSetup = (
+  setup: BoardSetup,
+  recordStage: string,
+): CliResult<{ readonly stage: string; readonly closed: string }> => {
+  const stage = requireStage(setup.recipe, recordStage);
   if (!stage.ok) return stage;
   const closed = checkClose(setup);
   return closed.ok ? ok({ stage: stage.value, closed: closed.value }) : closed;
 };
+
+/** The setup check for a record that passed, before the lock: the stage of the record must be in the recipe, and the setup must name a closed state. */
+export const checkRecorded = (setup: BoardSetup, checked: CheckedRecord): CliResult<void> => {
+  const target = checkRecordSetup(setup, checked.stage);
+  return target.ok ? ok(undefined) : target;
+};
+
+/** The message of the commit that records a passed check: the item, the stage and the summary of the check. */
+export const recordMessage = (id: string, checked: CheckedRecord): string =>
+  `chore: record item ${id} as ${checked.stage} (${checked.summary})`;
 
 /** The worker field of the setup, else a usage error (exit 2): without a worker field no item has a worker to take off. */
 export const checkWorkerField = (setup: BoardSetup): CliResult<string> => {
@@ -428,23 +442,23 @@ const queueWithout = (doc: BoardDoc, id: string): { readonly rows: readonly Stor
 };
 
 /**
- * Record a merge in the item and the queue, in one top object. The item gets the merged stage (any listed stage, also one that only
- * a flow sets), the closed state and the head sha of the PR (`merged.prHead`; the merge commit goes to the message of the commit
- * only). The id leaves each queue row that lists it. The value is true when the board changes.
+ * Record a passed check in the item and the queue, in one top object. The item gets the stage of the check (any listed stage, also
+ * one that only a flow sets), the closed state and the head of the check (`checked.head`; the rest of the summary goes to the
+ * message of the commit only). The id leaves each queue row that lists it. The value is true when the board changes.
  *
- * `workerName` is the worker that the merge check bound to the item (null for none). The item must still hold exactly that worker
- * in the worker field, else the merge check read another item than the one that is on the board now: exit 1, nothing changes. An
- * item that records another head sha is exit 1 too. An item that holds the stage, the state and the head sha already, and that no
- * queue row lists, is a rerun: the edit gives no top object.
+ * `workerName` is the worker that the check bound to the item (null for none). The item must still hold exactly that worker in the
+ * worker field, else the check read another item than the one that is on the board now: exit 1, nothing changes. An item that
+ * records another head is exit 1 too. An item that holds the stage, the state and the head already, and that no queue row lists, is
+ * a rerun: the edit gives no top object.
  */
-export const recordMergeIn = (
+export const recordCheckedIn = (
   doc: BoardDoc,
   setup: BoardSetup,
   id: string,
-  merged: MergedPr,
+  checked: CheckedRecord,
   workerName: string | null,
 ): CliResult<Edit<boolean>> => {
-  const target = checkMergeSetup(setup);
+  const target = checkRecordSetup(setup, checked.stage);
   if (!target.ok) return target;
   const found = itemAt(doc, id);
   if (!found.ok) return found;
@@ -453,17 +467,17 @@ export const recordMergeIn = (
   const holds = workerField !== undefined && Object.hasOwn(record, workerField) ? record[workerField] : null;
   if (holds !== workerName) {
     return failure(
-      `the ${roles.worker} field of ${id} changed after the merge check`,
-      `Run "${commandText(commandLines.itemMerged)} ${id} ${flagText(flags.pr)} ${merged.number}" again.`,
+      `the ${roles.worker} field of ${id} changed after the check`,
+      `Run "${commandText(commandLines.itemRecord)} ${id} ${flagText(flags.ref)} ${displayLine(checked.ref, maxEchoChars)}" again.`,
     );
   }
-  if (Object.hasOwn(record, boardKeys.mergedPrHead) && record[boardKeys.mergedPrHead] !== merged.prHead) {
-    return failure(`${id} records the merge of another PR head already`);
+  if (Object.hasOwn(record, boardKeys.mergedPrHead) && record[boardKeys.mergedPrHead] !== checked.head) {
+    return failure(`${id} records another head already`);
   }
   const next = withKeys(record, [
     [boardKeys.status, target.value.closed],
     [boardKeys.stage, target.value.stage],
-    [boardKeys.mergedPrHead, merged.prHead],
+    [boardKeys.mergedPrHead, checked.head],
   ]);
   const queue = queueWithout(doc, id);
   if (!next.changed && !queue.changed) return ok({ top: null, value: false });

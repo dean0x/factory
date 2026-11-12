@@ -23,7 +23,7 @@ const BASE: ItemOptions = {
   stage: undefined,
   all: false,
   follow: false,
-  pr: undefined,
+  ref: undefined,
   project: undefined,
   json: false,
 };

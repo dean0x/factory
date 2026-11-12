@@ -1,9 +1,8 @@
 import { resolve } from 'node:path';
-import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, MergeRecorded } from '../board/contract.js';
-import { checkItemId, checkMergeSetup } from '../board/edit.js';
+import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, ItemRecorded } from '../board/contract.js';
+import { checkItemId, checkRecordSetup } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
 import { followBoard } from '../board/follow.js';
-import { githubRepoOf, parsePrNumber, readMergedPr, type MergedPr, type MergeReadInput } from '../board/github-pr.js';
 import { boardView, trackView } from '../board/list-view.js';
 import { requireLocalKind } from '../board/local.js';
 import { stageShown } from '../board/stages.js';
@@ -11,9 +10,9 @@ import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
-import { defaultBranchOf } from '../core/git.js';
 import { ok } from '../core/result.js';
-import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, keys, roles, schemaIds } from '../names.js';
+import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, roles, schemaIds } from '../names.js';
+import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { requireCoordinatorCaller } from '../workers/panes.js';
@@ -35,20 +34,20 @@ export interface ItemOptions {
   readonly all: boolean;
   /** Draw the list again at each change of the board, until the reader goes. Only `list` takes it. */
   readonly follow: boolean;
-  /** The PR number, as typed. Only `merged` takes it. */
-  readonly pr: string | undefined;
-  /** The id of the project of the PR. Only `merged` takes it. */
+  /** The reference for the record check of the recipe, as typed. Only `record` takes it. */
+  readonly ref: string | undefined;
+  /** The id of the project of the record. Only `record` takes it. */
   readonly project: string | undefined;
   readonly json: boolean;
 }
 
 type Subcommand = (typeof itemCommands)[keyof typeof itemCommands];
 
-/** The merge record: the item, the PR number (checked), and the project when the person names it. */
-interface MergedAction {
-  readonly kind: typeof itemCommands.merged;
+/** The record of a passed check: the item, the reference as typed, and the project when the person names it. */
+interface RecordAction {
+  readonly kind: typeof itemCommands.record;
   readonly id: string;
-  readonly number: number;
+  readonly ref: string;
   readonly project: string | undefined;
 }
 
@@ -58,7 +57,7 @@ type Action =
   | { readonly kind: typeof itemCommands.move; readonly id: string; readonly move: ItemMove }
   | { readonly kind: typeof itemCommands.close; readonly id: string }
   | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean }
-  | MergedAction
+  | RecordAction
   | { readonly kind: typeof itemCommands.unassign; readonly id: string };
 
 const SUBCOMMANDS = Object.values(itemCommands).join(', ');
@@ -70,7 +69,7 @@ const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
   [itemCommands.move]: [flags.state, flags.stage],
   [itemCommands.close]: [],
   [itemCommands.list]: [flags.all, flags.track, flags.follow],
-  [itemCommands.merged]: [flags.pr, flags.project],
+  [itemCommands.record]: [flags.ref, flags.project],
   [itemCommands.unassign]: [],
 };
 
@@ -88,7 +87,7 @@ const refuseStrayFlags = (subcommand: Subcommand, options: ItemOptions): CliResu
     [flags.stage, options.stage !== undefined],
     [flags.all, options.all],
     [flags.follow, options.follow],
-    [flags.pr, options.pr !== undefined],
+    [flags.ref, options.ref !== undefined],
     [flags.project, options.project !== undefined],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
@@ -154,13 +153,11 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
       }
       return ok({ kind: subcommand, query: { all: options.all, ...withTrack(options) }, follow: options.follow });
     }
-    case itemCommands.merged: {
+    case itemCommands.record: {
       const id = idArgument(subcommand, args);
       if (!id.ok) return id;
-      if (options.pr === undefined) return needsUsage(`${subcommand} needs ${flagText(flags.pr)} N`);
-      const number = parsePrNumber(options.pr);
-      if (!number.ok) return needsUsage(number.error.message);
-      return ok({ kind: subcommand, id: id.value, number: number.value, project: options.project });
+      if (options.ref === undefined) return needsUsage(`${subcommand} needs ${flagText(flags.ref)} REF`);
+      return ok({ kind: subcommand, id: id.value, ref: options.ref, project: options.project });
     }
     case itemCommands.unassign: {
       const id = idArgument(subcommand, args);
@@ -242,17 +239,17 @@ const recordOf = async (deps: Deps, home: string, worker: string): Promise<CliRe
 };
 
 /**
- * What the PR must match, from the config. The project comes from the record of the worker that the item names, and a project that
- * the person names must be that one. An item with no worker record needs the project flag. The repo comes from the URL of the project
- * and the base from its default branch, else from the clone. The head branch is the branch of the worker, and an item with no worker
- * leaves it out.
+ * What the record check of the recipe gets, from the config. The project comes from the record of the worker that the item names, and
+ * a project that the person names must be that one. An item with no worker record needs the project flag. The branch is the branch of
+ * the worker, and an item with no worker leaves it out. The recipe reads the rest of the project itself.
  */
-const mergeTargetOf = async (
+const checkInputOf = async (
   deps: Deps,
   board: OpenBoard,
-  action: MergedAction,
+  action: RecordAction,
+  ref: string,
   worker: string | null,
-): Promise<CliResult<Omit<MergeReadInput, 'number'>>> => {
+): Promise<CliResult<RecordCheckInput>> => {
   const { home, config } = board;
   const record = worker === null ? ok(null) : await recordOf(deps, home, worker);
   if (!record.ok) return record;
@@ -267,40 +264,47 @@ const mergeTargetOf = async (
   if (project === undefined) {
     return usageError(`the project ${shown(projectId)} is not in the config of this ${roles.node}`, `Check the projects in ${files.config}.`);
   }
-  const repo = githubRepoOf(project.url ?? '');
-  if (!repo.ok) return repo;
-  const base = project.default_branch ?? (await defaultBranchOf(deps, resolve(home, project.path)));
-  if (base === null) {
-    return failure(`the project ${projectId} names no default branch`, `Set ${keys.project.defaultBranch} for the project in ${files.config}.`);
-  }
-  return ok({ repo: repo.value, base, ...(worker === null ? {} : { head: branchOf(worker) }) });
+  return ok({ ref, project, cloneDir: resolve(home, project.path), branch: worker === null ? undefined : branchOf(worker) });
 };
 
-const mergedAnswer = (merged: MergedPr, recorded: MergeRecorded): CommandOutput => {
+const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded): CommandOutput => {
   const id = displayLine(recorded.item.id);
-  const line = recorded.changed ? `Recorded ${id}: PR ${merged.number}, merge commit ${merged.mergeCommit}` : `${id}: PR ${merged.number} already recorded`;
-  return answer(line, {
+  const summary = displayLine(checked.summary);
+  return answer(recorded.changed ? `Recorded ${id}: ${summary}` : `${id}: ${summary} already recorded`, {
     schema: schemaIds.item,
-    action: itemCommands.merged,
+    action: itemCommands.record,
     id: recorded.item.id,
-    pr: merged.number,
-    commit: merged.mergeCommit,
+    stage: checked.stage,
+    ref: checked.ref,
+    head: checked.head,
+    summary: checked.summary,
     changed: recorded.changed,
   });
 };
 
 /**
- * `item merged`: the local checks come first (the item id, the tracker kind, the recipe stage, the closed state, the item), so no call
- * to the network runs for a request that the board refuses. Then the PR is read and checked (`readMergedPr`), and only a PR that
- * passed is recorded. The worker that the item names at the time of the check goes to the record, which tests it again under the lock.
+ * `item record`: the record check of the recipe of the node runs, and only a result that passed is written. A recipe with no record
+ * check makes this a usage error (exit 2) with no write. The reference is checked first, so a bad one is a usage error before the item
+ * is read and before the check reaches the network. The local checks come next (the item id, the tracker kind, the stage of the check
+ * in the recipe, the closed state, the item), so the check makes no call for a request that the board refuses. The worker that the
+ * item names at the time of the check goes to the write, which tests it again under the lock.
  */
-const recordMerged = async (deps: Deps, board: OpenBoard, action: MergedAction): Promise<CliResult<CommandOutput>> => {
+const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction): Promise<CliResult<CommandOutput>> => {
   const { connector, config } = board;
+  const hook: RecordCheck | undefined = config.entry.recordCheck;
+  if (hook === undefined) {
+    return usageError(
+      `the ${roles.recipe} ${config.entry.id} of this ${roles.node} has no check for ${commandText(commandLines.itemRecord)}`,
+      `Run "${commandText(commands.item)} ${flagText(flags.help)}" to see the commands that you can use.`,
+    );
+  }
+  const ref = hook.parseRef(action.ref);
+  if (!ref.ok) return ref;
   const valid = checkItemId(action.id);
   if (!valid.ok) return valid;
   const local = requireLocalKind(config.core.tracker.kind, commands.item);
   if (!local.ok) return local;
-  const ready = checkMergeSetup({ recipe: config.entry.board, config: config.core.board });
+  const ready = checkRecordSetup({ recipe: config.entry.board, config: config.core.board }, hook.stage);
   if (!ready.ok) return ready;
   const items = await connector.listItems({ all: true });
   if (!items.ok) return items;
@@ -308,12 +312,12 @@ const recordMerged = async (deps: Deps, board: OpenBoard, action: MergedAction):
   if (item === undefined) return usageError(`${files.board} has no item ${shown(action.id)}`);
   const worker = workerOf(item, config.core.board?.worker_field);
   if (!worker.ok) return worker;
-  const target = await mergeTargetOf(deps, board, action, worker.value);
-  if (!target.ok) return target;
-  const read = await readMergedPr(deps, { ...target.value, number: action.number });
-  if (!read.ok) return read;
-  const recorded = await connector.recordMerge(action.id, read.value.pr, worker.value);
-  return recorded.ok ? ok(mergedAnswer(read.value.pr, recorded.value)) : recorded;
+  const input = await checkInputOf(deps, board, action, ref.value, worker.value);
+  if (!input.ok) return input;
+  const checked = await hook.check(deps, input.value);
+  if (!checked.ok) return checked;
+  const recorded = await connector.recordChecked(action.id, checked.value, worker.value);
+  return recorded.ok ? ok(recordedAnswer(checked.value, recorded.value)) : recorded;
 };
 
 /**
@@ -360,8 +364,8 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       const ended = await followBoard(deps, { layout: layoutOf(board.home), draw: () => listAnswer(connector, config, action.query) });
       return ended.ok ? ok(followed()) : ended;
     }
-    case itemCommands.merged:
-      return recordMerged(deps, board, action);
+    case itemCommands.record:
+      return recordChecked(deps, board, action);
     case itemCommands.unassign:
       return unassign(deps, board, action.id);
     default: {
@@ -372,10 +376,11 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
 };
 
 /**
- * `item`: add, update, move, close and list the items of the board, record a merged PR, and take the worker off an item. The words and
- * the flags are checked first (exit 2), then the node is found and the connector runs the action. A write is one state commit through
- * the connector, and the connector refuses it for a hosted tracker kind. `list` reads the local files with no lock and has no JSON
- * output. With the follow flag, `list` draws the list again at each change of the board, until its reader goes (`followBoard`).
+ * `item`: add, update, move, close and list the items of the board, record a passed check of the recipe, and take the worker off an
+ * item. The words and the flags are checked first (exit 2), then the node is found and the connector runs the action. A write is one
+ * state commit through the connector, and the connector refuses it for a hosted tracker kind. `list` reads the local files with no
+ * lock and has no JSON output. With the follow flag, `list` draws the list again at each change of the board, until its reader goes
+ * (`followBoard`).
  */
 export const runItem = async (deps: Deps, options: ItemOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);

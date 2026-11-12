@@ -1,7 +1,7 @@
 import type { CliResult } from '../cli/errors.js';
 import type { requestDeciders } from '../names.js';
+import type { CheckedRecord } from '../recipes/entry.js';
 import type { DecideRequest } from './decide.js';
-import type { MergedPr } from './github-pr.js';
 
 /**
  * The board connector contract (design 4.10). Every board connector gives these operations, and the contract suite
@@ -154,8 +154,8 @@ export interface DecisionLogInput {
   readonly decision: string;
 }
 
-/** What `recordMerge` did: the item after the write, and whether the board changed. A merge that was recorded already changes nothing. */
-export interface MergeRecorded {
+/** What `recordChecked` did: the item after the write, and whether the board changed. A record that was made already changes nothing. */
+export interface ItemRecorded {
   readonly item: BoardItem;
   readonly changed: boolean;
 }
@@ -316,12 +316,12 @@ export interface LocalBoard extends BoardConnector {
    */
   logDecision(input: DecisionLogInput): Promise<CliResult<string>>;
   /**
-   * Record that the PR `merged` is merged, in one commit: the stage `merged`, the closed state, the head sha of the PR, and the item
-   * taken out of each queue row that lists it. `worker` is the worker that the merge check bound to the item (null for none). The item
-   * must still hold that worker under the lock, else the record stops with exit 1 and writes nothing. A merge that is recorded
-   * already, with the same head sha, changes nothing; a record of another head sha is exit 1.
+   * Record a check of the recipe that passed (`checked`), in one commit: the stage of the check, the closed state, the head of the
+   * check, and the item taken out of each queue row that lists it. `worker` is the worker that the check bound to the item (null for
+   * none). The item must still hold that worker under the lock, else the record stops with exit 1 and writes nothing. A record that
+   * is made already, with the same head, changes nothing; a record of another head is exit 1.
    */
-  recordMerge(id: string, merged: MergedPr, worker: string | null): Promise<CliResult<MergeRecorded>>;
+  recordChecked(id: string, checked: CheckedRecord, worker: string | null): Promise<CliResult<ItemRecorded>>;
   /**
    * Take the worker off an item: delete the worker key, keep the state and the stage, and add the former worker to the list of
    * former workers of the item. This is the only way to remove a worker from an item.

@@ -33,9 +33,9 @@ import type {
   DecisionRecordCall,
   DecisionRequestRead,
   ItemMoved,
+  ItemRecorded,
   ItemUnassigned,
   LocalBoard,
-  MergeRecorded,
   QueueRowSet,
 } from './contract.js';
 import { addNewRemedy, decideLogRow, recheckRequest, requestStateOf, requireLogRoom, requireOpen, strictRequestOf, type RequestState } from './decide.js';
@@ -50,12 +50,12 @@ import {
   checkDocPath,
   checkItemId,
   checkLogEntry,
-  checkMergeSetup,
   checkMove,
   checkNewItem,
   checkNewTrack,
   checkPatch,
   checkQueueRow,
+  checkRecorded,
   checkRequestId,
   checkSettlement,
   checkWorkerField,
@@ -64,7 +64,8 @@ import {
   linkDocIn,
   logDecisionIn,
   moveItemIn,
-  recordMergeIn,
+  recordCheckedIn,
+  recordMessage,
   requireTrack,
   setRowIn,
   settleRequestIn,
@@ -74,7 +75,6 @@ import {
   type Edit,
 } from './edit.js';
 import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readWaiting, type BoardDoc, type DecisionLogDoc, type WaitingDoc } from './files.js';
-import type { MergedPr } from './github-pr.js';
 import { boardJsonText } from './json.js';
 import { queueRowsOf } from './queue.js';
 import { requestsOf } from './requests.js';
@@ -85,7 +85,7 @@ import { requestsOf } from './requests.js';
  * and the item ids, writes the files and makes one state commit. A read takes no lock.
  *
  * The local board has the operations of the contract and more: the list and the close of the requests, the list and the write of the
- * queue, the decision log, the merge record and the removal of a worker from an item. A hosted board maps them to the provider
+ * queue, the decision log, the record of a passed check and the removal of a worker from an item. A hosted board maps them to the provider
  * (FAC-M3), so they are not in the contract suite.
  *
  * A hosted tracker kind (`github`, `jira` or `linear`) keeps the truth of the board at the provider. factory still keeps the local
@@ -115,8 +115,6 @@ const commitMessages = {
   closeItem: (id: string): string => `chore: close item ${id}`,
   linkDoc: (id: string): string => `chore: link a file to item ${id}`,
   addTrack: (id: string): string => `chore: add track ${id}`,
-  recordMerge: (id: string, merged: MergedPr): string =>
-    `chore: record the merge of item ${id} (PR ${merged.number}, merge commit ${merged.mergeCommit})`,
   unassignItem: (id: string): string => `chore: take the ${roles.worker} off item ${id}`,
   askDecision: 'chore: add a decision to the board',
   logDecision: 'chore: log a decision',
@@ -475,16 +473,16 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       return itemWrite(commitMessages.updateItem(id), (doc) => changeItemIn(doc, id, changes.value, setup.config?.worker_field));
     },
 
-    async recordMerge(id, merged, worker) {
+    async recordChecked(id, checked, worker) {
       const local = requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkItemId(id);
       if (!valid.ok) return valid;
-      const ready = checkMergeSetup(setup);
+      const ready = checkRecorded(setup, checked);
       if (!ready.ok) return ready;
-      return boardWrite<boolean, MergeRecorded>({
-        message: commitMessages.recordMerge(id, merged),
-        edit: (doc) => recordMergeIn(doc, setup, id, merged, worker),
+      return boardWrite<boolean, ItemRecorded>({
+        message: recordMessage(id, checked),
+        edit: (doc) => recordCheckedIn(doc, setup, id, checked, worker),
         resultOf: (doc, changed) => {
           const found = itemIn(doc, id);
           return found.ok ? ok({ item: found.value, changed }) : found;

@@ -22,7 +22,6 @@ import { runVersion } from '../commands/version.js';
 import { runWorker } from '../commands/worker.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { toolNames } from '../core/tools.js';
 import {
   assignmentSource,
   boardTextLimits,
@@ -120,6 +119,23 @@ export const hookCommandFor = (registry: RecipeRegistry): Command => ({
     return done.ok ? ok({ lines: [], json: { schema: schemaIds.hook }, warnings: [], failed: false }) : done;
   },
 });
+
+/**
+ * What the record checks of the registry add to the help of `item`: a part of the summary for each check, and the help of the
+ * reference flag. The words come from the recipes. A registry with no record check says so.
+ */
+const recordHelpOf = (registry: RecipeRegistry): { readonly summary: string; readonly ref: string } => {
+  const checks = registry.flatMap((entry) => (entry.recordCheck === undefined ? [] : [{ id: entry.id, check: entry.recordCheck }]));
+  const unassign = `take the ${roles.worker} off an item`;
+  const records = checks.map(({ check }) => check.summary);
+  const own = checks.map(({ id, check }) => `In the ${id} ${roles.recipe}: ${check.refHelp}`);
+  return {
+    summary: `Add, change, move, close and list the items of the board, ${records.length === 0 ? '' : `${records.join(', ')}, `}and ${unassign}.`,
+    ref:
+      `With ${itemCommands.record}: the reference that the check of the ${roles.recipe} reads. ` +
+      (own.length === 0 ? `No ${roles.recipe} of this package has a check.` : own.join(' ')),
+  };
+};
 
 /** The commands. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */
 export const commandTableFor = (registry: RecipeRegistry): readonly Command[] => [
@@ -461,14 +477,14 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.item,
-    summary: `Add, change, move, close and list the items of the board, record a merged PR, and take the ${roles.worker} off an item.`,
+    summary: recordHelpOf(registry).summary,
     usage: [
       `${commandText(commandLines.itemAdd)} ${flagText(flags.title)} TEXT [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemUpdate)} ID [${flagText(flags.title)} TEXT] [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemMove)} ID ${flagText(flags.state)} STATE|${flagText(flags.stage)} STAGE [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemClose)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemList)} [${flagText(flags.all)}] [${flagText(flags.track)} ID] [${flagText(flags.follow)}] [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.itemMerged)} ID ${flagText(flags.pr)} N [${flagText(flags.project)} PROJECT] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemRecord)} ID ${flagText(flags.ref)} REF [${flagText(flags.project)} PROJECT] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemUnassign)} ID [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
@@ -499,18 +515,16 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           `With ${itemCommands.add} and ${itemCommands.update}: set a field of the ${roles.owner} on the item. The setup declares the fields and their values. ` +
           `Repeat the flag for more fields. The ${roles.worker} field of an item that names a ${roles.worker} changes only through ${itemCommands.unassign}.`,
       },
-      [flags.pr]: {
+      [flags.ref]: {
         type: 'string',
-        placeholder: 'N',
-        description:
-          `With ${itemCommands.merged}: the number of the PR. ${program} reads the PR with ${toolNames.gh} and records the merge only when the PR is merged ` +
-          `into the default branch of the project, from the branch of the ${roles.worker}. It never merges a PR.`,
+        placeholder: 'REF',
+        description: recordHelpOf(registry).ref,
       },
       [flags.project]: {
         type: 'string',
         placeholder: 'PROJECT',
         description:
-          `With ${itemCommands.merged}: the id of the project of the PR. The item must name a ${roles.worker} with a record, which gives the project, ` +
+          `With ${itemCommands.record}: the id of the project of the work. The item must name a ${roles.worker} with a record, which gives the project, ` +
           'or this flag names it. With both, they must be the same project.',
       },
       [flags.state]: {
@@ -548,7 +562,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           stage: given.string(flags.stage),
           all: given.bool(flags.all),
           follow: given.bool(flags.follow),
-          pr: given.string(flags.pr),
+          ref: given.string(flags.ref),
           project: given.string(flags.project),
           json: given.bool(flags.json),
         },

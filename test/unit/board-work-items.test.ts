@@ -218,7 +218,7 @@ describe('the work item port of the board: a worker id of 40 characters (TP-139)
     stage: undefined,
     all: false,
     follow: false,
-    pr: undefined,
+    ref: undefined,
     project: undefined,
     json: false,
   };

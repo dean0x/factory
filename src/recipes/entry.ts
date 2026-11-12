@@ -1,4 +1,6 @@
 import type { z } from 'zod';
+import type { CliResult } from '../cli/errors.js';
+import type { Deps } from '../core/deps.js';
 import { boardKeys, keys, values } from '../names.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
@@ -79,6 +81,56 @@ export interface RecipeBoard {
   readonly flowOnly?: Readonly<Record<string, string>> | undefined;
 }
 
+declare const checkedBrand: unique symbol;
+
+/**
+ * The result of a check that passed. Only the `check` of a `RecordCheck` makes one, so a value of this type proves that the check
+ * of the recipe ran and passed. The core writes only this type into the board (`recordCheckedIn`).
+ * - `stage` is the stage that the record sets on the item: a stage of the recipe.
+ * - `ref` is the reference that the person typed, as the recipe checked it.
+ * - `head` is the value that the item keeps under `boardKeys.mergedPrHead`.
+ * - `summary` is one line of facts for the output and for the commit message.
+ */
+export interface CheckedRecord {
+  readonly [checkedBrand]: true;
+  readonly stage: string;
+  readonly ref: string;
+  readonly head: string;
+  readonly summary: string;
+}
+
+/**
+ * What the core gives the check of a recipe. The core found the project and the branch from the item: the project comes from the
+ * record of the worker that the item names, or from the project flag, and the branch is the branch of that worker.
+ */
+export interface RecordCheckInput {
+  /** The reference as the person typed it. */
+  readonly ref: string;
+  readonly project: RecipeProject;
+  /** The folder of the clone of the project. */
+  readonly cloneDir: string;
+  /** The branch of the worker that the item names, or undefined when the item names none. */
+  readonly branch: string | undefined;
+}
+
+/**
+ * The record check of a recipe: how `item record` proves that the work of an item is done, before the board records it. The core
+ * keeps the locked write, the queue clean-up, the kept head, the worker binding and the rerun. The recipe keeps what is checked
+ * and the words for it.
+ * - `stage` is the stage that a passed check sets. The recipe must list it.
+ * - `summary` is the part of the help of `item` that says what the recipe records.
+ * - `refHelp` is the help of the reference flag for this recipe.
+ * - `parseRef` checks the reference before the board is read. A bad reference is a usage error (exit 2).
+ * - `check` reads the proof and gives a `CheckedRecord`, or a failure (exit 1) for every fault and every mismatch.
+ */
+export interface RecordCheck {
+  readonly stage: string;
+  readonly summary: string;
+  readonly refHelp: string;
+  readonly parseRef: (text: string) => CliResult<string>;
+  readonly check: (deps: Deps, input: RecordCheckInput) => Promise<CliResult<CheckedRecord>>;
+}
+
 /**
  * What the core needs from a recipe. The core reads no other file of a recipe: it gets the entry from the registry.
  * - `schema` parses the `recipe` block of the shared file.
@@ -91,6 +143,7 @@ export interface RecipeBoard {
  * - `initProjectKeys` names the keys of the core that `init` writes into a new project. A project of the recipe holds no other.
  * - `roles` sets the role of each layer.
  * - `board` sets the queue key and the stages of the board.
+ * - `recordCheck` is the check that `item record` runs. A recipe with none makes that command a usage error.
  */
 export interface RecipeEntry {
   readonly id: string;
@@ -104,6 +157,7 @@ export interface RecipeEntry {
   readonly initProjectKeys: readonly InitProjectKey[];
   readonly roles: RecipeRoles;
   readonly board: RecipeBoard;
+  readonly recordCheck?: RecordCheck | undefined;
 }
 
 /** The key of the queue in `board.json`: the key of the recipe, or the default of the core when the recipe gives none. */

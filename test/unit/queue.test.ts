@@ -84,7 +84,7 @@ describe('queue set (TP-22, TP-28)', () => {
       stage: undefined,
       all: false,
       follow: false,
-      pr: undefined,
+      ref: undefined,
       project: undefined,
       json: false,
     };

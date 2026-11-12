@@ -11,7 +11,6 @@ import type {
   RequestDecider,
   RequestSettlement,
 } from '../../src/board/contract.js';
-import type { MergedPr } from '../../src/board/github-pr.js';
 import { strictRequestOf, type DecideRequest } from '../../src/board/decide.js';
 import { changeItemIn, checkPatch, checkSettlement, closeRequestIn } from '../../src/board/edit.js';
 import { resolveFields, declaredFields } from '../../src/board/fields.js';
@@ -42,6 +41,7 @@ import {
   workerFieldGuard,
   type CommandName,
 } from '../../src/names.js';
+import type { CheckedRecord } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
 import { layoutOf, stateRel } from '../../src/state/layout.js';
 import { describeBoardContract } from '../contract/board-contract.js';
@@ -1957,9 +1957,9 @@ describe('the checked settlement of a close', () => {
 const PR_HEAD = 'a'.repeat(40);
 const MERGE_COMMIT = 'b'.repeat(40);
 
-/** A PR that passed the merge check. The brand has no value at run time, so a test cast makes one. */
-const mergedPr = (overrides: Partial<{ number: number; mergeCommit: string; prHead: string }> = {}): MergedPr =>
-  ({ number: 12, mergeCommit: MERGE_COMMIT, prHead: PR_HEAD, ...overrides }) as MergedPr;
+/** A result of the record check of a recipe. The brand has no value at run time, so a test cast makes one. */
+const checkedRecord = (overrides: Partial<{ stage: string; ref: string; head: string; summary: string }> = {}): CheckedRecord =>
+  ({ stage: 'merged', ref: '12', head: PR_HEAD, summary: `PR 12, merge commit ${MERGE_COMMIT}`, ...overrides }) as CheckedRecord;
 
 const workItem = (extra: Record<string, unknown> = {}): Record<string, unknown> =>
   item('B-1', { status: 'doing', stage: 'review', lane: 'w1', ...extra });
@@ -1972,7 +1972,7 @@ const itemAfter = (repo: BoardRepo, id: string): Readonly<Record<string, unknown
   return found.record;
 };
 
-describe('the local connector: record a merge', () => {
+describe('the local connector: record a passed check', () => {
   const ROWS = [
     { name: 'First', items: ['B-1', 'B-2'], release: true },
     { name: 'Alone', items: ['B-1'], note: 'only this one' },
@@ -1982,7 +1982,7 @@ describe('the local connector: record a merge', () => {
 
   it('sets the merged stage, the closed state and the PR head, and keeps the merge commit out of the item', async () => {
     const repo = await repoWith(boardWith([workItem({ zeta: 1 }), item('B-2')]));
-    const done = valueOf(await connectorOf(repo).recordMerge('B-1', mergedPr(), 'w1'));
+    const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
     expect(done.changed).toBe(true);
     expect(done.item.status).toBe('done');
     expect(done.item.stage).toBe('merged');
@@ -1992,7 +1992,7 @@ describe('the local connector: record a merge', () => {
 
   it('takes the item out of each queue row that lists it, drops a row that becomes empty, and keeps the other rows', async () => {
     const repo = await repoWith(boardWith([workItem(), item('B-2')], { [QUEUE]: ROWS }));
-    valueOf(await connectorOf(repo).recordMerge('B-1', mergedPr(), 'w1'));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
     expect(valueOf(boardAfter(repo)).queue).toEqual([
       { name: 'First', items: ['B-2'], release: true },
       { name: 'Other', items: ['B-2'] },
@@ -2000,21 +2000,32 @@ describe('the local connector: record a merge', () => {
     ]);
   });
 
-  it('makes one commit of the board file, and its message names the PR number and the merge commit', async () => {
+  it('makes one commit of the board file, and its message names the stage and the summary of the check', async () => {
     const repo = await repoWith(boardWith([workItem()]));
-    valueOf(await connectorOf(repo).recordMerge('B-1', mergedPr(), 'w1'));
+    valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
     expect(repo.commits).toHaveLength(1);
     expect(repo.commits[0]?.staged).toEqual([fileNames.board]);
+    expect(repo.commits[0]?.message).toContain('merged');
     expect(repo.commits[0]?.message).toContain('12');
     expect(repo.commits[0]?.message).toContain(MERGE_COMMIT);
   });
 
-  it('is a success with no commit when the same merge is recorded again', async () => {
+  it('sets the stage that the check names, and exits 2 with no write for a stage that the recipe does not list', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    const connector = connectorOf(repo);
+    expect(exitOf(await connector.recordChecked('B-1', checkedRecord({ stage: 'unlisted' }), 'w1'))).toBe(2);
+    expectUntouched(repo, board);
+    valueOf(await connector.recordChecked('B-1', checkedRecord({ stage: 'released' }), 'w1'));
+    expect(itemAfter(repo, 'B-1')).toMatchObject({ stage: 'released', status: 'done' });
+  });
+
+  it('is a success with no commit when the same record is made again', async () => {
     const repo = await repoWith(boardWith([workItem()], { [QUEUE]: ROWS }));
     const connector = connectorOf(repo);
-    valueOf(await connector.recordMerge('B-1', mergedPr(), 'w1'));
+    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
     const written = repo.textOf(fileNames.board);
-    const again = valueOf(await connector.recordMerge('B-1', mergedPr({ mergeCommit: 'c'.repeat(40) }), 'w1'));
+    const again = valueOf(await connector.recordChecked('B-1', checkedRecord({ summary: `PR 12, merge commit ${'c'.repeat(40)}` }), 'w1'));
     expect(again.changed).toBe(false);
     expect(repo.commits).toHaveLength(1);
     expect(repo.textOf(fileNames.board)).toBe(written);
@@ -2023,7 +2034,7 @@ describe('the local connector: record a merge', () => {
   it('exits 1 and writes nothing when the item records another PR head', async () => {
     const board = boardWith([workItem({ merged_pr_head: 'd'.repeat(40), status: 'done', stage: 'merged' })]);
     const repo = await repoWith(board);
-    expect(exitOf(await connectorOf(repo).recordMerge('B-1', mergedPr(), 'w1'))).toBe(1);
+    expect(exitOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(1);
     expectUntouched(repo, board);
   });
 
@@ -2035,7 +2046,7 @@ describe('the local connector: record a merge', () => {
   ])('exits 1 and writes nothing when the worker field holds %s since the check', async (_name, stored, worker) => {
     const board = boardWith([stored], { [QUEUE]: ROWS });
     const repo = await repoWith(board);
-    const error = errorOf(await connectorOf(repo).recordMerge('B-1', mergedPr(), worker));
+    const error = errorOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), worker));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('B-1');
     expectUntouched(repo, board);
@@ -2043,7 +2054,7 @@ describe('the local connector: record a merge', () => {
 
   it('records the merge of an item that has no worker when the check bound none', async () => {
     const repo = await repoWith(boardWith([item('B-1', { stage: 'review' })]));
-    expect(valueOf(await connectorOf(repo).recordMerge('B-1', mergedPr(), null)).changed).toBe(true);
+    expect(valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), null)).changed).toBe(true);
   });
 
   it.each([
@@ -2052,15 +2063,15 @@ describe('the local connector: record a merge', () => {
   ])('exits 2 and writes nothing for %s', async (_name, id) => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
-    expect(exitOf(await connectorOf(repo).recordMerge(id, mergedPr(), 'w1'))).toBe(2);
+    expect(exitOf(await connectorOf(repo).recordChecked(id, checkedRecord(), 'w1'))).toBe(2);
     expectUntouched(repo, board);
   });
 
-  it('exits 2 and writes nothing when the recipe has no merged stage', async () => {
+  it('exits 2 and writes nothing when the recipe has no stage list', async () => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
     const bare = connectorOf(repo, { recipe: { queueKey: QUEUE } });
-    expect(exitOf(await bare.recordMerge('B-1', mergedPr(), 'w1'))).toBe(2);
+    expect(exitOf(await bare.recordChecked('B-1', checkedRecord(), 'w1'))).toBe(2);
     expectUntouched(repo, board);
   });
 
@@ -2068,14 +2079,14 @@ describe('the local connector: record a merge', () => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
     const { closed: _closed, ...open } = sampleBoard();
-    expect(exitOf(await connectorOf(repo, { config: open }).recordMerge('B-1', mergedPr(), 'w1'))).toBe(2);
+    expect(exitOf(await connectorOf(repo, { config: open }).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(2);
     expectUntouched(repo, board);
   });
 
   it('stops with exit 4 for a hosted tracker kind, before it reads the board', async () => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);
-    expect(exitOf(await connectorOf(repo, { tracker: 'github' }).recordMerge('B-1', mergedPr(), 'w1'))).toBe(4);
+    expect(exitOf(await connectorOf(repo, { tracker: 'github' }).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(4);
     expectUntouched(repo, board);
   });
 });

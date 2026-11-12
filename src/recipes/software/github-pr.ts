@@ -1,17 +1,49 @@
 import { z } from 'zod';
-import { failure, usageError, type CliResult } from '../cli/errors.js';
-import type { Deps } from '../core/deps.js';
-import { parseGithubRepo } from '../core/git.js';
-import { ok } from '../core/result.js';
-import { toolNames } from '../core/tools.js';
-import { flags, flagText, ghTimeoutMs, mergeCheck } from '../names.js';
-import { parseJsonText } from '../state/load.js';
+import { failure, usageError, type CliResult } from '../../cli/errors.js';
+import type { Deps } from '../../core/deps.js';
+import { parseGithubRepo } from '../../core/git.js';
+import { ok } from '../../core/result.js';
+import { toolNames } from '../../core/tools.js';
+import { flags, flagText, ghTimeoutMs } from '../../names.js';
+import { parseJsonText } from '../../state/load.js';
 
 /*
  * The merge check is a guard against a mistake, not a proof. The session that runs it controls PATH and the environment, so it
  * can put another `gh` in front of the real one. The check stops a wrong PR number, a PR that is not merged and a PR of another
  * branch. It does not stop a session that wants to deceive the board.
  */
+
+/**
+ * The answer of `gh pr view --json`: the nine fields that the merge check reads, under the names that `gh` gives them. A key that
+ * the check does not know, or a missing key, fails the parse. The keys are the list that `gh` is asked for (`mergeCheck.fieldList`).
+ */
+const prSchema = z.strictObject({
+  number: z.number(),
+  state: z.string(),
+  mergedAt: z.string().nullable(),
+  mergeCommit: z.object({ oid: z.string() }).nullable(),
+  headRefName: z.string(),
+  headRefOid: z.string(),
+  baseRefName: z.string(),
+  isCrossRepository: z.boolean(),
+  url: z.string(),
+});
+
+/**
+ * The merge check, which reads one PR with `gh pr view`. The PR number has one to nine digits and no leading zero. A sha has 40
+ * lowercase hex digits. `fieldList` is the list that the `--json` option takes. `words` are the arguments of `gh`: its JSON flag
+ * is spelled as the JSON flag of this program. Only a PR in the state `mergedState` on `host` passes. `maxOutputChars` bounds the
+ * output that is read.
+ */
+export const mergeCheck = {
+  host: 'github.com',
+  mergedState: 'MERGED',
+  prPattern: /^[1-9][0-9]{0,8}$/,
+  shaPattern: /^[0-9a-f]{40}$/,
+  maxOutputChars: 16_384,
+  fieldList: Object.keys(prSchema.shape).join(','),
+  words: { command: 'pr view', repoFlag: '--repo', jsonFlag: flagText(flags.json), endOfFlags: '--' },
+} as const;
 
 declare const mergedBrand: unique symbol;
 
@@ -40,21 +72,6 @@ export interface MergeReadInput {
   readonly head?: string;
 }
 
-const fields = mergeCheck.fields;
-
-/** The answer of `gh pr view`. A key that the check does not know, or a missing key, fails the parse. */
-const prSchema = z.strictObject({
-  [fields.number]: z.number(),
-  [fields.state]: z.string(),
-  [fields.mergedAt]: z.string().nullable(),
-  [fields.mergeCommit]: z.object({ [mergeCheck.mergeCommitSha]: z.string() }).nullable(),
-  [fields.headBranch]: z.string(),
-  [fields.headSha]: z.string(),
-  [fields.baseBranch]: z.string(),
-  [fields.crossRepository]: z.boolean(),
-  [fields.url]: z.string(),
-});
-
 const CHECK_AGAIN = 'Check the PR number and the branch, then run the command again.';
 
 /** A PR that does not match. The reason is a fixed phrase and the number that the caller gave: no text of gh is repeated. */
@@ -70,7 +87,7 @@ const unreadable = (number: string): CliResult<never> =>
 export const parsePrNumber = (text: string): CliResult<number> =>
   mergeCheck.prPattern.test(text)
     ? ok(Number(text))
-    : usageError(`${flagText(flags.pr)}: must be a whole number of one to nine digits, with no leading zero`);
+    : usageError(`${flagText(flags.ref)}: must be a whole number of one to nine digits, with no leading zero`);
 
 /**
  * `owner/name` of the repo of a project URL. Only a repo on the GitHub host passes. Any other URL is a failure, and no `gh` runs.
@@ -102,7 +119,7 @@ export const readMergedPr = async (deps: Deps, input: MergeReadInput): Promise<C
   const words = mergeCheck.words;
   const run = await deps.run(
     toolNames.gh,
-    [words.group, words.verb, words.repoFlag, `${mergeCheck.host}/${input.repo}`, words.jsonFlag, mergeCheck.fieldList, words.endOfFlags, number],
+    [...words.command.split(' '), words.repoFlag, `${mergeCheck.host}/${input.repo}`, words.jsonFlag, mergeCheck.fieldList, words.endOfFlags, number],
     { timeoutMs: ghTimeoutMs },
   );
   if (!run.ok || run.value.exitCode !== 0) return unreadable(number);
@@ -111,16 +128,16 @@ export const readMergedPr = async (deps: Deps, input: MergeReadInput): Promise<C
   const parsed = json.ok ? prSchema.safeParse(json.value) : null;
   if (parsed === null || !parsed.success) return mismatch(number, 'the answer of gh is not a PR record');
   const pr = parsed.data;
-  const mergeCommit = pr[fields.mergeCommit]?.[mergeCheck.mergeCommitSha] ?? '';
-  const head = pr[fields.headSha];
+  const mergeCommit = pr.mergeCommit?.oid ?? '';
+  const head = pr.headRefOid;
   const expectedUrl = `https://${mergeCheck.host}/${input.repo}/pull/${number}`;
-  if (pr[fields.state] !== mergeCheck.mergedState) return mismatch(number, 'the PR is not merged');
-  if ((pr[fields.mergedAt] ?? '') === '') return mismatch(number, 'the PR has no merge time');
-  if (pr[fields.number] !== input.number) return mismatch(number, 'gh gave another PR');
-  if (pr[fields.url].toLowerCase() !== expectedUrl.toLowerCase()) return mismatch(number, 'the PR is not in this repo');
-  if (pr[fields.crossRepository]) return mismatch(number, 'the PR comes from another repo');
-  if (pr[fields.baseBranch] !== input.base) return mismatch(number, 'the PR merged into another base branch');
-  if (input.head !== undefined && pr[fields.headBranch] !== input.head) return mismatch(number, 'the PR comes from another head branch');
+  if (pr.state !== mergeCheck.mergedState) return mismatch(number, 'the PR is not merged');
+  if ((pr.mergedAt ?? '') === '') return mismatch(number, 'the PR has no merge time');
+  if (pr.number !== input.number) return mismatch(number, 'gh gave another PR');
+  if (pr.url.toLowerCase() !== expectedUrl.toLowerCase()) return mismatch(number, 'the PR is not in this repo');
+  if (pr.isCrossRepository) return mismatch(number, 'the PR comes from another repo');
+  if (pr.baseRefName !== input.base) return mismatch(number, 'the PR merged into another base branch');
+  if (input.head !== undefined && pr.headRefName !== input.head) return mismatch(number, 'the PR comes from another head branch');
   if (!isSha(mergeCommit) || !isSha(head)) return mismatch(number, 'a commit of the PR is not a full sha');
   return ok({ kind: 'merged', pr: { number: input.number, mergeCommit, prHead: head } as MergedPr });
 };
