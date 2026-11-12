@@ -29,17 +29,30 @@ export const STATE_GITIGNORE: string = [...FIRST_IGNORED_DIRS.map((dir) => `${di
   .map((line) => `${line}\n`)
   .join('');
 
+const WILDCARD = /[*?[]/;
+
+/** A line as git reads it: without the CR of a CRLF line end and without the spaces before it. A tab and any other blank stay. */
+const gitLineOf = (candidate: string): string => {
+  let end = candidate.endsWith('\r') ? candidate.length - 1 : candidate.length;
+  while (end > 0 && candidate[end - 1] === ' ') end -= 1;
+  return candidate.slice(0, end);
+};
+
 /**
- * True when git ignores the path of `line` by this text: the last line that is `line` or the negation of `line` decides, as in
- * git. A comment, a longer name and the name inside another line do not count. Trailing blanks and a CR are not part of a line.
+ * True when git ignores the path of `line` by this text: the last line that is `line`, or a negation that can match its name,
+ * decides. A comment, a longer name and the name inside another line do not count. As in git, the CR of a CRLF line end and the
+ * spaces before it are not part of a line, but a tab or any other blank is.
+ *
+ * The check is not a full matcher and it fails closed. A line that starts with `!` and holds the name, or a wildcard, may take
+ * the path back into the repo, so it counts as a negation. A `!` line that is for another name does not.
  */
 export const ignoresLine = (text: string, line: string): boolean => {
-  const negated = `!${line}`;
+  const name = line.endsWith('/') ? line.slice(0, -1) : line;
   let ignored = false;
   for (const candidate of text.split('\n')) {
-    const trimmed = candidate.trimEnd();
+    const trimmed = gitLineOf(candidate);
     if (trimmed === line) ignored = true;
-    else if (trimmed === negated) ignored = false;
+    else if (trimmed.startsWith('!') && (trimmed.includes(name) || WILDCARD.test(trimmed))) ignored = false;
   }
   return ignored;
 };

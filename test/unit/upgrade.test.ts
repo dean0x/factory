@@ -781,6 +781,30 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
     expect(text(deps, STATE_IGNORE)).toBe(`${mine}inbox/\n`);
   });
 
+  it.each(['!inbox', '!/inbox/', '!inbox/**', '!*'])(
+    'adds the inbox line again after the later line %s, and then adds nothing',
+    async (negation) => {
+      const { deps } = await makeNode();
+      const mine = `${BEFORE_WORKERS}workers/\ninbox/\n${negation}\n`;
+      deps.files.set(STATE_IGNORE, mine);
+      success(await upgrade(deps));
+      const written = text(deps, STATE_IGNORE);
+      expect(written.startsWith(mine)).toBe(true);
+      expect(written.endsWith('\ninbox/\n')).toBe(true);
+      const again = success(await upgrade(deps));
+      expect(again.lines.at(-1)?.text).toBe('Nothing to upgrade.');
+      expect(text(deps, STATE_IGNORE)).toBe(written);
+    },
+  );
+
+  it('adds the inbox line when the line of the person ends in a tab, because git does not ignore that folder', async () => {
+    const { deps } = await makeNode();
+    const mine = `${BEFORE_WORKERS}workers/\ninbox/\t\n`;
+    deps.files.set(STATE_IGNORE, mine);
+    success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${mine}inbox/\n`);
+  });
+
   it('adds the workers line to a state repo that has none, and commits the file', async () => {
     const { deps, gitSince } = await makeNode();
     deps.files.set(STATE_IGNORE, BEFORE_WORKERS);
