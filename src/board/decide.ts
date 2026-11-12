@@ -16,10 +16,12 @@ import {
   maxDisplayWidth,
   maxFileBytes,
   optionKeys,
+  requestDeciders,
   requestWords,
   roles,
   waitingKeys,
 } from '../names.js';
+import type { RequestDecider } from './contract.js';
 import { shown } from './edit.js';
 import type { DecisionRecordOption, DecisionRecordRequest } from './decision-record.js';
 import type { DecisionLogDoc, WaitingDoc } from './files.js';
@@ -48,13 +50,19 @@ export interface DecideRequest extends DecisionRecordRequest {
 /**
  * Where a `D-n` stands in the waiting file and in the decision log. An `answered` row is a candidate only: a row names who
  * answered, but only a record in the owner store proves it, so the state is final after the store read. A row that holds
- * no `by` key is a close with no answer. The state holds no option: the option comes only from the store record.
+ * no `by` key is a close with no answer. A close with a decision of the coordinator or a delegate carries its `decider`, a value of
+ * `requestDeciders`; any other stored value is dropped. The state holds no option: the option comes only from the store record.
  */
 export type RequestState =
   | { readonly kind: 'open' }
   | { readonly kind: 'answered'; readonly date: string | null; readonly request: string | null }
-  | { readonly kind: 'closed'; readonly date: string | null }
+  | { readonly kind: 'closed'; readonly date: string | null; readonly decider?: RequestDecider }
   | { readonly kind: 'unknown' };
+
+const DECIDERS: readonly string[] = Object.values(requestDeciders);
+
+/** True for a stored value that is a decider of `requestDeciders`. Any other stored value is not a decider. */
+const isDecider = (value: unknown): value is RequestDecider => typeof value === 'string' && DECIDERS.includes(value);
 
 const REQUEST_KEYS: readonly string[] = [waitingKeys.id, decisionKeys.title, decisionKeys.question, decisionKeys.options];
 const OPTION_KEYS: readonly string[] = [optionKeys.key, optionKeys.text, optionKeys.rec];
@@ -162,17 +170,19 @@ export const requestStateOf = (waiting: WaitingDoc, log: DecisionLogDoc, id: str
     return failure(`${requestWords.request} ${id} is in ${files.waiting} and in ${files.decisionLog}; restore the files from the last commit`);
   }
   const date = textOrNull(row.record[decisionLogKeys.date]);
+  const decider = row.record[decisionLogKeys.decider];
   return ok(
     Object.hasOwn(row.record, decisionLogKeys.by)
       ? { kind: 'answered', date, request: textOrNull(row.record[decisionLogKeys.request]) }
-      : { kind: 'closed', date },
+      : { kind: 'closed', date, ...(isDecider(decider) ? { decider } : {}) },
   );
 };
 
 export const addNewRemedy = `Add a new ${requestWords.request} with "${commandText(commandLines.requestAdd)}".`;
 
 /**
- * The state that lets decide go on. An unknown number is exit 2 and a closed number is exit 1. An answered row is never a pass: the
+ * The state that lets decide go on. An unknown number is exit 2 and a closed number is exit 1; a closed number with a decider names
+ * the decider and says that the decider has no owner authority. An answered row is never a pass: the
  * caller reads the owner store first and handles that state itself, so a call with it fails closed.
  */
 export const requireOpen = (state: RequestState, id: string): CliResult<void> => {
@@ -185,8 +195,11 @@ export const requireOpen = (state: RequestState, id: string): CliResult<void> =>
         `${files.waiting} has no ${name}`,
         `Run "${commandText(commandLines.requestList)}" to see the open ${requestWords.requests}.`,
       );
-    case 'closed':
-      return failure(`${name} is closed${state.date === null ? '' : ` (${shown(state.date)})`}`, addNewRemedy);
+    case 'closed': {
+      const date = state.date === null ? '' : ` (${shown(state.date)})`;
+      const decider = state.decider === undefined ? '' : `, decided by the ${shown(state.decider)}, no ${roles.owner} authority`;
+      return failure(`${name} is closed${date}${decider}`, addNewRemedy);
+    }
     case 'answered':
       return failure(`${name} has an answer row in ${files.decisionLog}`, addNewRemedy);
     default: {

@@ -293,6 +293,19 @@ describe('decide: the state of the number comes before the question (TP-145, TP-
     expect(error.message).toContain('2030-01-02');
   });
 
+  it('M5-1b TP-145 exits 1 for a number that the coordinator closed with a decision, and names the decider', async () => {
+    const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(closedRow({ decider: 'coordinator' })) });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('decided by the "coordinator"');
+  });
+
+  it('M5-1b TP-145 does not print a decider of a closed row that is no value of the deciders', async () => {
+    const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(closedRow({ decider: 'EVIL-PEER' })) });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).not.toContain('EVIL-PEER');
+    expect(error.message).not.toContain('decided by');
+  });
+
   it('M5-1b TP-148 shows the date of a closed row clean and cut', async () => {
     const date = `2030\u001b[31m${'9'.repeat(100)}`;
     const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(closedRow({ date })) });
