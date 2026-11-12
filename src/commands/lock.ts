@@ -355,7 +355,9 @@ const waitForTurn = async (deps: Deps, run: Run, held: Held): Promise<CliResult<
       }
       if (attempt < heavyLock.attempts) await watch.pause(heavyLock.waitMs);
     }
-    return ok({ kind: 'used-up' });
+    // A stop signal during the last try still ends the run as stopped.
+    const last = watch.seen();
+    return ok(last === null ? { kind: 'used-up' } : { kind: 'stopped', signal: last });
   } finally {
     watch.stop();
   }

@@ -325,6 +325,23 @@ describe('lock run: a stop during the wait (TP-23)', () => {
     expect(base.sleeps).toHaveLength(2);
     expect(handlerCount(base)).toBe(0);
   });
+
+  it('exits 130 with the STOPPED line, not WAIT ENDED, when INT comes during the last try', async () => {
+    const base = withHeldLock();
+    let tries = 0;
+    const deps: FakeDeps = {
+      ...base,
+      randomHex: (bytes) => {
+        tries += 1;
+        if (tries === heavyLock.attempts) base.signals.emit('SIGINT');
+        return base.randomHex(bytes);
+      },
+    };
+    expectOutcome(await lock(deps), 130, lockWords.stopped);
+    expect(base.attached).toEqual([]);
+    expect(base.files.get(LOCK)).toBe(LIVE_HOLDER);
+    expect(handlerCount(base)).toBe(0);
+  });
 });
 
 describe('lock run: the program itself as the child (TP-27)', () => {

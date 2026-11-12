@@ -608,6 +608,7 @@ The lock:
 - The lock file is `heavy-test.lock`, and the priority file is `heavy-test.priority`. Both are in the per-user state folder: `$XDG_STATE_HOME/factory/`, or `~/.local/state/factory/` when the variable is not set. The folder has mode 700, and the files have mode 600. No config value sets a path.
 - Each of these exits with code 4 and runs nothing: a link at either path, a folder or file of another user, and a folder or file that a group or other users can write. When no state folder is known, the command exits with code 1 and runs nothing.
 - A lock is stale when the process of its holder has ended. It is also stale when that pid now belongs to a process that started more than 3 seconds from the recorded start. The age of a lock never makes it stale while its holder runs. A lock file that holds no valid token counts as held for 60 seconds. Then it is stale, with one warning.
+- factory removes only a file at the lock path. A folder there stays with all that it holds. After 60 seconds the run exits with code 1 (`NOT STARTED`) and runs nothing.
 
 The wait and the hold:
 
