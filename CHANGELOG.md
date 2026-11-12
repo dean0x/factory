@@ -132,6 +132,10 @@ Git 2.26 and the state lock
 - One lock file, `.factory/locks/state.lock`, covers each step that changes `.factory/` and commits it. A second writer waits 20 tries of 250 ms, then exits with code 1 and names the lock file. Three steps only warn, write nothing and go on with exit code 0: the claim of the active machine by `start`, the clear of the mark by `shutdown`, and the clear of the mark in the end step of `reboot`.
 - The lock file holds an owner token, `<pid>-<16 hex characters>`. A step that ends removes the lock file only when it holds its own token. A lock file older than 300 seconds is taken over, and the new lock file holds the token of the new owner.
 
+The heavy-test lock
+
+- New command `factory lock run [--priority] -- COMMAND`. It runs one heavy command after the other heavy runs of the user have ended, and it waits up to 90 minutes. The exit code of the command passes through, and each outcome that factory decides writes one stderr line that starts with `error: factory lock run:`. The text of the block `worker` names this command, so `upgrade` renders it again. See the README, "Run a heavy command".
+
 `doctor`
 
 - `factory doctor` runs 29 checks. Version 0.1.0 ran 11. The new checks are `local-file`, `root`, `temp-folder`, `index`, `node-id`, `setup-text`, `roles`, `tracker`, `children`, `root-repo`, `root-files`, `project-paths`, `delegations`, `instruction-files`, `project-urls`, `agent-version`, `state-guard` and `board-size`.
@@ -180,7 +184,7 @@ Messages between sessions
 - Each session starts with a name: the coordinator `<node id>`, a worker `<node id>_<id>`. An id can not hold an underscore, so two nodes with different ids never give the same name. From 0.2.0-ea.1, which used a hyphen: run `factory upgrade`, then restart each worker. A coordinator gives work with the cross-session messages of Claude Code (`SendMessage` and `ListAgents`, version 2.1.224 or newer). A long task is a file in the assignment folder of the worker. There is no inbox and no doorbell.
 - `worker reset` types `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and checks that it happened. `self reset` queues a `/compact` for the coordinator after its resume file exists. `worker watch` checks the workers every 30 seconds, at most 40 times, and exits at the first change. See the README, "Give work to a worker".
 - The hook settings hold two more events, `Notification` and `PreToolUse`, so there are 6. `worker list` and `status` show the new state `waits`, and `dismiss` refuses a worker that waits. `factory upgrade` adds the events to existing work copies and to the coordinator settings. Then run `factory reboot`, so that each session gets its name and the new events.
-- The role texts say that a message from another session is a work direction only and carries no authority of the owner. The block `worker` has version 2, and the block `coordinator` has version 3. `upgrade` renders them again.
+- The role texts say that a message from another session is a work direction only and carries no authority of the owner. The block `worker` has version 3, and the block `coordinator` has version 3. `upgrade` renders them again.
 - `doctor` checks the version of Claude Code (2.1.224 or newer) with the new check `agent-version`, and warns about `crossSessionInbound` set to `hold` or `refuse` and about the default mode `plan`.
 - New JSON objects: `factory.worker-reset/v1`, `factory.self-reset/v1` and `factory.worker-watch/v1`. `factory.worker-new/v1` gets the field `assignment`. `factory.upgrade` gets the field `hookSettings`.
 
