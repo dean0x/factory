@@ -174,6 +174,21 @@ describe('the node command in the command line', () => {
     expect(result.out).toContain('Usage: factory node children [--home DIR]');
     expect(result.out).toContain('       factory node add-child PATH [--home DIR]');
     expect(result.out).toContain('       factory node remove-child ID [--home DIR]');
+    expect(result.out).toContain('       factory node send ID --file FILE [--home DIR]');
+  });
+
+  it('describes the --file flag of send in the help', async () => {
+    const result = await run(['node', '--help']);
+    expect(result.out).toMatch(/--file FILE\s+With send: /);
+  });
+
+  it('exits 2 for send with no --file, and for --file with another subcommand', async () => {
+    const missing = await run(['node', 'send', 'web']);
+    expect(missing.code).toBe(2);
+    expect(missing.err).toContain('send takes one argument');
+    const stray = await run(['node', 'children', '--file', 'task.md']);
+    expect(stray.code).toBe(2);
+    expect(stray.err).toContain('--file belongs to send only');
   });
 
   it('lists the command and the start command in the help', async () => {

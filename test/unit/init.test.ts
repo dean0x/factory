@@ -214,7 +214,7 @@ describe('init: the files', () => {
     expect(read('board.json')).toEqual({ merge: [], items: [], tracks: [] });
     expect(read('waiting.json')).toEqual({ intro: '', groups: [], items: [] });
     expect(read('decision-log.json')).toEqual({ rows: [] });
-    expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\n');
+    expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\n');
     expect(deps.files.get(`${HOME}/.factory/orders/.gitkeep`)).toBe('');
   });
 
@@ -670,21 +670,21 @@ describe('init: the layer and the recipe', () => {
     expect(files(deps)).toContain('.factory/roles/worker.md');
   });
 
-  it('makes a node on layer 2 with the manager and safety blocks and no worker file', async () => {
+  it('makes a node on layer 2 with the manager and safety blocks and a worker file', async () => {
     const { deps } = setup();
     expect((await runInit(deps, options({ layer: '2' }))).ok).toBe(true);
     const config = await loadConfig(deps, HOME);
     expect(config.ok && config.value.core.node.layer).toBe(2);
     expect(claudeBlocks(deps)).toEqual(['manager', 'safety', 'setup']);
-    expect(files(deps)).not.toContain('.factory/roles/worker.md');
+    expect(files(deps)).toContain('.factory/roles/worker.md');
     expect(files(deps)).toContain('.factory/node.json');
     const state = await loadState(deps, HOME);
-    expect(state.ok && state.value.blocks).toEqual({ manager: 1, safety: 2, setup: 1 });
+    expect(state.ok && state.value.blocks).toEqual({ manager: 1, safety: 2, worker: 2, setup: 1, 'setup-worker': 1 });
     const statuses = await inspectBlocks(deps, HOME, layer2Blocks);
-    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact']);
+    expect(statuses.map((status) => status.kind)).toEqual(['intact', 'intact', 'intact', 'intact', 'intact']);
   });
 
-  it('makes a node on layer 3 with the safety block only, no worker file, and a warning that names the layer', async () => {
+  it('makes a node on layer 3 with the safety block in CLAUDE.md, a worker file, and a warning that names the layer', async () => {
     const { deps } = setup();
     const result = await runInit(deps, options({ layer: '3' }));
     expect(result.ok).toBe(true);
@@ -692,9 +692,9 @@ describe('init: the layer and the recipe', () => {
     const config = await loadConfig(deps, HOME);
     expect(config.ok && config.value.core.node.layer).toBe(3);
     expect(claudeBlocks(deps)).toEqual(['safety', 'setup']);
-    expect(files(deps)).not.toContain('.factory/roles/worker.md');
+    expect(files(deps)).toContain('.factory/roles/worker.md');
     const state = await loadState(deps, HOME);
-    expect(state.ok && state.value.blocks).toEqual({ safety: 2, setup: 1 });
+    expect(state.ok && state.value.blocks).toEqual({ safety: 2, worker: 2, setup: 1, 'setup-worker': 1 });
     expect(result.value.warnings).toContain('Layer 3 has no role template: CLAUDE.md holds the safety block only.');
     expect(result.value.json['warnings']).toEqual(result.value.warnings);
   });
@@ -2975,11 +2975,11 @@ describe('init: the setup texts and the link rule (TP-102, TP-130)', () => {
     expect(state.ok && Object.keys(state.value.blocks).sort()).toEqual(['coordinator', 'safety', 'worker']);
   });
 
-  it('renders no worker setup block for a node with no worker file, and writes no worker setup file text into CLAUDE.md', async () => {
+  it('renders the worker setup block into the worker file of a node on layer 2, and writes no worker setup file text into CLAUDE.md', async () => {
     const { deps } = setup();
     deps.seed(SETUP_WORKER, 'Worker text.\n');
     expect((await runInit(deps, options({ layer: '2' }))).ok).toBe(true);
-    expect(deps.files.has(WORKER)).toBe(false);
+    expect(deps.files.get(WORKER)).toContain('Worker text.');
     expect(deps.files.get(CLAUDE)).not.toContain('Worker text.');
   });
 

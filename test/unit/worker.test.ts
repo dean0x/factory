@@ -448,6 +448,20 @@ describe('worker new: the work, in order (TP-5)', () => {
   });
 });
 
+describe('worker new: a node on a layer of 2 or more holds workers (AC-1)', () => {
+  const layerOf = (layer: number): FactoryConfig => {
+    const config = sampleConfig();
+    return { ...config, core: { ...config.core, node: { ...config.core.node, layer } } };
+  };
+
+  it.each([1, 2, 3])('makes a worker on a node on layer %i', async (layer) => {
+    const made = make({ config: layerOf(layer) });
+    await succeeded(made);
+    expect(recordOf(made)).toMatchObject({ project: 'web', branch: BRANCH });
+    expect(indexOf(made, 'tmux split-window')).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe('worker new: the output is short (TP-63)', () => {
   it('has a short first line and few lines, also with warnings', async () => {
     const made = make({ machine: { memory: 'System-wide memory free percentage: 5%\n', disk: null } });
@@ -698,6 +712,25 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     const error = await failed(made, { words: ['new', 'demo'] });
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain('the id of this node');
+    expectNothingChanged(made);
+  });
+
+  it('exits 2 for the id of a child (AC-2), names a remedy, and changes nothing', async () => {
+    const config = sampleConfig();
+    const made = make({
+      config: {
+        ...config,
+        core: {
+          ...config.core,
+          node: { ...config.core.node, layer: 2 },
+          children: [{ id: 'alpha', address: 'file:///w/alpha-factory' }],
+        },
+      },
+    });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe('the id alpha is the id of a child of this node');
+    expect(error.hint).toContain('factory worker new');
     expectNothingChanged(made);
   });
 

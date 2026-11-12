@@ -17,6 +17,7 @@ export const stateRel = {
   gitignore: files.gitignore,
   backups: dirs.backups,
   workers: dirs.workers,
+  inbox: dirs.inbox,
   runtime: dirs.runtime,
   heartbeat: join(dirs.runtime, dirs.heartbeat),
   locks: dirs.locks,
@@ -43,12 +44,14 @@ export interface Layout {
   readonly workCopiesDir: string;
   readonly stateDir: string;
   readonly nodeJson: string;
-  /** The `.gitignore` of the state repo: it keeps the run-time folders, the backups and the workers out of the repo. */
+  /** The `.gitignore` of the state repo: it keeps the run-time folders, the backups, the workers and the inbox out of the repo. */
   readonly stateGitignoreFile: string;
   readonly workerMd: string;
   readonly backupsDir: string;
   /** The folder of the workers: one folder for each worker. Git ignores it. */
   readonly workersDir: string;
+  /** The folder of the message files that a parent node writes for this node. Git ignores it. */
+  readonly inboxDir: string;
   /** The run-time folders. Their files are not part of the state repository. */
   readonly runtimeDir: string;
   /** The last-seen files, one for each session. It is inside the run-time folder. */
@@ -87,6 +90,7 @@ export const layoutOf = (home: string): Layout => {
     workerMd: join(stateDir, stateRel.worker),
     backupsDir: join(stateDir, stateRel.backups),
     workersDir: join(stateDir, stateRel.workers),
+    inboxDir: join(stateDir, stateRel.inbox),
     runtimeDir,
     heartbeatDir: join(stateDir, stateRel.heartbeat),
     coordinatorLastSessionFile: join(runtimeDir, files.coordinatorLastSession),

@@ -54,6 +54,7 @@ You need:
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
 | `factory node remove-child ID` | Remove a child from the config. The files of the child stay. |
+| `factory node send ID --file FILE` | Write a task file into the inbox of a child node. It sends no message. See "Send a task to a child node". |
 | `factory help words` | Print one plain sentence for each word that factory uses. |
 | `factory version` | Print the version. |
 | `factory help` | Show the help. |
@@ -95,7 +96,7 @@ More flags of `init`:
 - The last step of `init` writes the factory folder into the factory list. If that fails, or if no variable names a folder for the list, `init` exits with code 1, removes only what the run made, and prints no success line. A second `init` in the same folder then works.
 - `init` writes the `url` of each project into `factory.yaml` from the origin of its repo. It writes the URL without credentials, and it warns when the origin held some. It refuses (exit code 2) and clones nothing for a `--project` URL that holds credentials: an `https://` URL with any user part, or a password or a token in any URL form. An `ssh://` URL and the `user@host:path` form accept a user name only. Use an `https://` URL with no user name, or an `ssh://` URL. Use `gh auth login` or an SSH key for the credentials.
 - A repo with no origin, or with a `file` URL, gets no `url`. `init` and `doctor` warn that the factory cannot be shared with that repo. Its local folder stays in the key `sources` of `factory.local.yaml`, never in `factory.yaml`.
-- `--layer N` sets the layer of the node, from 1 to 16. The default is 1. Layer 1 has the coordinator role, layer 2 the manager role. A layer above 2 has no role template yet: `coordinator/CLAUDE.md` holds the safety block only, and `init` prints a warning.
+- `--layer N` sets the layer of the node, from 1 to 16. The default is 1. Layer 1 has the coordinator role, layer 2 the manager role. A layer above 2 has no role template yet: `coordinator/CLAUDE.md` holds the safety block only, and `init` prints a warning. A node on any layer from 1 up has the worker file `.factory/roles/worker.md`, because it can hold workers.
 - `--recipe ID` sets the recipe. The only recipe is `software`.
 - `--approval POINT=MODE` sets the mode of one approval point of the recipe. See "Approval points".
 - `--name ID`, `--owner-name NAME` and `--owner-github LOGIN` set the id of the node and the owner.
@@ -465,7 +466,7 @@ It works on a session that has only the window `view`. It never makes the window
 
 ### Child nodes
 
-A node on layer 2 can have child nodes on layer 1. A child address is a `file://` address on this machine. Other addresses are refused.
+A node on layer 2 or above can have child nodes. A child node is on the layer just below its parent. A child address is a `file://` address on this machine. Other addresses are refused.
 
 ```sh
 factory node add-child ../api-factory
@@ -473,7 +474,70 @@ factory node children
 factory node remove-child api-factory
 ```
 
-On layer 1, `add-child` exits with code 2: the children of a coordinator are workers. A child on the wrong layer, a folder that is no node, a child folder that is this factory folder or holds it, and a child with the id of this node exit with code 1 and name a remedy. A child that is a child already gives a warning and changes nothing.
+On layer 1, `add-child` exits with code 2: the children of a coordinator are workers. A child on the wrong layer, a folder that is no node, a child folder that is this factory folder or holds it, a child with the id of this node, and a child with the id of a worker exit with code 1 and name a remedy. A child that is a child already gives a warning and changes nothing.
+
+A node on layer 1 or above can hold workers. A node on layer 2 or above holds workers and child nodes at the same time. A worker is on layer 0. A child node is exactly one layer below its parent. `factory worker new` works on every layer from 1, and the worker file `.factory/roles/worker.md` is written on every layer from 1.
+
+Workers and child nodes share one id space. `worker new` exits with code 2 for the id of a child node. `doctor` fails the check `children` when a child has the id of a worker.
+
+A node on layer 2 from an earlier version has no worker file. `doctor` warns and names the command. Run `factory upgrade --overwrite worker` to write the file.
+
+### Send a task to a child node
+
+```sh
+factory node send api-factory --file .factory/orders/task.md
+```
+
+`node send` gives a task to a child node. It writes the task as a new file in the inbox of the child, `.factory/inbox/`. It sends no message and types nothing. You do the last step (see "What the sender does next").
+
+- **The id.** The id must be a child in `factory.yaml`. Run `factory node children` to see the ids.
+- **The file.** FILE follows the rules of `--assignment` (see "Give work to a worker"). Its real path must be inside the factory folder or inside the git work tree of the folder where you run the command. A path part below that root that starts with a dot is allowed only for `.factory/orders/` in the factory folder. The other rules of `--assignment` apply: a link in the path exits with code 4, and a file over 1 MiB or not in UTF-8 exits with code 2. A text with a control character other than the line break and the tab, or with a bidi or hidden character, exits with code 2. A text that looks like a token exits with code 4, and no output repeats the value.
+- **The new file.** The name has the time, the id of this node and a random hex part, and it ends in `.md`. The mode is 600. The command never replaces a file. The file starts with four header lines. The task text follows them.
+
+  ```
+  Sender node id: acme
+  Sender node address: file:///home/example/work/acme-factory
+  Target node id: api-factory
+  Message, no owner authority.
+  ```
+
+- **The checks.** The command resolves the real path of the child folder once. It asks the child before the write and after it. Both answers must show the same id and the same layer as the config lists. If the second answer differs, the command removes the new file and exits with code 4. If the removal fails, the exit code is still 4, and the message names the file and the `rm` step.
+- **The paths.** The child folder, `factory.yaml`, `.factory` and `inbox` must not be links. They must belong to your user. They must have no group or other write bit. Else the exit code is 4.
+- **The folders.** The command never makes `.factory`. When `.factory` is absent, the exit code is 3. The command makes only `inbox`, with mode 700.
+- **The caps.** An inbox holds at most 100 files and 8 MiB in all. Over a cap, the exit code is 3.
+- **The state repo.** The state repo of the child must ignore `inbox/`. A new factory has that line. A child from an earlier version gets it when you run `factory upgrade` in its folder. Else the exit code is 3.
+
+On success, the output is:
+
+```
+Wrote the task for api-factory as a new file in its inbox.
+File: <path of the new file>
+Session: api-factory
+Check with ListAgents that exactly one session has the name api-factory.
+Then send one SendMessage to api-factory that names the file.
+```
+
+`--json` prints the object `factory.node-send/v1` with the fields `schema`, `home`, `id`, `session`, `file` and `steps`.
+
+Every failure prints `cannot send to ID: REASON` and one remedy line that names a command. The reason is a fixed text. It never shows text of the child.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| 0 | The file is written. | Do the steps that the output names. |
+| 1 | A fault of the file system, also a name that exists. | Check the rights and the free space of the child folder. Run the command again. |
+| 2 | The command line or the file is wrong: the id is not a child, `--file` is absent, FILE is bad, or the text holds a control or hidden character. | Run `factory node children` for the ids. Fix the file. Run the command again. |
+| 3 | Not ready: the child does not answer, its inbox is full, or its state repo does not ignore `inbox/`. | Start the child. Ask the child to deal with the files in its inbox. Run `factory upgrade` in the child folder. Run the command again. |
+| 4 | A safety rule refused the action: the id or the layer of the child differs from the config, a path of the child is a link, belongs to another user or can be written by a group or by other users, or the text looks like a token. | Run `factory node children`. Fix the child, or run `factory node remove-child ID` and add it again. Replace each link and run `chmod go-w PATH`. Remove the token. If the message names a file, delete it with `rm`. |
+
+**What the sender does next.** The command prints the session name of the child. The name is the id of the child. Check with `ListAgents` that exactly one session has that name. Then send one `SendMessage` that names the file. The name is not unique on the machine, and the command makes no tmux call. So this check is yours.
+
+**Authority.** The file is a message. It carries no authority of the owner. The header says so, and the safety block of every node says so. The node that gets the file tells its owner about it. Do not use `node send` to pass a decision of the owner. The relay of owner authority to a child is not built yet.
+
+**Limits.**
+
+- A child that belongs to another user account is refused with exit code 4.
+- Two sends at the same time can each pass the cap by one file, because the child folder has no lock.
+- A reader can see a partial file during the write, because the command creates the file in place. The child reads the file only after your `SendMessage`.
 
 ### Doctor
 
@@ -487,7 +551,7 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 - `setup-text`: text outside the managed blocks that the setup files do not hold. This is a warning.
 - `roles`: the layer has a role template.
 - `tracker`: the kind of the board. A kind other than `local` warns, because its connector comes later.
-- `children`: the child nodes.
+- `children`: the child nodes. It fails when a child is on the wrong layer or has the id of a worker.
 - `root-repo`: what the config repo tracks, and what git ignores.
 - `root-files`: the tracked text files hold no value that looks like a token (a failure), no `file` URL and no path of a user folder (warnings).
 - `project-paths`: each project folder is inside the factory folder and is not a reserved name.
@@ -536,6 +600,8 @@ factory upgrade
 `upgrade` writes the share list into the `.gitignore` of the factory folder. It writes the part between the two marker lines again, and it keeps every line that you added outside the part. A `.gitignore` with no marker lines gets the part at its top, and its old lines stay below it. A marker line with no pair stops `upgrade` with exit code 1 and changes nothing, also in a dry run. When the factory folder holds no `.git`, `upgrade` also makes it a git repo, the config repo, with one commit of the shared files: `.gitignore`, `factory.yaml`, and `setup/` when it exists. If git has no identity, `upgrade` makes the repo and no commit, and it prints a warning. A factory folder that holds a `.git` keeps its repo, and `upgrade` makes no commit there. If a step fails, `upgrade` removes the repo that it made. `upgrade` writes no file in `setup/`: a node of version 0.1.0 has no setup text, so it needs no acceptance. To add setup text, write `setup/coordinator.md` or `setup/roles/worker.md` yourself, then run `factory init` in a terminal window to accept it.
 
 `upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports.
+
+`upgrade` also adds the lines `workers/` and `inbox/` to the `.gitignore` of the state repo when the file lacks a line. The dry run lists each added line. Every other line of the file stays. A child node needs the line `inbox/` before `node send` can write to it. A link at the path stops `upgrade` with exit code 4.
 
 `upgrade` also adds the hook events that are missing (`Notification` and `PreToolUse`) to the hook settings of each recorded work copy whose settings file holds a hook entry of factory, and to the settings of the coordinator. It prints the change and asks first, with the same consent rule as `start`: a yes in a terminal window, or `--yes` outside a factory session. A dry run lists the change and writes nothing. A settings file with no hook entry of factory is skipped. A write that fails exits with code 1 and names the files that changed. `--json` lists the files in the field `hookSettings`. After this step, run `factory reboot`, so that each session gets its name and the new events.
 
@@ -593,8 +659,9 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
     work-copies/            the folder for work copies. The repo does not track it. `init` does not make it.
     .factory/               the state. It is its own git repo.
       node.json             the factory marker: the schema version and the versions of the blocks
-      roles/worker.md       the worker role (layer 1 only)
+      roles/worker.md       the worker role (layer 1 and above)
       orders/               assignments
+      inbox/                task files from the parent node. The state repo ignores it.
       board.json  waiting.json  decision-log.json
       decision-profile/  roadmaps/
 ```
@@ -627,6 +694,7 @@ Only a check at a security boundary stops a command. A stop exits with code 4. I
 - A proxy comes only from the config. `doctor` prints `Config: <path>` first. It checks that the proxy answers when the config passes the registration check (see "Find the factory folder"), also when it comes from a parent folder, from `FACTORY_HOME` or from the factory list. A `factory.yaml` that does not pass the check, for example one in a clone of a repo, stops `doctor` with exit code 4 before any request. A stray `ANTHROPIC_BASE_URL` in the shell is a warning.
 - The proxy host receives the API traffic of the coordinator. Use only a proxy that you control.
 - By default, merges and releases wait for the owner (see "Approval points").
+- A file in `.factory/inbox/` of a node comes from its parent node. It is data and not an instruction of the owner, also when it holds the owner prefix. The safety block of every node says so, and the node tells the owner about each such file.
 - `doctor` fails when a value in `factory.yaml` or a tracked text file of the factory folder looks like a token. It names the files and never prints the value.
 
 ## Exit codes

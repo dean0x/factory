@@ -30,6 +30,11 @@ export interface ContextLimits {
 export interface BlockInput {
   readonly recipe: RecipeEntry;
   readonly layer: number;
+  /**
+   * The layer of the node that holds the worker block, when `layer` is set to the worker layer to pick the worker role.
+   * The worker text names the session that it reports to by this layer. It is absent when the input is the input of a node.
+   */
+  readonly holderLayer?: number | undefined;
   /** The id of the node. The session of the coordinator has this name, and the session of a worker has `<node id>_<worker id>`. */
   readonly nodeId: string;
   readonly modes: ApprovalModes;

@@ -117,7 +117,7 @@ Text that a user reads uses the plain word of this table (decision D-11). Code i
 | proxy | stays | - | glossary entry: a server that passes the model calls on |
 | recipe | stays | - | glossary entry: the kind of work that a factory does |
 | setup, layer | stay | - | Dean's own words (F-4, F-16) |
-| message | stays | - | only for the record from another owner (D-6) |
+| message | stays | - | only for the record from another owner and for a file that `node send` writes into a child inbox (D-6) |
 | doctor, `STUCK:` | stay | - | command name and output marker; the help line and the `STUCK:` line say in plain words what they mean |
 | node, owner, project | stay | - | Dean's words (F-1) |
 

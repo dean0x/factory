@@ -587,19 +587,20 @@ describe('factory init: the home rules (built binary)', () => {
     },
   );
 
-  it('makes a node on layer 2 with the manager block, and doctor accepts it', async () => {
+  it('makes a node on layer 2 with the manager block and a worker file, and doctor accepts it', async () => {
     const result = await box.run(initArgs(['--layer', '2']));
     expect(result.code).toBe(0);
     const claude = await box.read(join(box.node, 'coordinator', 'CLAUDE.md'));
     expect(claude).toContain('factory:begin manager');
     expect(claude).not.toContain('factory:begin coordinator');
-    expect(existsSync(join(box.node, '.factory', 'roles', 'worker.md'))).toBe(false);
+    const worker = await box.read(join(box.node, '.factory', 'roles', 'worker.md'));
+    expect(worker).toContain('The manager is the single contact of the owner.');
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
-    expect(doctor.stdout).toContain('3 managed blocks are intact');
+    expect(doctor.stdout).toContain('5 managed blocks are intact');
   });
 
-  it('makes a node on layer 3 with the safety block only, warns and names the layer, and doctor warns the same', async () => {
+  it('makes a node on layer 3 with the safety block in CLAUDE.md and a worker file, warns and names the layer, and doctor warns the same', async () => {
     const result = await box.run(initArgs(['--layer', '3']));
     expect(result.code).toBe(0);
     expect(result.stderr).toContain('Layer 3 has no role template');
@@ -607,12 +608,12 @@ describe('factory init: the home rules (built binary)', () => {
     expect(claude).toContain('factory:begin safety');
     expect(claude).not.toContain('factory:begin coordinator');
     expect(claude).not.toContain('factory:begin manager');
-    expect(existsSync(join(box.node, '.factory', 'roles', 'worker.md'))).toBe(false);
+    expect(existsSync(join(box.node, '.factory', 'roles', 'worker.md'))).toBe(true);
 
     const doctor = await box.run(['doctor', '--home', box.node]);
     expect(doctor.code).toBe(0);
     expect(doctor.stdout).toContain('layer 3 has no role template');
-    expect(doctor.stdout).toContain('2 managed blocks are intact');
+    expect(doctor.stdout).toContain('4 managed blocks are intact');
   });
 
   it.each(['0', '17', 'x'])('exits 2 for the layer "%s"', async (layer) => {

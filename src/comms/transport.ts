@@ -4,6 +4,7 @@ import type { Deps } from '../core/deps.js';
 import { commands, commandText, files, keys, places, program } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { checkFileAddress } from './address.js';
+import { deliverToHome, type DeliverInput, type DeliverResult } from './deliver.js';
 
 /** What a ping learns about a node. */
 export type PingResult =
@@ -16,11 +17,13 @@ export type PingResult =
     };
 
 /**
- * How to reach another node. The address says where it is. FAC-M2 has only `ping`:
- * `report` and `deliver` come with the reports. A node that cannot be read is `unknown`, never an error.
+ * How to reach another node. The address says where it is. `ping` learns who answers there, and `deliver` puts a message
+ * file in its inbox. `report` comes with the reports. A node that cannot be read is `unknown`, never an error, and a delivery
+ * that fails is a kind of `DeliverResult`, never a throw.
  */
 export interface Transport {
   ping(address: string): Promise<PingResult>;
+  deliver(address: string, input: DeliverInput): Promise<DeliverResult>;
 }
 
 const unknown = (reason: string, schema?: number): PingResult =>
@@ -28,10 +31,11 @@ const unknown = (reason: string, schema?: number): PingResult =>
 
 /**
  * The transport for a `file://` address: a node home on this machine. The ping reads the shared config of that node
- * with the normal loader. It needs only the id and the layer, so it reads no local file of the other node.
+ * with the normal loader. It needs only the id and the layer, so it reads no local file of the other node. The delivery uses
+ * the same ping before and after the write (see `deliverToHome`).
  */
-export const fileTransport = (deps: Deps, registry: RecipeRegistry): Transport => ({
-  ping: async (address) => {
+export const fileTransport = (deps: Deps, registry: RecipeRegistry): Transport => {
+  const ping = async (address: string): Promise<PingResult> => {
     const checked = checkFileAddress(address);
     if (!checked.ok) return unknown(checked.error);
 
@@ -62,5 +66,6 @@ export const fileTransport = (deps: Deps, registry: RecipeRegistry): Transport =
         return unreachable;
       }
     }
-  },
-});
+  };
+  return { ping, deliver: (address, input) => deliverToHome(deps, ping, address, input) };
+};
