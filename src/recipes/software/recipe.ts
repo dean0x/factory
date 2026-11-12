@@ -12,7 +12,7 @@ type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeo
 /** The worker block lives in the worker file in the state folder, so its paths are written from the factory folder. It names the session of the coordinator by the id of the node. */
 const workerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.worker,
-  version: 2,
+  version: 3,
   target: 'workerFile',
   body: fillTemplate(WORKER_LINES, workerValuesFor(input)),
 });

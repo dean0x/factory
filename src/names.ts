@@ -1779,7 +1779,6 @@ export const templateValues: Readonly<Record<string, string>> = {
   diskLimitKey: keyPath(keys.root.limits, keys.limits.diskFreeMinGb),
   preparePctKey: keyPath(keys.root.limits, keys.limits.contextPreparePct),
   maxPctKey: keyPath(keys.root.limits, keys.limits.contextMaxPct),
-  heavyTestKey: keys.project.heavyTest,
   inboxEnv: env.inbox,
   resumeFile: files.resume,
   workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
