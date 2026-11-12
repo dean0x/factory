@@ -28,9 +28,9 @@ export interface RequestOptions {
   /** The key of the option that the asker recommends. */
   readonly recommend: string | undefined;
   /** With close: who decided the request, when it is not the owner. It goes with `decision`. */
-  readonly decider?: string | undefined;
+  readonly decider: string | undefined;
   /** With close: the decision, one line. It goes with `decider`. */
-  readonly decision?: string | undefined;
+  readonly decision: string | undefined;
 }
 
 type Subcommand = (typeof requestCommands)[keyof typeof requestCommands];

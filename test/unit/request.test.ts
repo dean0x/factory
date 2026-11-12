@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runRequest, type RequestOptions } from '../../src/commands/request.js';
-import { commands, commandText, files as fileNames, program, requestCommands, requestWords } from '../../src/names.js';
+import { boardTextLimits, commands, commandText, files as fileNames, program, requestCommands, requestWords } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { boardNode, boardText } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
@@ -12,7 +12,16 @@ import { HOME } from '../helpers/guard-fixture.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
 
-const BASE: RequestOptions = { home: HOME, words: [], title: undefined, question: undefined, options: [], recommend: undefined };
+const BASE: RequestOptions = {
+  home: HOME,
+  words: [],
+  title: undefined,
+  question: undefined,
+  options: [],
+  recommend: undefined,
+  decider: undefined,
+  decision: undefined,
+};
 
 const ADD: Partial<RequestOptions> = {
   words: ['add'],
@@ -383,6 +392,18 @@ describe('request close (TP-22, TP-99)', () => {
     const repo = await OPEN();
     const before = filesOf(repo);
     const error = errorOf(await run(repo, { words: ['close', 'D-1'], decider: 'coordinator', decision: 'Yes\nand no' }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each([
+    ['an empty decision', ''],
+    ['a decision of more than the most characters', 'x'.repeat(boardTextLimits.maxTextChars + 1)],
+  ])('refuses %s with exit 2, and changes no file', async (_name, decision) => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    const error = errorOf(await run(repo, { words: ['close', 'D-1'], decider: 'coordinator', decision }));
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(filesOf(repo)).toEqual(before);
     expect(repo.commits).toEqual([]);
