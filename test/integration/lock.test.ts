@@ -3,6 +3,7 @@ import { chmod, lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/p
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { env, files, lockWords } from '../../src/names.js';
+import { killKeptGroups, readyPid } from '../helpers/own-group.js';
 import { DIST, makeSandbox, removeOpenSandboxes, type Sandbox } from './harness.js';
 
 /**
@@ -30,13 +31,8 @@ beforeEach(() => rm(stateDir(), { recursive: true, force: true }));
 
 afterEach(() => {
   for (const child of processes.splice(0)) child.kill('SIGKILL');
-  for (const pgid of childGroups.splice(0)) {
-    try {
-      process.kill(-pgid, 'SIGKILL');
-    } catch {
-      // The group has ended already.
-    }
-  }
+  // `readyPid` keeps only a pid that a held child wrote, and `killKeptGroups` signals only a pid that passes the same check.
+  killKeptGroups(childGroups);
 });
 
 interface Running {
@@ -170,7 +166,7 @@ describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
     const [ready, marker] = [path('hold-ready'), path('hold-marker')];
     const run = factory(lockRun(HOLD, ready, marker));
     await until(async () => (await textOf(ready)) !== '');
-    childGroups.push(Number(await textOf(ready)));
+    await readyPid(childGroups, ready);
     expect(await exists(lockFile())).toBe(true);
     run.child.kill('SIGTERM');
     const result = await run.done;
@@ -183,7 +179,7 @@ describe('lock run with real processes', { timeout: TEST_TIMEOUT_MS }, () => {
     const [ready, marker, out] = [path('wait-ready'), path('wait-marker'), path('waiter.json')];
     factory(lockRun(HOLD, ready, marker));
     await until(async () => (await textOf(ready)) !== '');
-    childGroups.push(Number(await textOf(ready)));
+    await readyPid(childGroups, ready);
     const held = await textOf(lockFile());
     const waiter = factory(lockRun(REPORT, out, lockFile(), '0'));
     await until(() => waiter.stderr().includes(lockWords.waiting));

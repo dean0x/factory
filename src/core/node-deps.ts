@@ -502,7 +502,8 @@ const attachedEndOf = (code: number | null, signal: NodeJS.Signals | null): Atta
  * Run the program with the terminal of this process (`Deps.runAttached`). A held run starts the program as the leader of a new
  * process group with no standard input. While it runs, INT, TERM and HUP go on to that group only, and the handlers are removed at
  * every end. At `maxMs` the group gets TERM, then KILL after `killGraceMs`; the run ends `GROUP_STOP_GRACE_MS` after the KILL, also
- * when the first process has not ended. A run that is not held has no group, no handler and no limit.
+ * when the first process has not ended. When the first process ends after `maxMs`, the group gets KILL once at that moment, the
+ * timers end, and the run ends at once. A run that is not held has no group, no handler and no limit.
  */
 const runAttachedProgram = (command: string, args: readonly string[], options: AttachedOptions = {}): Promise<AttachedEnd> =>
   new Promise((resolve) => {
@@ -522,6 +523,7 @@ const runAttachedProgram = (command: string, args: readonly string[], options: A
     }
     const timers: { limit?: NodeJS.Timeout; kill?: NodeJS.Timeout; end?: NodeJS.Timeout } = {};
     let limited = false;
+    let killSent = false;
     let settled = false;
 
     const toGroup = (signal: NodeJS.Signals): void => {
@@ -547,12 +549,20 @@ const runAttachedProgram = (command: string, args: readonly string[], options: A
       resolve(end);
     };
     const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
-      if (!limited) settle(attachedEndOf(code, signal));
+      if (!limited) {
+        settle(attachedEndOf(code, signal));
+        return;
+      }
+      // The first process has ended after the limit. The group number is still ours now, so one KILL stops what is left of the group.
+      // The timers end here, so no later KILL can reach a group that has taken the number.
+      if (!killSent) toGroup('SIGKILL');
+      settle({ kind: 'limit' });
     };
     const stopAtLimit = (): void => {
       limited = true;
       toGroup('SIGTERM');
       timers.kill = setTimeout(() => {
+        killSent = true;
         toGroup('SIGKILL');
         timers.end = setTimeout(() => settle({ kind: 'limit' }), GROUP_STOP_GRACE_MS);
       }, options.killGraceMs ?? GROUP_STOP_GRACE_MS);
