@@ -224,6 +224,32 @@ describe('factory node send (built binary)', () => {
     expect(await readdir(elsewhere)).toEqual([]);
   });
 
+  it('exits 3 and names factory upgrade for a child whose state repo does not ignore the inbox, and sends after the upgrade', async () => {
+    const task = await readyPair();
+    const state = join(shop, '.factory');
+    // A state repo from before the inbox: it has every line of the .gitignore but "inbox/", and the rest of the folder is whole.
+    await writeFile(join(state, '.gitignore'), 'state/\nlocks/\nbackups/\nworkers/\n');
+    expect((await box.git(state, ['add', '.gitignore'])).code).toBe(0);
+    expect((await box.git(state, ['commit', '-q', '-m', 'drop the inbox line'])).code).toBe(0);
+
+    const refused = await node('send', 'web', '--file', task);
+    expect(refused.code).toBe(3);
+    expect(refused.stderr).toContain('factory upgrade');
+    await expect(stat(join(state, 'inbox'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const upgraded = await box.run(['upgrade', '--home', shop]);
+    expect(upgraded.code, upgraded.stderr).toBe(0);
+    expect(await readFile(join(state, '.gitignore'), 'utf8')).toContain('inbox/\n');
+
+    const sent = await node('send', 'web', '--file', task);
+    expect(sent.stderr).toBe('');
+    expect(sent.code).toBe(0);
+    expect(await readdir(join(state, 'inbox'))).toHaveLength(1);
+    const status = await box.git(state, ['status', '--porcelain', '--untracked-files=all']);
+    expect(status.code).toBe(0);
+    expect(status.stdout).not.toContain('inbox');
+  });
+
   it('exits 3 and does not make the state folder of a child that has none', async () => {
     const task = await readyPair();
     await rm(join(shop, '.factory'), { recursive: true });

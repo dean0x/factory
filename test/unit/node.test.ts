@@ -574,14 +574,17 @@ describe('node send', () => {
   interface Setup extends NonNullable<Parameters<typeof make>[0]> {
     /** The text of the task file. */
     readonly task?: string;
-    /** False: the state repo of the child has no .gitignore yet. */
-    readonly ignored?: boolean;
+    /** The text of the .gitignore in the state folder of the child. Null: the child has no state folder at all. */
+    readonly stateGitignore?: string | null;
   }
 
+  /** The .gitignore of a state repo from before the inbox: it has every line but `inbox/`. */
+  const GITIGNORE_WITHOUT_INBOX = 'state/\nlocks/\nbackups/\nworkers/\n';
+
   /** A node with one child that is ready for a send, and a task file in the orders folder of the node. */
-  const sendable = ({ task = 'Build the page.\n', ignored = true, ...options }: Setup = {}): FakeDeps => {
+  const sendable = ({ task = 'Build the page.\n', stateGitignore = STATE_GITIGNORE, ...options }: Setup = {}): FakeDeps => {
     const deps = make({ children: [{ id: 'web', address: `file://${CHILD}` }], homes: webHome, ...options });
-    if (ignored) deps.seed(`${CHILD}/.factory/.gitignore`, STATE_GITIGNORE);
+    if (stateGitignore !== null) deps.seed(`${CHILD}/.factory/.gitignore`, stateGitignore);
     deps.seed(TASK, task);
     return deps;
   };
@@ -640,12 +643,22 @@ describe('node send', () => {
   });
 
   it('TP-26: exits 3 and names factory upgrade when the state repo of the child does not ignore the inbox yet', async () => {
-    const deps = sendable({ ignored: false });
+    const deps = sendable({ stateGitignore: GITIGNORE_WITHOUT_INBOX });
+    expect(deps.files.get(`${CHILD}/.factory/.gitignore`)).toBe(GITIGNORE_WITHOUT_INBOX);
     const error = await refused(deps);
     expect(exitCodeOf[error.kind]).toBe(3);
     expect(error.message).toContain(nodeSendReasons.notIgnored);
     expect(error.hint).toContain('factory upgrade');
     expect(deps.dirs.has(INBOX)).toBe(false);
+  });
+
+  it('TP-26: exits 3 and names factory upgrade when the child has no state folder, and does not make one', async () => {
+    const deps = sendable({ stateGitignore: null });
+    const error = await refused(deps);
+    expect(exitCodeOf[error.kind]).toBe(3);
+    expect(error.message).toContain(nodeSendReasons.notIgnored);
+    expect(error.hint).toContain('factory upgrade');
+    expect(deps.dirs.has(`${CHILD}/.factory`)).toBe(false);
   });
 
   it('sends the text with LF line ends when the file has CRLF, and accepts a tab', async () => {
@@ -774,7 +787,8 @@ describe('node send', () => {
       for (let index = 0; index < nodeInbox.maxFiles; index += 1) deps.seed(`${INBOX}/old-${index}.md`, 'x');
       return { deps };
     }],
-    ['a state repo that does not ignore the inbox', 3, nodeSendReasons.notIgnored, () => ({ deps: sendable({ ignored: false }) })],
+    ['a state repo that does not ignore the inbox', 3, nodeSendReasons.notIgnored, () => ({ deps: sendable({ stateGitignore: GITIGNORE_WITHOUT_INBOX }) })],
+    ['a child with no state folder', 3, nodeSendReasons.notIgnored, () => ({ deps: sendable({ stateGitignore: null }) })],
     ['another id in the child', 4, nodeSendReasons.mismatch, () => ({ deps: sendable({ homes: { [CHILD]: configOf('other', 1) } }) })],
     ['a link as the inbox', 4, nodeSendReasons.unsafe, () => {
       const deps = sendable({ links: { [INBOX]: '/elsewhere' } });
