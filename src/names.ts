@@ -109,8 +109,16 @@ export const workerCommands = {
   watch: 'watch',
 } as const;
 
-/** The subcommands of `item`. */
-export const itemCommands = { add: 'add', update: 'update', move: 'move', close: 'close', list: 'list' } as const;
+/** The subcommands of `item`. `merged` records a merged PR and `unassign` takes the worker off an item. */
+export const itemCommands = {
+  add: 'add',
+  update: 'update',
+  move: 'move',
+  close: 'close',
+  list: 'list',
+  merged: 'merged',
+  unassign: 'unassign',
+} as const;
 
 /** The subcommands of `track`. The command has no remove subcommand. */
 export const trackCommands = { add: 'add', list: 'list' } as const;
@@ -142,8 +150,8 @@ export const commandLines = {
   itemMove: `${commands.item} ${itemCommands.move}`,
   itemClose: `${commands.item} ${itemCommands.close}`,
   itemList: `${commands.item} ${itemCommands.list}`,
-  itemMerged: `${commands.item} merged`,
-  itemUnassign: `${commands.item} unassign`,
+  itemMerged: `${commands.item} ${itemCommands.merged}`,
+  itemUnassign: `${commands.item} ${itemCommands.unassign}`,
   trackAdd: `${commands.track} ${trackCommands.add}`,
   trackList: `${commands.track} ${trackCommands.list}`,
   requestAdd: `${commands.request} ${requestCommands.add}`,

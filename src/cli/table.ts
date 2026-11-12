@@ -22,6 +22,7 @@ import { runVersion } from '../commands/version.js';
 import { runWorker } from '../commands/worker.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
+import { toolNames } from '../core/tools.js';
 import {
   assignmentSource,
   boardTextLimits,
@@ -459,13 +460,15 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.item,
-    summary: 'Add, change, move, close and list the items of the board.',
+    summary: `Add, change, move, close and list the items of the board, record a merged PR, and take the ${roles.worker} off an item.`,
     usage: [
       `${commandText(commandLines.itemAdd)} ${flagText(flags.title)} TEXT [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemUpdate)} ID [${flagText(flags.title)} TEXT] [${flagText(flags.text)} TEXT] [${flagText(flags.track)} ID] [${flagText(flags.field)} NAME=VALUE]... [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemMove)} ID ${flagText(flags.state)} STATE|${flagText(flags.stage)} STAGE [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemClose)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.itemList)} [${flagText(flags.all)}] [${flagText(flags.track)} ID] [${flagText(flags.follow)}] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemMerged)} ID ${flagText(flags.pr)} N [${flagText(flags.project)} PROJECT] [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.itemUnassign)} ID [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -493,7 +496,21 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         placeholder: 'NAME=VALUE',
         description:
           `With ${itemCommands.add} and ${itemCommands.update}: set a field of the ${roles.owner} on the item. The setup declares the fields and their values. ` +
-          'Repeat the flag for more fields.',
+          `Repeat the flag for more fields. The ${roles.worker} field of an item that names a ${roles.worker} changes only through ${itemCommands.unassign}.`,
+      },
+      [flags.pr]: {
+        type: 'string',
+        placeholder: 'N',
+        description:
+          `With ${itemCommands.merged}: the number of the PR. ${program} reads the PR with ${toolNames.gh} and records the merge only when the PR is merged ` +
+          `into the default branch of the project, from the branch of the ${roles.worker}. It never merges a PR.`,
+      },
+      [flags.project]: {
+        type: 'string',
+        placeholder: 'PROJECT',
+        description:
+          `With ${itemCommands.merged}: the id of the project of the PR. The item must name a ${roles.worker} with a record, which gives the project, ` +
+          'or this flag names it. With both, they must be the same project.',
       },
       [flags.state]: {
         type: 'string',
@@ -530,6 +547,8 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           stage: given.string(flags.stage),
           all: given.bool(flags.all),
           follow: given.bool(flags.follow),
+          pr: given.string(flags.pr),
+          project: given.string(flags.project),
           json: given.bool(flags.json),
         },
         registry,

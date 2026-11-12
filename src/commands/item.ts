@@ -1,16 +1,23 @@
+import { resolve } from 'node:path';
+import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, MergeRecorded } from '../board/contract.js';
+import { checkItemId, checkMergeSetup } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
-import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery } from '../board/contract.js';
 import { followBoard } from '../board/follow.js';
+import { githubRepoOf, parsePrNumber, readMergedPr, type MergedPr, type MergeReadInput } from '../board/github-pr.js';
 import { boardView, trackView } from '../board/list-view.js';
+import { requireLocalKind } from '../board/local.js';
 import { stageShown } from '../board/stages.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
+import { defaultBranchOf } from '../core/git.js';
 import { ok } from '../core/result.js';
-import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, schemaIds } from '../names.js';
+import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, keys, roles, schemaIds } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
+import { requireCoordinatorCaller } from '../workers/panes.js';
+import { branchOf, readWorkerRecord, type WorkerRecord } from '../workers/registry.js';
 import { openBoard, type OpenBoard } from './board-open.js';
 import { parseFieldWords, shown, usageFor } from './board-words.js';
 
@@ -28,17 +35,31 @@ export interface ItemOptions {
   readonly all: boolean;
   /** Draw the list again at each change of the board, until the reader goes. Only `list` takes it. */
   readonly follow: boolean;
+  /** The PR number, as typed. Only `merged` takes it. */
+  readonly pr: string | undefined;
+  /** The id of the project of the PR. Only `merged` takes it. */
+  readonly project: string | undefined;
   readonly json: boolean;
 }
 
 type Subcommand = (typeof itemCommands)[keyof typeof itemCommands];
+
+/** The merge record: the item, the PR number (checked), and the project when the person names it. */
+interface MergedAction {
+  readonly kind: typeof itemCommands.merged;
+  readonly id: string;
+  readonly number: number;
+  readonly project: string | undefined;
+}
 
 type Action =
   | { readonly kind: typeof itemCommands.add; readonly input: ItemAddInput }
   | { readonly kind: typeof itemCommands.update; readonly id: string; readonly patch: ItemPatch }
   | { readonly kind: typeof itemCommands.move; readonly id: string; readonly move: ItemMove }
   | { readonly kind: typeof itemCommands.close; readonly id: string }
-  | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean };
+  | { readonly kind: typeof itemCommands.list; readonly query: ItemQuery; readonly follow: boolean }
+  | MergedAction
+  | { readonly kind: typeof itemCommands.unassign; readonly id: string };
 
 const SUBCOMMANDS = Object.values(itemCommands).join(', ');
 
@@ -49,6 +70,8 @@ const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
   [itemCommands.move]: [flags.state, flags.stage],
   [itemCommands.close]: [],
   [itemCommands.list]: [flags.all, flags.track, flags.follow],
+  [itemCommands.merged]: [flags.pr, flags.project],
+  [itemCommands.unassign]: [],
 };
 
 const needsUsage = usageFor(commands.item);
@@ -65,6 +88,8 @@ const refuseStrayFlags = (subcommand: Subcommand, options: ItemOptions): CliResu
     [flags.stage, options.stage !== undefined],
     [flags.all, options.all],
     [flags.follow, options.follow],
+    [flags.pr, options.pr !== undefined],
+    [flags.project, options.project !== undefined],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.item} ${subcommand}`)}`);
@@ -129,6 +154,18 @@ const parseAction = (options: ItemOptions): CliResult<Action> => {
       }
       return ok({ kind: subcommand, query: { all: options.all, ...withTrack(options) }, follow: options.follow });
     }
+    case itemCommands.merged: {
+      const id = idArgument(subcommand, args);
+      if (!id.ok) return id;
+      if (options.pr === undefined) return needsUsage(`${subcommand} needs ${flagText(flags.pr)} N`);
+      const number = parsePrNumber(options.pr);
+      if (!number.ok) return needsUsage(number.error.message);
+      return ok({ kind: subcommand, id: id.value, number: number.value, project: options.project });
+    }
+    case itemCommands.unassign: {
+      const id = idArgument(subcommand, args);
+      return id.ok ? ok({ kind: subcommand, id: id.value }) : id;
+    }
     default: {
       const unreachable: never = subcommand;
       return unreachable;
@@ -180,6 +217,125 @@ const listAnswer = async (connector: BoardConnector, config: FactoryConfig, quer
 /** The output of a follow that has ended: the frames went to stdout as they were drawn, so nothing is left to print. */
 const followed = (): CommandOutput => ({ lines: [], json: { schema: schemaIds.itemList }, warnings: [], failed: false });
 
+/**
+ * The worker that an item names in the worker field of the setup, or null for none. A value that is not text names no branch and no
+ * record, so it is a failure (exit 1) and nothing is read from the network.
+ */
+const workerOf = (item: BoardItem, field: string | undefined): CliResult<string | null> => {
+  if (field === undefined || !Object.hasOwn(item.record, field)) return ok(null);
+  const stored = item.record[field];
+  return typeof stored === 'string'
+    ? ok(stored)
+    : failure(`the ${roles.worker} field of ${displayLine(item.id)} does not hold text`, `Check the item in ${files.board}.`);
+};
+
+/** The record of a worker, or null when it has none. A record that is not valid is a failure (exit 1). */
+const recordOf = async (deps: Deps, home: string, worker: string): Promise<CliResult<WorkerRecord | null>> => {
+  const read = await readWorkerRecord(deps, home, worker);
+  if (!read.ok) return read;
+  if (read.value.state === 'absent') return ok(null);
+  if (read.value.state === 'valid') return ok(read.value.record);
+  return failure(
+    `the record of the ${roles.worker} ${shown(worker)} is not valid: ${read.value.reason}`,
+    `Run "${commandText(commandLines.workerList)}" to see the records that are not valid.`,
+  );
+};
+
+/**
+ * What the PR must match, from the config. The project comes from the record of the worker that the item names, and a project that
+ * the person names must be that one. An item with no worker record needs the project flag. The repo comes from the URL of the project
+ * and the base from its default branch, else from the clone. The head branch is the branch of the worker, and an item with no worker
+ * leaves it out.
+ */
+const mergeTargetOf = async (
+  deps: Deps,
+  board: OpenBoard,
+  action: MergedAction,
+  worker: string | null,
+): Promise<CliResult<Omit<MergeReadInput, 'number'>>> => {
+  const { home, config } = board;
+  const record = worker === null ? ok(null) : await recordOf(deps, home, worker);
+  if (!record.ok) return record;
+  if (record.value !== null && action.project !== undefined && action.project !== record.value.project) {
+    return usageError(`${flagText(flags.project)} ${shown(action.project)} is not the project of the ${roles.worker} ${record.value.id}`);
+  }
+  const projectId = record.value?.project ?? action.project;
+  if (projectId === undefined) {
+    return usageError(`the item ${action.id} names no ${roles.worker} with a record, so ${action.kind} needs ${flagText(flags.project)} PROJECT`);
+  }
+  const project = config.recipe.projects.find((candidate) => candidate.id === projectId);
+  if (project === undefined) {
+    return usageError(`the project ${shown(projectId)} is not in the config of this ${roles.node}`, `Check the projects in ${files.config}.`);
+  }
+  const repo = githubRepoOf(project.url ?? '');
+  if (!repo.ok) return repo;
+  const base = project.default_branch ?? (await defaultBranchOf(deps, resolve(home, project.path)));
+  if (base === null) {
+    return failure(`the project ${projectId} names no default branch`, `Set ${keys.project.defaultBranch} for the project in ${files.config}.`);
+  }
+  return ok({ repo: repo.value, base, ...(worker === null ? {} : { head: branchOf(worker) }) });
+};
+
+const mergedAnswer = (merged: MergedPr, recorded: MergeRecorded): CommandOutput => {
+  const id = displayLine(recorded.item.id);
+  const line = recorded.changed ? `Recorded ${id}: PR ${merged.number}, merge commit ${merged.mergeCommit}` : `${id}: PR ${merged.number} already recorded`;
+  return answer(line, {
+    schema: schemaIds.item,
+    action: itemCommands.merged,
+    id: recorded.item.id,
+    pr: merged.number,
+    commit: merged.mergeCommit,
+    changed: recorded.changed,
+  });
+};
+
+/**
+ * `item merged`: the local checks come first (the item id, the tracker kind, the recipe stage, the closed state, the item), so no call
+ * to the network runs for a request that the board refuses. Then the PR is read and checked (`readMergedPr`), and only a PR that
+ * passed is recorded. The worker that the item names at the time of the check goes to the record, which tests it again under the lock.
+ */
+const recordMerged = async (deps: Deps, board: OpenBoard, action: MergedAction): Promise<CliResult<CommandOutput>> => {
+  const { connector, config } = board;
+  const valid = checkItemId(action.id);
+  if (!valid.ok) return valid;
+  const local = requireLocalKind(config.core.tracker.kind, commands.item);
+  if (!local.ok) return local;
+  const ready = checkMergeSetup({ recipe: config.entry.board, config: config.core.board });
+  if (!ready.ok) return ready;
+  const items = await connector.listItems({ all: true });
+  if (!items.ok) return items;
+  const item = items.value.find((candidate) => candidate.id === action.id);
+  if (item === undefined) return usageError(`${files.board} has no item ${shown(action.id)}`);
+  const worker = workerOf(item, config.core.board?.worker_field);
+  if (!worker.ok) return worker;
+  const target = await mergeTargetOf(deps, board, action, worker.value);
+  if (!target.ok) return target;
+  const read = await readMergedPr(deps, { ...target.value, number: action.number });
+  if (!read.ok) return read;
+  const recorded = await connector.recordMerge(action.id, read.value.pr, worker.value);
+  return recorded.ok ? ok(mergedAnswer(read.value.pr, recorded.value)) : recorded;
+};
+
+/**
+ * `item unassign`: only the coordinator pane runs it, and the caller rule runs before the board is read. The id is checked first, so
+ * the line that the rule prints never repeats text that is not an item id.
+ */
+const unassign = async (deps: Deps, board: OpenBoard, id: string): Promise<CliResult<CommandOutput>> => {
+  const valid = checkItemId(id);
+  if (!valid.ok) return valid;
+  const caller = await requireCoordinatorCaller(deps, board.home, board.config, `${commandLines.itemUnassign} ${id}`);
+  if (!caller.ok) return caller;
+  const freed = await board.connector.unassignItem(id);
+  if (!freed.ok) return freed;
+  const { item, worker } = freed.value;
+  return ok(
+    answer(`Took ${displayLine(worker)} off ${displayLine(item.id)}: ${titleText(item)}`, {
+      ...itemJson(itemCommands.unassign, item),
+      worker,
+    }),
+  );
+};
+
 const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<CliResult<CommandOutput>> => {
   const { connector, config } = board;
   switch (action.kind) {
@@ -204,6 +360,10 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
       const ended = await followBoard(deps, { layout: layoutOf(board.home), draw: () => listAnswer(connector, config, action.query) });
       return ended.ok ? ok(followed()) : ended;
     }
+    case itemCommands.merged:
+      return recordMerged(deps, board, action);
+    case itemCommands.unassign:
+      return unassign(deps, board, action.id);
     default: {
       const unreachable: never = action;
       return unreachable;
@@ -212,10 +372,10 @@ const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<Cl
 };
 
 /**
- * `item`: add, update, move, close and list the items of the board. The words and the flags are checked first (exit 2), then the node
- * is found and the connector runs the action. A write is one state commit through the connector, and the connector refuses it for a
- * hosted tracker kind. `list` reads the local files with no lock and has no JSON output. With the follow flag, `list` draws the list
- * again at each change of the board, until its reader goes (`followBoard`).
+ * `item`: add, update, move, close and list the items of the board, record a merged PR, and take the worker off an item. The words and
+ * the flags are checked first (exit 2), then the node is found and the connector runs the action. A write is one state commit through
+ * the connector, and the connector refuses it for a hosted tracker kind. `list` reads the local files with no lock and has no JSON
+ * output. With the follow flag, `list` draws the list again at each change of the board, until its reader goes (`followBoard`).
  */
 export const runItem = async (deps: Deps, options: ItemOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);

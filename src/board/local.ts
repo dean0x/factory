@@ -163,18 +163,24 @@ interface BoardEdited<T> {
   readonly doc: BoardDoc;
 }
 
+/**
+ * A hosted tracker kind is a security stop (exit 4) with one line. Every board write starts with this check, and so does a command
+ * that makes a call to the network before its write.
+ */
+export const requireLocalKind = (kind: string, command: CommandName): CliResult<void> =>
+  kind === values.trackerLocal
+    ? ok(undefined)
+    : safetyRefusal(
+        hostedBoardLine(displayLine(kind, maxEchoChars)),
+        `Set the tracker kind to ${values.trackerLocal} in the config, then run "${commandText(command)}" again.`,
+      );
+
 export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoardOptions): LocalBoard => {
   const { queueKey } = options;
   const setup: BoardSetup = { recipe: options.recipe, config: options.config };
 
   /** The first step of every write: a hosted kind stops here, before the input check, the lock and any file call. */
-  const requireLocalTracker = (): CliResult<void> =>
-    options.tracker === values.trackerLocal
-      ? ok(undefined)
-      : safetyRefusal(
-          hostedBoardLine(displayLine(options.tracker, maxEchoChars)),
-          `Set the tracker kind to ${values.trackerLocal} in the config, then run "${commandText(options.command)}" again.`,
-        );
+  const requireLocalTracker = (): CliResult<void> => requireLocalKind(options.tracker, options.command);
 
   /**
    * One `commitBoardChange` call. The value of the change reaches the caller through the closure, because the helper gives back only

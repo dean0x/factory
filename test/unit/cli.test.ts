@@ -709,6 +709,36 @@ describe('the item and track commands in the command line', () => {
     expect(result.err).toContain('--follow is not for');
   });
 
+  it('shows the merge record and the release of a worker in the help of item, with their flags', async () => {
+    const result = await run(['item', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory item merged ID --pr N [--project PROJECT] [--home DIR]');
+    expect(result.out).toContain('factory item unassign ID [--home DIR]');
+    expect(result.out).toMatch(/--pr N\s+With merged: the number of the PR\./);
+    expect(result.out).toMatch(/--project PROJECT\s+With merged: the id of the project of the PR\./);
+  });
+
+  it('says in the help of item that the worker field changes only through unassign', async () => {
+    const result = await run(['item', '--help']);
+    expect(result.out).toMatch(/The worker field of an item that names a worker changes only through\s+unassign\./);
+  });
+
+  it('passes the PR flag and the project flag of item merged to the command', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { stage: 'review' })], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, err: sink.errors.join('') };
+    };
+    const badNumber = await runBoard(['item', 'merged', 'B-1', '--pr', '012']);
+    expect(badNumber.code).toBe(2);
+    expect(badNumber.err).toContain('--pr: must be a whole number');
+    const unknownProject = await runBoard(['item', 'merged', 'B-1', '--pr', '12', '--project', 'nope']);
+    expect(unknownProject.code).toBe(2);
+    expect(unknownProject.err).toContain('the project "nope" is not in the config');
+    expect(repo.commits).toEqual([]);
+  });
+
   it('shows one usage line for each subcommand of request and of queue', () => {
     for (const subcommand of Object.values(requestCommands)) {
       expect(usageOf(commands.request), subcommand).toContain(`factory ${commands.request} ${subcommand} `);

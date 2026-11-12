@@ -17,6 +17,7 @@ import {
   flags,
   ghTimeoutMs,
   instructionFiles,
+  itemCommands,
   keys,
   marker,
   markLimits,
@@ -1535,9 +1536,13 @@ describe('the names of node send', () => {
 
 describe('the names of the board records', () => {
   it('gives the merge, unassign and log commands a name for the remedy lines', () => {
-    expect(commandLines.itemMerged).toBe(`${commands.item} merged`);
-    expect(commandLines.itemUnassign).toBe(`${commands.item} unassign`);
+    expect(commandLines.itemMerged).toBe(`${commands.item} ${itemCommands.merged}`);
+    expect(commandLines.itemUnassign).toBe(`${commands.item} ${itemCommands.unassign}`);
     expect(commandLines.requestLog).toBe(`${commands.request} log`);
+  });
+
+  it('adds the merged and unassign subcommands of item after the five older ones', () => {
+    expect(Object.values(itemCommands)).toEqual(['add', 'update', 'move', 'close', 'list', 'merged', 'unassign']);
   });
 
   it('names the flags of the merge record and of the relayed close', () => {
