@@ -571,9 +571,9 @@ export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', i
 
 /**
  * The keys of the decision log: the list of rows, and the keys of a row. The `item` text of a row starts with the id of a decision.
- * A row that a close of a request writes holds `item`, `decision` and `date` only: it names no one who answered. A row that `decide`
- * writes holds `by` too, and `request`, the canonical text that the hash of the owner record covers. A row is a display copy: only
- * the owner record proves an answer.
+ * A row that a close of a request writes holds `item`, `decision` and `date`, and `decider` when the coordinator or a delegate made
+ * the decision. It never holds `by`, so it is never an owner answer. A row that `decide` writes holds `by` too, and `request`, the
+ * canonical text that the hash of the owner record covers. A row is a display copy: only the owner record proves an answer.
  */
 export const decisionLogKeys = {
   rows: 'rows',

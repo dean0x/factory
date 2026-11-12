@@ -241,7 +241,7 @@ Then it does these steps in order:
 1. It makes the work copy `work-copies/PROJECT/ID` with `git worktree add -b worker/ID`. The new branch starts at the head of the clone.
 2. It writes the record of the worker in `.factory/workers/ID/`.
 3. It adds the line `/.claude/settings.local.json` to `info/exclude` in the git folder of the clone, once. Git then shows the work copy as clean when it holds only the hook settings.
-4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
+4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. Inside a factory session, `--yes` counts only when the work copy has no settings file. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
 6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its assignment folder (`.factory/workers/<id>/inbox/`), and the session name `<node id>_<id>`. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
 
