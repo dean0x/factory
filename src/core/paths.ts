@@ -61,6 +61,12 @@ const MACOS = 'darwin';
 /** The path in the form that is compared: macOS has a file system that ignores the case of letters. */
 export const comparable = (deps: Deps, path: string): string => (deps.platform.os === MACOS ? path.toLowerCase() : path);
 
+/** The key of a folder for a compare: its real path, or the path when the real path is not known, in the compared form. */
+export const folderKeyOf = async (deps: Deps, path: string): Promise<string> => {
+  const real = await realPathOf(deps, path);
+  return comparable(deps, real.ok ? real.value : path);
+};
+
 /**
  * True when `path` is `folder` or inside it, by the two paths as they are written, with the case rule of the platform.
  * No call of the file system is made, so a link is not followed.

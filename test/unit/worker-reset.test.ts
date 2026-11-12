@@ -803,7 +803,7 @@ describe('TP-25: the confirm', () => {
 });
 
 describe('TP-26: the output of a reset', () => {
-  const outcome: ResetOutcome = { workerId: WORKER, kind: 'clear', paneId: PANE, name: 'demo-alpha', resumeAgeMs: 5 * MINUTE };
+  const outcome: ResetOutcome = { workerId: WORKER, kind: 'clear', paneId: PANE, name: 'demo_alpha', resumeAgeMs: 5 * MINUTE };
 
   it('TP-26: prints the verdict, the age of the resume file and the next step', () => {
     const text = resetOutput(outcome).lines.map((line) => line.text).join('\n');
@@ -839,7 +839,7 @@ describe('TP-26: the output of a reset', () => {
       id: WORKER,
       kind: 'clear',
       pane: PANE,
-      name: 'demo-alpha',
+      name: 'demo_alpha',
       confirmed: true,
       resumeAgeSeconds: 300,
     });
@@ -848,13 +848,13 @@ describe('TP-26: the output of a reset', () => {
   it('TP-26: a reset that passed gives that output, and it is not a failure', async () => {
     const world = await make();
     const done = valueOf(await world.reset('clear', withProgram(world.deps, world.tmux, atWait(1, writesLine('SessionStart', NEW_SESSION, true)))));
-    expect(done).toEqual({ workerId: WORKER, kind: 'clear', paneId: PANE, name: 'demo-alpha', resumeAgeMs: 5 * MINUTE });
+    expect(done).toEqual({ workerId: WORKER, kind: 'clear', paneId: PANE, name: 'demo_alpha', resumeAgeMs: 5 * MINUTE });
     expect(resetOutput(done).failed).toBe(false);
   });
 });
 
 describe('TP-39: the output of a reset is short, and its size is in the token budget (row 7)', () => {
-  const outcome: ResetOutcome = { workerId: WORKER, kind: 'clear', paneId: PANE, name: 'demo-alpha', resumeAgeMs: 5 * MINUTE };
+  const outcome: ResetOutcome = { workerId: WORKER, kind: 'clear', paneId: PANE, name: 'demo_alpha', resumeAgeMs: 5 * MINUTE };
 
   it.each<ResetKind>(['clear', 'compact'])('TP-39: the output of a %s passes the short-output check', (kind) => {
     expectShortOutput(plainText(resetOutput({ ...outcome, kind })));

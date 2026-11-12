@@ -6,7 +6,7 @@ import { commands, commandText, env, files, flagText, flags, homeIndex, places, 
 import { parseJsonText } from '../state/load.js';
 import type { Deps } from './deps.js';
 import { commonDirOf, GIT_ENTRY } from './git.js';
-import { comparable, isInUserClaudeFolder, isSameOrInside, realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
+import { comparable, folderKeyOf, isInUserClaudeFolder, isSameOrInside, realPathOf, requireOutsideUserClaudeFolder } from './paths.js';
 import { changePrivateFile, readPrivateText, userStatePathOf } from './private-file.js';
 import { err, ok, type Result } from './result.js';
 import { describeIssues } from './zod.js';
@@ -238,6 +238,31 @@ export const goneHomes = async (deps: Deps, entries: readonly HomeEntry[]): Prom
     if (!gone.includes(home) && !(await homeExists(deps, home))) gone.push(home);
   }
   return gone;
+};
+
+/**
+ * The folder of the deepest root in the list that is `folder` or holds it, or null. Both sides are compared by real path, and
+ * on macOS with no case. A root that no longer holds its config file is ignored. A `factory.yaml` that the list does not list,
+ * for example one in a project clone, is not a root here.
+ */
+export const deepestListedRootOf = async (
+  deps: Deps,
+  entries: readonly HomeEntry[],
+  folder: string,
+): Promise<CliResult<string | null>> => {
+  const real = await realPathOf(deps, folder);
+  if (!real.ok) return real;
+  const wanted = comparable(deps, real.value);
+  let deepest: { readonly root: string; readonly key: string } | null = null;
+  for (const entry of entries) {
+    const root = entry[homeIndex.keys.home];
+    // The file system gets no call in the folder of Claude Code.
+    if (isInUserClaudeFolder(deps, root)) continue;
+    const key = await folderKeyOf(deps, root);
+    if (!isSameOrInside(key, wanted) || (deepest !== null && deepest.key.length >= key.length)) continue;
+    if (await homeExists(deps, root)) deepest = { root, key };
+  }
+  return ok(deepest?.root ?? null);
 };
 
 /**
