@@ -15,6 +15,7 @@ import {
   optionKeys,
   places,
   queueLimits,
+  requestDeciders,
   requestWords,
   trackLimits,
   waitingKeys,
@@ -32,6 +33,7 @@ import type {
   QueueRowInput,
   QueueRowSet,
   RequestClosed,
+  RequestDecider,
   RequestSettlement,
   TrackAddInput,
 } from './contract.js';
@@ -428,11 +430,25 @@ export const settleRequestIn = (
   log: { ...log.top, [decisionLogKeys.rows]: [...listAt(log.top, decisionLogKeys.rows), row] },
 });
 
-/** The settlement of a close, checked before the lock: the decision text is one line of at most `boardTextLimits.maxTextChars`. */
-export const checkSettlement = (settlement: RequestSettlement | undefined): CliResult<RequestSettlement | undefined> => {
+declare const checkedSettlementMark: unique symbol;
+
+/** A settlement that `checkSettlement` made: its decider is a value of `requestDeciders` and its decision is one clean line. */
+export type CheckedSettlement = RequestSettlement & { readonly [checkedSettlementMark]: true };
+
+const DECIDERS: readonly string[] = Object.values(requestDeciders);
+
+const isDecider = (word: string): word is RequestDecider => DECIDERS.includes(word);
+
+/**
+ * The settlement of a close, checked before the lock: the decider is a value of `requestDeciders`, so the owner is never one, and the
+ * decision text is one line of at most `boardTextLimits.maxTextChars`. A fault is a usage error (exit 2). This is the only function
+ * that makes a `CheckedSettlement`, so `closeRequestIn` takes no settlement that skipped the check.
+ */
+export const checkSettlement = (settlement: RequestSettlement | undefined): CliResult<CheckedSettlement | undefined> => {
   if (settlement === undefined) return ok(undefined);
+  if (!isDecider(settlement.decider)) return usageError(`the decider must be ${DECIDERS.join(' or ')}`);
   const decision = lineOf(decisionLogKeys.decision, settlement.decision, boardTextLimits.maxTextChars);
-  return decision.ok ? ok({ decider: settlement.decider, decision: decision.value }) : decision;
+  return decision.ok ? ok({ decider: settlement.decider, decision: decision.value } as CheckedSettlement) : decision;
 };
 
 /**
@@ -448,7 +464,7 @@ export const closeRequestIn = (
   log: DecisionLogDoc,
   id: string,
   date: string,
-  settlement?: RequestSettlement,
+  settlement?: CheckedSettlement,
 ): CliResult<RequestCloseEdit> => {
   const found = waiting.items.find((entry) => entry.id === id);
   if (found === undefined) return usageError(`${files.waiting} has no ${requestWords.request} ${shown(id)}`);

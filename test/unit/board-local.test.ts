@@ -8,8 +8,11 @@ import type {
   DecisionRecordCall,
   ItemAddInput,
   LocalBoard,
+  RequestDecider,
+  RequestSettlement,
 } from '../../src/board/contract.js';
 import { strictRequestOf, type DecideRequest } from '../../src/board/decide.js';
+import { checkSettlement, closeRequestIn } from '../../src/board/edit.js';
 import { resolveFields, declaredFields } from '../../src/board/fields.js';
 import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readDecisionLog, readWaiting } from '../../src/board/files.js';
 import { boardJsonText } from '../../src/board/json.js';
@@ -30,6 +33,7 @@ import {
   files as fileNames,
   maxBoardNumber,
   maxFileBytes,
+  requestDeciders,
   stateLock,
   values,
   type CommandName,
@@ -1890,6 +1894,23 @@ describe('the local connector: request add and request close read the owner deci
     expect(error.message).toContain(fileNames.waiting);
   });
 
+  it.each(['owner', 'Coordinator', ''])('refuses the decider %j of a close with exit 2, names no internal detail, and writes nothing', async (decider) => {
+    const repo = await decideRepo();
+    const before = new Map(repo.deps.files);
+    const error = errorOf(await localOf(repo.deps).closeRequest('D-1', { decider: decider as RequestDecider, decision: 'Yes' }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('decider');
+    expect(error.message).not.toContain(`"${decider}"`);
+    expect(repo.commits).toEqual([]);
+    expect(repo.deps.files).toEqual(before);
+  });
+
+  it.each(Object.values(requestDeciders))('closes a request with the decider %s and records it in the row', async (decider) => {
+    const repo = await decideRepo();
+    expect(valueOf(await localOf(repo.deps).closeRequest('D-1', { decider, decision: 'Yes' }))).toEqual({ id: 'D-1', title: 'Pick a plan', decider });
+    expect(repo.commits).toHaveLength(1);
+  });
+
   it('M5-1b TP-192 names the cap and says not to remove rows when the new text of the decision log is over the cap, and writes nothing', async () => {
     const repo = await decideRepo({ decisionLog: logOf(closedRow({ item: 'D-9: Big', pad: 'x'.repeat(maxFileBytes - 200) })) });
     const before = new Map(repo.deps.files);
@@ -1900,5 +1921,29 @@ describe('the local connector: request add and request close read the owner deci
     expect(error.hint).toContain('Do not remove rows');
     expect(repo.commits).toEqual([]);
     expect(repo.deps.files).toEqual(before);
+  });
+});
+
+describe('the checked settlement of a close', () => {
+  const DATE = '2030-01-02';
+  const docs = (): { waiting: ReturnType<typeof parseWaiting>; log: ReturnType<typeof parseDecisionLog> } => ({
+    waiting: parseWaiting(waitingOf(ENTRY)),
+    log: parseDecisionLog(logOf()),
+  });
+
+  it('closes a request with the text and the decider that checkSettlement gave', () => {
+    const { waiting, log } = docs();
+    const checked = valueOf(checkSettlement({ decider: requestDeciders.delegate, decision: '  Use plan A  ' }));
+    const edited = valueOf(closeRequestIn(valueOf(waiting), valueOf(log), 'D-1', DATE, checked));
+    expect(edited.closed).toEqual({ id: 'D-1', title: 'Pick a plan', decider: requestDeciders.delegate });
+    expect(edited.log).toEqual({ rows: [{ item: 'D-1: Pick a plan', decision: 'Use plan A', date: DATE, decider: requestDeciders.delegate }] });
+  });
+
+  it('does not compile a settlement that checkSettlement did not check', () => {
+    const { waiting, log } = docs();
+    const raw: RequestSettlement = { decider: requestDeciders.coordinator, decision: 'Yes' };
+    // @ts-expect-error The settlement of closeRequestIn is the one that checkSettlement made.
+    const edited = closeRequestIn(valueOf(waiting), valueOf(log), 'D-1', DATE, raw);
+    expect(edited.ok).toBe(true);
   });
 });
