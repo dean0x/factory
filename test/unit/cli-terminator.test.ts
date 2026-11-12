@@ -7,7 +7,7 @@ import { captureSink } from '../helpers/sink.js';
 
 const ran = vi.hoisted(() => [] as { words: readonly string[]; after: readonly string[] }[]);
 
-/** A test-only row with the double dash rule. The real table holds no such row yet. */
+/** A test-only row with the double dash rule, so that these tests do not depend on the lock command. */
 vi.mock('../../src/cli/table.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/cli/table.js')>();
   const row: Command = {

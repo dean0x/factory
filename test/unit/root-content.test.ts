@@ -1107,6 +1107,17 @@ describe('settings files (TP-44, TP-133, TP-154, TP-168, TP-179, TP-180)', () =>
       expect(requireRootClean(found).ok).toBe(true);
     });
 
+    it('warns for an allow rule of the lock run command like a rule for a whole tool, and does not stop', async () => {
+      const deps = make();
+      put(deps, 'coordinator', JSON.stringify({ permissions: { allow: ['Bash(factory lock run:*)'] } }));
+      const found = await scan(deps);
+      expect(levelsOf(found, checkIds.permissionMode)).not.toContain('fail');
+      const text = textOf(found, checkIds.permissionMode);
+      expect(text).toContain('allows every use of');
+      expect(text).toContain('Bash(factory lock run:*)');
+      expect(requireRootClean(found).ok).toBe(true);
+    });
+
     it('warns for a narrower allow rule, and names the rule', async () => {
       const deps = make();
       put(deps, 'web', JSON.stringify({ permissions: { allow: ['Bash(npm test)'] } }));

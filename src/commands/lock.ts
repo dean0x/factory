@@ -36,8 +36,16 @@ import {
 /**
  * `lock run`: run one child command while this user holds the heavy lock. The lock file and the priority file are per-user files
  * (see `userStatePathOf`). A run waits for its turn with a fixed bound, then runs the child in its own process group and frees the lock
- * by its token on every path. The exit code of the child passes through, so each outcome that the program decides writes one line that
- * starts with `error: factory lock run:` and holds a fixed word (`lockWords`): that line is the sure way to tell it from the child.
+ * by its token when the run ends. The exit code of the child passes through, so each outcome that the program decides writes one line
+ * that starts with `error: factory lock run:` and holds a fixed word (`lockWords`). The child shares stderr and can print a line of the
+ * same form, so the line is the outcome of the program only when the child did not print it.
+ *
+ * Two short windows have no stop handler and are not covered by the free. A stop signal in a window ends the process at once:
+ * - After `waitForTurn` removes its stop handlers and before the child starts. A `--priority` run first waits for the free of its
+ *   priority file in this window.
+ * - After `runAttached` removes its forward handlers and before `runHeld` frees the lock file.
+ * Then the lock file stays, and so does the priority file of a `--priority` run in the first window. The liveness check of the next
+ * waiter removes them, because the process of their holder has ended.
  */
 
 export interface LockRunOptions {
