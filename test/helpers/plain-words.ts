@@ -198,6 +198,12 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
   },
   { term: 'delegated', plain: 'stays', scan: '-', note: 'glossary entry: the coordinator approves for the owner' },
   {
+    term: 'delegate',
+    plain: 'stays',
+    scan: '-',
+    note: 'glossary entry: another session that makes a decision outside an approval point, with no owner authority; it differs from the mode delegated',
+  },
+  {
     term: 'approval point',
     plain: 'stays',
     scan: '-',

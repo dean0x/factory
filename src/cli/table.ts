@@ -600,7 +600,9 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'string',
         placeholder: 'WHO',
         description:
-          `With ${requestCommands.close}: who made the decision, when the ${requestWords.request} is not an approval point: ${Object.values(requestDeciders).join(' or ')}. ` +
+          `With ${requestCommands.close}: who made the decision, ${Object.values(requestDeciders).join(' or ')}. ` +
+          `Use it only for a ${requestWords.request} that is not an approval point. ` +
+          `A ${requestDeciders.delegate} is another session, for example an orchestrating agent, that makes the decision for the ${roles.owner}. ` +
           `The row of the log names who made it, and it has no ${roles.owner} authority. It is never an answer of the ${roles.owner}.`,
       },
       [flags.decision]: {
