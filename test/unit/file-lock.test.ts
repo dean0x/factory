@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
 import type { Deps } from '../../src/core/deps.js';
-import { freeLock, holdsLock, takeLock, type LivenessInput, type LockPolicy } from '../../src/core/file-lock.js';
+import { freeLock, holdsLock, holderStateOf, takeLock, type LivenessInput, type LockPolicy } from '../../src/core/file-lock.js';
 import { changePrivateFile, type PrivateChange } from '../../src/core/private-file.js';
 import { err, ok } from '../../src/core/result.js';
 import { privateFile } from '../../src/names.js';
-import { createFakeDeps, exited, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
+import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { psStarts } from '../helpers/ps-fake.js';
 
 const FOLDER = '/h/state';
 const LOCK_PATH = `${FOLDER}/entry.lock`;
@@ -142,25 +143,6 @@ const LIVE: LockPolicy = { ...POLICY, staleMs: 60_000, liveness: { startToleranc
 const DAY_MS = 86_400_000;
 
 const holderText = (pid: number, startMs: number): string => `${pid}-${startMs}-${HEX}\n`;
-
-const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/** The text that `ps -o lstart=` prints for a start in whole seconds: local time, the day padded with a space. */
-const lstartText = (ms: number): string => {
-  const date = new Date(ms);
-  const two = (value: number): string => String(value).padStart(2, '0');
-  const clock = `${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`;
-  return `${DAYS[date.getDay()]} ${MONTHS[date.getMonth()]} ${String(date.getDate()).padStart(2, ' ')} ${clock} ${date.getFullYear()}\n`;
-};
-
-/** A fake `ps` that knows the start of each pid in `starts`. A pid that is not there makes `ps` fail, as for a process that is gone. */
-const psStarts =
-  (starts: Readonly<Record<number, number>>): RunHandler =>
-  (call) => {
-    const start = starts[Number(call.args[3])];
-    return start === undefined ? exited(1) : exited(0, lstartText(start));
-  };
 
 const liveInput = (): LivenessInput => ({ ownStartMs: OWN_START, startCache: new Map() });
 const takeLive = (deps: Deps, input: LivenessInput = liveInput(), policy: LockPolicy = LIVE) =>
@@ -475,5 +457,23 @@ describe('private file: the typed outcome of a failed change', () => {
     const result = await changePrivateFile(full, FILE, 1_000, changeTo('new\n'));
     expect(result).toMatchObject({ ok: false, error: { writeState: 'not-saved', message: expect.stringContaining('ENOSPC') } });
     expect(deps.files.has(FILE_LOCK)).toBe(false);
+  });
+});
+
+describe('lock file: the state of the holder in a text', () => {
+  const stateOf = (deps: Deps, text: string) => holderStateOf(deps, text, LIVE.liveness ?? { startToleranceMs: 0 }, liveInput());
+
+  it('says live for a holder that runs with the recorded start, and ended when it does not run or runs with another start', async () => {
+    const text = holderText(HOLDER_PID, HOLDER_START);
+    expect(await stateOf(holderLockedFake(), text)).toBe('live');
+    expect(await stateOf(withRunning(holderLockedFake(), () => ok(false)), text)).toBe('ended');
+    expect(await stateOf(holderLockedFake(HOLDER_START + 4_000), text)).toBe('ended');
+  });
+
+  it.each([[''], ['not a token\n'], [`${HOLDER_PID}-${HOLDER_START}`]])('says invalid for the text %j, and touches nothing', async (text) => {
+    const deps = holderLockedFake();
+    expect(await stateOf(deps, text)).toBe('invalid');
+    expect([...deps.files.keys()]).toEqual([LOCK_PATH]);
+    expect(deps.terminated).toEqual([]);
   });
 });

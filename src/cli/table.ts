@@ -7,6 +7,7 @@ import { runHook } from '../hooks/hook.js';
 import { runInit } from '../commands/init.js';
 import { runItem } from '../commands/item.js';
 import { runLayout } from '../commands/layout.js';
+import { runLock } from '../commands/lock.js';
 import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
@@ -36,6 +37,8 @@ import {
   helpTopics,
   hookNames,
   itemCommands,
+  lockLine,
+  lockWords,
   nodeCommands,
   places,
   program,
@@ -89,6 +92,11 @@ export interface Command {
    * go to `afterTerminator`. At most one word comes before it, the subcommand. The help flag stands alone, with no double dash.
    */
   readonly terminator?: 'required';
+  /**
+   * For a command whose exit codes overlap with the codes of its child: the message of a usage error of the line, as the command
+   * prints it. The command marks its own error lines, so a person can tell them from the output of the child.
+   */
+  readonly usageMessage?: (message: string) => string;
   run(given: Given, deps: Deps): Promise<CliResult<CommandOutput>>;
 }
 
@@ -665,6 +673,27 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         },
         registry,
       ),
+  },
+  {
+    name: commands.lock,
+    summary: 'Run one heavy command, such as a full test run, after the other heavy runs of this user have ended.',
+    usage: `${commandText(commandLines.lockRun)} [${flagText(flags.priority)}] -- COMMAND [ARG]...`,
+    positionals: true,
+    terminator: 'required',
+    usageMessage: (message) => lockLine(lockWords.usage, message),
+    options: {
+      [flags.priority]: {
+        type: 'boolean',
+        description: `Go before the runs that wait. Only one run can hold the priority, so use it only when the ${roles.coordinator} says so.`,
+      },
+    },
+    run: (given, deps) =>
+      runLock(deps, {
+        words: given.positionals(),
+        childArgv: given.afterTerminator(),
+        priority: given.bool(flags.priority),
+        json: given.bool(flags.json),
+      }),
   },
   hookCommandFor(registry),
   {

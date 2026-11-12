@@ -135,6 +135,19 @@ const holderEnded = async (deps: Deps, holder: Holder, liveness: LockLiveness, i
   return observed.ok && differs(observed.value);
 };
 
+/** What the text of a lock file says about its holder: it runs (`live`), it ended (`ended`), or the text is no token with a pid and a start time (`invalid`). */
+export type HolderState = 'live' | 'ended' | 'invalid';
+
+/**
+ * The state of the holder that the text of a lock file names, by the same rule as a take. A caller that only reads a file, such as the
+ * check of a priority mark, uses it: the call takes no lock, removes nothing and signals no process.
+ */
+export const holderStateOf = async (deps: Deps, text: string, liveness: LockLiveness, input: LivenessInput): Promise<HolderState> => {
+  const holder = holderOf(text);
+  if (holder === null) return 'invalid';
+  return (await holderEnded(deps, holder, liveness, input)) ? 'ended' : 'live';
+};
+
 /** The judge of a lock that exists: it gets the stat of the lock file, taken before the text is read, and says whether the lock is stale. */
 type LockEnded = (seen: PathInfo) => Promise<Result<boolean, string>>;
 

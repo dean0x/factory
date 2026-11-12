@@ -15,6 +15,7 @@ import { FACTORY_VERSION } from '../../src/version.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
+import { psStarts } from '../helpers/ps-fake.js';
 import { HOME as BOARD_HOME } from '../helpers/guard-fixture.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -227,6 +228,51 @@ describe('the double dash rule of parseFlags', () => {
     if (!parsed.ok) return;
     expect(parsed.value.positionals()).toEqual(['a', 'b']);
     expect(parsed.value.afterTerminator()).toEqual([]);
+  });
+});
+
+describe('the lock command in the command line', () => {
+  const lockLine = async (argv: string[]) => {
+    const deps = createFakeDeps({ env: { HOME: '/h' }, run: psStarts({ 4242: Date.UTC(2030, 0, 1) }) });
+    const sink = captureSink();
+    const code = await runCli(argv, deps, sink);
+    return { deps, code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  it('lists the command in the help of the program', async () => {
+    expect((await run(['help'])).out).toMatch(/\n {2}lock {6}Run one heavy command/);
+  });
+
+  it.each([[['lock', '--help']], [['lock', 'run', '--help']], [['help', 'lock']]])(
+    'prints the help and exits 0 for %j, and runs nothing (TP-2)',
+    async (argv) => {
+      const result = await lockLine(argv);
+      expect(result.code).toBe(0);
+      expect(result.out).toContain('Usage: factory lock run [--priority] -- COMMAND [ARG]...');
+      expect(result.out).toContain('--priority');
+      expect(result.deps.attached).toEqual([]);
+    },
+  );
+
+  it.each([
+    [['lock', 'run', 'npm', 'test', '--help']],
+    [['lock', 'run', '--help', '--', 'npm']],
+    [['lock', 'run', '--help', '--']],
+  ])('exits 2 with the usage line, prints no help and runs nothing for %j (TP-1, TP-2)', async (argv) => {
+    const result = await lockLine(argv);
+    expect(result.code).toBe(2);
+    expect(result.out).toBe('');
+    expect(result.err.split('\n')[0]).toMatch(/^error: factory lock run: USAGE\. /);
+    expect(result.deps.attached).toEqual([]);
+  });
+
+  it('gives every word after the double dash to the child, also a word that looks like a flag (TP-3)', async () => {
+    const words = ['test', '--json', '--help', '-h', '--priority', '--', 'x'];
+    const result = await lockLine(['lock', 'run', '--', 'npm', ...words]);
+    expect(result.code).toBe(0);
+    expect(result.deps.attached).toHaveLength(1);
+    expect(result.deps.attached[0]).toMatchObject({ command: 'npm', args: words });
+    expect(result.deps.files.has('/h/.local/state/factory/heavy-test.priority')).toBe(false);
   });
 });
 

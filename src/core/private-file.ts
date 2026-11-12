@@ -43,19 +43,52 @@ export const userStatePathOf = async (deps: Deps, fileName: string): Promise<Cli
 };
 
 /**
+ * Why a per-user path cannot be used. `other-user`: another user owns it. `writable`: a group or another user can write it. `io`: the file
+ * system failed, or the path is no plain file, or the file is too large. A caller that must tell a refusal from a failure reads the
+ * reason, and never the text of the message.
+ */
+export interface PrivateFault {
+  readonly reason: 'other-user' | 'writable' | 'io';
+  readonly message: string;
+}
+
+const ioFault = (message: string): Err<PrivateFault> => err({ reason: 'io', message });
+
+/**
  * What the path is, or null when it does not exist. The path must belong to this user, and no group or other user may
  * write it, because the files decide which home a command uses and which approvals count. A platform with no user ids is
  * not checked.
  */
-const ownInfo = async (deps: Deps, path: string, what: string): Promise<Result<PathInfo | null, string>> => {
+const ownInfo = async (deps: Deps, path: string, what: string): Promise<Result<PathInfo | null, PrivateFault>> => {
   const info = await deps.fs.statInfo(path);
-  if (!info.ok) return err(info.error.message);
+  if (!info.ok) return ioFault(info.error.message);
   if (info.value === null || deps.uid === null) return ok(info.value);
-  if (info.value.uid !== deps.uid) return err(`the ${what} ${path} belongs to another user`);
+  if (info.value.uid !== deps.uid) return err({ reason: 'other-user', message: `the ${what} ${path} belongs to another user` });
   if ((info.value.mode & privateFile.groupOtherWrite) !== 0) {
-    return err(`the ${what} ${path} can be written by a group or by other users`);
+    return err({ reason: 'writable', message: `the ${what} ${path} can be written by a group or by other users` });
   }
   return ok(info.value);
+};
+
+/** The text of a per-user file, and the time of its last change in milliseconds since the epoch. */
+export interface PrivateRead {
+  readonly text: string;
+  readonly mtimeMs: number;
+}
+
+/**
+ * The text of a per-user file with the time of its last change, or null when the file does not exist. A file or a folder that
+ * another user owns or can write is refused, and so is a file over `maxBytes`. The error holds the reason as a code.
+ */
+export const readPrivateFile = async (deps: Deps, path: string, maxBytes: number): Promise<Result<PrivateRead | null, PrivateFault>> => {
+  const folder = await ownInfo(deps, dirname(path), 'folder');
+  if (!folder.ok) return folder;
+  const file = await ownInfo(deps, path, 'file');
+  if (!file.ok) return file;
+  if (file.value === null) return ok(null);
+  if (file.value.kind !== 'file') return ioFault('it is not a file');
+  const text = await deps.fs.readTextLimited(path, maxBytes);
+  return text.ok ? ok({ text: text.value, mtimeMs: file.value.mtimeMs }) : ioFault(text.error.message);
 };
 
 /**
@@ -63,28 +96,22 @@ const ownInfo = async (deps: Deps, path: string, what: string): Promise<Result<P
  * write is refused, and so is a file over `maxBytes`. The error is the reason.
  */
 export const readPrivateText = async (deps: Deps, path: string, maxBytes: number): Promise<Result<string | null, string>> => {
-  const folder = await ownInfo(deps, dirname(path), 'folder');
-  if (!folder.ok) return folder;
-  const file = await ownInfo(deps, path, 'file');
-  if (!file.ok) return file;
-  if (file.value === null) return ok(null);
-  if (file.value.kind !== 'file') return err('it is not a file');
-  const text = await deps.fs.readTextLimited(path, maxBytes);
-  return text.ok ? ok(text.value) : err(text.error.message);
+  const read = await readPrivateFile(deps, path, maxBytes);
+  return read.ok ? ok(read.value?.text ?? null) : err(read.error.message);
 };
 
 /**
  * Make the folder of the file ready: a folder that another user owns or can write is refused, and the folder gets
- * mode 0700, also when it exists. The folder of the state home keeps its mode.
+ * mode 0700, also when it exists. The folder of the state home keeps its mode. The error holds the reason as a code.
  */
-const prepareFolder = async (deps: Deps, path: string): Promise<Result<void, string>> => {
+export const preparePrivateFolder = async (deps: Deps, path: string): Promise<Result<void, PrivateFault>> => {
   const folderPath = dirname(path);
   const own = await ownInfo(deps, folderPath, 'folder');
-  if (!own.ok) return err(`${path} cannot be used: ${own.error}`);
+  if (!own.ok) return err({ reason: own.error.reason, message: `${path} cannot be used: ${own.error.message}` });
   const made = await deps.fs.mkdir(folderPath, privateFile.folderMode);
-  if (!made.ok) return err(made.error.message);
+  if (!made.ok) return ioFault(made.error.message);
   const tightened = await deps.fs.chmod(folderPath, privateFile.folderMode);
-  return tightened.ok ? ok(undefined) : err(tightened.error.message);
+  return tightened.ok ? ok(undefined) : ioFault(tightened.error.message);
 };
 
 /** The bounds of the lock file beside a per-user file. */
@@ -169,8 +196,8 @@ export const changePrivateFile = async (
   change: PrivateChange,
   options: PrivateChangeOptions = {},
 ): Promise<Result<void, PrivateChangeError>> => {
-  const folder = await prepareFolder(deps, path);
-  if (!folder.ok) return notSaved(folder.error);
+  const folder = await preparePrivateFolder(deps, path);
+  if (!folder.ok) return notSaved(folder.error.message);
   const lockPath = `${path}${privateFile.lockSuffix}`;
   const locked = await takeUserFileLock(deps, lockPath);
   if (!locked.ok) return notSaved(locked.error);

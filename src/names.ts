@@ -55,6 +55,7 @@ export const commands = {
   request: 'request',
   decide: 'decide',
   queue: 'queue',
+  lock: 'lock',
   self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
@@ -121,6 +122,9 @@ export const requestCommands = { add: 'add', list: 'list', close: 'close' } as c
 /** The subcommands of `queue`. */
 export const queueCommands = { set: 'set', show: 'show' } as const;
 
+/** The subcommands of `lock`. */
+export const lockCommands = { run: 'run' } as const;
+
 /** The subcommands of `self`. */
 export const selfCommands = { reset: 'reset' } as const;
 
@@ -148,6 +152,7 @@ export const commandLines = {
   requestClose: `${commands.request} ${requestCommands.close}`,
   queueSet: `${commands.queue} ${queueCommands.set}`,
   queueShow: `${commands.queue} ${queueCommands.show}`,
+  lockRun: `${commands.lock} ${lockCommands.run}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
   stateGuard: `${commands.state} ${stateCommands.guard}`,
 } as const;
@@ -185,6 +190,7 @@ export const flags = {
   item: 'item',
   note: 'note',
   position: 'position',
+  priority: 'priority',
   dryRun: 'dry-run',
   overwrite: 'overwrite',
   json: 'json',
@@ -236,6 +242,10 @@ export const files = {
   ownerDecisions: 'owner-decisions.json',
   /** The setup acceptances of the user. The per-user state folder holds the file, beside the factory list. */
   setupAcceptances: 'setup-acceptances.json',
+  /** The lock of the heavy runs of the user (`lock run`). The per-user state folder holds the file. */
+  heavyLock: 'heavy-test.lock',
+  /** The mark of a heavy run that goes first (`lock run --priority`), beside the lock. The per-user state folder holds the file. */
+  heavyPriority: 'heavy-test.priority',
 } as const;
 
 export const dirs = {
@@ -412,6 +422,8 @@ export const env = {
   /** The folder of the per-user state. The home index lives below it. */
   stateHome: 'XDG_STATE_HOME',
   userHome: 'HOME',
+  /** The token of the heavy lock. `lock run` sets it for its child only. A run whose value equals the lock file runs inside that lock. */
+  heavyLockToken: 'FACTORY_HEAVY_LOCK_TOKEN',
 } as const;
 
 /**
@@ -1398,6 +1410,35 @@ export const stateLock = {
   },
 } as const;
 
+/** The wait of a heavy run for its turn: it tries `HEAVY_ATTEMPTS` times and waits `HEAVY_WAIT_MS` between two tries. */
+const HEAVY_WAIT_MS = 5_000;
+const HEAVY_ATTEMPTS = 1_080;
+
+/**
+ * The bounds of the heavy lock (`lock run`). A run waits 5 seconds between two tries and tries 1,080 times, so it waits 90 minutes at
+ * most. A priority file that is older than the whole wait never blocks a waiter, because no run waits longer than that
+ * (`priorityMaxAgeMs` is derived, so the two cannot differ). A run may hold the lock for 3 hours (`maxHoldMs`); then its child group
+ * gets TERM, and KILL after `killGraceMs`. The lock is stale by the state of its holder (the pid and the start time, which may differ
+ * by `startToleranceMs`); a file that holds no valid token is stale after `claimStaleMs`, and so is a claim file. A file of the lock,
+ * the claim and the priority mark has mode `mode`, and the priority file holds at most `maxPriorityBytes` bytes. `stopSignals` are the
+ * signals that end the wait, with the number of each for the exit code (128 plus the number).
+ */
+export const heavyLock = {
+  waitMs: HEAVY_WAIT_MS,
+  attempts: HEAVY_ATTEMPTS,
+  maxHoldMs: 10_800_000,
+  priorityMaxAgeMs: HEAVY_WAIT_MS * HEAVY_ATTEMPTS,
+  startToleranceMs: 3_000,
+  claimStaleMs: 60_000,
+  killGraceMs: 10_000,
+  mode: privateFile.fileMode,
+  takeoverSuffix: privateFile.takeoverSuffix,
+  maxPriorityBytes: 256,
+  stopSignals: { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 },
+  /** The exit code of a run that a signal ends is this number plus the number of the signal, as a shell reports it. */
+  signalExitBase: 128,
+} as const;
+
 /**
  * The exclude file of a project clone (design 4.6): `info/exclude` in the common git folder, which every work copy of the
  * clone shares. It holds one entry that hides the settings file of the work copies from git, so a work copy that has only
@@ -1600,6 +1641,7 @@ export const schemaIds = {
   queue: `${program}.${commands.queue}/v1`,
   queueShow: `${program}.${commands.queue}-show/v1`,
   stateGuard: `${program}.state-guard/v1`,
+  lock: `${program}.${commands.lock}/v1`,
   version: `${program}.version/v1`,
   error: `${program}.error/v1`,
   lastSeen: `${program}.last-seen/v1`,
@@ -1621,6 +1663,28 @@ export const flagText = (name: string): string => `--${name}`;
 
 /** A command as a person types it, for example `factory upgrade`. */
 export const commandText = (command: string): string => `${program} ${command}`;
+
+/**
+ * The fixed word of each outcome of `lock run` that the program itself decides. The line of an outcome starts with `lockLine`, which
+ * names the command and the word. A child can exit with the same code as the program, so this line is the sure way to tell the two apart.
+ */
+export const lockWords = {
+  waiting: 'WAITING',
+  waitEnded: 'WAIT ENDED',
+  holdEnded: 'HOLD ENDED',
+  priorityHeld: 'PRIORITY HELD',
+  refused: 'REFUSED',
+  notFound: 'NOT FOUND',
+  notStarted: 'NOT STARTED',
+  stopped: 'STOPPED',
+  usage: 'USAGE',
+} as const;
+
+/** The text of a note of `lock run` that has no fixed word, for example a warning: the command and the detail. */
+export const lockNote = (detail: string): string => `${commandText(commandLines.lockRun)}: ${detail}`;
+
+/** The text of one line of `lock run`: the command, the fixed word and the detail, for example `factory lock run: WAIT ENDED. The lock stayed busy.` */
+export const lockLine = (word: string, detail: string): string => lockNote(`${word}. ${detail}`);
 
 /**
  * The delete guard of the state repo: hooks that git runs before it makes a commit. `init` and `upgrade` write them from the text
@@ -1727,6 +1791,8 @@ export const templateValues: Readonly<Record<string, string>> = {
   requestCommand: commandText(commands.request),
   decideCommand: commandText(commands.decide),
   queueCommand: commandText(commands.queue),
+  lockRunCommand: commandText(commandLines.lockRun),
+  lockPriorityFlag: flagText(flags.priority),
   itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
   clearFlag: flagText(flags.clear),
   compactFlag: flagText(flags.compact),
