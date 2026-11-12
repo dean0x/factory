@@ -16,13 +16,12 @@ import {
   maxDisplayWidth,
   maxFileBytes,
   optionKeys,
-  requestDeciders,
   requestWords,
   roles,
   waitingKeys,
 } from '../names.js';
 import type { RequestDecider } from './contract.js';
-import { shown } from './edit.js';
+import { isDecider, shown } from './edit.js';
 import type { DecisionRecordOption, DecisionRecordRequest } from './decision-record.js';
 import type { DecisionLogDoc, WaitingDoc } from './files.js';
 import { holdsBreak } from './text.js';
@@ -58,11 +57,6 @@ export type RequestState =
   | { readonly kind: 'answered'; readonly date: string | null; readonly request: string | null }
   | { readonly kind: 'closed'; readonly date: string | null; readonly decider?: RequestDecider }
   | { readonly kind: 'unknown' };
-
-const DECIDERS: readonly string[] = Object.values(requestDeciders);
-
-/** True for a stored value that is a decider of `requestDeciders`. Any other stored value is not a decider. */
-const isDecider = (value: unknown): value is RequestDecider => typeof value === 'string' && DECIDERS.includes(value);
 
 const REQUEST_KEYS: readonly string[] = [waitingKeys.id, decisionKeys.title, decisionKeys.question, decisionKeys.options];
 const OPTION_KEYS: readonly string[] = [optionKeys.key, optionKeys.text, optionKeys.rec];

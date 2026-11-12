@@ -437,7 +437,8 @@ export type CheckedSettlement = RequestSettlement & { readonly [checkedSettlemen
 
 const DECIDERS: readonly string[] = Object.values(requestDeciders);
 
-const isDecider = (word: string): word is RequestDecider => DECIDERS.includes(word);
+/** True for a value that is a decider of `requestDeciders`. Any other value is not a decider. */
+export const isDecider = (value: unknown): value is RequestDecider => typeof value === 'string' && DECIDERS.includes(value);
 
 /**
  * The settlement of a close, checked before the lock: the decider is a value of `requestDeciders`, so the owner is never one, and the
