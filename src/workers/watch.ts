@@ -9,6 +9,7 @@ import { commandLines, commandText, lastSeen, schemaIds, watchPoll, watchWords, 
 import { promptStateOf, readOwnLastSeen, type LastSeen, type OwnSessionRead } from './last-seen.js';
 import { listPanes, readPaneLife, type PaneLife } from './panes.js';
 import { listWorkerRecords, requireRecord } from './registry.js';
+import { paneProcessStart, requireLineAfterStart } from './session-checks.js';
 
 /**
  * `worker watch [ID...]` (design 4.12): the coordinator runs it in the background and learns when a worker needs it. The watch only
@@ -31,8 +32,11 @@ import { listWorkerRecords, requireRecord } from './registry.js';
  * earlier check. A line that does not belong to the worker is a change at once.
  * A worker of `--ready ID` waits out a block, for example a dialog that only the owner answers. It is watched with the other workers,
  * and its pane changes and a line that does not belong to it stay changes. Its other change is `ready`: a valid line of its own at the
- * prompt or busy. A missing line, a line that is not valid and a dialog that waits are no change for it. The bound of the checks is
- * the same.
+ * prompt or busy, later than the start of the pane process. A line from before that start is the line of the session that a resume
+ * or a restart replaced, so it is no change. A missing line, a line that is not valid and a dialog that waits are no change for it
+ * either. The start is read with `ps` (a read) for each pane of the worker, only at a check where the line says `ready`, so the reads
+ * have the bound of the checks times the panes of the worker. A start that can not be read is no change at that check, and the next
+ * check reads it again. The bound of the checks is the same.
  */
 
 /** The command that a person runs again after a fix, with the program name. */
@@ -74,6 +78,8 @@ export type WatchOutcome =
 interface Target {
   readonly workerId: string;
   readonly paneIds: readonly string[];
+  /** The process ids of the panes at the baseline, in the order of `paneIds`. */
+  readonly pids: readonly number[];
   /** True for a worker of `--ready`: the watch waits until it is ready. */
   readonly waitsForReady: boolean;
 }
@@ -120,14 +126,46 @@ const lineChange = (read: OwnSessionRead, nowMs: number, missingIsChange: boolea
 };
 
 /**
- * What the last-seen line says for a worker that waits to be ready. A line that is not owned stays a change. A valid line of its own
- * at the prompt or busy is `ready`. Every other line is the block that the worker waits out: no line yet, a line that is not valid,
- * a dialog that waits, or a line with no event.
+ * What the last-seen line says for a worker that waits to be ready, before the check against the start of the panes. A line that is
+ * not owned stays a change. A valid line of its own at the prompt or busy is `readyAfterBlock`. Every other line is the block that the
+ * worker waits out: no line yet, a line that is not valid, a dialog that waits, or a line with no event.
  */
 const readyChange = (read: OwnSessionRead): WatchKind | null => {
   if (read.state === 'unknown') return read.why === 'not-owned' ? 'lineNotOwned' : null;
   const state = promptStateOf(read.line);
-  return state === 'prompt' || state === 'busy' ? 'readyAfterBlock' : null;
+  switch (state) {
+    case 'prompt':
+    case 'busy':
+      return 'readyAfterBlock';
+    case 'waits':
+    case null:
+      return null;
+    default: {
+      const unreachable: never = state;
+      return unreachable;
+    }
+  }
+};
+
+/**
+ * True when the line is later than the start of every pane process of the target: the line is then the line of the session that runs
+ * now, not of a session that a resume or a restart replaced. A start that can not be read counts as not later, so the worker is not
+ * ready at that check.
+ */
+const isLineFresh = async (deps: Deps, target: Target, line: LastSeen): Promise<boolean> => {
+  for (const pid of target.pids) {
+    const start = await paneProcessStart(deps, pid, commandLines.workerWatch);
+    if (!start.ok) return false;
+    if (!requireLineAfterStart(line[keys.eventAt] ?? '', start.value, commandLines.workerWatch).ok) return false;
+  }
+  return true;
+};
+
+/** The change of a worker of `--ready`: `readyChange`, and for `readyAfterBlock` also a line that is later than the panes started. */
+const readyFinding = async (deps: Deps, target: Target, read: OwnSessionRead): Promise<WatchKind | null> => {
+  const change = readyChange(read);
+  if (change !== 'readyAfterBlock' || read.state !== 'valid') return change;
+  return (await isLineFresh(deps, target, read.line)) ? change : null;
 };
 
 /** What a check found for one worker: its change, or null, and whether the check read a valid line of the worker. */
@@ -151,7 +189,9 @@ const changeOf = async (deps: Deps, home: string, target: Target, missingIsChang
   if (pane !== null) return ok({ change: pane, lineSeen: false });
   const line = await readOwnLastSeen(deps, home, target.workerId);
   if (!line.ok) return line;
-  const change = target.waitsForReady ? readyChange(line.value) : lineChange(line.value, deps.now().getTime(), missingIsChange);
+  const change = target.waitsForReady
+    ? await readyFinding(deps, target, line.value)
+    : lineChange(line.value, deps.now().getTime(), missingIsChange);
   return ok({ change, lineSeen: line.value.state === 'valid' });
 };
 
@@ -218,8 +258,11 @@ const idsToWatch = async (
 /** The workers that have a pane, each with its panes. A worker with no pane is left out. */
 const targetsOf = (workerIds: readonly string[], readyIds: readonly string[], rows: readonly PaneRow[]): readonly Target[] =>
   workerIds.flatMap((workerId) => {
-    const paneIds = rows.filter((row) => row.worker === workerId).map((row) => row.paneId);
-    return paneIds.length === 0 ? [] : [{ workerId, paneIds, waitsForReady: readyIds.includes(workerId) }];
+    const panes = rows.filter((row) => row.worker === workerId);
+    if (panes.length === 0) return [];
+    return [
+      { workerId, paneIds: panes.map((row) => row.paneId), pids: panes.map((row) => row.pid), waitsForReady: readyIds.includes(workerId) },
+    ];
   });
 
 /**

@@ -22,6 +22,7 @@ const SESSION_OF: Readonly<Record<string, string>> = {
 /** The panes of the workers: the first pane after the three panes that a session of the fixture holds. */
 const PANE_OF: Readonly<Record<string, string>> = { [ALPHA]: '%3', [BETA]: '%4' };
 const MINUTE = 60_000;
+const DAY = 24 * 60 * MINUTE;
 /** The tmux verbs that only read. */
 const READ_VERBS = ['has-session', 'show-options', 'list-panes', 'display-message'];
 
@@ -42,6 +43,13 @@ interface Setup {
   readonly foreignRecords?: readonly string[];
   /** The list of the panes fails. */
   readonly listFails?: boolean;
+  /**
+   * When the process of every pane started, in milliseconds after the time of the first lines of the workers. Default: one day before,
+   * so every line is later than the start. A positive value is a pane that a resume or a restart started after the line.
+   */
+  readonly paneStartsAfterLineMs?: number;
+  /** The `ps` call that reads the start of a pane process fails. */
+  readonly psFails?: boolean;
 }
 
 interface World {
@@ -57,6 +65,8 @@ interface World {
   readonly breakReads: () => void;
   /** From now on, the read of a last-seen line file fails: the file system does not answer. */
   readonly breakLineReads: () => void;
+  /** From now on, the `ps` call that reads the start of a pane process works. */
+  readonly fixPs: () => void;
   readonly watch: (ids?: readonly string[], program?: Program, readyIds?: readonly string[]) => Promise<CliResult<WatchOutcome>>;
 }
 
@@ -64,6 +74,16 @@ const BIND_FACTS = 7;
 const fieldsOf = (stdout: string): string[] => stdout.replace(/\n$/, '').split('|');
 const withEndedFlag = (stdout: string): string => `${fieldsOf(stdout).map((field, index) => (index === 2 ? '1' : field)).join('|')}\n`;
 const withStartCommand = (stdout: string, command: string): string => `${[...fieldsOf(stdout).slice(0, BIND_FACTS), command].join('|')}\n`;
+
+const two = (value: number): string => String(value).padStart(2, '0');
+
+/** An elapsed time as `ps` prints it: whole seconds, with the days in front when there are any. */
+const etimeOf = (elapsedMs: number): string => {
+  const seconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const days = Math.floor(seconds / 86_400);
+  const clock = `${two(Math.floor((seconds % 86_400) / 3600))}:${two(Math.floor((seconds % 3600) / 60))}:${two(seconds % 60)}`;
+  return days === 0 ? clock : `${days}-${clock}`;
+};
 
 const lineFile = (sessionId: string): string => `${layoutOf(HOME).heartbeatDir}/${sessionId}`;
 
@@ -114,7 +134,9 @@ const make = async (setup: Setup = {}): Promise<World> => {
   const ended = new Set<string>();
   const foreign = new Set<string>();
   let readsBroken = false;
+  let psBroken = setup.psFails === true;
   const run: RunHandler = (call) => {
+    if (call.command === 'ps') return psBroken ? exited(1, '', 'no such process') : exited(0, `${etimeOf(deps.now().getTime() - paneStartMs)}\n`);
     if (call.args[0] === 'list-panes' && setup.listFails === true) return exited(1, '', 'no server');
     const result = tmux.handler(call);
     if (call.args[0] !== 'display-message' || !result.ok || result.value.exitCode !== 0) return result;
@@ -126,6 +148,7 @@ const make = async (setup: Setup = {}): Promise<World> => {
     return exited(0, stdout);
   };
   const deps = createFakeDeps({ cwd: '/w', os: 'darwin', env: { PATH: '/bin', XDG_STATE_HOME: '/state' }, run });
+  const paneStartMs = deps.now().getTime() + (setup.paneStartsAfterLineMs ?? -DAY);
   for (const id of ids) {
     const workCopy = (setup.foreignRecords ?? []).includes(id) ? `${HOME}/elsewhere/${id}` : workCopyOf(HOME, 'web', id);
     const written = await writeWorkerRecord(deps, HOME, { id, project: 'web', workCopy, branch: branchOf(id) });
@@ -154,6 +177,9 @@ const make = async (setup: Setup = {}): Promise<World> => {
     },
     breakLineReads: () => {
       lineReadsBroken = true;
+    },
+    fixPs: () => {
+      psBroken = false;
     },
     watch: (workerIds = [], program, readyIds = []) =>
       watchWorkers(program === undefined ? watchDeps : withProgram(watchDeps, tmux.log, program), {
@@ -406,9 +432,82 @@ describe('TP-30: a worker of --ready waits out its block', () => {
     expect(world.deps.sleeps).toEqual([]);
   });
 
-  it('TP-30: the report of a ready worker is one line with fixed words and the id', () => {
+  it('TP-30: the report of a ready worker is one line with fixed words and the id, and the JSON names the kind', () => {
     const output = watchOutput({ kind: 'changed', changes: [{ workerId: ALPHA, kind: 'readyAfterBlock' }], checks: 3 });
-    expect(output.lines).toEqual([{ level: 'warn', text: `${watchWords.changed} ${ALPHA} ${watchWords.kinds.readyAfterBlock}` }]);
+    expect(output.lines).toEqual([{ level: 'warn', text: 'CHANGED: alpha ready' }]);
+    expect(output.json).toEqual({
+      schema: schemaIds.workerWatch,
+      result: 'changed',
+      checks: 3,
+      changes: [{ id: ALPHA, kind: 'readyAfterBlock' }],
+    });
+  });
+
+  it('TP-30: a line that is not valid is no change for a worker of --ready, as an absent line is', async () => {
+    const world = await make();
+    world.deps.seed(lineFile(SESSION_OF[ALPHA] ?? ''), 'not json');
+    expect(valueOf(await world.watch([], undefined, [ALPHA]))).toEqual({ kind: 'no-change', workerIds: [ALPHA], checks: 40 });
+  });
+});
+
+describe('TP-30: a worker of --ready is ready only for a line of the session that runs now', () => {
+  const psCalls = (world: World) => world.deps.calls.filter((call) => call.command === 'ps');
+
+  it('TP-30: a line at the prompt from before the start of the pane is no change, also after the 40 checks', async () => {
+    // A resume or a restart started the pane process after the line, and the new session has written no line yet.
+    const world = await make({ paneStartsAfterLineMs: 30_000 });
+    world.deps.advance(MINUTE);
+    expect(valueOf(await world.watch([], undefined, [ALPHA]))).toEqual({ kind: 'no-change', workerIds: [ALPHA], checks: 40 });
+  });
+
+  it.each<[string, HookEvent]>([
+    ['at its prompt', 'Stop'],
+    ['busy', 'UserPromptSubmit'],
+  ])('TP-30: a line %s from before the start of the pane is no change, and the first line of the new session is ready', async (_name, event) => {
+    const world = await make({ events: { [ALPHA]: event }, paneStartsAfterLineMs: 30_000 });
+    world.deps.advance(MINUTE);
+    const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => writesEvent(world.deps, ALPHA, 'SessionStart')), [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
+    expect(outcome.checks).toBe(2);
+  });
+
+  it('TP-30: a line that is not later than the start of the pane is no change', async () => {
+    const world = await make({ paneStartsAfterLineMs: 0 });
+    expect(valueOf(await world.watch([], undefined, [ALPHA])).kind).toBe('no-change');
+  });
+
+  it('TP-30: the start of the pane is read with ps for the pid of the pane', async () => {
+    const world = await make();
+    changedOf(valueOf(await world.watch([], undefined, [ALPHA])));
+    const pid = world.tmux.panes().find((pane) => pane.id === PANE_OF[ALPHA])?.pid;
+    expect(pid).toBeDefined();
+    expect(psCalls(world)).toHaveLength(1);
+    expect(psCalls(world)[0]).toMatchObject({ args: ['-o', 'etime=', '-p', String(pid)] });
+  });
+
+  it('TP-30: a start of the pane that can not be read is no change, and the next check reads it again', async () => {
+    const world = await make({ psFails: true });
+    const outcome = changedOf(valueOf(await world.watch([], atWait(2, () => world.fixPs()), [ALPHA])));
+    expect(outcome.changes).toEqual([{ workerId: ALPHA, kind: 'readyAfterBlock' }]);
+    expect(outcome.checks).toBe(2);
+  });
+
+  it('TP-30: a start of the pane that is never readable gives no change, with one ps call for each check', async () => {
+    const world = await make({ psFails: true });
+    expect(valueOf(await world.watch([], undefined, [ALPHA]))).toEqual({ kind: 'no-change', workerIds: [ALPHA], checks: 40 });
+    expect(psCalls(world)).toHaveLength(watchPoll.attempts + 1);
+  });
+
+  it('TP-30: the pane of a worker that is not of --ready is never read with ps', async () => {
+    const world = await make();
+    valueOf(await world.watch());
+    expect(psCalls(world)).toEqual([]);
+  });
+
+  it('TP-30: a worker of --ready that is not ready, for example at a dialog, needs no ps call', async () => {
+    const world = await make({ events: { [ALPHA]: 'Notification' } });
+    valueOf(await world.watch([], undefined, [ALPHA]));
+    expect(psCalls(world)).toEqual([]);
   });
 });
 
