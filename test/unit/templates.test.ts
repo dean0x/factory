@@ -706,7 +706,8 @@ describe('the coordinator text: the board records', () => {
   it('says that the record command reads the PR, records only a merged PR, and never merges', () => {
     const board = sectionOf('Board');
     expect(board).toContain('The command reads the PR on GitHub.');
-    expect(board).toContain('It records the merge only if the PR is merged into the default branch from the branch of the worker.');
+    expect(board).toContain('It records the merge only if the PR is merged into the default branch.');
+    expect(board).toContain('If the item names a worker, the PR must come from the branch of that worker.');
     expect(board).toContain('It never merges a PR.');
   });
 
