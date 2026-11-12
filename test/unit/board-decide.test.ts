@@ -15,7 +15,7 @@ import {
 import { parseDecisionLog, parseWaiting, type DecisionLogDoc, type WaitingDoc } from '../../src/board/files.js';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
-import { commandLines, commandText, files, maxDisplayWidth, maxFileBytes } from '../../src/names.js';
+import { commandLines, commandText, files, maxDisplayWidth, maxFileBytes, requestDeciders, roles } from '../../src/names.js';
 
 /** Characters that tools and editors turn into other characters, so they are built from their code points. */
 const at = (code: number): string => String.fromCodePoint(code);
@@ -200,6 +200,16 @@ describe('the state of a request (TP-145, TP-167, TP-189)', () => {
     expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'))).toEqual({ kind: 'closed', date: null });
   });
 
+  it.each(Object.values(requestDeciders))('is closed, with the decider %s, for a row that names the decider and holds no by key', (decider) => {
+    const row = { ...ROW, decider };
+    expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'))).toEqual({ kind: 'closed', date: '2030-01-02', decider });
+  });
+
+  it.each(['owner', 'someone', 5, null])('is closed with no decider for a row whose decider %j is no value of the deciders', (decider) => {
+    const row = { ...ROW, decider };
+    expect(unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'))).toEqual({ kind: 'closed', date: '2030-01-02' });
+  });
+
   it('M5-1b TP-189 is answered, a candidate only, for a row that has a by key, and gives the date and the request text of the row and no option', () => {
     const row = { ...ROW, decision: 'zzz-edited', by: 'owner', request: 'the text of the row' };
     const state = unwrap(requestStateOf(waitingOf(), logOf(row), 'D-3'));
@@ -247,6 +257,17 @@ describe('the states that stop decide (TP-145, TP-148)', () => {
     const message = errorOf(requireOpen({ kind: 'closed', date }, 'D-3')).message;
     expect(message).not.toContain(ESCAPE);
     expect(message).not.toContain('x'.repeat(60));
+  });
+
+  it.each(Object.values(requestDeciders))('names the decider %s of a closed number, and says that the decider has no owner authority', (decider) => {
+    const error = errorOf(requireOpen({ kind: 'closed', date: '2030-01-02', decider }, 'D-3'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(`decided by the "${decider}"`);
+    expect(error.message).toContain(`no ${roles.owner} authority`);
+  });
+
+  it('names no decider for a closed number that holds none', () => {
+    expect(errorOf(requireOpen({ kind: 'closed', date: '2030-01-02' }, 'D-3')).message).not.toContain('decided by');
   });
 
   it('M5-1b TP-145 gives no pass to an answered row: the store read is the next step', () => {

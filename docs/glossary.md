@@ -27,6 +27,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **epic**: An epic is a group of work items under one goal of the owner. Each work item belongs to one epic.
 - **approval point**: An approval point is a step of the work that needs an approval. The owner sets the mode of each point.
 - **delegated**: Delegated is a mode of an approval point: the coordinator approves for the owner. The other mode is owner.
+- **delegate**: A delegate is another session that decides for the owner outside an approval point, with no owner authority. It is not the mode delegated.
 - **board**: A board is the system that holds the work items, the requests and the decisions. The config key is `tracker`.
 - **board connector** (was: adapter): A board connector links factory to a board. Local files, the review page and GitHub are connectors on one contract. A plugin adds more.
 - **plugin**: A plugin is an npm package that adds a part to factory, such as a board connector. The user installs it with npm.
@@ -113,11 +114,12 @@ Text that a user reads uses the plain word of this table (decision D-11). Code i
 | TTY | terminal window | by hand | user text says "in a terminal window"; the remedy line says "run factory init in a terminal window" |
 | accept prompt | (not in user text) | - | the prompt asks "Accept these files?" and lists them |
 | delegated | stays | - | glossary entry: the coordinator approves for the owner |
+| delegate | stays | - | glossary entry: another session that makes a decision outside an approval point, with no owner authority; it differs from the mode delegated |
 | approval point | stays | - | glossary entry: a step of the work that needs an approval |
 | proxy | stays | - | glossary entry: a server that passes the model calls on |
 | recipe | stays | - | glossary entry: the kind of work that a factory does |
 | setup, layer | stay | - | Dean's own words (F-4, F-16) |
-| message | stays | - | only for the record from another owner (D-6) |
+| message | stays | - | only for the record from another owner and for a file that `node send` writes into a child inbox (D-6) |
 | doctor, `STUCK:` | stay | - | command name and output marker; the help line and the `STUCK:` line say in plain words what they mean |
 | node, owner, project | stay | - | Dean's words (F-1) |
 

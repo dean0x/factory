@@ -11,6 +11,9 @@ const transportOf = (answers: Record<string, PingResult>): { transport: Transpor
         pinged.push(address);
         return answers[address] ?? { kind: 'unknown', reason: 'no answer' };
       },
+      deliver: async () => {
+        throw new Error('a probe never delivers');
+      },
     },
   };
 };

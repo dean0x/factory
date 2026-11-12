@@ -183,6 +183,7 @@ const hitsIn = (source: string, file: string): Hit[] =>
 const NOT_TMUX_WORDS: readonly { readonly file: string; readonly literal: string; readonly reason: string }[] = [
   { file: 'names.ts', literal: 'load', reason: 'the key of the load of the machine in the facts of the machine check' },
   { file: 'core/node-deps.ts', literal: 'pipe', reason: 'the stdio mode of the output of a child process' },
+  { file: 'names.ts', literal: 'send', reason: 'the name of the `factory node send` subcommand, a word of the command line of the factory' },
 ];
 
 /** The hits that the rule refuses: all of them, except in the typing module and the literals of the list above. */

@@ -198,6 +198,12 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
   },
   { term: 'delegated', plain: 'stays', scan: '-', note: 'glossary entry: the coordinator approves for the owner' },
   {
+    term: 'delegate',
+    plain: 'stays',
+    scan: '-',
+    note: 'glossary entry: another session that makes a decision outside an approval point, with no owner authority; it differs from the mode delegated',
+  },
+  {
     term: 'approval point',
     plain: 'stays',
     scan: '-',
@@ -216,7 +222,7 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
     note: 'glossary entry: the kind of work that a factory does',
   },
   { term: 'setup, layer', plain: 'stay', scan: '-', note: "Dean's own words (F-4, F-16)" },
-  { term: 'message', plain: 'stays', scan: '-', note: 'only for the record from another owner (D-6)' },
+  { term: 'message', plain: 'stays', scan: '-', note: 'only for the record from another owner and for a file that `node send` writes into a child inbox (D-6)' },
   {
     term: 'doctor, `STUCK:`',
     plain: 'stay',

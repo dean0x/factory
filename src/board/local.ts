@@ -53,6 +53,7 @@ import {
   checkPatch,
   checkQueueRow,
   checkRequestId,
+  checkSettlement,
   closeItemIn,
   closeRequestIn,
   linkDocIn,
@@ -538,11 +539,13 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       return waiting.ok ? ok(requestsOf(waiting.value)) : waiting;
     },
 
-    async closeRequest(id) {
+    async closeRequest(id, settlement) {
       const local = requireLocalTracker();
       if (!local.ok) return local;
       const valid = checkRequestId(id);
       if (!valid.ok) return valid;
+      const settled = checkSettlement(settlement);
+      if (!settled.ok) return settled;
       const place = await decisionPlaceOf(deps, layout.home, options.node);
       if (!place.ok) return place;
       return commit(decisionFiles, commitMessages.closeDecision(id), async (texts) => {
@@ -550,7 +553,7 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         if (!read.ok) return read;
         const stored = await storedIdsOf(place.value);
         if (!stored.ok) return stored;
-        const edited = closeRequestIn(read.value.waiting, read.value.log, id, deps.now().toISOString().slice(0, DATE_CHARS));
+        const edited = closeRequestIn(read.value.waiting, read.value.log, id, deps.now().toISOString().slice(0, DATE_CHARS), settled.value);
         if (!edited.ok) return edited;
         if (stored.value.includes(id)) return answeredCannotClose(id);
         const waiting = newText(files.waiting, edited.value.waiting, parseWaiting);

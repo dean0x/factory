@@ -6,7 +6,9 @@ import {
   address,
   checkIds,
   claudeSettings,
+  commandLines,
   commands,
+  coordinatorTemplateValues,
   dirs,
   env,
   files,
@@ -19,7 +21,12 @@ import {
   marker,
   maxFileBytes,
   maxTrackLines,
+  messageFile,
+  messageHeader,
+  messageHeaderLines,
   nodeCommands,
+  nodeInbox,
+  nodeSendReasons,
   permissionSkipList,
   program,
   requestHash,
@@ -74,11 +81,12 @@ const flat = (...groups: readonly Record<string, unknown>[]): string[] =>
   groups.flatMap((group) => Object.values(group).flatMap((value) => (typeof value === 'string' ? [value] : [])));
 
 /**
- * Flags that are plain words too, which the source uses for other things: `text` is the level of a line of output, and `title`
- * and `stage` are keys of an item. A literal that equals one of them is no breach. A literal that holds the flag with its two
- * dashes (`--text`) still is one: the check of the flags below has no such exemption.
+ * Flags that are plain words too, which the source uses for other things: `text` is the level of a line of output, `title`
+ * and `stage` are keys of an item, and `file` is the kind of an entry in a folder. A literal that equals one of them is no
+ * breach. A literal that holds the flag with its two dashes (`--text`) still is one: the check of the flags below has no such
+ * exemption.
  */
-const PLAIN_WORD_FLAGS: ReadonlySet<string> = new Set([flags.text, flags.title, flags.stage]);
+const PLAIN_WORD_FLAGS: ReadonlySet<string> = new Set([flags.text, flags.title, flags.stage, flags.file]);
 
 /** Names that a string literal must never equal outside names.ts. */
 const EXACT_NAMES = new Set([
@@ -759,14 +767,17 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
    * In user text, "request" means only the item that waits on the owner (the glossary entry, and the name of its term),
    * and "message" means only the record from another owner. The tmux command `display-message`, the recipe word
    * "pull request" and the phrase "messages between sessions" (the name of the agent feature that sends text from one
-   * session to another) are other names. A "checkout" of a project is a work copy, or a work tree of git.
+   * session to another) are other names. The note of the header of a file that `node send` writes states that the file is a
+   * message: it is the one literal of `names.ts` that holds the word. A "checkout" of a project is a work copy, or a work
+   * tree of git.
    */
   const wordRuleHits = (source: string, path: string): string[] =>
     literalsOf(source)
       .filter((literal) => !IMPORT_PATH.test(literal))
       .filter(
         (literal) =>
-          literal !== 'display-message' && !(path === NAMES_FILE && (literal === 'request' || literal === requestHash.tag)),
+          literal !== 'display-message' &&
+          !(path === NAMES_FILE && (literal === 'request' || literal === requestHash.tag || literal === messageHeader.notice)),
       )
       .map((literal) => literal.replace(/pull requests?/gi, ' ').replace(/messages between sessions/gi, ' '))
       .filter((literal) => path !== GLOSSARY_FILE && /(?<![A-Za-z0-9_])(?:requests?|messages?|checkouts?)(?![A-Za-z0-9_])/i.test(literal))
@@ -1475,5 +1486,67 @@ describe('the heavy lock policy and the lock words', () => {
   it('gives the worker text the lock command and the priority flag', () => {
     expect(templateValues['lockRunCommand']).toBe('factory lock run');
     expect(templateValues['lockPriorityFlag']).toBe('--priority');
+  });
+});
+
+describe('the names of node send', () => {
+  const parts = { senderId: 'parent', senderAddress: 'file:///work/parent', targetId: 'child' };
+
+  it('adds the send subcommand, the file flag, a command line for remedies and a schema id', () => {
+    expect(nodeCommands.send).toBe('send');
+    expect(flags.file).toBe('file');
+    expect(commandLines.nodeSend).toBe(`${commands.node} ${nodeCommands.send}`);
+    expect(schemaIds.nodeSend).toBe(`${program}.node-send/v1`);
+  });
+
+  it('writes the header in this order: sender id, sender address, target id, then the note of no owner authority', () => {
+    const lines = messageHeaderLines(parts);
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toBe(`${messageHeader.senderId}parent`);
+    expect(lines[1]).toBe(`${messageHeader.senderAddress}file:///work/parent`);
+    expect(lines[2]).toBe(`${messageHeader.targetId}child`);
+    expect(lines[3]).toBe(messageHeader.notice);
+  });
+
+  it('puts the node word and the owner word of the roles in the header, and the same note in each header', () => {
+    expect(messageHeader.senderId).toContain(roles.node);
+    expect(messageHeader.targetId).toContain(roles.node);
+    expect(messageHeader.notice).toContain(roles.owner);
+    expect(messageHeaderLines({ ...parts, targetId: 'other' })[3]).toBe(messageHeaderLines(parts)[3]);
+  });
+
+  it('caps the inbox of a child at 100 files and 8 MiB', () => {
+    expect(nodeInbox).toEqual({ maxFiles: 100, maxBytes: 8 * 1_048_576 });
+  });
+
+  it('names the parts of a message file: a separator, a suffix and a count of random bytes', () => {
+    expect(messageFile.separator).toMatch(/^[a-z0-9-]$/);
+    expect(messageFile.suffix).toMatch(/^\.[a-z]+$/);
+    expect(messageFile.randomBytes).toBeGreaterThanOrEqual(4);
+  });
+
+  it('has a fixed reason for each failure, with no placeholder and no line break', () => {
+    const reasons = Object.values(nodeSendReasons);
+    expect(Object.keys(nodeSendReasons).sort()).toEqual(
+      ['controlChars', 'full', 'io', 'mismatch', 'notAnswering', 'notChild', 'notIgnored', 'removeFailed', 'token', 'unsafe'].sort(),
+    );
+    for (const reason of reasons) {
+      expect(reason.trim()).toBe(reason);
+      expect(reason).not.toBe('');
+      expect(reason).not.toMatch(/[\r\n{}]/);
+    }
+    expect(duplicatesOf(reasons)).toEqual([]);
+  });
+
+  it('gives the send command and the inbox folder to the template texts, from the factory folder and from the coordinator folder', () => {
+    expect(templateValues['nodeSendCommand']).toBe(`${program} ${commands.node} ${nodeCommands.send} <id> --${flags.file} FILE`);
+    expect(templateValues['nodeInboxDir']).toBe(`${dirs.state}/${dirs.inbox}/`);
+    expect(coordinatorTemplateValues['nodeInboxDir']).toBe(`../${dirs.state}/${dirs.inbox}/`);
+    expect(coordinatorTemplateValues['nodeSendCommand']).toBe(templateValues['nodeSendCommand']);
+  });
+
+  it('gives the note of the header to the template texts, so that no text outside names.ts holds the word of the note', () => {
+    expect(templateValues['inboxNotice']).toBe(messageHeader.notice);
+    expect(coordinatorTemplateValues['inboxNotice']).toBe(messageHeader.notice);
   });
 });

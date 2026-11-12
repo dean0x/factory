@@ -283,6 +283,21 @@ describe('the node command in the command line', () => {
     expect(result.out).toContain('Usage: factory node children [--home DIR]');
     expect(result.out).toContain('       factory node add-child PATH [--home DIR]');
     expect(result.out).toContain('       factory node remove-child ID [--home DIR]');
+    expect(result.out).toContain('       factory node send ID --file FILE [--home DIR]');
+  });
+
+  it('describes the --file flag of send in the help', async () => {
+    const result = await run(['node', '--help']);
+    expect(result.out).toMatch(/--file FILE\s+With send: /);
+  });
+
+  it('exits 2 for send with no --file, and for --file with another subcommand', async () => {
+    const missing = await run(['node', 'send', 'web']);
+    expect(missing.code).toBe(2);
+    expect(missing.err).toContain('send takes one argument');
+    const stray = await run(['node', 'children', '--file', 'task.md']);
+    expect(stray.code).toBe(2);
+    expect(stray.err).toContain('--file belongs to send only');
   });
 
   it('lists the command and the start command in the help', async () => {
@@ -548,7 +563,7 @@ describe('the reset, watch and self commands in the command line', () => {
     const result = await run(['worker', '--help']);
     expect(result.code).toBe(0);
     expect(result.out).toContain('factory worker reset ID --clear|--compact [--home DIR]');
-    expect(result.out).toContain('factory worker watch [ID]... [--home DIR]');
+    expect(result.out).toContain('factory worker watch [ID]... [--ready ID]... [--home DIR]');
     expect(result.out).toMatch(/--clear\s+With reset: clear the session of the worker/);
     expect(result.out).toMatch(/--compact\s+With reset: compact the session of the worker/);
   });
@@ -624,6 +639,21 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(deps.calls).toEqual([]);
   });
 
+  it.each([
+    ['worker new', ['worker', 'new', 'alpha', '--project', 'web']],
+    ['worker stop', ['worker', 'stop', 'alpha']],
+    ['worker resume', ['worker', 'resume', 'alpha']],
+    ['worker summon', ['worker', 'summon', 'alpha']],
+    ['worker reset', ['worker', 'reset', 'alpha', '--clear']],
+    ['worker list', ['worker', 'list']],
+  ])('exits 2 for %s with --ready, names watch, and runs no program', async (_name, argv) => {
+    const { deps } = made();
+    const result = await runOn(deps, [...argv, '--ready', 'alpha', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--ready belongs to watch only');
+    expect(deps.calls).toEqual([]);
+  });
+
   it('keeps the message for an unknown subcommand that gets --assignment', async () => {
     const result = await runOn(made().deps, ['worker', 'nope', '--assignment', 'task.md', '--home', HOME]);
     expect(result.code).toBe(2);
@@ -651,6 +681,12 @@ describe('the reset, watch and self commands in the command line', () => {
 
   it('TP-31: exits 2 for worker watch with an id that has no record', async () => {
     const result = await runOn(made().deps, ['worker', 'watch', 'ghost', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('ghost');
+  });
+
+  it('TP-31: exits 2 for worker watch --ready with an id that has no record, and names the id', async () => {
+    const result = await runOn(made().deps, ['worker', 'watch', '--ready', 'ghost', '--home', HOME]);
     expect(result.code).toBe(2);
     expect(result.err).toContain('ghost');
   });
@@ -798,7 +834,7 @@ describe('the item and track commands in the command line', () => {
     const asked = await run(['request', '--help']);
     expect(asked.code).toBe(0);
     expect(asked.out).toContain('factory request add --title TEXT --question TEXT --option KEY=TEXT... [--recommend KEY] [--home DIR]');
-    expect(asked.out).toContain('factory request close ID [--home DIR]');
+    expect(asked.out).toContain('factory request close ID [--made-by WHO --decision TEXT] [--home DIR]');
     expect(asked.out).toMatch(/--option KEY=TEXT\s+With add: one answer that the owner can give/);
     const queue = await run(['queue', '--help']);
     expect(queue.code).toBe(0);
@@ -856,6 +892,19 @@ describe('the item and track commands in the command line', () => {
     expect((await runBoard(['queue', 'show'])).out).toMatch(/1\s+Docs\s+B-1\s+true/);
     expect((await runBoard(['request', 'close', 'D-1'])).out).toBe('Closed D-1: Pick\n');
     expect(repo.commits).toHaveLength(3);
+  });
+
+  it('M5-1b TP-22 closes a request with --made-by and --decision from the command line, and the output line names the decider', async () => {
+    const repo = await boardNode({ board: boardText([], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    await runBoard(['request', 'add', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Plan A']);
+    const closed = await runBoard(['request', 'close', 'D-1', '--made-by', 'coordinator', '--decision', 'Use plan A']);
+    expect(closed.code).toBe(0);
+    expect(closed.out).toBe('Closed D-1: Pick (decided by the coordinator, no owner authority)\n');
   });
 
   it('M5-1b TP-22 prints the document of request add and of queue set for the JSON flag', async () => {

@@ -45,6 +45,7 @@ import {
   queueCommands,
   queueLimits,
   requestCommands,
+  requestDeciders,
   requestWords,
   roles,
   schemaIds,
@@ -303,15 +304,27 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.node,
-    summary: `Show or change the children of the ${roles.node}.`,
+    summary: `Show or change the children of the ${roles.node}, or send a task to a child.`,
     usage: [
       `${commandText(commands.node)} ${nodeCommands.children} [${flagText(flags.home)} DIR]`,
       `${commandText(commands.node)} ${nodeCommands.addChild} PATH [${flagText(flags.home)} DIR]`,
       `${commandText(commands.node)} ${nodeCommands.removeChild} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commands.node)} ${nodeCommands.send} ID ${flagText(flags.file)} FILE [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
-    options: { [flags.home]: foundHomeOption },
-    run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.file]: {
+        type: 'string',
+        placeholder: 'FILE',
+        description:
+          `With ${nodeCommands.send}: write the text of FILE as a new file in the inbox folder of the child. ` +
+          `FILE is in ${assignmentSource.ordersShown} of the ${places.folder}, or in the git work tree of the working folder. ` +
+          `The new file carries no authority of the ${roles.owner}.`,
+      },
+    },
+    run: (given, deps) =>
+      runNode(deps, { home: given.string(flags.home), words: given.positionals(), file: given.string(flags.file) }, registry),
   },
   {
     name: commands.worker,
@@ -323,7 +336,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
       `${commandText(commandLines.workerResume)} ID [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerSummon)} ID [${flagText(flags.for)} TIME] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.workerReset)} ID ${flagText(flags.clear)}|${flagText(flags.compact)} [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.workerWatch)} [ID]... [${flagText(flags.ready)} ID]... [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -339,7 +352,16 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         description:
           `With ${workerCommands.new}: copy the text of FILE into the inbox folder of the new ${roles.worker}, as its assignment. ` +
           `FILE is in ${assignmentSource.ordersShown} of the ${places.folder}, or in the git work tree of the working folder. ` +
-          `It is a plain text file of at most 1 MiB, and no part of its path starts with a dot.`,
+          `A relative path that starts with ${assignmentSource.ordersShown} and has no ".." part names that folder of the ${places.folder}, from any folder. ` +
+          `It is a plain text file of at most 1 MiB, and no other part of its path starts with a dot.`,
+      },
+      [flags.ready]: {
+        type: 'string',
+        multiple: true,
+        placeholder: 'ID',
+        description:
+          `With ${workerCommands.watch}: also watch this ${roles.worker}, which waits for an answer of the ${roles.owner}, for example at a dialog. ` +
+          `The watch reports it when it is ready: at its prompt or busy. Repeat the flag for more ${roles.worker}s.`,
       },
       [flags.for]: {
         type: 'string',
@@ -379,6 +401,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           clear: given.bool(flags.clear),
           compact: given.bool(flags.compact),
           assignment: given.string(flags.assignment),
+          ready: given.strings(flags.ready),
         },
         registry,
       ),
@@ -556,11 +579,11 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.request,
-    summary: `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, or close a ${requestWords.request} with no answer.`,
+    summary: `Add a ${requestWords.request} for the ${roles.owner}, list the open ${requestWords.requests}, or close a ${requestWords.request} with no answer or with a decision that the ${requestDeciders.coordinator} or a ${requestDeciders.delegate} made.`,
     usage: [
       `${commandText(commandLines.requestAdd)} ${flagText(flags.title)} TEXT ${flagText(flags.question)} TEXT ${flagText(flags.option)} KEY=TEXT... [${flagText(flags.recommend)} KEY] [${flagText(flags.home)} DIR]`,
       `${commandText(commandLines.requestList)} [${flagText(flags.home)} DIR]`,
-      `${commandText(commandLines.requestClose)} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commandLines.requestClose)} ID [${flagText(flags.madeBy)} WHO ${flagText(flags.decision)} TEXT] [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
     options: {
@@ -588,6 +611,20 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         placeholder: 'KEY',
         description: `With ${requestCommands.add}: the key of the answer that you recommend.`,
       },
+      [flags.madeBy]: {
+        type: 'string',
+        placeholder: 'WHO',
+        description:
+          `With ${requestCommands.close}: who made the decision, ${Object.values(requestDeciders).join(' or ')}. ` +
+          `Use it only for a ${requestWords.request} that is not an approval point. ` +
+          `A ${requestDeciders.delegate} is another session, for example an orchestrating agent, that makes the decision for the ${roles.owner}. ` +
+          `The row of the log names who made it, and it has no ${roles.owner} authority. It is never an answer of the ${roles.owner}.`,
+      },
+      [flags.decision]: {
+        type: 'string',
+        placeholder: 'TEXT',
+        description: `With ${requestCommands.close} and ${flagText(flags.madeBy)}: the decision. One line of at most ${boardTextLimits.maxTextChars} characters.`,
+      },
     },
     run: (given, deps) =>
       runRequest(
@@ -599,6 +636,8 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
           question: given.string(flags.question),
           options: given.strings(flags.option),
           recommend: given.string(flags.recommend),
+          decider: given.string(flags.madeBy),
+          decision: given.string(flags.decision),
         },
         registry,
       ),

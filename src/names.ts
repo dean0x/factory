@@ -97,7 +97,7 @@ export const terms = [
 export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as const;
 
 /** The subcommands of `node`. */
-export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child' } as const;
+export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child', send: 'send' } as const;
 
 /** The subcommands of `worker`. */
 export const workerCommands = {
@@ -133,6 +133,7 @@ export const stateCommands = { guard: 'guard' } as const;
 
 /** The commands with a subcommand that a remedy line names, without the program name. */
 export const commandLines = {
+  nodeSend: `${commands.node} ${nodeCommands.send}`,
   workerNew: `${commands.worker} ${workerCommands.new}`,
   workerList: `${commands.worker} ${workerCommands.list}`,
   workerStop: `${commands.worker} ${workerCommands.stop}`,
@@ -175,6 +176,10 @@ export const flags = {
   clear: 'clear',
   compact: 'compact',
   assignment: 'assignment',
+  ready: 'ready',
+  madeBy: 'made-by',
+  decision: 'decision',
+  file: 'file',
   field: 'field',
   title: 'title',
   text: 'text',
@@ -578,9 +583,9 @@ export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', i
 
 /**
  * The keys of the decision log: the list of rows, and the keys of a row. The `item` text of a row starts with the id of a decision.
- * A row that a close of a request writes holds `item`, `decision` and `date` only: it names no one who answered. A row that `decide`
- * writes holds `by` too, and `request`, the canonical text that the hash of the owner record covers. A row is a display copy: only
- * the owner record proves an answer.
+ * A row that a close of a request writes holds `item`, `decision` and `date`, and `decider` when the coordinator or a delegate made
+ * the decision. It never holds `by`, so it is never an owner answer. A row that `decide` writes holds `by` too, and `request`, the
+ * canonical text that the hash of the owner record covers. A row is a display copy: only the owner record proves an answer.
  */
 export const decisionLogKeys = {
   rows: 'rows',
@@ -589,7 +594,16 @@ export const decisionLogKeys = {
   date: 'date',
   by: 'by',
   request: 'request',
+  /** Who decided a request that `request close --made-by` closed: a value of `requestDeciders`. Never the owner, never `by`. */
+  decider: 'decider',
 } as const;
+
+/**
+ * The deciders of a request that is not an approval point and that the owner did not answer: the coordinator itself, or a delegate,
+ * for example another session that decides for the owner with no owner authority. The owner answers with `decide`, so `owner` is
+ * not a value. A row with a decider is a display copy: it is never an owner answer.
+ */
+export const requestDeciders = { coordinator: roles.coordinator, delegate: 'delegate' } as const;
 
 /**
  * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
@@ -1236,6 +1250,7 @@ export const watchWords = {
     lineNotOwned: 'line not owned',
     waits: workerListWords.states.waits,
     stalled: 'stalled?',
+    readyAfterBlock: 'ready',
   },
 } as const;
 
@@ -1522,6 +1537,67 @@ export const ownerQuestion = { maxAttempts: 3, maxNameChars: 80 } as const;
 /** The scheme of the only address that a node link accepts. */
 export const address = { scheme: 'file://' } as const;
 
+/**
+ * The fixed header of a message file that `node send` writes into the inbox of a child. The file is a message and carries no
+ * authority of the owner. The header has four lines, in this order: the id of the sender, the address of the sender, the id
+ * of the target, and the note. `messageHeaderLines` builds them, so the order has one owner. The note is plain text, because
+ * the text rules of the source treat the word "message" as a name of this one use. The texts of the safety block reach the
+ * note through the template value `inboxNotice`, so that no other text of the source holds the word.
+ */
+export const messageHeader = {
+  senderId: `Sender ${roles.node} id: `,
+  senderAddress: `Sender ${roles.node} address: `,
+  targetId: `Target ${roles.node} id: `,
+  notice: 'Message, no owner authority.',
+} as const;
+
+/** The four lines of the header of a message file, in the fixed order. */
+export const messageHeaderLines = (parts: {
+  readonly senderId: string;
+  readonly senderAddress: string;
+  readonly targetId: string;
+}): readonly string[] => [
+  `${messageHeader.senderId}${parts.senderId}`,
+  `${messageHeader.senderAddress}${parts.senderAddress}`,
+  `${messageHeader.targetId}${parts.targetId}`,
+  messageHeader.notice,
+];
+
+/**
+ * The bounds of the inbox of a child (`.factory/inbox/`): the most files, and the most bytes in all. `node send` stops
+ * with a full inbox when a write would go past one of them.
+ */
+export const nodeInbox = { maxFiles: 100, maxBytes: 8 * 1_048_576 } as const;
+
+/**
+ * The parts of the name of a message file. `node send` makes the name from the time, the id of the sender and `randomBytes`
+ * random bytes as hex, with `separator` between the parts and `suffix` at the end.
+ */
+export const messageFile = { separator: '-', suffix: '.md', randomBytes: 4 } as const;
+
+/**
+ * The reasons that `node send` shows. Each one is fixed text: no reason holds text of the child, a message of a check or an
+ * id. A reason that comes from the check of the child stays in this list, so child text can not reach the output.
+ */
+export const nodeSendReasons = {
+  notChild: `the id is not a child of this ${roles.node}`,
+  controlChars: 'the task text has a control character or a hidden character',
+  token: 'the task text looks like a token',
+  notAnswering: 'the child does not answer',
+  mismatch: 'the child shows another id or another layer than the config lists',
+  unsafe: 'a folder or a file of the child is a link, has another owner, or can be written by a group or by other users',
+  full: 'the inbox of the child is full',
+  notIgnored: 'the state repo of the child does not ignore the inbox folder',
+  io: 'the file could not be written',
+  removeFailed: 'the file could not be removed',
+} as const;
+
+/**
+ * The tools of the agent program that the output of `node send` names. The command writes the file only. The sender checks the
+ * session of the child with `listAgents`, and sends a message that names the file with `sendMessage`.
+ */
+export const sendTools = { listAgents: 'ListAgents', sendMessage: 'SendMessage' } as const;
+
 /** The ids of the checks that the doctor command runs. */
 export const checkIds = {
   config: 'config',
@@ -1617,6 +1693,7 @@ export const schemaIds = {
   status: `${program}.status/v1`,
   dismiss: `${program}.dismiss/v1`,
   nodeChildren: `${program}.node-children/v1`,
+  nodeSend: `${program}.node-send/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   machine: `${program}.machine/v1`,
@@ -1755,6 +1832,7 @@ const pathValues: Readonly<Record<string, string>> = {
   ordersDir: `${inState(dirs.orders)}/`,
   workersDir: `${inState(dirs.workers)}/`,
   resumeDir: `${inState(dirs.resume)}/`,
+  nodeInboxDir: `${inState(dirs.inbox)}/`,
 };
 
 /** The values for the placeholders of the templates, for example {{worker}} and {{Worker}}. */
@@ -1784,17 +1862,22 @@ export const templateValues: Readonly<Record<string, string>> = {
   workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
   workerWatchCommand: workerCommandText(workerCommands.watch),
   workerResetCommand: workerCommandText(workerCommands.reset),
+  nodeSendCommand: `${commandText(commandLines.nodeSend)} <id> ${flagText(flags.file)} FILE`,
+  inboxNotice: messageHeader.notice,
   selfResetCommand: commandText(`${commands.self} ${selfCommands.reset}`),
   itemCommand: commandText(commands.item),
   trackCommand: commandText(commands.track),
   requestCommand: commandText(commands.request),
   decideCommand: commandText(commands.decide),
+  requestCloseCommand: `${commandText(commandLines.requestClose)} <id> ${flagText(flags.madeBy)} ${Object.values(requestDeciders).join('|')} ${flagText(flags.decision)} TEXT`,
   queueCommand: commandText(commands.queue),
   lockRunCommand: commandText(commandLines.lockRun),
   lockPriorityFlag: flagText(flags.priority),
   itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
   clearFlag: flagText(flags.clear),
   compactFlag: flagText(flags.compact),
+  yesFlag: flagText(flags.yes),
+  readyFlag: flagText(flags.ready),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,

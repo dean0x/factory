@@ -63,6 +63,7 @@ import { inspectState, STATE_LABEL } from '../state/load.js';
 import { STATE_SCHEMA_VERSION, type NodeState } from '../state/schema.js';
 import { readSetupFile, readSetupTexts } from '../state/setup-text.js';
 import { blockInputOf, blockTemplatesFor, roleBlockRenames } from '../templates/index.js';
+import { workerHasId } from '../workers/registry.js';
 import { leftoverTempFolders, tempFolderWarning } from './init-home.js';
 import { unsharedReasonOf, unsharedWarning } from './project-url.js';
 import { hasRootFailure, rootCheckResults, scanRoot } from './root-content.js';
@@ -300,10 +301,12 @@ const plural = (count: number, one: string, many: string): string => (count === 
 
 /**
  * Ping each child once. A child that does not answer is a warning, because a node can be off. A child on a layer other
- * than the one below this node is a failure, because the config is wrong.
+ * than the one below this node is a failure, because the config is wrong. A child with the id of a worker is a failure too:
+ * workers and children share one id space.
  */
 export const checkChildren = async (
   deps: Deps,
+  home: string,
   state: DocState<FactoryConfig>,
   registry: RecipeRegistry,
 ): Promise<CheckResult> => {
@@ -318,8 +321,17 @@ export const checkChildren = async (
       ? [`wrong layer: ${row.id} is on layer ${row.layer}, but layer ${needed} is needed`]
       : [],
   );
+  const sharedIds = await Promise.all(
+    children.map(async (child) => ({ id: child.id, taken: await workerHasId(deps, home, state.value, child.id) })),
+  );
+  const overlap = sharedIds.flatMap(({ id, taken }) =>
+    taken.ok && taken.value ? [`id overlap: ${id} is the id of a child and of a ${roles.worker}`] : [],
+  );
+  const unchecked = sharedIds.flatMap(({ id, taken }) =>
+    taken.ok ? [] : [`cannot compare ${id} with the ${roles.worker} ids: ${taken.error.message}`],
+  );
   const unknown = rows.flatMap((row) => (row.status === 'unknown' ? [`unknown: ${row.id} (${row.reason})`] : []));
-  const problems = [...wrong, ...unknown];
+  const problems = [...wrong, ...overlap, ...unchecked, ...unknown];
   if (problems.length === 0) {
     return check(
       checkIds.children,
@@ -327,7 +339,7 @@ export const checkChildren = async (
       `${rows.length} ${plural(rows.length, 'child answers', 'children answer')}, all on layer ${needed}`,
     );
   }
-  return check(checkIds.children, wrong.length > 0 ? 'fail' : 'warn', problems.join('; '));
+  return check(checkIds.children, wrong.length + overlap.length > 0 ? 'fail' : 'warn', problems.join('; '));
 };
 
 /** A block that is not as the layer needs it, and the command that fixes it. */
@@ -404,7 +416,7 @@ export const checkBlocks = (statuses: readonly BlockStatus[]): CheckResult => {
       );
 };
 
-/** The layer of the node sets its role. A layer with no role template gets the safety block only. */
+/** The layer of the node sets its role. A layer with no role template has the safety block only in `CLAUDE.md`. */
 export const checkRoles = (state: DocState<FactoryConfig>): CheckResult => {
   if (state.kind !== 'valid') return notChecked(checkIds.roles, `${files.config} is not valid`);
   const { layer } = state.value.core.node;
@@ -750,7 +762,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkNodeId(deps, home, config),
     checkNodeBlocks(deps, home, config),
     checkSetupText(deps, home),
-    checkChildren(deps, config, registry),
+    checkChildren(deps, home, config, registry),
     checkInstructionFiles(deps, home),
     hasRootFailure(rootScan) ? Promise.resolve([skippedProxyCheck()]) : checkProxies(deps, config),
     checkTools(deps),

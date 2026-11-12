@@ -78,11 +78,23 @@ export interface Fs {
   realpath(path: string): Promise<CliResult<string>>;
   /** Create the folder and its parents. A folder that this call creates gets `mode` when it is given. */
   mkdir(path: string, mode?: number): Promise<CliResult<void>>;
+  /**
+   * Create one folder and no parent. A parent that is not there is an error (ENOENT). A folder that exists already is not an
+   * error, but a file or a link at the path is. The folder gets `mode` when it is given.
+   */
+  mkdirOne(path: string, mode?: number): Promise<CliResult<void>>;
   /** The sorted names inside a folder. */
   list(path: string): Promise<CliResult<readonly string[]>>;
+  /**
+   * At most `limit` names inside a folder, in the order the system gives them. The rest of a larger folder stays unread, so a
+   * folder with a very large count of names costs the same as one with `limit` names. The limit is a whole number, 0 or more.
+   */
+  listLimited(path: string, limit: number): Promise<CliResult<readonly string[]>>;
   rename(from: string, to: string): Promise<CliResult<void>>;
   /** Remove a file or a folder tree. A missing path is not an error. */
   remove(path: string): Promise<CliResult<void>>;
+  /** Remove a file, or a link without its target. A folder at the path is an error and stays. A missing path is not an error. */
+  removeFile(path: string): Promise<CliResult<void>>;
   /** Remove a folder that holds nothing. A folder with content is an error. A missing path is not an error. */
   removeEmptyDir(path: string): Promise<CliResult<void>>;
   /**

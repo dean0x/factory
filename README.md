@@ -36,7 +36,7 @@ You need:
 | `factory worker new ID --project PROJECT [--assignment FILE]` | Make a worker: a work copy of the project on the new branch `worker/ID`, and a pane in the window `workers` that runs the worker. It asks before it writes the hook settings of the work copy; `--yes` agrees. `--assignment` copies a task file to the assignment folder of the worker. See "Make a worker" and "Give work to a worker". |
 | `factory worker list` | List the workers: the pane, the state (`at prompt`, `busy`, `waits` or `unknown`), the context percent and the mark `PREPARE` or `MAX`. It changes nothing. See "List the workers". |
 | `factory worker reset ID --clear` or `--compact` | Type `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and check that it happened. See "Give work to a worker". |
-| `factory worker watch [ID]...` | Check the workers every 30 seconds, at most 40 times. It exits at the first change: a pane that ended, a dialog that waits, a worker that looks stalled. It changes nothing. See "Give work to a worker". |
+| `factory worker watch [ID]... [--ready ID]...` | Check the workers every 30 seconds, at most 40 times. It exits at the first change: a pane that ended, a dialog that waits, a worker that looks stalled, or a worker of `--ready` that is ready after a block. It changes nothing. See "Give work to a worker". |
 | `factory self reset` | Queue a `/compact` for the coordinator itself, after it wrote its resume notes. See "Give work to a worker". |
 | `factory worker stop ID` | End the program of the pane of the worker with `kill -TERM`, and close the pane. It exits with code 3 when the state of the session is not known. See "Stop a worker". |
 | `factory worker resume ID` | Start a stopped worker again in a new pane. It continues the earlier conversation only when the last-seen line belongs to the worker, and it says "Resumed" only after the new session wrote its SessionStart line. See "Resume a worker". |
@@ -44,7 +44,7 @@ You need:
 | `factory layout` | Make the window `workers` if it is missing, tile its panes, and put the board back in the slot of the window `view` after a summon. See "Make the windows again". |
 | `factory item add\|update\|move\|close\|list` | Work with the work items of the local board. `item list` prints one line for each track. `--track ID` shows one track, and `--follow` draws the list again at each change. See "Use the local board". |
 | `factory track add ID --name TEXT [--roadmap]`, `factory track list` | Add a track to the board, or list the tracks. A track is a named stream of work. See "Use the local board". |
-| `factory request add\|list\|close` | Put a question for the owner in the waiting file, list the open requests, or close one with no answer. See "Use the local board". |
+| `factory request add\|list\|close` | Put a question for the owner in the waiting file, list the open requests, or close one with no answer or with a decision of the coordinator or a delegate. See "Use the local board". |
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. See "Use the local board". |
 | `factory doctor` | Run 29 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
@@ -55,6 +55,7 @@ You need:
 | `factory node children` | List the child nodes, with the layer and the state of each. |
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
 | `factory node remove-child ID` | Remove a child from the config. The files of the child stay. |
+| `factory node send ID --file FILE` | Write a task file into the inbox of a child node. It sends no message. See "Send a task to a child node". |
 | `factory help words` | Print one plain sentence for each word that factory uses. |
 | `factory version` | Print the version. |
 | `factory help` | Show the help. |
@@ -96,7 +97,7 @@ More flags of `init`:
 - The last step of `init` writes the factory folder into the factory list. If that fails, or if no variable names a folder for the list, `init` exits with code 1, removes only what the run made, and prints no success line. A second `init` in the same folder then works.
 - `init` writes the `url` of each project into `factory.yaml` from the origin of its repo. It writes the URL without credentials, and it warns when the origin held some. It refuses (exit code 2) and clones nothing for a `--project` URL that holds credentials: an `https://` URL with any user part, or a password or a token in any URL form. An `ssh://` URL and the `user@host:path` form accept a user name only. Use an `https://` URL with no user name, or an `ssh://` URL. Use `gh auth login` or an SSH key for the credentials.
 - A repo with no origin, or with a `file` URL, gets no `url`. `init` and `doctor` warn that the factory cannot be shared with that repo. Its local folder stays in the key `sources` of `factory.local.yaml`, never in `factory.yaml`.
-- `--layer N` sets the layer of the node, from 1 to 16. The default is 1. Layer 1 has the coordinator role, layer 2 the manager role. A layer above 2 has no role template yet: `coordinator/CLAUDE.md` holds the safety block only, and `init` prints a warning.
+- `--layer N` sets the layer of the node, from 1 to 16. The default is 1. Layer 1 has the coordinator role, layer 2 the manager role. A layer above 2 has no role template yet: `coordinator/CLAUDE.md` holds the safety block only, and `init` prints a warning. A node on any layer from 1 up has the worker file `.factory/roles/worker.md`, because it can hold workers.
 - `--recipe ID` sets the recipe. The only recipe is `software`.
 - `--approval POINT=MODE` sets the mode of one approval point of the recipe. See "Approval points".
 - `--name ID`, `--owner-name NAME` and `--owner-github LOGIN` set the id of the node and the owner.
@@ -241,11 +242,13 @@ Then it does these steps in order:
 1. It makes the work copy `work-copies/PROJECT/ID` with `git worktree add -b worker/ID`. The new branch starts at the head of the clone.
 2. It writes the record of the worker in `.factory/workers/ID/`.
 3. It adds the line `/.claude/settings.local.json` to `info/exclude` in the git folder of the clone, once. Git then shows the work copy as clean when it holds only the hook settings.
-4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
+4. It writes the hook settings of the work copy. It prints the exact change and the file first, then it asks in a terminal window. `--yes` is the yes outside a factory session, with the same rules as for `start`. Inside a factory session, `--yes` counts only when the work copy has no settings file. With no terminal window and no `--yes`, `worker new` writes nothing and exits with code 2.
 5. It warns when this machine is short of memory, disk space or processor time. The warning does not stop the command.
 6. It starts the worker in a new pane of the window `workers`, and it tiles the panes of that window, so that the next worker finds room. If the tile fails, the command prints a warning that names `factory layout`. The worker gets one `--add-dir`, its assignment folder (`.factory/workers/<id>/inbox/`), and the session name `<node id>_<id>`. After one second, the command reads the pane again. If the pane is gone or its program has ended, the command exits with code 1.
 
 If a step after the first fails, what exists stays, and nothing is undone. The message names the steps that remove the worker by hand: `git -C CLONE worktree remove WORK_COPY`, then `git -C CLONE branch -D worker/ID`, then the removal of the folder `.factory/workers/ID`. It also names `factory worker resume ID`, which starts the worker but does not make the exclude entry or the hook settings again. After the branch is pushed, `factory dismiss ID` frees the worker (see "Dismiss a worker"). A branch with a commit that no remote branch holds stops `dismiss`, so the steps by hand are the way for it.
+
+Claude Code can ask to trust the work copy. The owner answers this question once, in the pane that the output of `worker new` names. The trust of the factory folder does not cover a work copy, because a work copy is a git repository of its own. factory does not answer the question. After the owner answers, the coordinator runs `factory worker watch --ready ID`.
 
 ### List the workers
 
@@ -306,7 +309,7 @@ factory queue show
 - **Tracks.** A track is a named stream of work with its own roadmap. A worker is not a track. `track add ID --name TEXT` makes a track. `item add --track ID` and `item update --track ID` take the id of a listed track only. A factory has at most 30 tracks.
 - **Stages.** The stage of an item tells where it is on the board. It is not a step of the work cycle, and it is never an approval. The recipe gives the list of stages. The stages `merged` and `released` are only set by a flow, so `item move` refuses them with exit code 2. The status of an item alone decides if it is open, closed or idle.
 - **The list.** `item list` prints one line for each track, with the counts by stage. `--track ID` lists the items of one track. `--all` shows the closed items too. The output has at most 20 lines, and at most 17 of them are track lines. `item list --follow` draws the list again at each change of the board file. It checks every 2 seconds. It ends on SIGHUP or SIGTERM, when a write fails, when the parent process changes, or when stdout is not a terminal window. The slot of the window `view` runs it.
-- **Requests.** `request add` puts a request in `waiting.json`. It gets the next number `D-n` above the highest number in the waiting file and the decision log. `request close ID` takes a request out of the waiting file and writes a log row "closed with no answer". That row has no `by` and no who. A log row with no `by` is no decision, and the number is never given again.
+- **Requests.** `request add` puts a request in `waiting.json`. It gets the next number `D-n` above the highest number in the waiting file and the decision log. `request close ID` takes a request out of the waiting file and writes a log row "closed with no answer". That row has no `by` and no who. A log row with no `by` is no owner decision, and the number is never given again. `request close ID --made-by coordinator|delegate --decision TEXT` closes a request that the coordinator or a delegate decided. Use it only for a request that is not an approval point. A delegate is another session, for example an orchestrating agent, that decides a question for the owner outside an approval point. A delegate has no owner authority. The row holds the decision and the key `decider`, and it has no owner authority. An answer of the owner goes through `decide`.
 - **The queue.** `queue set NAME` finds a row by its exact name, and makes a new row at the end when no row has that name. `--item` replaces the whole list of items of the row. The queue has at most 30 rows, and a row has at most 30 items.
 - **Limits.** A text over 1 MiB for one of the three files is refused with exit code 1, and nothing is written. `doctor` warns when a file reaches 80 percent of that cap. A file that is corrupt, is not valid UTF-8 or holds a repeated id stops the command with exit code 1 and names the file. A command that prints a stored text removes control, bidi and invisible characters, turns a line break or a tab into one space, and cuts the line to 120 characters.
 
@@ -435,8 +438,8 @@ The sessions of one factory talk with the cross-session messages of Claude Code 
 
 - **Session names.** `start` and `worker new` start each session with `--name`. The coordinator gets the node id. A worker gets the node id, an underscore and the worker id, for example `demo_alpha`. An id can not hold an underscore, so two nodes with different ids never give the same name. A name is an address, not a proof, because any session can take any name. So the coordinator checks with `ListAgents` that exactly one session has the name of a worker, before its first send and after each resume of that worker. The name is not a word of the pane binding, so a pane that an older version started without a name still binds.
 - **Assignment files.** The assignment folder of a worker is `.factory/workers/ID/inbox/`, and the variable `FACTORY_INBOX` names it. A long task is a file in that folder, and the message names the file. The worker acts on a task file only when its real path is in that folder and it is not a link. The file is the durable copy of the task, because a message has no read receipt and no store.
-- **`--assignment FILE`.** `worker new` copies the file to `assignment.md` in the assignment folder before the worker starts. Before it writes anything, it checks the file. The real path must be inside the factory folder or inside the git work tree of the folder where you run the command, else the exit code is 4. A link in the path, a path part below that root that starts with a dot (except `.factory/orders/` in the factory folder), the file `factory.local.yaml` and a file that changes during the check also exit with code 4. A file that is not a regular file, is larger than 1 MiB, is not UTF-8 or holds a NUL byte exits with code 2. If the copy fails, the command exits with code 1, keeps the worker and does not start it. The message names the copy by hand to `.factory/workers/ID/inbox/assignment.md`, then `factory worker resume ID`. The output has one more line, and `--json` has the field `assignment`. The flags `--assignment`, `--clear` and `--compact` exit with code 2 on the other `worker` commands.
-- **`worker watch [ID]...`.** It watches every recorded worker, or the workers that you name. A worker with no pane at the start is not checked, and when no worker has a pane the command prints `NO WORKER: no worker has a pane to watch` and exits. Else it checks every 30 seconds, at most 40 times (20 minutes), and exits at the first change: a pane that ended, is gone or is not the launch of the worker; a last-seen line that is not valid or does not belong to the worker (a worker that has no line yet gets two checks, the first check included, to write one; after that, or once a valid line was seen, a missing line is a change; a line of another session is a change at once); the state `waits`; or `stalled?` (the state is `busy` and the last event or percent is older than 15 minutes). A change from `busy` to `at prompt` is not a change. The output is `CHANGED: ID what`, `NO CHANGE: IDs` or `NO WORKER: ...`, and the exit code is 0 for all three. No tmux session is exit code 3, a session of another factory folder is 4, a read fault is 1, an unknown worker id is 2, and a record that factory did not write is 4. It never types, signals or writes. `--json` prints `factory.worker-watch/v1`. Run it as a background task of the coordinator.
+- **`--assignment FILE`.** `worker new` copies the file to `assignment.md` in the assignment folder before the worker starts. Before it writes anything, it checks the file. The real path must be inside the factory folder or inside the git work tree of the folder where you run the command, else the exit code is 4. A link in the path, a path part below that root that starts with a dot (except `.factory/orders/` in the factory folder), the file `factory.local.yaml` and a file that changes during the check also exit with code 4. A relative path that starts with `.factory/orders/` and has no `..` part names that folder of the factory folder, from any folder, for example from `coordinator/`. A file that is not a regular file, is larger than 1 MiB, is not UTF-8 or holds a NUL byte exits with code 2. If the copy fails, the command exits with code 1, keeps the worker and does not start it. The message names the copy by hand to `.factory/workers/ID/inbox/assignment.md`, then `factory worker resume ID`. The output has one more line, and `--json` has the field `assignment`. The flags `--assignment`, `--clear`, `--compact` and `--ready` exit with code 2 on the `worker` commands that they do not belong to.
+- **`worker watch [ID]... [--ready ID]...`.** It watches every recorded worker, or the workers that you name. The workers of `--ready` are watched too. A worker with no pane at the start is not checked, and when no worker has a pane the command prints `NO WORKER: no worker has a pane to watch` and exits. Else it checks every 30 seconds, at most 40 times (20 minutes), and exits at the first change: a pane that ended, is gone or is not the launch of the worker; a last-seen line that is not valid or does not belong to the worker (a worker that has no line yet gets two checks, the first check included, to write one; after that, or once a valid line was seen, a missing line is a change; a line of another session is a change at once); the state `waits`; or `stalled?` (the state is `busy` and the last event or percent is older than 15 minutes). A change from `busy` to `at prompt` is not a change. With `--ready ID` (repeat it for more workers), the watch also waits for a worker that waits for you, for example at a dialog: for that worker a missing line, a line that is not valid and the state `waits` are no change, and the change is `ready` (JSON kind `readyAfterBlock`): a valid line of its own at `at prompt` or `busy`. Its pane changes and a line of another session stay changes, and the other workers keep their rules. The output is `CHANGED: ID what`, `NO CHANGE: IDs` or `NO WORKER: ...`, and the exit code is 0 for all three. No tmux session is exit code 3, a session of another factory folder is 4, a read fault is 1, an unknown worker id is 2, and a record that factory did not write is 4. It never types, signals or writes. `--json` prints `factory.worker-watch/v1`. Run it as a background task of the coordinator.
 - **`worker reset ID --clear` or `--compact`.** It types `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and checks that it happened. It exits with code 2 for neither or both flags and for a caller that is not the coordinator pane, with code 3 when no session runs or the coordinator pane is missing, and with code 4 for a start command that does not match. It refuses before it types any key, in these cases: the worker has no live pane (3, `factory worker resume ID`) or two (2); the pane is in the slot of the window `view` (3); the hook settings of the work copy lack an event (3, `factory upgrade`, then `factory restart ID`); the settings file is newer than the pane process (3, `factory restart ID`); the work is not pushed (1); `.factory/workers/ID/inbox/resume.md` is missing (3), is a link (4) or is empty or over 1 MiB (3); the state is `busy` or `waits` (1); the last-seen line is older than the pane process (3); the bottom of the pane shows a numbered option list (3). Then it types `C-u`, the command and `Enter` in one tmux run, and checks up to 10 times, one second apart. After `--clear` the pointer must name a new session with `SessionStart`. After `--compact` the line must show `PreCompact` or `SessionStart`. No confirmation is exit code 3 (look at the pane, then run it again), and a pane that ends during the check is exit code 1. The output has a verdict line, the age of the resume file and the next step: send the next task with `SendMessage`, or `factory restart ID` first when the worker has no name after a clear. `--json` prints `factory.worker-reset/v1`. The files `assignment.md` and `resume.md` stay in the assignment folder.
 - **`self reset`.** It queues a `/compact` for the coordinator itself, from the coordinator pane only. Write the resume notes to `.factory/resume/NODE_ID.md` first. The command exits with code 3 and names the file when it is missing, with code 4 for a link, and with code 3 when the coordinator settings lack one of the 6 hook events (`factory upgrade`, then `factory reboot`) or when a dialog waits in the coordinator pane. It then prints `QUEUED: the compact runs after the current turn` and exits with code 0. `--json` prints `factory.self-reset/v1`.
 
@@ -466,7 +469,7 @@ It works on a session that has only the window `view`. It never makes the window
 
 ### Child nodes
 
-A node on layer 2 can have child nodes on layer 1. A child address is a `file://` address on this machine. Other addresses are refused.
+A node on layer 2 or above can have child nodes. A child node is on the layer just below its parent. A child address is a `file://` address on this machine. Other addresses are refused.
 
 ```sh
 factory node add-child ../api-factory
@@ -474,7 +477,70 @@ factory node children
 factory node remove-child api-factory
 ```
 
-On layer 1, `add-child` exits with code 2: the children of a coordinator are workers. A child on the wrong layer, a folder that is no node, a child folder that is this factory folder or holds it, and a child with the id of this node exit with code 1 and name a remedy. A child that is a child already gives a warning and changes nothing.
+On layer 1, `add-child` exits with code 2: the children of a coordinator are workers. A child on the wrong layer, a folder that is no node, a child folder that is this factory folder or holds it, a child with the id of this node, and a child with the id of a worker exit with code 1 and name a remedy. A child that is a child already gives a warning and changes nothing.
+
+A node on layer 1 or above can hold workers. A node on layer 2 or above holds workers and child nodes at the same time. A worker is on layer 0. A child node is exactly one layer below its parent. `factory worker new` works on every layer from 1, and the worker file `.factory/roles/worker.md` is written on every layer from 1.
+
+Workers and child nodes share one id space. `worker new` exits with code 2 for the id of a child node. `doctor` fails the check `children` when a child has the id of a worker.
+
+A node on layer 2 from an earlier version has no worker file. `doctor` warns and names the command. Run `factory upgrade --overwrite worker` to write the file.
+
+### Send a task to a child node
+
+```sh
+factory node send api-factory --file .factory/orders/task.md
+```
+
+`node send` gives a task to a child node. It writes the task as a new file in the inbox of the child, `.factory/inbox/`. It sends no message and types nothing. You do the last step (see "What the sender does next").
+
+- **The id.** The id must be a child in `factory.yaml`. Run `factory node children` to see the ids.
+- **The file.** FILE follows the rules of `--assignment` (see "Give work to a worker"). Its real path must be inside the factory folder or inside the git work tree of the folder where you run the command. A path part below that root that starts with a dot is allowed only for `.factory/orders/` in the factory folder. The other rules of `--assignment` apply: a link in the path exits with code 4, and a file over 1 MiB or not in UTF-8 exits with code 2. A text with a control character other than the line break and the tab, or with a bidi or hidden character, exits with code 2. A text that looks like a token exits with code 4, and no output repeats the value.
+- **The new file.** The name has the time, the id of this node and a random hex part, and it ends in `.md`. The mode is 600. The command never replaces a file. The file starts with four header lines. The task text follows them.
+
+  ```
+  Sender node id: acme
+  Sender node address: file:///home/example/work/acme-factory
+  Target node id: api-factory
+  Message, no owner authority.
+  ```
+
+- **The checks.** The command resolves the real path of the child folder once. It asks the child before the write and after it. Both answers must show the same id and the same layer as the config lists. If the second answer differs, the command removes the new file and exits with code 4. If the removal fails, the exit code is still 4, and the message names the file and the `rm` step.
+- **The paths.** The child folder, `factory.yaml`, `.factory` and `inbox` must not be links. They must belong to your user. They must have no group or other write bit. Else the exit code is 4.
+- **The folders.** The command never makes `.factory`. When `.factory` is absent, the exit code is 3. The command makes only `inbox`, with mode 700.
+- **The caps.** An inbox holds at most 100 files and 8 MiB in all. Over a cap, the exit code is 3.
+- **The state repo.** The state repo of the child must ignore `inbox/`. A new factory has that line. A child from an earlier version gets it when you run `factory upgrade` in its folder. Else the exit code is 3.
+
+On success, the output is:
+
+```
+Wrote the task for api-factory as a new file in its inbox.
+File: <path of the new file>
+Session: api-factory
+Check with ListAgents that exactly one session has the name api-factory.
+Then send one SendMessage to api-factory that names the file.
+```
+
+`--json` prints the object `factory.node-send/v1` with the fields `schema`, `home`, `id`, `session`, `file` and `steps`.
+
+Every failure prints `cannot send to ID: REASON` and one remedy line that names a command. The reason is a fixed text. It never shows text of the child.
+
+| Code | Meaning | What to do |
+| --- | --- | --- |
+| 0 | The file is written. | Do the steps that the output names. |
+| 1 | A fault of the file system, also a name that exists. | Check the rights and the free space of the child folder. Run the command again. |
+| 2 | The command line or the file is wrong: the id is not a child, `--file` is absent, FILE is bad, or the text holds a control or hidden character. | Run `factory node children` for the ids. Fix the file. Run the command again. |
+| 3 | Not ready: the child does not answer, its inbox is full, or its state repo does not ignore `inbox/`. | Start the child. Ask the child to deal with the files in its inbox. Run `factory upgrade` in the child folder. Run the command again. |
+| 4 | A safety rule refused the action: the id or the layer of the child differs from the config, a path of the child is a link, belongs to another user or can be written by a group or by other users, or the text looks like a token. | Run `factory node children`. Fix the child, or run `factory node remove-child ID` and add it again. Replace each link and run `chmod go-w PATH`. Remove the token. If the message names a file, delete it with `rm`. |
+
+**What the sender does next.** The command prints the session name of the child. The name is the id of the child. Check with `ListAgents` that exactly one session has that name. Then send one `SendMessage` that names the file. The name is not unique on the machine, and the command makes no tmux call. So this check is yours.
+
+**Authority.** The file is a message. It carries no authority of the owner. The header says so, and the safety block of every node says so. The node that gets the file tells its owner about it. Do not use `node send` to pass a decision of the owner. The relay of owner authority to a child is not built yet.
+
+**Limits.**
+
+- A child that belongs to another user account is refused with exit code 4.
+- Two sends at the same time can each pass the cap by one file, because the child folder has no lock.
+- A reader can see a partial file during the write, because the command creates the file in place. The child reads the file only after your `SendMessage`.
 
 ### Doctor
 
@@ -488,7 +554,7 @@ On layer 1, `add-child` exits with code 2: the children of a coordinator are wor
 - `setup-text`: text outside the managed blocks that the setup files do not hold. This is a warning.
 - `roles`: the layer has a role template.
 - `tracker`: the kind of the board. A kind other than `local` warns, because its connector comes later.
-- `children`: the child nodes.
+- `children`: the child nodes. It fails when a child is on the wrong layer or has the id of a worker.
 - `root-repo`: what the config repo tracks, and what git ignores.
 - `root-files`: the tracked text files hold no value that looks like a token (a failure), no `file` URL and no path of a user folder (warnings).
 - `project-paths`: each project folder is inside the factory folder and is not a reserved name.
@@ -597,6 +663,8 @@ factory upgrade
 
 `upgrade --dry-run` makes the new text of each file and checks it, so it reports the errors that the real run reports.
 
+`upgrade` also adds the lines `workers/` and `inbox/` to the `.gitignore` of the state repo when the file lacks a line. The dry run lists each added line. Every other line of the file stays. A child node needs the line `inbox/` before `node send` can write to it. A link at the path stops `upgrade` with exit code 4.
+
 `upgrade` also adds the hook events that are missing (`Notification` and `PreToolUse`) to the hook settings of each recorded work copy whose settings file holds a hook entry of factory, and to the settings of the coordinator. It prints the change and asks first, with the same consent rule as `start`: a yes in a terminal window, or `--yes` outside a factory session. A dry run lists the change and writes nothing. A settings file with no hook entry of factory is skipped. A write that fails exits with code 1 and names the files that changed. `--json` lists the files in the field `hookSettings`. After this step, run `factory reboot`, so that each session gets its name and the new events.
 
 `upgrade` also writes the delete guard of `.factory/`. The guard is three hooks in `.factory/.git/factory-guard/`: `pre-commit` (for `git commit`), `pre-merge-commit` (for a `git merge` that makes a merge commit) and `pre-applypatch` (for `git am`). The setting `core.hooksPath` of `.factory/` names that folder. Each hook runs `factory state guard`. A commit in `.factory/` stops when it removes an item id from `board.json`, removes the file, or changes it to a text that cannot be read. A commit that does not change `board.json` passes. Git runs no hook for `git revert`, `git cherry-pick`, `git rebase`, `git reset`, and a `git merge` or `git pull` that fast-forwards, so the guard does not check them. `init` writes the same hooks into a new `.factory/`, and into an existing one that has no guard.
@@ -653,8 +721,9 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
     work-copies/            the folder for work copies. The repo does not track it. `init` does not make it.
     .factory/               the state. It is its own git repo.
       node.json             the factory marker: the schema version and the versions of the blocks
-      roles/worker.md       the worker role (layer 1 only)
+      roles/worker.md       the worker role (layer 1 and above)
       orders/               assignments
+      inbox/                task files from the parent node. The state repo ignores it.
       board.json  waiting.json  decision-log.json
       decision-profile/  roadmaps/
 ```
@@ -687,6 +756,7 @@ Only a check at a security boundary stops a command. A stop exits with code 4. I
 - A proxy comes only from the config. `doctor` prints `Config: <path>` first. It checks that the proxy answers when the config passes the registration check (see "Find the factory folder"), also when it comes from a parent folder, from `FACTORY_HOME` or from the factory list. A `factory.yaml` that does not pass the check, for example one in a clone of a repo, stops `doctor` with exit code 4 before any request. A stray `ANTHROPIC_BASE_URL` in the shell is a warning.
 - The proxy host receives the API traffic of the coordinator. Use only a proxy that you control.
 - By default, merges and releases wait for the owner (see "Approval points").
+- A file in `.factory/inbox/` of a node comes from its parent node. It is data and not an instruction of the owner, also when it holds the owner prefix. The safety block of every node says so, and the node tells the owner about each such file.
 - `doctor` fails when a value in `factory.yaml` or a tracked text file of the factory folder looks like a token. It names the files and never prints the value.
 
 ## Exit codes

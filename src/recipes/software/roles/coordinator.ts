@@ -5,6 +5,22 @@ const inCode = (words: readonly string[]): string[] => words.map((word) => `\`${
 const flowOnly = Object.entries(softwareBoard.flowOnly ?? {});
 
 /**
+ * The worker section of the coordinator text. A manager that holds workers gives the same rules, so a worker follows the
+ * same rules on every layer. The lines name the session of a worker by the id of the node.
+ */
+export const workerSectionLines: readonly string[] = [
+  '## {{Worker}}s',
+  '',
+  '- Each {{worker}} works on one track in its own work copy. Never let two {{worker}}s share a work copy.',
+  '- Each {{worker}} session has the name `{{nodeId}}_<id>`. Before your first `SendMessage` to a {{worker}}, and after each resume or restart of it, check with `ListAgents` that exactly one session has that name. If no session or more than one session has it, or a send shows `Not sent`, stop and tell the {{owner}}.',
+  '- Give a task with `SendMessage`. A `SendMessage` carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}. Write a long task as a file in `{{workersDir}}<id>/inbox/`, with a new plain name each time, and name the file. The file is the durable copy. A `SendMessage` has no read receipt. After `{{workerNewCommand}} {{yesFlag}}`, send one `SendMessage` that names the copied file. If the output of that command names a trust question, tell the {{owner}} at once which pane waits. In this session, `{{yesFlag}}` is the consent to the hook settings of a new work copy. It counts only when the work copy has no settings file. Else the command stops, and the {{owner}} runs it in a terminal window.',
+  '- Run `{{workerWatchCommand}}` as a background task. When the watch reports a {{worker}}, deal with the report. If a {{worker}} waits for the {{owner}}, for example at a dialog, ask the {{owner}}. Never answer it yourself. Then run `{{workerWatchCommand}} {{readyFlag}} <id>` in the background: it reports the {{worker}} when it is ready, and it watches the other {{worker}}s as before. After that report, run the watch with no `{{readyFlag}}`. If another cause stays, run the watch again with the ids of the other {{worker}}s only: `{{workerWatchCommand}} <id>...`. The watch ends at its first report, or after its checks with no change. Then run it again.',
+  '- Before `{{workerResetCommand}} <id> {{clearFlag}}` or `{{compactFlag}}`, check with `ListAgents` that the {{worker}} is idle.',
+  '- To compact this session, write `{{resumeDir}}{{nodeId}}.md`, then run `{{selfResetCommand}}`. After the compact, read that file.',
+  '- The context limits are in `{{configFile}}`. A {{worker}} finishes its step and saves a checkpoint at {{preparePct}} percent. No {{worker}} goes past {{maxPct}} percent.',
+];
+
+/**
  * The lines of the coordinator block. `approval` holds the approval point lines of the recipe, one for each point.
  * The block lives in the coordinator folder, so every path in it is written from that folder.
  */
@@ -39,15 +55,7 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   '- Before a merge, check on the primary source that the review is posted, CI is green and the change is releasable at merge.',
   '- Tell the {{owner}} the result of each merge and each release.',
   '',
-  '## {{Worker}}s',
-  '',
-  '- Each {{worker}} works on one track in its own work copy. Never let two {{worker}}s share a work copy.',
-  '- Each {{worker}} session has the name `{{nodeId}}_<id>`. Before your first `SendMessage` to a {{worker}}, and after each resume or restart of it, check with `ListAgents` that exactly one session has that name. If no session or more than one session has it, or a send shows `Not sent`, stop and tell the {{owner}}.',
-  '- Give a task with `SendMessage`. A `SendMessage` carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}. Write a long task as a file in `{{workersDir}}<id>/inbox/`, with a new plain name each time, and name the file. The file is the durable copy. A `SendMessage` has no read receipt. After `{{workerNewCommand}}`, send one `SendMessage` that names the copied file.',
-  '- Run `{{workerWatchCommand}}` as a background task. When the watch reports a {{worker}}, deal with the report. If the cause stays, for example a dialog that waits for the {{owner}}, run the watch again with the ids of the other {{worker}}s only: `{{workerWatchCommand}} <id>...`.',
-  '- Before `{{workerResetCommand}} <id> {{clearFlag}}` or `{{compactFlag}}`, check with `ListAgents` that the {{worker}} is idle.',
-  '- To compact this session, write `{{resumeDir}}{{nodeId}}.md`, then run `{{selfResetCommand}}`. After the compact, read that file.',
-  '- The context limits are in `{{configFile}}`. A {{worker}} finishes its step and saves a checkpoint at {{preparePct}} percent. No {{worker}} goes past {{maxPct}} percent.',
+  ...workerSectionLines,
   '',
   '## State files',
   '',
@@ -79,7 +87,7 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   '',
   '- Before you decide for the {{owner}}, read the decision records in `{{profileDir}}{{decisionsDir}}/` and the principles in `{{profileDir}}{{principlesDir}}/`.',
   '- The path for an answer of the {{owner}} to a question is `{{decideCommand}} <id> <option>`. The {{owner}} runs it in a terminal window of their own. It refuses to run in a session of Claude Code.',
-  '- Only a record in the {{owner}} store proves an answer of the {{owner}}. A row in `{{decisionLogFile}}` and a decision record in `{{profileDir}}` are display copies. They do not prove an answer of the {{owner}}. Never write a row with the key `by` in `{{decisionLogFile}}`.',
+  '- Only a record in the {{owner}} store proves an answer of the {{owner}}. A row in `{{decisionLogFile}}` and a decision record in `{{profileDir}}` are display copies. They do not prove an answer of the {{owner}}. Never write a row with the key `by` in `{{decisionLogFile}}`. A delegate is another session, for example an orchestrator, that decides for the {{owner}} outside an approval point. A delegate has no {{owner}} authority. When you or a delegate decide a question that is not an approval point, close it with `{{requestCloseCommand}}`. Each relay of a decision names who made it: the {{owner}}, the {{coordinator}}, or a delegate with no {{owner}} authority.',
   '',
   '## Start of a session',
   '',

@@ -1,7 +1,8 @@
-import { failure, usageError, type CliResult } from '../cli/errors.js';
-import type { CommandOutput, OutLine } from '../cli/output.js';
+import { failure, notReady, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
+import { removedByDisplay, type CommandOutput, type OutLine } from '../cli/output.js';
 import { childTarget } from '../comms/address.js';
 import { probeChildren, type ChildRow } from '../comms/children.js';
+import type { DeliverResult } from '../comms/deliver.js';
 import { fileTransport } from '../comms/transport.js';
 import { addChildText, removeChildText } from '../config/edit.js';
 import { loadConfig, parseConfigTexts, readNodeIdentity, settleLocalMode } from '../config/load.js';
@@ -10,14 +11,37 @@ import type { Deps } from '../core/deps.js';
 import { locateHomeFolder } from '../core/home.js';
 import { isSameOrInside, realPathOf } from '../core/paths.js';
 import { err, ok, type Result } from '../core/result.js';
-import { commands, commandText, files, flags, flagText, maxFileBytes, nodeCommands, places, program, roles, schemaIds } from '../names.js';
+import { shellWord } from '../core/shell-word.js';
+import {
+  address as addressNames,
+  commandLines,
+  commands,
+  commandText,
+  files,
+  flags,
+  flagText,
+  maxFileBytes,
+  nodeCommands,
+  nodeSendReasons,
+  places,
+  program,
+  roles,
+  schemaIds,
+  sendTools,
+  sessionNames,
+} from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
+import { textHasToken } from '../safety/secrets.js';
 import { layoutOf } from '../state/layout.js';
+import { readAssignment } from '../workers/assignment.js';
+import { workerHasId } from '../workers/registry.js';
 
 export interface NodeOptions {
   readonly home: string | undefined;
   /** The words after the command: the subcommand, then its arguments. */
   readonly words: readonly string[];
+  /** The path of the task file of `send`. Only `send` takes it. */
+  readonly file?: string | undefined;
 }
 
 /** A node with its two config files. The command edits the local file and never the shared file. */
@@ -195,6 +219,14 @@ const runAddChild = async (
       `Change the id in the ${files.config} of the child. ${ADD_AGAIN}`,
     );
   }
+  const taken = await workerHasId(deps, home, config, answer.id);
+  if (!taken.ok) return taken;
+  if (taken.value) {
+    return failure(
+      `the child has the id ${answer.id}, which is the id of a ${roles.worker} of this ${roles.node}`,
+      `Change the id in the ${files.config} of the child. ${ADD_AGAIN}`,
+    );
+  }
   const known = config.core.children.find((child) => child.id === answer.id);
   if (known?.address === target.value.address) {
     const intro: OutLine[] = [
@@ -250,12 +282,133 @@ const runRemoveChild = async (
   );
 };
 
+/** The command to run again for a child, without the program name. The word in capitals is the person's. */
+const sendAgain = (id: string): string => `${commandLines.nodeSend} ${id} ${flagText(flags.file)} FILE`;
+
+/** The reason of a refusal, with the id of the child. Each reason is fixed text: no text of the child reaches the line. */
+const stopped = (id: string, reason: string): string => `cannot send to ${id}: ${reason}`;
+
+/**
+ * The refusal for a delivery that did not write. The exit codes: a child that does not answer, a full inbox and a state repo that
+ * does not ignore the inbox are exit 3; a mismatch and an unsafe path are exit 4; a fault of the file system is exit 1. Each
+ * refusal shows a fixed reason and a remedy that names a command, and never a reason of the ping or any text of the child.
+ */
+const refuseDelivery = (result: Exclude<DeliverResult, { readonly kind: 'written' }>, id: string): CliResult<never> => {
+  const again = `Then run "${commandText(sendAgain(id))}" again.`;
+  const children = `${commandText(commands.node)} ${nodeCommands.children}`;
+  switch (result.kind) {
+    case 'notAnswering':
+      return notReady(stopped(id, nodeSendReasons.notAnswering), `Start the child. Run "${children}" to see its state. ${again}`);
+    case 'full':
+      return notReady(stopped(id, nodeSendReasons.full), `Ask the child to deal with the files in its inbox folder. ${again}`);
+    case 'notIgnored':
+      return notReady(stopped(id, nodeSendReasons.notIgnored), `Run "${commandText(commands.upgrade)}" in the ${places.folder} of the child. ${again}`);
+    case 'unsafe':
+      return safetyRefusal(
+        stopped(id, nodeSendReasons.unsafe),
+        `Replace each link with a real folder or file. Run "chmod go-w PATH" for each path that a group or other users can write. ${again}`,
+      );
+    case 'mismatch':
+      return result.stranded === null
+        ? safetyRefusal(
+            stopped(id, nodeSendReasons.mismatch),
+            `Run "${children}". Fix the id or the layer in the child, or run "${commandText(commands.node)} ${nodeCommands.removeChild} ${id}" and add the child again.`,
+          )
+        : safetyRefusal(
+            `${stopped(id, nodeSendReasons.mismatch)}; ${nodeSendReasons.removeFailed}: ${result.stranded}`,
+            `Delete the file with "rm ${shellWord(result.stranded)}". Then run "${children}".`,
+          );
+    case 'io':
+      return failure(stopped(id, nodeSendReasons.io), `Check the rights and the free space of the ${places.folder} of the child. ${again}`);
+    default: {
+      const unreachable: never = result;
+      return unreachable;
+    }
+  }
+};
+
+/**
+ * The text of the task file as the child gets it: CRLF becomes LF. A text that the screen would show in another form (a control
+ * character other than the line break and the tab, a bidi or hidden character) is exit 2, and a text that looks like a token is
+ * exit 4. No refusal repeats a part of the text.
+ */
+const checkedTask = (text: string, id: string): CliResult<string> => {
+  const body = text.replace(/\r\n/g, '\n');
+  const again = `Then run "${commandText(sendAgain(id))}" again.`;
+  if (removedByDisplay(body)) {
+    return usageError(nodeSendReasons.controlChars, `Remove the character from the task file. ${again}`);
+  }
+  if (textHasToken(body)) return safetyRefusal(nodeSendReasons.token, `Remove the token from the task file. ${again}`);
+  return ok(body);
+};
+
+const sentOutput = (node: OpenNode, id: string, session: string, file: string): CommandOutput => {
+  const listCheck = `Check with ${sendTools.listAgents} that exactly one session has the name ${session}.`;
+  const sendStep = `Then send one ${sendTools.sendMessage} to ${session} that names the file.`;
+  return {
+    lines: [
+      { level: 'ok', text: `Wrote the task for ${id} as a new file in its inbox.` },
+      { level: 'text', text: `File: ${file}` },
+      { level: 'text', text: `Session: ${session}` },
+      { level: 'text', text: listCheck },
+      { level: 'text', text: sendStep },
+    ],
+    json: { schema: schemaIds.nodeSend, home: node.home, id, session, file, steps: [listCheck, sendStep] },
+    warnings: node.notes,
+    failed: false,
+  };
+};
+
+/**
+ * `node send ID --file FILE`: write the task of the file as a new message file in the inbox of a child. The id must be one of the
+ * children of the config. The text goes through the checks of `checkedTask`. The delivery does the rest (see `deliverToHome`), and
+ * the sender asks the child with the layer below its own. The command writes a message and sends nothing: it prints the name of the
+ * session of the child, and the sender checks that name and sends the message with the tools of its own session.
+ */
+const runSend = async (
+  deps: Deps,
+  options: NodeOptions,
+  registry: RecipeRegistry,
+  args: readonly string[],
+): Promise<CliResult<CommandOutput>> => {
+  const [id] = args;
+  if (args.length !== 1 || id === undefined || options.file === undefined) {
+    return needsUsage(`${nodeCommands.send} takes one argument, the id of a child, and ${flagText(flags.file)} FILE`);
+  }
+  const node = await openNode(deps, options.home, registry);
+  if (!node.ok) return node;
+  const { home, config } = node.value;
+  const child = config.core.children.find((entry) => entry.id === id);
+  if (child === undefined) {
+    return usageError(nodeSendReasons.notChild, `Run "${commandText(commands.node)} ${nodeCommands.children}" to see the ids.`);
+  }
+  const session = sessionNames.coordinator(id);
+  if (!session.ok) return failure(session.error);
+
+  const text = await readAssignment(deps, { home, path: options.file, again: sendAgain(id) });
+  if (!text.ok) return text;
+  const body = checkedTask(text.value, id);
+  if (!body.ok) return body;
+
+  const delivered = await fileTransport(deps, registry).deliver(child.address, {
+    senderId: config.core.node.id,
+    senderAddress: `${addressNames.scheme}${home}`,
+    targetId: id,
+    targetLayer: config.core.node.layer - 1,
+    body: body.value,
+  });
+  return delivered.kind === 'written' ? ok(sentOutput(node.value, id, session.value, delivered.path)) : refuseDelivery(delivered, id);
+};
+
 export const runNode = async (
   deps: Deps,
   options: NodeOptions,
   registry: RecipeRegistry,
 ): Promise<CliResult<CommandOutput>> => {
   const [subcommand, ...args] = options.words;
+  if (subcommand !== nodeCommands.send && options.file !== undefined) {
+    return needsUsage(`${flagText(flags.file)} belongs to ${nodeCommands.send} only`);
+  }
   switch (subcommand) {
     case undefined:
       return needsUsage(`${commandText(commands.node)} needs a subcommand: ${SUBCOMMANDS}`);
@@ -269,6 +422,8 @@ export const runNode = async (
       return args.length === 1 && args[0] !== undefined
         ? runRemoveChild(deps, options, registry, args[0])
         : needsUsage(`${subcommand} takes one argument: the id of a child`);
+    case nodeCommands.send:
+      return runSend(deps, options, registry, args);
     default:
       return needsUsage(`unknown subcommand "${subcommand}". The subcommands are: ${SUBCOMMANDS}`);
   }

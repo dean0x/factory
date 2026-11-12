@@ -431,7 +431,8 @@ describe('worker new: the work, in order (TP-5)', () => {
     const made = make();
     const output = await succeeded(made);
     expect(plainText(output)).toBe(
-      'Made the worker alpha in work-copies/web/alpha on the branch worker/alpha.\nIt runs in the pane %3 of the window workers.\n',
+      'Made the worker alpha in work-copies/web/alpha on the branch worker/alpha.\nIt runs in the pane %3 of the window workers.\n' +
+        'If Claude Code asks to trust the folder, the owner answers once in the pane %3. Then run "factory worker watch --ready alpha".\n',
     );
     expect(output.json).toEqual({
       schema: 'factory.worker-new/v1',
@@ -444,6 +445,20 @@ describe('worker new: the work, in order (TP-5)', () => {
       assignment: null,
     });
     expect(output.failed).toBe(false);
+  });
+});
+
+describe('worker new: a node on a layer of 2 or more holds workers (AC-1)', () => {
+  const layerOf = (layer: number): FactoryConfig => {
+    const config = sampleConfig();
+    return { ...config, core: { ...config.core, node: { ...config.core.node, layer } } };
+  };
+
+  it.each([1, 2, 3])('makes a worker on a node on layer %i', async (layer) => {
+    const made = make({ config: layerOf(layer) });
+    await succeeded(made);
+    expect(recordOf(made)).toMatchObject({ project: 'web', branch: BRANCH });
+    expect(indexOf(made, 'tmux split-window')).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -502,6 +517,7 @@ describe('worker new --assignment: the source check and the copy (TP-32, TP-33, 
     expect(plainText(withFile)).toBe(
       'Made the worker alpha in work-copies/web/alpha on the branch worker/alpha.\n' +
         'It runs in the pane %3 of the window workers.\n' +
+        'If Claude Code asks to trust the folder, the owner answers once in the pane %3. Then run "factory worker watch --ready alpha".\n' +
         'Copied the assignment to .factory/workers/alpha/inbox/assignment.md.\n',
     );
     expect(withFile.json).toMatchObject({ assignment: ASSIGNMENT });
@@ -696,6 +712,25 @@ describe('worker new: the checks before any write (TP-6, TP-7, TP-8)', () => {
     const error = await failed(made, { words: ['new', 'demo'] });
     expect(exitCodeOf[error.kind]).toBe(2);
     expect(error.message).toContain('the id of this node');
+    expectNothingChanged(made);
+  });
+
+  it('exits 2 for the id of a child (AC-2), names a remedy, and changes nothing', async () => {
+    const config = sampleConfig();
+    const made = make({
+      config: {
+        ...config,
+        core: {
+          ...config.core,
+          node: { ...config.core.node, layer: 2 },
+          children: [{ id: 'alpha', address: 'file:///w/alpha-factory' }],
+        },
+      },
+    });
+    const error = await failed(made);
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe('the id alpha is the id of a child of this node');
+    expect(error.hint).toContain('factory worker new');
     expectNothingChanged(made);
   });
 
