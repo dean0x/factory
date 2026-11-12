@@ -6,7 +6,7 @@ import { changePrivateFile, type PrivateChange } from '../../src/core/private-fi
 import { err, ok } from '../../src/core/result.js';
 import { privateFile } from '../../src/names.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
-import { psStarts } from '../helpers/ps-fake.js';
+import { procStatPath, procStatText, psStarts } from '../helpers/ps-fake.js';
 
 const FOLDER = '/h/state';
 const LOCK_PATH = `${FOLDER}/entry.lock`;
@@ -144,7 +144,7 @@ const DAY_MS = 86_400_000;
 
 const holderText = (pid: number, startMs: number): string => `${pid}-${startMs}-${HEX}\n`;
 
-const liveInput = (): LivenessInput => ({ ownStartMs: OWN_START, startCache: new Map() });
+const liveInput = (): LivenessInput => ({ ownStartMs: OWN_START });
 const takeLive = (deps: Deps, input: LivenessInput = liveInput(), policy: LockPolicy = LIVE) =>
   takeLock(deps, LOCK_PATH, policy, input);
 const psCalls = (deps: FakeDeps) => deps.calls.filter((call) => call.command === 'ps');
@@ -152,7 +152,7 @@ const withRunning = (deps: FakeDeps, isRunning: Deps['isRunning']): Deps => ({ .
 
 /** A fake with a lock file of a holder that runs. `observedStart` is the start that `ps` reports for it: the token holds `HOLDER_START`. */
 const holderLockedFake = (observedStart = HOLDER_START): FakeDeps => {
-  const deps = fakeWithFolder({ run: psStarts({ [HOLDER_PID]: observedStart }) });
+  const deps = fakeWithFolder({ os: 'darwin', run: psStarts({ [HOLDER_PID]: observedStart }) });
   deps.seed(LOCK_PATH, holderText(HOLDER_PID, HOLDER_START));
   return deps;
 };
@@ -176,6 +176,7 @@ describe('lock file: the liveness of the holder', () => {
   it('keeps a live holder when the start read moves the clock by 4 s, and takes nothing', async () => {
     const starts = psStarts({ [HOLDER_PID]: HOLDER_START });
     const deps: FakeDeps = fakeWithFolder({
+      os: 'darwin',
       run: (call) => {
         deps.advance(4_000);
         return starts(call);
@@ -244,7 +245,7 @@ describe('lock file: the liveness of the holder', () => {
   });
 
   it('gives a stale lock to exactly one of two waiters', async () => {
-    const deps = fakeWithFolder({ run: psStarts({ 11: OWN_START, 12: OWN_START }) });
+    const deps = fakeWithFolder({ os: 'darwin', run: psStarts({ 11: OWN_START, 12: OWN_START }) });
     deps.seed(LOCK_PATH, holderText(HOLDER_PID, HOLDER_START));
     const waiter = (pid: number): Deps => withRunning({ ...deps, pid }, (other) => ok(other !== HOLDER_PID));
     const results = await Promise.all([takeLive(waiter(11)), takeLive(waiter(12))]);
@@ -278,31 +279,36 @@ describe('lock file: the liveness of the holder', () => {
   });
 
   it('counts a holder as live when the start read fails', async () => {
-    const deps = fakeWithFolder({ run: psStarts({}) });
+    const deps = fakeWithFolder({ os: 'darwin', run: psStarts({}) });
     deps.seed(LOCK_PATH, holderText(HOLDER_PID, HOLDER_START));
     deps.advance(10 * DAY_MS);
     expect(await takeLive(deps)).toEqual({ ok: true, value: { kind: 'held' } });
     expect(deps.files.get(LOCK_PATH)).toBe(holderText(HOLDER_PID, HOLDER_START));
   });
 
-  it('reads the start once for each holder token over a long wait, and checks that the holder runs on each try', async () => {
+  it('reads the start of the holder, and checks that it runs, on each try of a long wait', async () => {
     const deps = holderLockedFake();
-    const input = liveInput();
     const patient: LockPolicy = { ...LIVE, attempts: 5 };
-    expect(await takeLive(deps, input, patient)).toEqual({ ok: true, value: { kind: 'held' } });
-    expect(psCalls(deps)).toHaveLength(1);
+    expect(await takeLive(deps, liveInput(), patient)).toEqual({ ok: true, value: { kind: 'held' } });
+    expect(psCalls(deps)).toHaveLength(5);
     expect(deps.checked.filter((pid) => pid === HOLDER_PID)).toHaveLength(5);
   });
 
-  it('reads the start again for a new holder token, and once for it', async () => {
-    const deps = fakeWithFolder({ run: psStarts({ [HOLDER_PID]: HOLDER_START, [OTHER_PID]: HOLDER_START }) });
-    const input = liveInput();
-    deps.seed(LOCK_PATH, holderText(HOLDER_PID, HOLDER_START));
-    await takeLive(deps, input);
-    deps.seed(LOCK_PATH, holderText(OTHER_PID, HOLDER_START));
-    await takeLive(deps, input);
-    await takeLive(deps, input);
-    expect(psCalls(deps).map((call) => call.args[3])).toEqual([String(HOLDER_PID), String(OTHER_PID)]);
+  it('takes the lock when the holder ends between two tries and its pid goes to another process', async () => {
+    const starts: Record<number, number> = { [HOLDER_PID]: HOLDER_START };
+    const base = fakeWithFolder({ os: 'darwin', run: (call) => psStarts(starts)(call) });
+    base.seed(LOCK_PATH, holderText(HOLDER_PID, HOLDER_START));
+    const deps: Deps = {
+      ...base,
+      sleep: async (ms) => {
+        starts[HOLDER_PID] = HOLDER_START + 10 * 60_000;
+        await base.sleep(ms);
+      },
+    };
+    const result = await takeLive(deps);
+    expect(result).toMatchObject({ ok: true, value: { kind: 'taken' } });
+    expect(base.files.get(LOCK_PATH)).toMatch(new RegExp(`^${OWN_PID}-${OWN_START}-`));
+    expect(base.sleeps).toHaveLength(1);
   });
 
   it('keeps the age rule, and the old token form, for a policy with no liveness', async () => {
@@ -347,7 +353,7 @@ describe('lock file: the liveness of the holder', () => {
   });
 
   it('leaves a lock that another process took over while the check of the holder ran', async () => {
-    const deps = fakeWithFolder({ run: psStarts({ [OTHER_PID]: HOLDER_START }) });
+    const deps = fakeWithFolder({ os: 'darwin', run: psStarts({ [OTHER_PID]: HOLDER_START }) });
     deps.seed(LOCK_PATH, holderText(HOLDER_PID, HOLDER_START));
     const racing = withRunning(deps, (pid) => {
       if (pid !== HOLDER_PID) return ok(true);
@@ -359,6 +365,29 @@ describe('lock file: the liveness of the holder', () => {
     expect(deps.files.get(LOCK_PATH)).toBe(holderText(OTHER_PID, HOLDER_START));
   });
 
+  it('leaves a new lock that another waiter made while this waiter judged the old one, also when both locks have the same time stamp', async () => {
+    const base = fakeWithFolder({ os: 'darwin', run: psStarts({ [HOLDER_PID]: HOLDER_START, [OTHER_PID]: HOLDER_START }) });
+    base.seed(LOCK_PATH, holderText(HOLDER_PID, HOLDER_START));
+    const writeExclusive = base.fs.writeTextExclusive;
+    const waiter: Deps = {
+      ...withRunning(base, (pid) => ok(pid !== HOLDER_PID)),
+      fs: {
+        ...base.fs,
+        // The other waiter takes the old lock and makes its own in the moment before this waiter claims, within the same second.
+        writeTextExclusive: async (path, text, mode) => {
+          if (path === CLAIM_PATH) {
+            await base.fs.removeFile(LOCK_PATH);
+            base.seed(LOCK_PATH, holderText(OTHER_PID, HOLDER_START));
+          }
+          return writeExclusive(path, text, mode);
+        },
+      },
+    };
+    expect(await takeLive(waiter, liveInput(), { ...LIVE, attempts: 1 })).toEqual({ ok: true, value: { kind: 'held' } });
+    expect(base.files.get(LOCK_PATH)).toBe(holderText(OTHER_PID, HOLDER_START));
+    expect(base.files.has(CLAIM_PATH)).toBe(false);
+  });
+
   it('takes no lock when the policy asks for liveness and the caller gives no start', async () => {
     const deps = fakeWithFolder();
     expect(await takeLock(deps, LOCK_PATH, LIVE)).toMatchObject({ ok: false, error: expect.stringContaining('start') });
@@ -367,9 +396,35 @@ describe('lock file: the liveness of the holder', () => {
 
   it.each([Number.NaN, -1, 1.5, 1e15])('takes no lock for an own start of %s', async (ownStartMs) => {
     const deps = fakeWithFolder();
-    const result = await takeLive(deps, { ownStartMs, startCache: new Map() });
+    const result = await takeLive(deps, { ownStartMs });
     expect(result).toMatchObject({ ok: false, error: expect.stringContaining('start') });
     expect(deps.files.size).toBe(0);
+  });
+});
+
+describe('lock file: the start of a holder on Linux', () => {
+  const HOLDER_TICKS = 123_456;
+  const HOLDER_SINCE_BOOT_MS = HOLDER_TICKS * 10;
+
+  /** A Linux fake with a lock file of a holder that runs: the token holds its start since boot, and the stat file holds `statTicks`. */
+  const linuxLockedFake = (statTicks: number): FakeDeps => {
+    const deps = fakeWithFolder({ os: 'linux' });
+    deps.seed(procStatPath(HOLDER_PID), procStatText(HOLDER_PID, 'node', statTicks));
+    deps.seed(LOCK_PATH, holderText(HOLDER_PID, HOLDER_SINCE_BOOT_MS));
+    return deps;
+  };
+
+  it('keeps a live holder after a step of the wall clock, and runs no ps', async () => {
+    const deps = linuxLockedFake(HOLDER_TICKS);
+    deps.advance(DAY_MS);
+    expect(await takeLive(deps)).toEqual({ ok: true, value: { kind: 'held' } });
+    expect(deps.files.get(LOCK_PATH)).toBe(holderText(HOLDER_PID, HOLDER_SINCE_BOOT_MS));
+    expect(psCalls(deps)).toHaveLength(0);
+  });
+
+  it('takes the lock when the pid runs with another start since boot, by more than the tolerance', async () => {
+    const deps = linuxLockedFake(HOLDER_TICKS + 301);
+    expect(await takeLive(deps)).toMatchObject({ ok: true, value: { kind: 'taken' } });
   });
 });
 

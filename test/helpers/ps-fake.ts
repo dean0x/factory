@@ -18,3 +18,13 @@ export const psStarts =
     const start = starts[Number(call.args[3])];
     return start === undefined ? exited(1) : exited(0, lstartText(start));
   };
+
+/** The path of the stat file that Linux keeps for one process. */
+export const procStatPath = (pid: number): string => `/proc/${pid}/stat`;
+
+/**
+ * The text of a Linux stat file. The command name sits in parentheses and can hold spaces and parentheses. Field 22 is the start of the
+ * process in clock ticks since boot; the other fields are filler.
+ */
+export const procStatText = (pid: number, command: string, startTicks: number | string): string =>
+  `${pid} (${command}) S 1 1 1 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 1 0 ${startTicks} 12345678 900 18446744073709551615 1 1 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0\n`;

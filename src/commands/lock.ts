@@ -438,6 +438,6 @@ export const runLock = async (deps: Deps, options: LockRunOptions): Promise<CliR
     args,
     place: place.value,
     priority: options.priority,
-    liveness: { ownStartMs: start.value, startCache: new Map() },
+    liveness: { ownStartMs: start.value },
   });
 };

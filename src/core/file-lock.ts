@@ -53,18 +53,10 @@ export interface LockPolicy {
   readonly liveness?: LockLiveness;
 }
 
-/**
- * The start times that `ps` gave for the holders of one wait, by the token of the holder, as the result of the read. A failed read is
- * kept too, so the start of a holder is read at most once. The caller owns the cache and passes the same one to each `takeLock` call
- * of one wait, so it holds at most one entry for each holder token that the wait saw.
- */
-export type StartCache = Map<string, Result<number, string>>;
-
 /** What a take with `liveness` needs from its caller. */
 export interface LivenessInput {
-  /** The start time of the process of the caller in milliseconds, read once before the wait. It goes into the token. */
+  /** The start of the process of the caller (see `processStartOf`), read once before the wait. It goes into the token. */
   readonly ownStartMs: number;
-  readonly startCache: StartCache;
 }
 
 /**
@@ -111,19 +103,12 @@ const holderOf = (text: string): Holder | null => {
   return pid > 0 && Number.isSafeInteger(pid) && Number.isSafeInteger(startMs) ? { token: text.slice(0, -1), pid, startMs } : null;
 };
 
-/** The start time of the holder as `ps` reads it now. The read runs once for each token of the cache. */
-const observedStartOf = async (deps: Deps, holder: Holder, cache: StartCache): Promise<Result<number, string>> => {
-  const known = cache.get(holder.token);
-  if (known !== undefined) return known;
-  const read = await processStartOf(deps, holder.pid);
-  cache.set(holder.token, read);
-  return read;
-};
-
 /**
  * True only when the holder has ended: its pid does not run, or runs with a start time that differs from the recorded one by more than
  * the tolerance. An error from the running check and a failed read of the start are no proof that the holder ended, so they count as a
- * live holder. The pid of this process is never asked: the process runs, and its start is the own start that the caller gave.
+ * live holder. The start is read again on each call: a holder can end and its pid can go to another process between two tries, and
+ * a start that an earlier try read would then match the recorded one. The pid of this process is never asked: the process runs, and
+ * its start is the own start that the caller gave.
  */
 const holderEnded = async (deps: Deps, holder: Holder, liveness: LockLiveness, input: LivenessInput): Promise<boolean> => {
   const differs = (observedMs: number): boolean => Math.abs(observedMs - holder.startMs) > liveness.startToleranceMs;
@@ -131,7 +116,7 @@ const holderEnded = async (deps: Deps, holder: Holder, liveness: LockLiveness, i
   const running = deps.isRunning(holder.pid);
   if (!running.ok) return false;
   if (!running.value) return true;
-  const observed = await observedStartOf(deps, holder, input.startCache);
+  const observed = await processStartOf(deps, holder.pid);
   return observed.ok && differs(observed.value);
 };
 
@@ -148,8 +133,16 @@ export const holderStateOf = async (deps: Deps, text: string, liveness: LockLive
   return (await holderEnded(deps, holder, liveness, input)) ? 'ended' : 'live';
 };
 
+/**
+ * What the judge says of a lock that exists. A lock that is stale by the state of its holder also gives the text of the lock file that
+ * the judge read, so the removal can check that the file still holds it. The text is null for a lock that the age rule judged.
+ */
+type Verdict = { readonly ended: false } | { readonly ended: true; readonly tokenText: string | null };
+
+const STILL_HELD: Verdict = { ended: false };
+
 /** The judge of a lock that exists: it gets the stat of the lock file, taken before the text is read, and says whether the lock is stale. */
-type LockEnded = (seen: PathInfo) => Promise<Result<boolean, string>>;
+type LockEnded = (seen: PathInfo) => Promise<Result<Verdict, string>>;
 
 /** The liveness rule of a take: the option of the policy, and what the caller gave for it. */
 interface LivenessRule {
@@ -178,17 +171,17 @@ const livenessRuleOf = (policy: LockPolicy, input: LivenessInput | undefined): R
  * first one that is stale gives one warning. The text is not read for a file over the byte cap.
  */
 const lockEndedOf = (deps: Deps, lockPath: string, policy: LockPolicy, rule: LivenessRule | null): LockEnded => {
-  if (rule === null) return async (seen) => ok(isStale(deps, seen, policy));
+  if (rule === null) return async (seen) => ok(isStale(deps, seen, policy) ? { ended: true, tokenText: null } : STILL_HELD);
   let warned = false;
   return async (seen) => {
     const text = seen.kind === 'file' && seen.size <= MAX_LOCK_BYTES ? await readLockText(deps, lockPath) : ok(null);
     if (!text.ok) return text;
     const holder = text.value === null ? null : holderOf(text.value);
-    if (holder !== null) return ok(await holderEnded(deps, holder, rule.liveness, rule.input));
-    if (!isStale(deps, seen, policy)) return ok(false);
+    if (holder !== null) return ok((await holderEnded(deps, holder, rule.liveness, rule.input)) ? { ended: true, tokenText: text.value } : STILL_HELD);
+    if (!isStale(deps, seen, policy)) return ok(STILL_HELD);
     if (!warned) deps.warn(lockStaleWarning(lockPath));
     warned = true;
-    return ok(true);
+    return ok({ ended: true, tokenText: null });
   };
 };
 
@@ -196,12 +189,20 @@ const lockEndedOf = (deps: Deps, lockPath: string, policy: LockPolicy, rule: Liv
  * Remove the lock only when it is still the stale lock that the caller saw. The caller holds the claim file, so no other
  * waiter removes the lock now. A lock that a waiter took over in the meantime stays. The value is true when the lock is
  * gone. Only a file is removed: a folder at the lock path stays with all that it holds, and the result is an error.
+ *
+ * The time stamp of a file can have a resolution of 1 s or 2 s, so a new lock can carry the time stamp of the old one. When the
+ * judge read a token (`tokenText`), the file must also still hold that text.
  */
-const removeSeenLock = async (deps: Deps, lockPath: string, seen: PathInfo): Promise<Result<boolean, string>> => {
+const removeSeenLock = async (deps: Deps, lockPath: string, seen: PathInfo, tokenText: string | null): Promise<Result<boolean, string>> => {
   const current = await deps.fs.statInfo(lockPath);
   if (!current.ok) return err(current.error.message);
   if (current.value === null) return ok(true);
   if (current.value.mtimeMs !== seen.mtimeMs) return ok(false);
+  if (tokenText !== null) {
+    const text = await readLockText(deps, lockPath);
+    if (!text.ok) return err(text.error);
+    if (text.value !== tokenText) return ok(false);
+  }
   const removed = await deps.fs.removeFile(lockPath);
   return removed.ok ? ok(true) : err(removed.error.message);
 };
@@ -229,15 +230,15 @@ const dropStaleLock = async (deps: Deps, lockPath: string, policy: LockPolicy, l
   if (!seen.ok) return err(seen.error.message);
   if (seen.value === null) return ok(true);
   const ended = await lockEnded(seen.value);
-  if (!ended.ok) return ended;
-  if (!ended.value) return ok(false);
+  if (!ended.ok) return err(ended.error);
+  if (!ended.value.ended) return ok(false);
 
   const claimPath = `${lockPath}${policy.takeoverSuffix}`;
   const claimed = await deps.fs.writeTextExclusive(claimPath, `${deps.pid}\n`, policy.mode);
   if (!claimed.ok) return err(claimed.error.message);
   if (!claimed.value) return dropStaleClaim(deps, claimPath, policy);
 
-  const dropped = await removeSeenLock(deps, lockPath, seen.value);
+  const dropped = await removeSeenLock(deps, lockPath, seen.value, ended.value.tokenText);
   const claimGone = await deps.fs.removeFile(claimPath);
   if (!dropped.ok) return dropped;
   return claimGone.ok ? dropped : err(claimGone.error.message);
@@ -252,8 +253,8 @@ const dropStaleLock = async (deps: Deps, lockPath: string, policy: LockPolicy, l
  * call takes no lock without a token. The call removes only files: a folder at the lock path stays, and when it is stale, the
  * call ends with an error and takes no lock.
  *
- * With `policy.liveness`, the caller gives `liveness`: its own start time, which goes into the token as `<pid>-<startMs>-<random>`,
- * and the cache of start reads for this wait. A policy with `liveness` and no valid input is an error, and no lock is taken.
+ * With `policy.liveness`, the caller gives `liveness`: its own start time, which goes into the token as `<pid>-<startMs>-<random>`.
+ * The start of a holder is read again on each try. A policy with `liveness` and no valid input is an error, and no lock is taken.
  */
 export const takeLock = async (
   deps: Deps,

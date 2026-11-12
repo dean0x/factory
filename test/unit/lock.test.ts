@@ -31,10 +31,11 @@ const OK_END: AttachedEnd = { kind: 'code', code: 0 };
 const holderText = (pid: number, startMs: number): string => `${pid}-${startMs}-${HEX}\n`;
 const LIVE_HOLDER = holderText(HOLDER_PID, HOLDER_START);
 
-/** Fake deps with a home folder, and a fake `ps` that knows the start of the own process and of the two other holders. */
+/** Fake deps for macOS with a home folder, and a fake `ps` that knows the start of the own process and of the two other holders. */
 const fake = (options: FakeOptions = {}): FakeDeps =>
   createFakeDeps({
     env: { HOME: '/h' },
+    os: 'darwin',
     run: psStarts({ [OWN_PID]: OWN_START, 5000: OWN_START, [HOLDER_PID]: HOLDER_START, [OTHER_PID]: HOLDER_START }),
     ...options,
   });
@@ -204,7 +205,8 @@ describe('lock run: the wait (TP-15, TP-16)', () => {
     expect(deps.warned[0]).toMatch(/^factory lock run: WAITING\. /);
     expect(deps.attached).toEqual([]);
     expect(deps.files.get(LOCK)).toBe(LIVE_HOLDER);
-    expect(deps.calls.filter((call) => call.command === 'ps')).toHaveLength(2);
+    // One read for the own start, and one for the start of the holder on each try.
+    expect(deps.calls.filter((call) => call.command === 'ps')).toHaveLength(1 + heavyLock.attempts);
     expect(deps.terminated).toEqual([]);
     expect(handlerCount(deps)).toBe(0);
   });
@@ -359,6 +361,26 @@ describe('lock run: a stop during the wait (TP-23)', () => {
     expectOutcome(await lock(deps), 130, lockWords.stopped);
     expect(base.attached).toEqual([]);
     expect(base.files.get(LOCK)).toBe(LIVE_HOLDER);
+    expect(handlerCount(base)).toBe(0);
+  });
+});
+
+describe('lock run: a stop during the take', () => {
+  it('exits 130 with the STOPPED line, frees the lock it took and starts no child, when INT comes during the create of the lock file', async () => {
+    const base = fake();
+    const deps: FakeDeps = {
+      ...base,
+      fs: {
+        ...base.fs,
+        writeTextExclusive: async (path, text, mode) => {
+          if (path === LOCK) base.signals.emit('SIGINT');
+          return base.fs.writeTextExclusive(path, text, mode);
+        },
+      },
+    };
+    expectOutcome(await lock(deps), 130, lockWords.stopped);
+    expect(base.attached).toEqual([]);
+    expect(base.files.has(LOCK)).toBe(false);
     expect(handlerCount(base)).toBe(0);
   });
 });
