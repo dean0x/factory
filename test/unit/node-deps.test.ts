@@ -378,7 +378,8 @@ describe('node deps: run with the terminal, held', { timeout: ATTACHED_TEST_TIME
       ours[0]?.(signal);
     });
     expect(await running).toEqual({ kind: 'code', code: 0 });
-    expect(await readFile(log, 'utf8')).toBe('SIGINT,SIGTERM,SIGHUP');
+    // The order of three signals that arrive together is not fixed, so compare the sorted set: each signal once.
+    expect((await readFile(log, 'utf8')).split(',').sort()).toEqual([...SIGNALS].sort());
     expect(listenerCounts()).toEqual(before);
   });
 
