@@ -485,6 +485,7 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
     });
     const deps = onSleep(base, 2, () => {
       expect(base.files.has(PRIORITY)).toBe(true);
+      expect(base.modes.get(PRIORITY)).toBe(0o600);
       base.files.delete(LOCK);
     });
     expect((await lock(deps, ['run', '--priority', '--', 'npm'])).code).toBe(0);
