@@ -561,7 +561,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
       during.lock = repo.deps.files.has(LOCK_FILE);
       during.added = await runRequest(
         repo.deps,
-        { home: HOME, words: ['add'], title: 'Second', question: 'Which?', options: ['a=Yes'], recommend: undefined },
+        { home: HOME, words: ['add'], title: 'Second', question: 'Which?', options: ['a=Yes'], recommend: undefined, decider: undefined, decision: undefined },
         recipes,
       );
       return ok('y');
