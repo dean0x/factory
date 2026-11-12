@@ -1265,6 +1265,47 @@ describe('upgrade: managed blocks', () => {
     expect(snapshot(deps)).toEqual(before);
   });
 
+  describe('the line about the earlier conversation of the coordinator', () => {
+    const RESUME_LINE =
+      'The next factory start resumes the earlier coordinator conversation. That conversation must follow the new rules of the coordinator block.';
+    const POINTER = layoutOf(HOME).coordinatorLastSessionFile;
+
+    it('says that the next start resumes the conversation, in the dry run and in the real run, when the coordinator block changes', async () => {
+      for (const dryRun of [true, false]) {
+        const { deps } = await makeNode();
+        const output = success(await upgrade(deps, newer, { dryRun }));
+        expect(lineTexts(output).filter((line) => line === RESUME_LINE)).toHaveLength(1);
+      }
+    });
+
+    it('keeps the line next to the block lines, before the dry run note', async () => {
+      const { deps } = await makeNode();
+      const lines = lineTexts(success(await upgrade(deps, newer, { dryRun: true })));
+      const lastBlockLine = lines.map((line) => line.startsWith('block ')).lastIndexOf(true);
+      expect(lines.indexOf(RESUME_LINE)).toBe(lastBlockLine + 1);
+      expect(lines.indexOf('Dry run: no file was changed.')).toBeGreaterThan(lastBlockLine + 1);
+    });
+
+    it('says nothing about the conversation when only another block changes', async () => {
+      const { deps } = await makeNode();
+      const output = success(await upgrade(deps, blocksSpec(withBlock('worker', 'New worker text.')), { dryRun: true }));
+      expect(lineTexts(output)).not.toContain(RESUME_LINE);
+    });
+
+    it('says nothing about the conversation when no block changes', async () => {
+      const { deps } = await makeNode();
+      const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+      expect(lineTexts(output)).not.toContain(RESUME_LINE);
+    });
+
+    it('does not write the pointer of the coordinator to its session', async () => {
+      const { deps } = await makeNode();
+      deps.seed(POINTER, 'earlier-session\n');
+      success(await upgrade(deps, newer));
+      expect(text(deps, POINTER)).toBe('earlier-session\n');
+    });
+  });
+
   it('replaces an intact older block, keeps the text of the owner, and records the version', async () => {
     const { deps, gitSince } = await makeNode();
     const original = text(deps, CLAUDE);

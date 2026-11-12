@@ -1389,8 +1389,16 @@ describe('start:the recovery after a kill of the server and the mark of the acti
       expect(start.slice(at, at + 2)).toEqual(['--resume', COORDINATOR_SESSION]);
       expect(at).toBeLessThan(start.indexOf('--add-dir'));
       expect(output.json).toMatchObject({ coordinatorResumed: true });
-      expect(output.lines.map((line) => line.text)).toContain('The coordinator resumes its earlier conversation.');
+      expect(output.lines.map((line) => line.text)).toContain(
+        'The coordinator resumes its earlier conversation. It must follow the current rules of the coordinator block.',
+      );
       expect(output.warnings).toEqual([]);
+    });
+
+    it('does not say that the coordinator resumes when it starts a new conversation', async () => {
+      const made = await seeded({ workers: [] });
+      const output = await succeeded(made.deps);
+      expect(output.lines.map((line) => line.text).filter((line) => line.includes('resumes'))).toEqual([]);
     });
 
     it('starts a new conversation, with no warning, when it has no pointer', async () => {

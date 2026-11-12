@@ -16,6 +16,7 @@ import { launchArgv } from '../launch/argv.js';
 import { attachArgs, attachHint, killSessionArgs, startSteps, switchArgs, type TmuxArgs } from '../launch/tmux.js';
 import { coordinatorEnded, requireOwnSession, sessionExists, tmuxStep } from '../launch/tmux-run.js';
 import {
+  blockNames,
   capitalize,
   commands,
   commandText,
@@ -259,9 +260,19 @@ export const startAgain = async (
   });
 };
 
+/**
+ * The line about the coordinator that resumes. Its earlier conversation can hold the text of an older block, so the line says
+ * that the conversation must follow the current rules. A reboot gives the same line.
+ */
+export const coordinatorResumeLine = (): OutLine =>
+  text(
+    `The ${roles.coordinator} resumes its earlier conversation. ` +
+      `It must follow the current rules of the ${blockNames.coordinator} block.`,
+  );
+
 /** The lines about the recovery: the coordinator that resumes, and the workers that run again. A start that resumes nothing says nothing. */
 const recoveryLines = (plan: StartPlan, recovery: Recovery): readonly OutLine[] => [
-  ...(plan.resumeId === null ? [] : [text(`The ${roles.coordinator} resumes its earlier conversation.`)]),
+  ...(plan.resumeId === null ? [] : [coordinatorResumeLine()]),
   ...(recovery === null || recovery.resumed.length === 0
     ? []
     : [text(`Resumed the ${roles.worker}s: ${recovery.resumed.join(', ')}.`)]),
