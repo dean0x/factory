@@ -288,15 +288,27 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
   {
     name: commands.node,
-    summary: `Show or change the children of the ${roles.node}.`,
+    summary: `Show or change the children of the ${roles.node}, or send a task to a child.`,
     usage: [
       `${commandText(commands.node)} ${nodeCommands.children} [${flagText(flags.home)} DIR]`,
       `${commandText(commands.node)} ${nodeCommands.addChild} PATH [${flagText(flags.home)} DIR]`,
       `${commandText(commands.node)} ${nodeCommands.removeChild} ID [${flagText(flags.home)} DIR]`,
+      `${commandText(commands.node)} ${nodeCommands.send} ID ${flagText(flags.file)} FILE [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
-    options: { [flags.home]: foundHomeOption },
-    run: (given, deps) => runNode(deps, { home: given.string(flags.home), words: given.positionals() }, registry),
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.file]: {
+        type: 'string',
+        placeholder: 'FILE',
+        description:
+          `With ${nodeCommands.send}: write the text of FILE as a new file in the inbox folder of the child. ` +
+          `FILE is in ${assignmentSource.ordersShown} of the ${places.folder}, or in the git work tree of the working folder. ` +
+          `The new file carries no authority of the ${roles.owner}.`,
+      },
+    },
+    run: (given, deps) =>
+      runNode(deps, { home: given.string(flags.home), words: given.positionals(), file: given.string(flags.file) }, registry),
   },
   {
     name: commands.worker,

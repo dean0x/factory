@@ -1,4 +1,4 @@
-import { chmod, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MANAGER_LAYER } from '../../src/config/schema.js';
@@ -163,5 +163,99 @@ describe('factory node (built binary)', () => {
     const text = await node('children');
     expect(text.code).toBe(0);
     expect(text.stdout).toContain('unknown: factory.yaml has schema 1');
+  });
+});
+
+describe('factory node send (built binary)', () => {
+  const BODY = 'Build the landing page.\r\nKeep it short.\n';
+
+  /** A child on layer 1, a node on layer 2 that lists it, and a task file in the orders folder of the node. */
+  const readyPair = async (): Promise<string> => {
+    await initNode(shop, 'web', 1);
+    await initNode(manager, 'mgr', 2);
+    expect((await node('add-child', shop)).code).toBe(0);
+    const task = join(manager, '.factory', 'orders', 'task.md');
+    await mkdir(join(manager, '.factory', 'orders'), { recursive: true });
+    await writeFile(task, BODY);
+    return task;
+  };
+
+  it('writes the task into the inbox of a real child folder, as a new file that git ignores', async () => {
+    const task = await readyPair();
+    const result = await node('send', 'web', '--file', task);
+    expect(result.stderr).toBe('');
+    expect(result.code).toBe(0);
+
+    const inbox = join(await realpath(shop), '.factory', 'inbox');
+    const names = await readdir(inbox);
+    expect(names).toHaveLength(1);
+    const file = join(inbox, names[0] ?? '');
+    expect(names[0]).toMatch(/^\d{4}-\d{2}-\d{2}T[\d-]+Z-mgr-[0-9a-f]{8}\.md$/);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(inbox)).mode & 0o777).toBe(0o700);
+    const lines = (await readFile(file, 'utf8')).split('\n');
+    expect(lines[0]).toBe('Sender node id: mgr');
+    expect(lines[1]).toMatch(/^Sender node address: file:\/\//);
+    expect(lines.slice(2)).toEqual(['Target node id: web', 'Message, no owner authority.', '', 'Build the landing page.', 'Keep it short.', '']);
+    expect(result.stdout).toContain(`File: ${file}`);
+    expect(result.stdout).toContain('Session: web');
+    expect(result.stdout).toContain('Check with ListAgents that exactly one session has the name web.');
+    const status = await box.git(join(shop, '.factory'), ['status', '--porcelain', '--untracked-files=all']);
+    expect(status.code).toBe(0);
+    expect(status.stdout).not.toContain('inbox');
+  });
+
+  it('prints the JSON document with its schema id', async () => {
+    const task = await readyPair();
+    const result = await node('send', 'web', '--file', task, '--json');
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ schema: 'factory.node-send/v1', id: 'web', session: 'web' });
+  });
+
+  it('exits 4 for an inbox that is a link, and writes nothing through the link', async () => {
+    const task = await readyPair();
+    const elsewhere = join(box.root, 'elsewhere');
+    await mkdir(elsewhere);
+    await symlink(elsewhere, join(shop, '.factory', 'inbox'));
+    const result = await node('send', 'web', '--file', task);
+    expect(result.code).toBe(4);
+    expect(result.stderr).toContain('is a link');
+    expect(result.stderr).toContain('chmod go-w');
+    expect(await readdir(elsewhere)).toEqual([]);
+  });
+
+  it('exits 3 and names factory upgrade for a child whose state repo does not ignore the inbox, and sends after the upgrade', async () => {
+    const task = await readyPair();
+    const state = join(shop, '.factory');
+    // A state repo from before the inbox: it has every line of the .gitignore but "inbox/", and the rest of the folder is whole.
+    await writeFile(join(state, '.gitignore'), 'state/\nlocks/\nbackups/\nworkers/\n');
+    expect((await box.git(state, ['add', '.gitignore'])).code).toBe(0);
+    expect((await box.git(state, ['commit', '-q', '-m', 'drop the inbox line'])).code).toBe(0);
+
+    const refused = await node('send', 'web', '--file', task);
+    expect(refused.code).toBe(3);
+    expect(refused.stderr).toContain('factory upgrade');
+    await expect(stat(join(state, 'inbox'))).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const upgraded = await box.run(['upgrade', '--home', shop]);
+    expect(upgraded.code, upgraded.stderr).toBe(0);
+    expect(await readFile(join(state, '.gitignore'), 'utf8')).toContain('inbox/\n');
+
+    const sent = await node('send', 'web', '--file', task);
+    expect(sent.stderr).toBe('');
+    expect(sent.code).toBe(0);
+    expect(await readdir(join(state, 'inbox'))).toHaveLength(1);
+    const status = await box.git(state, ['status', '--porcelain', '--untracked-files=all']);
+    expect(status.code).toBe(0);
+    expect(status.stdout).not.toContain('inbox');
+  });
+
+  it('exits 3 and does not make the state folder of a child that has none', async () => {
+    const task = await readyPair();
+    await rm(join(shop, '.factory'), { recursive: true });
+    const result = await node('send', 'web', '--file', task);
+    expect(result.code).toBe(3);
+    expect(result.stderr).toContain('factory upgrade');
+    await expect(stat(join(shop, '.factory'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

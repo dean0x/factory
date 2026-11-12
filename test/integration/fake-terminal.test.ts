@@ -63,13 +63,17 @@ const expectGroupGone = async (group: number): Promise<void> => {
   expect(groupExists(group)).toBe(false);
 };
 
-/** Kill a group that a test failed to stop, so a failed case leaves no process. A group that is gone is no fault. */
+/**
+ * Kill a group that a test failed to stop, so a failed case leaves no process. A group that is gone is no fault. On macOS, a group
+ * with only zombie members gives EPERM: nothing is left to kill, so it is no fault too. Any other error is thrown.
+ */
 const killGroupAfterTest = (group: number): void => {
   if (!Number.isInteger(group) || group <= 1) return;
   try {
     process.kill(-group, 'SIGKILL');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'ESRCH' && code !== 'EPERM') throw error;
   }
 };
 

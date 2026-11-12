@@ -4,6 +4,7 @@ import { fileTransport } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
 import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
+import { STATE_GITIGNORE } from '../../src/state/files.js';
 
 const CHILD = '/srv/web-factory';
 
@@ -116,5 +117,24 @@ describe('file transport: ping', () => {
     const result = await transport.ping(`file://${CHILD}`);
     expect(result.kind).toBe('unknown');
     if (result.kind === 'unknown') expect(result.reason).not.toContain('SECRET');
+  });
+});
+
+describe('file transport: deliver', () => {
+  const input = { senderId: 'root', senderAddress: 'file:///srv/root', targetId: 'web', targetLayer: 1, body: 'Do the task.\n' };
+
+  it('writes the message file into the inbox of a child that answers with the target id and layer', async () => {
+    const { deps, transport } = withConfig(
+      childConfig((config) => ({ ...config, core: { ...config.core, node: { id: 'web', layer: 1 } } })),
+    );
+    deps.seed(`${CHILD}/.factory/.gitignore`, STATE_GITIGNORE);
+    const result = await transport.deliver(`file://${CHILD}`, input);
+    expect(result).toEqual({ kind: 'written', path: `${CHILD}/.factory/inbox/2030-01-02T03-04-05-678Z-root-00000001.md` });
+    expect(deps.files.get(result.kind === 'written' ? result.path : '')).toContain('Target node id: web');
+  });
+
+  it('gives notAnswering for a home that has no config', async () => {
+    const { transport } = withConfig(null);
+    expect(await transport.deliver(`file://${CHILD}`, input)).toEqual({ kind: 'notAnswering' });
   });
 });

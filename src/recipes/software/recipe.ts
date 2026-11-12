@@ -9,7 +9,11 @@ import { WORKER_LINES } from './roles/worker.js';
 
 type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeof blockNames.manager;
 
-/** The worker block lives in the worker file in the state folder, so its paths are written from the factory folder. It names the session of the coordinator by the id of the node. */
+/**
+ * The worker block lives in the worker file in the state folder, so its paths are written from the factory folder. It names
+ * the session that it reports to by the id of the node. The role word of that session follows the layer of the node that
+ * holds the worker.
+ */
 const workerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.worker,
   version: 2,

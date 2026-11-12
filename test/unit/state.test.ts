@@ -1,7 +1,10 @@
 import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { describeIssues } from '../../src/core/zod.js';
+import { maxFileBytes } from '../../src/names.js';
 import {
+  ignoresLine,
+  INBOX_GITIGNORE_LINE,
   initialBoardText,
   initialDecisionLogText,
   initialWaitingText,
@@ -147,6 +150,7 @@ describe('layout', () => {
       workerMd: '/h/node/.factory/roles/worker.md',
       backupsDir: '/h/node/.factory/backups',
       workersDir: '/h/node/.factory/workers',
+      inboxDir: '/h/node/.factory/inbox',
       runtimeDir: '/h/node/.factory/state',
       heartbeatDir: '/h/node/.factory/state/heartbeat',
       coordinatorLastSessionFile: '/h/node/.factory/state/coordinator-last-session',
@@ -228,5 +232,59 @@ describe('the share list in the root .gitignore (TP-69)', () => {
     expect(locateShareList(SHARE_LIST_PART)).toMatchObject({ kind: 'found', current: true });
     expect(locateShareList(`${SHARE_LIST_BEGIN}\n${SHARE_LIST_END}\n`)).toMatchObject({ kind: 'found', current: false });
     expect(locateShareList('!/notes.md\n')).toEqual({ kind: 'absent' });
+  });
+});
+
+describe('ignoresLine: when git ignores the inbox by the state .gitignore', () => {
+  it('counts the line, also with trailing spaces, a CR, or no line break', () => {
+    expect(ignoresLine('inbox/\n', INBOX_GITIGNORE_LINE)).toBe(true);
+    expect(ignoresLine('inbox/ \n', INBOX_GITIGNORE_LINE)).toBe(true);
+    expect(ignoresLine('inbox/   \n', INBOX_GITIGNORE_LINE)).toBe(true);
+    expect(ignoresLine('state/\r\ninbox/\r\n', INBOX_GITIGNORE_LINE)).toBe(true);
+    expect(ignoresLine('inbox/ \r\n', INBOX_GITIGNORE_LINE)).toBe(true);
+    expect(ignoresLine('state/\ninbox/', INBOX_GITIGNORE_LINE)).toBe(true);
+  });
+
+  it.each([
+    ['a tab', 'inbox/\t\n'],
+    ['a no-break space', 'inbox/ \n'],
+    ['an escaped space', 'inbox/\\ \n'],
+    ['a tab before the CR of a CRLF line end', 'inbox/\t\r\n'],
+  ])('does not count a line that ends in %s, because git keeps that character in the pattern', (_name, text) => {
+    expect(ignoresLine(text, INBOX_GITIGNORE_LINE)).toBe(false);
+  });
+
+  it.each(['!inbox/', '!inbox', '!/inbox/', '!inbox/**', '!**/inbox', '!*', '!in*', '!?nbox/', '![i]nbox/'])(
+    'does not count the line when the later line %s can take the folder back into the repo',
+    (negation) => {
+      expect(ignoresLine(`inbox/\n${negation}\n`, INBOX_GITIGNORE_LINE)).toBe(false);
+      expect(ignoresLine(`inbox/\r\n${negation}\r\n`, INBOX_GITIGNORE_LINE)).toBe(false);
+      expect(ignoresLine(`inbox/\n${negation}`, INBOX_GITIGNORE_LINE)).toBe(false);
+    },
+  );
+
+  it('counts the line again when it comes after the negation', () => {
+    expect(ignoresLine('inbox/\n!*\ninbox/\n', INBOX_GITIGNORE_LINE)).toBe(true);
+    expect(ignoresLine('!inbox\ninbox/\n', INBOX_GITIGNORE_LINE)).toBe(true);
+  });
+
+  it('reads a very long run of spaces in one pass', () => {
+    const blanks = ' '.repeat(maxFileBytes - 16);
+    expect(ignoresLine(`inbox/${blanks}x\ninbox/${blanks}\n`, INBOX_GITIGNORE_LINE)).toBe(true);
+    expect(ignoresLine(`inbox/${blanks}x\n`, INBOX_GITIGNORE_LINE)).toBe(false);
+  });
+
+  it('counts the line when a later negation is for a name that cannot be the inbox', () => {
+    expect(ignoresLine('inbox/\n!keep-me.md\n!/setup/\n', INBOX_GITIGNORE_LINE)).toBe(true);
+  });
+
+  it.each([
+    ['a comment', '# inbox/\n'],
+    ['a longer name', 'my-inbox/\n'],
+    ['a name with a path before it', 'a/inbox/\n'],
+    ['a line that starts with a blank', ' inbox/\n'],
+    ['no text', ''],
+  ])('does not count %s', (_name, text) => {
+    expect(ignoresLine(text, INBOX_GITIGNORE_LINE)).toBe(false);
   });
 });

@@ -47,8 +47,11 @@ const requireNoLink = async (deps: Deps, path: string, what: string): Promise<Cl
   return kind.value === 'link' ? safetyRefusal(`cannot write ${path}: ${what} is a link`, LINK_REMEDY) : ok(undefined);
 };
 
+/** `withParents` makes the folders above the target too. `folderOnly` makes the folder of the target and no other. */
+type Making = 'withParents' | 'folderOnly';
+
 /** The real folder of the target, made when it does not exist. The real path is inside the real path of the parent. */
-const realFolderOf = async (deps: Deps, target: FolderTarget): Promise<CliResult<string>> => {
+const realFolderOf = async (deps: Deps, target: FolderTarget, making: Making): Promise<CliResult<string>> => {
   const parent = await requireNoLink(deps, target.parent, 'the parent folder');
   if (!parent.ok) return parent;
   const kind = await deps.fs.lstat(target.folder);
@@ -56,7 +59,10 @@ const realFolderOf = async (deps: Deps, target: FolderTarget): Promise<CliResult
   if (kind.value === 'link') return safetyRefusal(`cannot write ${target.folder}: it is a link`, LINK_REMEDY);
   if (kind.value !== null && kind.value !== 'dir') return failure(`cannot write in ${target.folder}: it is not a folder`);
   if (kind.value === null) {
-    const made = await deps.fs.mkdir(target.folder, target.folderMode);
+    const made =
+      making === 'withParents'
+        ? await deps.fs.mkdir(target.folder, target.folderMode)
+        : await deps.fs.mkdirOne(target.folder, target.folderMode);
     if (!made.ok) return made;
     // A link can take the place of the new folder before the next check.
     const again = await requireNoLink(deps, target.folder, 'the folder');
@@ -81,7 +87,7 @@ const realFolderOf = async (deps: Deps, target: FolderTarget): Promise<CliResult
  */
 export const writeInFolder = async (deps: Deps, target: FolderTarget, text: string): Promise<CliResult<void>> => {
   if (!isPlainName(target.name)) return notPlainName(target);
-  const folder = await realFolderOf(deps, target);
+  const folder = await realFolderOf(deps, target, 'withParents');
   if (!folder.ok) return folder;
   const file = join(folder.value, target.name);
   const found = await deps.fs.lstat(file);
@@ -99,6 +105,24 @@ export const writeInFolder = async (deps: Deps, target: FolderTarget, text: stri
     return renamed;
   }
   return failure(`cannot write ${file}: no free temporary name`);
+};
+
+/**
+ * Create a new file in the folder with the text, and give the real path of the file. The folder is checked as for
+ * `writeInFolder`: it is never a link, and its real path is inside the real path of the parent. The call makes the folder when
+ * it does not exist, but never a folder above it: a parent that is not there is a failure (exit 1), also when it went away
+ * after the caller looked. The file must not exist: a file, a folder or a link at that path is never replaced and never followed,
+ * and the call is a failure (exit 1). A refusal of a link or of a folder outside the parent is a security stop (exit 4). A failed
+ * write leaves no part of the file.
+ */
+export const createInFolder = async (deps: Deps, target: FolderTarget, text: string): Promise<CliResult<string>> => {
+  if (!isPlainName(target.name)) return notPlainName(target);
+  const folder = await realFolderOf(deps, target, 'folderOnly');
+  if (!folder.ok) return folder;
+  const file = join(folder.value, target.name);
+  const created = await deps.fs.writeTextExclusive(file, text, target.mode);
+  if (!created.ok) return created;
+  return created.value ? ok(file) : failure(`cannot write ${file}: it exists already`);
 };
 
 /** The bounds of a lock beside a file, and the end of its name: the lock file is the name of the file and the suffix. */
@@ -122,7 +146,7 @@ export const withFolderLock = async <T>(
   work: () => Promise<CliResult<T>>,
 ): Promise<CliResult<T>> => {
   if (!isPlainName(target.name)) return notPlainName(target);
-  const folder = await realFolderOf(deps, target);
+  const folder = await realFolderOf(deps, target, 'withParents');
   if (!folder.ok) return folder;
   const lockPath = join(folder.value, `${target.name}${lock.suffix}`);
   const taken = await takeLock(deps, lockPath, lock);

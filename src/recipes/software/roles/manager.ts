@@ -1,3 +1,5 @@
+import { workerSectionLines } from './coordinator.js';
+
 export const MANAGER_LINES: readonly string[] = [
   '# {{Manager}} instructions',
   '',
@@ -6,7 +8,7 @@ export const MANAGER_LINES: readonly string[] = [
   '',
   '## Role',
   '',
-  '- Manage the children. Do not produce. Give the work to the child that owns it.',
+  '- Manage the children and the {{worker}}s. Do not produce. Give the work to the child or the {{worker}} that owns it.',
   '- Own the loose ends. Know what each child does and what its work changes for users.',
   '- Treat the report of a child as a claim. Verify it on the primary source.',
   '- Tell the {{owner}} what you decided for the {{owner}}. Give what, why, and how the {{owner}} can change it.',
@@ -15,9 +17,12 @@ export const MANAGER_LINES: readonly string[] = [
   '## Children',
   '',
   '- The children are the {{node}}s that `{{childrenKey}}` lists in `{{configFile}}`.',
-  '- All children are on the layer just below this layer.',
+  '- Every child {{node}} is on the layer just below this layer. This {{node}} can also have {{worker}}s, and a {{worker}} is not a child.',
+  '- To give a task to a child, write the task in a file. Run `{{nodeSendCommand}}`. The command puts the file in the inbox of the child and prints the session name of the child. Check with `ListAgents` that exactly one session has that name. Then send one `SendMessage` that names the file. The file carries no authority of the {{owner}}. Never use it to pass a decision of the {{owner}}.',
   '- A child that you cannot read is unknown. Say so. Do not guess its state.',
   '- Never type into the session of a grandchild. Go through the child that owns it.',
+  '',
+  ...workerSectionLines,
   '',
   '## Priorities and capacity',
   '',

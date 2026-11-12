@@ -70,14 +70,17 @@ const fileTextOf = (target: BlockTarget, config: FactoryConfig, texts: SetupText
 /** The managed blocks of a node on layer 1 that `init` made: coordinator, safety, worker, setup and setup-worker. */
 export const layer1Blocks: readonly BlockTemplate[] = freshBlocks(1);
 
-/** The managed blocks of a node on layer 2 that `init` made: manager, safety and setup. */
+/** The managed blocks of a node on layer 2 that `init` made: manager, safety, worker, setup and setup-worker. */
 export const layer2Blocks: readonly BlockTemplate[] = freshBlocks(2);
 
 const plainLayer1: readonly BlockTemplate[] = blockTemplatesFor(blockInput(1));
 const plainLayer2: readonly BlockTemplate[] = blockTemplatesFor(blockInput(2));
 
-/** Every core block of the package once, with an owner prefix that holds no contraction, for the style tests. */
+/**
+ * Every core block of the package once, with an owner prefix that holds no contraction, for the style tests. A block
+ * whose text differs between layer 1 and layer 2 (the worker block) is listed once for each text.
+ */
 export const allBlocks: readonly BlockTemplate[] = [
   ...plainLayer1,
-  ...plainLayer2.filter((block) => !plainLayer1.some((known) => known.name === block.name)),
+  ...plainLayer2.filter((block) => !plainLayer1.some((known) => known.name === block.name && known.body === block.body)),
 ];
