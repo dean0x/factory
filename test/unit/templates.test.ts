@@ -13,6 +13,7 @@ import {
   flagText,
   messageHeader,
   program,
+  requestDeciders,
   selfCommands,
   templateValues,
   values,
@@ -590,6 +591,12 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
     );
   });
 
+  it('tells the coordinator to tell the owner at once which pane waits when the output of worker new names a trust question', () => {
+    expect(coordinatorOf('acme')).toContain(
+      'If the output of that command names a trust question, tell the owner at once which pane waits.',
+    );
+  });
+
   it('runs the watch as a background task, waits for a blocked worker with --ready, and runs the watch again after each end', () => {
     const text = coordinatorOf('acme');
     expect(text).toContain(`Run \`${watch}\` as a background task.`);
@@ -717,18 +724,25 @@ describe('the coordinator text and the profile README: decisions and the owner p
     expect(decisionsPart()).toContain(`Never write a row with the key \`by\` in \`${decisionLog}\`.`);
   });
 
-  it('B-212 G-g closes a question that the coordinator or a delegate decided with request close and the made-by flag', () => {
+  it('M5-1b TP-163 closes a question that the coordinator or a delegate decided with request close and the made-by flag', () => {
     expect(decisionsPart()).toContain(
       'When you or a delegate decide a question that is not an approval point, close it with ' +
         `\`${commandText(commandLines.requestClose)} <id> ${flagText(flags.madeBy)} coordinator|delegate ${flagText(flags.decision)} TEXT\`.`,
     );
   });
 
-  it('B-212 G-g says that each relay of a decision names who made it', () => {
+  it('M5-1b TP-163 defines a delegate as another session that decides for the owner outside an approval point, with no owner authority', () => {
+    const { delegate } = requestDeciders;
+    expect(decisionsPart()).toContain(
+      `A ${delegate} is another session, for example an orchestrator, that decides for the owner outside an approval point. A ${delegate} has no owner authority.`,
+    );
+  });
+
+  it('M5-1b TP-163 says that each relay of a decision names who made it', () => {
     expect(decisionsPart()).toContain('Each relay of a decision names who made it: the owner, the coordinator, or a delegate with no owner authority.');
   });
 
-  it('B-212 G-g tells a worker to name who made a decision, and that a decision of the coordinator is never one of the owner', () => {
+  it('M5-1b TP-163 tells a worker to name who made a decision, and that a decision of the coordinator is never one of the owner', () => {
     const worker = layer1Blocks.find((template) => template.name === 'worker')?.body ?? '';
     expect(worker).toContain('When a report or a public text gives a decision, name who made it: the owner, the coordinator, or a delegate.');
     expect(worker).toContain('A decision of the coordinator or of a delegate is never a decision of the owner.');
