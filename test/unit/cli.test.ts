@@ -9,7 +9,7 @@ import {
   renderWarnings,
 } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
-import { commandTable, parseFlags } from '../../src/cli/table.js';
+import { commandTable, globalOptions, parseFlags } from '../../src/cli/table.js';
 import { commands, flags, itemCommands, queueCommands, requestCommands, selfCommands, trackCommands, workerCommands } from '../../src/names.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
@@ -164,6 +164,69 @@ describe('parseFlags', () => {
 
   it('still refuses a flag that the command does not know, when it takes words', () => {
     expect(parseFlags(['children', '--nope'], options, true).ok).toBe(false);
+  });
+});
+
+describe('the double dash rule of parseFlags', () => {
+  const options = { ...globalOptions, wait: { type: 'boolean', description: 'x' } } as const;
+  const withRule = (args: readonly string[]) => parseFlags(args, options, true, 'required');
+
+  it('keeps every word after the double dash as a child word, also a word that looks like a flag (TP-3)', () => {
+    const parsed = withRule(['run', '--wait', '--', 'npm', 'test', '--json', '--help', '--wait', '-h', '--', 'x']);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.positionals()).toEqual(['run']);
+    expect(parsed.value.afterTerminator()).toEqual(['npm', 'test', '--json', '--help', '--wait', '-h', '--', 'x']);
+    expect(parsed.value.bool('wait')).toBe(true);
+    expect(parsed.value.bool(flags.json)).toBe(false);
+    expect(parsed.value.bool(flags.help)).toBe(false);
+  });
+
+  it('gives no child word when the double dash is absent or last', () => {
+    for (const args of [['run'], ['run', '--']]) {
+      const parsed = withRule(args);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(parsed.value.afterTerminator()).toEqual([]);
+    }
+  });
+
+  it.each([
+    [['run', 'x', '--', 'npm']],
+    [['run', 'x']],
+    [['run', 'x', '--help']],
+    [['x', 'y', '-h']],
+  ])('returns a usage error for a second word before the double dash: %j (TP-1, TP-2)', (args) => {
+    const parsed = withRule(args);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error.kind).toBe('usage');
+  });
+
+  it.each([[['--help']], [['run', '--help']], [['run', '-h']]])(
+    'reads the help flag when no double dash and no other word follows: %j (TP-2)',
+    (args) => {
+      const parsed = withRule(args);
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(parsed.value.bool(flags.help)).toBe(true);
+    },
+  );
+
+  it.each([
+    [['run', '--help', '--', 'npm', 'test']],
+    [['run', '--help', '--']],
+    [['--help', '--']],
+    [['run', '-h', '--', 'npm']],
+  ])('returns a usage error for the help flag with a double dash: %j (TP-2)', (args) => {
+    const parsed = withRule(args);
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error.kind).toBe('usage');
+  });
+
+  it('leaves a command without the rule as it was', () => {
+    const parsed = parseFlags(['a', '--', 'b'], options, true);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.value.positionals()).toEqual(['a', 'b']);
+    expect(parsed.value.afterTerminator()).toEqual([]);
   });
 });
 

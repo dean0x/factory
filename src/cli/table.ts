@@ -72,6 +72,8 @@ export interface Given {
   bool(name: string): boolean;
   /** The words that are not flags, in order. Only a command with `positionals` gets any. */
   positionals(): readonly string[];
+  /** The words after the double dash, in order. Every one is a word of the child, also a word that looks like a flag. */
+  afterTerminator(): readonly string[];
 }
 
 export interface Command {
@@ -82,6 +84,11 @@ export interface Command {
   readonly options: Readonly<Record<string, FlagOption>>;
   /** True when the command takes words that are not flags, for example a subcommand and its argument. */
   readonly positionals?: boolean;
+  /**
+   * `required` marks a command that runs a child command line after a double dash. The words after the double dash all
+   * go to `afterTerminator`. At most one word comes before it, the subcommand. The help flag stands alone, with no double dash.
+   */
+  readonly terminator?: 'required';
   run(given: Given, deps: Deps): Promise<CliResult<CommandOutput>>;
 }
 
@@ -688,8 +695,13 @@ const toDescriptor = (option: FlagOption): NonNullable<ParseArgsConfig['options'
   ...(option.short === undefined ? {} : { short: option.short }),
 });
 
-const toGiven = (values: Readonly<Record<string, ParsedValue>>, words: readonly string[]): Given => ({
+const toGiven = (
+  values: Readonly<Record<string, ParsedValue>>,
+  words: readonly string[],
+  childWords: readonly string[] = [],
+): Given => ({
   positionals: () => words,
+  afterTerminator: () => childWords,
   string: (name) => {
     const value = values[name];
     return typeof value === 'string' ? value : undefined;
@@ -702,17 +714,39 @@ const toGiven = (values: Readonly<Record<string, ParsedValue>>, words: readonly 
   bool: (name) => values[name] === true,
 });
 
+/** The most words that a command with the double dash rule takes before the double dash: the subcommand. */
+const WORDS_BEFORE_TERMINATOR = 1;
+
 export const parseFlags = (
   args: readonly string[],
   options: Readonly<Record<string, FlagOption>>,
   allowPositionals = false,
+  terminator?: Command['terminator'],
 ): CliResult<Given> => {
   const descriptors = Object.fromEntries(
     Object.entries(options).map(([name, option]) => [name, toDescriptor(option)]),
   );
   try {
-    const parsed = parseArgs({ args: [...args], options: descriptors, strict: true, allowPositionals });
-    return ok(toGiven(parsed.values, parsed.positionals));
+    const parsed = parseArgs({
+      args: [...args],
+      options: descriptors,
+      strict: true,
+      allowPositionals: allowPositionals || terminator !== undefined,
+      tokens: true,
+    });
+    if (terminator === undefined) return ok(toGiven(parsed.values, parsed.positionals));
+
+    const stop = parsed.tokens.find((token) => token.kind === 'option-terminator');
+    const childWords = stop === undefined ? [] : args.slice(stop.index + 1);
+    const words = parsed.positionals.slice(0, parsed.positionals.length - childWords.length);
+    // This check comes before the help check, so that a line with a stray word never prints help.
+    if (words.length > WORDS_BEFORE_TERMINATOR) {
+      return usageError(`too many words before the double dash: "${words[WORDS_BEFORE_TERMINATOR]}"`);
+    }
+    if (stop !== undefined && parsed.values[flags.help] === true) {
+      return usageError(`${flagText(flags.help)} takes no double dash`);
+    }
+    return ok(toGiven(parsed.values, words, childWords));
   } catch (cause) {
     return usageError(cause instanceof Error ? cause.message : 'cannot read the flags');
   }

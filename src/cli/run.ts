@@ -37,6 +37,7 @@ const wordsOnly = (words: readonly string[]): Given => ({
   strings: () => [],
   bool: () => false,
   positionals: () => words,
+  afterTerminator: () => [],
 });
 
 /**
@@ -111,7 +112,7 @@ export const runCli = async (
     return EXIT_USAGE;
   }
 
-  const parsed = parseFlags(rest, { ...globalOptions, ...command.options }, command.positionals === true);
+  const parsed = parseFlags(rest, { ...globalOptions, ...command.options }, command.positionals === true, command.terminator);
   if (!parsed.ok) {
     await sink.stderr(
       renderError({ ...parsed.error, hint: `Run "${commandText(command.name)} ${flagText(flags.help)}".` }),
