@@ -15,7 +15,7 @@ import { FACTORY_VERSION } from '../../src/version.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
 import { gitHandler } from '../helpers/git-fake.js';
-import { psStarts } from '../helpers/ps-fake.js';
+import { procStatPath, procStatText } from '../helpers/ps-fake.js';
 import { HOME as BOARD_HOME } from '../helpers/guard-fixture.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -233,7 +233,8 @@ describe('the double dash rule of parseFlags', () => {
 
 describe('the lock command in the command line', () => {
   const lockLine = async (argv: string[]) => {
-    const deps = createFakeDeps({ env: { HOME: '/h' }, run: psStarts({ 4242: Date.UTC(2030, 0, 1) }) });
+    const deps = createFakeDeps({ env: { HOME: '/h' } });
+    deps.seed(procStatPath(4242), procStatText(4242, 'node', 5));
     const sink = captureSink();
     const code = await runCli(argv, deps, sink);
     return { deps, code, out: sink.out.join(''), err: sink.errors.join('') };
