@@ -3,7 +3,7 @@ import { failure } from '../../src/cli/errors.js';
 import { deliverToHome, type DeliverInput, type DeliverResult } from '../../src/comms/deliver.js';
 import type { PingResult } from '../../src/comms/transport.js';
 import { renderConfig } from '../../src/config/render.js';
-import type { Deps } from '../../src/core/deps.js';
+import type { Deps, Fs } from '../../src/core/deps.js';
 import { nodeInbox } from '../../src/names.js';
 import { STATE_GITIGNORE } from '../../src/state/files.js';
 import { createFakeDeps, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
@@ -98,6 +98,22 @@ describe('deliver: a message file for a child', () => {
     expect(pinged).toEqual([]);
     expect(inboxFiles(deps)).toEqual([]);
   });
+
+  const HIDDEN = [
+    ['a C1 control character', '\u0085'],
+    ['a bidi character', '‮'],
+    ['a line separator', ' '],
+  ] as const;
+
+  it.each(
+    (['senderId', 'senderAddress', 'targetId'] as const).flatMap((field) => HIDDEN.map(([name, character]) => [field, name, character] as const)),
+  )('refuses a character in %s that the screen does not show (%s) before it asks anything', async (field, _name, character) => {
+    const deps = readyChild();
+    const { ping, pinged } = watched(deps);
+    expect(await deliver(deps, ping, { ...INPUT, [field]: `x${character}y` })).toEqual({ kind: 'io' });
+    expect(pinged).toEqual([]);
+    expect(inboxFiles(deps)).toEqual([]);
+  });
 });
 
 describe('deliver: a child that does not answer', () => {
@@ -147,26 +163,30 @@ describe('deliver: the id and the layer', () => {
 
   it('gives mismatch with the path of the file when the removal fails, and the file stays', async () => {
     const deps = readyChild();
-    const failing: Deps = { ...deps, fs: { ...deps.fs, remove: async (path) => failure(`cannot remove ${path}: EIO`) } };
+    const failing: Deps = { ...deps, fs: { ...deps.fs, removeFile: async (path) => failure(`cannot remove ${path}: EIO`) } };
     const answers = [known(), known('other')];
     let calls = 0;
     expect(await deliver(failing, async () => answers[calls++] ?? silent)).toEqual({ kind: 'mismatch', stranded: FILE });
     expect(deps.files.get(FILE)).toBe(TEXT);
   });
 
-  it('removes only a file: a folder in its place stays, and the path is given', async () => {
+  it('removes only a file: a folder that takes its place after the check stays with its content, and the path is given', async () => {
     const deps = readyChild();
-    const swapping: Deps = {
+    // The check sees the file. The folder comes after it, before the removal.
+    const checked: Deps = {
       ...deps,
-      fs: {
-        ...deps.fs,
-        lstat: async (path) => (path === FILE ? { ok: true, value: 'dir' } : deps.fs.lstat(path)),
-      },
+      fs: { ...deps.fs, lstat: async (path) => (path === FILE ? { ok: true, value: 'file' } : deps.fs.lstat(path)) },
     };
-    const answers = [known(), silent];
     let calls = 0;
-    expect(await deliver(swapping, async () => answers[calls++] ?? silent)).toEqual({ kind: 'mismatch', stranded: FILE });
-    expect(deps.files.has(FILE)).toBe(true);
+    const ping: Ping = async () => {
+      calls += 1;
+      if (calls < 2) return known();
+      deps.files.delete(FILE);
+      deps.seed(`${FILE}/keep.md`, 'x');
+      return silent;
+    };
+    expect(await deliver(checked, ping)).toEqual({ kind: 'mismatch', stranded: FILE });
+    expect(deps.files.get(`${FILE}/keep.md`)).toBe('x');
   });
 });
 
@@ -182,6 +202,17 @@ describe('deliver: the safety of the child folders', () => {
     const deps = readyChild({ links: { [path]: '/elsewhere' } });
     deps.seedDir(INBOX);
     expect(await deliver(deps, watched(deps).ping)).toEqual({ kind: 'unsafe' });
+    expect(inboxFiles(deps)).toEqual([]);
+  });
+
+  it.each([
+    ['a slash at the end', `file://${HOME}/`],
+    ['a dot part at the end', `file://${HOME}/.`],
+  ])('gives unsafe for an address with %s when the home is a link, and writes nothing', async (_name, address) => {
+    const deps = readyChild({ links: { [HOME]: '/elsewhere' } });
+    const { ping, pinged } = watched(deps);
+    expect(await deliver(deps, ping, INPUT, address)).toEqual({ kind: 'unsafe' });
+    expect(pinged).toEqual([]);
     expect(inboxFiles(deps)).toEqual([]);
   });
 
@@ -244,6 +275,21 @@ describe('deliver: no state folder', () => {
     };
     expect(await deliver(racing, watched(racing).ping)).toEqual({ kind: 'notIgnored' });
     expect(deps.dirs.has(STATE)).toBe(false);
+  });
+
+  it('makes no state folder and no inbox when the state folder goes away after the second check and before the inbox is made', async () => {
+    const deps = readyChild();
+    const goneFirst =
+      (make: Fs['mkdir']): Fs['mkdir'] =>
+      async (path, mode) => {
+        await deps.fs.remove(STATE);
+        return make(path, mode);
+      };
+    const racing: Deps = { ...deps, fs: { ...deps.fs, mkdir: goneFirst(deps.fs.mkdir), mkdirOne: goneFirst(deps.fs.mkdirOne) } };
+    expect(await deliver(racing, watched(racing).ping)).toEqual({ kind: 'io' });
+    expect(deps.dirs.has(STATE)).toBe(false);
+    expect(deps.dirs.has(INBOX)).toBe(false);
+    expect(inboxFiles(deps)).toEqual([]);
   });
 });
 

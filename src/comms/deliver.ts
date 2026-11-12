@@ -1,5 +1,6 @@
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { CliError } from '../cli/errors.js';
+import { removedByDisplay } from '../cli/output.js';
 import { accessFaultOf } from '../core/access.js';
 import type { Deps } from '../core/deps.js';
 import { err, ok, type Result } from '../core/result.js';
@@ -45,6 +46,9 @@ const IO: Refusal = { kind: 'io' };
 
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
 
+/** A header field is one line: no C0 or DEL control character (the line break and the tab too), and none that the screen hides. */
+const holdsHiddenCharacter = (field: string): boolean => CONTROL_CHARACTER.test(field) || removedByDisplay(field);
+
 /** A stop for safety is `unsafe`, and any other fault is `io`. The text of the fault is dropped. */
 const faultOf = (error: CliError): Refusal => (error.kind === 'safety' ? UNSAFE : IO);
 
@@ -64,8 +68,13 @@ const inspectEntry = async (deps: Deps, path: string, kind: 'dir' | 'file', wron
   return accessFaultOf(deps, info.value) === null ? ok(true) : err(UNSAFE);
 };
 
-/** The real path of the home, found once. The home and factory.yaml are checked first, so no config is read before that. */
+/**
+ * The real path of the home, found once. The home and factory.yaml are checked first, so no config is read before that. A path
+ * that is not clean (a slash at the end, a `.` part, a double slash) is `unsafe`: the system follows a link in the last part of
+ * such a path, so lstat would not see the link.
+ */
 const locateHome = async (deps: Deps, path: string): Promise<Step<string>> => {
+  if (resolve(path) !== path) return err(UNSAFE);
   const home = await inspectEntry(deps, path, 'dir', NOT_ANSWERING);
   if (!home.ok) return home;
   if (!home.value) return err(NOT_ANSWERING);
@@ -131,7 +140,10 @@ const nameOf = (deps: Deps, senderId: string): Step<string> => {
   return ok(`${[stamp, senderId, random.value].join(messageFile.separator)}${messageFile.suffix}`);
 };
 
-/** Create the file. The state folder is checked again just before, so a folder that went away is never made again. */
+/**
+ * Create the file. The state folder is checked again just before, and the inbox is made without its parent. So a state folder
+ * that went away is never made again: the fault is `io`.
+ */
 const writeMessage = async (deps: Deps, layout: Layout, name: string, text: string): Promise<Step<string>> => {
   const state = await requireState(deps, layout);
   if (!state.ok) return state;
@@ -140,14 +152,8 @@ const writeMessage = async (deps: Deps, layout: Layout, name: string, text: stri
   return created.ok ? ok(created.value) : err(faultOf(created.error));
 };
 
-/** Remove the file that this call made. A folder in its place stays. True when nothing of the file is left. */
-const removeMade = async (deps: Deps, path: string): Promise<boolean> => {
-  const kind = await deps.fs.lstat(path);
-  if (!kind.ok) return false;
-  if (kind.value === null) return true;
-  if (kind.value !== 'file' && kind.value !== 'link') return false;
-  return (await deps.fs.remove(path)).ok;
-};
+/** Remove the file that this call made. The call removes a file or a link only, so a folder in its place stays. True when nothing of the file is left. */
+const removeMade = async (deps: Deps, path: string): Promise<boolean> => (await deps.fs.removeFile(path)).ok;
 
 const answersAsTarget = (answer: PingResult, input: DeliverInput): boolean =>
   answer.kind === 'known' && answer.id === input.targetId && answer.layer === input.targetLayer;
@@ -155,9 +161,10 @@ const answersAsTarget = (answer: PingResult, input: DeliverInput): boolean =>
 /**
  * Deliver a message file to the `.factory/inbox/` folder of the node at a `file://` address. `ping` is the ping of the
  * transport. The steps, in this order:
- *  1. The text of the header, with no control character.
- *  2. The real path of the home, found once. The home and factory.yaml are not links, belong to this user and have no group or
- *     other write bit (else `unsafe`). The first ping and the second ping, and the write, use that real path.
+ *  1. The text of the header, with no control character and no character that the screen hides (else `io`).
+ *  2. The real path of the home, found once. The path of the address must be clean, with no slash at the end and no `.` part
+ *     (else `unsafe`). The home and factory.yaml are not links, belong to this user and have no group or other write bit (else
+ *     `unsafe`). The first ping and the second ping, and the write, use that real path.
  *  3. The first ping: no answer is `notAnswering`, and another id or layer than the target is `mismatch`. Nothing is written yet.
  *  4. The state folder and the inbox: the same checks. A state folder that is not there is `notIgnored`, and it is never made.
  *     The count of the inbox comes after its owner and mode, and reads at most `nodeInbox.maxFiles` names (`full`).
@@ -168,7 +175,7 @@ const answersAsTarget = (answer: PingResult, input: DeliverInput): boolean =>
  * Every fault gives a kind: a safety stop of a step is `unsafe`, any other fault is `io`. No result holds text of the child.
  */
 export const deliverToHome = async (deps: Deps, ping: Ping, address: string, input: DeliverInput): Promise<DeliverResult> => {
-  if ([input.senderId, input.senderAddress, input.targetId].some((field) => CONTROL_CHARACTER.test(field))) return IO;
+  if ([input.senderId, input.senderAddress, input.targetId].some(holdsHiddenCharacter)) return IO;
   const checked = checkFileAddress(address);
   if (!checked.ok) return NOT_ANSWERING;
   const home = await locateHome(deps, checked.value);
