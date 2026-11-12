@@ -123,8 +123,11 @@ export const itemCommands = {
 /** The subcommands of `track`. The command has no remove subcommand. */
 export const trackCommands = { add: 'add', list: 'list' } as const;
 
-/** The subcommands of `request`. The command has no subcommand that changes the options of a request that is open. */
-export const requestCommands = { add: 'add', list: 'list', close: 'close' } as const;
+/**
+ * The subcommands of `request`. `log` records a decision that no request asked for. The command has no subcommand that changes the
+ * options of a request that is open.
+ */
+export const requestCommands = { add: 'add', list: 'list', close: 'close', log: 'log' } as const;
 
 /** The subcommands of `queue`. */
 export const queueCommands = { set: 'set', show: 'show' } as const;
@@ -157,7 +160,7 @@ export const commandLines = {
   requestAdd: `${commands.request} ${requestCommands.add}`,
   requestList: `${commands.request} ${requestCommands.list}`,
   requestClose: `${commands.request} ${requestCommands.close}`,
-  requestLog: `${commands.request} log`,
+  requestLog: `${commands.request} ${requestCommands.log}`,
   queueSet: `${commands.queue} ${queueCommands.set}`,
   queueShow: `${commands.queue} ${queueCommands.show}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,

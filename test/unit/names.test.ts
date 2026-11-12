@@ -33,6 +33,7 @@ import {
   permissionSkipList,
   program,
   relayedMarker,
+  requestCommands,
   requestHash,
   reservedFieldNames,
   reservedRootNames,
@@ -1538,7 +1539,11 @@ describe('the names of the board records', () => {
   it('gives the merge, unassign and log commands a name for the remedy lines', () => {
     expect(commandLines.itemMerged).toBe(`${commands.item} ${itemCommands.merged}`);
     expect(commandLines.itemUnassign).toBe(`${commands.item} ${itemCommands.unassign}`);
-    expect(commandLines.requestLog).toBe(`${commands.request} log`);
+    expect(commandLines.requestLog).toBe(`${commands.request} ${requestCommands.log}`);
+  });
+
+  it('adds the log subcommand of request after the three older ones', () => {
+    expect(Object.values(requestCommands)).toEqual(['add', 'list', 'close', 'log']);
   });
 
   it('adds the merged and unassign subcommands of item after the five older ones', () => {

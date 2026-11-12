@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runDecide, type DecideOptions } from '../../src/commands/decide.js';
+import { addNewRemedy } from '../../src/board/decide.js';
 import { runRequest } from '../../src/commands/request.js';
 import type { Deps } from '../../src/core/deps.js';
 import { canonicalRequestText, requestHashOf } from '../../src/core/request-hash.js';
@@ -17,6 +18,7 @@ import {
   maxFileBytes,
   privateFile,
   program,
+  relayedMarker,
   schemaIds,
   stateLock,
 } from '../../src/names.js';
@@ -299,6 +301,17 @@ describe('decide: the state of the number comes before the question (TP-145, TP-
     expect(error.message).toContain('decided by the "coordinator"');
   });
 
+  it('exits 1 for a number that the coordinator closed to relay an answer of the owner, names the relay, and keeps the remedy to add a new request', async () => {
+    const { error } = await refused({
+      waiting: waitingOf(),
+      decisionLog: logOf(closedRow({ decider: 'coordinator', relayed: relayedMarker })),
+    });
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(relayedMarker);
+    expect(error.message).not.toContain('decided by');
+    expect(error.hint).toContain(addNewRemedy);
+  });
+
   it('M5-1b TP-145 does not print a decider of a closed row that is no value of the deciders', async () => {
     const { error } = await refused({ waiting: waitingOf(), decisionLog: logOf(closedRow({ decider: 'EVIL-PEER' })) });
     expect(exitCodeOf[error.kind]).toBe(1);
@@ -561,7 +574,7 @@ describe('decide: a no answer, the lock during the question, and a request that 
       during.lock = repo.deps.files.has(LOCK_FILE);
       during.added = await runRequest(
         repo.deps,
-        { home: HOME, words: ['add'], title: 'Second', question: 'Which?', options: ['a=Yes'], recommend: undefined, decider: undefined, decision: undefined },
+        { home: HOME, words: ['add'], title: 'Second', question: 'Which?', options: ['a=Yes'], recommend: undefined, decider: undefined, decision: undefined, relayed: false },
         recipes,
       );
       return ok('y');

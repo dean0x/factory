@@ -3,11 +3,22 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runRequest, type RequestOptions } from '../../src/commands/request.js';
-import { boardTextLimits, commands, commandText, files as fileNames, program, requestCommands, requestWords } from '../../src/names.js';
+import {
+  boardTextLimits,
+  commandLines,
+  commands,
+  commandText,
+  files as fileNames,
+  program,
+  relayedMarker,
+  requestCommands,
+  requestWords,
+} from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { boardNode, boardText } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
-import { withFsWatch } from '../helpers/fake-deps.js';
+import { inPane } from '../helpers/coordinator-pane.js';
+import { withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { HOME } from '../helpers/guard-fixture.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
@@ -21,6 +32,7 @@ const BASE: RequestOptions = {
   recommend: undefined,
   decider: undefined,
   decision: undefined,
+  relayed: false,
 };
 
 const ADD: Partial<RequestOptions> = {
@@ -29,6 +41,13 @@ const ADD: Partial<RequestOptions> = {
   question: 'Which plan do we build?',
   options: ['a=Plan A', 'b=Plan B'],
   recommend: 'a',
+};
+
+const LOG: Partial<RequestOptions> = {
+  words: ['log'],
+  title: 'Pick a plan',
+  decider: 'coordinator',
+  decision: 'Use plan A',
 };
 
 const valueOf = <T>(result: CliResult<T>): T => {
@@ -249,6 +268,17 @@ describe('the words and the flags of request (TP-99)', () => {
     ['list with an argument', { words: ['list', 'D-1'] }, 'takes no argument'],
     ['list with the question flag', { words: ['list'], question: 'Why?' }, '--question is not for'],
     ['list with the recommend flag', { words: ['list'], recommend: 'a' }, '--recommend is not for'],
+    ['close with the relayed flag and a decider', { words: ['close', 'D-1'], relayed: true, decider: 'coordinator', decision: 'Yes' }, '--relayed takes no --made-by'],
+    ['close with the relayed flag and no decision', { words: ['close', 'D-1'], relayed: true }, '--relayed needs --decision'],
+    ['add with the relayed flag', { ...ADD, relayed: true }, '--relayed is not for'],
+    ['list with the relayed flag', { words: ['list'], relayed: true }, '--relayed is not for'],
+    ['log with the relayed flag', { ...LOG, relayed: true }, '--relayed is not for'],
+    ['log with no title', { ...LOG, title: undefined }, '--title'],
+    ['log with no decider and no decision', { ...LOG, decider: undefined, decision: undefined }, '--made-by'],
+    ['log with a decider and no decision', { ...LOG, decision: undefined }, 'go together'],
+    ['log with an argument', { ...LOG, words: ['log', 'D-1'] }, 'takes no argument'],
+    ['log with the question flag', { ...LOG, question: 'Why?' }, '--question is not for'],
+    ['close with the title flag and the relayed flag', { words: ['close', 'D-1'], relayed: true, decision: 'Yes', title: 'Other' }, '--title is not for'],
   ];
 
   it.each(BAD_WORDS)('M5-1b TP-99 %s exits 2 and touches no file', async (_name, overrides, message) => {
@@ -478,6 +508,142 @@ describe('request close (TP-22, TP-99)', () => {
   });
 });
 
+describe('request close --relayed (AC-5)', () => {
+  const OPEN = (): Promise<BoardRepo> => boardNode({ waiting: waitingText([entry('D-1'), entry('D-2')]) });
+  const RELAY: Partial<RequestOptions> = { words: ['close', 'D-2'], relayed: true, decision: 'Use plan A' };
+  const relay = (deps: FakeDeps, overrides: Partial<RequestOptions> = {}): Promise<CliResult<CommandOutput>> =>
+    runRequest(deps, { ...BASE, ...RELAY, ...overrides }, recipes);
+  const pathsOf = (repo: BoardRepo): string[] => [...repo.deps.files.keys()].sort();
+
+  it('closes the request from the pane of the coordinator: the row names the coordinator and the relay, and holds no owner key', async () => {
+    const repo = await OPEN();
+    const pathsBefore = pathsOf(repo);
+    const output = valueOf(await relay(inPane(repo.deps, '%0')));
+    expect(plainText(output).trimEnd()).toBe(`Closed D-2: Request D-2 (${relayedMarker})`);
+    expect(output.json).toEqual({ schema: 'factory.request/v1', action: 'close', id: 'D-2', title: 'Request D-2', decider: 'coordinator', relayed: true });
+    const row = logOf(repo).rows[0] ?? {};
+    expect(row).toEqual({ item: 'D-2: Request D-2', decision: 'Use plan A', date: '2030-01-02', decider: 'coordinator', relayed: relayedMarker });
+    expect(row).not.toHaveProperty('by');
+    expect(waitingOf(repo).items.map((item) => item['id'])).toEqual(['D-1']);
+    expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.waiting, fileNames.decisionLog]]);
+    expect(pathsOf(repo)).toEqual(pathsBefore);
+  });
+
+  it('refuses a caller in the pane of a worker with exit 2, does not repeat the decision in the refusal, and changes no file', async () => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    const error = errorOf(await relay(inPane(repo.deps, '%1'), { decision: 'PRIVATE-TEXT' }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.hint).toContain(`${commandText(commandLines.requestClose)} D-2 --relayed`);
+    expect(`${error.message} ${error.hint ?? ''}`).not.toContain('PRIVATE-TEXT');
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('refuses a caller outside tmux with exit 2, and changes no file', async () => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    expect(exitCodeOf[errorOf(await relay(repo.deps)).kind]).toBe(2);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('refuses an id of a bad form with exit 2 before the caller rule runs a tmux call', async () => {
+    const repo = await OPEN();
+    const tmuxCalls: (readonly string[])[] = [];
+    expect(exitCodeOf[errorOf(await relay(inPane(repo.deps, '%0', tmuxCalls), { words: ['close', 'D-x\ny'] })).kind]).toBe(2);
+    expect(tmuxCalls).toEqual([]);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('refuses a request that the owner answered, as a close from the coordinator does', async () => {
+    const repo = await nodeWithStore(storeText([storedRecord({ id: 'D-2' })]), { waiting: waitingText([entry('D-1'), entry('D-2')]) });
+    const before = filesOf(repo);
+    const error = errorOf(await relay(inPane(repo.deps, '%0')));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.hint).toContain(commandText(commands.decide));
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('refuses a request that is not in the waiting file with exit 2, and changes no file', async () => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    expect(exitCodeOf[errorOf(await relay(inPane(repo.deps, '%0'), { words: ['close', 'D-9'] })).kind]).toBe(2);
+    expect(filesOf(repo)).toEqual(before);
+  });
+});
+
+describe('request log (AC-6)', () => {
+  const run = (repo: BoardRepo, overrides: Partial<RequestOptions> = {}): Promise<CliResult<CommandOutput>> =>
+    runRequest(repo.deps, { ...BASE, ...LOG, ...overrides }, recipes);
+
+  it('writes one log row with the next number over the waiting file, the log and the owner store, in one commit of the log', async () => {
+    const repo = await nodeWithStore(storeText([storedRecord({ id: 'D-12' })]), { waiting: waitingText([entry('D-3')]), decisionLog: logText([logRow('D-9')]) });
+    const waitingBefore = repo.textOf(fileNames.waiting);
+    expect(linesOf(await run(repo))).toEqual(['Logged D-13: Pick a plan (decided by the coordinator, no owner authority)']);
+    expect(logOf(repo).rows).toEqual([logRow('D-9'), { item: 'D-13: Pick a plan', decision: 'Use plan A', date: '2030-01-02', decider: 'coordinator' }]);
+    expect(repo.textOf(fileNames.waiting)).toBe(waitingBefore);
+    expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.decisionLog]]);
+  });
+
+  it('names a delegate as the decider, and the row holds no owner key and no relay key', async () => {
+    const repo = await boardNode();
+    expect(linesOf(await run(repo, { decider: 'delegate' }))).toEqual(['Logged D-1: Pick a plan (decided by the delegate, no owner authority)']);
+    const row = logOf(repo).rows[0] ?? {};
+    expect(row).toEqual({ item: 'D-1: Pick a plan', decision: 'Use plan A', date: '2030-01-02', decider: 'delegate' });
+    expect(row).not.toHaveProperty('by');
+    expect(row).not.toHaveProperty('relayed');
+  });
+
+  it('adds no waiting entry, and the next request takes the number after the logged one', async () => {
+    const repo = await boardNode();
+    valueOf(await run(repo));
+    expect(waitingOf(repo).items).toEqual([]);
+    expect(linesOf(await runRequest(repo.deps, { ...BASE, ...ADD }, recipes))).toEqual(['Added D-2: Pick a plan']);
+  });
+
+  it('prints the JSON document of a logged decision', async () => {
+    const repo = await boardNode();
+    expect(valueOf(await run(repo)).json).toEqual({ schema: 'factory.request/v1', action: 'log', id: 'D-1', title: 'Pick a plan', decider: 'coordinator' });
+  });
+
+  it('refuses the owner as a decider with exit 2, names decide, and touches no file', async () => {
+    const repo = await boardNode();
+    const touched: string[] = [];
+    const error = errorOf(await runRequest(withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`)), { ...BASE, ...LOG, decider: 'owner' }, recipes));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.hint).toContain(commandText(commands.decide));
+    expect(touched).toEqual([]);
+  });
+
+  it.each([
+    ['a decider that is not known', { decider: 'boss' }],
+    ['an empty title', { title: ' ' }],
+    ['a title with a line break', { title: 'Two\nlines' }],
+    ['a title of more than the most characters', { title: 'x'.repeat(boardTextLimits.maxTitleChars + 1) }],
+    ['an empty decision', { decision: '' }],
+    ['a decision with a line break', { decision: 'Yes\nand no' }],
+    ['a decision of more than the most characters', { decision: 'x'.repeat(boardTextLimits.maxTextChars + 1) }],
+  ] as const)('refuses %s with exit 2, and changes no file', async (_name, overrides) => {
+    const repo = await boardNode();
+    const before = filesOf(repo);
+    expect(exitCodeOf[errorOf(await run(repo, overrides)).kind]).toBe(2);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('exits 1, names the decision file and writes nothing when the decision file cannot be read', async () => {
+    const repo = await nodeWithStore('not json');
+    const before = filesOf(repo);
+    const error = errorOf(await run(repo));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(STORE_PATH);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+});
+
 describe('request with a hosted tracker kind (TP-67)', () => {
   const hosted = async (): Promise<BoardRepo> => {
     const base = sampleConfigWithBoard();
@@ -485,9 +651,19 @@ describe('request with a hosted tracker kind (TP-67)', () => {
     return boardNode({ config, waiting: waitingText([entry('D-1')]), board: boardText() });
   };
 
+  it('refuses a relayed close from the pane of the coordinator with exit 4 and writes nothing', async () => {
+    const repo = await hosted();
+    const before = filesOf(repo);
+    const error = errorOf(await runRequest(inPane(repo.deps, '%0'), { ...BASE, words: ['close', 'D-1'], relayed: true, decision: 'Yes' }, recipes));
+    expect(exitCodeOf[error.kind]).toBe(4);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
   it.each([
     ['add', ADD],
     ['close', { words: ['close', 'D-1'] }],
+    ['log', LOG],
   ] as const)('M5-1b TP-67 refuses request %s with exit 4 and writes nothing, and request list still works', async (_name, overrides) => {
     const repo = await hosted();
     const before = filesOf(repo);

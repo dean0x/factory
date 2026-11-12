@@ -1,20 +1,34 @@
 import type {
   BoardRequest,
   DecisionAskInput,
+  DecisionLogInput,
   DecisionOption,
-  LocalBoard,
   RequestClosed,
   RequestDecider,
   RequestSettlement,
 } from '../board/contract.js';
+import { checkRequestId } from '../board/edit.js';
 import { requestView } from '../board/list-view.js';
 import { usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, flags, flagText, requestCommands, requestDeciders, requestWords, roles, schemaIds } from '../names.js';
+import {
+  commandLines,
+  commands,
+  commandText,
+  flags,
+  flagText,
+  relayedMarker,
+  requestCommands,
+  requestDeciders,
+  requestWords,
+  roles,
+  schemaIds,
+} from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
-import { openBoard } from './board-open.js';
+import { requireCoordinatorCaller } from '../workers/panes.js';
+import { openBoard, type OpenBoard } from './board-open.js';
 import { shown, usageFor } from './board-words.js';
 
 export interface RequestOptions {
@@ -27,10 +41,12 @@ export interface RequestOptions {
   readonly options: readonly string[];
   /** The key of the option that the asker recommends. */
   readonly recommend: string | undefined;
-  /** With close: who decided the request, when it is not the owner. It goes with `decision`. */
+  /** With close and log: who decided, when it is not the owner. It goes with `decision`. A relayed close takes none. */
   readonly decider: string | undefined;
-  /** With close: the decision, one line. It goes with `decider`. */
+  /** With close and log: the decision, one line. It goes with `decider`. */
   readonly decision: string | undefined;
+  /** With close: the coordinator passes on an answer of the owner. It needs `decision` and takes no `decider`. */
+  readonly relayed: boolean;
 }
 
 type Subcommand = (typeof requestCommands)[keyof typeof requestCommands];
@@ -38,7 +54,8 @@ type Subcommand = (typeof requestCommands)[keyof typeof requestCommands];
 type Action =
   | { readonly kind: typeof requestCommands.add; readonly input: DecisionAskInput }
   | { readonly kind: typeof requestCommands.list }
-  | { readonly kind: typeof requestCommands.close; readonly id: string; readonly settlement: RequestSettlement | undefined };
+  | { readonly kind: typeof requestCommands.close; readonly id: string; readonly settlement: RequestSettlement | undefined }
+  | { readonly kind: typeof requestCommands.log; readonly input: DecisionLogInput };
 
 const SUBCOMMANDS = Object.values(requestCommands).join(', ');
 
@@ -49,7 +66,8 @@ const SUBCOMMANDS = Object.values(requestCommands).join(', ');
 const TAKES: Readonly<Record<Subcommand, readonly string[]>> = {
   [requestCommands.add]: [flags.title, flags.question, flags.option, flags.recommend],
   [requestCommands.list]: [],
-  [requestCommands.close]: [flags.madeBy, flags.decision],
+  [requestCommands.close]: [flags.madeBy, flags.decision, flags.relayed],
+  [requestCommands.log]: [flags.title, flags.madeBy, flags.decision],
 };
 
 const needsUsage = usageFor(commands.request);
@@ -64,6 +82,7 @@ const refuseStrayFlags = (subcommand: Subcommand, options: RequestOptions): CliR
     [flags.recommend, options.recommend !== undefined],
     [flags.madeBy, options.decider !== undefined],
     [flags.decision, options.decision !== undefined],
+    [flags.relayed, options.relayed],
   ];
   const stray = given.find(([flag, present]) => present && !TAKES[subcommand].includes(flag));
   return stray === undefined ? ok(undefined) : needsUsage(`the flag ${flagText(stray[0])} is not for ${commandText(`${commands.request} ${subcommand}`)}`);
@@ -107,6 +126,18 @@ const parseSettlement = (options: RequestOptions): CliResult<RequestSettlement |
   return ok({ decider, decision });
 };
 
+/**
+ * The settlement of a relayed close: the coordinator passes on an answer of the owner, so the decider is the coordinator. The caller
+ * rule checks that the coordinator runs the command. A flag never names the relayer, so `--made-by` is a usage error.
+ */
+const parseRelay = (options: RequestOptions): CliResult<RequestSettlement> => {
+  if (options.decider !== undefined) {
+    return needsUsage(`${flagText(flags.relayed)} takes no ${flagText(flags.madeBy)}: only the ${requestDeciders.coordinator} relays an answer`);
+  }
+  if (options.decision === undefined) return needsUsage(`${flagText(flags.relayed)} needs ${flagText(flags.decision)} TEXT`);
+  return ok({ decider: requestDeciders.coordinator, decision: options.decision, relayed: true });
+};
+
 /** Check the words and the flags. A usage error (exit 2) from here comes before the node is found and before any lock. */
 const parseAction = (options: RequestOptions): CliResult<Action> => {
   const [word, ...args] = options.words;
@@ -132,8 +163,19 @@ const parseAction = (options: RequestOptions): CliResult<Action> => {
     case requestCommands.close: {
       const [id, ...rest] = args;
       if (id === undefined || rest.length > 0) return needsUsage(`${subcommand} takes one argument: the id of a ${requestWords.request}`);
-      const settlement = parseSettlement(options);
+      const settlement: CliResult<RequestSettlement | undefined> = options.relayed ? parseRelay(options) : parseSettlement(options);
       return settlement.ok ? ok({ kind: subcommand, id, settlement: settlement.value }) : settlement;
+    }
+    case requestCommands.log: {
+      if (args.length > 0) return needsUsage(`${subcommand} takes no argument: the board gives the number`);
+      if (options.title === undefined) return needsUsage(`${subcommand} needs ${flagText(flags.title)} TEXT`);
+      const settlement = parseSettlement(options);
+      if (!settlement.ok) return settlement;
+      if (settlement.value === undefined) {
+        return needsUsage(`${subcommand} needs ${flagText(flags.madeBy)} WHO and ${flagText(flags.decision)} TEXT`);
+      }
+      const { decider, decision } = settlement.value;
+      return ok({ kind: subcommand, input: { title: options.title, decider, decision } });
     }
     default: {
       const unreachable: never = subcommand;
@@ -152,13 +194,32 @@ const withTitle = (id: string, title: string | null): string => (title === null 
 const addAnswer = (id: string, input: DecisionAskInput): CommandOutput =>
   answer(`Added ${withTitle(id, input.title.trim())}`, { schema: schemaIds.request, action: requestCommands.add, id, title: input.title.trim() });
 
-const closeAnswer = (closed: RequestClosed): CommandOutput =>
-  answer(`Closed ${withTitle(closed.id, closed.title)}${closed.decider === null ? '' : ` (decided by the ${closed.decider}, no ${roles.owner} authority)`}`, {
+/** The words that tell who decided: the decider, and that the decider has no authority of the owner. */
+const decidedBy = (decider: RequestDecider): string => `decided by the ${decider}, no ${roles.owner} authority`;
+
+/** The end of the line of a close: the relay words, or who decided, or nothing for a close with no answer. */
+const closedNote = (closed: RequestClosed, relayed: boolean): string => {
+  if (relayed) return ` (${relayedMarker})`;
+  return closed.decider === null ? '' : ` (${decidedBy(closed.decider)})`;
+};
+
+const closeAnswer = (closed: RequestClosed, relayed: boolean): CommandOutput =>
+  answer(`Closed ${withTitle(closed.id, closed.title)}${closedNote(closed, relayed)}`, {
     schema: schemaIds.request,
     action: requestCommands.close,
     id: closed.id,
     title: closed.title,
     decider: closed.decider,
+    ...(relayed ? { relayed: true } : {}),
+  });
+
+const logAnswer = (id: string, input: DecisionLogInput): CommandOutput =>
+  answer(`Logged ${withTitle(id, input.title.trim())} (${decidedBy(input.decider)})`, {
+    schema: schemaIds.request,
+    action: requestCommands.log,
+    id,
+    title: input.title.trim(),
+    decider: input.decider,
   });
 
 const listAnswer = (requests: readonly BoardRequest[]): CommandOutput => ({
@@ -168,7 +229,21 @@ const listAnswer = (requests: readonly BoardRequest[]): CommandOutput => ({
   failed: false,
 });
 
-const execute = async (connector: LocalBoard, action: Action): Promise<CliResult<CommandOutput>> => {
+/**
+ * The caller rule of a relayed close: only the pane of the coordinator passes on an answer of the owner. It guards against a mistake
+ * and it is no proof. The id is checked first, so the line that the rule prints never repeats text that is not a request id. That line
+ * holds the word `TEXT` in the place of the decision, and never the decision that was typed.
+ */
+const requireRelayer = async (deps: Deps, board: OpenBoard, id: string): Promise<CliResult<void>> => {
+  const valid = checkRequestId(id);
+  if (!valid.ok) return valid;
+  const again = `${commandLines.requestClose} ${id} ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT`;
+  const caller = await requireCoordinatorCaller(deps, board.home, board.config, again);
+  return caller.ok ? ok(undefined) : caller;
+};
+
+const execute = async (deps: Deps, board: OpenBoard, action: Action): Promise<CliResult<CommandOutput>> => {
+  const { connector } = board;
   switch (action.kind) {
     case requestCommands.add: {
       const id = await connector.askDecision(action.input);
@@ -179,8 +254,17 @@ const execute = async (connector: LocalBoard, action: Action): Promise<CliResult
       return requests.ok ? ok(listAnswer(requests.value)) : requests;
     }
     case requestCommands.close: {
+      const relayed = action.settlement?.relayed === true;
+      if (relayed) {
+        const relayer = await requireRelayer(deps, board, action.id);
+        if (!relayer.ok) return relayer;
+      }
       const closed = await connector.closeRequest(action.id, action.settlement);
-      return closed.ok ? ok(closeAnswer(closed.value)) : closed;
+      return closed.ok ? ok(closeAnswer(closed.value, relayed)) : closed;
+    }
+    case requestCommands.log: {
+      const id = await connector.logDecision(action.input);
+      return id.ok ? ok(logAnswer(id.value, action.input)) : id;
     }
     default: {
       const unreachable: never = action;
@@ -190,15 +274,17 @@ const execute = async (connector: LocalBoard, action: Action): Promise<CliResult
 };
 
 /**
- * `request`: add a request for the owner, list the open requests, or close one with no answer. The words and the flags are checked
- * first (exit 2), then the node is found and the connector runs the action. An add or a close is one state commit through the
- * connector, and the connector refuses it for a hosted tracker kind. The number of a new request is one more than the highest number
- * in the waiting file and in the decision log, found under the lock. A request that is open can not be changed.
+ * `request`: add a request for the owner, list the open requests, close one with no answer or with a decision, or log a decision that
+ * no request asked for. The words and the flags are checked first (exit 2), then the node is found and the connector runs the action.
+ * A relayed close passes on an answer of the owner. It runs only in the pane of the coordinator, and the rule runs after the id
+ * check and before the connector reads the decision files. An add, a close or a log is one state commit through the connector, and the connector refuses
+ * it for a hosted tracker kind. The number of a new request or of a logged decision is one more than the highest number in the
+ * waiting file, in the decision log and in the owner store, found under the lock. A request that is open can not be changed.
  */
 export const runRequest = async (deps: Deps, options: RequestOptions, registry: RecipeRegistry): Promise<CliResult<CommandOutput>> => {
   const action = parseAction(options);
   if (!action.ok) return action;
   const board = await openBoard(deps, options.home, registry, commands.request);
   if (!board.ok) return board;
-  return execute(board.value.connector, action.value);
+  return execute(deps, board.value, action.value);
 };
