@@ -195,26 +195,27 @@ const lockEndedOf = (deps: Deps, lockPath: string, policy: LockPolicy, rule: Liv
 /**
  * Remove the lock only when it is still the stale lock that the caller saw. The caller holds the claim file, so no other
  * waiter removes the lock now. A lock that a waiter took over in the meantime stays. The value is true when the lock is
- * gone.
+ * gone. Only a file is removed: a folder at the lock path stays with all that it holds, and the result is an error.
  */
 const removeSeenLock = async (deps: Deps, lockPath: string, seen: PathInfo): Promise<Result<boolean, string>> => {
   const current = await deps.fs.statInfo(lockPath);
   if (!current.ok) return err(current.error.message);
   if (current.value === null) return ok(true);
   if (current.value.mtimeMs !== seen.mtimeMs) return ok(false);
-  const removed = await deps.fs.remove(lockPath);
+  const removed = await deps.fs.removeFile(lockPath);
   return removed.ok ? ok(true) : err(removed.error.message);
 };
 
 /**
  * Another waiter holds the claim file: the caller waits. A claim that is stale is removed, because the process that made
- * it ended. The value is always false: the caller tries again after the wait.
+ * it ended. Only a file is removed: a folder at the claim path stays, and the result is an error. The value is always false:
+ * the caller tries again after the wait.
  */
 const dropStaleClaim = async (deps: Deps, claimPath: string, policy: LockPolicy): Promise<Result<boolean, string>> => {
   const claim = await deps.fs.statInfo(claimPath);
   if (!claim.ok) return err(claim.error.message);
   if (claim.value === null || !isStale(deps, claim.value, policy)) return ok(false);
-  const removed = await deps.fs.remove(claimPath);
+  const removed = await deps.fs.removeFile(claimPath);
   return removed.ok ? ok(false) : err(removed.error.message);
 };
 
@@ -237,7 +238,7 @@ const dropStaleLock = async (deps: Deps, lockPath: string, policy: LockPolicy, l
   if (!claimed.value) return dropStaleClaim(deps, claimPath, policy);
 
   const dropped = await removeSeenLock(deps, lockPath, seen.value);
-  const claimGone = await deps.fs.remove(claimPath);
+  const claimGone = await deps.fs.removeFile(claimPath);
   if (!dropped.ok) return dropped;
   return claimGone.ok ? dropped : err(claimGone.error.message);
 };
@@ -247,7 +248,8 @@ const dropStaleLock = async (deps: Deps, lockPath: string, policy: LockPolicy, l
  * the wait has a fixed bound. A stale lock is taken over, and the new lock file holds the token of this call. A lock path that
  * is a link ends the call at once with `link`, and the link is not followed. When the lock is taken, the caller must free it with
  * the token. The error is the reason that a call of the file system failed, or that there is no random text for the token: the
- * call takes no lock without a token.
+ * call takes no lock without a token. The call removes only files: a folder at the lock path stays, and when it is stale, the
+ * call ends with an error and takes no lock.
  *
  * With `policy.liveness`, the caller gives `liveness`: its own start time, which goes into the token as `<pid>-<startMs>-<random>`,
  * and the cache of start reads for this wait. A policy with `liveness` and no valid input is an error, and no lock is taken.
@@ -299,6 +301,6 @@ export const freeLock = async (deps: Deps, lockPath: string, token: string): Pro
   const held = await holdsLock(deps, lockPath, token);
   if (!held.ok) return held;
   if (!held.value) return ok(undefined);
-  const removed = await deps.fs.remove(lockPath);
+  const removed = await deps.fs.removeFile(lockPath);
   return removed.ok ? ok(undefined) : err(removed.error.message);
 };

@@ -210,6 +210,20 @@ describe('lock run: the wait (TP-15, TP-16)', () => {
     expect(deps.attached).toEqual([]);
     expect(handlerCount(deps)).toBe(0);
   });
+
+  it('keeps a folder at the lock path that is older than the claim age, and all it holds, and exits 1 with the NOT STARTED line', async () => {
+    const deps = fake();
+    deps.seed(`${LOCK}/inside.txt`, 'keep\n');
+    deps.mtimes.set(LOCK, deps.now().getTime() - heavyLock.claimStaleMs - 1);
+    const result = await lock(deps);
+    expectOutcome(result, 1, lockWords.notStarted);
+    expect(result.err).toContain(LOCK);
+    expect(deps.attached).toEqual([]);
+    expect(deps.dirs.has(LOCK)).toBe(true);
+    expect(deps.files.get(`${LOCK}/inside.txt`)).toBe('keep\n');
+    expect(deps.files.has(`${LOCK}${heavyLock.takeoverSuffix}`)).toBe(false);
+    expect(handlerCount(deps)).toBe(0);
+  });
 });
 
 describe('lock run: the child (TP-17, TP-18, TP-19, TP-20, TP-24)', () => {

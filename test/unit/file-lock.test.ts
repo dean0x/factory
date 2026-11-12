@@ -91,7 +91,7 @@ describe('lock file: freeing the lock', () => {
   it('gives the reason when the file system can not remove the lock file of the caller', async () => {
     const deps = fakeWithFolder();
     const token = await taken(deps);
-    const stuck: Deps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    const stuck: Deps = { ...deps, fs: { ...deps.fs, removeFile: async () => failure('cannot remove: EBUSY') } };
     expect(await freeLock(stuck, LOCK_PATH, token)).toMatchObject({ ok: false, error: expect.stringContaining('EBUSY') });
     expect(deps.files.get(LOCK_PATH)).toBe(`${token}\n`);
   });
@@ -335,6 +335,41 @@ describe('lock file: the liveness of the holder', () => {
   });
 });
 
+describe('lock file: a folder at a path of the lock', () => {
+  const INSIDE = 'keep\n';
+
+  /** A fake with a folder at `path` that holds one file. The folder is older than the stale age of `policy`. */
+  const staleFolderFake = (path: string, policy: LockPolicy): FakeDeps => {
+    const deps = fakeWithFolder();
+    deps.seed(`${path}/inside.txt`, INSIDE);
+    deps.mtimes.set(path, deps.now().getTime());
+    deps.advance(policy.staleMs + 1);
+    return deps;
+  };
+
+  it.each([
+    ['the age rule', POLICY],
+    ['the liveness rule', LIVE],
+  ])('keeps a stale folder at the lock path, and all it holds, with %s, and takes no lock', async (_name, policy) => {
+    const deps = staleFolderFake(LOCK_PATH, policy);
+    const result = await takeLock(deps, LOCK_PATH, policy, liveInput());
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(LOCK_PATH) });
+    expect(deps.dirs.has(LOCK_PATH)).toBe(true);
+    expect(deps.files.get(`${LOCK_PATH}/inside.txt`)).toBe(INSIDE);
+    expect(deps.files.has(CLAIM_PATH)).toBe(false);
+  });
+
+  it('keeps a stale folder at the claim path, and all it holds, and takes no lock', async () => {
+    const deps = staleFolderFake(CLAIM_PATH, POLICY);
+    deps.seed(LOCK_PATH, '1\n');
+    deps.mtimes.set(LOCK_PATH, deps.now().getTime() - POLICY.staleMs - 1);
+    const result = await takeLock(deps, LOCK_PATH, POLICY);
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining(CLAIM_PATH) });
+    expect(deps.files.get(`${CLAIM_PATH}/inside.txt`)).toBe(INSIDE);
+    expect(deps.files.get(LOCK_PATH)).toBe('1\n');
+  });
+});
+
 const FILE = `${FOLDER}/data.json`;
 const FILE_LOCK =`${FILE}${privateFile.lockSuffix}`;
 const ANOTHER_TOKEN = '99-ffffffffffffffff';
@@ -418,7 +453,7 @@ describe('private file: the check of the lock before the rename', () => {
 describe('private file: the typed outcome of a failed change', () => {
   it('M5-1b TP-180 says saved-lock-left when the change is saved and only the lock file stays', async () => {
     const deps = fakeWithFolder();
-    const stuck: Deps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    const stuck: Deps = { ...deps, fs: { ...deps.fs, removeFile: async () => failure('cannot remove: EBUSY') } };
     const result = await changePrivateFile(stuck, FILE, 1_000, changeTo('new\n'));
     expect(result).toMatchObject({
       ok: false,
@@ -429,7 +464,7 @@ describe('private file: the typed outcome of a failed change', () => {
 
   it('M5-1b TP-180 says saved-lock-left also with the check before the rename', async () => {
     const deps = fakeWithFolder();
-    const stuck: Deps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    const stuck: Deps = { ...deps, fs: { ...deps.fs, removeFile: async () => failure('cannot remove: EBUSY') } };
     const result = await changePrivateFile(stuck, FILE, 1_000, changeTo('new\n'), { recheckLock: true });
     expect(result).toMatchObject({ ok: false, error: { writeState: 'saved-lock-left' } });
   });
