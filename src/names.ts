@@ -777,6 +777,9 @@ export const reservedFieldNames: readonly string[] = [
   boardKeys.unassignedFrom,
 ];
 
+/** The stage that a merge record sets on an item. The recipe must list it. */
+export const mergedStage = 'merged';
+
 /** The most workers that the list of former workers of one item (`boardKeys.unassignedFrom`) holds. */
 export const markLimits = { maxFormerWorkers: 30 } as const;
 

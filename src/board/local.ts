@@ -33,7 +33,9 @@ import type {
   DecisionRecordCall,
   DecisionRequestRead,
   ItemMoved,
+  ItemUnassigned,
   LocalBoard,
+  MergeRecorded,
   QueueRowSet,
 } from './contract.js';
 import { addNewRemedy, decideLogRow, recheckRequest, requestStateOf, requireLogRoom, requireOpen, strictRequestOf, type RequestState } from './decide.js';
@@ -47,6 +49,8 @@ import {
   checkDecision,
   checkDocPath,
   checkItemId,
+  checkLogEntry,
+  checkMergeSetup,
   checkMove,
   checkNewItem,
   checkNewTrack,
@@ -54,18 +58,23 @@ import {
   checkQueueRow,
   checkRequestId,
   checkSettlement,
+  checkWorkerField,
   closeItemIn,
   closeRequestIn,
   linkDocIn,
+  logDecisionIn,
   moveItemIn,
+  recordMergeIn,
   requireTrack,
   setRowIn,
   settleRequestIn,
   shown,
+  unassignIn,
   type BoardSetup,
   type Edit,
 } from './edit.js';
 import { parseBoard, parseDecisionLog, parseWaiting, readBoard, readWaiting, type BoardDoc, type DecisionLogDoc, type WaitingDoc } from './files.js';
+import type { MergedPr } from './github-pr.js';
 import { boardJsonText } from './json.js';
 import { queueRowsOf } from './queue.js';
 import { requestsOf } from './requests.js';
@@ -75,8 +84,9 @@ import { requestsOf } from './requests.js';
  * the callback reads the files that the helper gives it, builds the new text and returns it, so the helper checks the guard, the size
  * and the item ids, writes the files and makes one state commit. A read takes no lock.
  *
- * The local board has the operations of the contract and four more: the list and the close of the requests, and the list and the
- * write of the queue. A hosted board maps them to the provider (FAC-M3), so they are not in the contract suite.
+ * The local board has the operations of the contract and more: the list and the close of the requests, the list and the write of the
+ * queue, the decision log, the merge record and the removal of a worker from an item. A hosted board maps them to the provider
+ * (FAC-M3), so they are not in the contract suite.
  *
  * A hosted tracker kind (`github`, `jira` or `linear`) keeps the truth of the board at the provider. factory still keeps the local
  * files, and they are the source for the views (design 4.10). This version has no provider, so every write of a hosted kind stops with a security stop (exit 4) before the input check and
@@ -105,7 +115,11 @@ const commitMessages = {
   closeItem: (id: string): string => `chore: close item ${id}`,
   linkDoc: (id: string): string => `chore: link a file to item ${id}`,
   addTrack: (id: string): string => `chore: add track ${id}`,
+  recordMerge: (id: string, merged: MergedPr): string =>
+    `chore: record the merge of item ${id} (PR ${merged.number}, merge commit ${merged.mergeCommit})`,
+  unassignItem: (id: string): string => `chore: take the ${roles.worker} off item ${id}`,
   askDecision: 'chore: add a decision to the board',
+  logDecision: 'chore: log a decision',
   closeDecision: (id: string): string => `chore: close decision ${id}`,
   recordDecision: (id: string): string => `chore: record decision ${id}`,
   setQueueRow: 'chore: change the queue',
@@ -452,7 +466,41 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
       if (!valid.ok) return valid;
       const changes = checkPatch(setup, patch);
       if (!changes.ok) return changes;
-      return itemWrite(commitMessages.updateItem(id), (doc) => changeItemIn(doc, id, changes.value));
+      return itemWrite(commitMessages.updateItem(id), (doc) => changeItemIn(doc, id, changes.value, setup.config?.worker_field));
+    },
+
+    async recordMerge(id, merged, worker) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkItemId(id);
+      if (!valid.ok) return valid;
+      const ready = checkMergeSetup(setup);
+      if (!ready.ok) return ready;
+      return boardWrite<boolean, MergeRecorded>({
+        message: commitMessages.recordMerge(id, merged),
+        edit: (doc) => recordMergeIn(doc, setup, id, merged, worker),
+        resultOf: (doc, changed) => {
+          const found = itemIn(doc, id);
+          return found.ok ? ok({ item: found.value, changed }) : found;
+        },
+      });
+    },
+
+    async unassignItem(id) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const valid = checkItemId(id);
+      if (!valid.ok) return valid;
+      const field = checkWorkerField(setup);
+      if (!field.ok) return field;
+      return boardWrite<string, ItemUnassigned>({
+        message: commitMessages.unassignItem(id),
+        edit: (doc) => unassignIn(doc, id, field.value),
+        resultOf: (doc, worker) => {
+          const found = itemIn(doc, id);
+          return found.ok ? ok({ item: found.value, worker }) : found;
+        },
+      });
     },
 
     async moveItem(id, move) {
@@ -531,6 +579,29 @@ export const createLocalBoard = (deps: Deps, layout: Layout, options: LocalBoard
         const written = newText(files.waiting, edited.value.top, parseWaiting);
         if (!written.ok) return written;
         return ok({ texts: new Map([[files.waiting, written.value.text]]), value: edited.value.value });
+      });
+    },
+
+    async logDecision(input) {
+      const local = requireLocalTracker();
+      if (!local.ok) return local;
+      const checked = checkLogEntry(input);
+      if (!checked.ok) return checked;
+      const place = await decisionPlaceOf(deps, layout.home, options.node);
+      if (!place.ok) return place;
+      return commit(decisionFiles, commitMessages.logDecision, async (texts) => {
+        const read = decisionDocsOf(texts);
+        if (!read.ok) return read;
+        const stored = await storedIdsOf(place.value);
+        if (!stored.ok) return stored;
+        const date = deps.now().toISOString().slice(0, DATE_CHARS);
+        const edited = logDecisionIn(read.value.waiting, read.value.log, checked.value.settlement, checked.value.title, date, stored.value);
+        if (!edited.ok) return edited;
+        const log = newText(files.decisionLog, edited.value.top, parseDecisionLog);
+        if (!log.ok) return log;
+        const room = requireLogRoom(log.value.text);
+        if (!room.ok) return room;
+        return ok({ texts: new Map([[files.decisionLog, log.value.text]]), value: edited.value.value });
       });
     },
 
