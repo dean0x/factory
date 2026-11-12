@@ -4,20 +4,25 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   address,
+  boardKeys,
   checkIds,
   claudeSettings,
   commandLines,
   commands,
   coordinatorTemplateValues,
+  decisionLogKeys,
   dirs,
   env,
   files,
   flags,
+  ghTimeoutMs,
   instructionFiles,
   keys,
   marker,
+  markLimits,
   maxFileBytes,
   maxTrackLines,
+  mergeCheck,
   messageFile,
   messageHeader,
   messageHeaderLines,
@@ -26,7 +31,9 @@ import {
   nodeSendReasons,
   permissionSkipList,
   program,
+  relayedMarker,
   requestHash,
+  reservedFieldNames,
   reservedRootNames,
   roles,
   schema1,
@@ -1523,5 +1530,59 @@ describe('the names of node send', () => {
   it('gives the note of the header to the template texts, so that no text outside names.ts holds the word of the note', () => {
     expect(templateValues['inboxNotice']).toBe(messageHeader.notice);
     expect(coordinatorTemplateValues['inboxNotice']).toBe(messageHeader.notice);
+  });
+});
+
+describe('the names of the board records', () => {
+  it('gives the merge, unassign and log commands a name for the remedy lines', () => {
+    expect(commandLines.itemMerged).toBe(`${commands.item} merged`);
+    expect(commandLines.itemUnassign).toBe(`${commands.item} unassign`);
+    expect(commandLines.requestLog).toBe(`${commands.request} log`);
+  });
+
+  it('names the flags of the merge record and of the relayed close', () => {
+    expect(flags.pr).toBe('pr');
+    expect(flags.relayed).toBe('relayed');
+  });
+
+  it('reserves the two item keys, so that no owner field can take their name', () => {
+    expect(boardKeys.mergedPrHead).toBe('merged_pr_head');
+    expect(boardKeys.unassignedFrom).toBe('unassigned_from');
+    expect(reservedFieldNames).toContain(boardKeys.mergedPrHead);
+    expect(reservedFieldNames).toContain(boardKeys.unassignedFrom);
+    expect(duplicatesOf(reservedFieldNames)).toEqual([]);
+  });
+
+  it('keeps the key and the fixed marker of a relayed close apart from the owner proof keys', () => {
+    expect(decisionLogKeys.relayed).toBe('relayed');
+    expect(decisionLogKeys.relayed).not.toBe(decisionLogKeys.by);
+    expect(relayedMarker).toBe('owner answer, relayed by the coordinator, no owner proof');
+  });
+
+  it('caps the list of former workers of an item at 30', () => {
+    expect(markLimits.maxFormerWorkers).toBe(30);
+  });
+
+  it('reads a PR number of one to nine digits with no leading zero', () => {
+    for (const text of ['1', '12', '999999999']) expect(mergeCheck.prPattern.test(text)).toBe(true);
+    for (const text of ['', '0', '01', '1234567890', '-1', '1.5', ' 1', '1\n']) expect(mergeCheck.prPattern.test(text)).toBe(false);
+  });
+
+  it('reads a sha as exactly 40 lowercase hex digits', () => {
+    expect(mergeCheck.shaPattern.test('0123456789abcdef'.repeat(2) + '01234567')).toBe(true);
+    for (const text of ['', 'a'.repeat(39), 'a'.repeat(41), 'A'.repeat(40), `${'a'.repeat(40)}\n`, 'g'.repeat(40)]) {
+      expect(mergeCheck.shaPattern.test(text)).toBe(false);
+    }
+  });
+
+  it('asks gh for the nine fields of the merge check in one comma list, and accepts the state MERGED on github.com', () => {
+    expect(mergeCheck.fieldList.split(',')).toHaveLength(9);
+    expect(mergeCheck.fieldList.split(',')).toEqual(Object.values(mergeCheck.fields));
+    expect(mergeCheck.mergedState).toBe('MERGED');
+    expect(mergeCheck.host).toBe('github.com');
+  });
+
+  it('gives the gh time limit that init and the merge check share', () => {
+    expect(ghTimeoutMs).toBe(10_000);
   });
 });

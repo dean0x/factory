@@ -39,6 +39,7 @@ import {
   files,
   flags,
   flagText,
+  ghTimeoutMs,
   keys,
   localFileModes,
   maxFileBytes,
@@ -187,7 +188,6 @@ export interface InitResult {
   readonly warnings: readonly string[];
 }
 
-const GH_TIMEOUT_MS = 10_000;
 const DEFAULT_BRANCH = 'main';
 const DEFAULT_MODEL = 'default';
 
@@ -215,7 +215,7 @@ const parseRecipe = (text: string | undefined, registry: RecipeRegistry): CliRes
 };
 
 export const detectGithubLogin = async (deps: Deps): Promise<string | undefined> => {
-  const result = await deps.run('gh', ['api', 'user', '--jq', '.login'], { timeoutMs: GH_TIMEOUT_MS });
+  const result = await deps.run('gh', ['api', 'user', '--jq', '.login'], { timeoutMs: ghTimeoutMs });
   if (!result.ok || result.value.exitCode !== 0) return undefined;
   const login = result.value.stdout.trim();
   return isGithubLogin(login) ? login : undefined;

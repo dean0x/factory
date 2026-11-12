@@ -142,11 +142,14 @@ export const commandLines = {
   itemMove: `${commands.item} ${itemCommands.move}`,
   itemClose: `${commands.item} ${itemCommands.close}`,
   itemList: `${commands.item} ${itemCommands.list}`,
+  itemMerged: `${commands.item} merged`,
+  itemUnassign: `${commands.item} unassign`,
   trackAdd: `${commands.track} ${trackCommands.add}`,
   trackList: `${commands.track} ${trackCommands.list}`,
   requestAdd: `${commands.request} ${requestCommands.add}`,
   requestList: `${commands.request} ${requestCommands.list}`,
   requestClose: `${commands.request} ${requestCommands.close}`,
+  requestLog: `${commands.request} log`,
   queueSet: `${commands.queue} ${queueCommands.set}`,
   queueShow: `${commands.queue} ${queueCommands.show}`,
   selfReset: `${commands.self} ${selfCommands.reset}`,
@@ -174,6 +177,8 @@ export const flags = {
   ready: 'ready',
   madeBy: 'made-by',
   decision: 'decision',
+  pr: 'pr',
+  relayed: 'relayed',
   file: 'file',
   field: 'field',
   title: 'title',
@@ -548,7 +553,9 @@ export const minGitVersion = '2.26';
 /**
  * The keys of `board.json`. The top keys are the queue (its key comes from the recipe), the list of items and the list of
  * tracks. `defaultQueue` is the key of the queue when the recipe gives none. The other keys belong to an item (`id`, `title`,
- * `status`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`).
+ * `status`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`). `mergedPrHead` is the head sha of the merged PR that
+ * `item merged` records, and `unassignedFrom` is the list of the workers that `item unassign` took off the item. Both are
+ * reserved field names, so no owner field can take their place.
  */
 export const boardKeys = {
   items: 'items',
@@ -564,6 +571,8 @@ export const boardKeys = {
   docs: 'docs',
   note: 'note',
   defaultQueue: 'queue',
+  mergedPrHead: 'merged_pr_head',
+  unassignedFrom: 'unassigned_from',
 } as const;
 
 /** The keys of the waiting file: the top keys, and the id of a waiting item. */
@@ -584,7 +593,15 @@ export const decisionLogKeys = {
   request: 'request',
   /** Who decided a request that `request close --made-by` closed: a value of `requestDeciders`. Never the owner, never `by`. */
   decider: 'decider',
+  /**
+   * The mark of a row that `request close --relayed` writes: the coordinator passed on an answer of the owner. The value is
+   * `relayedMarker`. A row with this key holds no `by` key, so it is never an owner answer.
+   */
+  relayed: 'relayed',
 } as const;
+
+/** The fixed value of the `relayed` key of a row of the decision log. Only the owner record proves an answer of the owner. */
+export const relayedMarker = 'owner answer, relayed by the coordinator, no owner proof';
 
 /**
  * The deciders of a request that is not an approval point and that the owner did not answer: the coordinator itself, or a delegate,
@@ -756,7 +773,55 @@ export const reservedFieldNames: readonly string[] = [
   boardKeys.tracks,
   boardKeys.track,
   boardKeys.stage,
+  boardKeys.mergedPrHead,
+  boardKeys.unassignedFrom,
 ];
+
+/** The most workers that the list of former workers of one item (`boardKeys.unassignedFrom`) holds. */
+export const markLimits = { maxFormerWorkers: 30 } as const;
+
+/**
+ * The refusal of a change of the worker field of an item that already names a worker: the message names the item, and the remedy
+ * names the one command that takes a worker off an item.
+ */
+export const workerFieldGuard = {
+  message: (id: string): string => `the worker field of ${id} holds a worker`,
+  remedy: (id: string): string => `Run "${commandText(commandLines.itemUnassign)} ${id}" first.`,
+} as const;
+
+/** The time limit of one run of `gh`, in milliseconds. */
+export const ghTimeoutMs = 10_000;
+
+/** The fields of a PR that `gh pr view --json` gives, under the name that the merge check uses for each. */
+const prFields = {
+  number: 'number',
+  state: 'state',
+  mergedAt: 'mergedAt',
+  mergeCommit: 'mergeCommit',
+  headBranch: 'headRefName',
+  headSha: 'headRefOid',
+  baseBranch: 'baseRefName',
+  crossRepository: 'isCrossRepository',
+  url: 'url',
+} as const;
+
+/**
+ * The merge check, which reads one PR with `gh pr view`. The PR number has one to nine digits and no leading zero. A sha has 40
+ * lowercase hex digits. `fields` are the names that `gh` gives in its JSON, `fieldList` is the list that the `--json` option takes,
+ * and `mergeCommitSha` is the key of the commit inside `mergeCommit`. `words` are the arguments of `gh`. Only a PR in the state
+ * `mergedState` on `host` passes. `maxOutputChars` bounds the output that is read.
+ */
+export const mergeCheck = {
+  host: 'github.com',
+  mergedState: 'MERGED',
+  prPattern: /^[1-9][0-9]{0,8}$/,
+  shaPattern: /^[0-9a-f]{40}$/,
+  maxOutputChars: 16_384,
+  fields: prFields,
+  fieldList: Object.values(prFields).join(','),
+  mergeCommitSha: 'oid',
+  words: { group: 'pr', verb: 'view', repoFlag: '--repo', jsonFlag: '--json', endOfFlags: '--' },
+} as const;
 
 /**
  * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to `maxTokenChars` letters, digits,
