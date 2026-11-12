@@ -229,6 +229,30 @@ describe('safe create: with the fake file system', () => {
     expect(errorOf(await createInFolder(deps, { ...TARGET, name: '../escape' }, 'x')).kind).toBe('failure');
     expect([...deps.files.keys()]).toEqual([]);
   });
+
+  it('makes the folder only: a parent that is not there gives a failure, and the parent is not made', async () => {
+    const deps = createFakeDeps();
+    expect(errorOf(await createInFolder(deps, TARGET, 'x')).kind).toBe('failure');
+    expect(deps.dirs.has(PARENT)).toBe(false);
+    expect(deps.dirs.has(FOLDER)).toBe(false);
+    expect([...deps.files.keys()]).toEqual([]);
+  });
+
+  it('makes the folder and the file when the folder was made by another process after the check', async () => {
+    const deps = fakeWithParent();
+    const racing: Deps = {
+      ...deps,
+      fs: {
+        ...deps.fs,
+        mkdirOne: async (path, mode) => {
+          deps.seedDir(path);
+          return deps.fs.mkdirOne(path, mode);
+        },
+      },
+    };
+    expect(await createInFolder(racing, TARGET, 'first\n')).toEqual({ ok: true, value: FILE });
+    expect(deps.files.get(FILE)).toBe('first\n');
+  });
 });
 
 describe('safe lock: with the fake file system', () => {
@@ -407,6 +431,13 @@ describe('safe write: with the real file system', () => {
     await symlink(missing, join(folder, NAME));
     expect(errorOf(await createInFolder(deps, target, 'text\n')).kind).toBe('failure');
     expect(await readdir(parent)).not.toContain('missing.txt');
+  });
+
+  it('makes the folder only: a parent that is not there gives a failure, and no parent is made', async () => {
+    const { parent, target } = await fresh();
+    await rm(parent, { recursive: true });
+    expect(errorOf(await createInFolder(deps, target, 'text\n')).kind).toBe('failure');
+    await expect(lstat(parent)).rejects.toThrow();
   });
 
   it('refuses a folder that is a link and leaves the folder behind the link as it was', async () => {

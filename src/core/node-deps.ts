@@ -310,6 +310,18 @@ const readNames = async (path: string, limit: number): Promise<string[]> => {
   }
 };
 
+/**
+ * Create the folder, and no parent. A folder that is there already is no error. Another process can make it between the check of
+ * the caller and this call. Anything else at the path, a link included, keeps the error of the system.
+ */
+const makeOneFolder = async (path: string, mode: number | undefined): Promise<void> => {
+  try {
+    await mkdir(path, mode === undefined ? undefined : { mode });
+  } catch (cause) {
+    if (errorCode(cause) !== 'EEXIST' || !(await lstat(path)).isDirectory()) throw cause;
+  }
+};
+
 const nodeFs: Fs = {
   readText: (path) => guard('read', path, () => readFile(path, 'utf8')),
   readTextLimited: async (path, maxBytes, decode = 'lenient') => {
@@ -332,6 +344,7 @@ const nodeFs: Fs = {
   realpath: resolved,
   mkdir: (path, mode) =>
     guard('create', path, async () => void (await mkdir(path, mode === undefined ? { recursive: true } : { recursive: true, mode }))),
+  mkdirOne: (path, mode) => guard('create', path, () => makeOneFolder(path, mode)),
   list: (path) => guard('list', path, async () => (await readdir(path)).sort()),
   listLimited: async (path, limit) => {
     if (!Number.isInteger(limit) || limit < 0) return failure(`cannot list ${path}: the limit ${limit} is not a whole number, 0 or more`);
@@ -339,6 +352,7 @@ const nodeFs: Fs = {
   },
   rename: (from, to) => guard('rename', from, () => rename(from, to)),
   remove: (path) => guard('remove', path, () => rm(path, { recursive: true, force: true })),
+  removeFile: (path) => guard('remove', path, () => rm(path, { force: true })),
   removeEmptyDir: async (path) => {
     try {
       await rmdir(path);

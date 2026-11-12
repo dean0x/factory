@@ -1369,6 +1369,81 @@ describe('node deps: remove an empty folder', () => {
   });
 });
 
+describe('node deps: remove a file', () => {
+  it('removes a file', async () => {
+    const file = fresh('file.txt');
+    await writeFile(file, 'x', 'utf8');
+    expect((await deps.fs.removeFile(file)).ok).toBe(true);
+    expect(await deps.fs.stat(file)).toEqual({ ok: true, value: null });
+  });
+
+  it('removes a link and keeps the file that it points to', async () => {
+    const victim = fresh('victim.txt');
+    const link = fresh('link.txt');
+    await writeFile(victim, 'victim text', 'utf8');
+    await symlink(victim, link);
+    expect((await deps.fs.removeFile(link)).ok).toBe(true);
+    expect(await deps.fs.lstat(link)).toEqual({ ok: true, value: null });
+    expect(await readFile(victim, 'utf8')).toBe('victim text');
+  });
+
+  it('does not fail for a path that does not exist', async () => {
+    expect((await deps.fs.removeFile(fresh('none'))).ok).toBe(true);
+  });
+
+  it('keeps a folder and what it holds, and fails', async () => {
+    const folder = fresh('folder');
+    await deps.fs.mkdir(folder);
+    await writeFile(join(folder, 'other.txt'), 'x', 'utf8');
+    const result = await deps.fs.removeFile(folder);
+    expect(result.ok).toBe(false);
+    expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['other.txt'] });
+  });
+});
+
+describe('node deps: create one folder', () => {
+  it('creates the folder with the mode', async () => {
+    const folder = fresh('one');
+    expect((await deps.fs.mkdirOne(folder, 0o700)).ok).toBe(true);
+    expect((await stat(folder)).mode & 0o777).toBe(0o700);
+  });
+
+  it('makes no parent: a parent that is not there gives an error with the code, and nothing is made', async () => {
+    const parent = fresh('no-parent');
+    const result = await deps.fs.mkdirOne(join(parent, 'inner'));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('ENOENT');
+    expect(await deps.fs.stat(parent)).toEqual({ ok: true, value: null });
+  });
+
+  it('is no error for a folder that exists already, and keeps what it holds', async () => {
+    const folder = fresh('there');
+    await deps.fs.mkdir(folder);
+    await writeFile(join(folder, 'other.txt'), 'x', 'utf8');
+    expect((await deps.fs.mkdirOne(folder)).ok).toBe(true);
+    expect(await deps.fs.list(folder)).toEqual({ ok: true, value: ['other.txt'] });
+  });
+
+  it('fails for a file at the path', async () => {
+    const file = fresh('file.txt');
+    await writeFile(file, 'x', 'utf8');
+    const result = await deps.fs.mkdirOne(file);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('EEXIST');
+  });
+
+  it('fails for a link to a folder, and does not follow it', async () => {
+    const target = fresh('target');
+    const link = fresh('link');
+    await deps.fs.mkdir(target);
+    await symlink(target, link);
+    const result = await deps.fs.mkdirOne(link);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.message).toContain('EEXIST');
+    expect(await lstat(link).then((info) => info.isSymbolicLink())).toBe(true);
+  });
+});
+
 describe('node deps: fetch', () => {
   let server: Server;
   let base = '';

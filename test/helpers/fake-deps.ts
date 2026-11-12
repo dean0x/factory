@@ -321,6 +321,15 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         addDir(path);
         return ok(undefined);
       },
+      mkdirOne: async (path, mode) => {
+        if (!dirs.has(posix.dirname(path))) return enoent('create', path);
+        // A folder there is no error. A file and a link are, and a link is not followed.
+        if (Object.hasOwn(options.links ?? {}, path) || files.has(path)) return failure(`cannot create ${path}: EEXIST`);
+        if (dirs.has(path)) return ok(undefined);
+        dirs.add(path);
+        if (mode !== undefined) modes.set(path, mode);
+        return ok(undefined);
+      },
       list: async (path) => {
         if (!dirs.has(path)) return enoent('list', path);
         const names = new Set<string>();
@@ -358,6 +367,12 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
         const tree = treeKeys(path);
         for (const key of tree.files) files.delete(key);
         for (const key of tree.dirs) dirs.delete(key);
+        return ok(undefined);
+      },
+      removeFile: async (path) => {
+        // As the real call: a folder stays, with all it holds.
+        if (dirs.has(path)) return failure(`cannot remove ${path}: ERR_FS_EISDIR`);
+        files.delete(path);
         return ok(undefined);
       },
       removeEmptyDir: async (path) => {
