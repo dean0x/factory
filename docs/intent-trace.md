@@ -27,7 +27,7 @@ How to read the table:
 | F-3d | One project or many: the same layout | §4.1, §4.3 | FAC-M2: `start` test with one `--add-dir` for each project | covered |
 | F-4a | Same layer, same behavior; the role comes from the layer | §5.2 | FAC-M2: role template tests; `node add-child` exits 1 for another layer | covered |
 | F-4b | The pyramid can grow; a new top layer changes nothing below | §5.2, §5.7 | FAC-M8: growth test (hashes of the nodes below stay the same) and the layer-3 rollup test | covered |
-| F-5 | macOS and Linux only | §4.7 | FAC-M2: fake `win32` refusal test. FAC-M4: `machine` fixtures for both systems. B-208: `lock run` has no platform branch and its tests run on both systems. CI runs on Ubuntu and macOS | covered |
+| F-5 | macOS and Linux only | §4.7 | FAC-M2: fake `win32` refusal test. FAC-M4: `machine` fixtures for both systems. Heavy-test lock: `lock run` has no platform branch and its tests run on both systems. CI runs on Ubuntu and macOS | covered |
 | F-6a | Approved and assigned work merges when the gates pass, with no ask for each PR | §6, §6.1 | FAC-M5: `pr merge` tests, one for each proof, for both kinds of assignment, and the refusals; template test: the coordinator role text and the fixed rules follow the approval setting | covered |
 | F-6b | Does "a-z" include releases? | §6.2, §9 | FAC-M5b (moved from FAC-M5: D-133 A): the `approval.release` config test and the no-publish test. D-57 is answered: releases wait for the owner | covered |
 | F-6c | The owner chooses the merge rule | §4.4, §6 | FAC-M5: `pr merge` tests for `owner` and `delegated` | covered |
@@ -115,7 +115,7 @@ How to read the table:
 | Gap 11 | Nothing publishes without a protected environment and a decision | §4.7 | FAC-M10: the four release scripts and the install tests | covered |
 | Gap 12 | Subswitch has real preset values and a criterion | §4.6, §2.2 | FAC-M6: stub server tests. FAC-M7: `scripts/subswitch-run.sh` | covered |
 | Gap 13 | The growth of the pyramid is tested | §5.2 | FAC-M8: growth test and layer-3 rollup | covered |
-| Gap 14 | Each command has a milestone; the Linux parts are tested | §4.2, §4.7 | FAC-M2: the docs check compares the §4.2 commands with the command map. FAC-M4: `machine` fixtures. B-208: `lock run` tests. FAC-M5: the report core | covered |
+| Gap 14 | Each command has a milestone; the Linux parts are tested | §4.2, §4.7 | FAC-M2: the docs check compares the §4.2 commands with the command map. FAC-M4: `machine` fixtures. Heavy-test lock: `lock run` tests. FAC-M5: the report core | covered |
 | Gap 15 | The D-51 A review has an owner | §9 | FAC-M2: `scripts/check-review-scope.sh` | covered |
 | Gap 16 | The percent rule for context is checked | §4.6 | FAC-M4: `worker list` marks `PREPARE` and `MAX` at 29, 30, 40 and 41 percent | covered |
 | Gap 17 | The accepted firstmate ideas have a place | §4.8 | FAC-M3 (idea 8), FAC-M5 and FAC-M8 (idea 5), FAC-M8 (ideas 3 and 4) | covered |

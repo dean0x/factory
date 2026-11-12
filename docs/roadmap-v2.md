@@ -61,7 +61,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `item list --follow` (the board pane of the live board, with the estimate mark) | FAC-M5b |
 | `worker mark`, `worker list --follow` (the columns of the live board) | FAC-M5b |
 | `check`, `pr`, `issues`, `copies` (list, status) | FAC-M5 |
-| `lock` (run) | B-208 (from FAC-M5) |
+| `lock` (run) | Heavy-test lock (from FAC-M5) |
 | `state` (guard) | FAC-M5 |
 | `release` (check, verify, scope), `copies` (sync, clean) | FAC-M5b |
 | `status` (the digest for the owner), `report` (the digest of one node, with a row for each direct child) | B-207 (the core); the events and `--since` stay in FAC-M5 |
@@ -181,7 +181,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 1. **Local board (F-2).** The `local` connector (files in `.factory/`; also the test double of later connectors), on the operations that FAC-M11 makes the one connector contract (design §4.10). The commands `item`, `request`, `decide <D-n> <option>` (for `local`; FAC-M3 adds `github`) and `queue`. The decision log and the decision profile tools. The board commit helper and the delete-guard hooks. Every write of a board file goes through the board commit helper.
 2. **Check (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `pr watch`, `issues audit`. The dismiss idle window (M5-2): `dismiss --idle` reads the board again just before each stop, and not once before all stops. M5-1b reads the board once to list the idle workers and once more after the pick, so a worker can get an item after the second read and before its stop. M5-1b states this as a limit.
 3. **`factory copies list|status` (D-55).**
-4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. B-207 builds the report core without the events. The events stay in FAC-M5. B-207 also gives the rows for the direct children. The rest of the rollup stays in FAC-M8. B-208 builds `lock run`, so it is no part of this item. The view slot shows `factory item list`.
+4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. B-207 builds the report core without the events. The events stay in FAC-M5. B-207 also gives the rows for the direct children. The rest of the rollup stays in FAC-M8. `lock run` is no part of this item: the section "Heavy-test lock" holds it. The view slot shows `factory item list`.
 5. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
 6. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
 7. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
@@ -517,9 +517,9 @@ There is one checkbox for each of the eight points of Dean's request, in the sam
   - A project entry can hold a clone URL, so one repo list can set up the factory on a second machine (as in mars, D-60). Config test: the entry accepts a URL with no user name and no password.
   - No local machine path in the docs (docs check 8).
 
-## Heavy-test lock (B-208)
+## Heavy-test lock
 
-`factory lock run` moved out of FAC-M5. B-208 builds it in one PR and has no milestone of its own. The Command map names it (design §4.7).
+`factory lock run` moved out of FAC-M5. One PR builds it, and it has no milestone of its own. The Command map names it (design §4.7).
 
 - [ ] `lock run` tests: the token lock sits in the per-user state folder, and its liveness rule uses the pid and the start time of the holder. A second run waits and stops at its bound with exit 3. The exit code of the inner command passes through. A link at the lock path is refused with exit 4.
 
