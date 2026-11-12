@@ -47,8 +47,8 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `init`, `start`, `doctor`, `upgrade`, `help` (with `help words`) | FAC-M2 |
 | `init --tracker --items --decisions --state-from`; `upgrade` rule for a dirty state repo | FAC-M3 |
 | `node children`, `node add-child`, `node remove-child` | FAC-M2 |
-| `node send` | B-207 (from FAC-M8) |
-| `node tree` | B-207 (from FAC-M8) |
+| `node send` | the report core work (from FAC-M8) |
+| `node tree` | the report core work (from FAC-M8) |
 | `machine`, `layout`, `self`, `hook` | FAC-M4 |
 | `shutdown`, `restart`, `reboot`, `status` (the worker states, the work item, the unused state), `dismiss` (with `--idle`; FAC-M5b names it `--unused`) | FAC-M4 |
 | `worker` (new, list, reset, stop, resume, summon, watch) | FAC-M4 |
@@ -64,9 +64,9 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 | `lock` (run) | Heavy-test lock (from FAC-M5) |
 | `state` (guard) | FAC-M5 |
 | `release` (check, verify, scope), `copies` (sync, clean) | FAC-M5b |
-| `status` (the digest for the owner), `report` (the digest of one node, with a row for each direct child) | B-207 (the core); the events and `--since` stay in FAC-M5 |
+| `status` (the digest for the owner), `report` (the digest of one node, with a row for each direct child) | the report core work (the core); the events and `--since` stay in FAC-M5 |
 | `status --usage` | FAC-M5b |
-| `report` (the rollup over children) | B-207 (the rows for the children); the inherit list, the decision relay and the `director` template stay in FAC-M8 |
+| `report` (the rollup over children) | the report core work (the rows for the children); the inherit list, the decision relay and the `director` template stay in FAC-M8 |
 | `recipe` (show, variant), `project` (add, remove, list) | FAC-M6 |
 | `adopt` | FAC-M7 |
 | `plugin` (test) | FAC-M11 |
@@ -181,7 +181,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
 1. **Local board (F-2).** The `local` connector (files in `.factory/`; also the test double of later connectors), on the operations that FAC-M11 makes the one connector contract (design §4.10). The commands `item`, `request`, `decide <D-n> <option>` (for `local`; FAC-M3 adds `github`) and `queue`. The decision log and the decision profile tools. The board commit helper and the delete-guard hooks. Every write of a board file goes through the board commit helper.
 2. **Check (F-6).** `check`, `pr merge` (with both modes of the approval point `merge` and the proofs of design §6.1), `pr watch`, `issues audit`. The dismiss idle window (M5-2): `dismiss --idle` reads the board again just before each stop, and not once before all stops. M5-1b reads the board once to list the idle workers and once more after the pick, so a worker can get an item after the second read and before its stop. M5-1b states this as a limit.
 3. **`factory copies list|status` (D-55).**
-4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. B-207 builds the report core without the events. The events stay in FAC-M5. B-207 also gives the rows for the direct children. The rest of the rollup stays in FAC-M8. `lock run` is no part of this item: the section "Heavy-test lock" holds it. The view slot shows `factory item list`.
+4. **Report core.** `factory report` and `factory status` for one node, with no children: worker states, board counts, the items in progress, the requests and the events that scripts write at merge and decision. The release event belongs to FAC-M5b. This item builds the report core without the events. The events stay in FAC-M5. This item also gives the rows for the direct children. The rest of the rollup stays in FAC-M8. `lock run` is no part of this item: the section "Heavy-test lock" holds it. The view slot shows `factory item list`.
 5. **Proxy host warning.** `doctor` warns when the proxy host is not loopback, because the proxy host receives the API traffic of the node.
 6. **Delegation control outside factory (D-10 A).** The session settings that factory renders hold deny rules for the record commands and for the store path of the approval records.
 7. **Typed owner input and limit recovery (moved from FAC-M4).** `worker relay` and `worker recover`.
@@ -226,7 +226,7 @@ Each command of design §4.2 has one milestone. A command with two milestones na
   - With any account setup, a board event is never a proof: an owner comment `approve`, an assignee change, a `worker:<id>` label and a review are each refused, and the message says that a board event is no proof. A decision from `factory decide` on a fake terminal window with no `FACTORY_SESSION` is accepted, and `pr merge` merges.
 - [ ] `copies list` and `copies status` give the right rows and counts on fixture repos with linked worktrees: clean, dirty, unpushed, branch not on the remote. They ask git, never a `.git` folder test.
 - [ ] A dirty, diverged or off-default work copy shows `STUCK:`, and no command changes it (test).
-- [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`. B-207 (PR B1) will meet the keys test and the static test. The `--since` test and the two event tests stay open.
+- [ ] Report tests: `report --json` has the keys of design §5.4 for a node with fixture workers and no children. `--since` returns only newer events. `pr merge` and `decide` each add one event to `.factory/outbox/`. A static test shows that `status` calls the same builder as `report`. The report core work (PR B1) will meet the keys test and the static test. The `--since` test and the two event tests stay open.
 - [ ] A tmux test: the view slot pane shows the item titles of a fixture `local` board.
 - [ ] Template test: the coordinator role text and the fixed rules follow the approval setting. With `merge: owner`, the text says that every merge waits for the owner. With `merge: delegated`, it names the proofs of design §6.1 and does not say that every merge waits.
 - [ ] Unit test: `doctor` warns, with the fix, when the host of a configured proxy is not loopback (`127.0.0.1`, `::1` or `localhost`). It gives no such warning for a loopback host.
