@@ -245,7 +245,8 @@ const dropStaleLock = async (deps: Deps, lockPath: string, policy: LockPolicy, l
 
 /**
  * Take the lock file at the path. The call tries `policy.attempts` times and waits `policy.waitMs` between two tries, so
- * the wait has a fixed bound. A stale lock is taken over, and the new lock file holds the token of this call. A lock path that
+ * the wait has a fixed bound. A stale lock is taken over in the same try that removes it, and the new lock file holds the token of
+ * this call. A lock path that
  * is a link ends the call at once with `link`, and the link is not followed. When the lock is taken, the caller must free it with
  * the token. The error is the reason that a call of the file system failed, or that there is no random text for the token: the
  * call takes no lock without a token. The call removes only files: a folder at the lock path stays, and when it is stale, the
@@ -266,8 +267,9 @@ export const takeLock = async (
   if (!random.ok) return err(random.error.message);
   const token = (rule.value === null ? [deps.pid, random.value] : [deps.pid, rule.value.input.ownStartMs, random.value]).join('-');
   const lockEnded = lockEndedOf(deps, lockPath, policy, rule.value);
+  const create = () => deps.fs.writeTextExclusive(lockPath, lockText(token), policy.mode);
   for (let attempt = 1; attempt <= policy.attempts; attempt += 1) {
-    const created = await deps.fs.writeTextExclusive(lockPath, lockText(token), policy.mode);
+    const created = await create();
     if (!created.ok) return err(created.error.message);
     if (created.value) return ok({ kind: 'taken', token });
     const kind = await deps.fs.lstat(lockPath);
@@ -275,7 +277,14 @@ export const takeLock = async (
     if (kind.value === 'link') return ok({ kind: 'link' });
     const dropped = await dropStaleLock(deps, lockPath, policy, lockEnded);
     if (!dropped.ok) return dropped;
-    if (!dropped.value && attempt < policy.attempts) await deps.sleep(policy.waitMs);
+    if (dropped.value) {
+      // The lock is gone: make it in this try, so a stale lock does not cost a wait. One more create, never a loop.
+      const again = await create();
+      if (!again.ok) return err(again.error.message);
+      if (again.value) return ok({ kind: 'taken', token });
+    } else if (attempt < policy.attempts) {
+      await deps.sleep(policy.waitMs);
+    }
   }
   return ok({ kind: 'held' });
 };

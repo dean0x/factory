@@ -194,6 +194,44 @@ describe('lock file: the liveness of the holder', () => {
     expect(deps.terminated).toEqual([]);
   });
 
+  it('takes a stale lock in the same try: one attempt is enough, and no wait comes before the take', async () => {
+    const deps = holderLockedFake();
+    const once: LockPolicy = { ...LIVE, attempts: 1 };
+    const result = await takeLive(withRunning(deps, (pid) => ok(pid !== HOLDER_PID)), liveInput(), once);
+    expect(result).toMatchObject({ ok: true, value: { kind: 'taken' } });
+    expect(deps.files.get(LOCK_PATH)).toMatch(new RegExp(`^${OWN_PID}-${OWN_START}-`));
+    expect(deps.files.has(CLAIM_PATH)).toBe(false);
+    expect(deps.sleeps).toEqual([]);
+  });
+
+  it('takes a lock that is stale by age in the same try, for a policy with no liveness', async () => {
+    const deps = holderLockedFake();
+    deps.advance(POLICY.staleMs + 1);
+    const result = await takeLock(deps, LOCK_PATH, { ...POLICY, attempts: 1 });
+    expect(result).toMatchObject({ ok: true, value: { kind: 'taken' } });
+    expect(deps.sleeps).toEqual([]);
+  });
+
+  it('ends the try as held when another waiter makes the lock between the removal and the second create', async () => {
+    const deps = holderLockedFake();
+    const racing = withRunning(deps, (pid) => ok(pid !== HOLDER_PID));
+    const remove = deps.fs.removeFile;
+    const taker: Deps = {
+      ...racing,
+      fs: {
+        ...racing.fs,
+        removeFile: async (path) => {
+          const removed = await remove(path);
+          if (path === LOCK_PATH) deps.seed(LOCK_PATH, holderText(OTHER_PID, HOLDER_START));
+          return removed;
+        },
+      },
+    };
+    const result = await takeLive(taker, liveInput(), { ...LIVE, attempts: 1 });
+    expect(result).toEqual({ ok: true, value: { kind: 'held' } });
+    expect(deps.files.get(LOCK_PATH)).toBe(holderText(OTHER_PID, HOLDER_START));
+  });
+
   it.each([
     ['later by the tolerance', 3_000, 'held'],
     ['earlier by the tolerance', -3_000, 'held'],
