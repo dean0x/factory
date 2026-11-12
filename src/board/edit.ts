@@ -15,6 +15,7 @@ import {
   optionKeys,
   places,
   queueLimits,
+  requestDeciders,
   requestWords,
   trackLimits,
   waitingKeys,
@@ -32,6 +33,8 @@ import type {
   QueueRowInput,
   QueueRowSet,
   RequestClosed,
+  RequestDecider,
+  RequestSettlement,
   TrackAddInput,
 } from './contract.js';
 import { declaredFields, itemTarget, resolveFields, rowTarget, type FieldInput } from './fields.js';
@@ -427,23 +430,54 @@ export const settleRequestIn = (
   log: { ...log.top, [decisionLogKeys.rows]: [...listAt(log.top, decisionLogKeys.rows), row] },
 });
 
+declare const checkedSettlementMark: unique symbol;
+
+/** A settlement that `checkSettlement` made: its decider is a value of `requestDeciders` and its decision is one clean line. */
+export type CheckedSettlement = RequestSettlement & { readonly [checkedSettlementMark]: true };
+
+const DECIDERS: readonly string[] = Object.values(requestDeciders);
+
+/** True for a value that is a decider of `requestDeciders`. Any other value is not a decider. */
+export const isDecider = (value: unknown): value is RequestDecider => typeof value === 'string' && DECIDERS.includes(value);
+
+/**
+ * The settlement of a close, checked before the lock: the decider is a value of `requestDeciders`, so the owner is never one, and the
+ * decision text is one line of at most `boardTextLimits.maxTextChars`. A fault is a usage error (exit 2). This is the only function
+ * that makes a `CheckedSettlement`, so `closeRequestIn` takes no settlement that skipped the check.
+ */
+export const checkSettlement = (settlement: RequestSettlement | undefined): CliResult<CheckedSettlement | undefined> => {
+  if (settlement === undefined) return ok(undefined);
+  if (!isDecider(settlement.decider)) return usageError(`the decider must be ${DECIDERS.join(' or ')}`);
+  const decision = lineOf(decisionLogKeys.decision, settlement.decision, boardTextLimits.maxTextChars);
+  return decision.ok ? ok({ decider: settlement.decider, decision: decision.value } as CheckedSettlement) : decision;
+};
+
 /**
  * Take a request off the waiting file and add a row for it to the decision log, so the number of the request stays used. The row
- * holds the id and the title in its `item` text, the closed text and the date. It holds no key that names who answered, so no reader
- * counts it as a decision. A request that is not in the waiting file is a usage error (exit 2). A log that names the id already is
- * a failure (exit 1), because the log would name the id twice. Every other entry of both files stays as it is.
+ * holds the id and the title in its `item` text, the decision text and the date. With a settlement, the decision text is the text of
+ * the settlement and the row names its decider; without one, the text says that the request closed with no answer. The row never holds
+ * the owner key `by`, so no reader counts it as an owner answer. A request that is not in the waiting file is a usage error (exit 2).
+ * A log that names the id already is a failure (exit 1), because the log would name the id twice. Every other entry of both files
+ * stays as it is.
  */
-export const closeRequestIn = (waiting: WaitingDoc, log: DecisionLogDoc, id: string, date: string): CliResult<RequestCloseEdit> => {
+export const closeRequestIn = (
+  waiting: WaitingDoc,
+  log: DecisionLogDoc,
+  id: string,
+  date: string,
+  settlement?: CheckedSettlement,
+): CliResult<RequestCloseEdit> => {
   const found = waiting.items.find((entry) => entry.id === id);
   if (found === undefined) return usageError(`${files.waiting} has no ${requestWords.request} ${shown(id)}`);
   if (log.rows.some((row) => row.id === id)) return failure(`${files.decisionLog}: the id ${id} is used already`);
   const title = requestTitleOf(found);
   const row = {
     [decisionLogKeys.item]: title === null ? id : `${id}: ${title.trim()}`,
-    [decisionLogKeys.decision]: requestWords.closedDecision,
+    [decisionLogKeys.decision]: settlement?.decision ?? requestWords.closedDecision,
     [decisionLogKeys.date]: date,
+    ...(settlement === undefined ? {} : { [decisionLogKeys.decider]: settlement.decider }),
   };
-  return ok({ ...settleRequestIn(waiting, log, id, row), closed: { id, title } });
+  return ok({ ...settleRequestIn(waiting, log, id, row), closed: { id, title, decider: settlement?.decider ?? null } });
 };
 
 /** True when the stored value is a list that holds exactly these ids, in this order. */

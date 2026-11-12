@@ -13,6 +13,7 @@ import {
   flagText,
   messageHeader,
   program,
+  requestDeciders,
   selfCommands,
   templateValues,
   values,
@@ -580,16 +581,35 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
   });
 
   it('sends one SendMessage that names the copied file after a worker starts with an assignment', () => {
-    const create = `${workerCommand(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`;
+    const create = `${workerCommand(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE ${flagText(flags.yes)}`;
     expect(coordinatorOf('acme')).toContain(`After \`${create}\`, send one \`SendMessage\` that names the copied file.`);
   });
 
-  it('runs the watch as a background task, and runs it again without a worker whose cause stays', () => {
+  it('names the yes flag of worker new as the consent of a new work copy with no settings file, and the owner step for the other case', () => {
+    expect(coordinatorOf('acme')).toContain(
+      `In this session, \`${flagText(flags.yes)}\` is the consent to the hook settings of a new work copy. It counts only when the work copy has no settings file. Else the command stops, and the owner runs it in a terminal window.`,
+    );
+  });
+
+  it('tells the coordinator to tell the owner at once which pane waits when the output of worker new names a trust question', () => {
+    expect(coordinatorOf('acme')).toContain(
+      'If the output of that command names a trust question, tell the owner at once which pane waits.',
+    );
+  });
+
+  it('runs the watch as a background task, waits for a blocked worker with --ready, and runs the watch again after each end', () => {
     const text = coordinatorOf('acme');
     expect(text).toContain(`Run \`${watch}\` as a background task.`);
     expect(text).toContain(
-      `When the watch reports a worker, deal with the report. If the cause stays, for example a dialog that waits for the owner, run the watch again with the ids of the other workers only: \`${watch} <id>...\`.`,
+      `When the watch reports a worker, deal with the report. If a worker waits for the owner, for example at a dialog, ask the owner. Never answer it yourself. Then run \`${watch} ${flagText(flags.ready)} <id>\` in the background: it reports the worker when it is ready, and it watches the other workers as before.`,
     );
+    expect(text).toContain('The watch ends at its first report, or after its checks with no change. Then run it again.');
+  });
+
+  it('drops --ready after the ready report, and leaves out a worker whose other cause stays, so the watch does not end at once again', () => {
+    const text = coordinatorOf('acme');
+    expect(text).toContain(`After that report, run the watch with no \`${flagText(flags.ready)}\`.`);
+    expect(text).toContain(`If another cause stays, run the watch again with the ids of the other workers only: \`${watch} <id>...\`.`);
   });
 
   it('checks with ListAgents that a worker is idle before a reset', () => {
@@ -702,6 +722,30 @@ describe('the coordinator text and the profile README: decisions and the owner p
 
   it('M5-1b TP-163 says never to write a log row with the by key', () => {
     expect(decisionsPart()).toContain(`Never write a row with the key \`by\` in \`${decisionLog}\`.`);
+  });
+
+  it('M5-1b TP-163 closes a question that the coordinator or a delegate decided with request close and the made-by flag', () => {
+    expect(decisionsPart()).toContain(
+      'When you or a delegate decide a question that is not an approval point, close it with ' +
+        `\`${commandText(commandLines.requestClose)} <id> ${flagText(flags.madeBy)} coordinator|delegate ${flagText(flags.decision)} TEXT\`.`,
+    );
+  });
+
+  it('M5-1b TP-163 defines a delegate as another session that decides for the owner outside an approval point, with no owner authority', () => {
+    const { delegate } = requestDeciders;
+    expect(decisionsPart()).toContain(
+      `A ${delegate} is another session, for example an orchestrator, that decides for the owner outside an approval point. A ${delegate} has no owner authority.`,
+    );
+  });
+
+  it('M5-1b TP-163 says that each relay of a decision names who made it', () => {
+    expect(decisionsPart()).toContain('Each relay of a decision names who made it: the owner, the coordinator, or a delegate with no owner authority.');
+  });
+
+  it('M5-1b TP-163 tells a worker to name who made a decision, and that a decision of the coordinator is never one of the owner', () => {
+    const worker = layer1Blocks.find((template) => template.name === 'worker')?.body ?? '';
+    expect(worker).toContain('When a report or a public text gives a decision, name who made it: the owner, the coordinator, or a delegate.');
+    expect(worker).toContain('A decision of the coordinator or of a delegate is never a decision of the owner.');
   });
 
   it('M5-1b TP-163 README step 1 says that decide writes the record of an owner decision, and the coordinator writes one only for its own', () => {

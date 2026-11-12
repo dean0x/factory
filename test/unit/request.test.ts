@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeOf, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { CommandOutput } from '../../src/cli/output.js';
 import { runRequest, type RequestOptions } from '../../src/commands/request.js';
-import { commands, commandText, files as fileNames, program, requestCommands, requestWords } from '../../src/names.js';
+import { boardTextLimits, commands, commandText, files as fileNames, program, requestCommands, requestWords } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { boardNode, boardText } from '../helpers/board-node.js';
 import type { BoardRepo } from '../helpers/board-repo.js';
@@ -12,7 +12,16 @@ import { HOME } from '../helpers/guard-fixture.js';
 import { sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { plainText } from '../helpers/short-output.js';
 
-const BASE: RequestOptions = { home: HOME, words: [], title: undefined, question: undefined, options: [], recommend: undefined };
+const BASE: RequestOptions = {
+  home: HOME,
+  words: [],
+  title: undefined,
+  question: undefined,
+  options: [],
+  recommend: undefined,
+  decider: undefined,
+  decision: undefined,
+};
 
 const ADD: Partial<RequestOptions> = {
   words: ['add'],
@@ -233,6 +242,10 @@ describe('the words and the flags of request (TP-99)', () => {
     ['close with two ids', { words: ['close', 'D-1', 'D-2'] }, 'one argument'],
     ['close with the title flag', { words: ['close', 'D-1'], title: 'Other' }, '--title is not for'],
     ['close with the option flag', { words: ['close', 'D-1'], options: ['a=Plan'] }, '--option is not for'],
+    ['close with a decider and no decision', { words: ['close', 'D-1'], decider: 'coordinator' }, 'go together'],
+    ['close with a decision and no decider', { words: ['close', 'D-1'], decision: 'Yes' }, 'go together'],
+    ['add with the decider flag', { ...ADD, decider: 'coordinator' }, '--made-by is not for'],
+    ['list with the decision flag', { words: ['list'], decision: 'Yes' }, '--decision is not for'],
     ['list with an argument', { words: ['list', 'D-1'] }, 'takes no argument'],
     ['list with the question flag', { words: ['list'], question: 'Why?' }, '--question is not for'],
     ['list with the recommend flag', { words: ['list'], recommend: 'a' }, '--recommend is not for'],
@@ -338,7 +351,71 @@ describe('request close (TP-22, TP-99)', () => {
       action: 'close',
       id: 'D-1',
       title: 'Request D-1',
+      decider: null,
     });
+  });
+
+  it.each(['coordinator', 'delegate'])('closes a request with the decision of the %s: the row names the decider and has no owner key', async (decider) => {
+    const repo = await OPEN();
+    const lines = linesOf(await run(repo, { words: ['close', 'D-2'], decider, decision: 'Use plan A' }));
+    expect(lines).toEqual([`Closed D-2: Request D-2 (decided by the ${decider}, no owner authority)`]);
+    const row = logOf(repo).rows[0] ?? {};
+    expect(row).toEqual({ item: 'D-2: Request D-2', decision: 'Use plan A', date: '2030-01-02', decider });
+    expect(row).not.toHaveProperty('by');
+    expect(waitingOf(repo).items.map((item) => item['id'])).toEqual(['D-1']);
+    expect(repo.commits.map((commit) => commit.staged)).toEqual([[fileNames.waiting, fileNames.decisionLog]]);
+  });
+
+  it('prints the decider in the JSON document of a close with a decision', async () => {
+    const repo = await OPEN();
+    expect(valueOf(await run(repo, { words: ['close', 'D-1'], decider: 'coordinator', decision: 'Yes' })).json).toEqual({
+      schema: 'factory.request/v1',
+      action: 'close',
+      id: 'D-1',
+      title: 'Request D-1',
+      decider: 'coordinator',
+    });
+  });
+
+  it('refuses the owner as a decider with exit 2, names decide, and touches no file', async () => {
+    const repo = await OPEN();
+    const touched: string[] = [];
+    const watched = withFsWatch(repo.deps, (method, path) => touched.push(`${method} ${path}`));
+    const error = errorOf(await runRequest(watched, { ...BASE, words: ['close', 'D-1'], decider: 'owner', decision: 'Yes' }, recipes));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('coordinator or delegate');
+    expect(error.hint).toContain(commandText(commands.decide));
+    expect(touched).toEqual([]);
+  });
+
+  it('refuses a decision with a line break with exit 2, and changes no file', async () => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    const error = errorOf(await run(repo, { words: ['close', 'D-1'], decider: 'coordinator', decision: 'Yes\nand no' }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it.each([
+    ['an empty decision', ''],
+    ['a decision of more than the most characters', 'x'.repeat(boardTextLimits.maxTextChars + 1)],
+  ])('refuses %s with exit 2, and changes no file', async (_name, decision) => {
+    const repo = await OPEN();
+    const before = filesOf(repo);
+    const error = errorOf(await run(repo, { words: ['close', 'D-1'], decider: 'coordinator', decision }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(filesOf(repo)).toEqual(before);
+    expect(repo.commits).toEqual([]);
+  });
+
+  it('refuses a close with a decision for a request that the owner answered, as a close with no answer', async () => {
+    const repo = await nodeWithStore(storeText([storedRecord({ id: 'D-2' })]), { waiting: waitingText([entry('D-1'), entry('D-2')]) });
+    const before = filesOf(repo);
+    const error = errorOf(await run(repo, { words: ['close', 'D-2'], decider: 'delegate', decision: 'No' }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.hint).toContain(commandText(commands.decide));
+    expect(filesOf(repo)).toEqual(before);
   });
 
   const REFUSED: readonly (readonly [string, string, number])[] = [

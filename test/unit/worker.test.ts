@@ -431,7 +431,8 @@ describe('worker new: the work, in order (TP-5)', () => {
     const made = make();
     const output = await succeeded(made);
     expect(plainText(output)).toBe(
-      'Made the worker alpha in work-copies/web/alpha on the branch worker/alpha.\nIt runs in the pane %3 of the window workers.\n',
+      'Made the worker alpha in work-copies/web/alpha on the branch worker/alpha.\nIt runs in the pane %3 of the window workers.\n' +
+        'If Claude Code asks to trust the folder, the owner answers once in the pane %3. Then run "factory worker watch --ready alpha".\n',
     );
     expect(output.json).toEqual({
       schema: 'factory.worker-new/v1',
@@ -516,6 +517,7 @@ describe('worker new --assignment: the source check and the copy (TP-32, TP-33, 
     expect(plainText(withFile)).toBe(
       'Made the worker alpha in work-copies/web/alpha on the branch worker/alpha.\n' +
         'It runs in the pane %3 of the window workers.\n' +
+        'If Claude Code asks to trust the folder, the owner answers once in the pane %3. Then run "factory worker watch --ready alpha".\n' +
         'Copied the assignment to .factory/workers/alpha/inbox/assignment.md.\n',
     );
     expect(withFile.json).toMatchObject({ assignment: ASSIGNMENT });

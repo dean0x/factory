@@ -171,6 +171,9 @@ export const flags = {
   clear: 'clear',
   compact: 'compact',
   assignment: 'assignment',
+  ready: 'ready',
+  madeBy: 'made-by',
+  decision: 'decision',
   file: 'file',
   field: 'field',
   title: 'title',
@@ -568,9 +571,9 @@ export const waitingKeys = { intro: 'intro', groups: 'groups', items: 'items', i
 
 /**
  * The keys of the decision log: the list of rows, and the keys of a row. The `item` text of a row starts with the id of a decision.
- * A row that a close of a request writes holds `item`, `decision` and `date` only: it names no one who answered. A row that `decide`
- * writes holds `by` too, and `request`, the canonical text that the hash of the owner record covers. A row is a display copy: only
- * the owner record proves an answer.
+ * A row that a close of a request writes holds `item`, `decision` and `date`, and `decider` when the coordinator or a delegate made
+ * the decision. It never holds `by`, so it is never an owner answer. A row that `decide` writes holds `by` too, and `request`, the
+ * canonical text that the hash of the owner record covers. A row is a display copy: only the owner record proves an answer.
  */
 export const decisionLogKeys = {
   rows: 'rows',
@@ -579,7 +582,16 @@ export const decisionLogKeys = {
   date: 'date',
   by: 'by',
   request: 'request',
+  /** Who decided a request that `request close --made-by` closed: a value of `requestDeciders`. Never the owner, never `by`. */
+  decider: 'decider',
 } as const;
+
+/**
+ * The deciders of a request that is not an approval point and that the owner did not answer: the coordinator itself, or a delegate,
+ * for example another session that decides for the owner with no owner authority. The owner answers with `decide`, so `owner` is
+ * not a value. A row with a decider is a display copy: it is never an owner answer.
+ */
+export const requestDeciders = { coordinator: roles.coordinator, delegate: 'delegate' } as const;
 
 /**
  * The forms of the ids. An item id is `B-` and a number. A waiting item and a decision have an id of `D-` and a number. A row of the
@@ -1208,6 +1220,7 @@ export const watchWords = {
     lineNotOwned: 'line not owned',
     waits: workerListWords.states.waits,
     stalled: 'stalled?',
+    readyAfterBlock: 'ready',
   },
 } as const;
 
@@ -1775,10 +1788,13 @@ export const templateValues: Readonly<Record<string, string>> = {
   trackCommand: commandText(commands.track),
   requestCommand: commandText(commands.request),
   decideCommand: commandText(commands.decide),
+  requestCloseCommand: `${commandText(commandLines.requestClose)} <id> ${flagText(flags.madeBy)} ${Object.values(requestDeciders).join('|')} ${flagText(flags.decision)} TEXT`,
   queueCommand: commandText(commands.queue),
   itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
   clearFlag: flagText(flags.clear),
   compactFlag: flagText(flags.compact),
+  yesFlag: flagText(flags.yes),
+  readyFlag: flagText(flags.ready),
   variantKey: keyPath(keys.root.recipe, keys.recipe.variant),
   onFailDirect: `${keys.proxy.onFail}: ${values.onFail[1]}`,
   proxyEnv: env.proxyBaseUrl,

@@ -14,7 +14,7 @@ Rules:
 | 1 | Merge check and merge | `factory check <pr>`, `factory pr merge <pr>` | FAC-M5 | 2 calls, 3–6k | 6000 | - |
 | 2 | Status round | `factory status` | FAC-M4 | 1–2 calls, 3–5k | 5000 | 42 |
 | 3 | Restart of all workers | `factory reboot` | FAC-M4 | 2 calls, 3–5k | 5000 | 37 |
-| 4 | Worker creation | `factory worker new` | FAC-M4 | 1 call, 1–2k | 2000 | 31 |
+| 4 | Worker creation | `factory worker new` | FAC-M4 | 1 call, 1–2k | 2000 | 62 |
 | 5 | Board and owner-item updates | `factory item …`, `factory request …`, `factory track …` | FAC-M5 | 1–2 calls, 1–3k | 3000 | - |
 | 6 | Reading the answers of the owner | `factory decide read` | FAC-M11 (`local`, `artifact`), FAC-M3 (`github`) | 1 call, <1k | 1000 | - |
 | 7 | Worker session reset, then a new assignment | `factory worker reset` | FAC-M4 | 1 call, 1k | 1000 | 74 |
