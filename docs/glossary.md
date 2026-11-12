@@ -28,6 +28,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **approval point**: An approval point is a step of the work that needs an approval. The owner sets the mode of each point.
 - **delegated**: Delegated is a mode of an approval point: the coordinator approves for the owner. The other mode is owner.
 - **delegate**: A delegate is another session that decides for the owner outside an approval point, with no owner authority. It is not the mode delegated.
+- **relayed answer**: A relayed answer is an answer of the owner that the coordinator passes on. It is never proof of an answer of the owner.
 - **board**: A board is the system that holds the work items, the requests and the decisions. The config key is `tracker`.
 - **board connector** (was: adapter): A board connector links factory to a board. Local files, the review page and GitHub are connectors on one contract. A plugin adds more.
 - **plugin**: A plugin is an npm package that adds a part to factory, such as a board connector. The user installs it with npm.
@@ -63,6 +64,7 @@ The list `terms` in `src/names.ts` names the words of the program. Each line bel
 - **merge**: To merge is to add the change of a pull request to the main line of the project. The approval point `merge` guards it.
 - **merge order**: In the software recipe, the merge order is the queue of the pull requests that are READY, first item first.
 - **merge check**: The merge check reads a pull request and says READY or NOT READY, with reasons. It is `factory check <pr>`. Not built yet.
+- **merge record**: A merge record shows that the pull request of a work item is merged. `factory item record` writes it after a check on GitHub.
 - **release**: A release is a version of a project that you publish. The approval point `release` guards it.
 - **release check** (was: ship): The release check tests that a release is ready and works after it is out. It never publishes. Not built yet.
 - **release scope**: A release scope lists the items and the version that the owner approved for a release. A delegated release check needs one.
@@ -115,6 +117,7 @@ Text that a user reads uses the plain word of this table (decision D-11). Code i
 | accept prompt | (not in user text) | - | the prompt asks "Accept these files?" and lists them |
 | delegated | stays | - | glossary entry: the coordinator approves for the owner |
 | delegate | stays | - | glossary entry: another session that makes a decision outside an approval point, with no owner authority; it differs from the mode delegated |
+| relayed answer | stays | - | glossary entry: an answer of the owner that the coordinator passes on with `request close --relayed`; the log row says that it has no owner proof |
 | approval point | stays | - | glossary entry: a step of the work that needs an approval |
 | proxy | stays | - | glossary entry: a server that passes the model calls on |
 | recipe | stays | - | glossary entry: the kind of work that a factory does |
