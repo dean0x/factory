@@ -298,6 +298,16 @@ describe('node deps: run with the terminal', { timeout: ATTACHED_TEST_TIMEOUT_MS
     expect(await deps.runAttached('factory-no-such-program', [])).toEqual({ kind: 'spawn', code: 'ENOENT' });
   });
 
+  it.each([
+    ['plain', undefined],
+    ['held', { held: true, maxMs: 5_000 }],
+  ] as const)('gives a spawn value, not a throw, for an empty program name (%s run)', async (_name, options) => {
+    const before = ['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) => process.listenerCount(signal));
+    const end = await deps.runAttached('', [], options);
+    expect(end).toMatchObject({ kind: 'spawn' });
+    expect(['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) => process.listenerCount(signal))).toEqual(before);
+  });
+
   it('gives the signal and its number when a signal ends the program', async () => {
     const result = await deps.runAttached('node', ['-e', 'process.kill(process.pid, "SIGTERM")']);
     expect(result).toEqual({ kind: 'signal', signal: 'SIGTERM', number: 15 });

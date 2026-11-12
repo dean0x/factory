@@ -507,12 +507,19 @@ const attachedEndOf = (code: number | null, signal: NodeJS.Signals | null): Atta
 const runAttachedProgram = (command: string, args: readonly string[], options: AttachedOptions = {}): Promise<AttachedEnd> =>
   new Promise((resolve) => {
     const held = options.held === true;
-    const child = spawn(command, [...args], {
-      stdio: held ? ['ignore', 'inherit', 'inherit'] : 'inherit',
-      detached: held,
-      windowsHide: true,
-      ...(options.extraEnv === undefined ? {} : { env: { ...process.env, ...options.extraEnv } }),
-    });
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(command, [...args], {
+        stdio: held ? ['ignore', 'inherit', 'inherit'] : 'inherit',
+        detached: held,
+        windowsHide: true,
+        ...(options.extraEnv === undefined ? {} : { env: { ...process.env, ...options.extraEnv } }),
+      });
+    } catch (error) {
+      // An argument that spawn refuses at once (an empty program name) throws before a child or a handler exists.
+      resolve({ kind: 'spawn', code: errorCode(error) });
+      return;
+    }
     const timers: { limit?: NodeJS.Timeout; kill?: NodeJS.Timeout; end?: NodeJS.Timeout } = {};
     let limited = false;
     let settled = false;
