@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
 import { effectiveModes, recordDelegation } from '../../src/core/owner-record.js';
 import {
+  boardKeys,
   commandLines,
   commandText,
   commands,
@@ -118,7 +119,7 @@ const summary = (blocks: readonly { name: string; version: number; target: strin
 describe('block templates', () => {
   it('gives layer 1 the coordinator, safety and worker blocks with their versions and targets', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
-      ['coordinator', 3, 'claudeFile'],
+      ['coordinator', 4, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
       ['worker', 2, 'workerFile'],
     ]);
@@ -146,7 +147,7 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 90],
+    ['coordinator', 40, 110],
     ['manager', 20, 50],
     ['safety', 12, 25],
     ['worker', 40, 59],
@@ -680,6 +681,103 @@ describe('the coordinator text: the board commands and the stages (M5-1b TP-50)'
     expect(boardPart()).toContain('The command refuses `merged` and `released`. Only the merge flow and the release flow set them.');
   });
 
+});
+
+describe('the coordinator text: the board records', () => {
+  const coordinator = (): string => layer1Blocks.find((template) => template.name === 'coordinator')?.body ?? '';
+  /** The part of the coordinator text under the heading `## <heading>`. */
+  const sectionOf = (heading: string): string =>
+    coordinator().split('\n## ').find((part) => part.startsWith(`${heading}\n`)) ?? '';
+  const record = `${commandText(commandLines.itemRecord)} <id> ${flagText(flags.ref)} N`;
+  const unassign = `${commandText(commandLines.itemUnassign)} <id>`;
+  const update = commandText(commandLines.itemUpdate);
+  const relay = `${commandText(commandLines.requestClose)} <id> ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT`;
+  const log =
+    `${commandText(commandLines.requestLog)} ${flagText(flags.madeBy)} coordinator|delegate ` +
+    `${flagText(flags.title)} TEXT ${flagText(flags.decision)} TEXT`;
+  const stateFile = (file: string): string => `../${dirs.state}/${file}`;
+
+  it('tells the coordinator to run the record command after the go of the owner and the merge of the PR', () => {
+    expect(sectionOf('Board')).toContain(
+      `After the owner gives the go and the PR is merged, run \`${record}\`. N is the number of the PR.`,
+    );
+  });
+
+  it('says that the record command reads the PR, records only a merged PR, and never merges', () => {
+    const board = sectionOf('Board');
+    expect(board).toContain('The command reads the PR on GitHub.');
+    expect(board).toContain('It records the merge only if the PR is merged into the default branch from the branch of the worker.');
+    expect(board).toContain('It never merges a PR.');
+  });
+
+  it('says what a record sets, and that a second run for the same PR changes nothing', () => {
+    expect(sectionOf('Board')).toContain(
+      'A record sets the stage `merged`, closes the item, and takes the item out of each queue. A second run for the same PR makes no change.',
+    );
+  });
+
+  it('names unassign as the way to free a worker from an item that waits, and says that a parked item is still open work', () => {
+    const board = sectionOf('Board');
+    expect(board).toContain(`To take a worker off an item, run \`${unassign}\` in this session.`);
+    expect(board).toContain('Use it to free a worker from an item that waits.');
+    expect(board).toContain('A parked item is still open work: it is not closed.');
+  });
+
+  it('says that the worker field changes only through unassign and that the update command refuses a change', () => {
+    const board = sectionOf('Board');
+    expect(board).toContain(`The worker field of an item that names a worker changes only through \`${unassign}\`.`);
+    expect(board).toContain(`\`${update}\` refuses a change of it, and the board stays as it was.`);
+  });
+
+  it('names the two reserved field names and says that the program writes them', () => {
+    expect(sectionOf('Board')).toContain(
+      `The names \`${boardKeys.mergedPrHead}\` and \`${boardKeys.unassignedFrom}\` are reserved. ${program} writes them. Never set them in a field.`,
+    );
+  });
+
+  it('passes on an answer of the owner with the relayed flag, never with made-by, and with no owner prefix in the text', () => {
+    const decisions = sectionOf('Decisions');
+    expect(decisions).toContain(`To pass on an answer that the owner gave to you, run \`${relay}\`.`);
+    expect(decisions).toContain(`Never add \`${flagText(flags.madeBy)}\` to it.`);
+    expect(decisions).toContain('Type the decision as the owner gave it, with no owner prefix.');
+  });
+
+  it('says that a relayed answer is never proof of an answer of the owner', () => {
+    expect(sectionOf('Decisions')).toContain('A relayed answer is never proof of an answer of the owner.');
+  });
+
+  it('logs a decision that no question asked for, for example a decision of a plan, with the log subcommand', () => {
+    const decisions = sectionOf('Decisions');
+    expect(decisions).toContain(
+      `To log a decision that no question asked for, for example a decision of a plan, run \`${log}\`.`,
+    );
+    expect(decisions).toContain('No question waits for the owner.');
+  });
+
+  it('keeps an approval point on the decide command only', () => {
+    expect(sectionOf('Decisions')).toContain(
+      `An approval point has one path only: \`${commandText(commands.decide)} <id> <option>\`, run by the owner. ` +
+        `Never use \`${flagText(flags.relayed)}\`, \`${flagText(flags.madeBy)}\` or the log for an approval point.`,
+    );
+  });
+
+  it('says that the decision log holds the decisions with their decider, and that only the owner store proves an answer', () => {
+    expect(sectionOf('State files')).toContain(
+      `\`${stateFile(files.decisionLog)}\`: the decisions, with the decider of each. Only the owner store proves an answer of the owner.`,
+    );
+  });
+
+  it('has a section that tells the coordinator to follow the new rules after an upgrade and to drop the workarounds that a rule replaces, by kind', () => {
+    const upgraded = sectionOf('After an upgrade');
+    expect(upgraded).toContain(
+      `\`${commandText(commands.upgrade)}\` can change the rules of this block. This session can resume an earlier conversation that holds the old rules.`,
+    );
+    expect(upgraded).toContain('After an upgrade, follow the rules of this block.');
+    expect(upgraded).toContain('Drop each workaround that a new rule replaces. Judge by kind, not by the exact command.');
+    expect(upgraded).toContain(
+      `A change of the worker field to pass the guard of a dismiss is a workaround. \`${update}\` now refuses it. Use \`${unassign}\`.`,
+    );
+  });
 });
 
 describe('the coordinator text and the profile README: decisions and the owner path (M5-1b TP-163)', () => {
