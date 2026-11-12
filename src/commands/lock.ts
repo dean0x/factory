@@ -107,12 +107,12 @@ const resultOfEnd = (end: AttachedEnd, command: string): CliResult<CommandOutput
   }
 };
 
-/** The line must be `run`, with no `--json`, and a command after the double dash. */
+/** The line must be `run`, with no `--json`, and a command after the double dash. A later empty word is an argument of the child. */
 const checkedLine = (options: LockRunOptions): CliResult<readonly string[]> => {
   const usage = (detail: string) => usageError(lockLine(lockWords.usage, detail), USAGE_REMEDY);
   if (options.json) return usage(`The flag ${flagText(flags.json)} is not allowed.`);
   if (options.words.length !== 1 || options.words[0] !== lockCommands.run) return usage(`The subcommand must be "${lockCommands.run}".`);
-  if (options.childArgv.length === 0) return usage('Give the command after a double dash.');
+  if ((options.childArgv[0] ?? '') === '') return usage('Give the command after a double dash.');
   return ok(options.childArgv);
 };
 
@@ -210,10 +210,21 @@ const inspectFile = async (deps: Deps, path: string): Promise<CliResult<Seen>> =
   return read.error.reason === 'io' ? ok('unreadable') : refused(read.error.message);
 };
 
-/** Take the priority file, with one try. A live priority run of another process holds it: this run ends with exit 3. */
-const takePriority = async (deps: Deps, run: Run): Promise<CliResult<string>> => {
+/** The warning for a priority file that no live run owns. */
+const ignoredNote = (path: string, state: 'ended' | 'invalid'): string =>
+  `The priority file ${path} ${state === 'ended' ? 'belongs to a run that ended' : 'is not valid'}. It is ignored.`;
+
+/**
+ * Take the priority file, with one try. A live priority run of another process holds it: this run ends with exit 3. A priority file of
+ * a run that ended is taken over, with one warning.
+ */
+const takePriority = async (deps: Deps, run: Run, warnOnce: (detail: string) => void): Promise<CliResult<string>> => {
   const seen = await inspectFile(deps, run.place.priorityPath);
   if (!seen.ok) return seen;
+  if (seen.value !== 'absent' && seen.value !== 'unreadable') {
+    const state = await holderStateOf(deps, seen.value.text, LIVENESS, run.liveness);
+    if (state === 'ended') warnOnce(ignoredNote(run.place.priorityPath, state));
+  }
   const taken = await takeLock(deps, run.place.priorityPath, ONE_TRY, run.liveness);
   if (!taken.ok) return notStarted(taken.error);
   switch (taken.value.kind) {
@@ -245,7 +256,7 @@ const priorityBlocks = async (deps: Deps, run: Run, warnOnce: (detail: string) =
   }
   const state = await holderStateOf(deps, seen.text, LIVENESS, run.liveness);
   if (state !== 'live') {
-    warnOnce(`The priority file ${path} ${state === 'ended' ? 'belongs to a run that ended' : 'is not valid'}. It is ignored.`);
+    warnOnce(ignoredNote(path, state));
     return ok(false);
   }
   if (deps.now().getTime() - seen.mtimeMs >= heavyLock.priorityMaxAgeMs) {
@@ -336,7 +347,7 @@ const waitForTurn = async (deps: Deps, run: Run, held: Held): Promise<CliResult<
   };
   try {
     if (run.priority) {
-      const priority = await takePriority(deps, run);
+      const priority = await takePriority(deps, run, warnOnce);
       if (!priority.ok) return priority;
       held.priorityToken = priority.value;
     }

@@ -80,6 +80,7 @@ describe('lock run: the command line (TP-1)', () => {
     ['no subcommand', ['lock']],
     ['no double dash', ['lock', 'run']],
     ['an empty command', ['lock', 'run', '--']],
+    ['an empty first word after the double dash', ['lock', 'run', '--', '']],
     ['the json flag', ['lock', 'run', '--json', '--', 'npm']],
     ['a subcommand that is not run', ['lock', 'x', '--', 'npm']],
     ['no subcommand before the double dash', ['lock', '--', 'npm']],
@@ -95,6 +96,14 @@ describe('lock run: the command line (TP-1)', () => {
     expect(sink.errors.join('').split('\n')[0]).toMatch(/^error: factory lock run: USAGE\. /);
     expect(deps.attached).toEqual([]);
     expect(deps.files.size).toBe(0);
+  });
+});
+
+describe('lock run: an empty word in the command', () => {
+  it('passes an empty word after the first one to the child as an argument', async () => {
+    const deps = fake();
+    expect((await lock(deps, ['run', '--', 'printf', '%s', ''])).code).toBe(0);
+    expect(deps.attached.map((call) => [call.command, ...call.args])).toEqual([['printf', '%s', '']]);
   });
 });
 
@@ -198,6 +207,16 @@ describe('lock run: the wait (TP-15, TP-16)', () => {
     expect(deps.calls.filter((call) => call.command === 'ps')).toHaveLength(2);
     expect(deps.terminated).toEqual([]);
     expect(handlerCount(deps)).toBe(0);
+  });
+
+  it('takes a stale lock in the first try: no WAITING line and no wait', async () => {
+    const base = withHeldLock();
+    const deps: FakeDeps = { ...base, isRunning: (pid) => (pid === HOLDER_PID ? ok(false) : base.isRunning(pid)) };
+    expect((await lock(deps)).code).toBe(0);
+    expect(base.attached).toHaveLength(1);
+    expect(base.warned).toEqual([]);
+    expect(base.sleeps).toEqual([]);
+    expect(base.files.size).toBe(0);
   });
 
   it.each([
@@ -445,6 +464,17 @@ describe('lock run: the priority file (TP-28, TP-29, TP-30, TP-31, TP-32)', () =
     expect(base.warned.filter((line) => line.includes('priority file'))).toHaveLength(1);
     expect(base.terminated).toEqual([]);
     expect(base.files.get(PRIORITY)).toBe(LIVE_PRIORITY);
+  });
+
+  it('runs a priority run over a priority file of a run that ended, with one warning and no wait (TP-30)', async () => {
+    const base = fake();
+    base.seed(PRIORITY, LIVE_PRIORITY);
+    const deps: FakeDeps = { ...base, isRunning: (pid) => (pid === OTHER_PID ? ok(false) : base.isRunning(pid)) };
+    expect((await lock(deps, ['run', '--priority', '--', 'npm'])).code).toBe(0);
+    expect(base.attached).toHaveLength(1);
+    expect(base.warned).toEqual([expect.stringContaining('priority file')]);
+    expect(base.sleeps).toEqual([]);
+    expect(base.files.size).toBe(0);
   });
 
   const seeded =
