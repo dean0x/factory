@@ -618,7 +618,7 @@ The wait and the hold:
 - `--priority` writes the priority file. A waiter takes no free lock while a live priority file of another run exists and is younger than 90 minutes. A second live priority run exits with code 3 and runs nothing.
 - A priority file that does not parse, is over 256 bytes or cannot be read counts as no priority, with one warning, and the run waits as before. So does a priority file of a process that ended, or one older than 90 minutes. factory never signals a pid from the priority file.
 - The command can hold the lock for 3 hours at most. Then factory sends TERM to its process group, and KILL after 10 seconds, and exits with code 3.
-- factory forwards INT, TERM and HUP to the process group of the command only. It frees the lock by its token on every end path.
+- factory forwards INT, TERM and HUP to the process group of the command only. It frees the lock by its token when the run ends. Two short windows have no stop handler (see the limits).
 - A `lock run` inside the command is nested when its `FACTORY_HEAVY_LOCK_TOKEN` equals the content of the lock file now. It runs its command at once, in the current process group. It takes no second lock, writes no priority file and sets no time limit.
 
 Exit codes of `lock run`:
@@ -646,7 +646,7 @@ Limits:
 - Two short windows have no stop handler: after the wait ends and before the command starts, and after the command ends and before the lock is freed. A stop signal in a window ends `factory lock run` at once and leaves the lock file, and the priority file of a `--priority` run. The next waiter removes them, because their holder has ended.
 - A command can print a line of the same form as the line of a factory outcome (`error: factory lock run: ...`) on the shared stderr.
 - An allow rule for `factory lock run` in a Claude settings file allows every command, because the command after the double dash can be a shell. `doctor` and `start` warn about such a rule.
-- The start time has 1 second resolution, with a tolerance of 3 seconds.
+- On macOS, the start time comes from `ps` and has 1 second resolution. On Linux, it comes from the process stat record, counts from boot and has 10 ms resolution. The tolerance is 3 seconds.
 - Two sessions with a different `XDG_STATE_HOME` use two lock files and can run at the same time.
 - The config key `heavy_test` stays in `factory.yaml`, and no command reads it.
 
