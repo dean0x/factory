@@ -337,7 +337,7 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         description:
           `With ${workerCommands.new}: copy the text of FILE into the inbox folder of the new ${roles.worker}, as its assignment. ` +
           `FILE is in ${assignmentSource.ordersShown} of the ${places.folder}, or in the git work tree of the working folder. ` +
-          `A relative path that starts with ${assignmentSource.ordersShown} names that folder of the ${places.folder}, from any folder. ` +
+          `A relative path that starts with ${assignmentSource.ordersShown} and has no ".." part names that folder of the ${places.folder}, from any folder. ` +
           `It is a plain text file of at most 1 MiB, and no other part of its path starts with a dot.`,
       },
       [flags.ready]: {
