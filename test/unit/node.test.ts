@@ -761,7 +761,7 @@ describe('node send', () => {
           deps.seed(`${CHILD}/factory.yaml`, renderConfig(configOf('other', 1)).shared);
           return made;
         },
-        remove: async () => failure('cannot remove: EIO'),
+        removeFile: async () => failure('cannot remove: EIO'),
       },
     };
     const error = await refused(racing);
