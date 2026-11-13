@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { exitCodeFor } from '../../src/cli/errors.js';
 import { recipeHostFor } from '../../src/cli/recipe-host.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
-import { commands } from '../../src/names.js';
+import { commands, files } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
@@ -38,9 +38,13 @@ describe('the host object of a recipe', () => {
       expect(located).toEqual({ ok: true, value: HOME });
     });
 
-    it('fails for a folder that holds no node', async () => {
+    it('exits 1 for a folder that holds no node, and names the command to run again', async () => {
       const located = await host.locateNode(nodeWith(), '/w/elsewhere', commands.version);
       expect(located.ok).toBe(false);
+      if (located.ok) return;
+      expect(exitCodeFor(located.error)).toBe(1);
+      expect(located.error.message).toContain('/w/elsewhere is not a folder');
+      expect(located.error.hint).toContain('"factory version" again');
     });
   });
 
@@ -83,10 +87,13 @@ describe('the host object of a recipe', () => {
       expect(project.error.hint).toContain('"factory version"');
     });
 
-    it('fails when the config of the node cannot be read', async () => {
+    it('exits 1 when the config of the node cannot be read, and names the file', async () => {
       const deps = createFakeDeps({ cwd: '/w', os: 'darwin', env: { PATH: '/bin', XDG_STATE_HOME: '/state' } });
       const project = await host.loadProject(deps, HOME, undefined, commands.version);
       expect(project.ok).toBe(false);
+      if (project.ok) return;
+      expect(exitCodeFor(project.error)).toBe(1);
+      expect(project.error.message).toBe(`${files.config} not found`);
     });
   });
 });

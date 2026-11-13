@@ -712,7 +712,7 @@ The command line:
 - `PR` is the number of the pull request: one to nine digits, with no leading zero. Any other value exits with code 2 before any call of `gh`.
 - `--head SHA` is the full commit id of the head to watch: 40 lowercase hex digits. Any other value exits with code 2. Without the flag, the watch pins the head of its first good read.
 - `--project ID` names the project. The config can list more than one project; then the flag is required, else the command exits with code 2. `--home DIR` names the factory folder, as for the other commands.
-- The repo comes from the URL of the project. Only repos on github.com are read. A project with no GitHub URL exits with code 1 before any call of `gh`.
+- The repo comes from the URL of the project. Only repos on github.com are read. A project with no GitHub URL exits with code 2 before any call of `gh`.
 
 The watch:
 
@@ -720,6 +720,7 @@ The watch:
 - The watch makes 60 reads at most, 60 seconds apart. After the last read it ends with `NO CHANGE`.
 - A read fails when `gh` exits with an error, does not answer in time, gives an answer of more than 262,144 characters or text that is not JSON, or gives a value that factory does not know. A failed read is never a pass. A good read resets the count of failures in a row.
 - The first good read pins the head, unless `--head` gives it, and the review decision. A later read ends the watch when the head, the state or the review decision differs.
+- With `--head`, GitHub can show the old head for some seconds after a push. Until the pinned head has shown once, a read of another head is not yet an end. The watch ignores it for 3 reads: it counts none of its checks, and it takes no state or review decision from it. The next read of another head ends the watch with `HEAD MOVED`. These reads are part of the 60 reads. After the pinned head has shown once, another head ends the watch at once.
 - A check run counts when it is completed. `SUCCESS`, `NEUTRAL` and `SKIPPED` count as passed. `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE` and `STALE` count as failed. Any other value is pending. A status counts as passed with `SUCCESS`, as failed with `FAILURE` or `ERROR`, and as pending in any other state.
 - INT or TERM ends the watch, and so does a change of the parent process. HUP does not, so a lost terminal does not end the watch.
 
@@ -731,17 +732,17 @@ Exit codes of `pr watch`:
 | --- | --- | --- |
 | 0 | `PASSED` | At least one check exists, and every check passed at the pinned head. |
 | 1 | `UNREADABLE` | 3 reads failed in a row, or `gh` is not on the path. |
-| 2 | none | The command line is wrong. The message is on stderr. |
+| 2 | none | The command line is wrong, or the project has no GitHub URL. The message is on stderr. |
 | 3 | `FAILED` | A check failed. The watch does not wait for the checks that still run. |
-| 3 | `HEAD MOVED` | The head of the pull request is not the pinned head. |
+| 3 | `HEAD MOVED` | The head of the pull request is not the pinned head. With `--head`, this holds only after the pinned head has shown once, or after 3 reads that show another head. |
 | 3 | `CLOSED` | The pull request is closed. |
 | 3 | `MERGED` | The pull request is merged. |
 | 3 | `REVIEW CHANGED` | The review decision is not the one of the first good read. |
-| 3 | `NO CHECKS` | The first 2 reads are good and show no check. No check on read 1 alone does not end the watch. |
+| 3 | `NO CHECKS` | The first 2 reads are good, show the pinned head and show no check. No check on read 1 alone does not end the watch. |
 | 3 | `NO CHANGE` | 60 reads ended with none of the words above. |
 | 3 | `STOPPED` | INT, TERM, or a change of the parent process. |
 
-A stop exits with code 3 here. `factory lock run` exits with 128 plus the signal number for a stop. A project with no GitHub URL exits with code 1. It prints the error on stderr, with no word on line 1.
+A stop exits with code 3 here. `factory lock run` exits with 128 plus the signal number for a stop. A project with no GitHub URL exits with code 2. It prints the error on stderr, with no word on line 1.
 
 Limits:
 

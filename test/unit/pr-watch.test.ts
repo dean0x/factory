@@ -7,7 +7,7 @@ import type { RunOutput } from '../../src/core/deps.js';
 import { literalsOf } from '../helpers/source-scan.js';
 import { commands, ghTimeoutMs, lockWords } from '../../src/names.js';
 import { prWatchPoll } from '../../src/recipes/software/words.js';
-import { createFakeDeps, exited, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, exited, missingProgram, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
@@ -67,6 +67,8 @@ type Script = (nth: number, deps: FakeDeps) => CliResult<RunOutput>;
 interface Options {
   readonly config?: ReturnType<typeof sampleConfig>;
   readonly ghOnPath?: boolean;
+  /** False: the folder holds a config file, but the factory list has no entry for it, so it is no node. */
+  readonly registered?: boolean;
   /** Replaces the wait of the fake deps. */
   readonly sleep?: (deps: FakeDeps, ms: number) => Promise<void>;
 }
@@ -95,7 +97,7 @@ const watch = async (args: readonly string[], script: Script, options: Options =
     run: (call) => (call.command === 'gh' ? script(deps.calls.filter((made) => made.command === 'gh').length, deps) : exited(1)),
   });
   seedConfig(deps, HOME, options.config ?? sampleConfig());
-  registerRoot(deps, HOME, NODE);
+  if (options.registered !== false) registerRoot(deps, HOME, NODE);
   if (options.ghOnPath !== false) deps.seed('/bin/gh', '');
   if (options.sleep !== undefined) {
     const replacement = options.sleep;
@@ -149,7 +151,7 @@ describe('pr watch: the input check before any gh call', () => {
     expect(result.gh).toEqual([]);
   });
 
-  it('exits 2 with no number, with a second number, and with an unknown subcommand', async () => {
+  it('exits 2 with no number and with a second number', async () => {
     for (const args of [[], ['12', '13']]) {
       const result = await watch(args, () => good());
       expect(result.code).toBe(2);
@@ -177,12 +179,20 @@ describe('pr watch: the project and the repo', () => {
     ['another host', () => 'https://gitlab.com/acme/web.git'],
     ['a path', () => '/home/someone/web'],
     ['no url', () => undefined],
-  ])('exits 1 with a remedy for a project with %s, and calls no gh', async (_name, url) => {
+  ])('exits 2 with a remedy for a project with %s, and calls no gh', async (_name, url) => {
     const result = await watch(['12'], () => good(), { config: projectsConfig(['web'], url) });
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(2);
     expect(result.gh).toEqual([]);
     expect(result.err).toContain('pr watch reads repos on github.com only');
     expect(result.err).toContain('"factory pr watch PR" again');
+  });
+
+  it('exits 4 with the refusal of the node lookup for a folder that holds no node, and calls no gh', async () => {
+    const result = await watch(['12'], () => good(), { registered: false });
+    expect(result.code).toBe(4);
+    expect(result.gh).toEqual([]);
+    expect(result.out).toBe('');
+    expect(result.err).toContain('does not count');
   });
 
   it('exits 1 at once with the word UNREADABLE when gh is not on PATH', async () => {
@@ -296,7 +306,7 @@ describe('pr watch: a read that does not pass the checks is a read failure and n
   });
 
   it('counts a time limit, a non-zero exit and a gh that cannot start as read failures', async () => {
-    for (const answer of [failure('timed out'), exited(1, JSON.stringify(snapshot()), HOSTILE), exited(4, '', `${HOSTILE}: run gh auth login`)]) {
+    for (const answer of [failure('timed out'), exited(1, JSON.stringify(snapshot()), HOSTILE), missingProgram('gh')]) {
       const result = await watch(['12'], () => answer);
       expect(result.code).toBe(1);
       expect(result.gh).toHaveLength(3);
@@ -315,6 +325,7 @@ describe('pr watch: a read that does not pass the checks is a read failure and n
     const result = await watch(['12'], steps(pending(), bad, bad, bad));
     expect(result.code).toBe(1);
     expect(verdictOf(result.lines)).toBe(`UNREADABLE 12 ${SHA}`);
+    expect(result.lines[1]).toContain('passed 1, failed 0, pending 1');
     expect(result.lines.join('\n')).toContain('Check that gh is installed and signed in to github.com, then run "factory pr watch PR" again.');
   });
 
@@ -328,6 +339,18 @@ describe('pr watch: a read that does not pass the checks is a read failure and n
     const result = await watch(['12'], steps(good({ statusCheckRollup: [checkRun(null, 'QUEUED')] }), good()));
     expect(result.code).toBe(0);
     expect(result.gh).toHaveLength(2);
+  });
+
+  it.each([
+    ['null', null],
+    ['an empty text', ''],
+  ])('keeps a completed check run with the conclusion %s pending, so it never passes', async (_name, conclusion) => {
+    const result = await watch(['12'], () => good({ statusCheckRollup: [passing, checkRun(conclusion)] }));
+    expect(result.code).toBe(3);
+    expect(verdictOf(result.lines)).toBe(`NO CHANGE 12 ${SHA}`);
+    expect(result.lines[1]).toContain('passed 1, failed 0, pending 1');
+    expect(result.out).not.toContain('PASSED');
+    expect(result.gh).toHaveLength(prWatchPoll.reads);
   });
 });
 
@@ -376,13 +399,63 @@ describe('pr watch: the verdicts', () => {
     expect(verdictOf(result.lines)).toBe(`HEAD MOVED 12 ${SHA}`);
   });
 
-  it('pins the head of the head flag, and exits 3 with HEAD MOVED at the first read when the PR has another head', async () => {
-    const same = await watch(['12', '--head', SHA], () => good());
-    expect(same.code).toBe(0);
-    const moved = await watch(['12', '--head', OTHER_SHA], () => good());
-    expect(moved.code).toBe(3);
-    expect(verdictOf(moved.lines)).toBe(`HEAD MOVED 12 ${OTHER_SHA}`);
-    expect(moved.gh).toHaveLength(1);
+  it('pins the head of the head flag, and passes when the PR has that head at the first read', async () => {
+    const result = await watch(['12', '--head', SHA], () => good());
+    expect(result.code).toBe(0);
+    expect(verdictOf(result.lines)).toBe(`PASSED 12 ${SHA}`);
+    expect(result.gh).toHaveLength(1);
+  });
+
+  describe('with the head flag, a head that shows late', () => {
+    const lagging = (overrides: Record<string, unknown> = {}): CliResult<RunOutput> => good({ headRefOid: OTHER_SHA, ...overrides });
+
+    it('waits for the pinned head when read 1 shows another head, and then gives the verdict at the pinned head', async () => {
+      const result = await watch(['12', '--head', SHA], steps(lagging(), good()));
+      expect(result.code).toBe(0);
+      expect(verdictOf(result.lines)).toBe(`PASSED 12 ${SHA}`);
+      expect(result.gh).toHaveLength(2);
+      expect(result.waits).toEqual([prWatchPoll.intervalMs]);
+      expect(result.lines[2]).toContain('Reads: 2 of 60');
+    });
+
+    it.each([
+      ['passed checks', [lagging({ statusCheckRollup: [passing] }), pending()]],
+      ['a failed check', [lagging({ statusCheckRollup: [checkRun('FAILURE')] })]],
+      ['no checks, twice', [lagging({ statusCheckRollup: [] }), lagging({ statusCheckRollup: [] })]],
+      ['a closed PR and another review decision', [lagging({ state: 'CLOSED', reviewDecision: 'APPROVED' })]],
+    ])('ignores a read of another head that shows %s, until the pinned head shows', async (_name, early) => {
+      const result = await watch(['12', '--head', SHA], steps(...early, good()));
+      expect(result.code).toBe(0);
+      expect(verdictOf(result.lines)).toBe(`PASSED 12 ${SHA}`);
+      expect(result.gh).toHaveLength(early.length + 1);
+    });
+
+    it('exits 3 with HEAD MOVED after the grace reads when every read shows another head, and shows the pinned head', async () => {
+      const result = await watch(['12', '--head', SHA], () => lagging());
+      expect(result.code).toBe(3);
+      expect(verdictOf(result.lines)).toBe(`HEAD MOVED 12 ${SHA}`);
+      expect(result.gh).toHaveLength(prWatchPoll.headLagReads + 1);
+      expect(result.waits).toEqual(Array.from({ length: prWatchPoll.headLagReads }, () => prWatchPoll.intervalMs));
+    });
+
+    it('exits 3 with HEAD MOVED at once when the pinned head showed once and a later read shows another head', async () => {
+      const result = await watch(['12', '--head', SHA], steps(pending(), lagging()));
+      expect(result.code).toBe(3);
+      expect(verdictOf(result.lines)).toBe(`HEAD MOVED 12 ${SHA}`);
+      expect(result.gh).toHaveLength(2);
+    });
+
+    it('gives no new grace to a head that moves after it showed late', async () => {
+      const result = await watch(['12', '--head', SHA], steps(lagging(), pending(), lagging()));
+      expect(verdictOf(result.lines)).toBe(`HEAD MOVED 12 ${SHA}`);
+      expect(result.gh).toHaveLength(3);
+    });
+
+    it('does not spend the grace on a read that fails', async () => {
+      const result = await watch(['12', '--head', SHA], steps(lagging(), exited(1), lagging(), exited(1), lagging(), good()));
+      expect(result.code).toBe(0);
+      expect(result.gh).toHaveLength(6);
+    });
   });
 
   it('pins the head of the first good read when the first read fails', async () => {
@@ -488,6 +561,7 @@ describe('pr watch: a stop', () => {
     expect(result.code).toBe(3);
     expect(verdictOf(result.lines)).toBe(`${lockWords.stopped} 12 ${SHA}`);
     expect(result.gh).toHaveLength(2);
+    expect(result.lines[2]).toContain('Reads: 2 of 60');
   });
 
   it('exits 3 with STOPPED when the parent process changes during a read', async () => {
@@ -498,6 +572,7 @@ describe('pr watch: a stop', () => {
     expect(result.code).toBe(3);
     expect(verdictOf(result.lines)).toBe(`STOPPED 12 ${SHA}`);
     expect(result.gh).toHaveLength(2);
+    expect(result.lines[2]).toContain('Reads: 2 of 60');
   });
 
   it('exits 3 with STOPPED when the parent process changes during a wait, and makes no read after it', async () => {
@@ -509,6 +584,7 @@ describe('pr watch: a stop', () => {
     expect(result.code).toBe(3);
     expect(verdictOf(result.lines)).toBe(`STOPPED 12 ${SHA}`);
     expect(result.gh).toHaveLength(1);
+    expect(result.lines[2]).toContain('Reads: 1 of 60');
   });
 
   it('ends a wait that does not end at a signal', async () => {
@@ -521,6 +597,7 @@ describe('pr watch: a stop', () => {
     expect(result.code).toBe(3);
     expect(verdictOf(result.lines)).toBe(`STOPPED 12 ${SHA}`);
     expect(result.gh).toHaveLength(1);
+    expect(result.lines[2]).toContain('Reads: 1 of 60');
   });
 
   it('does not end for HUP, so a lost terminal does not end the watch', async () => {

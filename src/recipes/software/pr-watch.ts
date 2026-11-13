@@ -183,6 +183,10 @@ interface Outcome {
  * The loop: at most `prWatchPoll.reads` reads, `intervalMs` apart. The first good read pins the head and the review decision. A read
  * failure counts toward `failuresInRow`, and a good read resets that count. A stop ends the loop at the next check, which comes
  * before each read and ends a wait at once.
+ *
+ * With a head flag, GitHub can show the old head for some seconds after a push. Until the pinned head has shown once, a read of
+ * another head is ignored for `headLagReads` reads: its checks, state and review decision count toward no verdict and set no
+ * baseline. The next such read ends the watch with HEAD MOVED. Once the pinned head has shown, another head ends the watch at once.
  */
 const loop = async (deps: Deps, request: WatchRequest, stop: StopWatch): Promise<Outcome> => {
   let head = request.head;
@@ -190,6 +194,8 @@ const loop = async (deps: Deps, request: WatchRequest, stop: StopWatch): Promise
   let counts: Counts | null = null;
   let failures = 0;
   let emptyReads = 0;
+  let pinnedHeadShown = false;
+  let lagReads = 0;
   const ended = (result: PrWatchResult, reads: number): Outcome => ({ result, head, counts, reads });
 
   for (let reads = 1; reads <= prWatchPoll.reads; reads += 1) {
@@ -203,6 +209,12 @@ const loop = async (deps: Deps, request: WatchRequest, stop: StopWatch): Promise
     }
     failures = 0;
     head ??= snapshot.headRefOid;
+    if (snapshot.headRefOid === head) {
+      pinnedHeadShown = true;
+    } else if (!pinnedHeadShown && lagReads < prWatchPoll.headLagReads) {
+      lagReads += 1;
+      continue;
+    }
     review ??= snapshot.reviewDecision;
     counts = countsOf(snapshot.statusCheckRollup ?? []);
     if (reads <= prWatchPoll.zeroChecksReads && totalOf(counts) === 0) emptyReads += 1;
@@ -334,8 +346,10 @@ const parseWatchArgs = (given: Given): CliResult<WatchArgs> => {
 };
 
 /**
- * `pr watch PR`: the order of the steps is fixed. The words of the command line (exit 2), the node and the project through the host
- * object (exit 2), the repo of the project (exit 1), gh on PATH (UNREADABLE, exit 1), then the watch. No gh call comes before the last step.
+ * `pr watch PR`: the order of the steps is fixed. The words of the command line (exit 2). The node through the host object (exit 4 for
+ * a config that the factory list does not count, exit 1 for a path that is not a folder). The project through the host object (exit 2
+ * for a project that is not named, not listed or missing, exit 1 for a config that cannot be read). The repo of the project: a project
+ * with no GitHub URL is a usage error (exit 2). Then gh on PATH (UNREADABLE, exit 1), then the watch. No gh call comes before the last step.
  */
 const runWatch = async (host: RecipeHost, deps: Deps, given: Given): Promise<CliResult<CommandOutput>> => {
   const args = parseWatchArgs(given);
@@ -346,7 +360,7 @@ const runWatch = async (host: RecipeHost, deps: Deps, given: Given): Promise<Cli
   const project = await host.loadProject(deps, home.value, args.value.projectId, commands.pr);
   if (!project.ok) return project;
   const repo = githubRepoOf(project.value.url ?? '', READER);
-  if (!repo.ok) return repo;
+  if (!repo.ok) return usageError(repo.error.message, repo.error.hint);
   if (!(await onPath(deps, toolNames.gh))) return ok(outputOf({ result: 'unreadable', head, counts: null, reads: 0 }, number));
   return ok(outputOf(await watchPr(deps, { repo: repo.value, number, head }), number));
 };

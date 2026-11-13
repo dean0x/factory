@@ -98,7 +98,9 @@ export const prWatchSchemaId = `${program}.pr-watch/v1`;
 /**
  * The bounds of `pr watch`. The watch makes at most `reads` reads, `intervalMs` apart. `failuresInRow` reads that fail, one after
  * the other, end it. `maxSnapshotChars` is the most chars of the answer of gh, and `maxChecks` is the most checks in it. Zero
- * checks in each of the first `zeroChecksReads` reads end the watch.
+ * checks in each of the first `zeroChecksReads` reads end the watch. With a head flag, GitHub can show the old head for some seconds
+ * after a push: `headLagReads` is the most reads that may show another head before the pinned head has shown once. The next read
+ * that shows another head ends the watch. These reads are part of the `reads` bound.
  */
 export const prWatchPoll = {
   reads: 60,
@@ -107,6 +109,7 @@ export const prWatchPoll = {
   maxSnapshotChars: 262_144,
   maxChecks: 500,
   zeroChecksReads: 2,
+  headLagReads: 3,
 } as const;
 
 /**
