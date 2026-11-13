@@ -47,10 +47,12 @@ const exists = (path: string): Promise<boolean> =>
   );
 
 const WAIT_STEP_MS = 25;
-/** The wait for one event of a signal test. On a loaded machine, the built binary and its shell can need more than 3 s to start. */
+/** The wait for the start of the owner command in a signal test. A loaded runner can stall the built binary and its shell for more than 15 s. */
+const SIGNAL_START_WAIT_MS = 60_000;
+/** The wait for the end of the command group after the signal. The binary is up then, so the stop needs little time. */
 const SIGNAL_WAIT_MS = 15_000;
-/** The time limit of a signal test: the two waits of the test, plus 15 s for the start of the binary and the end of the run. */
-const SIGNAL_TEST_TIMEOUT_MS = 2 * SIGNAL_WAIT_MS + 15_000;
+/** The time limit of a signal test: the two waits of the test, plus 15 s for the end of the run. */
+const SIGNAL_TEST_TIMEOUT_MS = SIGNAL_START_WAIT_MS + SIGNAL_WAIT_MS + 15_000;
 /** The wait after the end of a run for the write of a process that the stop did not reach: twice the 1 s that it needs. */
 const LATE_WRITE_WAIT_MS = 2_000;
 
@@ -397,7 +399,7 @@ describe('factory hook statusline (built binary)', () => {
       group = await waitFor(async () => {
         const text = await readFile(marker, 'utf8').catch(() => '');
         return Number(text.trim()) || undefined;
-      }, SIGNAL_WAIT_MS);
+      }, SIGNAL_START_WAIT_MS);
       child.kill(name);
       expect(await exited).toBe(0);
       await waitFor(async () => (groupExists(group) ? undefined : true), SIGNAL_WAIT_MS);
