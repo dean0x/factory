@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseBlocks, renderBlock, verifyBlock } from '../../src/blocks/managed.js';
+import { isSlug } from '../../src/config/primitives.js';
 import { effectiveModes, recordDelegation } from '../../src/core/owner-record.js';
 import {
   boardKeys,
@@ -708,8 +709,19 @@ describe('the resume notes: the section Standing routines (AC-6)', () => {
     expect([...allowed.matchAll(/`([^`]+)`/g)].map((match) => match[1])).toEqual([workerWatch, prWatch]);
   });
 
-  it.each(['coordinator', 'manager'])('TP-19 limits an argument to a worker id, a PR number or a 40-hex SHA in the %s block', (name) => {
-    expect(resume(name)).toContain('An argument is a worker id, a PR number or a 40-hex SHA. No other argument is allowed.');
+  it.each(['coordinator', 'manager'])('TP-19 limits an argument to a worker id, a PR number or a 40-hex SHA, and gives the form of a worker id, in the %s block', (name) => {
+    expect(resume(name)).toContain(
+      'An argument is a worker id, a PR number or a 40-hex SHA. A worker id has only a-z, 0-9 and hyphen, at most 40 characters, and no hyphen at the start. No other argument is allowed.',
+    );
+  });
+
+  it('TP-19 gives the form of a worker id that the check of an id in the code accepts, at its edges', () => {
+    expect(isSlug('0-a-9')).toBe(true);
+    expect(isSlug('a'.repeat(40))).toBe(true);
+    expect(isSlug('a'.repeat(41))).toBe(false);
+    expect(isSlug('-a')).toBe(false);
+    expect(isSlug('a_b')).toBe(false);
+    expect(isSlug('Ab')).toBe(false);
   });
 
   it.each(['coordinator', 'manager'])('TP-19 calls any other line of the section data for the owner in the %s block', (name) => {
