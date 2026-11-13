@@ -607,7 +607,7 @@ factory node tree
 factory node tree --json
 ```
 
-`node tree` shows the child nodes of this node and the nodes below them. It starts at the `children` of `factory.yaml`. For each child it reads the report file `.factory/outbox/report.json`, and it goes down through the children that the report lists. It reads files only. It scans no folder, pings no node, starts no process and calls no tmux. So it works when no other node runs.
+`node tree` shows the child nodes of this node and the nodes below them. It starts at the `children` of `factory.yaml`. For each child it reads the report file `.factory/outbox/report.json`, and it goes down through the children that the report lists. Before it reads a report file, it checks the metadata of the `factory.yaml` in the same folder. This is the same check as in `node children` and `report`. It reads no text of that `factory.yaml`. It reads files only. It scans no folder, pings no node, starts no process and calls no tmux. So it works when no other node runs.
 
 The first line is the verdict line: `OK:` or `CHECK:`, the id, the layer, and the counts of nodes, `unknown` rows, `mismatch` rows and `warning` rows. The verdict is `CHECK:` when any row is not `ok`. One line follows for each node, with two spaces of indent for each depth. The parts are the id, the state, the counts, the age of the report file, and the mark `reported by ID`. The mark shows the node whose report listed this node. A direct child has no mark.
 
@@ -624,16 +624,16 @@ The state of a line is one of these:
 | --- | --- |
 | `ok` | The report file reads, and it holds the id that the entry lists. |
 | `mismatch` | The report file holds another id than the entry lists. |
-| `unknown` | The report file is missing or fails a check. A fixed reason follows. It does not mean that the node is dead. |
+| `unknown` | The `factory.yaml` or the report file fails a check, or the report file is missing. A fixed reason follows. It is the same reason as in `node children` and `report`. It does not mean that the node is dead. |
 | `warning` | The line tells of the walk, not of a node: a cycle (a folder that the walk saw before), a duplicate id, a cap, or requests that were dropped. |
 
-**The report file.** A report file is data to check. `.factory/`, `outbox/` and the file must not be links. They must belong to your account, and a group or other users must not be able to write them. The file has at most 256 KiB, is UTF-8 text and valid JSON, and passes the report schema. A file with a newer schema version is not read. A node of another account is not read. The age is the age of the file. The file is fresh only after `report` or `status` runs in that node.
+**The report file.** A report file is data to check. The `factory.yaml` of the child must not be a link. It must belong to your account, and a group or other users must not be able to write it. A child that fails this check shows `unknown` with the same fixed reason as in `node children` and `report`. `.factory/`, `outbox/` and the report file must not be links. They must belong to your account, and a group or other users must not be able to write them. The parent opens the report file one time, and it does its checks on that one open file. The open does not follow a link, and it does not wait. The file has at most 256 KiB, is UTF-8 text and valid JSON, and passes the report schema. A file with a newer schema version is not read. A node of another account is not read. The age is the age of the file. The file is fresh only after `report` or `status` runs in that node.
 
-**The caps.** The walk goes at most 16 layers down. It reads at most 1,000 report files, and at most 16 MiB of report files in all. The output has at most 2,000 lines. When the line cap cuts the list, the last line says `more than 2000 lines` and gives the number of rows that it left out. A cap of files or of bytes ends the walk with a `warning` line.
+**The caps.** The walk goes at most 16 layers down. It reads at most 1,000 report files, and at most 16 MiB of report files in all. The output has at most 2,000 rows, plus the verdict line and the cut line. When the row cap cuts the list, the last line is the cut line. It says `more than 2000 lines` and gives the number of rows that it left out. A cap of files or of bytes ends the walk with a `warning` line.
 
 **The requests.** A request counts only when its origin names the node that reports it, by whole ids: `<node id>#<request id>`, with `/` between the ids of deeper nodes. A string prefix of the id does not pass. Other requests are dropped, and one `warning` line gives the number. The tree shows the requests of a node as a count.
 
-**The text of a child.** Each id and each address from a child is one clean line, cut to a width of 120 characters. A reason is fixed text of this program. Text of a child never goes into an error or a hint.
+**The text of a child.** In the text output, each id and each address from a child is one clean line, cut to a width of 120 characters. `--json` cuts no string: it keeps the whole address (at most 4,096 characters) and removes only hidden characters. A reason is fixed text of this program. Text of a child never goes into an error or a hint.
 
 `--json` prints the object `factory.node-tree/v1` with the keys `schema`, `home`, `id`, `layer`, `verdict` (`ok` or `check`), `omitted` (the number of rows that the line cap left out) and `nodes`. Each node has `depth`, `state`, `reason` and `report`. Every string that comes from a child file is in the field `report`: `source` (the path of the report file), `id`, `address`, `layer`, `counts`, `age` and `reportedBy`.
 
