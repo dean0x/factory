@@ -329,12 +329,12 @@ export const changelogPartOf = (text: string, version: string): string => {
 };
 
 /**
- * A row of the trace that keeps an old word on purpose, in its quote cell (the second column). The docs review reads this
+ * A row of the trace that keeps an old word on purpose, in its quote cell (the first column). The docs review reads this
  * list.
  */
 export interface AllowedLine {
   readonly file: string;
-  /** The line starts with this text. */
+  /** The line starts with this text: the whole quote cell of the row, with the bar after it. */
   readonly startsWith: string;
   readonly reason: string;
 }
@@ -344,10 +344,14 @@ const OWNER_NOTE =
 
 /** The rows of the docs that keep an old word in the quote cell, each with its reason. */
 export const ALLOWED_LINES: readonly AllowedLine[] = [
-  { file: 'intent-trace.md', startsWith: '| F-1a |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| F-14b |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| V-F-1b |', reason: OWNER_NOTE },
-  { file: 'intent-trace.md', startsWith: '| V-F-1c |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| Replace "lane" and "pack" with factory words |', reason: OWNER_NOTE },
+  {
+    file: 'intent-trace.md',
+    startsWith: '| "I don\'t like lane, though." and "the thing that you called Andon. I don\'t know that word." |',
+    reason: OWNER_NOTE,
+  },
+  { file: 'intent-trace.md', startsWith: '| Replace "lane" and "pack" |', reason: OWNER_NOTE },
+  { file: 'intent-trace.md', startsWith: '| "Pack" is not clear from the name or the description |', reason: OWNER_NOTE },
 ];
 
 /** The doc whose entries show the old word of a new word in the form `(was: old word)`. */
@@ -372,11 +376,11 @@ export const TABLE_HEADER = '| Term | Plain word in user text | Scan | Note |';
 /** Removes the code spans of one line: text between backticks, also between double backticks. */
 const withoutCodeSpans = (line: string): string => line.replace(/(`+)[^`]*?\1/g, ' ');
 
-/** Removes the quote cell of a table row: the second column, after the id cell. The line keeps its other cells. */
+/** Removes the quote cell of a table row: the first column. The line keeps its other cells. */
 const withoutQuoteCell = (line: string): string =>
   line
     .split('|')
-    .map((cell, index) => (index === 2 ? ' ' : cell))
+    .map((cell, index) => (index === 1 ? ' ' : cell))
     .join('|');
 
 /** Removes the `(was: old word)` mark of a glossary entry. A mark in another doc, or after the first words, stays. */

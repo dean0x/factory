@@ -977,27 +977,53 @@ describe('scripts/check-intent-docs.sh, a comment or a heading in fenced code do
   });
 });
 
-/** The asks of the design v3 feedback, each with one row in the trace. */
+/** The asks of the design v3 feedback, each with one row in the trace, by the first cell of the row. */
+const ENCAPSULATED_UNIT = '"I want the factory to be an encapsulated unit."';
+const COORDINATOR_HOME = '"I think the coordinator home folder should encapsulate everything below it: the clones, the repos."';
 const DESIGN_V3_ASKS = [
-  'F-14a', 'F-14b', 'F-14c',
-  'F-15a', 'F-15b', 'F-15c',
-  'F-16a', 'F-16b', 'F-16c', 'F-16d',
-  'F-17a', 'F-17b', 'F-17c', 'F-17d',
-  'F-18a', 'F-18b', 'F-18c', 'F-18d', 'F-18e', 'F-18f',
-  'F-19a', 'F-19b',
-  'F-20a', 'F-20b',
-  'F-21a', 'F-21b', 'F-21c',
-  'D-57', 'D-59', 'D-60',
+  '"I do want this to bring those concepts to the everyday world."',
+  '"I don\'t like lane, though." and "the thing that you called Andon. I don\'t know that word."',
+  '"They\'re a bit strange, I think, to someone who does not come from software factories."',
+  '"They should be configurable when you set up a factory in a folder."',
+  COORDINATOR_HOME,
+  '"It\'s very software-development-oriented. If it would be like a marketing factory, then what do we still have: releases and PRs?"',
+  '"He would have his own way to do priorities and, I don\'t know, his own software development lifecycle, configuration skills, whatnot."',
+  '"I need to be able, for example, for my setup, to share the way I do priorities, the way I work with devflow."',
+  '"The user can adapt it and still, when needed, get new features"',
+  '"We should provide the infrastructure, or the metal, for someone to run the factory orchestration, but with his own workflows"',
+  '"Review desk articfact should not be included not even optionally. There shouldn\'t be a rule for it."',
+  '"One user might want to create himself a review desk in an artifact. In case that user wants to do that, we need to be able to support it."',
+  '"we need to minimize basically how much we get in the way"',
+  '"you just have the config. When you install locally, clone it, and run it, it clones locally the repos that are relevant to this workspace configuration."',
+  ENCAPSULATED_UNIT,
+  '"It could sit in a folder next to all the cloned repos. This way, they won\'t load each other\'s cloud.md files."',
+  '"I don\'t want to push multiple clones of the same repo sometimes to a repo, so we need to use some kind of Mars-like way"',
+  '"I might want to run a few different factories on the same machine"',
+  '"the same instances of a factory on different machines"',
+  '"I can share that factory unit with another developer. You can start work over there as if nothing happened."',
+  '"I want to manage multiple projects, multiple repos, and GitHub through one dashboard. Is that possible?"',
+  '"And also in other task management tools like Jira and Linear"',
+  '"I think our factory needs the whole lifecycle commands"',
+  '"like shutdown, reboot, restart, start"',
+  '"I don\'t know, maybe dismiss, discharge, something of this nature."',
+  '"And maybe also a cleanup or something like that."',
+  '"Their names are already outdated."',
+  'The release is an approval point of its own, and releases wait for the owner',
+  'The glossary words: worker, request, coordinator, queue, check and release check',
+  'A factory is one folder. The config is at the root, as a shareable git repo with no CLAUDE.md. The coordinator runs in its own folder next to the clones. A mars-like list names the repos. Several factories run on one machine, and one factory runs on several machines',
 ] as const;
 
 /** A milestone cell of a row starts with a milestone or the label. A cell that only names one later in its text, such as "None. FAC-M5 dropped this ask", does not. */
 const MILESTONE_OR_LABEL = /^(?:FAC-M\d+[a-z]?|Design v3 PR)\b/;
 
-/** The rows of the tables of the trace, by ask id, as five cells each. */
+/** A header row of a table of the trace. */
+const isTraceHeader = (line: string): boolean => line.startsWith('| Short ask |') || line.startsWith("| Dean's words (short quote) |");
+
+/** The rows of the tables of the trace, by the first cell, as four cells each. */
 const traceRows = (text: string): Map<string, string[]> => {
   const rows = new Map<string, string[]>();
   for (const line of text.split('\n')) {
-    if (!line.startsWith('| ') || line.startsWith('| Ask id')) continue;
+    if (!line.startsWith('| ') || isTraceHeader(line)) continue;
     const cells = line.slice(1, line.length - 1).split('|').map((cell) => cell.trim());
     rows.set(cells[0] ?? '', cells);
   }
@@ -1007,40 +1033,40 @@ const traceRows = (text: string): Map<string, string[]> => {
 describe('docs/intent-trace.md: the rows of the design v3 feedback', () => {
   const trace = readFileSync(join(ROOT, 'docs', 'intent-trace.md'), 'utf8');
   const rows = traceRows(trace);
-  const cell = (id: string, index: number): string => rows.get(id)?.[index] ?? '';
+  const cell = (first: string, index: number): string => rows.get(first)?.[index] ?? '';
 
-  it('has one row for each ask, and no ask id twice', () => {
-    const ids = trace.split('\n').filter((line) => line.startsWith('| ') && !line.startsWith('| Ask id')).map((line) => line.split('|')[1]?.trim() ?? '');
-    expect(new Set(ids).size).toBe(ids.length);
-    expect(DESIGN_V3_ASKS.filter((id) => !rows.has(id))).toEqual([]);
+  it('has one row for each ask, and no first cell twice', () => {
+    const firsts = trace.split('\n').filter((line) => line.startsWith('| ') && !isTraceHeader(line)).map((line) => line.split('|')[1]?.trim() ?? '');
+    expect(new Set(firsts).size).toBe(firsts.length);
+    expect(DESIGN_V3_ASKS.filter((first) => !rows.has(first))).toEqual([]);
   });
 
-  it.each(DESIGN_V3_ASKS)('gives the row %s a design section, a milestone or the label, and a status', (id) => {
-    expect(cell(id, 2), 'no design section').toMatch(/§\d|"(?:Core and setup|Extension points)"/);
-    expect(cell(id, 3), 'no milestone and no label').toMatch(MILESTONE_OR_LABEL);
-    expect(cell(id, 4)).toMatch(/^(?:covered|not applicable: .+)$/);
+  it.each(DESIGN_V3_ASKS)('gives the row %s a design section, a milestone or the label, and a status', (first) => {
+    expect(cell(first, 1), 'no design section').toMatch(/§\d|"(?:Core and setup|Extension points)"/);
+    expect(cell(first, 2), 'no milestone and no label').toMatch(MILESTONE_OR_LABEL);
+    expect(cell(first, 3)).toMatch(/^(?:covered|not applicable: .+)$/);
   });
 
   it.each([
-    ['F-14c', ['Design v3 PR']],
-    ['F-15b', ['D-60', 'F-18a']],
-    ['F-16d', ['Design v3 PR']],
-    ['F-17c', ['Design v3 PR']],
-    ['F-18e', ['FAC-M3', 'init --state-from']],
-    ['F-18f', ['Design v3 PR', 'FAC-M3']],
-    ['F-20b', ['FAC-M4']],
-    ['F-21c', ['FAC-M4', 'FAC-M7']],
-  ] as const)('names in the row %s: %j', (id, words) => {
-    const text = `${cell(id, 3)} ${cell(id, 4)}`;
+    [DESIGN_V3_ASKS[2], ['Design v3 PR']],
+    [COORDINATOR_HOME, ['the factory folder holds the clones, the coordinator folder and the work copies', `the row ${ENCAPSULATED_UNIT} has the checks`]],
+    [DESIGN_V3_ASKS[9], ['Design v3 PR']],
+    [DESIGN_V3_ASKS[12], ['Design v3 PR']],
+    [DESIGN_V3_ASKS[18], ['FAC-M3', 'init --state-from']],
+    [DESIGN_V3_ASKS[19], ['Design v3 PR', 'FAC-M3']],
+    [DESIGN_V3_ASKS[23], ['FAC-M4']],
+    [DESIGN_V3_ASKS[26], ['FAC-M4', 'FAC-M7']],
+  ] as const)('names in the row %s: %j', (first, words) => {
+    const text = `${cell(first, 2)} ${cell(first, 3)}`;
     for (const word of words) expect(text).toContain(word);
   });
 
   it('refuses a milestone cell that names no milestone and no label', () => {
-    const oldCell = 'None. D-60 replaces this ask: see F-18a';
-    const mutated = traceRows(trace.replace(cell('F-15b', 3), oldCell));
-    expect(mutated.get('F-15b')?.[3]).toBe(oldCell);
-    expect(mutated.get('F-15b')?.[3]).not.toMatch(MILESTONE_OR_LABEL);
-    expect(cell('F-15b', 3)).toMatch(MILESTONE_OR_LABEL);
+    const oldCell = `None. A decision replaces this ask: see the row ${ENCAPSULATED_UNIT}`;
+    const mutated = traceRows(trace.replace(cell(COORDINATOR_HOME, 2), oldCell));
+    expect(mutated.get(COORDINATOR_HOME)?.[2]).toBe(oldCell);
+    expect(mutated.get(COORDINATOR_HOME)?.[2]).not.toMatch(MILESTONE_OR_LABEL);
+    expect(cell(COORDINATOR_HOME, 2)).toMatch(MILESTONE_OR_LABEL);
     expect('FAC-M5b: the usage view').toMatch(MILESTONE_OR_LABEL);
     expect('None. FAC-M5 dropped this ask').not.toMatch(MILESTONE_OR_LABEL);
     expect('None; not in the Design v3 PR').not.toMatch(MILESTONE_OR_LABEL);
@@ -1086,40 +1112,42 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
   const changelog = readFileSync(join(ROOT, 'CHANGELOG.md'), 'utf8');
   const part = (text: string, from: string, to: string): string => text.split(from)[1]?.split(to)[0] ?? '';
 
-  it('TP-94: lists the board archive in FAC-M5b, and the review page render and the page answer in FAC-M11', () => {
+  it('lists the board archive in FAC-M5b, and the review page render and the page answer in FAC-M11', () => {
     const later = part(roadmap, '### FAC-M5b: ', '\n### ');
     expect(later).toMatch(/^- \[ \] Board archive\./m);
-    expect(later).not.toMatch(/^- \[ \] (Review page command|Page answer) \(TB-5\)\./m);
+    expect(later).not.toMatch(/^- \[ \] (Review page command|Page answer)\b/m);
     const plugins = part(roadmap, '### FAC-M11: ', '\n### ');
-    expect(plugins).toMatch(/^- \[ \] Review page render test \(TB-5\)\./m);
-    expect(plugins).toMatch(/^- \[ \] Page answer test \(D-142 A\)\./m);
+    expect(plugins).toMatch(/^- \[ \] Review page render test\./m);
+    expect(plugins).toMatch(/^- \[ \] Page answer test\./m);
   });
 
-  it('TP-94: lists the criteria of tracks and stages in FAC-M5, and the track views of M5-1c', () => {
+  it('lists the criteria of tracks and stages, and the track views, in FAC-M5', () => {
     const board = part(roadmap, '### FAC-M5: ', '\n### ');
-    expect(board).toMatch(/^- \[ \] Tracks and stages \(TB-7, M5-1b\)\./m);
-    expect(board).toMatch(/^- \[ \] Track views \(M5-1c, TB-1 to TB-3\)\./m);
+    expect(board).toMatch(/^- \[ \] Tracks and stages \(the local board part of FAC-M5\)\./m);
+    expect(board).toMatch(/^- \[ \] Track views \(the track view part of FAC-M5\)\./m);
   });
 
-  it('TP-94: says in design 4.10 that the review page is an owner view that only reads in M5-1b', () => {
+  it('says in design 4.10 that the review page is an owner view that only reads', () => {
     const connector = part(design, '### 4.10 Board connector', '\n### 4.11');
     expect(connector).toContain('The review desk page of today is a supported owner view, and the owner can choose it.');
     expect(connector).toContain(
-      'In M5-1b the page only reads. A page answer is a board event. It shows and wakes, and records nothing (D-142 A).',
+      'Until FAC-M11, it reads the local files. The page only reads. A page answer is a board event. It shows and wakes, and records nothing.',
     );
     expect(connector).not.toContain('A page answer that records through the owner store');
   });
 
-  it('TP-94: says in step 4 of the migration that the page only reads the local files, and that FAC-M3 keeps the page', () => {
+  it('says in step 4 of the migration that the page only reads the local files, and that FAC-M3 keeps the page', () => {
     const migration = part(design, '## 8. Migration of this workspace', '\n## 9. Decisions');
     expect(migration).toContain(
-      'In M5-1b the page only reads the local files. A page answer is a board event. It shows and wakes, and records nothing (D-142 A).',
+      'The page only reads the local files. A page answer is a board event. It shows and wakes, and records nothing.',
     );
     expect(migration).not.toContain('A page answer that records through the owner store');
     const decisions = part(design, '## 9. Decisions', '\n## 10.');
-    expect(decisions).toContain('| D-142 A |');
+    expect(decisions).toContain(
+      '- Only `factory decide <D-n> <option>`, in a terminal window outside a factory session, records a decision in the owner store. A page answer or a board answer shows and wakes, and records nothing (§4.10, §6.1).',
+    );
     expect(decisions).not.toContain('a page answer that records through the owner store');
-    expect(migration).toContain('It does not retire the page (TB-5).');
+    expect(migration).toContain('FAC-M3 moves the items into GitHub issues with a private repo as the decision store. It does not retire the page.');
   });
 
   it('TP-94: gives the terms track and stage in design 4.1 and in the glossary, and calls the steps of the work cycle steps', () => {
@@ -1132,20 +1160,31 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
     expect(design.split('\n').filter((line) => /work cycle/i.test(line) && /\b(?:the|all) stages of the work cycle\b/i.test(line))).toEqual([]);
   });
 
-  it('TP-94: records the direction about the board of each track in one decision row that has no D-n id', () => {
-    const decisions = design.split('## 9. Decisions')[1] ?? '';
-    const rows = decisions.split('\n').filter((line) => line.startsWith('| TB-5 to TB-7 |'));
-    expect(rows).toHaveLength(1);
-    const [row = ''] = rows;
-    const id = row.split('|')[1]?.trim() ?? '';
-    expect(id).not.toMatch(/^D-\d+$/);
-    expect(row).toContain('His words: "');
-    expect(row).toContain('supersedes the part of F-17 (Changes in v3, point 6) and the part of F-2 (Changes from v1, point 2)');
+  it('records the direction about the board of each track in the Board part of the decisions', () => {
+    const board = part(design, '## 9. Decisions', '\n## 10.').split('\n### Board\n')[1]?.split('\n### ')[0] ?? '';
+    const lines = board.split('\n');
+    expect(lines).toContain('- factory builds no review desk of its own. There is no desk command and no board kind named `desk`. The extension points let a person add a reader (§4.14).');
+    expect(lines).toContain(
+      '- The review page of today is a supported owner view that the owner can choose. Until FAC-M11 it reads the local files. From FAC-M11 it is the `artifact` connector. No milestone retires it (§4.10).',
+    );
+    expect(lines).toContain('- factory always keeps the local board, with any board kind and any owner view.');
+    expect(lines).toContain('- The board has tracks, and each item has a stage. The recipe gives the list of stages (§4.10).');
   });
 
-  it('TP-94: gives each note of the direction a row in the intent trace', () => {
-    const trace = docsText('intent-trace.md');
-    for (let n = 1; n <= 8; n += 1) expect(trace).toMatch(new RegExp(`\\bTB-${n}\\b`));
+  it('gives each note of the direction about the board of each track a row in the intent trace', () => {
+    const rows = traceRows(docsText('intent-trace.md'));
+    const notes = [
+      'Each track has its own mini board, except a track with one task and no subtasks',
+      'The main board shows one high-level line for each track',
+      'A click on a track opens the board of that track',
+      'Each ticket shows its stage',
+      'The review page stays a supported owner view that the owner can choose',
+      'factory always keeps the local board, with any owner view or board kind',
+      'The board of each track and the stage of each ticket are part of the architecture',
+      'The update cost stays low: scripts render the views, and the stage changes at milestone events',
+      'Factory gives the same live board as this workspace: the workers table, the tracks view and the board pane, and it works the same way',
+    ];
+    expect(notes.filter((note) => !rows.has(note))).toEqual([]);
   });
 
   it('TP-106: tells in the README and in design 4.2 that --json removes only hidden characters from string values', () => {
@@ -1155,13 +1194,13 @@ describe('docs of M5-1b: the board of each track (TP-94, TP-106, TP-107, TP-109)
     expect(part(design, '### 4.2 Commands', '### 4.3 ')).toContain(sentence);
   });
 
-  it('TP-107: names the dismiss idle window of M5-2 in the Check item of FAC-M5', () => {
+  it('names the dismiss idle window of the merge part in the Check item of FAC-M5', () => {
     const board = part(roadmap, '### FAC-M5: ', '\n### ');
-    const item = board.split('\n').find((line) => line.startsWith('2. **Check (F-6).**')) ?? '';
+    const item = board.split('\n').find((line) => line.startsWith('2. **Check.**')) ?? '';
     expect(item).toContain(
-      'The dismiss idle window (M5-2): `dismiss --idle` reads the board again just before each stop, and not once before all stops.',
+      'The dismiss idle window, in the merge part of FAC-M5: `dismiss --idle` reads the board again just before each stop, and not once before all stops.',
     );
-    expect(item).toContain('M5-1b states this as a limit.');
+    expect(item).toContain('The local board part states this as a limit.');
   });
 
   it('TP-109: adds no decide row to the Commands table of the README and no decide command to the guide', () => {
@@ -1292,7 +1331,7 @@ describe('docs of M5-1b PR B: the owner store record and decide (TP-169, TP-170,
 
   it('M5-1b TP-171 roadmap holds the --principle line under FAC-M5 and the request list note under FAC-M7', () => {
     const board = part(roadmap, '### FAC-M5: ', '\n### ');
-    expect(board).toContain('`--principle` is not in M5-1b.');
+    expect(board).toContain('`--principle` is not in the local board part of FAC-M5.');
     expect(board).toContain('each decision record has `principles: []`');
     const adopted = part(roadmap, '### FAC-M7: ', '\n### ');
     expect(adopted).toContain('`request list` must show answered rows.');

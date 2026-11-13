@@ -219,23 +219,26 @@ describe('the docs scan: what it skips', () => {
   });
 
   it('skips a quoted note of the owner in the trace only, and reads the other rows', () => {
-    const quoted = readDoc('intent-trace.md').split('\n').find((line) => line.startsWith('| F-1a |')) ?? '';
+    const first = '| Replace "lane" and "pack" with factory words |';
+    const quoted = readDoc('intent-trace.md').split('\n').find((line) => line.startsWith(first)) ?? '';
     expect(quoted).not.toBe('');
     expect(scanDoc('intent-trace.md', `${quoted}\n`)).toEqual([]);
     expect(scanDoc('design.md', `${quoted}\n`).length).toBeGreaterThan(0);
-    expect(scanDoc('intent-trace.md', '| F-9 | A cell stops | §4.11 | FAC-M4 | covered |\n')).toHaveLength(1);
+    expect(scanDoc('intent-trace.md', '| A cell stops | §4.11 | FAC-M4 | covered |\n')).toHaveLength(1);
   });
 
-  it.each(['F-1a', 'F-14b', 'V-F-1b', 'V-F-1c'])('skips only the quote cell of the allowed trace row %s', (id) => {
-    expect(scanDoc('intent-trace.md', `| ${id} | The note says lane and andon. | §4.1 | FAC-M2 | covered |\n`)).toEqual([]);
+  it.each(ALLOWED_LINES.map((entry) => entry.startsWith))('skips only the quote cell of the allowed trace row %s', (first) => {
+    const row = `${first} §4.1 | FAC-M2 | covered |\n`;
+    expect(scanDoc('roadmap-v2.md', row).length, 'the quote cell holds no old word').toBeGreaterThan(0);
+    expect(scanDoc('intent-trace.md', row)).toEqual([]);
   });
 
   it.each([
-    ['design section', 3],
-    ['milestone', 4],
-    ['status', 5],
+    ['design section', 2],
+    ['milestone', 3],
+    ['status', 4],
   ] as const)('reads the %s cell of an allowed trace row', (_name, position) => {
-    const cells = ['', ' F-1a ', ' The note says lane. ', ' §4.1 ', ' FAC-M2 ', ' covered ', ''];
+    const cells = ['', ' Replace "lane" and "pack" with factory words ', ' §4.1 ', ' FAC-M2 ', ' covered ', ''];
     const row = cells.map((cell, index) => (index === position ? ' A cell works. ' : cell)).join('|');
     expect(scanDoc('intent-trace.md', `${row}\n`)).toEqual([
       { file: 'intent-trace.md', line: 1, word: 'cell', kind: 'old word' },
@@ -243,7 +246,8 @@ describe('the docs scan: what it skips', () => {
   });
 
   it('reads a jargon word in the milestone cell of an allowed trace row', () => {
-    const row = '| F-14b | The note says lane. | §7 | Design v3 PR: the heartbeat file | covered |\n';
+    const row =
+      '| "I don\'t like lane, though." and "the thing that you called Andon. I don\'t know that word." | §7 | Design v3 PR: the heartbeat file | covered |\n';
     expect(scanDoc('intent-trace.md', row).map((hit) => hit.kind)).toEqual(['jargon']);
   });
 
