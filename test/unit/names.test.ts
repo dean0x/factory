@@ -735,9 +735,10 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
 
   /**
    * The names on disk that stay although the table of plain words has a plain word for them (the file name stays): the
-   * folder of the last-seen files. Only `names.ts` holds them, and text for a user says "last seen".
+   * folder of the last-seen files, and the folder of the report of a node. Only `names.ts` holds them, and text for a user says
+   * "last seen" and "event file".
    */
-  const DISK_NAMES: ReadonlySet<string> = new Set([dirs.heartbeat]);
+  const DISK_NAMES: ReadonlySet<string> = new Set([dirs.heartbeat, dirs.outbox]);
 
   /**
    * The old words and the scanned jargon words that a string literal of the source holds, with the file. Comments and

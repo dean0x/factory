@@ -45,6 +45,7 @@ export const commands = {
   restart: 'restart',
   reboot: 'reboot',
   status: 'status',
+  report: 'report',
   dismiss: 'dismiss',
   node: 'node',
   doctor: 'doctor',
@@ -188,6 +189,7 @@ export const flags = {
   stage: 'stage',
   all: 'all',
   follow: 'follow',
+  since: 'since',
   roadmap: 'roadmap',
   question: 'question',
   option: 'option',
@@ -251,6 +253,8 @@ export const files = {
   heavyLock: 'heavy-test.lock',
   /** The mark of a heavy run that goes first (`lock run --priority`), beside the lock. The per-user state folder holds the file. */
   heavyPriority: 'heavy-test.priority',
+  /** The report of this node, in the event file folder: the file that a parent node reads. */
+  report: 'report.json',
 } as const;
 
 export const dirs = {
@@ -265,6 +269,8 @@ export const dirs = {
   workers: 'workers',
   /** The folder of the messages for a worker, inside its folder. The session of the worker gets it with `--add-dir`. */
   inbox: 'inbox',
+  /** The event file folder in the state folder: it holds the report of this node for the parent node. Git ignores it. */
+  outbox: 'outbox',
   /** The folder of the resume notes of the coordinator in the state folder: one file for each node, named by the node id. */
   resume: 'resume',
   backups: 'backups',
@@ -1269,6 +1275,99 @@ export const statusWords = {
 } as const;
 
 /**
+ * The limits of the report of a node (design 5.4). `schemaVersion` is the number that a report holds in its version key: a reader
+ * that finds a higher number reads no more of the file. A report file has at most `maxBytes` bytes. One build of the report reads at
+ * most `maxBuildBytes` bytes from the report files of its children in all. The lists of the report have at most `maxWorkers`,
+ * `maxChildren`, `maxRequests` and `maxItems` entries, and the lists of counts (the states, the owner fields and the values of one
+ * field) at most `maxCountRows`. A text is at most `maxTextChars` characters, a version text at most `maxVersionChars`, and a
+ * count or an age (in whole seconds) at most `maxNumber`.
+ */
+export const reportLimits = {
+  schemaVersion: 1,
+  maxBytes: 256 * 1_024,
+  maxBuildBytes: 4 * 1_048_576,
+  maxWorkers: 200,
+  maxChildren: 200,
+  maxRequests: 500,
+  maxItems: 500,
+  maxCountRows: 50,
+  maxTextChars: 200,
+  maxVersionChars: 64,
+  maxNumber: maxBoardNumber,
+} as const;
+
+/**
+ * The keys of the report document (design 5.4), by the part of the document that holds them. `report --json` prints the document
+ * and `report` and `status` write the same document to the report file, so a parent node reads these keys from a child. The
+ * report allows these keys and no other: the schema is strict, so a key that is not here can not enter the file. A key never
+ * changes inside one schema version.
+ */
+export const reportKeys = {
+  doc: {
+    schema: 'schema',
+    schemaVersion: 'schemaVersion',
+    id: 'id',
+    layer: 'layer',
+    factoryVersion: 'factoryVersion',
+    cursor: 'cursor',
+    workers: 'workers',
+    board: 'board',
+    inProgress: 'inProgress',
+    requests: requestWords.requests,
+    events: 'events',
+    children: 'children',
+  },
+  worker: {
+    id: 'id',
+    project: 'project',
+    state: 'state',
+    contextPct: 'contextPct',
+    activityAt: 'activityAt',
+    workItem: 'workItem',
+    idle: 'idle',
+  },
+  /** The board counts: the items by state, and the items by each owner field. */
+  board: { states: 'states', fields: 'fields' },
+  /** One count: a state, or a value of an owner field, with the number of items. */
+  tally: { name: 'name', count: 'count' },
+  /** The counts of one owner field: the field name, and the counts of its values. */
+  field: { field: 'field', values: 'values' },
+  item: { id: 'id', title: 'title', state: 'state', track: 'track', stage: 'stage' },
+  /** A request that waits for the owner. The origin is `<node id>#<request id>`, with `/` between the ids of deeper nodes. */
+  request: { id: 'id', title: 'title', origin: 'origin' },
+  /** The row of one direct child. The age is the age of its report file in whole seconds. */
+  child: { id: 'id', address: 'address', state: 'state', reason: 'reason', counts: 'counts', age: 'age' },
+  /** The counts that a child row takes from the report of that child. */
+  counts: { workers: 'workers', inProgress: 'inProgress', requests: requestWords.requests, children: 'children' },
+} as const;
+
+/**
+ * The words of the report: the first word of the verdict line of `report`, the states of a child row (the report file holds the
+ * same words), the states of a worker row (the words of `status`), and the titles of the columns of the child table.
+ */
+export const reportWords = {
+  verdict: { ok: 'OK:', check: 'CHECK:' },
+  childStates: { ok: 'ok', unknown: 'unknown', mismatch: 'mismatch' },
+  workerStates: [
+    statusWords.stopped,
+    workerListWords.states.prompt,
+    workerListWords.states.busy,
+    workerListWords.states.waits,
+    workerListWords.states.unknown,
+  ],
+  columns: {
+    id: 'ID',
+    state: 'STATE',
+    workers: 'WORKERS',
+    items: 'ITEMS',
+    requests: requestWords.requests.toUpperCase(),
+    children: 'CHILDREN',
+    age: 'AGE',
+    reason: 'REASON',
+  },
+} as const;
+
+/**
  * The rules and the words of `dismiss` (design 4.11). The work of a worker is pushed when, after a fetch of `remote`, the head of its
  * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run and the free
  * name at most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
@@ -1691,6 +1790,7 @@ export const schemaIds = {
   restart: `${program}.restart/v1`,
   reboot: `${program}.reboot/v1`,
   status: `${program}.status/v1`,
+  report: `${program}.report/v1`,
   dismiss: `${program}.dismiss/v1`,
   nodeChildren: `${program}.node-children/v1`,
   nodeSend: `${program}.node-send/v1`,
