@@ -1342,11 +1342,13 @@ export const reportKeys = {
 } as const;
 
 /**
- * The words of the report: the first word of the verdict line of `report`, the states of a child row (the report file holds the
- * same words), the states of a worker row (the words of `status`), and the titles of the columns of the child table.
+ * The words of the report: the first word of the verdict line of `report`, the text between a node id and a request id in the
+ * origin of a request, the states of a child row (the report file holds the same words), the states of a worker row (the words
+ * of `status`), and the titles of the columns of the child table.
  */
 export const reportWords = {
   verdict: { ok: 'OK:', check: 'CHECK:' },
+  originSeparator: '#',
   childStates: { ok: 'ok', unknown: 'unknown', mismatch: 'mismatch' },
   workerStates: [
     statusWords.stopped,
