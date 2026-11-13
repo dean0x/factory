@@ -433,8 +433,17 @@ describe('words of the old names', () => {
     });
     expect(result.ok).toBe(true);
     expect(deps.files.size).toBeGreaterThan(10);
+    // The state .gitignore names the folder of the event file by its name on disk, as a line of its own. Only that file may do so.
+    const diskLine = `${dirs.outbox}/`;
+    const stateGitignore = `/${dirs.state}/${files.gitignore}`;
     for (const [path, text] of deps.files) {
-      expect({ path, found: plainWordsIn(text) }).toEqual({ path, found: [] });
+      const scanned = path.endsWith(stateGitignore)
+        ? text
+            .split('\n')
+            .filter((line) => line !== diskLine)
+            .join('\n')
+        : text;
+      expect({ path, found: plainWordsIn(scanned) }).toEqual({ path, found: [] });
     }
   });
 });
@@ -724,6 +733,7 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
     'blocks',
     'launch',
     'comms',
+    'report',
     'migrate',
     'templates',
     'recipes',
@@ -743,9 +753,10 @@ describe('the old words and the jargon words in the text of the source (TP-60)',
 
   /**
    * The names on disk that stay although the table of plain words has a plain word for them (the file name stays): the
-   * folder of the last-seen files. Only `names.ts` holds them, and text for a user says "last seen".
+   * folder of the last-seen files, and the folder of the report of a node. Only `names.ts` holds them, and text for a user says
+   * "last seen" and "event file".
    */
-  const DISK_NAMES: ReadonlySet<string> = new Set([dirs.heartbeat]);
+  const DISK_NAMES: ReadonlySet<string> = new Set([dirs.heartbeat, dirs.outbox]);
 
   /**
    * The old words and the scanned jargon words that a string literal of the source holds, with the file. Comments and

@@ -154,6 +154,8 @@ describe('layout', () => {
       workersDir: '/h/node/.factory/workers',
       inboxDir: '/h/node/.factory/inbox',
       reviewsDir: '/h/node/.factory/reviews',
+      outboxDir: '/h/node/.factory/outbox',
+      reportFile: '/h/node/.factory/outbox/report.json',
       runtimeDir: '/h/node/.factory/state',
       heartbeatDir: '/h/node/.factory/state/heartbeat',
       coordinatorLastSessionFile: '/h/node/.factory/state/coordinator-last-session',

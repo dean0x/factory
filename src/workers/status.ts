@@ -1,5 +1,5 @@
 import type { PaneRow } from '../launch/tmux.js';
-import { keys, lastSeen, roles, workerListWords, type HookState } from '../names.js';
+import { keys, lastSeen, roles, statusWords, workerListWords, type HookState } from '../names.js';
 import { promptStateOf, type LastSeen } from './last-seen.js';
 import type { MachineLimits } from './machine.js';
 import type { WorkerRecord } from './registry.js';
@@ -13,6 +13,8 @@ import { unknownItem, type WorkItem } from './work-items.js';
 
 export type WorkerState = (typeof workerListWords.states)[keyof typeof workerListWords.states];
 export type Mark = (typeof workerListWords.marks)[keyof typeof workerListWords.marks];
+/** The state that a person reads: the state of the worker, or `stopped`. */
+export type ShownState = WorkerState | typeof statusWords.stopped;
 
 const MS_PER_MINUTE = 60_000;
 
@@ -147,3 +149,6 @@ export const buildStatus = (input: StatusInput): BuiltStatus => {
   const built = input.records.map((record) => entryOf(record, input));
   return { entries: built.map(({ entry }) => entry), warnings: built.flatMap(({ warnings }) => warnings) };
 };
+
+/** What a person reads as the state: a worker with no live pane is stopped, whatever its last line says. */
+export const shownStateOf = (entry: WorkerStatus): ShownState => (entry.running ? entry.state : statusWords.stopped);

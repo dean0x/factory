@@ -16,6 +16,7 @@ import { writeWorkerRecord, type WorkerRecord } from '../../src/workers/registry
 import { buildStatus, type LineRead, type StatusInput } from '../../src/workers/status.js';
 import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
+import { EMPTY_WAITING } from '../helpers/board-repo.js';
 import { countReadsOf } from '../helpers/read-count.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type RunHandler } from '../helpers/fake-deps.js';
 import { gitHandler, type GitFixture } from '../helpers/git-fake.js';
@@ -30,6 +31,9 @@ import { busyWith, knownItem, NONE, UNKNOWN } from '../helpers/work-item.js';
 const HOME = '/w/node';
 const NODE = sampleConfig().core.node.id;
 const MINUTE = 60_000;
+const LAYOUT = layoutOf(HOME);
+const BOARD_PATH = join(LAYOUT.stateDir, files.board);
+const WAITING_PATH = join(LAYOUT.stateDir, files.waiting);
 
 
 describe('status: the builder', () => {
@@ -251,6 +255,10 @@ interface Setup {
   /** The projects that the factory list holds for the factory folder. */
   readonly projects?: readonly string[];
   readonly git?: GitFixture;
+  /** True: the node has no state folder at all, so no board file either. A node with workers always has one. */
+  readonly noState?: boolean;
+  /** Links of the file system: a path under a key resolves to the same path under the value. */
+  readonly links?: Readonly<Record<string, string>>;
 }
 
 interface Made {
@@ -276,10 +284,25 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   const git = gitHandler(setup.git);
   const run: RunHandler = (call) => (call.command === 'git' ? git.handler(call) : tmux.handler(call));
   const cwd = setup.cwd ?? '/w';
-  const deps = createFakeDeps({ cwd, os: 'darwin', env: { PATH: '/bin', XDG_STATE_HOME: '/state' }, run });
+  const deps = createFakeDeps({
+    cwd,
+    os: 'darwin',
+    env: { PATH: '/bin', XDG_STATE_HOME: '/state' },
+    run,
+    ...(setup.links === undefined ? {} : { links: setup.links }),
+  });
   const config = setup.config ?? sampleConfig();
   seedConfig(deps, HOME, config);
   registerRoot(deps, HOME, config.core.node.id, setup.projects ?? []);
+  if (setup.noState === true) {
+    // `registerRoot` writes the marker file of the state folder. Take it away, so the node has no state folder.
+    deps.files.delete(LAYOUT.nodeJson);
+    deps.dirs.delete(LAYOUT.stateDir);
+  } else {
+    // `init` writes both board files, so a node has them, empty at the start.
+    deps.seed(BOARD_PATH, boardText([]));
+    deps.seed(WAITING_PATH, EMPTY_WAITING);
+  }
   deps.seedDir(cwd);
   for (const project of setup.projects ?? []) deps.seedDir(`${project}/.git`);
   for (const [index, seed] of (setup.workers ?? []).entries()) {
@@ -619,12 +642,74 @@ describe('status: a record that is not valid', () => {
   });
 });
 
-describe('status: it is a read-only command', () => {
-  it('changes no file and no folder', async () => {
-    const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop', percent: 33 } }], panes: [pane('alpha', { id: '%7' })] });
-    const before = snapshot(made.deps);
+describe('status: it changes only the report file (TP-13, TP-27)', () => {
+  const alpha: Setup = { workers: [{ id: 'alpha', line: { event: 'Stop', percent: 33 } }], panes: [pane('alpha', { id: '%7' })] };
+  const reportJsonOf = async (made: Made): Promise<string> => {
+    const sink = captureSink();
+    expect(await runCli(['report', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
+    return sink.out.join('');
+  };
+
+  it('writes the report file and no other file and no other folder', async () => {
+    const made = await make(alpha);
+    const filesBefore = new Map(made.deps.files);
+    const foldersBefore = new Set(made.deps.dirs);
     await statusOf(made, portOf({ alpha: NONE }).port);
+    const changed = [...made.deps.files].filter(([path, text]) => filesBefore.get(path) !== text).map(([path]) => path);
+    expect(changed).toEqual([LAYOUT.reportFile]);
+    expect([...made.deps.dirs].filter((path) => !foldersBefore.has(path))).toEqual([LAYOUT.outboxDir]);
+    expect(made.deps.modes.get(LAYOUT.reportFile)).toBe(0o600);
+    expect(made.deps.modes.get(LAYOUT.outboxDir)).toBe(0o700);
+  });
+
+  it('writes the same document that report prints with the flag --json', async () => {
+    const made = await make(alpha);
+    await statusOf(made, boardWorkItems(recipes));
+    const fromStatus = made.deps.files.get(LAYOUT.reportFile);
+    expect(fromStatus).toBeDefined();
+    expect(await reportJsonOf(made)).toBe(fromStatus);
+  });
+
+  it('writes no file and no folder, and keeps its exit code, when the node has no factory folder', async () => {
+    const made = await make({ noState: true });
+    const before = snapshot(made.deps);
+    const sink = captureSink();
+    // The step that finds the factory folder stops the command first, so the report writer does not run here.
+    // The tests of the writer call it direct for its `skipped` result.
+    expect(await runCli(['status', '--home', HOME], made.deps, sink)).toBe(4);
+    expect(sink.errors.join('')).toContain('marker');
+    expect(sink.out.join('')).toBe('');
     expect(snapshot(made.deps)).toBe(before);
+  });
+
+  it('stops with exit 4 when the outbox folder is a link, and writes nothing into its target', async () => {
+    const made = await make({ ...alpha, links: { [LAYOUT.outboxDir]: '/outside/place' } });
+    const sink = captureSink();
+    expect(await runCli(['status', '--home', HOME], made.deps, sink)).toBe(4);
+    expect(sink.errors.join('')).toContain('link');
+    expect([...made.deps.files.keys()].filter((path) => path.startsWith('/outside') || path === LAYOUT.reportFile)).toEqual([]);
+  });
+
+  it('gives a warning line and the same exit code and output, when the file cannot be written for a reason that is not a link', async () => {
+    const made = await make(alpha);
+    made.deps.seed(LAYOUT.outboxDir, 'a file where the folder should be');
+    const sink = captureSink();
+    expect(await runCli(['status', '--home', HOME], made.deps, sink)).toBe(0);
+    expect(sink.out.join('')).toMatch(/alpha\s+web\s+at prompt\s+unknown\s+no/);
+    const warnings = sink.errors.join('').split('\n').filter((line) => line !== '');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/^warning: the report file was not written: /);
+    expect(made.deps.files.get(LAYOUT.outboxDir)).toBe('a file where the folder should be');
+  });
+
+  it('gives a warning line, writes no file and keeps its exit code, when the board cannot be read', async () => {
+    const made = await make(alpha);
+    made.deps.files.delete(BOARD_PATH);
+    const sink = captureSink();
+    expect(await runCli(['status', '--home', HOME], made.deps, sink)).toBe(0);
+    expect(sink.out.join('')).toMatch(/alpha\s+web\s+at prompt/);
+    expect(sink.errors.join('')).toMatch(/^warning: the report file was not written: .*board\.json/m);
+    expect(made.deps.files.has(LAYOUT.reportFile)).toBe(false);
   });
 });
 
@@ -705,7 +790,8 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
   /** A factory with the three workers, a long quiet time, and the board file `text` (none: no board file). */
   const withBoard = async (text: string | undefined, config: FactoryConfig = sampleConfigWithBoard()): Promise<Made> => {
     const made = await make({ workers: WORKERS, panes: WORKERS.map((worker) => pane(worker.id)), config });
-    if (text !== undefined) made.deps.seed(BOARD_FILE, text);
+    if (text === undefined) made.deps.files.delete(BOARD_FILE);
+    else made.deps.seed(BOARD_FILE, text);
     made.deps.advance(24 * 60 * MINUTE);
     return made;
   };
@@ -757,18 +843,20 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
       ['unknown', 'yes'],
       ['unknown', 'yes'],
     ]);
-    expect(output.warnings).toHaveLength(1);
+    // The first warning is the one of the work items. The second one says that the report file is not written, for the same fault.
+    expect(output.warnings).toHaveLength(2);
     expect(output.warnings[0]).toContain(files.board);
+    expect(output.warnings[1]).toMatch(/^the report file was not written: .*board\.json/);
   });
 
-  it('M5-1b TP-64 reads the board file once, and the config and the board of a status run change no file', async () => {
+  it('M5-1b TP-64 reads the board file once for the work items and once for the report, and changes no file but the report file', async () => {
     const made = await withBoard(BOARD);
-    const before = snapshot(made.deps);
+    const filesBefore = new Map(made.deps.files);
     const counted = countReadsOf(made.deps, BOARD_FILE);
     const result = await runStatus(counted.deps, options(), recipes, boardWorkItems(recipes));
     expect(result.ok).toBe(true);
-    expect(counted.count()).toBe(1);
-    expect(snapshot(made.deps)).toBe(before);
+    expect(counted.count()).toBe(2);
+    expect([...made.deps.files].filter(([path, text]) => filesBefore.get(path) !== text).map(([path]) => path)).toEqual([LAYOUT.reportFile]);
   });
 });
 

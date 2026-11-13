@@ -560,6 +560,20 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(names).toEqual(Object.values(commands).filter((name) => name !== commands.help).sort());
   });
 
+  it('TP-14: shows report with its flag --since in the help, and exits 2 with a remedy that names the command for a use of the flag', async () => {
+    const { deps } = made();
+    const list = await runOn(deps, ['--help']);
+    expect(list.out).toMatch(/^ {2}report {4}\S/m);
+    const help = await runOn(deps, ['report', '--help']);
+    expect(help.code).toBe(0);
+    expect(help.out).toContain('factory report [--home DIR] [--since CURSOR]');
+    expect(help.out).toMatch(/--since CURSOR\s+\S/);
+    const since = await runOn(deps, ['report', '--since', 'cursor-1', '--home', HOME]);
+    expect(since.code).toBe(2);
+    expect(since.err).toContain('"factory report"');
+    expect(since.out).toBe('');
+  });
+
   it('shows one usage line for each subcommand of worker and of self', () => {
     const usageOf = (name: string): string => commandTable.find((command) => command.name === name)?.usage ?? '';
     for (const subcommand of Object.values(workerCommands)) {

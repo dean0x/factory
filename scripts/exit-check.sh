@@ -172,12 +172,20 @@ step "deny list"
 # Search the files that init wrote and the help texts. A match fails the check.
 # The patterns match test/helpers/deny-list.ts. Keep both lists equal.
 # The mode is "any" (any case) or "exact" (the case of the pattern).
+# The optional fourth argument is a pattern for matches that stay allowed. It is matched against "file:line".
 scan() {
-  local label="$1" pattern="$2" mode="${3:-any}" option="-Ei" code=0
+  local label="$1" pattern="$2" mode="${3:-any}" allowed="${4:-}" option="-Ei" code=0 found=""
   if [ "$mode" = "exact" ]; then
     option="-E"
   fi
-  grep -r "$option" -q --exclude-dir=.git -e "$pattern" "$home" "$tmp/help" || code=$?
+  found="$(grep -r "$option" --exclude-dir=.git -e "$pattern" "$home" "$tmp/help")" || code=$?
+  if [ "$code" -eq 0 ] && [ -n "$allowed" ]; then
+    printf '%s\n' "$found" | grep -Ev -e "$allowed" >/dev/null || code=$?
+    if [ "$code" -ne 0 ] && [ "$code" -ne 1 ]; then
+      fail "the search for $label failed"
+    fi
+    # Code 1 here means that every match is an allowed one. This is the same as no match.
+  fi
   if [ "$code" -eq 0 ]; then
     fail "a generated file or a help text holds $label"
   elif [ "$code" -ne 1 ]; then
@@ -205,7 +213,9 @@ scan "an old word" "$old_words"
 # test/helpers/plain-words.ts, and a unit test keeps them equal.
 jargon_words="changeovers?|work orders?|heartbeats?|bench windows?|outbox(es)?|adapters?|home index(es)?|registered roots?|state markers?|root rules?|allow[ -]lists?|owner records?|owner channels?|core blocks?|trust steps?|permission[ -]skip lists?|token-like values?"
 jargon_pattern="(^|[^[:alnum:]_])(${jargon_words})([^[:alnum:]_]|\$)"
-scan "a jargon word" "$jargon_pattern"
+# The state .gitignore names the folder of the event file by its name on disk, as a line of its own. That line is allowed.
+# The names test treats the name on disk in the same way. A help text or a role file that holds the word still fails.
+scan "a jargon word" "$jargon_pattern" any '/\.factory/\.gitignore:outbox/$'
 printf 'no generated file and no help text holds a name from the deny list, an old word or a jargon word\n'
 
 # The npm page shows the package.json of the package. The installed copy holds no old word.
