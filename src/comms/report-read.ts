@@ -1,10 +1,10 @@
 import { accessFaultOf, type AccessFault } from '../core/access.js';
-import type { Deps, PathInfo } from '../core/deps.js';
-import { childReasons, dirs, files, reportKeys, reportLimits } from '../names.js';
+import type { CheckedFault, Deps, PathInfo } from '../core/deps.js';
+import { childReasons, reportKeys, reportLimits } from '../names.js';
 import { layoutOf, type Layout } from '../state/layout.js';
 import { parseJsonText } from '../state/load.js';
-import { readCheckedFile, type FileFault } from '../workers/registry.js';
 import { checkFileAddress } from './address.js';
+import { configAccessOf } from './config-access.js';
 import { parseReport, type NodeReport } from './report-schema.js';
 
 /** One of the fixed reasons of a child row. No reason holds text of the child. */
@@ -34,15 +34,15 @@ const unknown = (reason: ChildReason, source: string | null, age: number | null,
   source,
 });
 
-const FILE_FAULT_REASONS: Readonly<Record<FileFault, ChildReason>> = {
-  link: childReasons.reportLink,
-  'wrong-kind': childReasons.reportWrongKind,
-  size: childReasons.reportTooLarge,
-};
-
 const ACCESS_FAULT_REASONS: Readonly<Record<AccessFault, ChildReason>> = {
   otherOwner: childReasons.reportOtherOwner,
   writableByOthers: childReasons.reportWritable,
+};
+
+const FILE_FAULT_REASONS: Readonly<Record<CheckedFault, ChildReason>> = {
+  ...ACCESS_FAULT_REASONS,
+  'wrong-kind': childReasons.reportWrongKind,
+  size: childReasons.reportTooLarge,
 };
 
 /** The byte cap of one read: the smaller of the cap of a report and the cap of the call. A cap that is not a positive whole number reads nothing. */
@@ -62,27 +62,29 @@ const ageOf = (deps: Deps, info: PathInfo): number => {
   return Math.min(reportLimits.maxNumber, Math.max(0, seconds));
 };
 
-/** The age of the file with the fault of its path, or the age and no fault. */
-type Access = { readonly fault: null; readonly age: number } | { readonly fault: ChildReason; readonly age: number | null };
-
 /**
- * The age of the report file, and the first fault of the owner or the mode in the factory folder, the outbox folder and the file, in
- * that order. The paths are not links: `readCheckedFile` checked that before this call.
+ * What the look at the factory folder and the outbox folder finds. `stop` is the reason when a folder is missing, is a link or is not a
+ * folder: the report file is not opened. `fault` is the reason of the first fault of the owner or the mode of a folder, or null.
  */
-const accessOf = async (deps: Deps, layout: Layout): Promise<Access> => {
-  const file = await deps.fs.statInfo(layout.reportFile);
-  if (!file.ok) return { fault: childReasons.reportUnreadable, age: null };
-  if (file.value === null) return { fault: childReasons.noReport, age: null };
-  const age = ageOf(deps, file.value);
+interface Folders {
+  readonly stop: ChildReason | null;
+  readonly fault: ChildReason | null;
+}
+
+/** Look at the factory folder and the outbox folder, in that order, with no link followed. */
+const lookAtFolders = async (deps: Deps, layout: Layout): Promise<Folders> => {
+  let fault: ChildReason | null = null;
   for (const path of [layout.stateDir, layout.outboxDir]) {
-    const folder = await deps.fs.statInfo(path);
-    if (!folder.ok) return { fault: childReasons.reportUnreadable, age };
-    if (folder.value === null) return { fault: childReasons.noReport, age: null };
-    const fault = accessFaultOf(deps, folder.value);
-    if (fault !== null) return { fault: ACCESS_FAULT_REASONS[fault], age };
+    const seen = await deps.fs.lstatInfo(path);
+    if (!seen.ok) return { stop: childReasons.reportUnreadable, fault };
+    const info = seen.value;
+    if (info === null) return { stop: childReasons.noReport, fault };
+    if (info.kind === 'link') return { stop: childReasons.reportLink, fault };
+    if (info.kind !== 'dir') return { stop: childReasons.reportWrongKind, fault };
+    const access = accessFaultOf(deps, info);
+    if (fault === null && access !== null) fault = ACCESS_FAULT_REASONS[access];
   }
-  const fault = accessFaultOf(deps, file.value);
-  return fault === null ? { fault: null, age } : { fault: ACCESS_FAULT_REASONS[fault], age };
+  return { stop: null, fault };
 };
 
 /** True when the document is a mapping with a whole number in its version key that is higher than the version that this program reads. */
@@ -94,13 +96,16 @@ const isNewer = (value: unknown): boolean => {
 
 /**
  * Read the report file of a child node (design 5.4). The file is data to check and never a thing to trust. The address must be a
- * clean `file://` address. The factory folder, the outbox folder and the file must not be links, must be of the right kind, must
- * belong to the user of this process, and must not be writable by a group or by other users. The file has at most the smaller of
- * `maxBytes` and `reportLimits.maxBytes` bytes, is UTF-8 text and valid JSON, and passes the report schema. A document with a
- * newer schema version is not read further.
+ * clean `file://` address. The config file of the child must not be a link, must belong to the user of this process, and must not be
+ * writable by a group or by other users: the look at it reads the metadata of the open file, and no text. The factory folder and the
+ * outbox folder must not be links, must be folders, and must pass the same owner and mode checks. The report file is opened once with
+ * no link followed, and its kind, owner, mode and size are checked on the open handle before one byte is read from it. It has at
+ * most the smaller of `maxBytes` and `reportLimits.maxBytes` bytes, is UTF-8 text and valid JSON, and passes the report schema. A
+ * document with a newer schema version is not read further.
  *
- * Every fault is an `unknown` value with one fixed reason, and the text of a faulty file is dropped before any parse. A reason never
- * holds a path, a key name, a message of a check or any other text of the child. The call never throws.
+ * Every fault is an `unknown` value with one fixed reason, and the text of a faulty file is dropped before any parse. `bytes` counts
+ * what the call read from the open file, also when the read or the decode failed. A reason never holds a path, a key name, a message
+ * of a check or any other text of the child. The call never throws.
  */
 export const readChildReport = async (deps: Deps, address: string, maxBytes: number): Promise<ChildReportRead> => {
   const checked = checkFileAddress(address);
@@ -108,31 +113,35 @@ export const readChildReport = async (deps: Deps, address: string, maxBytes: num
   const layout = layoutOf(checked.value);
   const source = layout.reportFile;
 
-  const found = await readCheckedFile(
-    deps,
-    [
-      { path: layout.stateDir, what: dirs.state },
-      { path: layout.outboxDir, what: dirs.outbox },
-    ],
-    { path: source, what: files.report },
-    capOf(maxBytes),
-    'fatal',
-  );
-  if (!found.ok) return unknown(childReasons.reportUnreadable, source, (await accessOf(deps, layout)).age, 0);
+  const config = await configAccessOf(deps, layout.configFile);
+  if (config === 'unsafe' || config === 'unreadable') return unknown(childReasons.configUnsafe, source, null, 0);
 
-  const read = found.value;
+  const folders = await lookAtFolders(deps, layout);
+  if (folders.stop !== null) return unknown(folders.stop, source, null, 0);
+
+  // A fault of a folder gives no read of the file: the open then asks for the facts of the file alone, for its age.
+  const opened = await deps.fs.openChecked(source, {
+    uid: deps.uid,
+    maxBytes: folders.fault === null ? capOf(maxBytes) : null,
+    decode: 'fatal',
+  });
+  if (!opened.ok) return unknown(childReasons.reportUnreadable, source, null, 0);
+
+  const read = opened.value;
   if (read.state === 'absent') return unknown(childReasons.noReport, source, null, 0);
-  if (read.state === 'invalid' && read.cause !== 'size') return unknown(FILE_FAULT_REASONS[read.cause], source, null, 0);
+  if (read.state === 'link') return unknown(childReasons.reportLink, source, null, 0);
+  if (read.state === 'refused' && read.fault === 'wrong-kind') return unknown(childReasons.reportWrongKind, source, null, 0);
 
-  const bytes = read.state === 'text' ? Buffer.byteLength(read.text, 'utf8') : 0;
-  const access = await accessOf(deps, layout);
-  if (access.fault !== null) return unknown(access.fault, source, access.age, bytes);
-  if (read.state === 'invalid') return unknown(FILE_FAULT_REASONS[read.cause], source, access.age, bytes);
+  const age = ageOf(deps, read.info);
+  if (folders.fault !== null) return unknown(folders.fault, source, age, 0);
+  if (read.state === 'refused') return unknown(FILE_FAULT_REASONS[read.fault], source, age, read.bytes);
+  if (read.state === 'unreadable' || read.text === null) return unknown(childReasons.reportUnreadable, source, age, read.bytes);
 
+  const { bytes } = read;
   const json = parseJsonText(read.text);
-  if (!json.ok) return unknown(childReasons.reportNotJson, source, access.age, bytes);
-  if (isNewer(json.value)) return unknown(childReasons.reportNewer, source, access.age, bytes);
+  if (!json.ok) return unknown(childReasons.reportNotJson, source, age, bytes);
+  if (isNewer(json.value)) return unknown(childReasons.reportNewer, source, age, bytes);
   const report = parseReport(json.value);
-  if (!report.ok) return unknown(childReasons.reportInvalid, source, access.age, bytes);
-  return { state: 'read', report: report.value, age: access.age, bytes, source };
+  if (!report.ok) return unknown(childReasons.reportInvalid, source, age, bytes);
+  return { state: 'read', report: report.value, age, bytes, source };
 };

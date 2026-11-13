@@ -1,11 +1,11 @@
 import { inspectSharedConfig } from '../config/load.js';
 import { CONFIG_SCHEMA_VERSION } from '../config/schema.js';
-import { accessFaultOf } from '../core/access.js';
 import type { Deps } from '../core/deps.js';
 import { childReasons, commands, commandText, files, keys, places, program } from '../names.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
 import { checkFileAddress } from './address.js';
+import { configAccessOf } from './config-access.js';
 import { deliverToHome, type DeliverInput, type DeliverResult } from './deliver.js';
 import { readChildReport, type ChildReportRead } from './report-read.js';
 
@@ -37,20 +37,27 @@ const NO_CONFIG = `no ${files.config} found there`;
 const CONFIG_UNREADABLE = `${files.config} could not be read`;
 
 /**
- * Look at the shared config of the child before any read of its text. The value is the answer that stops the ping, or null when the
- * config may be read. No entry, or an entry that is not a file, gives the answer of a missing config. A link, another owner, and a
- * write bit of a group or of others give the fixed reason of an unsafe config. A fault of the file system gives a fixed reason too.
- * No answer holds the text of the fault.
+ * Look at the shared config of the child before any read of its text (`configAccessOf`). The value is the answer that stops the
+ * ping, or null when the config may be read. No entry, or an entry that is not a file, gives the answer of a missing config. A link,
+ * another owner, and a write bit of a group or of others give the fixed reason of an unsafe config. A fault of the file system gives
+ * a fixed reason too. No answer holds the text of the fault.
  */
 const configFault = async (deps: Deps, path: string): Promise<PingResult | null> => {
-  const seen = await deps.fs.lstat(path);
-  if (!seen.ok) return unknown(CONFIG_UNREADABLE);
-  if (seen.value === 'link') return unknown(childReasons.configUnsafe);
-  if (seen.value !== 'file') return unknown(NO_CONFIG);
-  const info = await deps.fs.statInfo(path);
-  if (!info.ok) return unknown(CONFIG_UNREADABLE);
-  if (info.value === null) return unknown(NO_CONFIG);
-  return accessFaultOf(deps, info.value) === null ? null : unknown(childReasons.configUnsafe);
+  const access = await configAccessOf(deps, path);
+  switch (access) {
+    case 'safe':
+      return null;
+    case 'unsafe':
+      return unknown(childReasons.configUnsafe);
+    case 'missing':
+      return unknown(NO_CONFIG);
+    case 'unreadable':
+      return unknown(CONFIG_UNREADABLE);
+    default: {
+      const unreachable: never = access;
+      return unreachable;
+    }
+  }
 };
 
 /**

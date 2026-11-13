@@ -6,7 +6,9 @@ import type { NodeReport } from '../../src/comms/report-schema.js';
 import type { Transport } from '../../src/comms/transport.js';
 import { childReasons, layers, reportLimits, reportWords, schemaIds, treeLimits, treeWords } from '../../src/names.js';
 import { walkTree, type TreeEntry, type TreeRow, type TreeWalk } from '../../src/report/tree.js';
+import { layoutOf } from '../../src/state/layout.js';
 import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
+import { fileTransport } from '../helpers/package-registry.js';
 import { importPathsOf, stripComments } from '../helpers/source-scan.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
@@ -432,6 +434,24 @@ describe('tree walk: the caps', () => {
   it('counts no omitted row for a list within the line cap', async () => {
     const world = worldOf([nodeOf('a')]);
     expect((await walkOf(world, names('a'))).omitted).toBe(0);
+  });
+});
+
+describe('tree walk: the bytes of files that do not read', () => {
+  it('counts the bytes of a file that is not UTF-8, so the walk stops at the byte cap with one row', async () => {
+    const fullReports = treeLimits.maxWalkBytes / reportLimits.maxBytes;
+    const folders = Array.from({ length: fullReports + 1 }, (_, at) => `n${at}`);
+    const deps = createFakeDeps();
+    deps.seedDir(HOME);
+    for (const folder of folders) {
+      const { reportFile } = layoutOf(pathOf(folder));
+      deps.seed(reportFile, ' '.repeat(reportLimits.maxBytes));
+      deps.invalidUtf8.add(reportFile);
+    }
+    const walk = await walkTree(deps, { home: HOME, id: OWN_ID, children: names(...folders), transport: fileTransport(deps) });
+    expect(walk.rows).toHaveLength(fullReports + 1);
+    expect(walk.rows.slice(0, fullReports).map((row) => row.reason)).toEqual(Array(fullReports).fill(childReasons.reportUnreadable));
+    expect(walk.rows.at(-1)).toMatchObject({ state: WARNING, reason: childReasons.byteCap });
   });
 });
 

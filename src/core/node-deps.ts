@@ -27,15 +27,19 @@ import { isatty } from 'node:tty';
 import { failure, type CliResult } from '../cli/errors.js';
 import { renderWarnings } from '../cli/output.js';
 import { hookNames } from '../names.js';
+import { checkedFaultOf } from './access.js';
 import { isSameOrInside } from './paths.js';
 import { ok } from './result.js';
 import {
   MAX_ANSWER_CHARS,
   type AttachedEnd,
   type AttachedOptions,
+  type CheckedOpen,
+  type CheckedOpenRequest,
   type Deps,
   type FileDigest,
   type Fs,
+  type LinkInfo,
   type LinkKind,
   type PathInfo,
   type PathKind,
@@ -186,16 +190,17 @@ const pathKindOf = (info: { isFile(): boolean; isDirectory(): boolean }): PathKi
   return info.isDirectory() ? 'dir' : 'other';
 };
 
+const infoOf = (info: Stats): PathInfo => ({
+  kind: pathKindOf(info),
+  uid: info.uid,
+  mode: info.mode & PERMISSION_BITS,
+  mtimeMs: info.mtimeMs,
+  size: info.size,
+});
+
 const statInfo = async (path: string): Promise<CliResult<PathInfo | null>> => {
   try {
-    const info = await stat(path);
-    return ok({
-      kind: pathKindOf(info),
-      uid: info.uid,
-      mode: info.mode & PERMISSION_BITS,
-      mtimeMs: info.mtimeMs,
-      size: info.size,
-    });
+    return ok(infoOf(await stat(path)));
   } catch (cause) {
     return errorCode(cause) === 'ENOENT' ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
   }
@@ -203,6 +208,90 @@ const statInfo = async (path: string): Promise<CliResult<PathInfo | null>> => {
 
 /** A path that does not exist, or that has a file where a folder should be, has no kind. */
 const MISSING_CODES: readonly string[] = ['ENOENT', 'ENOTDIR'];
+
+const lstatInfo = async (path: string): Promise<CliResult<LinkInfo | null>> => {
+  try {
+    const info = await lstat(path);
+    return ok(info.isSymbolicLink() ? { kind: 'link' } : infoOf(info));
+  } catch (cause) {
+    return MISSING_CODES.includes(errorCode(cause)) ? ok(null) : failure(`cannot stat ${path}: ${errorCode(cause)}`);
+  }
+};
+
+/**
+ * The flags of the open of a file that is checked: read only, no link at the last part of the path (the error is ELOOP), and no wait
+ * for a pipe that has no writer. The bytes of a regular file are not changed by the last flag.
+ */
+const CHECKED_OPEN_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+/** The error code of an open that found a link at the last part of the path. */
+const LINK_CODE = 'ELOOP';
+const READ_CHUNK_BYTES = 65_536;
+
+/** What a read of the open file got: the chunks, the count of their bytes, and whether a read failed. */
+interface HandleRead {
+  readonly chunks: readonly Buffer[];
+  readonly size: number;
+  readonly failed: boolean;
+}
+
+/**
+ * Read from the open file until its end, or until `maxBytes` plus one byte are read. The count of the bytes stays when a read fails.
+ * Each step reads at least one byte or stops, so the loop has the fixed bound `maxBytes + 1`.
+ */
+const readHandleBounded = async (handle: FileHandle, maxBytes: number): Promise<HandleRead> => {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  const limit = maxBytes + 1;
+  try {
+    while (size < limit) {
+      const chunk = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, limit - size));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      chunks.push(chunk.subarray(0, bytesRead));
+      size += bytesRead;
+    }
+    return { chunks, size, failed: false };
+  } catch {
+    return { chunks, size, failed: true };
+  }
+};
+
+/** Check the open file by its own facts, and read it when it passes and the request has a cap. The handle stays open for the caller. */
+const checkOpenFile = async (handle: FileHandle, path: string, request: CheckedOpenRequest): Promise<CheckedOpen> => {
+  const info = infoOf(await handle.stat());
+  const fault = checkedFaultOf(request.uid, info, request.maxBytes);
+  if (fault !== null) return { state: 'refused', fault, info, bytes: 0 };
+  if (request.maxBytes === null) return { state: 'opened', info, text: null, bytes: 0 };
+  const read = await readHandleBounded(handle, request.maxBytes);
+  if (read.size > request.maxBytes) return { state: 'refused', fault: 'size', info, bytes: read.size };
+  if (read.failed) return { state: 'unreadable', info, bytes: read.size };
+  const bytes = Buffer.concat(read.chunks);
+  if (request.decode !== 'fatal') return { state: 'opened', info, text: bytes.toString('utf8'), bytes: read.size };
+  const text = decodeStrict(path, bytes);
+  return text.ok ? { state: 'opened', info, text: text.value, bytes: read.size } : { state: 'unreadable', info, bytes: read.size };
+};
+
+const openChecked = async (path: string, request: CheckedOpenRequest): Promise<CliResult<CheckedOpen>> => {
+  const { maxBytes } = request;
+  if (maxBytes !== null && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
+    return failure(`cannot read ${path}: the cap ${maxBytes} is not a whole number, 0 or more`);
+  }
+  let handle: FileHandle;
+  try {
+    handle = await open(path, CHECKED_OPEN_FLAGS);
+  } catch (cause) {
+    const code = errorCode(cause);
+    if (code === LINK_CODE) return ok({ state: 'link' });
+    return MISSING_CODES.includes(code) ? ok({ state: 'absent' }) : failure(`cannot open ${path}: ${code}`);
+  }
+  try {
+    return ok(await checkOpenFile(handle, path, request));
+  } catch (cause) {
+    return failure(`cannot read ${path}: ${errorCode(cause)}`);
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+};
 
 const linkKind = async (path: string): Promise<CliResult<LinkKind | null>> => {
   try {
@@ -342,6 +431,8 @@ const nodeFs: Fs = {
     return info.ok ? ok(info.value?.kind ?? null) : info;
   },
   statInfo,
+  lstatInfo,
+  openChecked,
   lstat: linkKind,
   chmod: (path, mode) => guard('change the mode of', path, () => chmod(path, mode)),
   realpath: resolved,

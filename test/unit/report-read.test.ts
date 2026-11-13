@@ -173,6 +173,65 @@ describe('child report reader: a path that must not be trusted', () => {
   });
 });
 
+describe('child report reader: the config file of the child', () => {
+  const CONFIG = LAYOUT.configFile;
+  const withConfig = (options: Parameters<typeof createFakeDeps>[0] = {}): FakeDeps => {
+    const deps = childWith(REPORT_TEXT, options);
+    deps.seed(CONFIG, 'schema: 2\n');
+    return deps;
+  };
+  const unsafe: readonly (readonly [what: string, options: Parameters<typeof createFakeDeps>[0], change: (deps: FakeDeps) => void])[] = [
+    ['a link', { links: { [CONFIG]: '/elsewhere/factory.yaml' } }, () => undefined],
+    ['another owner', {}, (deps) => void deps.owners.set(CONFIG, OTHER_USER)],
+    ['the mode 664', {}, (deps) => void deps.modes.set(CONFIG, 0o664)],
+    ['the mode 646', {}, (deps) => void deps.modes.set(CONFIG, 0o646)],
+  ];
+
+  it('reads the report of a child whose config is safe, also when others can read the config', async () => {
+    const deps = withConfig();
+    deps.modes.set(CONFIG, 0o644);
+    expect((await readChildReport(deps, ADDRESS, BIG)).state).toBe('read');
+  });
+
+  it.each(unsafe)('gives configUnsafe, and touches no path of the report, for a config with %s', async (_what, options, change) => {
+    const base = withConfig(options);
+    change(base);
+    const touched: string[] = [];
+    const deps = withFsWatch(base, (_method, path) => void touched.push(path));
+    const result = await readChildReport(deps, ADDRESS, BIG);
+    expect(result).toEqual({ state: 'unknown', reason: childReasons.configUnsafe, age: null, bytes: 0, source: LAYOUT.reportFile });
+    expect(touched.filter((path) => path !== CONFIG)).toEqual([]);
+  });
+
+  it('looks at the metadata of the config only, and reads no text of it', async () => {
+    const reads: string[] = [];
+    const deps = withFsWatch(withConfig(), (method, path) => void (path === CONFIG && reads.push(method)));
+    await readChildReport(deps, ADDRESS, BIG);
+    expect(reads).toEqual(['openChecked']);
+  });
+
+  it('gives configUnsafe, and no text of the fault, when the look at the config fails', async () => {
+    const base = withConfig();
+    const deps: Deps = {
+      ...base,
+      fs: { ...base.fs, openChecked: async (path, request) => (path === CONFIG ? failure('EACCES on /secret/place') : base.fs.openChecked(path, request)) },
+    };
+    const result = await readChildReport(deps, ADDRESS, BIG);
+    expect(result).toMatchObject({ state: 'unknown', reason: childReasons.configUnsafe });
+    expect(JSON.stringify(result)).not.toContain('/secret/place');
+  });
+
+  it('reads the report when the child has no config, as it did before', async () => {
+    expect((await readChildReport(childWith(), ADDRESS, BIG)).state).toBe('read');
+  });
+
+  it('reads the report when the config path is a folder, as it did before', async () => {
+    const deps = childWith();
+    deps.seedDir(CONFIG);
+    expect((await readChildReport(deps, ADDRESS, BIG)).state).toBe('read');
+  });
+});
+
 describe('child report reader: the byte cap', () => {
   it('gives reportTooLarge, with the age and no bytes read, when the file is larger than the cap of the call', async () => {
     const result = await readChildReport(childWith(), ADDRESS, BYTES - 1);
@@ -188,11 +247,9 @@ describe('child report reader: the byte cap', () => {
     expect(unknownOf(await readChildReport(deps, ADDRESS, BIG)).reason).toBe(childReasons.reportTooLarge);
   });
 
-  it.each([0, -1, Number.NaN, 1.5])('reads no text when the cap of the call is %s', async (cap) => {
-    const reads: string[] = [];
-    const deps = withFsWatch(childWith(), (method, path) => void (method === 'readTextLimited' && reads.push(path)));
-    expect(unknownOf(await readChildReport(deps, ADDRESS, cap)).reason).toBe(childReasons.reportTooLarge);
-    expect(reads).toEqual([]);
+  it.each([0, -1, Number.NaN, 1.5])('reads no byte when the cap of the call is %s', async (cap) => {
+    const result = unknownOf(await readChildReport(childWith(), ADDRESS, cap));
+    expect(result).toMatchObject({ reason: childReasons.reportTooLarge, bytes: 0 });
   });
 
   it('puts the cause on the cap of the call when that cap is below the cap of a report, and on the file when it is not', async () => {
@@ -206,28 +263,79 @@ describe('child report reader: the byte cap', () => {
 });
 
 describe('child report reader: a file that does not read', () => {
-  it('gives reportUnreadable, with the age, for bytes that are not UTF-8', async () => {
+  it('gives reportUnreadable, with the age and the bytes that it read, for bytes that are not UTF-8', async () => {
     const deps = childWith();
     deps.invalidUtf8.add(LAYOUT.reportFile);
     const result = unknownOf(await readChildReport(deps, ADDRESS, BIG));
-    expect(result).toMatchObject({ reason: childReasons.reportUnreadable, age: AGE_SECONDS });
+    expect(result).toMatchObject({ reason: childReasons.reportUnreadable, age: AGE_SECONDS, bytes: BYTES });
   });
 
-  it('gives reportUnreadable, and shows no text of the fault, when the read fails', async () => {
+  it('gives reportUnreadable, and shows no text of the fault, when the open of the report file fails', async () => {
     const base = childWith();
-    const deps: Deps = { ...base, fs: { ...base.fs, readTextLimited: async () => failure('EIO on /secret/place') } };
+    const open = base.fs.openChecked;
+    const deps: Deps = {
+      ...base,
+      fs: { ...base.fs, openChecked: async (path, request) => (path === LAYOUT.reportFile ? failure('EIO on /secret/place') : open(path, request)) },
+    };
     const result = await readChildReport(deps, ADDRESS, BIG);
     expect(unknownOf(result).reason).toBe(childReasons.reportUnreadable);
     expect(JSON.stringify(result)).not.toContain('EIO');
     expect(JSON.stringify(result)).not.toContain('/secret/place');
   });
 
-  it.each(['lstat', 'statInfo'] as const)('gives reportUnreadable, and does not throw, when %s fails', async (call) => {
+  it('gives reportUnreadable, with the age and the bytes that it read, when the read fails after the first bytes', async () => {
     const base = childWith();
-    const deps: Deps = { ...base, fs: { ...base.fs, [call]: async () => failure('EACCES on /secret/place') } };
+    const open = base.fs.openChecked;
+    const partial = async (path: string, request: Parameters<typeof open>[1]): ReturnType<typeof open> => {
+      const opened = await open(path, request);
+      return path === LAYOUT.reportFile && opened.ok && opened.value.state === 'opened'
+        ? { ok: true, value: { state: 'unreadable', info: opened.value.info, bytes: 7 } }
+        : opened;
+    };
+    const result = await readChildReport({ ...base, fs: { ...base.fs, openChecked: partial } }, ADDRESS, BIG);
+    expect(result).toEqual({ state: 'unknown', reason: childReasons.reportUnreadable, age: AGE_SECONDS, bytes: 7, source: LAYOUT.reportFile });
+  });
+
+  it('gives reportUnreadable, and does not throw, when the look at a folder fails', async () => {
+    const base = childWith();
+    const deps: Deps = { ...base, fs: { ...base.fs, lstatInfo: async () => failure('EACCES on /secret/place') } };
     const result = await readChildReport(deps, ADDRESS, BIG);
     expect(unknownOf(result).reason).toBe(childReasons.reportUnreadable);
     expect(JSON.stringify(result)).not.toContain('/secret/place');
+  });
+});
+
+describe('child report reader: one open of the report file', () => {
+  it('opens the report file once, and looks at its path by no other call', async () => {
+    const calls: string[] = [];
+    const deps = withFsWatch(childWith(), (method, path) => void (path === LAYOUT.reportFile && calls.push(method)));
+    expect((await readChildReport(deps, ADDRESS, BIG)).state).toBe('read');
+    expect(calls).toEqual(['openChecked']);
+  });
+
+  it('takes the age and the owner of the report from the open, and asks for the owner of the process', async () => {
+    const requests: unknown[] = [];
+    const base = childWith();
+    const open = base.fs.openChecked;
+    const deps: Deps = {
+      ...base,
+      fs: { ...base.fs, openChecked: async (path, request) => (path === LAYOUT.reportFile && requests.push(request), open(path, request)) },
+    };
+    await readChildReport(deps, ADDRESS, BIG);
+    expect(requests).toEqual([{ uid: base.uid, maxBytes: Math.min(BIG, reportLimits.maxBytes), decode: 'fatal' }]);
+  });
+
+  it('gives the facts of a file in a folder that another account owns, and reads no byte of it', async () => {
+    const base = childWith();
+    base.owners.set(LAYOUT.outboxDir, OTHER_USER);
+    const requests: unknown[] = [];
+    const open = base.fs.openChecked;
+    const deps: Deps = {
+      ...base,
+      fs: { ...base.fs, openChecked: async (path, request) => (path === LAYOUT.reportFile && requests.push(request), open(path, request)) },
+    };
+    expect(await readChildReport(deps, ADDRESS, BIG)).toMatchObject({ reason: childReasons.reportOtherOwner, age: AGE_SECONDS, bytes: 0 });
+    expect(requests).toEqual([{ uid: base.uid, maxBytes: null, decode: 'fatal' }]);
   });
 });
 

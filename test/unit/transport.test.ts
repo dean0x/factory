@@ -147,7 +147,7 @@ describe('file transport: ping, the checks of the config file', () => {
     const { deps } = withConfig(childConfig(), { links: { [CONFIG]: '/elsewhere/factory.yaml' } });
     const { result, touched } = await pingWatched(deps);
     expect(result).toEqual({ kind: 'unknown', reason: childReasons.configUnsafe });
-    expect(touched).toEqual(['lstat']);
+    expect(touched).toEqual(['openChecked']);
   });
 
   it('is unknown, and reads no text, when another account owns the config', async () => {
@@ -181,13 +181,9 @@ describe('file transport: ping, the checks of the config file', () => {
     expect(await transport.ping(`file://${CHILD}`)).toEqual({ kind: 'unknown', reason: 'no factory.yaml found there' });
   });
 
-  it.each(['lstat', 'statInfo'] as const)('gives a fixed reason, and no text of the fault, when %s fails', async (method) => {
+  it('gives a fixed reason, and no text of the fault, when the look at the config fails', async () => {
     const { deps } = withConfig(childConfig());
-    const fault = async () => failure('cannot look at /secret/path: EACCES');
-    const failing: Deps = {
-      ...deps,
-      fs: { ...deps.fs, lstat: method === 'lstat' ? fault : deps.fs.lstat, statInfo: method === 'statInfo' ? fault : deps.fs.statInfo },
-    };
+    const failing: Deps = { ...deps, fs: { ...deps.fs, openChecked: async () => failure('cannot look at /secret/path: EACCES') } };
     const result = await fileTransport(failing).ping(`file://${CHILD}`);
     expect(result).toEqual({ kind: 'unknown', reason: 'factory.yaml could not be read' });
     if (result.kind === 'unknown') expect(result.reason).not.toContain('secret');

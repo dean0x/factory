@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import { posix } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { failure, type CliResult } from '../../src/cli/errors.js';
+import { checkedFaultOf } from '../../src/core/access.js';
 import type { AttachedEnd, AttachedOptions, Deps, FetchStatus, Fs, PathKind, RunOptions, RunOutput } from '../../src/core/deps.js';
 import { isSameOrInside } from '../../src/core/paths.js';
 import { ok } from '../../src/core/result.js';
@@ -313,6 +314,24 @@ export const createFakeDeps = (options: FakeOptions = {}): FakeDeps => {
           mtimeMs: mtimes.get(path) ?? clock,
           size: Buffer.byteLength(files.get(path) ?? '', 'utf8'),
         });
+      },
+      lstatInfo: async (path) => (Object.hasOwn(options.links ?? {}, path) ? ok({ kind: 'link' }) : fake.fs.statInfo(path)),
+      openChecked: async (path, request) => {
+        const { maxBytes } = request;
+        if (maxBytes !== null && (!Number.isSafeInteger(maxBytes) || maxBytes < 0)) {
+          return failure(`cannot read ${path}: the cap ${maxBytes} is not a whole number, 0 or more`);
+        }
+        if (Object.hasOwn(options.links ?? {}, path)) return ok({ state: 'link' });
+        const found = await fake.fs.statInfo(path);
+        if (!found.ok) return found;
+        const info = found.value;
+        if (info === null) return ok({ state: 'absent' });
+        const fault = checkedFaultOf(request.uid, info, maxBytes);
+        if (fault !== null) return ok({ state: 'refused', fault, info, bytes: 0 });
+        if (maxBytes === null) return ok({ state: 'opened', info, text: null, bytes: 0 });
+        // The fake keeps decoded text, so the paths in `invalidUtf8` stand for bytes that only a lenient decode can read.
+        if (request.decode === 'fatal' && invalidUtf8.has(path)) return ok({ state: 'unreadable', info, bytes: info.size });
+        return ok({ state: 'opened', info, text: files.get(path) ?? '', bytes: info.size });
       },
       chmod: async (path, mode) => {
         if (kindOf(path) === null) return enoent('change the mode of', path);
