@@ -138,17 +138,22 @@ export interface RecordCheck {
 
 /**
  * What the core gives to the `commands` hook of a recipe. A recipe imports no loader and no command file, so the core carries what
- * a command of the recipe needs from them.
+ * a command of the recipe needs from them. In both calls, `command` is the command name that the remedy of a failure tells the
+ * person to run again.
  * - `registry` is the registry that the command table is built from.
- * - `locateNode` gives the folder of the node: the folder of the home flag, else the one that the current folder is in. The command
- *   name is the one that the remedy of a failure tells the person to run again.
+ * - `locateNode` gives the folder of the node: the folder of the home flag, else the one that the current folder is in.
  * - `loadProject` reads the config of the node in `home` and gives one project. The id names it. Without an id, the node must list
  *   exactly one project. Any other case is a usage error (exit 2) that lists the projects.
  */
 export interface RecipeHost {
   readonly registry: RecipeRegistry;
   readonly locateNode: (deps: Deps, home: string | undefined, command: CommandName) => Promise<CliResult<string>>;
-  readonly loadProject: (deps: Deps, home: string, projectId: string | undefined) => Promise<CliResult<RecipeProject>>;
+  readonly loadProject: (
+    deps: Deps,
+    home: string,
+    projectId: string | undefined,
+    command: CommandName,
+  ) => Promise<CliResult<RecipeProject>>;
 }
 
 /**

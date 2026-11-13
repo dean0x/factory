@@ -46,41 +46,46 @@ describe('the host object of a recipe', () => {
 
   describe('loadProject', () => {
     it('gives the only project of the node when the person names none', async () => {
-      const project = await host.loadProject(nodeWith(), HOME, undefined);
+      const project = await host.loadProject(nodeWith(), HOME, undefined, commands.version);
       expect(project.ok && project.value.id).toBe('web');
     });
 
     it('gives the project that the person names', async () => {
-      const project = await host.loadProject(nodeWith(withProjects(['api', 'web'])), HOME, 'api');
+      const project = await host.loadProject(nodeWith(withProjects(['api', 'web'])), HOME, 'api', commands.version);
       expect(project.ok && project.value.id).toBe('api');
       expect(project.ok && project.value.url).toBe('https://github.com/acme/api.git');
     });
 
     it('exits 2 and lists the projects when the node has more than one and the person names none', async () => {
-      const project = await host.loadProject(nodeWith(withProjects(['api', 'web'])), HOME, undefined);
+      const project = await host.loadProject(nodeWith(withProjects(['api', 'web'])), HOME, undefined, commands.version);
       expect(project.ok).toBe(false);
       if (project.ok) return;
       expect(exitCodeFor(project.error)).toBe(2);
-      expect(`${project.error.message} ${project.error.hint ?? ''}`).toContain('api, web');
+      expect(project.error.hint).toContain('api, web');
+      expect(project.error.hint).toContain('Run "factory version" again with --project PROJECT.');
     });
 
-    it('exits 2 for a project that the config does not list', async () => {
-      const project = await host.loadProject(nodeWith(withProjects(['api', 'web'])), HOME, 'other');
+    it('exits 2 for a project that the config does not list, and names the listed projects and the command to run again', async () => {
+      const project = await host.loadProject(nodeWith(withProjects(['api', 'web'])), HOME, 'other', commands.version);
       expect(project.ok).toBe(false);
       if (project.ok) return;
       expect(exitCodeFor(project.error)).toBe(2);
       expect(project.error.message).toContain('"other"');
+      expect(project.error.hint).toContain('api, web');
+      expect(project.error.hint).toContain('"factory version"');
     });
 
-    it('exits 2 when the node lists no project', async () => {
-      const project = await host.loadProject(nodeWith(withProjects([])), HOME, undefined);
+    it('exits 2 when the node lists no project, and names the command to run again', async () => {
+      const project = await host.loadProject(nodeWith(withProjects([])), HOME, undefined, commands.version);
       expect(project.ok).toBe(false);
-      if (!project.ok) expect(exitCodeFor(project.error)).toBe(2);
+      if (project.ok) return;
+      expect(exitCodeFor(project.error)).toBe(2);
+      expect(project.error.hint).toContain('"factory version"');
     });
 
     it('fails when the config of the node cannot be read', async () => {
       const deps = createFakeDeps({ cwd: '/w', os: 'darwin', env: { PATH: '/bin', XDG_STATE_HOME: '/state' } });
-      const project = await host.loadProject(deps, HOME, undefined);
+      const project = await host.loadProject(deps, HOME, undefined, commands.version);
       expect(project.ok).toBe(false);
     });
   });
