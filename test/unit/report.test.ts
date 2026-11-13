@@ -7,6 +7,8 @@ import type { LocalBoard } from '../../src/board/contract.js';
 import { createLocalBoard } from '../../src/board/local.js';
 import { failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import { renderJson } from '../../src/cli/output.js';
+import { runCli } from '../../src/cli/run.js';
+import { reportLines, runReport } from '../../src/commands/report.js';
 import { parseReport, type NodeReport } from '../../src/comms/report-schema.js';
 import type { PingResult, Transport } from '../../src/comms/transport.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
@@ -14,6 +16,7 @@ import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
 import { commands, files, reportKeys, reportLimits, schemaIds, values } from '../../src/names.js';
+import { recipes } from '../../src/recipes/index.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { checkReport, readNodeFacts, reportDocOf, reportTextOf, type NodeFacts } from '../../src/report/build.js';
 import { writeReportFile } from '../../src/report/outbox.js';
@@ -23,9 +26,10 @@ import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.j
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
-import { sampleBoard, sampleConfigWithBoard } from '../helpers/sample-config.js';
-import { allSourceFiles, importPathsOf } from '../helpers/source-scan.js';
+import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { sampleBoard, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
+import { captureSink } from '../helpers/sink.js';
+import { allSourceFiles, importPathsOf, stripComments } from '../helpers/source-scan.js';
 import { tmuxHandler, type PaneFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 
 const HOME = '/w/node';
@@ -49,6 +53,10 @@ interface FixtureOptions {
   readonly requests?: readonly Record<string, unknown>[];
   /** The workers of the registry. A worker with an event has a last-seen line and a pane that runs. */
   readonly workers?: readonly { readonly id: string; readonly event?: 'PreToolUse' | 'Stop'; readonly percent?: number }[];
+  /** Links of the file system: a path under a key resolves to the same path under the value. */
+  readonly links?: Readonly<Record<string, string>>;
+  /** The configs of the child homes, by home folder. The node home of a child is a folder with its config file. */
+  readonly childHomes?: Readonly<Record<string, FactoryConfig>>;
 }
 
 const SESSION = '00000000-0000-4000-8000-000000000001';
@@ -70,7 +78,19 @@ const fixtureOf = async (options: FixtureOptions = {}): Promise<Fixture> => {
     .filter((worker) => worker.event !== undefined)
     .map((worker) => ({ session: config.core.node.id, options: { '@worker': worker.id } }));
   const tmux = tmuxHandler({ sessions: { [config.core.node.id]: HOME }, panes });
-  const deps = createFakeDeps({ cwd: '/w', os: 'darwin', env: { PATH: '/bin', XDG_STATE_HOME: '/state' }, run: tmux.handler });
+  const deps = createFakeDeps({
+    cwd: '/w',
+    os: 'darwin',
+    env: { PATH: '/bin', XDG_STATE_HOME: '/state' },
+    run: tmux.handler,
+    ...(options.links === undefined ? {} : { links: options.links }),
+  });
+  seedConfig(deps, HOME, config);
+  registerRoot(deps, HOME, config.core.node.id);
+  for (const [path, childConfig] of Object.entries(options.childHomes ?? {})) {
+    deps.seedDir(path);
+    seedConfig(deps, path, childConfig);
+  }
   deps.seedDir(LAYOUT.stateDir);
   deps.seed(BOARD_FILE, boardText(options.items ?? [], []));
   deps.seed(WAITING_FILE, waitingText(options.requests ?? []));
@@ -551,5 +571,137 @@ describe('report file writer: with the real file system (TP-25)', () => {
     await symlink(target, join(home, '.factory', 'outbox'));
     expect(errorOf(await writeReportFile(deps, home, await sampleReport())).kind).toBe('safety');
     expect(await readdir(target)).toEqual([]);
+  });
+});
+
+describe('report: the command (TP-12, TP-13, TP-14)', () => {
+  const nodeConfig = (children: FactoryConfig['core']['children'] = []): FactoryConfig => {
+    const config = sampleConfigWithBoard();
+    return { ...config, core: { ...config.core, node: { id: 'mgr', layer: 2 }, children } };
+  };
+  const childConfig = (): FactoryConfig => {
+    const config = sampleConfigWithBoard();
+    return { ...config, core: { ...config.core, node: { id: 'web', layer: 1 } } };
+  };
+  const WEB = { id: 'web', address: 'file:///w/web-factory' };
+  const API = { id: 'api', address: 'file:///w/api-factory' };
+
+  const run = async (fixture: Fixture, ...words: string[]) => {
+    const sink = captureSink();
+    const code = await runCli(['report', '--home', HOME, ...words], fixture.deps, sink);
+    return { code, out: sink.out.join(''), err: sink.errors.join('') };
+  };
+
+  const fileOf = (fixture: Fixture): string | undefined => fixture.deps.files.get(LAYOUT.reportFile);
+
+  it('starts the text with the OK line when the node has no child, and prints no table', async () => {
+    const fixture = await fixtureOf({ config: nodeConfig(), workers: [{ id: 'alpha', event: 'Stop' }] });
+    const result = await run(fixture);
+    expect(result.code).toBe(0);
+    expect(result.out.split('\n')[0]).toMatch(/^OK: mgr \(layer 2\): workers 1, in progress 0, requests 0, children 0$/);
+    expect(result.out.split('\n').filter((line) => line !== '')).toHaveLength(1);
+  });
+
+  it('starts the text with the CHECK line, then one row for each child, when a child does not answer', async () => {
+    const fixture = await fixtureOf({
+      config: nodeConfig([WEB, API]),
+      childHomes: { '/w/web-factory': childConfig() },
+    });
+    const result = await run(fixture);
+    expect(result.code).toBe(0);
+    const lines = result.out.split('\n').filter((line) => line !== '');
+    expect(lines[0]).toMatch(/^CHECK: mgr \(layer 2\): workers 0, in progress 0, requests 0, children 2 \(1 not ok\)$/);
+    expect(lines[1]).toMatch(/^ID\s+STATE\s+WORKERS\s+ITEMS\s+REQUESTS\s+CHILDREN\s+AGE\s+REASON$/);
+    expect(lines[2]).toMatch(/^web\s+ok\s+-\s+-\s+-\s+-\s+-\s+-$/);
+    expect(lines[3]).toMatch(/^api\s+unknown\s+-\s+-\s+-\s+-\s+-\s+\S/);
+    expect(lines).toHaveLength(4);
+  });
+
+  it('prints with the flag --json the document that the file holds, and the file has mode 600 in a folder of mode 700', async () => {
+    const fixture = await fixtureOf({ workers: [{ id: 'alpha', event: 'Stop', percent: 20 }], items: [itemRecord('B-1', { status: 'doing', lane: 'alpha', priority: 'P1' })] });
+    const result = await run(fixture, '--json');
+    expect(result.code).toBe(0);
+    const printed = JSON.parse(result.out) as NodeReport;
+    expect(printed.schema).toBe(schemaIds.report);
+    expect(printed.workers.map((worker) => worker.id)).toEqual(['alpha']);
+    expect(fileOf(fixture)).toBe(result.out);
+    expect(fileOf(fixture)).toBe(reportTextOf(printed));
+    expect(fixture.deps.modes.get(LAYOUT.reportFile)).toBe(0o600);
+    expect(fixture.deps.modes.get(LAYOUT.outboxDir)).toBe(0o700);
+  });
+
+  it('writes the file on each run of the text output too, and replaces the older file whole', async () => {
+    const fixture = await fixtureOf();
+    fixture.deps.seed(LAYOUT.reportFile, 'old text\n');
+    expect((await run(fixture)).code).toBe(0);
+    const written = parseReport(JSON.parse(fileOf(fixture) ?? 'null'));
+    expect(written.ok && written.value.id).toBe(fixture.config.core.node.id);
+    expect([...fixture.deps.files.keys()].filter((path) => path.startsWith(LAYOUT.outboxDir))).toEqual([LAYOUT.reportFile]);
+  });
+
+  it('stops with exit 4 when the outbox folder is a link, and writes nothing into its target', async () => {
+    const fixture = await fixtureOf({ links: { [LAYOUT.outboxDir]: '/outside/place' } });
+    const result = await run(fixture, '--json');
+    expect(result.code).toBe(4);
+    expect(fileOf(fixture)).toBeUndefined();
+    expect([...fixture.deps.files.keys()].filter((path) => path.startsWith('/outside'))).toEqual([]);
+  });
+
+  it('exits 1 with the error of the board, and writes no file, when the board cannot be read', async () => {
+    const fixture = await fixtureOf();
+    fixture.deps.files.delete(BOARD_FILE);
+    const result = await run(fixture);
+    expect(result.code).toBe(1);
+    expect(result.err).toContain(files.board);
+    expect(fileOf(fixture)).toBeUndefined();
+  });
+
+  it('exits 1, and keeps the older file, for a write fault that is not a link', async () => {
+    const fixture = await fixtureOf();
+    fixture.deps.seed(LAYOUT.reportFile, 'old text\n');
+    const denied: Deps = { ...fixture.deps, fs: { ...fixture.deps.fs, writeTextExclusive: async () => failure('cannot write: ENOSPC') } };
+    const result = await runReport(denied, { home: HOME, since: undefined }, recipes, portOf({}));
+    expect(errorOf(result).kind).toBe('failure');
+    expect(fileOf(fixture)).toBe('old text\n');
+  });
+
+  it('exits 2 for the flag --since, with a remedy that names the command, and writes no file', async () => {
+    const fixture = await fixtureOf();
+    const result = await run(fixture, '--since', 'cursor-1');
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--since');
+    expect(result.err).toContain('"factory report"');
+    expect(result.err).not.toContain('cursor-1');
+    expect(result.out).toBe('');
+    expect(fileOf(fixture)).toBeUndefined();
+  });
+
+  it('shows the report in the help, with its flag', async () => {
+    const sink = captureSink();
+    expect(await runCli(['report', '--help'], (await fixtureOf()).deps, sink)).toBe(0);
+    expect(sink.out.join('')).toContain('factory report [--home DIR] [--since CURSOR]');
+  });
+
+  it('shows the counts and the age of a child, when the child row holds them', async () => {
+    const report = await reportOf(await fixtureOf());
+    const withCounts: NodeReport = {
+      ...report,
+      children: [{ id: 'web', address: 'file:///w/web-factory', state: 'ok', reason: null, counts: { workers: 3, inProgress: 2, requests: 1, children: 0 }, age: 90 }],
+    };
+    const lines = reportLines(withCounts, { notValid: 0, hasWarnings: false }).map((line) => line.text);
+    expect(lines[0]).toMatch(/^OK: /);
+    expect(lines[2]).toMatch(/^web\s+ok\s+3\s+2\s+1\s+0\s+90s\s+-$/);
+  });
+});
+
+describe('report: one builder for status and report (TP-12)', () => {
+  const sourceOf = (name: string): string => stripComments(readFileSync(join(SRC, 'commands', name), 'utf8'));
+
+  it.each(['report.ts'])('%s reads the facts with the one builder, and never calls readStatus itself', (name) => {
+    const source = sourceOf(name);
+    expect(importPathsOf(source).some((path) => /report\/build/.test(path))).toBe(true);
+    expect(source).toMatch(/\breadNodeFacts\(/);
+    expect(source).not.toMatch(/\breadStatus\b/);
+    expect(importPathsOf(source).filter((path) => /status-read/.test(path))).toEqual([]);
   });
 });

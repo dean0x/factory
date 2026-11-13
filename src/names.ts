@@ -1392,10 +1392,23 @@ export const reportKeys = {
 /**
  * The words of the report: the first word of the verdict line of `report`, the text between a node id and a request id in the
  * origin of a request, the states of a child row (the report file holds the same words), the states of a worker row (the words
- * of `status`), and the titles of the columns of the child table.
+ * of `status`), the words of the verdict line, and the titles of the columns of the child table. A cell that has no value shows
+ * `empty`, and an age in seconds has the unit `ageUnit`.
  */
 export const reportWords = {
   verdict: { ok: 'OK:', check: 'CHECK:' },
+  /** The words of the counts in the verdict line, and the notes after a count: a worker record that is not valid, a child that is not ok. */
+  summary: {
+    layer: 'layer',
+    workers: 'workers',
+    inProgress: 'in progress',
+    requests: requestWords.requests,
+    children: 'children',
+    notValid: 'not valid',
+    notOk: 'not ok',
+  },
+  empty: '-',
+  ageUnit: 's',
   originSeparator: '#',
   childStates: { ok: 'ok', unknown: 'unknown', mismatch: 'mismatch' },
   workerStates: [
