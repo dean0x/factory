@@ -253,6 +253,8 @@ export const files = {
   resume: 'resume.md',
   /** The assignment of a worker, in its inbox folder: `worker new --assignment FILE` copies the text of FILE to this file. */
   assignment: 'assignment.md',
+  /** The lessons of the coordinator, in the state folder: the state repo tracks the file, and only the coordinator writes it. */
+  lessons: 'lessons.md',
   /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
   coordinatorLastSession: 'coordinator-last-session',
   /** The run marker of `worker watch`, in the run-time folder: it holds the token of the newest watch run of the node. */
@@ -1277,6 +1279,9 @@ export const selfResetWords = { queued: 'QUEUED:', after: 'the compact runs afte
 /** The name of the file with the resume notes of the coordinator of a node, in the folder `dirs.resume` of the state folder. */
 export const coordinatorResumeFile = (nodeId: string): string => `${nodeId}.md`;
 
+/** The limits of the lessons file of the coordinator. The file holds at most `maxEntries` entries, and the role text gives that number. */
+export const lessonLimits = { maxEntries: 40 } as const;
+
 /**
  * The start time of the process of a pane. The macOS `ps` has no `etimes`, and tmux has no format for the start time of a pane, so
  * the check asks `ps` for the elapsed time of the pane process. `timeoutMs` bounds the call. `etime` is the one form of the answer
@@ -2136,6 +2141,7 @@ const pathValues: Readonly<Record<string, string>> = {
   boardFile: inState(files.board),
   waitingFile: inState(files.waiting),
   decisionLogFile: inState(files.decisionLog),
+  lessonsFile: inState(files.lessons),
   profileDir: `${inState(dirs.profile)}/`,
   roadmapsDir: `${inState(dirs.roadmaps)}/`,
   ordersDir: `${inState(dirs.orders)}/`,
@@ -2169,6 +2175,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   maxPctKey: keyPath(keys.root.limits, keys.limits.contextMaxPct),
   inboxEnv: env.inbox,
   resumeFile: files.resume,
+  maxLessons: String(lessonLimits.maxEntries),
   workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
   workerWatchCommand: workerCommandText(workerCommands.watch),
   dismissCommand: commandText(commands.dismiss),
