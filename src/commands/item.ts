@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import type { BoardConnector, BoardItem, ItemAddInput, ItemMove, ItemMoved, ItemPatch, ItemQuery, ItemRecorded } from '../board/contract.js';
-import { checkItemId, checkRecordSetup } from '../board/edit.js';
+import { checkItemId, checkRecordSetup, formerWorkersOf } from '../board/edit.js';
 import { declaredFields, itemTarget } from '../board/fields.js';
 import { followBoard } from '../board/follow.js';
 import { boardView, trackView } from '../board/list-view.js';
@@ -8,10 +8,11 @@ import { requireLocalKind } from '../board/local.js';
 import { stageShown } from '../board/stages.js';
 import { failure, usageError, type CliResult } from '../cli/errors.js';
 import { displayLine, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
+import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, roles, schemaIds } from '../names.js';
+import { boardKeys, commandLines, commands, commandText, files, flags, flagText, itemCommands, itemWords, roles, schemaIds } from '../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../recipes/entry.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import { layoutOf } from '../state/layout.js';
@@ -226,6 +227,27 @@ const workerOf = (item: BoardItem, field: string | undefined): CliResult<string 
     : failure(`the ${roles.worker} field of ${displayLine(item.id)} does not hold text`, `Check the item in ${files.board}.`);
 };
 
+/**
+ * The branches that the work of an item may come from, for the record check. An item with a worker has the branch of that worker.
+ * An item with no worker and a list of former workers (`unassigned_from`) has the branch of each former worker that is a worker id.
+ * That list fails closed: a list that is not a list of text, and a list that gives no branch, are a failure (exit 1) and nothing is
+ * read from the network, because the work could not be tied to a worker. An item that never had a worker (no list, or an empty
+ * one) has no branches, so the check tests none.
+ */
+const branchesOf = (item: BoardItem, worker: string | null): CliResult<readonly string[] | undefined> => {
+  if (worker !== null) return ok([branchOf(worker)]);
+  const again = `${commandText(commandLines.itemRecord)} ${item.id} ${flagText(flags.ref)} REF`;
+  const former = formerWorkersOf(item.record, item.id, again);
+  if (!former.ok) return former;
+  if (former.value.length === 0) return ok(undefined);
+  const branches = former.value.filter(isSlug).map(branchOf);
+  if (branches.length > 0) return ok(branches);
+  return failure(
+    `the item ${item.id} names former ${roles.worker}s, but none has a branch to test`,
+    `Check the "${boardKeys.unassignedFrom}" of the item in ${files.board}, then run "${again}" again.`,
+  );
+};
+
 /** The record of a worker, or null when it has none. A record that is not valid is a failure (exit 1). */
 const recordOf = async (deps: Deps, home: string, worker: string): Promise<CliResult<WorkerRecord | null>> => {
   const read = await readWorkerRecord(deps, home, worker);
@@ -240,8 +262,8 @@ const recordOf = async (deps: Deps, home: string, worker: string): Promise<CliRe
 
 /**
  * What the record check of the recipe gets, from the config. The project comes from the record of the worker that the item names, and
- * a project that the person names must be that one. An item with no worker record needs the project flag. The branch is the branch of
- * the worker, and an item with no worker leaves it out. The recipe reads the rest of the project itself.
+ * a project that the person names must be that one. An item with no worker record needs the project flag. The branches come from the
+ * worker and the former workers of the item (`branchesOf`). The recipe reads the rest of the project itself.
  */
 const checkInputOf = async (
   deps: Deps,
@@ -249,6 +271,7 @@ const checkInputOf = async (
   action: RecordAction,
   ref: string,
   worker: string | null,
+  branches: readonly string[] | undefined,
 ): Promise<CliResult<RecordCheckInput>> => {
   const { home, config } = board;
   const record = worker === null ? ok(null) : await recordOf(deps, home, worker);
@@ -264,7 +287,7 @@ const checkInputOf = async (
   if (project === undefined) {
     return usageError(`the project ${shown(projectId)} is not in the config of this ${roles.node}`, `Check the projects in ${files.config}.`);
   }
-  return ok({ ref, project, cloneDir: resolve(home, project.path), branch: worker === null ? undefined : branchOf(worker) });
+  return ok({ ref, project, cloneDir: resolve(home, project.path), branches });
 };
 
 const recordedAnswer = (checked: CheckedRecord, recorded: ItemRecorded): CommandOutput => {
@@ -312,7 +335,9 @@ const recordChecked = async (deps: Deps, board: OpenBoard, action: RecordAction)
   if (item === undefined) return usageError(`${files.board} has no item ${shown(action.id)}`);
   const worker = workerOf(item, config.core.board?.worker_field);
   if (!worker.ok) return worker;
-  const input = await checkInputOf(deps, board, action, ref.value, worker.value);
+  const branches = branchesOf(item, worker.value);
+  if (!branches.ok) return branches;
+  const input = await checkInputOf(deps, board, action, ref.value, worker.value, branches.value);
   if (!input.ok) return input;
   const checked = await hook.check(deps, input.value);
   if (!checked.ok) return checked;

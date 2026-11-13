@@ -100,8 +100,8 @@ export interface CheckedRecord {
 }
 
 /**
- * What the core gives the check of a recipe. The core found the project and the branch from the item: the project comes from the
- * record of the worker that the item names, or from the project flag, and the branch is the branch of that worker.
+ * What the core gives the check of a recipe. The core found the project and the branches from the item: the project comes from the
+ * record of the worker that the item names, or from the project flag, and the branches come from the workers of the item.
  */
 export interface RecordCheckInput {
   /** The reference as `parseRef` of the same check gave it. */
@@ -109,8 +109,12 @@ export interface RecordCheckInput {
   readonly project: RecipeProject;
   /** The folder of the clone of the project. */
   readonly cloneDir: string;
-  /** The branch of the worker that the item names, or undefined when the item names none. */
-  readonly branch: string | undefined;
+  /**
+   * The branches that the work of the item may come from: the branch of the worker that the item names, else the branch of each
+   * former worker of the item. Undefined when the item never had a worker, so the check tests no branch. A list that is empty
+   * matches no work, so a check refuses with it.
+   */
+  readonly branches: readonly string[] | undefined;
 }
 
 /**

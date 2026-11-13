@@ -62,14 +62,14 @@ export interface MergedPr {
 /** The result of the read: a merged PR that matches. Every other case is a failure. */
 export type MergedRead = { readonly kind: 'merged'; readonly pr: MergedPr };
 
-/** What the PR must match. `head` is the head branch; without it the head branch is not tested. */
+/** What the PR must match. `heads` are the head branches that the PR may come from; without them the head branch is not tested. An empty list matches no PR. */
 export interface MergeReadInput {
   /** `owner/name` of the repo, from `githubRepoOf`. */
   readonly repo: string;
   readonly number: number;
   /** The branch that the PR merged into. */
   readonly base: string;
-  readonly head?: string;
+  readonly heads?: readonly string[];
 }
 
 /** The command that runs the record check, as the remedy lines show it. */
@@ -140,7 +140,7 @@ export const readMergedPr = async (deps: Deps, input: MergeReadInput): Promise<C
   if (pr.url.toLowerCase() !== expectedUrl.toLowerCase()) return mismatch(number, 'the PR is not in this repo');
   if (pr.isCrossRepository) return mismatch(number, 'the PR comes from another repo');
   if (pr.baseRefName !== input.base) return mismatch(number, 'the PR merged into another base branch');
-  if (input.head !== undefined && pr.headRefName !== input.head) return mismatch(number, 'the PR comes from another head branch');
+  if (input.heads !== undefined && !input.heads.includes(pr.headRefName)) return mismatch(number, 'the PR comes from another head branch');
   if (!isSha(mergeCommit) || !isSha(head)) return mismatch(number, 'a commit of the PR is not a full sha');
   return ok({ kind: 'merged', pr: { number: input.number, mergeCommit, prHead: head } as MergedPr });
 };

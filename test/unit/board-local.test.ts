@@ -2031,11 +2031,49 @@ describe('the local connector: record a passed check', () => {
     expect(repo.textOf(fileNames.board)).toBe(written);
   });
 
+  it('records the item and takes it out of the queue when the item holds the stage, the state and the head and a queue row lists it', async () => {
+    const recorded = workItem({ status: 'done', stage: 'merged', merged_pr_head: PR_HEAD });
+    const repo = await repoWith(boardWith([recorded, item('B-2')], { [QUEUE]: ROWS }));
+    const done = valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(done.changed).toBe(true);
+    expect(repo.commits).toHaveLength(1);
+    expect(valueOf(boardAfter(repo)).queue).toEqual([
+      { name: 'First', items: ['B-2'], release: true },
+      { name: 'Other', items: ['B-2'] },
+      { name: 'Empty', items: [] },
+    ]);
+    expect(itemAfter(repo, 'B-1')).toEqual(recorded);
+  });
+
   it('exits 1 and writes nothing when the item records another PR head', async () => {
     const board = boardWith([workItem({ merged_pr_head: 'd'.repeat(40), status: 'done', stage: 'merged' })]);
     const repo = await repoWith(board);
     expect(exitOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'))).toBe(1);
     expectUntouched(repo, board);
+  });
+
+  it('exits 1 and writes nothing when another item records the PR head already, and names that item and the command in the remedy', async () => {
+    const board = boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: PR_HEAD })], { [QUEUE]: ROWS });
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('B-2');
+    expect(error.message).not.toContain(PR_HEAD);
+    expect(error.hint).toContain(commandText(commandLines.itemRecord));
+    expectUntouched(repo, board);
+  });
+
+  it('records the item when the other items record other PR heads', async () => {
+    const repo = await repoWith(boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: 'd'.repeat(40) })]));
+    expect(valueOf(await connectorOf(repo).recordChecked('B-1', checkedRecord(), 'w1')).changed).toBe(true);
+  });
+
+  it('keeps a rerun of the same item a success with no commit, whatever the other items record', async () => {
+    const repo = await repoWith(boardWith([workItem(), item('B-2', { status: 'done', stage: 'merged', merged_pr_head: 'd'.repeat(40) })]));
+    const connector = connectorOf(repo);
+    valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1'));
+    expect(valueOf(await connector.recordChecked('B-1', checkedRecord(), 'w1')).changed).toBe(false);
+    expect(repo.commits).toHaveLength(1);
   });
 
   it.each([
@@ -2148,7 +2186,10 @@ describe('the local connector: take a worker off an item', () => {
     const full = Array.from({ length: markLimits.maxFormerWorkers }, (_, at) => `w-${at}`);
     const board = boardWith([workItem({ unassigned_from: full })]);
     const repo = await repoWith(board);
-    expect(exitOf(await connectorOf(repo).unassignItem('B-1'))).toBe(2);
+    const error = errorOf(await connectorOf(repo).unassignItem('B-1'));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.hint).toContain(`"${commandText(commandLines.itemUnassign)} B-1"`);
+    expect(error.hint).toContain('unassigned_from');
     expectUntouched(repo, board);
     const named = await repoWith(boardWith([workItem({ lane: 'w-3', unassigned_from: full })]));
     valueOf(await connectorOf(named).unassignItem('B-1'));

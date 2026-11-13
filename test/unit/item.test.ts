@@ -7,7 +7,7 @@ import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import { ok } from '../../src/core/result.js';
 import { toolNames } from '../../src/core/tools.js';
-import { boardKeys, commands, commandText, files as fileNames, stateLock } from '../../src/names.js';
+import { boardKeys, commandLines, commands, commandText, files as fileNames, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import type { CheckedRecord, RecipeRegistry, RecordCheck, RecordCheckInput } from '../../src/recipes/entry.js';
 import { softwareBoard } from '../../src/recipes/software/board.js';
@@ -576,6 +576,59 @@ describe('item record with the software recipe: the check fails closed (AC-2)', 
   });
 });
 
+describe('item record with the software recipe: an item with no worker that names former workers', () => {
+  const boardOf = (extra: Record<string, unknown>): string =>
+    boardText([itemRecord('B-1', { status: 'doing', stage: 'review', ...extra })], TRACKS);
+
+  const recordFrom = (extra: Record<string, unknown>, headBranch: string) =>
+    mergeWorld({ board: boardOf(extra), record: false, answer: answering(goodPr({ headRefName: headBranch })) });
+
+  it('records a PR that comes from the branch of any one of the former workers', async () => {
+    const world = await recordFrom({ unassigned_from: [WORKER, 'beta'] }, branchOf('beta'));
+    valueOf(await runMerge(world, { project: 'web' }));
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', status: 'done', [boardKeys.mergedPrHead]: HEAD_SHA });
+  });
+
+  it('exits 1 and writes nothing for a PR from a branch that no former worker has', async () => {
+    const board = boardOf({ unassigned_from: [WORKER] });
+    const world = await mergeWorld({ board, record: false, answer: answering(goodPr({ headRefName: 'any-branch' })) });
+    const error = errorOf(await runMerge(world, { project: 'web' }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('another head branch');
+    expectUntouched(world.repo, board);
+  });
+
+  it.each([
+    ['a stored value that is not a list', 'alpha', 'is not a list of text'],
+    ['a list with a value that is not text', [WORKER, 7], 'is not a list of text'],
+    ['a list of names that are not worker ids', ['Not A Worker Id', ''], 'none has a branch to test'],
+  ])('exits 1, runs no gh and writes nothing for %s', async (_name, former, reason) => {
+    const board = boardOf({ unassigned_from: former });
+    const world = await mergeWorld({ board, record: false });
+    const error = errorOf(await runMerge(world, { project: 'web' }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain(reason);
+    expect(error.hint).toContain(commandText(commandLines.itemRecord));
+    expect(world.gh.calls).toEqual([]);
+    expectUntouched(world.repo, board);
+  });
+
+  it('keeps the branch test off when the list of former workers is empty, as for an item that never had a worker', async () => {
+    const world = await recordFrom({ unassigned_from: [] }, 'any-branch');
+    valueOf(await runMerge(world, { project: 'web' }));
+    expect(itemIn(world.repo, 'B-1')).toMatchObject({ stage: 'merged', status: 'done' });
+  });
+
+  it('tests the branch of the worker, not the branches of the former workers, when the item has a worker again', async () => {
+    const board = boardOf({ lane: 'beta', unassigned_from: [WORKER] });
+    const world = await mergeWorld({ board, record: false, answer: answering(goodPr({ headRefName: branchOf(WORKER) })) });
+    const error = errorOf(await runMerge(world, { project: 'web' }));
+    expect(exitCodeOf[error.kind]).toBe(1);
+    expect(error.message).toContain('another head branch');
+    expectUntouched(world.repo, board);
+  });
+});
+
 describe('item record with the software recipe: the local checks come before any call of gh', () => {
   const REFUSED: readonly (readonly [string, Partial<MergeSetup>, Partial<ItemOptions>, number])[] = [
     ['an item that is not on the board', {}, { words: ['record', 'B-9'] }, 2],
@@ -800,7 +853,7 @@ describe('item record: the record check belongs to the recipe of the node', () =
     expect(repo.commits[0]?.message).toContain('approved');
     expect(repo.commits[0]?.message).toContain('proof 7 signed');
     expect(checkCalls).toHaveLength(1);
-    expect(checkCalls[0]).toMatchObject({ ref: '7', project: { id: 'web' }, cloneDir: join(HOME, 'web'), branch: undefined });
+    expect(checkCalls[0]).toMatchObject({ ref: '7', project: { id: 'web' }, cloneDir: join(HOME, 'web'), branches: undefined });
     expect(gh.calls).toEqual([]);
   });
 

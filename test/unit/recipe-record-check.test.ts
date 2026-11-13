@@ -29,17 +29,25 @@ const inputOf = (change: Partial<RecordCheckInput> = {}): RecordCheckInput => ({
   ref: '12',
   project: PROJECT,
   cloneDir: '/h/node/web',
-  branch: 'worker/alpha',
+  branches: ['worker/alpha'],
   ...change,
 });
 
-/** The fake world: `gh` gives the PR, and git gives the branch that the test names, or nothing. */
-const world = (pr: Record<string, unknown> = goodPr(), currentBranch = ''): { readonly calls: RunCall[]; readonly run: RunHandler } => {
+/** What git knows about the clone: the remote head (`origin/main`) and the current branch. A part that is left out is unknown. */
+interface CloneBranches {
+  readonly originHead?: string;
+  readonly currentBranch?: string;
+}
+
+/** The fake world: `gh` gives the PR, and git gives the branches of the clone that the test names, or nothing. */
+const world = (pr: Record<string, unknown> = goodPr(), clone: CloneBranches = {}): { readonly calls: RunCall[]; readonly run: RunHandler } => {
   const calls: RunCall[] = [];
   const run: RunHandler = (call) => {
     calls.push(call);
     if (call.command === 'gh') return exited(0, JSON.stringify(pr));
-    return call.args.includes('--show-current') ? exited(0, `${currentBranch}\n`) : exited(128, '', 'fatal: not a ref');
+    if (call.args.includes('--show-current')) return exited(0, `${clone.currentBranch ?? ''}\n`);
+    if (call.args.includes('refs/remotes/origin/HEAD') && clone.originHead !== undefined) return exited(0, `${clone.originHead}\n`);
+    return exited(128, '', 'fatal: not a ref');
   };
   return { calls, run };
 };
@@ -102,17 +110,27 @@ describe('the software record check: a merged PR (AC-1, AC-2)', () => {
     expect(fake.calls.filter((call) => call.command === 'git')).toEqual([]);
   });
 
-  it('takes the base from the clone when the project names no default branch', async () => {
-    const fake = world(goodPr(), 'main');
+  it('takes the base from the remote head of the clone when the project names no default branch', async () => {
+    const fake = world(goodPr(), { originHead: 'origin/main' });
     const done = await check(fake, inputOf({ project: { id: 'web', path: 'web', url: PROJECT.url } }));
     expect(done.ok).toBe(true);
-    expect(fake.calls.some((call) => call.command === 'git' && call.args.includes('--show-current'))).toBe(true);
+    expect(ghCalls(fake)).toHaveLength(1);
   });
 
-  it('tests the head branch only when the item names a worker', async () => {
+  it('tests the head branch only when the item gives branches', async () => {
     const other = goodPr({ headRefName: 'worker/beta' });
     expect(exitCodeOf[errorOf(await check(world(other), inputOf())).kind]).toBe(1);
-    expect((await check(world(other), inputOf({ branch: undefined }))).ok).toBe(true);
+    expect((await check(world(other), inputOf({ branches: undefined }))).ok).toBe(true);
+  });
+
+  it('passes a PR from any one of the branches that the item gives, and refuses a PR from another branch', async () => {
+    const branches = ['worker/alpha', 'worker/beta'];
+    expect((await check(world(goodPr({ headRefName: 'worker/beta' })), inputOf({ branches }))).ok).toBe(true);
+    expect(exitCodeOf[errorOf(await check(world(goodPr({ headRefName: 'worker/gamma' })), inputOf({ branches }))).kind]).toBe(1);
+  });
+
+  it('refuses every PR when the list of branches is empty, so an empty list never lets a PR pass', async () => {
+    expect(exitCodeOf[errorOf(await check(world(), inputOf({ branches: [] }))).kind]).toBe(1);
   });
 
   it.each([
@@ -141,11 +159,15 @@ describe('the software record check: the faults that stop before gh runs', () =>
     expect(fake.calls).toEqual([]);
   });
 
-  it('refuses a project with no default branch when the clone gives none, with exit 1 and no gh', async () => {
-    const fake = world(goodPr(), '');
+  it.each([
+    ['the clone gives no branch', {}],
+    ['the clone gives only its current branch', { currentBranch: 'main' }],
+  ])('refuses a project with no default branch when %s for the remote head, with exit 1, the remedy and no gh', async (_name, clone) => {
+    const fake = world(goodPr(), clone);
     const error = errorOf(await check(fake, inputOf({ project: { id: 'web', path: 'web', url: PROJECT.url } })));
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('names no default branch');
+    expect(error.hint).toContain('default_branch');
     expect(ghCalls(fake)).toEqual([]);
   });
 });

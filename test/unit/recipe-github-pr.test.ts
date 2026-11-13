@@ -23,7 +23,7 @@ const goodPr = (): Record<string, unknown> => ({
   url: 'https://github.com/acme/web/pull/12',
 });
 
-const inputOf = { repo: REPO, number: 12, base: 'main', head: 'work-branch' } as const;
+const inputOf = { repo: REPO, number: 12, base: 'main', heads: ['work-branch'] } as const;
 
 const answering = (pr: Record<string, unknown>): RunHandler => () => exited(0, JSON.stringify(pr));
 
@@ -138,11 +138,24 @@ describe('readMergedPr: the PR that matches', () => {
     expect(deps.calls[0]?.timeoutMs).toBe(ghTimeoutMs);
   });
 
-  it('skips the head branch test when the caller gives no head', async () => {
+  it('skips the head branch test when the caller gives no heads', async () => {
     const pr = { ...goodPr(), headRefName: 'some-other-branch' };
     const { result } = readWith(answering(pr), { repo: REPO, number: 12, base: 'main' });
 
     expect((await result).ok).toBe(true);
+  });
+
+  it('accepts a PR from any one of the head branches that the caller gives', async () => {
+    const pr = { ...goodPr(), headRefName: 'second-branch' };
+    const { result } = readWith(answering(pr), { ...inputOf, heads: ['work-branch', 'second-branch'] });
+
+    expect((await result).ok).toBe(true);
+  });
+
+  it('refuses every PR when the caller gives an empty list of heads', async () => {
+    const { result } = readWith(answering(goodPr()), { ...inputOf, heads: [] });
+
+    expect(exitCodeOf[(await errorOf(result)).kind]).toBe(1);
   });
 
   it('accepts the url of the PR in another letter case, because GitHub names the owner and the repo in its own case', async () => {

@@ -458,6 +458,10 @@ const queueWithout = (doc: BoardDoc, id: string): { readonly rows: readonly Stor
   return { rows, changed };
 };
 
+/** The id of an item other than `id` that records `head`, or undefined when no other item does. */
+const headHolderIn = (doc: BoardDoc, id: string, head: string): string | undefined =>
+  doc.items.find((other) => other.id !== id && other.record[boardKeys.mergedPrHead] === head)?.id;
+
 /**
  * Record a passed check in the item and the queue, in one top object. The item gets the stage of the check (any listed stage, also
  * one that only a flow sets), the closed state and the head of the check (`checked.head`; the rest of the summary goes to the
@@ -465,8 +469,10 @@ const queueWithout = (doc: BoardDoc, id: string): { readonly rows: readonly Stor
  *
  * `workerName` is the worker that the check bound to the item (null for none). The item must still hold exactly that worker in the
  * worker field, else the check read another item than the one that is on the board now: exit 1, nothing changes. An item that
- * records another head is exit 1 too. An item that holds the stage, the state and the head already, and that no queue row lists, is
- * a rerun: the edit gives no top object.
+ * records another head is exit 1 too, and so is an item whose check gives a head that another item records already: a later guard
+ * trusts the recorded head, so one head belongs to one item. This test reads the board under the lock, so it holds against a race.
+ * An item that holds the stage, the state and the head already, and that no queue row lists, is a rerun: the edit gives no top object.
+ * A rerun of an item that records the head is not tested against the other items, so it stays a success.
  */
 export const recordCheckedIn = (
   doc: BoardDoc,
@@ -491,6 +497,13 @@ export const recordCheckedIn = (
   if (Object.hasOwn(record, boardKeys.mergedPrHead) && record[boardKeys.mergedPrHead] !== checked.head) {
     return failure(`${id} records another head already`);
   }
+  const holder = record[boardKeys.mergedPrHead] === checked.head ? undefined : headHolderIn(doc, id, checked.head);
+  if (holder !== undefined) {
+    return failure(
+      `the item ${holder} records the head of this check already`,
+      `Check the item and the reference, then run "${commandText(commandLines.itemRecord)} ${id} ${flagText(flags.ref)} ${displayLine(checked.ref, maxEchoChars)}" again.`,
+    );
+  }
   const next = withKeys(record, [
     [boardKeys.status, target.value.closed],
     [boardKeys.stage, target.value.stage],
@@ -502,12 +515,18 @@ export const recordCheckedIn = (
   return ok({ top: queue.changed ? { ...top, [doc.queueKey]: queue.rows } : top, value: true });
 };
 
-/** The former workers of an item, else a failure (exit 1) when the stored value is not a list of text. */
-const formerWorkersOf = (record: Stored, id: string): CliResult<readonly string[]> => {
+/**
+ * The former workers of an item, else a failure (exit 1) when the stored value is not a list of text. The remedy of the failure
+ * names the command that the caller ran, so the person can run it again.
+ */
+export const formerWorkersOf = (record: Stored, id: string, command: string): CliResult<readonly string[]> => {
   const stored = record[boardKeys.unassignedFrom];
   if (stored === undefined) return ok([]);
   if (Array.isArray(stored) && stored.every((entry): entry is string => typeof entry === 'string')) return ok(stored);
-  return failure(`${files.board}: the "${boardKeys.unassignedFrom}" of ${id} is not a list of text`);
+  return failure(
+    `${files.board}: the "${boardKeys.unassignedFrom}" of ${id} is not a list of text`,
+    `Check the item in ${files.board}, then run "${command}" again.`,
+  );
 };
 
 /**
@@ -520,16 +539,20 @@ export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliR
   const found = itemAt(doc, id);
   if (!found.ok) return found;
   const { record } = found.value;
+  const again = `${commandText(commandLines.itemUnassign)} ${id}`;
   if (!Object.hasOwn(record, workerField)) return usageError(`the item ${id} has no ${roles.worker} to take off`);
   const worker = record[workerField];
   if (typeof worker !== 'string') {
-    return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}, then run "${commandText(commandLines.itemUnassign)} ${id}" again.`);
+    return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}, then run "${again}" again.`);
   }
-  const former = formerWorkersOf(record, id);
+  const former = formerWorkersOf(record, id, again);
   if (!former.ok) return former;
   const named = former.value.includes(worker);
   if (!named && former.value.length >= markLimits.maxFormerWorkers) {
-    return usageError(`the item ${id} names ${markLimits.maxFormerWorkers} former ${roles.worker}s already, so it takes no more`);
+    return usageError(
+      `the item ${id} names ${markLimits.maxFormerWorkers} former ${roles.worker}s already, so it takes no more`,
+      `Take a former ${roles.worker} out of the "${boardKeys.unassignedFrom}" of the item in ${files.board}, then run "${again}" again.`,
+    );
   }
   const without = Object.fromEntries(Object.entries(record).filter(([key]) => key !== workerField));
   const marked = named ? without : withKeys(without, [[boardKeys.unassignedFrom, [...former.value, worker]]]).record;
