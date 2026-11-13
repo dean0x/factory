@@ -4,7 +4,7 @@ import type { Deps } from '../../core/deps.js';
 import { parseGithubRepo } from '../../core/git.js';
 import { ok } from '../../core/result.js';
 import { toolNames } from '../../core/tools.js';
-import { commandLines, commandText, flags, flagText, ghTimeoutMs } from '../../names.js';
+import { commandLines, commandText, flags, flagText, ghTimeoutMs, type CommandText } from '../../names.js';
 import { parseJsonText } from '../../state/load.js';
 
 /*
@@ -92,14 +92,20 @@ export const parsePrNumber = (text: string, label: string): CliResult<number> =>
     ? ok(Number(text))
     : usageError(`${label}: must be a whole number of one to nine digits, with no leading zero`);
 
-/** Who reads a PR, for the words of a refusal. `name` says what reads. `again` is the command line that the remedy tells the person to run again. */
+/**
+ * Who reads a PR, for the words of a refusal. `name` says what reads. `command` and `usage` make the command line that the remedy
+ * tells the person to run again.
+ */
 export interface PrReader {
   readonly name: string;
-  readonly again: string;
+  readonly command: CommandText;
+  readonly usage: string;
 }
 
 /** The reader of `item record`. */
-export const RECORD_READER: PrReader = { name: 'the merge check', again: RECORD_COMMAND };
+export const RECORD_READER: PrReader = { name: 'the merge check', command: commandLines.itemRecord, usage: `ID ${flagText(flags.ref)} REF` };
+
+const againOf = (reader: PrReader): string => `${commandText(reader.command)} ${reader.usage}`;
 
 /**
  * `owner/name` of the repo of a project URL. Only a repo on the GitHub host passes. Any other URL is a failure, and no `gh` runs.
@@ -110,7 +116,7 @@ export const githubRepoOf = (url: string, reader: PrReader): CliResult<string> =
   return repo === null
     ? failure(
         `${reader.name} reads repos on ${mergeCheck.host} only`,
-        `Check that the url of the project is a ${mergeCheck.host} URL, then run "${reader.again}" again.`,
+        `Check that the url of the project is a ${mergeCheck.host} URL, then run "${againOf(reader)}" again.`,
       )
     : ok(repo);
 };

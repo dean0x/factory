@@ -11,7 +11,7 @@ import {
   runPrView,
   type MergedRead,
 } from '../../src/recipes/software/github-pr.js';
-import { flags, flagText, ghTimeoutMs } from '../../src/names.js';
+import { commands, flags, flagText, ghTimeoutMs } from '../../src/names.js';
 import { createFakeDeps, exited, missingProgram, type RunHandler } from '../helpers/fake-deps.js';
 
 const REPO = 'acme/web';
@@ -130,7 +130,7 @@ describe('githubRepoOf', () => {
   });
 
   it('names the reader and the command to run again that the caller gives, and never repeats the URL', () => {
-    const reader = { name: 'the sample reader', again: 'sample run PR' };
+    const reader = { name: 'the sample reader', command: commands.version, usage: 'NUMBER' };
     const url = 'https://user:secret-token@gitlab.com/acme/web.git';
 
     const result = githubRepoOf(url, reader);
@@ -138,7 +138,7 @@ describe('githubRepoOf', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.message).toBe('the sample reader reads repos on github.com only');
-    expect(result.error.hint).toContain('"sample run PR"');
+    expect(result.error.hint).toContain('"factory version NUMBER"');
     expect(textOf(result.error)).not.toContain('secret-token');
   });
 
