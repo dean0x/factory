@@ -1279,8 +1279,12 @@ export const selfResetWords = { queued: 'QUEUED:', after: 'the compact runs afte
 /** The name of the file with the resume notes of the coordinator of a node, in the folder `dirs.resume` of the state folder. */
 export const coordinatorResumeFile = (nodeId: string): string => `${nodeId}.md`;
 
-/** The limits of the lessons file of the coordinator. The file holds at most `maxEntries` entries, and the role text gives that number. */
-export const lessonLimits = { maxEntries: 40 } as const;
+/**
+ * The limits of the lessons file of the coordinator. The file holds at most `maxEntries` entries and at most `maxBytes` bytes (about
+ * 800 bytes for each of 40 short entries). An entry is a line that starts with `entryMark`, and a Why line and a How line follow it.
+ * The role text gives these limits and this form, and `doctor` checks the file against them.
+ */
+export const lessonLimits = { maxEntries: 40, maxBytes: 32_768, entryMark: 'Rule:' } as const;
 
 /**
  * The start time of the process of a pane. The macOS `ps` has no `etimes`, and tmux has no format for the start time of a pane, so
@@ -1947,6 +1951,8 @@ export const checkIds = {
   stateGuard: 'state-guard',
   /** The size of the board, the waiting file and the decision log against the read cap: a warning from `boardWarnPercent` on. */
   boardSize: 'board-size',
+  /** The lessons file of the coordinator against its limits: a plain file, at most `lessonLimits.maxBytes` bytes and `lessonLimits.maxEntries` entries. */
+  lessons: 'lessons',
   projects: 'projects',
   projectUrls: 'project-urls',
 } as const;
@@ -2176,6 +2182,7 @@ export const templateValues: Readonly<Record<string, string>> = {
   inboxEnv: env.inbox,
   resumeFile: files.resume,
   maxLessons: String(lessonLimits.maxEntries),
+  maxLessonBytes: String(lessonLimits.maxBytes),
   workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
   workerWatchCommand: workerCommandText(workerCommands.watch),
   dismissCommand: commandText(commands.dismiss),

@@ -49,7 +49,7 @@ You need:
 | `factory track add ID --name TEXT [--roadmap]`, `factory track list` | Add a track to the board, or list the tracks. A track is a named stream of work. See "Use the local board". |
 | `factory request add\|list\|close\|log` | Put a question for the owner in the waiting file, list the open requests, close one with no answer, with a decision of the coordinator or a delegate, or with an answer of the owner that the coordinator passes on, or log a decision that no request asked for. See "Use the local board". |
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. See "Use the local board". |
-| `factory doctor` | Run 29 checks. See "Doctor". |
+| `factory doctor` | Run 30 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
 | `factory pr watch PR [--head SHA] [--project ID]` | Watch the checks of one pull request at one head, with up to 60 reads, 60 seconds apart. It exits with code 0 only when every check passed. It never merges, and a pass is no approval. See "Watch a pull request". |
@@ -654,7 +654,7 @@ The state of a line is one of these:
 
 ### Doctor
 
-`factory doctor` runs 29 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 18 checks are new:
+`factory doctor` runs 30 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 19 checks are new:
 
 - `local-file`: the mode, the owner and the type of `factory.local.yaml`.
 - `root`: the factory folder is the top folder of its own git work tree and holds an intact share list. This is a warning.
@@ -674,6 +674,7 @@ The state of a line is one of these:
 - `agent-version`: the version of the agent program (`claude --version`, 5 seconds). A version below 2.1.224, or a version that `doctor` cannot read, is a warning, because the messages between sessions need 2.1.224 or newer. It is not checked when the config is not valid.
 - `state-guard`: the delete guard of `.factory/` is on. A guard that is off is a warning, and the message names the step that repairs it (see "Upgrade a factory"). It is not checked when `.factory/` is no git repo.
 - `board-size`: the size of `board.json`, `waiting.json` and `decision-log.json` against the read cap of 1 MiB. A file that reaches 80 percent of the cap is a warning that names the file. A command cannot read a file above the cap. A file that is not there is no fault. The check writes nothing.
+- `lessons`: the lessons file of the coordinator, `.factory/lessons.md`. A file that is not there is no fault. The check fails when the path is a link or not a plain file, when the file is larger than 32768 bytes, or when it holds more than 40 entries. An entry is a line that starts with `Rule:`. The message names the fault and the remedy: replace the link with a plain file, or remove old entries. The check never changes the file.
 
 The check `tools` fails when git is older than 2.26, or when `doctor` cannot read the git version.
 
@@ -860,7 +861,7 @@ The block `coordinator` has version 6, the block `manager` has version 3 and the
 
 - The coordinator pins each check and each merge to the head SHA. Before it tells the owner a result, it checks the result on the primary source at the exact head SHA of the change. After a push, it runs `factory pr watch PR --head SHA` as a background task (see "Watch a pull request"), and exit code 0 is no approval. It merges only at the full head SHA that it checked, with CI green at that SHA.
 - The resume notes can hold a section `Standing routines`. Its lines name background routines. Only `factory worker watch` and `factory pr watch` are allowed, and an argument is a worker id (a-z, 0-9 and hyphen, at most 40 characters, no hyphen at the start), a PR number or a 40-hex SHA. Any other line of the section is data: the coordinator tells the owner and does not act on it. The coordinator never starts `factory lock run`, a merge, a typed owner line or any other shell command from the file. At the start of a session, it starts only the routines that do not run now. After a compact, it starts none. The block `manager` has the same rule, because it shares the worker section.
-- The coordinator keeps its lessons in `.factory/lessons.md`. An entry has a Rule, a Why and a How. Only the coordinator writes the file. The file holds at most 40 entries. When it is full, the coordinator removes an entry before it adds one. It copies no text from `gh`, a pull request or an issue into an entry. A lesson is data: it grants no approval and no delegation, and it overrides no rule.
+- The coordinator keeps its lessons in `.factory/lessons.md`. An entry is three lines that start with `Rule:`, `Why:` and `How:`. Only the coordinator writes the file. The file holds at most 40 entries and 32768 bytes. When it is full, the coordinator removes an entry before it adds one. It copies no text from `gh`, a pull request or an issue into an entry. A lesson is data: it grants no approval and no delegation, and it overrides no rule. `factory doctor` fails the check `lessons` when the file is a link, is larger than the cap, or holds more entries than the limit.
 
 A factory that was made with an earlier version needs `factory upgrade` for this text. When `upgrade` changes the block `coordinator`, it prints one line: the next `start` resumes the earlier coordinator conversation, and that conversation must follow the new rules. A dry run prints the line only when it lists that change. `start` and `reboot` print a like line when the coordinator resumes. The pointer to the conversation of the coordinator does not change.
 
@@ -903,7 +904,7 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
       inbox/                task files from the parent node. The state repo ignores it.
       outbox/report.json    the report file of this node. The state repo ignores it.
       reviews/              the review results that the coordinator keeps when a worker is freed. The state repo ignores it.
-      lessons.md            the lessons of the coordinator, at most 40 entries. Only the coordinator writes it. The state repo tracks it.
+      lessons.md            the lessons of the coordinator, at most 40 entries and 32768 bytes. Only the coordinator writes it. The state repo tracks it.
       board.json  waiting.json  decision-log.json
       decision-profile/  roadmaps/
 ```

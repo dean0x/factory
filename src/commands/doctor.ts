@@ -42,6 +42,7 @@ import {
   flagText,
   homeIndex,
   keys,
+  lessonLimits,
   maxFileBytes,
   overwriteCommand,
   places,
@@ -682,6 +683,40 @@ export const checkBoardSize = async (deps: Deps, home: string): Promise<CheckRes
     : check(checkIds.boardSize, 'warn', `${near.join('; ')}. A file above ${maxFileBytes} bytes cannot be read.`);
 };
 
+/** The entries of a lessons text: the lines that start with the mark of an entry. */
+const lessonEntries = (text: string): number => text.split('\n').filter((line) => line.startsWith(lessonLimits.entryMark)).length;
+
+/**
+ * The lessons file of the coordinator against its limits. A missing file is no fault: there are no lessons yet. Any other file that
+ * the check cannot show to be good is a failure with a short remedy: a link or another kind of path, a file above
+ * `lessonLimits.maxBytes` bytes, more than `lessonLimits.maxEntries` entries, and a file that the check cannot look at or read.
+ * Only the coordinator writes the file, and the check never changes it. No code enforces that single writer: the role text states it.
+ */
+export const checkLessons = async (deps: Deps, home: string): Promise<CheckResult> => {
+  const name = `${dirs.state}/${files.lessons}`;
+  const path = join(layoutOf(home).stateDir, files.lessons);
+  const failed = (text: string): CheckResult => check(checkIds.lessons, 'fail', text);
+  const info = await deps.fs.lstatInfo(path);
+  if (!info.ok) return failed(`${name} cannot be checked: ${info.error.message}. Check the file.`);
+  if (info.value === null) return check(checkIds.lessons, 'ok', 'there is no lessons file yet');
+  if (info.value.kind === 'link') return failed(`${name} is a link. Replace it with a plain file.`);
+  if (info.value.kind !== 'file') return failed(`${name} is not a plain file. Replace it with a plain file.`);
+  if (info.value.size > lessonLimits.maxBytes) {
+    return failed(`${name} is ${info.value.size} bytes, more than ${lessonLimits.maxBytes} bytes. Remove old entries.`);
+  }
+  const text = await deps.fs.readTextLimited(path, lessonLimits.maxBytes);
+  if (!text.ok) return failed(`${name} cannot be read: ${text.error.message}`);
+  const entries = lessonEntries(text.value);
+  if (entries > lessonLimits.maxEntries) {
+    return failed(`${name} holds ${entries} entries, more than ${lessonLimits.maxEntries}. Remove old entries.`);
+  }
+  return check(
+    checkIds.lessons,
+    'ok',
+    `${name} holds ${entries} entries (at most ${lessonLimits.maxEntries}) and ${info.value.size} bytes (at most ${lessonLimits.maxBytes})`,
+  );
+};
+
 export const checkProjects = async (
   deps: Deps,
   home: string,
@@ -754,6 +789,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     stateRepo,
     stateGuard,
     boardSize,
+    lessons,
     projects,
     localFile,
   ] = await Promise.all([
@@ -771,6 +807,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     checkStateRepo(deps, home),
     checkStateGuard(deps, home),
     checkBoardSize(deps, home),
+    checkLessons(deps, home),
     checkProjects(deps, home, config),
     checkLocalFile(deps, home),
   ]);
@@ -798,6 +835,7 @@ const runChecks = async (deps: Deps, home: string, registry: RecipeRegistry): Pr
     stateRepo,
     stateGuard,
     boardSize,
+    lessons,
     projects,
     ...checkProjectUrls(config),
   ];

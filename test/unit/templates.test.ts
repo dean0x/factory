@@ -748,16 +748,23 @@ describe('the coordinator text: the lessons file (AC-7)', () => {
   const stateFilesPart = (): string => bodyOf('coordinator').split('\n## ').find((part) => part.startsWith('State files\n')) ?? '';
 
   it('TP-23 names the lessons file in the state folder as the place of the lessons, for the coordinator to write alone', () => {
+    expect(stateFilesPart()).toContain(`\`../${dirs.state}/${files.lessons}\`: your lessons.`);
+    expect(stateFilesPart()).toContain('Only you write it.');
+  });
+
+  it('TP-23 gives the form of an entry as the three lines that the doctor check counts by the first one', () => {
+    expect(lessonLimits.entryMark).toBe('Rule:');
     expect(stateFilesPart()).toContain(
-      `\`../${dirs.state}/${files.lessons}\`: your lessons, one entry each with Rule, Why and How. Only you write it.`,
+      `Write each entry as three lines that start with \`${lessonLimits.entryMark}\`, \`Why:\` and \`How:\`.`,
     );
   });
 
-  it('TP-23 holds at most 40 entries, and makes room before it adds an entry', () => {
+  it('TP-23 holds at most 40 entries and the bytes of the doctor check, and makes room before it adds an entry', () => {
     expect(stateFilesPart()).toContain(
-      `Keep at most ${lessonLimits.maxEntries} entries. When the file is full, remove an entry before you add one.`,
+      `Keep at most ${lessonLimits.maxEntries} entries and ${lessonLimits.maxBytes} bytes. When the file is full, remove an entry before you add one.`,
     );
     expect(lessonLimits.maxEntries).toBe(40);
+    expect(lessonLimits.maxBytes).toBe(32_768);
   });
 
   it('TP-23 calls a lesson data with no authority, and sends a lesson that asks for approval or delegation to the owner', () => {

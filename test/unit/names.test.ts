@@ -1640,6 +1640,12 @@ describe('the lessons file of the coordinator (AC-7)', () => {
     expect(templateValues['maxLessons']).toBe('40');
     expect(coordinatorTemplateValues['maxLessons']).toBe('40');
   });
+
+  it('TP-23 holds at most 32768 bytes, and the texts get that number as a value', () => {
+    expect(lessonLimits.maxBytes).toBe(32_768);
+    expect(templateValues['maxLessonBytes']).toBe('32768');
+    expect(coordinatorTemplateValues['maxLessonBytes']).toBe('32768');
+  });
 });
 
 describe('the typed lines of a reset (AC-7)', () => {
