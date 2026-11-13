@@ -214,7 +214,7 @@ describe('init: the files', () => {
     expect(read('board.json')).toEqual({ merge: [], items: [], tracks: [] });
     expect(read('waiting.json')).toEqual({ intro: '', groups: [], items: [] });
     expect(read('decision-log.json')).toEqual({ rows: [] });
-    expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\n');
+    expect(deps.files.get(`${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\noutbox/\n');
     expect(deps.files.get(`${HOME}/.factory/orders/.gitkeep`)).toBe('');
   });
 

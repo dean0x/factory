@@ -12,6 +12,7 @@ import { runReboot, runRestart, runShutdown } from '../commands/lifecycle.js';
 import { runMachine } from '../commands/machine.js';
 import { runNode } from '../commands/node.js';
 import { runQueue } from '../commands/queue.js';
+import { runReport } from '../commands/report.js';
 import { runRequest } from '../commands/request.js';
 import { runSelf } from '../commands/self.js';
 import { runStart } from '../commands/start.js';
@@ -290,6 +291,23 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     usage: `${commandText(commands.status)} [${flagText(flags.home)} DIR]`,
     options: { [flags.home]: foundHomeOption },
     run: (given, deps) => runStatus(deps, { home: given.string(flags.home) }, registry, boardWorkItems(registry)),
+  },
+  {
+    name: commands.report,
+    summary:
+      `Show the report of the ${roles.node}: its ${roles.worker}s, its board counts, its ${requestWords.requests} and its children. ` +
+      `It writes the report file that the parent ${roles.node} reads.`,
+    usage: `${commandText(commands.report)} [${flagText(flags.home)} DIR] [${flagText(flags.since)} CURSOR]`,
+    options: {
+      [flags.home]: foundHomeOption,
+      [flags.since]: {
+        type: 'string',
+        placeholder: 'CURSOR',
+        description: 'Show the events after CURSOR. Not available yet: the command exits 2.',
+      },
+    },
+    run: (given, deps) =>
+      runReport(deps, { home: given.string(flags.home), since: given.string(flags.since) }, registry, boardWorkItems(registry)),
   },
   {
     name: commands.dismiss,
