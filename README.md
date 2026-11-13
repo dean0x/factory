@@ -59,6 +59,7 @@ You need:
 | `factory node add-child PATH` | Add a child node that is one layer lower. |
 | `factory node remove-child ID` | Remove a child from the config. The files of the child stay. |
 | `factory node send ID --file FILE` | Write a task file into the inbox of a child node. It sends no message. See "Send a task to a child node". |
+| `factory node tree` | Show the child nodes and the nodes below them, from the report files. It reads files only. See "Show the tree of child nodes". |
 | `factory help words` | Print one plain sentence for each word that factory uses. |
 | `factory version` | Print the version. |
 | `factory help` | Show the help. |
@@ -304,10 +305,10 @@ factory report --json
 ```
 OK: acme (layer 2): workers 0, in progress 0, requests 0, children 1
 ID   STATE  WORKERS  ITEMS  REQUESTS  CHILDREN  AGE  REASON
-web  ok     -        -      -         -         -    -
+web  ok     2        1      0         0         12s  -
 ```
 
-The verdict is `OK:` or `CHECK:`. It is `CHECK:` when a worker record is not valid, when the facts of the workers gave a warning, or when a child is not `ok`. The exit code is 0 for both. A child is `ok` when it answers with the id that the config lists. Else it is `unknown`, and `REASON` says why. A missing value shows `-`. For now, the columns `WORKERS`, `ITEMS`, `REQUESTS`, `CHILDREN` and `AGE` of a child row always show `-`, because a parent does not read the report file of a child yet.
+The verdict is `OK:` or `CHECK:`. It is `CHECK:` when a worker record is not valid, when the facts of the workers gave a warning, or when a child is not `ok`. The exit code is 0 for both. A child is `ok` when it answers with the id that the config lists and its report file reads. It is `mismatch` for another id. In other cases it is `unknown`, and `REASON` says why. The columns `WORKERS`, `ITEMS`, `REQUESTS` and `CHILDREN` show the counts of the report file of the child, and `AGE` shows the age of that file. A missing value shows `-`. A child that answers but has no report file is `unknown` until it runs `factory report`. The report holds the direct children only. To see the nodes below them, run `factory node tree`.
 
 | Flag | Meaning |
 | --- | --- |
@@ -532,6 +533,10 @@ factory node remove-child api-factory
 
 On layer 1, `add-child` exits with code 2: the children of a coordinator are workers. A child on the wrong layer, a folder that is no node, a child folder that is this factory folder or holds it, a child with the id of this node, and a child with the id of a worker exit with code 1 and name a remedy. A child that is a child already gives a warning and changes nothing.
 
+`node children` pings each child and shows its state. The state is `ok` when the child answers with the id that the config lists. It is `mismatch` when the child answers with another id, and `unknown` when it does not answer. `node children --json` has the same states, and `factory doctor` fails the check `children` for a `mismatch`.
+
+The ping reads only the `factory.yaml` of the child. A child `factory.yaml` that is a link, belongs to another account, or can be written by a group or by other users shows `unknown`, and `add-child` refuses it with exit code 1. A child `factory.yaml` that is not valid shows `unknown` with a fixed reason and no key names. Run `factory doctor` in the child folder to see the detail.
+
 A node on layer 1 or above can hold workers. A node on layer 2 or above holds workers and child nodes at the same time. A worker is on layer 0. A child node is exactly one layer below its parent. `factory worker new` works on every layer from 1, and the worker file `.factory/roles/worker.md` is written on every layer from 1.
 
 Workers and child nodes share one id space. `worker new` exits with code 2 for the id of a child node. `doctor` fails the check `children` when a child has the id of a worker.
@@ -595,6 +600,50 @@ Every failure prints `cannot send to ID: REASON` and one remedy line that names 
 - Two sends at the same time can each pass the cap by one file, because the child folder has no lock.
 - A reader can see a partial file during the write, because the command creates the file in place. The child reads the file only after your `SendMessage`.
 
+### Show the tree of child nodes
+
+```sh
+factory node tree
+factory node tree --json
+```
+
+`node tree` shows the child nodes of this node and the nodes below them. It starts at the `children` of `factory.yaml`. For each child it reads the report file `.factory/outbox/report.json`, and it goes down through the children that the report lists. It reads files only. It scans no folder, pings no node, starts no process and calls no tmux. So it works when no other node runs.
+
+The first line is the verdict line: `OK:` or `CHECK:`, the id, the layer, and the counts of nodes, `unknown` rows, `mismatch` rows and `warning` rows. The verdict is `CHECK:` when any row is not `ok`. One line follows for each node, with two spaces of indent for each depth. The parts are the id, the state, the counts, the age of the report file, and the mark `reported by ID`. The mark shows the node whose report listed this node. A direct child has no mark.
+
+```
+CHECK: top (layer 3): nodes 3, unknown 1, mismatch 0, warnings 0
+  mid  ok  workers 0, in progress 0, requests 0, children 2  12s
+    web  ok  workers 2, in progress 1, requests 0, children 0  8s  reported by mid
+    api  unknown: the child has no report file  reported by mid
+```
+
+The state of a line is one of these:
+
+| State | Meaning |
+| --- | --- |
+| `ok` | The report file reads, and it holds the id that the entry lists. |
+| `mismatch` | The report file holds another id than the entry lists. |
+| `unknown` | The report file is missing or fails a check. A fixed reason follows. It does not mean that the node is dead. |
+| `warning` | The line tells of the walk, not of a node: a cycle (a folder that the walk saw before), a duplicate id, a cap, or requests that were dropped. |
+
+**The report file.** A report file is data to check. `.factory/`, `outbox/` and the file must not be links. They must belong to your account, and a group or other users must not be able to write them. The file has at most 256 KiB, is UTF-8 text and valid JSON, and passes the report schema. A file with a newer schema version is not read. A node of another account is not read. The age is the age of the file. The file is fresh only after `report` or `status` runs in that node.
+
+**The caps.** The walk goes at most 16 layers down. It reads at most 1,000 report files, and at most 16 MiB of report files in all. The output has at most 2,000 lines. When the line cap cuts the list, the last line says `more than 2000 lines` and gives the number of rows that it left out. A cap of files or of bytes ends the walk with a `warning` line.
+
+**The requests.** A request counts only when its origin names the node that reports it, by whole ids: `<node id>#<request id>`, with `/` between the ids of deeper nodes. A string prefix of the id does not pass. Other requests are dropped, and one `warning` line gives the number. The tree shows the requests of a node as a count.
+
+**The text of a child.** Each id and each address from a child is one clean line, cut to a width of 120 characters. A reason is fixed text of this program. Text of a child never goes into an error or a hint.
+
+`--json` prints the object `factory.node-tree/v1` with the keys `schema`, `home`, `id`, `layer`, `verdict` (`ok` or `check`), `omitted` (the number of rows that the line cap left out) and `nodes`. Each node has `depth`, `state`, `reason` and `report`. Every string that comes from a child file is in the field `report`: `source` (the path of the report file), `id`, `address`, `layer`, `counts`, `age` and `reportedBy`.
+
+| Code | Meaning |
+| --- | --- |
+| 0 | The tree is shown, also with `unknown`, `mismatch` and `warning` lines. |
+| 1 | `factory.yaml` or `factory.local.yaml` does not parse or is not valid. |
+| 2 | An argument after `tree`, the flag `--file`, or a missing `factory.local.yaml`. |
+| 4 | A safety rule refused the action: `factory.local.yaml` is a link or can be written by others, or the factory list does not list this folder for this node id. |
+
 ### Doctor
 
 `factory doctor` runs 29 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 18 checks are new:
@@ -607,7 +656,7 @@ Every failure prints `cannot send to ID: REASON` and one remedy line that names 
 - `setup-text`: text outside the managed blocks that the setup files do not hold. This is a warning.
 - `roles`: the layer has a role template.
 - `tracker`: the kind of the board. A kind other than `local` warns, because its connector comes later.
-- `children`: the child nodes. It fails when a child is on the wrong layer or has the id of a worker.
+- `children`: the child nodes. It fails when a child is on the wrong layer, answers with another id than the config lists (`mismatch`), or has the id of a worker.
 - `root-repo`: what the config repo tracks, and what git ignores.
 - `root-files`: the tracked text files hold no value that looks like a token (a failure), no `file` URL and no path of a user folder (warnings).
 - `project-paths`: each project folder is inside the factory folder and is not a reserved name.
