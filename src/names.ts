@@ -287,6 +287,8 @@ export const dirs = {
   workers: 'workers',
   /** The folder of the messages for a worker, inside its folder. The session of the worker gets it with `--add-dir`. */
   inbox: 'inbox',
+  /** The folder of the review results in the state folder, one place for the whole node. Git ignores it, and `start` makes it private. */
+  reviews: 'reviews',
   /** The folder of the resume notes of the coordinator in the state folder: one file for each node, named by the node id. */
   resume: 'resume',
   backups: 'backups',
@@ -1352,14 +1354,21 @@ export const statusWords = {
  * The rules and the words of `dismiss` (design 4.11). The work of a worker is pushed when, after a fetch of `remote`, the head of its
  * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run and the free
  * name at most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
- * files. The table of `--idle` has the columns `columns`.
+ * files. The dry run also names at most `maxInboxShown` of the inbox files that the removal deletes. The table of `--idle` has the
+ * columns `columns`.
  */
 export const dismissWords = {
   remote: 'origin',
   stuck: 'STUCK:',
   maxIgnoredShown: 20,
   maxFilesNamed: 5,
-  columns: { id: 'ID', project: 'PROJECT', state: 'STATE', pushed: 'PUSHED' },
+  /** The most inbox files that the dry run names. The read takes one name more, to know that the inbox holds more. */
+  maxInboxShown: 20,
+  columns: { id: 'ID', project: 'PROJECT', state: 'STATE', pushed: 'PUSHED', ignored: 'IGNORED' },
+  /** What the removal deletes, as the line about a list of files names it. */
+  fileKinds: { ignored: 'ignored', inbox: dirs.inbox },
+  /** The cell of the ignored count for a worker whose files are not read: its work is not pushed, so it is not freed. */
+  noCount: '-',
   pushed: { yes: 'yes', no: 'no' },
 } as const;
 

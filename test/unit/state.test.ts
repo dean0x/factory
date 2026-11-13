@@ -14,6 +14,8 @@ import {
   SHARE_LIST_END,
   SHARE_LIST_PART,
   sharedRootPaths,
+  STATE_GITIGNORE,
+  withAddedLines,
   withShareList,
 } from '../../src/state/files.js';
 import { layoutOf, stagingDirOf } from '../../src/state/layout.js';
@@ -151,10 +153,12 @@ describe('layout', () => {
       backupsDir: '/h/node/.factory/backups',
       workersDir: '/h/node/.factory/workers',
       inboxDir: '/h/node/.factory/inbox',
+      reviewsDir: '/h/node/.factory/reviews',
       runtimeDir: '/h/node/.factory/state',
       heartbeatDir: '/h/node/.factory/state/heartbeat',
       coordinatorLastSessionFile: '/h/node/.factory/state/coordinator-last-session',
       machineIdFile: '/h/node/.factory/state/machine-id',
+      watchRunFile: '/h/node/.factory/state/worker-watch-run',
       activeMachineFile: '/h/node/.factory/active-machine.json',
       locksDir: '/h/node/.factory/locks',
     });
@@ -286,5 +290,22 @@ describe('ignoresLine: when git ignores the inbox by the state .gitignore', () =
     ['no text', ''],
   ])('does not count %s', (_name, text) => {
     expect(ignoresLine(text, INBOX_GITIGNORE_LINE)).toBe(false);
+  });
+});
+
+describe('the .gitignore of the state repo: the reviews folder (TP-31)', () => {
+  const BEFORE_REVIEWS = 'state/\nlocks/\nbackups/\nworkers/\ninbox/\n';
+
+  it('ignores the reviews folder from the start', () => {
+    expect(STATE_GITIGNORE).toBe(`${BEFORE_REVIEWS}reviews/\n`);
+    expect(ignoresLine(STATE_GITIGNORE, 'reviews/')).toBe(true);
+  });
+
+  it('adds the reviews line to a text from before, and no other line', () => {
+    expect(withAddedLines(BEFORE_REVIEWS)).toEqual({ text: `${BEFORE_REVIEWS}reviews/\n`, added: ['reviews/'] });
+  });
+
+  it('adds nothing to a text that has the line', () => {
+    expect(withAddedLines(STATE_GITIGNORE)).toEqual({ text: STATE_GITIGNORE, added: [] });
   });
 });

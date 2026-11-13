@@ -18,13 +18,13 @@ const FIRST_IGNORED_DIRS: readonly string[] = [dirs.runtime, dirs.locks, dirs.ba
 export const INBOX_GITIGNORE_LINE = `${dirs.inbox}/`;
 
 /**
- * The lines that a later version added to `STATE_GITIGNORE`: the registry of the workers, and the inbox of the messages from a
- * parent node. A state repo from before lacks them, and `upgrade` adds each one that is missing. A later version adds its line
- * to this list.
+ * The lines that a later version added to `STATE_GITIGNORE`: the registry of the workers, the inbox of the messages from a parent
+ * node, and the folder of the review results. A state repo from before lacks them, and `upgrade` adds each one that is missing. A
+ * later version adds its line to this list.
  */
-export const ADDED_GITIGNORE_LINES: readonly string[] = [`${dirs.workers}/`, INBOX_GITIGNORE_LINE];
+export const ADDED_GITIGNORE_LINES: readonly string[] = [`${dirs.workers}/`, INBOX_GITIGNORE_LINE, `${dirs.reviews}/`];
 
-/** The runtime folders, the backups, the registry of the workers and the inbox are not part of the state repository. */
+/** The runtime folders, the backups, the registry of the workers, the inbox and the reviews are not part of the state repository. */
 export const STATE_GITIGNORE: string = [...FIRST_IGNORED_DIRS.map((dir) => `${dir}/`), ...ADDED_GITIGNORE_LINES]
   .map((line) => `${line}\n`)
   .join('');

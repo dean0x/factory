@@ -756,7 +756,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(changes.stdout).toContain('protocol.md');
     expect(changes.stdout).toContain('roles/worker.md');
     expect(changes.stdout).toContain('roadmaps/README.md');
-    expect(await box.read(join(state, '.gitignore'))).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\n');
+    expect(await box.read(join(state, '.gitignore'))).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\nreviews/\n');
     expect(changes.stdout).toContain('.gitignore');
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
     // The old state repo had no guard: the run wrote it into the git folder, and git does not track it.
