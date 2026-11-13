@@ -28,7 +28,9 @@ describe.skipIf(!hasTmux)('factory reboot (built binary, separate tmux server, A
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toContain('Stopped the workers: alpha, beta.');
     expect(result.stdout).toContain('Started the session demo again.');
-    expect(result.stdout).toContain('The coordinator resumes its earlier conversation.');
+    expect(result.stdout).toContain(
+      'The coordinator resumes its earlier conversation. It must follow the current rules of the coordinator block.',
+    );
     expect(result.stdout).toContain('Resumed the workers: alpha, beta.');
 
     for (const fact of before) expect(await waitUntilEnded(fact.pid)).toBe(true);
