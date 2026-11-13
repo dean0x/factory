@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { files } from '../../src/names.js';
 import { hasTmux, isAlive, LIFECYCLE_CASE_MS, SESSIONS, useLab, waitUntilEnded, type Marker } from './lifecycle-lab.js';
 
 if (!hasTmux) console.warn('dismiss.test.ts is skipped: tmux 3.0 or newer is not installed.');
@@ -246,5 +247,73 @@ describe.skipIf(!hasTmux)('factory dismiss refuses a busy worker, and the pick s
     await expectIntact('alpha');
     await expectIntact('beta');
     expect(await lab.hasSession('demo')).toBe(true);
+  }, LIFECYCLE_CASE_MS);
+});
+
+/** The `board` block of the setup: three item states, and the field `lane` that names the worker of an item. */
+const BOARD_BLOCK = [
+  'board:',
+  '  states: [open, doing, done]',
+  '  in_progress: doing',
+  '  closed: done',
+  '  worker_field: lane',
+  '  fields:',
+  '    - name: lane',
+  '      target: item',
+  '      kind: token',
+  '',
+].join('\n');
+
+describe.skipIf(!hasTmux)('factory dismiss --closed frees a finished worker for the coordinator pane only (built binary, separate tmux server, TP-40)', () => {
+  const inPaneOf = (pane: string): Record<string, string> => ({ TMUX_PANE: pane, FACTORY_SESSION: 'demo' });
+
+  /** A node with the board block, and an item of alpha that is closed. */
+  const nodeWithClosedItem = async (): Promise<void> => {
+    await lab.node();
+    const config = join(lab.box.node, files.config);
+    const text = await readFile(config, 'utf8');
+    await writeFile(config, `${text}${text.endsWith('\n') ? '' : '\n'}${BOARD_BLOCK}`);
+    const added = await lab.factory('item', ['add', '--title', 'Build the page', '--field', 'lane=alpha']);
+    expect(added.code, added.stderr).toBe(0);
+    const closed = await lab.factory('item', ['close', 'B-1']);
+    expect(closed.code, closed.stderr).toBe(0);
+  };
+
+  const logText = (): Promise<string> => readFile(join(lab.stateOf(), files.decisionLog), 'utf8');
+
+  it('refuses a caller in a worker pane, refuses a worker with no closed item, and frees the finished worker for the coordinator pane after it logs one decision', async () => {
+    await nodeWithClosedItem();
+    await push('alpha');
+    const alphaPane = await lab.livePaneOf('alpha');
+    const betaPane = await lab.livePaneOf('beta');
+    expect(alphaPane).toBeDefined();
+    expect(betaPane).toBeDefined();
+
+    const fromWorker = await lab.factory('dismiss', ['alpha', '--closed'], inPaneOf(betaPane?.pane ?? ''));
+    expect(fromWorker.code, fromWorker.stderr).toBe(2);
+    expect(await logText()).not.toContain('Free the worker');
+    await expectIntact('alpha');
+    await expectIntact('beta');
+
+    const coordinator = inPaneOf(await lab.coordinatorPane());
+    const noItem = await lab.factory('dismiss', ['beta', '--closed'], coordinator);
+    expect(noItem.code, noItem.stderr).toBe(4);
+    expect(noItem.stderr).toContain('dismiss beta --yes');
+    await expectIntact('beta');
+
+    const freed = await lab.factory('dismiss', ['alpha', '--closed'], coordinator);
+    expect(freed.code, freed.stderr).toBe(0);
+    expect(freed.stdout).toContain('Logged the decision D-1 to free the worker alpha.');
+    expect(freed.stdout).toContain('Removed the work copy');
+    expect(await waitUntilEnded(alphaPane?.pid ?? 0)).toBe(true);
+    expect(await lab.livePaneOf('alpha')).toBeUndefined();
+    expect(existsSync(copyOf('alpha'))).toBe(false);
+    expect(existsSync(recordDirOf('alpha'))).toBe(false);
+    expect(existsSync(lineOf('alpha'))).toBe(false);
+    const log = await logText();
+    expect(log).toContain('D-1: Free the worker alpha');
+    expect(log).toContain('"decider": "coordinator"');
+    expect(log.match(/Free the worker/g)).toHaveLength(2);
+    await expectIntact('beta');
   }, LIFECYCLE_CASE_MS);
 });

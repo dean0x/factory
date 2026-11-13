@@ -18,6 +18,7 @@ export const stateRel = {
   backups: dirs.backups,
   workers: dirs.workers,
   inbox: dirs.inbox,
+  reviews: dirs.reviews,
   outbox: dirs.outbox,
   report: join(dirs.outbox, files.report),
   runtime: dirs.runtime,
@@ -46,7 +47,7 @@ export interface Layout {
   readonly workCopiesDir: string;
   readonly stateDir: string;
   readonly nodeJson: string;
-  /** The `.gitignore` of the state repo: it keeps the run-time folders, the backups, the workers, the inbox and the outbox out of the repo. */
+  /** The `.gitignore` of the state repo: it keeps the run-time folders, the backups, the workers, the inbox, the outbox and the reviews out of the repo. */
   readonly stateGitignoreFile: string;
   readonly workerMd: string;
   readonly backupsDir: string;
@@ -54,6 +55,8 @@ export interface Layout {
   readonly workersDir: string;
   /** The folder of the message files that a parent node writes for this node. Git ignores it. */
   readonly inboxDir: string;
+  /** The folder of the review results of the node: the kept place, because the free of a worker deletes its inbox. Git ignores it. */
+  readonly reviewsDir: string;
   /** The event file folder: it holds the report of this node for the parent node. Git ignores it. */
   readonly outboxDir: string;
   /** The report of this node: the file that a parent node reads. */
@@ -66,6 +69,8 @@ export interface Layout {
   readonly coordinatorLastSessionFile: string;
   /** The id of this machine. It is inside the run-time folder, so the state repo never holds it. */
   readonly machineIdFile: string;
+  /** The run marker of `worker watch`: the token of the newest watch run. It is inside the run-time folder, so the state repo never holds it. */
+  readonly watchRunFile: string;
   /** The mark of the active machine. The state repo tracks it. */
   readonly activeMachineFile: string;
   readonly locksDir: string;
@@ -97,12 +102,14 @@ export const layoutOf = (home: string): Layout => {
     backupsDir: join(stateDir, stateRel.backups),
     workersDir: join(stateDir, stateRel.workers),
     inboxDir: join(stateDir, stateRel.inbox),
+    reviewsDir: join(stateDir, stateRel.reviews),
     outboxDir: join(stateDir, stateRel.outbox),
     reportFile: join(stateDir, stateRel.report),
     runtimeDir,
     heartbeatDir: join(stateDir, stateRel.heartbeat),
     coordinatorLastSessionFile: join(runtimeDir, files.coordinatorLastSession),
     machineIdFile: join(runtimeDir, files.machineId),
+    watchRunFile: join(runtimeDir, files.watchRun),
     activeMachineFile: join(stateDir, files.activeMachine),
     locksDir: join(stateDir, stateRel.locks),
   };

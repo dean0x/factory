@@ -750,13 +750,13 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     expect(names).toContain('orders');
     expect(await readdir(join(state, 'roles'))).toEqual(['worker.md']);
     const node = JSON.parse(await box.read(join(state, 'node.json'))) as Record<string, unknown>;
-    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 4, safety: 2, worker: 3 } });
+    expect(node).toMatchObject({ schema_version: 2, blocks: { coordinator: 5, safety: 2, worker: 4 } });
 
     const changes = await box.git(state, ['diff', '--name-status', '-M', 'HEAD~1', 'HEAD']);
     expect(changes.stdout).toContain('protocol.md');
     expect(changes.stdout).toContain('roles/worker.md');
     expect(changes.stdout).toContain('roadmaps/README.md');
-    expect(await box.read(join(state, '.gitignore'))).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\noutbox/\n');
+    expect(await box.read(join(state, '.gitignore'))).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\noutbox/\nreviews/\n');
     expect(changes.stdout).toContain('.gitignore');
     expect((await box.git(state, ['status', '--porcelain'])).stdout).toBe('');
     // The old state repo had no guard: the run wrote it into the git folder, and git does not track it.
@@ -838,7 +838,7 @@ describe('factory upgrade of a FAC-M1 node (the committed fixture)', () => {
     // A node from before the setup folder has no setup text, so only the worker block is the same.
     const workerBlockOf = (text: string): string => text.slice(0, text.indexOf('<!-- factory:end worker -->'));
     const upgradedWorker = workerBlockOf(await box.read(join(state, 'roles', 'worker.md')));
-    expect(upgradedWorker).toContain('<!-- factory:begin worker v3 sha256=');
+    expect(upgradedWorker).toContain('<!-- factory:begin worker v4 sha256=');
     expect(upgradedWorker).toContain('`factory lock run -- <command>`');
     expect(upgradedWorker).not.toContain('wait in a loop');
     expect(upgradedWorker).toBe(workerBlockOf(await box.read(join(fresh, 'roles', 'worker.md'))));

@@ -8,7 +8,7 @@ import { runItem, type ItemOptions } from '../../src/commands/item.js';
 import { isSlug } from '../../src/config/primitives.js';
 import type { BoardConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
-import { files, stateLock } from '../../src/names.js';
+import { boardKeys, files, stateLock } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import type { WorkItem } from '../../src/workers/work-items.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
@@ -16,12 +16,9 @@ import { BOARD_PATH, LAYOUT, type BoardRepo } from '../helpers/board-repo.js';
 import { HOME, linkAt } from '../helpers/guard-fixture.js';
 import { sampleBoard, sampleConfig, sampleConfigWithBoard } from '../helpers/sample-config.js';
 import { stripComments } from '../helpers/source-scan.js';
+import { busyWith, knownItem, NONE, UNKNOWN } from '../helpers/work-item.js';
 
 const LOCK_FILE = join(LAYOUT.locksDir, `${stateLock.name}${stateLock.lock.suffix}`);
-
-const NONE: WorkItem = { state: 'known', item: null };
-const UNKNOWN: WorkItem = { state: 'unknown' };
-const busyWith = (item: string): WorkItem => ({ state: 'known', item });
 
 /** An item that the worker `lane` of the sample board owns. */
 const owned = (id: string, lane: string, status: string, extra: Record<string, unknown> = {}): Record<string, unknown> =>
@@ -49,7 +46,7 @@ describe('the work item port of the board (TP-43)', () => {
     ]);
     expect(await answersOf(repo, ['alpha', 'beta', 'gamma'])).toEqual([
       ['alpha', busyWith('B-1')],
-      ['beta', NONE],
+      ['beta', knownItem(null, { closed: ['B-2'] })],
       ['gamma', NONE],
     ]);
   });
@@ -64,8 +61,8 @@ describe('the work item port of the board (TP-43)', () => {
     ]);
     expect(await answersOf(repo, ['alpha', 'beta', 'gamma'])).toEqual([
       ['alpha', busyWith('B-2')],
-      ['beta', busyWith('B-3')],
-      ['gamma', NONE],
+      ['beta', knownItem('B-3', { closed: ['B-4'] })],
+      ['gamma', knownItem(null, { closed: ['B-5'] })],
     ]);
   });
 
@@ -168,7 +165,7 @@ describe('the work item port of the board: a stage is display data and never pro
     expect(staged).toEqual(plain);
     expect(staged).toEqual([
       ['busy', busyWith('B-1')],
-      ['quiet', NONE],
+      ['quiet', knownItem(null, { closed: ['B-2'] })],
       ['waits', busyWith('B-3')],
     ]);
   });
@@ -183,7 +180,71 @@ describe('the work item port of the board: a stage is display data and never pro
     const source = stripComments(readFileSync(join(__dirname, '..', '..', 'src', 'board', 'work-items.ts'), 'utf8'));
     expect(source).not.toMatch(/\bstage\b/i);
     expect(source).not.toMatch(/\btrack\b/i);
-    expect(source).not.toMatch(/boardKeys/);
+    expect(source).not.toMatch(/boardKeys\.(stage|track)\b/);
+  });
+});
+
+describe('the work item port of the board: the evidence of closed and parked work (AC-12)', () => {
+  const HEAD_A = 'a'.repeat(40);
+  const HEAD_B = 'b'.repeat(40);
+
+  it('lists the closed items whose worker field holds the id, in the order of the board, and not an open item', async () => {
+    const repo = await nodeWith([
+      owned('B-1', 'alpha', 'done'),
+      owned('B-2', 'alpha', 'doing'),
+      owned('B-3', 'beta', 'done'),
+      owned('B-4', 'alpha', 'done'),
+    ]);
+    expect(await answersOf(repo, ['alpha', 'beta'])).toEqual([
+      ['alpha', knownItem('B-2', { closed: ['B-1', 'B-4'] })],
+      ['beta', knownItem(null, { closed: ['B-3'] })],
+    ]);
+  });
+
+  it('lists the items that are not closed and carry the unassign mark of the worker as parked, and no closed item', async () => {
+    const mark = (...ids: readonly string[]): Record<string, unknown> => ({ [boardKeys.unassignedFrom]: ids });
+    const repo = await nodeWith([
+      itemRecord('B-1', { status: 'open', ...mark('alpha', 'beta') }),
+      owned('B-2', 'beta', 'done', mark('alpha')),
+      owned('B-3', 'gamma', 'doing', mark('beta')),
+    ]);
+    expect(await answersOf(repo, ['alpha', 'beta', 'gamma'])).toEqual([
+      ['alpha', knownItem(null, { parked: ['B-1'] })],
+      ['beta', knownItem(null, { parked: ['B-1', 'B-3'], closed: ['B-2'] })],
+      ['gamma', knownItem('B-3')],
+    ]);
+  });
+
+  it('fills the parked list from a mark that is a list, and from its text entries only', async () => {
+    const repo = await nodeWith([
+      itemRecord('B-1', { [boardKeys.unassignedFrom]: 'alpha' }),
+      itemRecord('B-2', { [boardKeys.unassignedFrom]: [7, null, 'alpha', { id: 'alpha' }] }),
+      itemRecord('B-3', { [boardKeys.unassignedFrom]: { alpha: true } }),
+      itemRecord('B-4', { [boardKeys.unassignedFrom]: ['alpha-2'] }),
+    ]);
+    expect(await answersOf(repo, ['alpha'])).toEqual([['alpha', knownItem(null, { parked: ['B-2'] })]]);
+  });
+
+  it('lists the recorded heads of the closed items of the worker, and only those that are a full commit id', async () => {
+    const head = (value: unknown): Record<string, unknown> => ({ [boardKeys.mergedPrHead]: value });
+    const repo = await nodeWith([
+      owned('B-1', 'alpha', 'done', head(HEAD_A)),
+      owned('B-2', 'alpha', 'done', head('not-a-commit')),
+      owned('B-3', 'alpha', 'done', head(7)),
+      owned('B-4', 'alpha', 'doing', head(HEAD_B)),
+      owned('B-5', 'beta', 'done', head(HEAD_B)),
+      owned('B-6', 'alpha', 'done'),
+      owned('B-7', 'alpha', 'done', head(HEAD_A.toUpperCase())),
+    ]);
+    expect(await answersOf(repo, ['alpha', 'beta'])).toEqual([
+      ['alpha', knownItem('B-4', { closed: ['B-1', 'B-2', 'B-3', 'B-6', 'B-7'], mergedPrHeads: [HEAD_A] })],
+      ['beta', knownItem(null, { closed: ['B-5'], mergedPrHeads: [HEAD_B] })],
+    ]);
+  });
+
+  it('gives a worker that no item names an empty list of each kind', async () => {
+    const repo = await nodeWith([owned('B-1', 'alpha', 'done', { [boardKeys.mergedPrHead]: HEAD_A })]);
+    expect(await answersOf(repo, ['gamma'])).toEqual([['gamma', NONE]]);
   });
 });
 

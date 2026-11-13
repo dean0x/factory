@@ -29,6 +29,7 @@ import { boardText, itemRecord } from '../helpers/board-node.js';
 import { EMPTY_WAITING } from '../helpers/board-repo.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleBoard, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
+import { knownItem } from '../helpers/work-item.js';
 import { captureSink } from '../helpers/sink.js';
 import { allSourceFiles, importPathsOf, stripComments } from '../helpers/source-scan.js';
 import { tmuxHandler, type PaneFixture, type TmuxLog } from '../helpers/tmux-fake.js';
@@ -178,7 +179,7 @@ describe('report builder: the document (TP-10)', () => {
       items,
       workers: [{ id: 'alpha', event: 'PreToolUse' }, { id: 'beta' }],
     });
-    const report = await reportOf(fixture, { port: portOf({ alpha: { state: 'known', item: 'B-1' }, beta: { state: 'known', item: null } }) });
+    const report = await reportOf(fixture, { port: portOf({ alpha: knownItem('B-1'), beta: knownItem(null) }) });
     expect(Object.keys(report)).toEqual([
       'schema',
       'schemaVersion',
@@ -211,7 +212,7 @@ describe('report builder: the document (TP-10)', () => {
       workers: [{ id: 'alpha', event: 'PreToolUse', percent: 12 }, { id: 'beta' }, { id: 'gamma' }],
     });
     const report = await reportOf(fixture, {
-      port: portOf({ alpha: { state: 'known', item: 'B-1' }, beta: { state: 'known', item: null } }),
+      port: portOf({ alpha: knownItem('B-1'), beta: knownItem(null) }),
     });
     expect(report.workers).toEqual([
       {
@@ -239,7 +240,7 @@ describe('report builder: the document (TP-10)', () => {
   it('shows the item of a work item as one clean line within the text cap, and keeps the state known', async () => {
     const item = `B-1\nline two ‮evil${'x'.repeat(reportLimits.maxTextChars)}`;
     const fixture = await fixtureOf({ workers: [{ id: 'alpha' }] });
-    const report = await reportOf(fixture, { port: portOf({ alpha: { state: 'known', item } }) });
+    const report = await reportOf(fixture, { port: portOf({ alpha: knownItem(item) }) });
     const workItem = report.workers[0]?.workItem;
     if (workItem?.state !== 'known') throw new Error('the work item should be known');
     expect(workItem.item).toHaveLength(reportLimits.maxTextChars);

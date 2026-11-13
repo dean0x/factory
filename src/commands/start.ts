@@ -35,6 +35,7 @@ import {
 } from '../names.js';
 import { guardWarning } from '../state/guard.js';
 import { layoutOf } from '../state/layout.js';
+import { ensureReviewsFolder } from '../state/reviews-folder.js';
 import { claimActiveMachine, markNamesThisMachine } from '../state/active-machine.js';
 import type { RecipeRegistry } from '../recipes/index.js';
 import type { SetupTexts } from '../templates/types.js';
@@ -529,6 +530,12 @@ export const runStart = async (
   // launch. A no on a terminal window goes on without the hook. Any error of the writer is a stop with its own exit code.
   const hook = await settleHook(deps, home, { yes: options.yes, dryRun, command: commands.start });
   if (!hook.ok) return hook;
+
+  // The folder of the review results stays when a worker is freed. A real run makes it before the session lookup and any launch.
+  if (!dryRun) {
+    const reviews = await ensureReviewsFolder(deps, home);
+    if (!reviews.ok) return reviews;
+  }
 
   const exists = await sessionExists(deps, id);
   if (exists && !dryRun) {

@@ -19,6 +19,7 @@ import {
   selfCommands,
   templateValues,
   values,
+  watchWords,
   workerCommands,
 } from '../../src/names.js';
 import { approvalLines, ownerModes, recipes, type ApprovalModes } from '../../src/recipes/index.js';
@@ -120,24 +121,24 @@ const summary = (blocks: readonly { name: string; version: number; target: strin
 describe('block templates', () => {
   it('gives layer 1 the coordinator, safety and worker blocks with their versions and targets', () => {
     expect(summary(blockTemplatesFor(blockInput(1)))).toEqual([
-      ['coordinator', 4, 'claudeFile'],
+      ['coordinator', 5, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
-      ['worker', 3, 'workerFile'],
+      ['worker', 4, 'workerFile'],
     ]);
   });
 
   it('gives layer 2 the manager, safety and worker blocks, so that a node can hold workers and child nodes', () => {
     expect(summary(blockTemplatesFor(blockInput(2)))).toEqual([
-      ['manager', 1, 'claudeFile'],
+      ['manager', 2, 'claudeFile'],
       ['safety', 2, 'claudeFile'],
-      ['worker', 3, 'workerFile'],
+      ['worker', 4, 'workerFile'],
     ]);
   });
 
   it.each([3, 4, 16])('gives layer %i, which has no role template, the safety block and the worker block', (layer) => {
     expect(summary(blockTemplatesFor(blockInput(layer)))).toEqual([
       ['safety', 2, 'claudeFile'],
-      ['worker', 3, 'workerFile'],
+      ['worker', 4, 'workerFile'],
     ]);
   });
 
@@ -148,10 +149,10 @@ describe('block templates', () => {
   });
 
   it.each([
-    ['coordinator', 40, 110],
+    ['coordinator', 40, 111],
     ['manager', 20, 50],
     ['safety', 12, 25],
-    ['worker', 40, 59],
+    ['worker', 40, 64],
   ])('keeps the %s block short (%i to %i lines)', (name, min, max) => {
     const template = allBlocks.find((candidate) => candidate.name === name);
     const lines = template?.body.split('\n').length ?? 0;
@@ -605,7 +606,9 @@ describe('the coordinator text: workers, watch and reset (TP-37)', () => {
     expect(text).toContain(
       `When the watch reports a worker, deal with the report. If a worker waits for the owner, for example at a dialog, ask the owner. Never answer it yourself. Then run \`${watch} ${flagText(flags.ready)} <id>\` in the background: it reports the worker when it is ready, and it watches the other workers as before.`,
     );
-    expect(text).toContain('The watch ends at its first report, or after its checks with no change. Then run it again.');
+    expect(text).toContain(
+      `The watch ends at its first report, or after 24 hours with no change. Then run it again, except after a report \`${watchWords.replaced}\`.`,
+    );
   });
 
   it('drops --ready after the ready report, and leaves out a worker whose other cause stays, so the watch does not end at once again', () => {
@@ -782,6 +785,91 @@ describe('the coordinator text: the board records', () => {
   });
 });
 
+describe('the worker section: the watch over a long run (TP-30)', () => {
+  const since = flagText(flags.since);
+
+  describe.each([
+    ['coordinator', layer1Blocks],
+    ['manager', layer2Blocks],
+  ])('in the %s text', (name, blocks) => {
+    const body = blocks.find((template) => template.name === name)?.body ?? '';
+
+    it('says that the watch reports a finish, and that it runs for up to 24 hours', () => {
+      expect(body).toContain('The watch reports a worker that finished a turn or that needs you. It runs for up to 24 hours.');
+    });
+
+    it('gives the time of the last report to the next run with the since flag', () => {
+      expect(body).toContain(
+        `Each line of a report ends with \`${watchWords.lastCheck} <time>\`. When you run the watch again, give \`${since} <time>\` with the time of the last report.`,
+      );
+    });
+
+    it('runs the watch again after a new worker starts, and says that the new run stops the older run', () => {
+      expect(body).toContain(
+        'After you start a new worker, run the watch again, so that it covers that worker. The new run stops the older run at its next check.',
+      );
+    });
+
+    it('does not run the watch again for a report that a newer watch replaced it, so that no loop of watches starts', () => {
+      expect(body).toContain(
+        `A report \`${watchWords.replaced}\` means that a newer watch runs. Do not run the watch again for it, or the two watches stop each other in a loop.`,
+      );
+    });
+
+    it('runs the watch again when the newer watch fails with exit code 1, so that a watch always runs, and tells the owner about a second fault', () => {
+      expect(body).toContain(
+        'If the newer watch fails with exit code 1, run the watch again. If that run fails again, tell the owner.',
+      );
+    });
+
+    it('runs the watch once again after a lost run marker, and tells the owner about a second fault', () => {
+      expect(body).toContain(
+        `If the watch fails with \`${watchWords.markerLost}\`, run it once again. If it fails again, tell the owner.`,
+      );
+    });
+
+    it('says that a pane gone report for a worker that was dismissed is expected', () => {
+      expect(body).toContain(`A \`${watchWords.kinds.gone}\` report for a worker that you dismissed is expected.`);
+    });
+  });
+});
+
+describe('the coordinator text: the free of a worker in the session (TP-30)', () => {
+  const coordinator = (): string => layer1Blocks.find((template) => template.name === 'coordinator')?.body ?? '';
+  /** The part of the coordinator text under the heading `## <heading>`. */
+  const sectionOf = (heading: string): string =>
+    coordinator().split('\n## ').find((part) => part.startsWith(`${heading}\n`)) ?? '';
+  const dismiss = commandText(commands.dismiss);
+  const closed = flagText(flags.closed);
+
+  it('names the closed free, and allows it only for a closed item, a pushed branch and a clean copy', () => {
+    const workers = sectionOf('Workers');
+    expect(workers).toContain(`To free a worker in this session, run \`${dismiss} <id> ${closed}\`.`);
+    expect(workers).toContain('Do it only when the item of the worker is closed, its branch is pushed and its work copy is clean.');
+  });
+
+  it('runs the dry run first, and copies each review file that the worker named to the reviews folder', () => {
+    const workers = sectionOf('Workers');
+    expect(workers).toContain(`Run \`${dismiss} <id>\` first. It lists the files that the free deletes.`);
+    expect(workers).toContain(
+      `Copy each review file that the worker named from \`../${dirs.state}/${dirs.workers}/<id>/${dirs.inbox}/\` to \`../${dirs.state}/${dirs.reviews}/\`.`,
+    );
+  });
+
+  it('tells the owner about each dismiss in the session, leaves every other case to the owner, and keeps a denial final', () => {
+    const workers = sectionOf('Workers');
+    expect(workers).toContain('Tell the owner about each dismiss that you run in this session.');
+    expect(workers).toContain('Every other case is a step of the owner in a terminal window.');
+    expect(workers).toContain(`If \`${closed}\` refuses, tell the owner why. A denial is final.`);
+  });
+
+  it('says that an item with no worker takes the PR from the branch of a former worker (the item record rule)', () => {
+    expect(sectionOf('Board')).toContain(
+      `If the item has no worker but names former workers in \`${boardKeys.unassignedFrom}\`, the PR must come from the branch of one of them.`,
+    );
+  });
+});
+
 describe('the coordinator text and the profile README: decisions and the owner path (M5-1b TP-163)', () => {
   const coordinator = (): string => layer1Blocks.find((template) => template.name === 'coordinator')?.body ?? '';
   /** The part of a text under the heading `## <heading>`. */
@@ -890,6 +978,14 @@ describe('the worker text: questions, assignments and resume notes (TP-37)', () 
 
   it('writes the resume notes to the resume file in the inbox folder', () => {
     expect(workerOf('acme')).toContain(`Write your resume notes to \`${files.resume}\` in the folder that ${inbox} names.`);
+  });
+
+  it('says that a dismiss deletes the inbox folder, asks for each review result in a file of it, and names the reviews folder as the kept place (TP-30)', () => {
+    const worker = workerOf('acme');
+    expect(worker).toContain('A dismiss deletes your work copy, its ignored files and your inbox folder.');
+    expect(worker).toContain('Put each review result in a file in the inbox folder, and name the file in your report.');
+    expect(worker).toContain(`The coordinator keeps the file in \`${dirs.state}/${dirs.reviews}/\`.`);
+    expect(worker).toContain('A file that is not copied there is lost at the dismiss.');
   });
 });
 

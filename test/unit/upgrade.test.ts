@@ -747,32 +747,54 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
   const STATE_IGNORE = `${STATE_DIR}/.gitignore`;
   /** The lines that a state repo from before the registry of the workers holds. */
   const BEFORE_WORKERS = 'state/\nlocks/\nbackups/\n';
-  /** The three lines that upgrade adds to a state repo that holds none of them. */
-  const LINE = 'workers/\ninbox/\noutbox/\n';
+  /** The four lines that upgrade adds to a state repo that holds none of them. */
+  const LINE = 'workers/\ninbox/\noutbox/\nreviews/\n';
   const COMMIT = '-c commit.gpgsign=false commit -q -m chore: upgrade the state';
 
-  it('adds the inbox and outbox lines to a state repo that has the workers line, and lists each one', async () => {
+  it('adds the inbox, outbox and reviews lines to a state repo that has the workers line, and lists each one', async () => {
     const { deps } = await makeNode();
     deps.files.set(STATE_IGNORE, `${BEFORE_WORKERS}workers/\n`);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
     expect(lineTexts(output).filter((line) => line.startsWith('.factory/.gitignore'))).toEqual([
       '.factory/.gitignore: add the line inbox/. Your lines stay as they are.',
       '.factory/.gitignore: add the line outbox/. Your lines stay as they are.',
+      '.factory/.gitignore: add the line reviews/. Your lines stay as they are.',
     ]);
     success(await upgrade(deps));
-    expect(text(deps, STATE_IGNORE)).toBe(`${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n`);
+    expect(text(deps, STATE_IGNORE)).toBe(`${BEFORE_WORKERS}${LINE}`);
   });
 
-  it('adds only the outbox line to a state repo that has the inbox line, and lists that one line', async () => {
+  it('adds only the outbox and reviews lines to a state repo that has the inbox line, and lists each one', async () => {
     const { deps } = await makeNode();
     const mine = `${BEFORE_WORKERS}workers/\ninbox/\n`;
     deps.files.set(STATE_IGNORE, mine);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
     expect(lineTexts(output).filter((line) => line.startsWith('.factory/.gitignore'))).toEqual([
       '.factory/.gitignore: add the line outbox/. Your lines stay as they are.',
+      '.factory/.gitignore: add the line reviews/. Your lines stay as they are.',
     ]);
     success(await upgrade(deps));
-    expect(text(deps, STATE_IGNORE)).toBe(`${mine}outbox/\n`);
+    expect(text(deps, STATE_IGNORE)).toBe(`${mine}outbox/\nreviews/\n`);
+  });
+
+  it('adds only the reviews line to a state repo that has the workers, inbox and outbox lines, and lists that one line', async () => {
+    const { deps } = await makeNode();
+    const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n`;
+    deps.files.set(STATE_IGNORE, mine);
+    const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
+    expect(lineTexts(output).filter((line) => line.startsWith('.factory/.gitignore'))).toEqual([
+      '.factory/.gitignore: add the line reviews/. Your lines stay as they are.',
+    ]);
+    success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${mine}reviews/\n`);
+  });
+
+  it('adds the reviews line again when a later line of the person takes the folder back into the repo', async () => {
+    const { deps } = await makeNode();
+    const mine = `${BEFORE_WORKERS}${LINE}!reviews/\n`;
+    deps.files.set(STATE_IGNORE, mine);
+    success(await upgrade(deps));
+    expect(text(deps, STATE_IGNORE)).toBe(`${mine}reviews/\n`);
   });
 
   it('lists each added line in the preview, and keeps the plan action as add', async () => {
@@ -783,13 +805,14 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
       '.factory/.gitignore: add the line workers/. Your lines stay as they are.',
       '.factory/.gitignore: add the line inbox/. Your lines stay as they are.',
       '.factory/.gitignore: add the line outbox/. Your lines stay as they are.',
+      '.factory/.gitignore: add the line reviews/. Your lines stay as they are.',
     ]);
     expect(output.json).toMatchObject({ stateGitignore: 'add' });
   });
 
   it('adds the inbox line again when a later line of the person takes the folder back into the repo', async () => {
     const { deps } = await makeNode();
-    const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n!inbox/\n`;
+    const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n!inbox/\nreviews/\n`;
     deps.files.set(STATE_IGNORE, mine);
     success(await upgrade(deps));
     expect(text(deps, STATE_IGNORE)).toBe(`${mine}inbox/\n`);
@@ -797,7 +820,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
 
   it('adds the outbox line again when a later line of the person takes the folder back into the repo', async () => {
     const { deps } = await makeNode();
-    const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n!outbox/\n`;
+    const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n!outbox/\nreviews/\n`;
     deps.files.set(STATE_IGNORE, mine);
     success(await upgrade(deps));
     expect(text(deps, STATE_IGNORE)).toBe(`${mine}outbox/\n`);
@@ -807,7 +830,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
     'adds the inbox line again after the later line %s, and then adds nothing',
     async (negation) => {
       const { deps } = await makeNode();
-      const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n${negation}\n`;
+      const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n${negation}\nreviews/\n`;
       deps.files.set(STATE_IGNORE, mine);
       success(await upgrade(deps));
       const written = text(deps, STATE_IGNORE);
@@ -823,7 +846,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
     'adds the outbox line again after the later line %s, and then adds nothing',
     async (negation) => {
       const { deps } = await makeNode();
-      const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n${negation}\n`;
+      const mine = `${BEFORE_WORKERS}workers/\ninbox/\noutbox/\n${negation}\nreviews/\n`;
       deps.files.set(STATE_IGNORE, mine);
       success(await upgrade(deps));
       const written = text(deps, STATE_IGNORE);
@@ -836,7 +859,7 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
 
   it('adds the inbox line when the line of the person ends in a tab, because git does not ignore that folder', async () => {
     const { deps } = await makeNode();
-    const mine = `${BEFORE_WORKERS}workers/\ninbox/\t\noutbox/\n`;
+    const mine = `${BEFORE_WORKERS}workers/\ninbox/\t\noutbox/\nreviews/\n`;
     deps.files.set(STATE_IGNORE, mine);
     success(await upgrade(deps));
     expect(text(deps, STATE_IGNORE)).toBe(`${mine}inbox/\n`);
@@ -894,11 +917,11 @@ describe('upgrade: the .gitignore of the state repo (TP-9)', () => {
   });
 
   it.each([
-    ['in the middle of other lines', `state/\nworkers/\n*.tmp\ninbox/\noutbox/\nlocks/\n`],
-    ['with trailing blanks', 'state/\nworkers/  \ninbox/ \noutbox/  \n'],
-    ['in a file with CRLF line ends', 'state/\r\nworkers/\r\ninbox/\r\noutbox/\r\n'],
-    ['as the last line with no line break', 'state/\nworkers/\ninbox/\noutbox/'],
-    ['with a line of the person that takes the folder back and a later line that ignores it again', 'workers/\n!inbox/\ninbox/\n!outbox/\noutbox/\n'],
+    ['in the middle of other lines', `state/\nworkers/\n*.tmp\ninbox/\noutbox/\nreviews/\nlocks/\n`],
+    ['with trailing blanks', 'state/\nworkers/  \ninbox/ \noutbox/  \nreviews/ \n'],
+    ['in a file with CRLF line ends', 'state/\r\nworkers/\r\ninbox/\r\noutbox/\r\nreviews/\r\n'],
+    ['as the last line with no line break', 'state/\nworkers/\ninbox/\noutbox/\nreviews/'],
+    ['with a line of the person that takes the folder back and a later line that ignores it again', 'workers/\n!inbox/\ninbox/\n!outbox/\noutbox/\nreviews/\n'],
   ])('writes nothing when the lines are there already, %s', async (_name, mine) => {
     const { deps, gitSince } = await makeNode();
     deps.files.set(STATE_IGNORE, mine);
@@ -1868,12 +1891,12 @@ describe('upgrade: the blocks of a layer', () => {
 
     const claude = text(deps, CLAUDE);
     expect(claude.startsWith('My own rules.\n')).toBe(true);
-    expect(claude).toContain('<!-- factory:begin manager v1 sha256=');
+    expect(claude).toContain('<!-- factory:begin manager v2 sha256=');
     expect(claude).not.toContain('factory:begin coordinator');
     expect(claude).toContain(`<!-- factory:begin safety v${versionOf('safety')} sha256=`);
-    expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 1');
+    expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 2');
     expect(blocksOfState(deps)).toEqual({
-      manager: 1,
+      manager: 2,
       safety: versionOf('safety'),
       worker: versionOf('worker'),
       setup: versionOf('setup'),
@@ -1927,7 +1950,7 @@ describe('upgrade: the blocks of a layer', () => {
     setLayer(deps, 2);
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
-    expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 1');
+    expect(lineTexts(output)).toContain('block coordinator: becomes block manager, version 2');
     expect(snapshot(deps)).toEqual(before);
   });
 
@@ -1945,9 +1968,9 @@ describe('upgrade: the blocks of a layer', () => {
     expect(snapshot(deps)).toEqual(before);
 
     success(await upgrade(deps, currentSpec, { overwrite: ['manager'] }));
-    expect(text(deps, CLAUDE)).toContain('factory:begin manager v1');
+    expect(text(deps, CLAUDE)).toContain('factory:begin manager v2');
     expect(text(deps, CLAUDE)).not.toContain('Do as you like.');
-    expect(blocksOfState(deps)).toMatchObject({ manager: 1 });
+    expect(blocksOfState(deps)).toMatchObject({ manager: 2 });
     expect(blocksOfState(deps)).not.toHaveProperty('coordinator');
   });
 
@@ -2524,7 +2547,7 @@ describe('upgrade: a node of schema 1', () => {
       blocks: { coordinator: versionOf('coordinator'), safety: versionOf('safety'), worker: versionOf('worker') },
     });
 
-    expect(text(deps, `${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\noutbox/\n');
+    expect(text(deps, `${HOME}/.factory/.gitignore`)).toBe('state/\nlocks/\nbackups/\nworkers/\ninbox/\noutbox/\nreviews/\n');
     expect(output.lines.at(-1)?.text).toBe('Changed 11 files. The backup is in .factory/backups/2030-01-02T03-04-05-678Z.');
     expect(output.json).toMatchObject({ committed: true, config: { from: 1, to: C }, state: { from: 1, to: S }, stateGitignore: 'add' });
     expect(gitWrites(gitSince())).toEqual([
@@ -4327,7 +4350,7 @@ describe('upgrade: render a changed block again (TP-76)', () => {
   });
 });
 
-describe('upgrade: the role texts of worker version 3 and coordinator version 4 (TP-38, TP-40)', () => {
+describe('upgrade: the role texts of worker version 4 and coordinator version 5 (TP-38, TP-40)', () => {
   /** Put an earlier version of the block `name` into the file, with a text of its own, and record that version. */
   const makeOlder = (deps: FakeDeps, path: string, name: string, version: number): void => {
     const parsed = parseBlocks(text(deps, path));
@@ -4341,31 +4364,31 @@ describe('upgrade: the role texts of worker version 3 and coordinator version 4 
   };
 
   it('writes the new blocks over the earlier versions, and then shows them as current', async () => {
-    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([3, 4]);
+    expect([versionOf('worker'), versionOf('coordinator')]).toEqual([4, 5]);
     const { deps } = await makeNode();
-    makeOlder(deps, WORKER, 'worker', 2);
-    makeOlder(deps, CLAUDE, 'coordinator', 3);
+    makeOlder(deps, WORKER, 'worker', 3);
+    makeOlder(deps, CLAUDE, 'coordinator', 4);
 
     const output = success(await upgrade(deps));
 
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 2 to 3', 'block coordinator: version 3 to 4']));
-    expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v3 sha256=');
-    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v4 sha256=');
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 3 to 4', 'block coordinator: version 4 to 5']));
+    expect(text(deps, WORKER)).toContain('<!-- factory:begin worker v4 sha256=');
+    expect(text(deps, CLAUDE)).toContain('<!-- factory:begin coordinator v5 sha256=');
     expect(text(deps, CLAUDE)).not.toContain('The coordinator text of an earlier version.');
     expect((await inspectBlocks(deps, HOME, layer1Blocks)).every((status) => status.kind === 'intact')).toBe(true);
     const state = parseJsonText(text(deps, NODE_JSON));
-    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 4, worker: 3 } });
+    expect(state.ok && state.value).toMatchObject({ blocks: { coordinator: 5, worker: 4 } });
     await deps.fs.remove(`${HOME}/.factory/backups`);
     expect(success(await upgrade(deps)).lines.at(-1)?.text).toBe('Nothing to upgrade.');
   });
 
   it('shows the earlier versions as older in a dry run, and changes no file', async () => {
     const { deps } = await makeNode();
-    makeOlder(deps, WORKER, 'worker', 2);
-    makeOlder(deps, CLAUDE, 'coordinator', 3);
+    makeOlder(deps, WORKER, 'worker', 3);
+    makeOlder(deps, CLAUDE, 'coordinator', 4);
     const before = snapshot(deps);
     const output = success(await upgrade(deps, currentSpec, { dryRun: true }));
-    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 2 to 3', 'block coordinator: version 3 to 4']));
+    expect(lineTexts(output)).toEqual(expect.arrayContaining(['block worker: version 3 to 4', 'block coordinator: version 4 to 5']));
     expect(snapshot(deps)).toEqual(before);
   });
 });
