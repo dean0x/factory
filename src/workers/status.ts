@@ -41,7 +41,10 @@ export interface WorkerStatus {
   /** The newer of the event time and the percent time of the line, as the line holds it, or null when the worker has no line. */
   readonly activityAt: string | null;
   readonly workItem: WorkItem;
+  /** True when the pane lives, the session waits at the prompt and its last event is older than `idle_after`. It says nothing of the work item. */
   readonly idle: boolean;
+  /** True when the board knows the work item of the worker and the worker has no open item. */
+  readonly noOpenWork: boolean;
 }
 
 export interface StatusInput {
@@ -93,13 +96,18 @@ const activityOf = (line: LastSeen): string | null =>
     .reduce<string | null>((newest, time) => (newest === null || Date.parse(time) > Date.parse(newest) ? time : newest), null);
 
 /**
- * A worker is idle when its activity is older than `idle_after` and the board knows that it has no open work. A worker with no
- * line, a work item that is unknown and a time that is not a time are never idle: an unknown fact fails closed.
+ * A worker is idle when its pane lives, its session waits at the prompt and its last event is older than `idle_after`. The event
+ * time counts, not the percent time: a percent line alone does not show that the session works. A worker with no pane, a dead pane,
+ * no line, a session that works or waits, and a time that is not a time are never idle: an unknown fact fails closed. Idle says
+ * nothing of the work item. A dismiss reads `noOpenWork` too.
  */
-const isIdle = (activityAt: string | null, workItem: WorkItem, now: Date, idleAfterMinutes: number): boolean => {
-  if (activityAt === null || workItem.state !== 'known' || workItem.item !== null) return false;
-  return now.getTime() - Date.parse(activityAt) > idleAfterMinutes * MS_PER_MINUTE;
+const isIdle = (running: boolean, state: WorkerState, eventAt: string | null, now: Date, idleAfterMinutes: number): boolean => {
+  if (!running || state !== workerListWords.states.prompt || eventAt === null) return false;
+  return now.getTime() - Date.parse(eventAt) > idleAfterMinutes * MS_PER_MINUTE;
 };
+
+/** True when the board knows the work of the worker and the worker has no open item. An unknown work item is never free of work. */
+const hasNoOpenWork = (workItem: WorkItem): boolean => workItem.state === 'known' && workItem.item === null;
 
 const entryOf = (
   record: WorkerRecord,
@@ -114,18 +122,22 @@ const entryOf = (
   const workItem = input.workItems.get(record.id) ?? unknownItem;
   const fault =
     read?.kind === 'fault' ? `cannot read the last-seen line of the ${roles.worker} ${record.id}: ${read.reason}` : null;
+  const running = pane.row !== null && !pane.row.dead;
+  const state = promptState === null ? workerListWords.states.unknown : stateWords[promptState];
+  const eventAt = line === null ? null : line[lastSeen.keys.eventAt];
   const entry: WorkerStatus = {
     id: record.id,
     project: record.project,
     pane: pane.row?.paneId ?? null,
     dead: pane.row?.dead ?? false,
-    running: pane.row !== null && !pane.row.dead,
-    state: promptState === null ? workerListWords.states.unknown : stateWords[promptState],
+    running,
+    state,
     contextPct,
     mark: markOf(contextPct, input.limits),
     activityAt,
     workItem,
-    idle: isIdle(activityAt, workItem, input.now, input.idleAfterMinutes),
+    idle: isIdle(running, state, eventAt, input.now, input.idleAfterMinutes),
+    noOpenWork: hasNoOpenWork(workItem),
   };
   return { entry, warnings: [pane.warning, fault].filter((warning): warning is string => warning !== null) };
 };

@@ -22,7 +22,7 @@ import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE, workerPane } from '../helpers/slot-fixture.js';
 import { tmuxHandler, type PaneFixture, type PaneView, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { unknownPort } from '../helpers/unknown-port.js';
-import { busyWith, NONE } from '../helpers/work-item.js';
+import { busyWith, knownItem, NONE } from '../helpers/work-item.js';
 
 const HOUR_MS = 3_600_000;
 const HEAD = 'a'.repeat(40);
@@ -1072,8 +1072,8 @@ describe('dismiss --idle', () => {
     ['a worker that is not listed', 'ghost', { id: 'alpha' }, 'status'],
     ['a worker that is not idle', 'delta', { id: 'delta', recent: true }, 'status'],
     ['a busy worker', 'alpha', { id: 'alpha', event: 'UserPromptSubmit' }, 'dismiss --idle'],
-    ['a worker whose state is not known', 'alpha', { id: 'alpha', event: null, percentOnly: true }, 'pane'],
-    ['a worker with no live pane', 'alpha', { id: 'alpha', pane: false }, 'dismiss alpha'],
+    ['a worker whose state is not known', 'alpha', { id: 'alpha', event: null, percentOnly: true }, 'status'],
+    ['a worker with no live pane', 'alpha', { id: 'alpha', pane: false }, 'status'],
   ])('refuses the pick of %s with a remedy, exit 1, and ends nothing (TP-59)', async (_name, pick, seed, remedy) => {
     const made = await make({ workers: [seed, { id: 'zed' }], terminal: { answer: `${pick} zed` } });
     const error = await errorOf(made, { idle: true }, portOf({ alpha: NONE, delta: NONE, zed: NONE }));
@@ -1084,15 +1084,63 @@ describe('dismiss --idle', () => {
     expect(hasPane(made, 'zed')).toBe(true);
   });
 
-  it('lists a worker with no live pane, and an unknown state, but offers no pick for them', async () => {
+  it('does not list a worker with no live pane, or a state that is not known', async () => {
     const made = await make({
       workers: [{ id: 'alpha', pane: false }, { id: 'beta', event: null, percentOnly: true }],
     });
     const output = await outputOf(made, { idle: true }, portOf({ alpha: NONE, beta: NONE }));
-    expect(rowsOf(output, 2).slice(1)).toEqual([
-      ['alpha', 'web', 'stopped', 'yes'],
-      ['beta', 'web', 'unknown', 'yes'],
-    ]);
+    expect(textOf(output)).toContain('No idle');
+    expect(output.json).toMatchObject({ workers: [] });
+  });
+
+  describe('the work item gates the list and the pick (TP-28)', () => {
+    const TWO: readonly Seed[] = [{ id: 'alpha' }, { id: 'beta' }];
+
+    it('lists no worker with open work and no worker with an unknown work item, though each is idle', async () => {
+      const made = await make({ workers: [...TWO, { id: 'gamma' }] });
+      const output = await outputOf(made, { idle: true }, portOf({ alpha: NONE, beta: busyWith('item 3') }));
+      expect(rowsOf(output, 1).slice(1)).toEqual([['alpha', 'web', 'at prompt', 'yes']]);
+      expect(output.json).toMatchObject({ workers: [{ id: 'alpha' }] });
+    });
+
+    it('lists a worker with a known work item and no open work, whatever else the board holds of it', async () => {
+      const made = await make({ workers: TWO });
+      const done = knownItem(null, { closed: ['B-1'], parked: ['B-2'], mergedPrHeads: [HEAD] });
+      const output = await outputOf(made, { idle: true }, portOf({ alpha: done, beta: NONE }));
+      expect(output.json).toMatchObject({ workers: [{ id: 'alpha' }, { id: 'beta' }] });
+    });
+
+    it('refuses the pick of an idle worker that has open work, and ends nothing', async () => {
+      const made = await make({ workers: TWO, terminal: { answer: 'alpha beta' } });
+      const error = await errorOf(made, { idle: true }, portOf({ alpha: busyWith('item 3'), beta: NONE }));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('alpha');
+      await expectNothingChanged(made, ['alpha', 'beta']);
+    });
+
+    it('refuses the pick of an idle worker that has an unknown work item, and ends nothing', async () => {
+      const made = await make({ workers: TWO, terminal: { answer: 'alpha beta' } });
+      const error = await errorOf(made, { idle: true }, portOf({ beta: NONE }));
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('alpha');
+      await expectNothingChanged(made, ['alpha', 'beta']);
+    });
+
+    it('reads the work items again at the pick, and refuses a worker whose work item is unknown then', async () => {
+      let reads = 0;
+      const port: WorkItemPort = {
+        itemsOf: async (_deps, _home, ids) => {
+          reads += 1;
+          return ok(new Map(reads === 1 ? ids.map((id) => [id, NONE] as const) : []));
+        },
+      };
+      const made = await make({ workers: TWO, terminal: { answer: 'alpha' } });
+      const error = await errorOf(made, { idle: true }, port);
+      expect(reads).toBe(2);
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('alpha');
+      await expectNothingChanged(made, ['alpha', 'beta']);
+    });
   });
 
   it('lists, then stops with exit 4 in a factory session, and asks nothing (TP-60)', async () => {

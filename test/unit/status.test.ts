@@ -25,7 +25,7 @@ import { captureSink } from '../helpers/sink.js';
 import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 import { tmuxHandler, type PaneFixture, type TmuxFixture, type TmuxLog } from '../helpers/tmux-fake.js';
 import { unknownPort } from '../helpers/unknown-port.js';
-import { busyWith, NONE, UNKNOWN } from '../helpers/work-item.js';
+import { busyWith, knownItem, NONE, UNKNOWN } from '../helpers/work-item.js';
 
 const HOME = '/w/node';
 const NODE = sampleConfig().core.node.id;
@@ -85,65 +85,71 @@ describe('status: the builder', () => {
     return { entry, warnings: built.warnings };
   };
 
-  describe('idle (TP-48, TP-49)', () => {
+  describe('idle (TP-27, TP-48, TP-49)', () => {
+    const idleOf = (change: Partial<StatusInput>): boolean => firstOf(inputOf(change)).entry.idle;
+    const lineMap = (read: LineRead): ReadonlyMap<string, LineRead> => new Map([['alpha', read]]);
+
     it.each([
-      ['activity older than idle_after and no open work', 121, NONE, true],
-      ['activity of exactly idle_after', 120, NONE, false],
-      ['activity newer than idle_after', 119, NONE, false],
-      ['old activity and open work', 121, busyWith('W-1'), false],
-      ['old activity and an unknown work item', 121, UNKNOWN, false],
-    ])('is %s: idle is %s', (_name, minutes, workItem, idle) => {
-      const { entry } = firstOf(
-        inputOf({
-          lines: new Map([['alpha', lineOf({ event: ['Stop', minutes] })]]),
-          workItems: new Map([['alpha', workItem]]),
-        }),
-      );
-      expect(entry.idle).toBe(idle);
-      expect(entry.workItem).toEqual(workItem);
+      ['an event older than idle_after', 121, true],
+      ['an event of exactly idle_after', 120, false],
+      ['an event newer than idle_after', 119, false],
+      ['an event after the current time', -500, false],
+    ] as const)('is idle for a live pane at the prompt with %s: %s', (_name, minutes, idle) => {
+      expect(idleOf({ lines: lineMap(lineOf({ event: ['Stop', minutes] })) })).toBe(idle);
     });
 
-    it('never calls a worker idle when the port has no answer for it', () => {
-      const { entry } = firstOf(inputOf({ lines: new Map([['alpha', lineOf({ event: ['Stop', 600] })]]) }));
-      expect(entry.workItem).toEqual(UNKNOWN);
-      expect(entry.idle).toBe(false);
+    it('takes the event time, not the percent time: a fresh percent time does not keep a worker from being idle', () => {
+      const { entry } = firstOf(inputOf({ lines: lineMap(lineOf({ event: ['Stop', 300], percent: [20, 10] })) }));
+      expect(entry.idle).toBe(true);
+      expect(entry.activityAt).toBe(minutesAgo(10));
     });
 
-    it('never calls a worker idle when it has no usable last-seen line, also with no open work', () => {
-      for (const read of [undefined, { kind: 'none' }, { kind: 'fault', reason: 'EIO' }] as const) {
-        const lines = read === undefined ? new Map<string, LineRead>() : new Map<string, LineRead>([['alpha', read]]);
-        const { entry } = firstOf(inputOf({ lines, workItems: new Map([['alpha', NONE]]) }));
-        expect(entry.idle).toBe(false);
-        expect(entry.activityAt).toBeNull();
+    it('is not idle for a session that works or waits for an answer, however old its event is', () => {
+      expect(idleOf({ lines: lineMap(lineOf({ event: ['UserPromptSubmit', 600] })) })).toBe(false);
+      expect(idleOf({ lines: lineMap(lineOf({ event: ['Notification', 600] })) })).toBe(false);
+    });
+
+    it('is not idle for a worker with a dead pane or no pane or no session', () => {
+      const lines = lineMap(lineOf({ event: ['Stop', 600] }));
+      expect(idleOf({ lines, panes: [paneOf('alpha', { dead: true })] })).toBe(false);
+      expect(idleOf({ lines, panes: [] })).toBe(false);
+      expect(idleOf({ lines, panes: null })).toBe(false);
+    });
+
+    it('is not idle for a worker with no usable last-seen line, or a line with a percent time only', () => {
+      for (const read of [undefined, { kind: 'none' }, { kind: 'fault', reason: 'EIO' }, lineOf({ percent: [20, 600] })] as const) {
+        const lines = read === undefined ? new Map<string, LineRead>() : lineMap(read);
+        expect(idleOf({ lines })).toBe(false);
       }
     });
 
-    it('takes the newer of the event time and the percent time as the activity', () => {
-      const { entry } = firstOf(
-        inputOf({
-          lines: new Map([['alpha', lineOf({ event: ['Stop', 300], percent: [20, 10] })]]),
-          workItems: new Map([['alpha', NONE]]),
-        }),
-      );
-      expect(entry.activityAt).toBe(minutesAgo(10));
-      expect(entry.idle).toBe(false);
+    it('is a fact of the session alone: the work item does not change it', () => {
+      const lines = lineMap(lineOf({ event: ['Stop', 121] }));
+      for (const workItem of [NONE, busyWith('W-1'), UNKNOWN]) {
+        const { entry } = firstOf(inputOf({ lines, workItems: new Map([['alpha', workItem]]) }));
+        expect(entry.idle).toBe(true);
+        expect(entry.workItem).toEqual(workItem);
+      }
     });
 
     it('counts the minutes of idle_after, not a fixed time', () => {
-      const lines = new Map([['alpha', lineOf({ event: ['Stop', 31] })]]);
-      const workItems = new Map([['alpha', NONE]]);
-      expect(firstOf(inputOf({ lines, workItems, idleAfterMinutes: 30 })).entry.idle).toBe(true);
-      expect(firstOf(inputOf({ lines, workItems, idleAfterMinutes: 32 })).entry.idle).toBe(false);
+      const lines = lineMap(lineOf({ event: ['Stop', 31] }));
+      expect(idleOf({ lines, idleAfterMinutes: 30 })).toBe(true);
+      expect(idleOf({ lines, idleAfterMinutes: 32 })).toBe(false);
+    });
+  });
+
+  describe('no open work (TP-28)', () => {
+    const noOpenWorkOf = (workItems: StatusInput['workItems']): boolean => firstOf(inputOf({ workItems })).entry.noOpenWork;
+
+    it('is true only for a work item that the board knows and that has no open item', () => {
+      expect(noOpenWorkOf(new Map([['alpha', NONE]]))).toBe(true);
+      expect(noOpenWorkOf(new Map([['alpha', busyWith('W-1')]]))).toBe(false);
+      expect(noOpenWorkOf(new Map([['alpha', UNKNOWN]]))).toBe(false);
     });
 
-    it('does not call a worker idle when its activity is after the current time', () => {
-      const { entry } = firstOf(
-        inputOf({
-          lines: new Map([['alpha', lineOf({ event: ['Stop', -500] })]]),
-          workItems: new Map([['alpha', NONE]]),
-        }),
-      );
-      expect(entry.idle).toBe(false);
+    it('is false for a worker that the port gives no answer for', () => {
+      expect(noOpenWorkOf(new Map())).toBe(false);
     });
   });
 
@@ -382,23 +388,29 @@ describe('status: the table (TP-48)', () => {
     expect(output.warnings).toEqual([]);
   });
 
-  it('shows a worker as idle when its activity is older than idle_after and the work item is known and has no open work', async () => {
+  it('shows a worker as idle when its event is older than idle_after', async () => {
     const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop', percent: 5 } }], panes: [pane('alpha')] });
     made.deps.advance(121 * MINUTE);
     const output = await statusOf(made, portOf({ alpha: NONE }).port);
     expect(rowsOf(output)).toMatchObject([{ id: 'alpha', state: 'at prompt', workItem: 'none', idle: 'yes' }]);
   });
 
-  it('does not show a worker as idle while its activity is newer than idle_after', async () => {
+  it('does not show a worker as idle while its event is newer than idle_after', async () => {
     const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop' } }], panes: [pane('alpha')] });
     made.deps.advance(119 * MINUTE);
     expect(rowsOf(await statusOf(made, portOf({ alpha: NONE }).port))[0]?.idle).toBe('no');
   });
 
-  it('does not show a worker as idle while the board gives it open work', async () => {
+  it('shows a worker as idle by its session alone: open work on the board does not change the idle column', async () => {
     const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop' } }], panes: [pane('alpha')] });
     made.deps.advance(600 * MINUTE);
-    expect(rowsOf(await statusOf(made, portOf({ alpha: busyWith('W-2') }).port))).toMatchObject([{ workItem: 'W-2', idle: 'no' }]);
+    expect(rowsOf(await statusOf(made, portOf({ alpha: busyWith('W-2') }).port))).toMatchObject([{ workItem: 'W-2', idle: 'yes' }]);
+  });
+
+  it('does not show a worker as idle while its session works, however old its event is', async () => {
+    const made = await make({ workers: [{ id: 'alpha', line: { event: 'UserPromptSubmit' } }], panes: [pane('alpha')] });
+    made.deps.advance(600 * MINUTE);
+    expect(rowsOf(await statusOf(made, portOf({ alpha: NONE }).port))[0]?.idle).toBe('no');
   });
 
   it('takes idle_after from the config', async () => {
@@ -448,7 +460,7 @@ describe('status: the table (TP-48)', () => {
 });
 
 describe('status: the stub of the work item port (TP-49)', () => {
-  it('shows the work item as unknown and no worker as idle, however old the activity is', async () => {
+  it('shows the work item as unknown, and the idle state from the session alone', async () => {
     const made = await make({
       workers: [
         { id: 'alpha', line: { event: 'Stop', percent: 5 } },
@@ -459,12 +471,12 @@ describe('status: the stub of the work item port (TP-49)', () => {
     made.deps.advance(24 * 60 * MINUTE);
     const output = await statusOf(made);
     expect(rowsOf(output)).toMatchObject([
-      { id: 'alpha', workItem: 'unknown', idle: 'no' },
-      { id: 'beta', workItem: 'unknown', idle: 'no' },
+      { id: 'alpha', workItem: 'unknown', idle: 'yes' },
+      { id: 'beta', workItem: 'unknown', idle: 'yes' },
     ]);
     expect(jsonOf(output).workers.map((worker) => [worker.workItem, worker.idle])).toEqual([
-      [{ state: 'unknown' }, false],
-      [{ state: 'unknown' }, false],
+      [{ state: 'unknown' }, true],
+      [{ state: 'unknown' }, true],
     ]);
   });
 
@@ -478,7 +490,7 @@ describe('status: the stub of the work item port (TP-49)', () => {
   it('treats a worker that the port does not answer for as unknown', async () => {
     const made = await make({ workers: [{ id: 'alpha', line: { event: 'Stop' } }], panes: [pane('alpha')] });
     made.deps.advance(600 * MINUTE);
-    expect(rowsOf(await statusOf(made, portOf({}).port))).toMatchObject([{ workItem: 'unknown', idle: 'no' }]);
+    expect(rowsOf(await statusOf(made, portOf({}).port))).toMatchObject([{ workItem: 'unknown', idle: 'yes' }]);
   });
 
   it('warns and shows every work item as unknown when the port fails', async () => {
@@ -486,7 +498,7 @@ describe('status: the stub of the work item port (TP-49)', () => {
     made.deps.advance(600 * MINUTE);
     const broken: WorkItemPort = { itemsOf: async () => failure('the board cannot be read: EIO') };
     const output = await statusOf(made, broken);
-    expect(rowsOf(output)).toMatchObject([{ workItem: 'unknown', idle: 'no' }]);
+    expect(rowsOf(output)).toMatchObject([{ workItem: 'unknown', idle: 'yes' }]);
     expect(output.warnings).toHaveLength(1);
     expect(output.warnings[0]).toContain('EIO');
     expect(output.failed).toBe(false);
@@ -698,15 +710,15 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
     return made;
   };
 
-  it('M5-1b TP-43 shows the item in progress of a worker, and idle yes for a worker with no open work', async () => {
+  it('M5-1b TP-43 shows the item in progress of a worker, and idle yes for each worker at its prompt with an old event', async () => {
     const made = await withBoard(BOARD);
     const output = await statusOf(made, boardWorkItems(recipes));
     expect(rowsOf(output)).toMatchObject([
-      { id: 'alpha', workItem: 'B-1', idle: 'no' },
+      { id: 'alpha', workItem: 'B-1', idle: 'yes' },
       { id: 'beta', workItem: 'none', idle: 'yes' },
       { id: 'gamma', workItem: 'none', idle: 'yes' },
     ]);
-    expect(jsonOf(output).workers.map((worker) => worker.workItem)).toEqual([busyWith('B-1'), NONE, NONE]);
+    expect(jsonOf(output).workers.map((worker) => worker.workItem)).toEqual([busyWith('B-1'), NONE, knownItem(null, { closed: ['B-2'] })]);
     expect(output.warnings).toEqual([]);
   });
 
@@ -716,20 +728,20 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
     expect(await runCli(['status', '--home', HOME, '--json'], made.deps, sink)).toBe(0);
     expect(JSON.parse(sink.out.join(''))).toMatchObject({
       workers: [
-        { id: 'alpha', workItem: busyWith('B-1'), idle: false },
+        { id: 'alpha', workItem: busyWith('B-1'), idle: true },
         { id: 'beta', workItem: NONE, idle: true },
-        { id: 'gamma', workItem: NONE, idle: true },
+        { id: 'gamma', workItem: knownItem(null, { closed: ['B-2'] }), idle: true },
       ],
     });
   });
 
-  it('M5-1b TP-44 shows every worker as unknown and none as idle when the setup has no board block', async () => {
+  it('M5-1b TP-44 shows every worker as unknown, with the idle state of its session, when the setup has no board block', async () => {
     const made = await withBoard(BOARD, sampleConfig());
     const output = await statusOf(made, boardWorkItems(recipes));
     expect(rowsOf(output).map((row) => [row.workItem, row.idle])).toEqual([
-      ['unknown', 'no'],
-      ['unknown', 'no'],
-      ['unknown', 'no'],
+      ['unknown', 'yes'],
+      ['unknown', 'yes'],
+      ['unknown', 'yes'],
     ]);
     expect(output.warnings).toEqual([]);
   });
@@ -737,13 +749,13 @@ describe('status: the work items come from the board (TP-43, TP-44, TP-64)', () 
   it.each([
     ['a board file that is not there', undefined],
     ['a board file that is not JSON', 'not json'],
-  ])('M5-1b TP-44 shows every worker as unknown and none as idle, with a warning, for %s', async (_name, text) => {
+  ])('M5-1b TP-44 shows every worker as unknown, with the idle state of its session and a warning, for %s', async (_name, text) => {
     const made = await withBoard(text);
     const output = await statusOf(made, boardWorkItems(recipes));
     expect(rowsOf(output).map((row) => [row.workItem, row.idle])).toEqual([
-      ['unknown', 'no'],
-      ['unknown', 'no'],
-      ['unknown', 'no'],
+      ['unknown', 'yes'],
+      ['unknown', 'yes'],
+      ['unknown', 'yes'],
     ]);
     expect(output.warnings).toHaveLength(1);
     expect(output.warnings[0]).toContain(files.board);

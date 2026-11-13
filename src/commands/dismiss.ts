@@ -260,19 +260,21 @@ const isPushed = (inspected: CliResult<Inspected> | undefined): boolean =>
 
 const stateText = (entry: WorkerStatus): string => (entry.running ? entry.state : statusWords.stopped);
 
-/** The picked worker as a refusal, or its checks: it must be listed, have a live pane at its prompt, and not be this pane. */
-const requirePick = (deps: Deps, id: string, idle: readonly WorkerStatus[], panes: readonly PaneRow[]): CliResult<WorkerStatus> => {
-  const entry = idle.find((candidate) => candidate.id === id);
+/**
+ * The workers that `dismiss --idle` lists and lets the owner pick: idle (a live pane at its prompt with an old event) and with a
+ * work item that the board knows and that has no open item. The idle state alone never lists a worker, and a work item that is
+ * unknown never does.
+ */
+const listableOf = (entries: readonly WorkerStatus[]): readonly WorkerStatus[] =>
+  entries.filter((entry) => entry.idle && entry.noOpenWork);
+
+/** The picked worker as a refusal, or its checks: it must be listed, ready to end, and not be this pane. */
+const requirePick = (deps: Deps, id: string, listed: readonly WorkerStatus[], panes: readonly PaneRow[]): CliResult<WorkerStatus> => {
+  const entry = listed.find((candidate) => candidate.id === id);
   if (entry === undefined) {
     return failure(
       `the ${roles.worker} ${id} is not in the list of idle ${roles.worker}s`,
       `Run "${commandText(commands.status)}" to see the state of each ${roles.worker}, or run "${commandText(IDLE_LINE)}" again.`,
-    );
-  }
-  if (!entry.running) {
-    return failure(
-      `the ${roles.worker} ${id} has no live pane, so the pick ends no pane`,
-      `Run "${commandText(dismissLine(id))}" to free its work copy.`,
     );
   }
   const endable = requireEndable(entry, IDLE_LINE);
@@ -356,7 +358,8 @@ interface Listed {
 /**
  * The pick step of `dismiss --idle`, in a terminal window outside a factory session: the owner types the ids. The owner may take
  * long, so after the answer the state of the workers is read again, and every picked id is checked again (it must be listed as
- * idle, and its work must be pushed) before the first change. Then each picked worker is freed as `dismiss ID --yes` frees it.
+ * idle with no open work, and its work must be pushed) before the first change. Then each picked worker is freed as `dismiss ID --yes`
+ * frees it.
  */
 const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkItemPort, facts: Facts, listed: Listed): Promise<CliResult<CommandOutput>> => {
   const { table, workers, json } = listed;
@@ -367,7 +370,7 @@ const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkI
   if (ids.length === 0) return ok({ lines: [...table, text('Nothing picked. Nothing changed.')], json, warnings, failed: false });
   const now = await factsOf(deps, options, workItems, facts.home, facts.config);
   if (!now.ok) return now;
-  const idleNow = now.value.entries.filter((entry) => entry.idle);
+  const idleNow = listableOf(now.value.entries);
   const inspect = inspectorOf(deps, now.value.home, now.value.config);
   const picks: Pick[] = [];
   for (const id of ids) {
@@ -394,7 +397,7 @@ const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkI
 };
 
 /**
- * `dismiss --idle`: lists the idle workers with their state and whether their work is pushed, and changes nothing. Inside a factory
+ * `dismiss --idle`: lists the idle workers that have no open work, with their state and whether their work is pushed, and changes nothing. Inside a factory
  * session the pick step stops (exit 4). With no terminal window the list is all. In a terminal window the owner types the ids to
  * dismiss: every id is checked before the first change, and then each picked worker is freed as `dismiss ID --yes` frees it.
  */
@@ -406,7 +409,7 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
   if (!loaded.ok) return loaded;
   const facts = await factsOf(deps, options, workItems, home, loaded.value);
   if (!facts.ok) return facts;
-  const idle = facts.value.entries.filter((entry) => entry.idle);
+  const idle = listableOf(facts.value.entries);
   const warnings = facts.value.warnings;
   const base = { schema: schemaIds.dismiss, home, idle: true, yes: false };
   const inspect = inspectorOf(deps, home, loaded.value);

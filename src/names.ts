@@ -1547,7 +1547,7 @@ export const values = {
   /** What an owner field holds: one value of a list, a flag, or one free token. */
   boardKinds: ['values', 'flag', 'token'],
   defaultWatchInterval: '5m',
-  /** A worker with no activity for this time, and no open work, is idle. */
+  /** A worker at its prompt with no event for this time is idle. */
   defaultIdleAfter: '2h',
 } as const;
 
