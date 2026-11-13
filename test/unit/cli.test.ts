@@ -574,7 +574,8 @@ describe('the reset, watch and self commands in the command line', () => {
     const result = await run(['worker', '--help']);
     expect(result.code).toBe(0);
     expect(result.out).toContain('factory worker reset ID --clear|--compact [--home DIR]');
-    expect(result.out).toContain('factory worker watch [ID]... [--ready ID]... [--home DIR]');
+    expect(result.out).toContain('factory worker watch [ID]... [--ready ID]... [--since TIME] [--home DIR]');
+    expect(result.out).toMatch(/--since TIME\s+With watch: also report a finish of a worker that came after TIME/);
     expect(result.out).toMatch(/--clear\s+With reset: clear the session of the worker/);
     expect(result.out).toMatch(/--compact\s+With reset: compact the session of the worker/);
   });
@@ -663,6 +664,42 @@ describe('the reset, watch and self commands in the command line', () => {
     expect(result.code).toBe(2);
     expect(result.err).toContain('--ready belongs to watch only');
     expect(deps.calls).toEqual([]);
+  });
+
+  it.each([
+    ['worker new', ['worker', 'new', 'alpha', '--project', 'web']],
+    ['worker stop', ['worker', 'stop', 'alpha']],
+    ['worker list', ['worker', 'list']],
+  ])('TP-26: exits 2 for %s with --since, names watch, and runs no program', async (_name, argv) => {
+    const { deps } = made();
+    const result = await runOn(deps, [...argv, '--since', '2030-01-02T03:04:05.678Z', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--since belongs to watch only');
+    expect(deps.calls).toEqual([]);
+  });
+
+  it('TP-26: names both flags when --ready and --since go to a command that is not watch', async () => {
+    const result = await runOn(made().deps, ['worker', 'list', '--ready', 'alpha', '--since', '2030-01-02T03:04:05.678Z', '--home', HOME]);
+    expect(result.code).toBe(2);
+    expect(result.err).toContain('--ready and --since belong to watch only');
+  });
+
+  it.each([['text that is no time', 'yesterday'], ['a time with an offset', '2030-01-02T03:04:05+02:00'], ['a date with no time', '2030-01-02'], ['empty text', '']])(
+    'TP-26: exits 2 for worker watch --since with %s, before any tmux call and with no run marker',
+    async (_name, since) => {
+      const { deps, log } = made();
+      const result = await runOn(deps, ['worker', 'watch', '--since', since, '--home', HOME]);
+      expect(result.code).toBe(2);
+      expect(result.err).toContain('--since needs an ISO time in UTC that ends with Z');
+      expect(log.calls).toEqual([]);
+      expect([...deps.files.keys()].filter((path) => path.endsWith('worker-watch-run'))).toEqual([]);
+    },
+  );
+
+  it('TP-26: takes a time in UTC for worker watch --since, and the watch runs', async () => {
+    const result = await runOn(made().deps, ['worker', 'watch', '--since', '2030-01-02T03:04:05.678Z', '--home', HOME]);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('NO WORKER');
   });
 
   it('keeps the message for an unknown subcommand that gets --assignment', async () => {
