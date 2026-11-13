@@ -4,7 +4,7 @@ import type { Deps } from '../../core/deps.js';
 import { parseGithubRepo } from '../../core/git.js';
 import { ok } from '../../core/result.js';
 import { toolNames } from '../../core/tools.js';
-import { flags, flagText, ghTimeoutMs } from '../../names.js';
+import { commandLines, commandText, flags, flagText, ghTimeoutMs } from '../../names.js';
 import { parseJsonText } from '../../state/load.js';
 
 /*
@@ -72,7 +72,10 @@ export interface MergeReadInput {
   readonly head?: string;
 }
 
-const CHECK_AGAIN = 'Check the PR number and the branch, then run the command again.';
+/** The command that runs the record check, as the remedy lines show it. */
+export const RECORD_COMMAND = `${commandText(commandLines.itemRecord)} ID ${flagText(flags.ref)} REF`;
+
+const CHECK_AGAIN = `Check the PR number and the branch, then run "${RECORD_COMMAND}" again.`;
 
 /** A PR that does not match. The reason is a fixed phrase and the number that the caller gave: no text of gh is repeated. */
 const mismatch = (number: string, reason: string): CliResult<never> => failure(`PR ${number}: ${reason}`, CHECK_AGAIN);
@@ -80,7 +83,7 @@ const mismatch = (number: string, reason: string): CliResult<never> => failure(`
 const unreadable = (number: string): CliResult<never> =>
   failure(
     `gh could not read PR ${number}`,
-    `Check that ${toolNames.gh} is installed and signed in to ${mergeCheck.host}, then run the command again.`,
+    `Check that ${toolNames.gh} is installed and signed in to ${mergeCheck.host}, then run "${RECORD_COMMAND}" again.`,
   );
 
 /** The PR number of a flag: one to nine digits, no leading zero. Anything else is a usage error. */
@@ -98,7 +101,7 @@ export const githubRepoOf = (url: string): CliResult<string> => {
   return repo === null
     ? failure(
         `the merge check reads repos on ${mergeCheck.host} only`,
-        `Check that the url of the project is a ${mergeCheck.host} URL.`,
+        `Check that the url of the project is a ${mergeCheck.host} URL, then run "${RECORD_COMMAND}" again.`,
       )
     : ok(repo);
 };

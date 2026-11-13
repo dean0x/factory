@@ -6,7 +6,7 @@ import { toolNames } from '../../core/tools.js';
 import { files, keys, program, roles } from '../../names.js';
 import type { CheckedRecord, RecordCheck, RecordCheckInput } from '../entry.js';
 import { mergedStage } from './board.js';
-import { githubRepoOf, parsePrNumber, readMergedPr } from './github-pr.js';
+import { githubRepoOf, parsePrNumber, readMergedPr, RECORD_COMMAND } from './github-pr.js';
 
 /**
  * Check a merged PR on GitHub and give the record that the core writes. The repo comes from the URL of the project, the base is the
@@ -23,7 +23,7 @@ const checkMergedPr = async (deps: Deps, input: RecordCheckInput): Promise<CliRe
   if (base === null) {
     return failure(
       `the project ${input.project.id} names no default branch`,
-      `Set ${keys.project.defaultBranch} for the project in ${files.config}.`,
+      `Set ${keys.project.defaultBranch} for the project in ${files.config}, then run "${RECORD_COMMAND}" again.`,
     );
   }
   const read = await readMergedPr(deps, {

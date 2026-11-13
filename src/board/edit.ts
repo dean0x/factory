@@ -506,7 +506,7 @@ export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliR
   if (!Object.hasOwn(record, workerField)) return usageError(`the item ${id} has no ${roles.worker} to take off`);
   const worker = record[workerField];
   if (typeof worker !== 'string') {
-    return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}.`);
+    return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}, then run "${commandText(commandLines.itemUnassign)} ${id}" again.`);
   }
   const former = formerWorkersOf(record, id);
   if (!former.ok) return former;
