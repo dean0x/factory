@@ -131,7 +131,7 @@ const readChildFacts = async (transport: Transport, rows: readonly ChildRow[]): 
     if (row.status !== childStates.ok) {
       facts.push(withoutFacts(row));
     } else if (left <= 0) {
-      facts.push(withoutFacts({ ...row, layer: null, status: childStates.unknown, reason: childReasons.byteCap }));
+      facts.push(withoutFacts({ ...row, layer: null, status: childStates.unknown, reason: childReasons.buildByteCap }));
     } else {
       const read = await transport.report(row.address, left);
       left = Math.max(0, left - read.bytes);

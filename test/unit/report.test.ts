@@ -504,7 +504,7 @@ describe('report builder: the document (TP-10)', () => {
       );
       const rows = await childrenOf([API, SHOP], transport);
       expect(rows[0]).toMatchObject({ id: 'api', state: 'ok', age: 3 });
-      expect(rows[1]).toEqual({ id: 'shop', address: SHOP.address, state: 'unknown', reason: childReasons.byteCap, counts: null, age: null });
+      expect(rows[1]).toEqual({ id: 'shop', address: SHOP.address, state: 'unknown', reason: childReasons.buildByteCap, counts: null, age: null });
       expect(reads.map((read) => read.address)).toEqual([API.address]);
     });
   });

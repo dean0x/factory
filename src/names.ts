@@ -1494,6 +1494,7 @@ export const childReasons = {
   depthCap: 'the walk is at the depth cap',
   nodeCap: 'the walk is at the cap of nodes',
   byteCap: 'the walk is at the cap of bytes that it may read',
+  buildByteCap: 'the build of the report is at the cap of bytes that it may read',
 } as const;
 
 /**
