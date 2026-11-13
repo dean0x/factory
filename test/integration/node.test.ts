@@ -259,3 +259,144 @@ describe('factory node send (built binary)', () => {
     await expect(stat(join(shop, '.factory'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
+
+describe('factory node tree (built binary)', () => {
+  interface TreeNodeJson {
+    readonly depth: number;
+    readonly state: string;
+    readonly reason: string | null;
+    readonly report: {
+      readonly source: string | null;
+      readonly id: string;
+      readonly address: string;
+      readonly layer: number | null;
+      readonly counts: { workers: number; inProgress: number; requests: number; children: number } | null;
+      readonly age: number | null;
+      readonly reportedBy: string | null;
+    };
+  }
+  interface TreeJson {
+    readonly schema: string;
+    readonly home: string;
+    readonly id: string;
+    readonly layer: number;
+    readonly verdict: string;
+    readonly omitted: number;
+    readonly nodes: readonly TreeNodeJson[];
+  }
+
+  let middle: string;
+  beforeEach(() => {
+    middle = join(box.root, 'mid-factory');
+  });
+
+  const reportFileOf = (home: string): string => join(home, '.factory', 'outbox', 'report.json');
+
+  /** A line of a plain terminal starts with the mark of its level. The mark is no part of the indent of the tree. */
+  const withoutMark = (line: string): string => line.replace(/^\[(?:ok|warn)\] /, '');
+
+  /** A node on layer 3 with a child on layer 2, which has a child on layer 1. Every node is a folder with its own files. */
+  const threeLayers = async (): Promise<void> => {
+    await initNode(shop, 'web', 1);
+    await initNode(middle, 'mid', 2);
+    await initNode(manager, 'top', 3);
+    const lower = await box.run(['node', 'add-child', shop, '--home', middle]);
+    expect(lower.code, lower.stderr).toBe(0);
+    const upper = await node('add-child', middle);
+    expect(upper.code, upper.stderr).toBe(0);
+  };
+
+  const reportIn = async (home: string): Promise<void> => {
+    const result = await box.run(['report', '--home', home]);
+    expect(result.code, result.stderr).toBe(0);
+  };
+
+  const treeJson = async (): Promise<TreeJson> => {
+    const result = await node('tree', '--json');
+    expect(result.code, result.stderr).toBe(0);
+    return JSON.parse(result.stdout) as TreeJson;
+  };
+
+  it('reads a tree over two layers of file children from their report files, as text and as a document', async () => {
+    await threeLayers();
+    await reportIn(shop);
+    await reportIn(middle);
+
+    const text = await node('tree');
+    expect(text.stderr).toBe('');
+    expect(text.code).toBe(0);
+    const lines = text.stdout.split('\n').filter((line) => line !== '').map(withoutMark);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toBe('OK: top (layer 3): nodes 2, unknown 0, mismatch 0, warnings 0');
+    expect(lines[1]).toMatch(/^ {2}mid {2}ok {2}workers 0, in progress 0, requests 0, children 1 {2}\d+s$/);
+    expect(lines[2]).toMatch(/^ {4}web {2}ok {2}workers 0, in progress 0, requests 0, children 0 {2}\d+s {2}reported by mid$/);
+
+    const tree = await treeJson();
+    expect(tree).toMatchObject({ schema: 'factory.node-tree/v1', home: manager, id: 'top', layer: 3, verdict: 'ok', omitted: 0 });
+    expect(tree.nodes).toHaveLength(2);
+    expect(tree.nodes[0]).toMatchObject({
+      depth: 1,
+      state: 'ok',
+      reason: null,
+      report: { source: reportFileOf(middle), id: 'mid', address: `file://${middle}`, layer: 2, reportedBy: null },
+    });
+    expect(tree.nodes[0]?.report.counts).toEqual({ workers: 0, inProgress: 0, requests: 0, children: 1 });
+    expect(tree.nodes[1]).toMatchObject({
+      depth: 2,
+      state: 'ok',
+      reason: null,
+      report: { source: reportFileOf(shop), id: 'web', address: `file://${shop}`, layer: 1, reportedBy: 'mid' },
+    });
+    expect(tree.nodes[1]?.report.counts).toEqual({ workers: 0, inProgress: 0, requests: 0, children: 0 });
+  });
+
+  it('makes a report that holds the row of its direct child only, with the counts and the age of the report file of that child', async () => {
+    await threeLayers();
+    await reportIn(shop);
+    await reportIn(middle);
+
+    const result = await box.run(['report', '--json', '--home', manager]);
+    expect(result.code, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout) as { children: { id: string; state: string; counts: unknown; age: number | null }[] };
+    expect(report.children.map((child) => child.id)).toEqual(['mid']);
+    expect(report.children[0]).toMatchObject({ state: 'ok', counts: { workers: 0, inProgress: 0, requests: 0, children: 1 } });
+    expect(typeof report.children[0]?.age).toBe('number');
+  });
+
+  it('shows a node with no report file as unknown with a fixed reason, says CHECK, and exits 0', async () => {
+    await threeLayers();
+    await reportIn(middle);
+
+    const text = await node('tree');
+    expect(text.code).toBe(0);
+    const lines = text.stdout.split('\n').filter((line) => line !== '').map(withoutMark);
+    expect(lines[0]).toBe('CHECK: top (layer 3): nodes 2, unknown 1, mismatch 0, warnings 0');
+    expect(lines[2]).toBe('    web  unknown: the child has no report file  reported by mid');
+    const tree = await treeJson();
+    expect(tree.verdict).toBe('check');
+    expect(tree.nodes[1]).toMatchObject({ state: 'unknown', reason: 'the child has no report file', report: { id: 'web', age: null } });
+  });
+
+  it('shows a child that shows another id as a mismatch, and reads nothing below it', async () => {
+    await threeLayers();
+    await reportIn(shop);
+    await reportIn(middle);
+    const file = reportFileOf(middle);
+    await writeFile(file, (await readFile(file, 'utf8')).replace('"id": "mid"', '"id": "other"'));
+
+    const tree = await treeJson();
+    expect(tree.verdict).toBe('check');
+    expect(tree.nodes).toHaveLength(1);
+    expect(tree.nodes[0]).toMatchObject({ state: 'mismatch', report: { id: 'mid' } });
+  });
+
+  it('exits 2 for an argument, and for a node with no local file', async () => {
+    await initNode(manager, 'top', 3);
+    const extra = await node('tree', 'extra');
+    expect(extra.code).toBe(2);
+    await rm(join(manager, 'factory.local.yaml'));
+    const missing = await node('tree');
+    expect(missing.code).toBe(2);
+    expect(missing.stderr).toContain('factory.local.yaml not found');
+  });
+});
