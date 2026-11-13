@@ -31,7 +31,6 @@ import {
   commandLines,
   commands,
   commandText,
-  env,
   files,
   flags,
   flagShorts,
@@ -62,6 +61,7 @@ import {
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
+import { foundHomeOption } from './home-option.js';
 import type { CommandOutput } from './output.js';
 import { recipeHostFor } from './recipe-host.js';
 
@@ -110,15 +110,6 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
   [flags.quiet]: { type: 'boolean', description: 'Print only warnings and failures.' },
   [flags.noColor]: { type: 'boolean', description: 'Do not use color.' },
   [flags.help]: { type: 'boolean', short: flagShorts.help, description: 'Show help.' },
-};
-
-const foundHomeOption: FlagOption = {
-  type: 'string',
-  placeholder: 'DIR',
-  description:
-    `The ${places.folder}. Default: ${env.home}, which stops when the current folder is in another listed ${places.folder}, ` +
-    `else the folder of the nearest config file ` +
-    `above the current folder, else the ${places.folder} that the ${places.list} gives for the current folder.`,
 };
 
 /**
