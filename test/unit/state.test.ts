@@ -296,7 +296,7 @@ describe('ignoresLine: when git ignores the inbox by the state .gitignore', () =
 });
 
 describe('the .gitignore of the state repo: the reviews folder (TP-31)', () => {
-  const BEFORE_REVIEWS = 'state/\nlocks/\nbackups/\nworkers/\ninbox/\n';
+  const BEFORE_REVIEWS = 'state/\nlocks/\nbackups/\nworkers/\ninbox/\noutbox/\n';
 
   it('ignores the reviews folder from the start', () => {
     expect(STATE_GITIGNORE).toBe(`${BEFORE_REVIEWS}reviews/\n`);

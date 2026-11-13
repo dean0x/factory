@@ -210,7 +210,6 @@ export const flags = {
   stage: 'stage',
   all: 'all',
   follow: 'follow',
-  since: 'since',
   roadmap: 'roadmap',
   question: 'question',
   option: 'option',
