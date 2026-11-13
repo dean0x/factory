@@ -425,8 +425,14 @@ describe('words of the old names', () => {
     });
     expect(result.ok).toBe(true);
     expect(deps.files.size).toBeGreaterThan(10);
+    // The state .gitignore names the folder of the event file by its name on disk, as a line of its own.
+    const diskLines = new Set([`${dirs.outbox}/`]);
     for (const [path, text] of deps.files) {
-      expect({ path, found: plainWordsIn(text) }).toEqual({ path, found: [] });
+      const scanned = text
+        .split('\n')
+        .filter((line) => !diskLines.has(line))
+        .join('\n');
+      expect({ path, found: plainWordsIn(scanned) }).toEqual({ path, found: [] });
     }
   });
 });
