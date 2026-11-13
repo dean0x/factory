@@ -219,12 +219,30 @@ describe('report builder: the document (TP-10)', () => {
         state: 'busy',
         contextPct: 12,
         activityAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-        workItem: 'B-1',
+        workItem: { state: 'known', item: 'B-1' },
         idle: false,
       },
-      { id: 'beta', project: 'web', state: 'stopped', contextPct: null, activityAt: null, workItem: null, idle: false },
-      { id: 'gamma', project: 'web', state: 'stopped', contextPct: null, activityAt: null, workItem: null, idle: false },
+      {
+        id: 'beta',
+        project: 'web',
+        state: 'stopped',
+        contextPct: null,
+        activityAt: null,
+        workItem: { state: 'known', item: null },
+        idle: false,
+      },
+      { id: 'gamma', project: 'web', state: 'stopped', contextPct: null, activityAt: null, workItem: { state: 'unknown' }, idle: false },
     ]);
+  });
+
+  it('shows the item of a work item as one clean line within the text cap, and keeps the state known', async () => {
+    const item = `B-1\nline two ‮evil${'x'.repeat(reportLimits.maxTextChars)}`;
+    const fixture = await fixtureOf({ workers: [{ id: 'alpha' }] });
+    const report = await reportOf(fixture, { port: portOf({ alpha: { state: 'known', item } }) });
+    const workItem = report.workers[0]?.workItem;
+    if (workItem?.state !== 'known') throw new Error('the work item should be known');
+    expect(workItem.item).toHaveLength(reportLimits.maxTextChars);
+    expect(workItem.item?.startsWith('B-1 line two evilx')).toBe(true);
   });
 
   it('gives a row for each worker that the worker list can read, up to the most that it reads', async () => {

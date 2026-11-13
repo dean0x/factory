@@ -1385,6 +1385,11 @@ export const reportKeys = {
     idle: 'idle',
   },
   /**
+   * The work item of a worker row. `state` is `known` and `item` holds the id of the open item, or null when the worker has no open
+   * work; or `state` is `unknown` and the row has no `item` key. So null never means two things.
+   */
+  workItem: { state: 'state', item: 'item' },
+  /**
    * The board counts: all the items by state, and the open items by each owner field. `statesOmitted` is the number of the states that
    * a full list of `states` left out.
    */
@@ -1424,6 +1429,8 @@ export const reportWords = {
   ageUnit: 's',
   originSeparator: '#',
   childStates: { ok: 'ok', unknown: 'unknown', mismatch: 'mismatch' },
+  /** The states of the work item of a worker row: the board gives the item (or no open work), or it does not give it. */
+  workItemStates: { known: 'known', unknown: 'unknown' },
   workerStates: [
     statusWords.stopped,
     workerListWords.states.prompt,

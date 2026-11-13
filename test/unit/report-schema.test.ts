@@ -14,7 +14,7 @@ const worker = {
   state: 'busy',
   contextPct: 41,
   activityAt: '2026-11-13T10:00:00.000Z',
-  workItem: 'B-3',
+  workItem: { state: 'known', item: 'B-3' },
   idle: false,
 };
 
@@ -220,12 +220,42 @@ describe('the report caps (AC-12 limits)', () => {
       state: 'at prompt',
       contextPct: null,
       activityAt: '2026-11-13T10:00:00.000Z',
-      workItem: '世'.repeat(reportLimits.maxTextChars),
+      workItem: { state: 'known', item: '世'.repeat(reportLimits.maxTextChars) },
     });
     const result = parseReport({ ...document(), workers: Array.from({ length: reportLimits.maxWorkers }, (_, at) => widest(at)) });
     if (!result.ok) throw new Error(result.error);
     expect(result.value.workers).toHaveLength(reportLimits.maxWorkers);
     expect(Buffer.byteLength(renderJson(result.value), 'utf8')).toBeLessThan(reportLimits.maxBytes);
+  });
+});
+
+describe('the work item of a worker row', () => {
+  const rowParses = (workItem: unknown): boolean => parsed((doc) => (doc['workers'] = [{ ...worker, workItem }])).ok;
+
+  it.each([
+    ['a known work item with an item', { state: 'known', item: 'B-3' }],
+    ['a known work item with no open work', { state: 'known', item: null }],
+    ['an unknown work item', { state: 'unknown' }],
+    ['an item at the text cap', { state: 'known', item: 'x'.repeat(reportLimits.maxTextChars) }],
+  ])('accepts %s', (_name, workItem) => {
+    expect(rowParses(workItem)).toBe(true);
+  });
+
+  it.each([
+    ['an unknown work item with an item', { state: 'unknown', item: 'B-3' }],
+    ['an unknown work item with a null item', { state: 'unknown', item: null }],
+    ['an unknown work item with an extra key', { state: 'unknown', pane: '%1' }],
+    ['a known work item with no item key', { state: 'known' }],
+    ['a known work item with an extra key', { state: 'known', item: 'B-3', pane: '%1' }],
+    ['a bare string', 'B-3'],
+    ['null', null],
+    ['no value', undefined],
+    ['an empty object', {}],
+    ['another state word', { state: 'none', item: null }],
+    ['an item that is not text', { state: 'known', item: 3 }],
+    ['an item over the text cap', { state: 'known', item: 'x'.repeat(reportLimits.maxTextChars + 1) }],
+  ])('refuses %s', (_name, workItem) => {
+    expect(rowParses(workItem)).toBe(false);
   });
 });
 

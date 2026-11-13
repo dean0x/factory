@@ -18,6 +18,8 @@ import { MAX_ADDRESS_LENGTH } from './address.js';
 
 const doc = reportKeys.doc;
 const workerKeys = reportKeys.worker;
+const workItemKeys = reportKeys.workItem;
+const workItemStates = reportWords.workItemStates;
 const boardKeys = reportKeys.board;
 const tallyKeys = reportKeys.tally;
 const fieldKeys = reportKeys.field;
@@ -30,13 +32,22 @@ const text = z.string().max(reportLimits.maxTextChars);
 const name = z.string().min(1).max(reportLimits.maxTextChars);
 const count = z.number().int().min(0).max(reportLimits.maxNumber);
 
+/**
+ * What the board says of the work of a worker. A known work item holds the item, or null for a worker with no open work. An unknown
+ * work item has no item key. So null has one meaning only: no open work.
+ */
+const workItemSchema = z.discriminatedUnion(workItemKeys.state, [
+  z.strictObject({ [workItemKeys.state]: z.literal(workItemStates.known), [workItemKeys.item]: text.nullable() }),
+  z.strictObject({ [workItemKeys.state]: z.literal(workItemStates.unknown) }),
+]);
+
 const workerSchema = z.strictObject({
   [workerKeys.id]: slug,
   [workerKeys.project]: name,
   [workerKeys.state]: z.enum(reportWords.workerStates),
   [workerKeys.contextPct]: z.number().min(lastSeen.minPercent).max(lastSeen.maxPercent).nullable(),
   [workerKeys.activityAt]: z.iso.datetime().nullable(),
-  [workerKeys.workItem]: text.nullable(),
+  [workerKeys.workItem]: workItemSchema,
   [workerKeys.idle]: z.boolean(),
 });
 
@@ -108,6 +119,7 @@ export const reportSchema = z.strictObject({
 /** The report document of one node. */
 export type NodeReport = z.infer<typeof reportSchema>;
 export type ReportWorker = NodeReport[typeof doc.workers][number];
+export type ReportWorkItem = ReportWorker[typeof workerKeys.workItem];
 export type ReportBoard = NodeReport[typeof doc.board];
 export type ReportItem = NodeReport[typeof doc.inProgress][number];
 export type ReportRequest = NodeReport[typeof doc.requests][number];

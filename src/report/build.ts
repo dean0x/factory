@@ -12,6 +12,7 @@ import {
   type ReportItem,
   type ReportRequest,
   type ReportWorker,
+  type ReportWorkItem,
 } from '../comms/report-schema.js';
 import type { Transport } from '../comms/transport.js';
 import type { BoardConfig, FactoryConfig } from '../config/schema.js';
@@ -21,7 +22,7 @@ import { commands, commandText, places, reportKeys, reportLimits, reportWords, r
 import { FACTORY_VERSION } from '../version.js';
 import { readStatus, type StatusReport } from '../workers/status-read.js';
 import { shownStateOf, type WorkerStatus } from '../workers/status.js';
-import type { WorkItemPort } from '../workers/work-items.js';
+import type { WorkItem, WorkItemPort } from '../workers/work-items.js';
 
 /**
  * The one builder of the report of a node (design 5.4). `status` and `report` both read the facts with `readNodeFacts` and make the
@@ -35,6 +36,8 @@ import type { WorkItemPort } from '../workers/work-items.js';
 
 const doc = reportKeys.doc;
 const workerKeys = reportKeys.worker;
+const workItemKeys = reportKeys.workItem;
+const workItemStates = reportWords.workItemStates;
 const boardKeys = reportKeys.board;
 const tallyKeys = reportKeys.tally;
 const fieldKeys = reportKeys.field;
@@ -103,13 +106,19 @@ const lineOf = (text: string): string => displayLine(text, reportLimits.maxTextC
 
 const lineOrNull = (text: string | null): string | null => (text === null ? null : lineOf(text));
 
+/** A work item that the board gave, with a clean item or null for no open work; or a work item that it did not give. */
+const workItemOf = (workItem: WorkItem): ReportWorkItem =>
+  workItem.state === 'known'
+    ? { [workItemKeys.state]: workItemStates.known, [workItemKeys.item]: lineOrNull(workItem.item) }
+    : { [workItemKeys.state]: workItemStates.unknown };
+
 const workerOf = (entry: WorkerStatus): ReportWorker => ({
   [workerKeys.id]: entry.id,
   [workerKeys.project]: lineOf(entry.project),
   [workerKeys.state]: shownStateOf(entry),
   [workerKeys.contextPct]: entry.contextPct,
   [workerKeys.activityAt]: entry.activityAt,
-  [workerKeys.workItem]: entry.workItem.state === 'known' ? lineOrNull(entry.workItem.item) : null,
+  [workerKeys.workItem]: workItemOf(entry.workItem),
   [workerKeys.idle]: entry.idle,
 });
 
