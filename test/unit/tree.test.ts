@@ -396,6 +396,27 @@ describe('tree walk: the caps', () => {
     expect(rowAt(walk, 2).reason).toBe(childReasons.byteCap);
   });
 
+  it('stops with one byte cap row, and reads no more, when a report is larger than the bytes that are left', async () => {
+    const tooLarge: ChildReportRead = { state: 'unknown', reason: childReasons.reportTooLarge, age: 9, bytes: 0, source: `${pathOf('b')}/report.json` };
+    const world = worldOf([
+      [addressOf('a'), readOf(reportOf('a', { children: [childRowOf(entryOf('b'))] }), treeLimits.maxWalkBytes - 1_000)],
+      [addressOf('b'), tooLarge],
+      nodeOf('c'),
+    ]);
+    const walk = await walkOf(world, names('a', 'c'));
+    expect(shapeOf(walk)).toEqual(['1 a ok', '2 b warning']);
+    expect(rowAt(walk, 1)).toMatchObject({ reason: childReasons.byteCap, report: { source: tooLarge.source, age: 9 } });
+    expect(readAddresses(world)).toEqual([addressOf('a'), addressOf('b')]);
+  });
+
+  it('keeps the reason of a report that is larger than the cap of one report, and walks on', async () => {
+    const tooLarge: ChildReportRead = { state: 'unknown', reason: childReasons.reportTooLarge, age: 9, bytes: 0, source: `${pathOf('a')}/report.json` };
+    const world = worldOf([[addressOf('a'), tooLarge], nodeOf('b')]);
+    const walk = await walkOf(world, names('a', 'b'));
+    expect(shapeOf(walk)).toEqual(['1 a unknown', '1 b ok']);
+    expect(rowAt(walk, 0).reason).toBe(childReasons.reportTooLarge);
+  });
+
   it('keeps at most the line cap of rows, and counts the rows that it left out', async () => {
     const bad = Array.from({ length: reportLimits.maxChildren }, (_, at) => ({ id: `x${at}`, address: 'ssh://host/x' }));
     const folders = Array.from({ length: 11 }, (_, at) => `p${at}`);

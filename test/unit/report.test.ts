@@ -507,6 +507,23 @@ describe('report builder: the document (TP-10)', () => {
       expect(rows[1]).toEqual({ id: 'shop', address: SHOP.address, state: 'unknown', reason: childReasons.buildByteCap, counts: null, age: null });
       expect(reads.map((read) => read.address)).toEqual([API.address]);
     });
+
+    it('gives the reason of the byte cap for a report file that is larger than the part of the build cap that is left', async () => {
+      const tooLarge: ChildReportRead = { state: 'unknown', reason: childReasons.reportTooLarge, age: 4, bytes: 0, source: '/c/shop/report.json' };
+      const transport = transportOf(
+        { [API.address]: KNOWN('api'), [SHOP.address]: KNOWN('shop') },
+        { [API.address]: readOf(childReport('api'), 3, reportLimits.maxBuildBytes - 1_000), [SHOP.address]: tooLarge },
+      );
+      const rows = await childrenOf([API, SHOP], transport);
+      expect(rows[1]).toEqual({ id: 'shop', address: SHOP.address, state: 'unknown', reason: childReasons.buildByteCap, counts: null, age: 4 });
+    });
+
+    it('keeps the reason of a report file that is larger than the cap of one report', async () => {
+      const tooLarge: ChildReportRead = { state: 'unknown', reason: childReasons.reportTooLarge, age: 4, bytes: 0, source: '/c/api/report.json' };
+      const transport = transportOf({ [API.address]: KNOWN('api') }, { [API.address]: tooLarge });
+      const [row] = await childrenOf([API], transport);
+      expect(row).toMatchObject({ state: 'unknown', reason: childReasons.reportTooLarge, age: 4 });
+    });
   });
 
   it('reads the facts of the workers once', async () => {

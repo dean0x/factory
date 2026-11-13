@@ -1,4 +1,5 @@
 import { checkFileAddress } from '../comms/address.js';
+import { isOverCallCap, type ChildReportRead } from '../comms/report-read.js';
 import type { NodeReport, ReportCounts, ReportRequest } from '../comms/report-schema.js';
 import type { Transport } from '../comms/transport.js';
 import { isSlug } from '../config/primitives.js';
@@ -147,12 +148,42 @@ const push = (run: Run, entries: readonly TreeEntry[], depth: number, reportedBy
 };
 
 /**
+ * The rows of a node whose report file was read and holds the id of its entry: the row of the node, a warning row for the requests
+ * that were dropped, and the depth cap row when the node lists children below the cap. The children of the report go on the stack.
+ */
+const takeReport = (run: Run, pending: Pending, read: Extract<ChildReportRead, { state: 'read' }>): void => {
+  const { report } = read;
+  run.ids.add(pending.entry.id);
+  const passing = report.requests.filter((item) => originPasses(report.id, item)).length;
+  emit(
+    run,
+    rowOf(pending, states.ok, null, {
+      source: read.source,
+      layer: report.layer,
+      counts: countsOf(report, passing),
+      age: read.age,
+    }),
+  );
+  const dropped = report.requests.length - passing;
+  if (dropped > 0) {
+    emit(run, rowOf(pending, treeWords.warning, `${treeWords.requestsDropped}: ${dropped}`, { source: read.source }));
+  }
+  if (report.children.length === 0) return;
+  if (pending.depth >= treeLimits.maxDepth) {
+    emit(run, rowOf(pending, treeWords.warning, childReasons.depthCap, { source: read.source }));
+    return;
+  }
+  push(run, report.children, pending.depth + 1, report.id);
+};
+
+/**
  * Take the entry that came off the stack. The value is true when a cap stops the whole walk. The order of the checks: the address, the
  * real path (a folder that the walk saw is a cycle), the id (a new folder with an id that the walk saw), the caps of nodes and of
- * bytes, then the read. A row that is not `ok` stops the walk below it.
+ * bytes, then the read. A file that is larger than the bytes that are left of the walk cap stops the walk with the row of the byte
+ * cap. A row that is not `ok` stops the walk below it.
  */
 const visit = async (deps: Deps, request: TreeRequest, run: Run, pending: Pending): Promise<boolean> => {
-  const { entry, depth } = pending;
+  const { entry } = pending;
   const checked = checkFileAddress(entry.address);
   if (!checked.ok) {
     emit(run, rowOf(pending, states.unknown, childReasons.addressInvalid));
@@ -179,39 +210,22 @@ const visit = async (deps: Deps, request: TreeRequest, run: Run, pending: Pendin
   }
 
   run.reads += 1;
-  const read = await request.transport.report(entry.address, Math.min(left, reportLimits.maxBytes));
+  const cap = Math.min(left, reportLimits.maxBytes);
+  const read = await request.transport.report(entry.address, cap);
   run.bytes += read.bytes;
+  if (isOverCallCap(read, cap)) {
+    emit(run, rowOf(pending, treeWords.warning, childReasons.byteCap, { source: read.source, age: read.age }));
+    return true;
+  }
   if (read.state === 'unknown') {
     emit(run, rowOf(pending, states.unknown, read.reason, { source: read.source, age: read.age }));
     return false;
   }
-  const { report } = read;
-  if (report.id !== entry.id) {
+  if (read.report.id !== entry.id) {
     emit(run, rowOf(pending, states.mismatch, childReasons.otherId, { source: read.source, age: read.age }));
     return false;
   }
-
-  run.ids.add(entry.id);
-  const passing = report.requests.filter((item) => originPasses(report.id, item)).length;
-  emit(
-    run,
-    rowOf(pending, states.ok, null, {
-      source: read.source,
-      layer: report.layer,
-      counts: countsOf(report, passing),
-      age: read.age,
-    }),
-  );
-  const dropped = report.requests.length - passing;
-  if (dropped > 0) {
-    emit(run, rowOf(pending, treeWords.warning, `${treeWords.requestsDropped}: ${dropped}`, { source: read.source }));
-  }
-  if (report.children.length === 0) return false;
-  if (depth >= treeLimits.maxDepth) {
-    emit(run, rowOf(pending, treeWords.warning, childReasons.depthCap, { source: read.source }));
-    return false;
-  }
-  push(run, report.children, depth + 1, report.id);
+  takeReport(run, pending, read);
   return false;
 };
 

@@ -4,6 +4,7 @@ import { failure, type CliResult } from '../cli/errors.js';
 import { displayLine, renderJson } from '../cli/output.js';
 import { MAX_ADDRESS_LENGTH } from '../comms/address.js';
 import { probeChildren, type ChildRow } from '../comms/children.js';
+import { isOverCallCap } from '../comms/report-read.js';
 import {
   parseReport,
   type NodeReport,
@@ -122,7 +123,7 @@ const withoutFacts = (row: ChildRow): ChildFacts => ({ row, counts: null, age: n
  * read needs the part of `reportLimits.maxBuildBytes` that the reads before it left. A child that did not pass the ping gets no read.
  * A report file with another id than the config lists gives a `mismatch`, and a file that cannot be read gives `unknown` with its
  * fixed reason: neither shows text of the child. When nothing of the budget is left, the child is `unknown` with the reason of the
- * byte cap, and no read happens.
+ * byte cap, and no read happens. A file that is larger than the part of the budget that is left gives the reason of the byte cap too.
  */
 const readChildFacts = async (transport: Transport, rows: readonly ChildRow[]): Promise<readonly ChildFacts[]> => {
   const facts: ChildFacts[] = [];
@@ -134,9 +135,11 @@ const readChildFacts = async (transport: Transport, rows: readonly ChildRow[]): 
       facts.push(withoutFacts({ ...row, layer: null, status: childStates.unknown, reason: childReasons.buildByteCap }));
     } else {
       const read = await transport.report(row.address, left);
+      const overCap = isOverCallCap(read, left);
       left = Math.max(0, left - read.bytes);
       if (read.state === 'unknown') {
-        facts.push({ row: { ...row, layer: null, status: childStates.unknown, reason: read.reason }, counts: null, age: read.age });
+        const reason = overCap ? childReasons.buildByteCap : read.reason;
+        facts.push({ row: { ...row, layer: null, status: childStates.unknown, reason }, counts: null, age: read.age });
       } else if (read.report.id !== row.id) {
         facts.push({ row: { ...row, layer: null, status: childStates.mismatch, reason: childReasons.otherId }, counts: null, age: read.age });
       } else {

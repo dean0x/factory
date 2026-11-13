@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { failure } from '../../src/cli/errors.js';
-import { readChildReport, type ChildReportRead } from '../../src/comms/report-read.js';
+import { isOverCallCap, readChildReport, type ChildReportRead } from '../../src/comms/report-read.js';
 import { parseReport, type NodeReport } from '../../src/comms/report-schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { childReasons, layers, reportLimits, schemaIds } from '../../src/names.js';
@@ -193,6 +193,15 @@ describe('child report reader: the byte cap', () => {
     const deps = withFsWatch(childWith(), (method, path) => void (method === 'readTextLimited' && reads.push(path)));
     expect(unknownOf(await readChildReport(deps, ADDRESS, cap)).reason).toBe(childReasons.reportTooLarge);
     expect(reads).toEqual([]);
+  });
+
+  it('puts the cause on the cap of the call when that cap is below the cap of a report, and on the file when it is not', async () => {
+    const overCall = await readChildReport(childWith(), ADDRESS, BYTES - 1);
+    expect(isOverCallCap(overCall, BYTES - 1)).toBe(true);
+    const overReport = await readChildReport(childWith(' '.repeat(reportLimits.maxBytes + 1)), ADDRESS, BIG);
+    expect(isOverCallCap(overReport, BIG)).toBe(false);
+    expect(isOverCallCap(await readChildReport(childWith('{'), ADDRESS, BYTES - 1), BYTES - 1)).toBe(false);
+    expect(isOverCallCap(await readChildReport(childWith(), ADDRESS, BIG), BYTES - 1)).toBe(false);
   });
 });
 

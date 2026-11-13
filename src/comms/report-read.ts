@@ -49,6 +49,13 @@ const ACCESS_FAULT_REASONS: Readonly<Record<AccessFault, ChildReason>> = {
 const capOf = (maxBytes: number): number =>
   Number.isSafeInteger(maxBytes) && maxBytes > 0 ? Math.min(reportLimits.maxBytes, maxBytes) : 0;
 
+/**
+ * True when the read refused the file only for the cap of the call: the call gave fewer bytes than the cap of one report, and the file
+ * is larger than that. Then the budget of the caller is the cause, not the file, and the caller gives the reason of its own cap.
+ */
+export const isOverCallCap = (read: ChildReportRead, maxBytes: number): boolean =>
+  read.state === 'unknown' && read.reason === childReasons.reportTooLarge && capOf(maxBytes) < reportLimits.maxBytes;
+
 /** The age in whole seconds, at least 0 and at most the largest number that a report holds. */
 const ageOf = (deps: Deps, info: PathInfo): number => {
   const seconds = Math.floor((deps.now().getTime() - info.mtimeMs) / 1000);
