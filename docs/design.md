@@ -349,8 +349,8 @@ The lifecycle verbs of the core table:
 - `shutdown` stops every session of this factory, and nothing else.
 - `restart <worker>` restarts one worker with its session id.
 - `reboot` shuts down the whole factory and starts it again. Each recorded worker resumes.
-      outbox/report.json    the report file of this node. The state repo ignores it.
-      reviews/              the review results that the coordinator keeps when a worker is freed. The state repo ignores it.
+- `status` lists each worker with its state, its work item and its unused state. It writes only the report file (§5.4).
+- `dismiss <worker>` and `dismiss --unused` end a worker and free its work copy. `--unused` lists the unused workers that have no open work first, and the owner picks. `dismiss <worker> --closed` is the one free that the coordinator runs in its own session.
 
 §4.11 defines "unused", "pushed" and "free", the stop scope, the recovery after a machine restart and the worker states of the live board. The names `--unused`, `UNUSED`, `limits.unused_after` and the words of the live board are the target of FAC-M5b. Until then the code has `--idle`, `IDLE`, `limits.idle_after` and the old state words.
 

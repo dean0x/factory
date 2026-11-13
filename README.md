@@ -790,8 +790,8 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
       roles/worker.md       the worker role (layer 1 and above)
       orders/               assignments
       inbox/                task files from the parent node. The state repo ignores it.
-- `status` lists each worker with its state, its work item and its unused state. It writes only the report file (§5.4).
-- `dismiss <worker>` and `dismiss --unused` end a worker and free its work copy. `--unused` lists the unused workers that have no open work first, and the owner picks. `dismiss <worker> --closed` is the one free that the coordinator runs in its own session.
+      outbox/report.json    the report file of this node. The state repo ignores it.
+      reviews/              the review results that the coordinator keeps when a worker is freed. The state repo ignores it.
       board.json  waiting.json  decision-log.json
       decision-profile/  roadmaps/
 ```
