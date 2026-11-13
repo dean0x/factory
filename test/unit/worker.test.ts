@@ -348,6 +348,9 @@ const expectKeptCopyHint = (error: CliError): void => {
   expect(hint).toContain('Nothing is undone: the work copy, the branch and the record of the worker stay.');
   expect(hint).toContain('After its branch is pushed, factory can remove it: run "factory dismiss alpha" to see the steps');
   expect(hint).toContain('then add --yes in a terminal window outside a factory session.');
+  expect(hint).toContain(
+    'The coordinator may instead run "factory dismiss alpha --closed" in its factory session, only when an item of the worker is closed and its branch is pushed.',
+  );
   expect(hint).toContain(`To remove the worker by hand, run "${REMOVE_COPY}" and then "${DELETE_BRANCH}". Then delete the folder ${RECORD_DIR}.`);
 };
 

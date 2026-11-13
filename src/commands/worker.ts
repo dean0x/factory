@@ -224,6 +224,8 @@ const removeCopyAndBranch = (plan: NewWorkerPlan): string => {
 const removeByHand = (plan: NewWorkerPlan, home: string): string =>
   `After its branch is pushed, ${program} can remove it: run "${commandText(dismissLine(plan.id))}" to see the steps, ` +
   `then add ${flagText(flags.yes)} in a terminal window outside a ${places.session}. ` +
+  `The ${roles.coordinator} may instead run "${commandText(`${dismissLine(plan.id)} ${flagText(flags.closed)}`)}" in its ${places.session}, ` +
+  `only when an item of the ${roles.worker} is closed and its branch is pushed. ` +
   `To remove the ${roles.worker} by hand, run ${removeCopyAndBranch(plan)}. ` +
   `Then delete the folder ${shellWord(workerPathsOf(home, plan.id).dir)}.`;
 
