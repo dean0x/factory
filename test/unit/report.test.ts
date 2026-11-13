@@ -15,7 +15,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { createNodeDeps } from '../../src/core/node-deps.js';
 import { ok } from '../../src/core/result.js';
-import { commands, files, reportKeys, reportLimits, schemaIds, values, workerRecord } from '../../src/names.js';
+import { childReasons, commands, files, reportKeys, reportLimits, schemaIds, values, workerRecord } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { softwareQueueKey } from '../../src/recipes/software/words.js';
 import { checkReport, readNodeFacts, reportDocOf, reportTextOf, type NodeFacts } from '../../src/report/build.js';
@@ -130,6 +130,7 @@ const noChildren: Transport = {
   deliver: async () => {
     throw new Error('a report never delivers');
   },
+  report: async () => ({ state: 'unknown', reason: childReasons.noReport, age: null, bytes: 0, source: null }),
 };
 
 const transportOf = (answers: Readonly<Record<string, PingResult>>): Transport => ({

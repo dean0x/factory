@@ -5,7 +5,7 @@ import { fileTransport, parseConfigTexts, runNode } from '../helpers/package-reg
 import { renderConfig } from '../../src/config/render.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
-import { env, nodeInbox, nodeSendReasons } from '../../src/names.js';
+import { childReasons, env, nodeInbox, nodeSendReasons } from '../../src/names.js';
 import { STATE_GITIGNORE } from '../../src/state/files.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
@@ -274,11 +274,15 @@ describe('node add-child', () => {
     }
   });
 
-  it('fails for a child whose config is not valid, and says why', async () => {
+  it('fails for a child whose config is not valid, with the fixed reason and no key or value of the child file', async () => {
     const broken = renderConfig(configOf('bad', 1)).shared.replace('effort: high', 'effort: wild');
     const result = await node(make({ homes: { '/w/bad': broken } }), 'add-child', '/w/bad');
     expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
-    if (!result.ok) expect(result.error.message).toContain('factory.yaml is invalid');
+    if (!result.ok) {
+      expect(result.error.message).toBe(`cannot add the child: ${childReasons.configInvalid}`);
+      expect(result.error.message).not.toContain('session.effort');
+      expect(result.error.message).not.toContain('wild');
+    }
   });
 
   it('tells which side needs the upgrade when the schema of the child is not the current one', async () => {

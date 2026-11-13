@@ -1,17 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import type { Transport } from '../../src/comms/transport.js';
+import { failure } from '../../src/cli/errors.js';
+import type { NodeReport } from '../../src/comms/report-schema.js';
+import type { PingResult, Transport } from '../../src/comms/transport.js';
+import type { Deps } from '../../src/core/deps.js';
 import { fileTransport } from '../helpers/package-registry.js';
 import { renderConfig } from '../../src/config/render.js';
-import { createFakeDeps, type FakeDeps } from '../helpers/fake-deps.js';
+import { childReasons, layers, reportLimits, schemaIds } from '../../src/names.js';
+import { createFakeDeps, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig } from '../helpers/sample-config.js';
 import { STATE_GITIGNORE } from '../../src/state/files.js';
+import { layoutOf } from '../../src/state/layout.js';
 
 const CHILD = '/srv/web-factory';
+const CONFIG = layoutOf(CHILD).configFile;
+const OTHER_USER = 2000;
 
-const withConfig = (text: string | null): { deps: FakeDeps; transport: Transport } => {
-  const deps = createFakeDeps({ cwd: '/w' });
+const withConfig = (
+  text: string | null,
+  options: Parameters<typeof createFakeDeps>[0] = {},
+): { deps: FakeDeps; transport: Transport } => {
+  const deps = createFakeDeps({ cwd: '/w', ...options });
   deps.seedDir(CHILD);
-  if (text !== null) deps.seed(`${CHILD}/factory.yaml`, text);
+  if (text !== null) deps.seed(CONFIG, text);
   return { deps, transport: fileTransport(deps) };
 };
 
@@ -47,11 +57,15 @@ describe('file transport: ping', () => {
     expect(await transport.ping(`file://${CHILD}`)).toEqual({ kind: 'unknown', reason: 'no factory.yaml found there' });
   });
 
-  it('is unknown, and names the key, when the config is not valid', async () => {
+  it('gives the fixed reason, with the remedy, and no key or value of the file, when the config is not valid', async () => {
     const { transport } = withConfig(childConfig().replace('effort: high', 'effort: wild'));
     const result = await transport.ping(`file://${CHILD}`);
-    expect(result.kind).toBe('unknown');
-    if (result.kind === 'unknown') expect(result.reason).toContain('session.effort');
+    expect(result).toEqual({ kind: 'unknown', reason: childReasons.configInvalid });
+    if (result.kind === 'unknown') {
+      expect(result.reason).toContain('factory doctor');
+      expect(result.reason).not.toContain('session.effort');
+      expect(result.reason).not.toContain('wild');
+    }
   });
 
   it('is unknown when the config does not parse', async () => {
@@ -117,6 +131,112 @@ describe('file transport: ping', () => {
     const result = await transport.ping(`file://${CHILD}`);
     expect(result.kind).toBe('unknown');
     if (result.kind === 'unknown') expect(result.reason).not.toContain('SECRET');
+  });
+});
+
+describe('file transport: ping, the checks of the config file', () => {
+  const pingWatched = async (deps: FakeDeps): Promise<{ result: PingResult; touched: string[] }> => {
+    const touched: string[] = [];
+    const watched = withFsWatch(deps, (method, path) => {
+      if (path === CONFIG) touched.push(method);
+    });
+    return { result: await fileTransport(watched).ping(`file://${CHILD}`), touched };
+  };
+
+  it('is unknown, and reads no text, when the config is a link', async () => {
+    const { deps } = withConfig(childConfig(), { links: { [CONFIG]: '/elsewhere/factory.yaml' } });
+    const { result, touched } = await pingWatched(deps);
+    expect(result).toEqual({ kind: 'unknown', reason: childReasons.configUnsafe });
+    expect(touched).toEqual(['lstat']);
+  });
+
+  it('is unknown, and reads no text, when another account owns the config', async () => {
+    const { deps } = withConfig(childConfig());
+    deps.owners.set(CONFIG, OTHER_USER);
+    const { result, touched } = await pingWatched(deps);
+    expect(result).toEqual({ kind: 'unknown', reason: childReasons.configUnsafe });
+    expect(touched).not.toContain('readTextLimited');
+  });
+
+  it.each([
+    ['a group', 0o664],
+    ['other users', 0o646],
+  ])('is unknown, and reads no text, when %s can write the config', async (_who, mode) => {
+    const { deps } = withConfig(childConfig());
+    deps.modes.set(CONFIG, mode);
+    const { result, touched } = await pingWatched(deps);
+    expect(result).toEqual({ kind: 'unknown', reason: childReasons.configUnsafe });
+    expect(touched).not.toContain('readTextLimited');
+  });
+
+  it('answers for a config that a group and other users can read but not write', async () => {
+    const { deps } = withConfig(childConfig());
+    deps.modes.set(CONFIG, 0o644);
+    expect((await pingWatched(deps)).result.kind).toBe('known');
+  });
+
+  it('gives the reason of a missing config for a folder at the config path', async () => {
+    const { deps, transport } = withConfig(null);
+    deps.seedDir(CONFIG);
+    expect(await transport.ping(`file://${CHILD}`)).toEqual({ kind: 'unknown', reason: 'no factory.yaml found there' });
+  });
+
+  it.each(['lstat', 'statInfo'] as const)('gives a fixed reason, and no text of the fault, when %s fails', async (method) => {
+    const { deps } = withConfig(childConfig());
+    const fault = async () => failure('cannot look at /secret/path: EACCES');
+    const failing: Deps = {
+      ...deps,
+      fs: { ...deps.fs, lstat: method === 'lstat' ? fault : deps.fs.lstat, statInfo: method === 'statInfo' ? fault : deps.fs.statInfo },
+    };
+    const result = await fileTransport(failing).ping(`file://${CHILD}`);
+    expect(result).toEqual({ kind: 'unknown', reason: 'factory.yaml could not be read' });
+    if (result.kind === 'unknown') expect(result.reason).not.toContain('secret');
+  });
+});
+
+describe('file transport: report', () => {
+  const REPORT_FILE = layoutOf(CHILD).reportFile;
+  const REPORT: NodeReport = {
+    schema: schemaIds.report,
+    schemaVersion: reportLimits.schemaVersion,
+    id: 'web',
+    layer: layers.coordinator,
+    factoryVersion: '1.0.0',
+    cursor: null,
+    workers: [],
+    board: { states: [], statesOmitted: 0, fields: [] },
+    inProgress: [],
+    requests: [],
+    events: [],
+    children: [],
+  };
+  const withReport = (text: string | null): Transport => {
+    const { deps, transport } = withConfig(childConfig());
+    deps.seedDir(layoutOf(CHILD).stateDir);
+    deps.seedDir(layoutOf(CHILD).outboxDir);
+    if (text !== null) deps.seed(REPORT_FILE, text);
+    return transport;
+  };
+  const REPORT_TEXT = `${JSON.stringify(REPORT, null, 2)}\n`;
+
+  it('reads the report file of the node at the address', async () => {
+    const result = await withReport(REPORT_TEXT).report(`file://${CHILD}`, reportLimits.maxBytes);
+    expect(result).toMatchObject({ state: 'read', report: REPORT, source: REPORT_FILE });
+  });
+
+  it('gives an unknown value with a fixed reason for a node with no report file', async () => {
+    const result = await withReport(null).report(`file://${CHILD}`, reportLimits.maxBytes);
+    expect(result).toMatchObject({ state: 'unknown', reason: childReasons.noReport, source: REPORT_FILE });
+  });
+
+  it('gives an unknown value with a fixed reason for an address that is not valid', async () => {
+    const result = await withReport(REPORT_TEXT).report('ssh://owner@host/srv/web-factory', reportLimits.maxBytes);
+    expect(result).toMatchObject({ state: 'unknown', reason: childReasons.addressInvalid, source: null });
+  });
+
+  it('reads at most the bytes that the caller gives', async () => {
+    const result = await withReport(REPORT_TEXT).report(`file://${CHILD}`, 10);
+    expect(result).toMatchObject({ state: 'unknown', reason: childReasons.reportTooLarge, bytes: 0 });
   });
 });
 

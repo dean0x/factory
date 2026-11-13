@@ -14,6 +14,9 @@ const transportOf = (answers: Record<string, PingResult>): { transport: Transpor
       deliver: async () => {
         throw new Error('a probe never delivers');
       },
+      report: async () => {
+        throw new Error('a probe never reads a report');
+      },
     },
   };
 };
