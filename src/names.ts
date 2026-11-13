@@ -57,6 +57,7 @@ export const commands = {
   decide: 'decide',
   queue: 'queue',
   lock: 'lock',
+  pr: 'pr',
   self: 'self',
   layout: 'layout',
   upgrade: 'upgrade',
@@ -252,6 +253,8 @@ export const files = {
   resume: 'resume.md',
   /** The assignment of a worker, in its inbox folder: `worker new --assignment FILE` copies the text of FILE to this file. */
   assignment: 'assignment.md',
+  /** The lessons of the coordinator, in the state folder: the state repo tracks the file, and only the coordinator writes it. */
+  lessons: 'lessons.md',
   /** The pointer of the coordinator to its newest session, in the run-time folder: `state/coordinator-last-session` holds a session id. */
   coordinatorLastSession: 'coordinator-last-session',
   /** The run marker of `worker watch`, in the run-time folder: it holds the token of the newest watch run of the node. */
@@ -1277,6 +1280,13 @@ export const selfResetWords = { queued: 'QUEUED:', after: 'the compact runs afte
 export const coordinatorResumeFile = (nodeId: string): string => `${nodeId}.md`;
 
 /**
+ * The limits of the lessons file of the coordinator. The file holds at most `maxEntries` entries and at most `maxBytes` bytes (about
+ * 800 bytes for each of 40 short entries). An entry is a line that starts with `entryMark`, and a Why line and a How line follow it.
+ * The role text gives these limits and this form, and `doctor` checks the file against them.
+ */
+export const lessonLimits = { maxEntries: 40, maxBytes: 32_768, entryMark: 'Rule:' } as const;
+
+/**
  * The start time of the process of a pane. The macOS `ps` has no `etimes`, and tmux has no format for the start time of a pane, so
  * the check asks `ps` for the elapsed time of the pane process. `timeoutMs` bounds the call. `etime` is the one form of the answer
  * that the check accepts: spaces at the ends and one new line at the end, then optional days and a dash (days need hours), optional
@@ -1941,6 +1951,8 @@ export const checkIds = {
   stateGuard: 'state-guard',
   /** The size of the board, the waiting file and the decision log against the read cap: a warning from `boardWarnPercent` on. */
   boardSize: 'board-size',
+  /** The lessons file of the coordinator against its limits: a plain file, at most `lessonLimits.maxBytes` bytes and `lessonLimits.maxEntries` entries. */
+  lessons: 'lessons',
   projects: 'projects',
   projectUrls: 'project-urls',
 } as const;
@@ -2135,6 +2147,7 @@ const pathValues: Readonly<Record<string, string>> = {
   boardFile: inState(files.board),
   waitingFile: inState(files.waiting),
   decisionLogFile: inState(files.decisionLog),
+  lessonsFile: inState(files.lessons),
   profileDir: `${inState(dirs.profile)}/`,
   roadmapsDir: `${inState(dirs.roadmaps)}/`,
   ordersDir: `${inState(dirs.orders)}/`,
@@ -2168,6 +2181,8 @@ export const templateValues: Readonly<Record<string, string>> = {
   maxPctKey: keyPath(keys.root.limits, keys.limits.contextMaxPct),
   inboxEnv: env.inbox,
   resumeFile: files.resume,
+  maxLessons: String(lessonLimits.maxEntries),
+  maxLessonBytes: String(lessonLimits.maxBytes),
   workerNewCommand: `${workerCommandText(workerCommands.new)} <id> ${flagText(flags.project)} P ${flagText(flags.assignment)} FILE`,
   workerWatchCommand: workerCommandText(workerCommands.watch),
   dismissCommand: commandText(commands.dismiss),

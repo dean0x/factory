@@ -31,7 +31,6 @@ import {
   commandLines,
   commands,
   commandText,
-  env,
   files,
   flags,
   flagShorts,
@@ -62,7 +61,9 @@ import {
 import { recipeIds, recipes, type RecipeRegistry } from '../recipes/index.js';
 import { FACTORY_VERSION } from '../version.js';
 import { usageError, type CliResult } from './errors.js';
+import { foundHomeOption } from './home-option.js';
 import type { CommandOutput } from './output.js';
+import { recipeHostFor } from './recipe-host.js';
 
 export interface FlagOption {
   readonly type: 'string' | 'boolean';
@@ -111,15 +112,6 @@ export const globalOptions: Readonly<Record<string, FlagOption>> = {
   [flags.help]: { type: 'boolean', short: flagShorts.help, description: 'Show help.' },
 };
 
-const foundHomeOption: FlagOption = {
-  type: 'string',
-  placeholder: 'DIR',
-  description:
-    `The ${places.folder}. Default: ${env.home}, which stops when the current folder is in another listed ${places.folder}, ` +
-    `else the folder of the nearest config file ` +
-    `above the current folder, else the ${places.folder} that the ${places.list} gives for the current folder.`,
-};
-
 /**
  * The hook that Claude Code runs. `runCli` routes it before the flags are read. An event prints none of its output, so that
  * it exits 0 with an empty stdout on every path, and the word `statusline` prints the status line (see `runStatusline`). The
@@ -154,8 +146,8 @@ const recordHelpOf = (registry: RecipeRegistry): { readonly summary: string; rea
   };
 };
 
-/** The commands. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */
-export const commandTableFor = (registry: RecipeRegistry): readonly Command[] => [
+/** The commands of the core. The registry sets the recipes that `init` accepts, and every command that reads a config gets it. */
+const coreCommandsFor = (registry: RecipeRegistry): readonly Command[] => [
   {
     name: commands.init,
     summary: `Create a ${roles.node} in a folder.`,
@@ -847,6 +839,16 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
   },
 ];
 
+/**
+ * The commands: the rows of the core, then the rows that each recipe of the registry adds through its `commands` hook. A name
+ * has one row, the first one. A row of a recipe therefore never replaces a command of the core.
+ */
+export const commandTableFor = (registry: RecipeRegistry): readonly Command[] => {
+  const host = recipeHostFor(registry);
+  const rows = [...coreCommandsFor(registry), ...registry.flatMap((entry) => entry.commands?.(host) ?? [])];
+  return rows.filter((row, index) => rows.findIndex((other) => other.name === row.name) === index);
+};
+
 /** The commands of the package: the table for the package registry. */
 export const commandTable: readonly Command[] = commandTableFor(recipes);
 
@@ -926,14 +928,14 @@ const flagBlock = (title: string, options: Readonly<Record<string, FlagOption>>)
   ...Object.entries(options).map(([name, option]) => flagLine(name, option)),
 ];
 
-export const renderHelp = (): string =>
+export const renderHelp = (table: readonly Command[] = commandTable): string =>
   [
     `${program} ${FACTORY_VERSION}`,
     '',
     `Usage: ${program} <command> [flags]`,
     '',
     'Commands:',
-    ...commandTable.map((command) => `  ${command.name.padEnd(10)}${command.summary}`),
+    ...table.map((command) => `  ${command.name.padEnd(10)}${command.summary}`),
     `  ${commands.help.padEnd(10)}Show this help.`,
     '',
     ...flagBlock('Flags for all commands:', globalOptions),

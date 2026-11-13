@@ -49,9 +49,10 @@ You need:
 | `factory track add ID --name TEXT [--roadmap]`, `factory track list` | Add a track to the board, or list the tracks. A track is a named stream of work. See "Use the local board". |
 | `factory request add\|list\|close\|log` | Put a question for the owner in the waiting file, list the open requests, close one with no answer, with a decision of the coordinator or a delegate, or with an answer of the owner that the coordinator passes on, or log a decision that no request asked for. See "Use the local board". |
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. See "Use the local board". |
-| `factory doctor` | Run 29 checks. See "Doctor". |
+| `factory doctor` | Run 30 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
 | `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
+| `factory pr watch PR [--head SHA] [--project ID]` | Watch the checks of one pull request at one head, with up to 60 reads, 60 seconds apart. It exits with code 0 only when every check passed. It never merges, and a pass is no approval. See "Watch a pull request". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `PreToolUse` and `Notification`. It records `Notification` only for the types `permission_prompt` and `elicitation_dialog`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
 | `factory hook statusline` | For Claude Code, not for people. It is the status line of the coordinator. It records the context percent of the session in the last-seen record, then prints the output of the command in `session.statusline` of `factory.local.yaml` as it is (the command gets the same input, and has 2 seconds; at the limit, every process that it started stops, and a SIGTERM, SIGHUP or SIGINT of the wrapper stops them too; a SIGKILL of the wrapper leaves them running). With no command, or with a command that fails or takes too long, it prints `context N%`. When the input gives no percent, or is not whole after 2 seconds, it prints `context ?%`. It exits with code 0 on every path and prints at most one line on stderr. The field names of the input come from the devflow HUD, which reads the live payload; checked against the Claude Code status line docs. |
@@ -502,7 +503,7 @@ The sessions of one factory talk with the cross-session messages of Claude Code 
 - **`--assignment FILE`.** `worker new` copies the file to `assignment.md` in the assignment folder before the worker starts. Before it writes anything, it checks the file. The real path must be inside the factory folder or inside the git work tree of the folder where you run the command, else the exit code is 4. A link in the path, a path part below that root that starts with a dot (except `.factory/orders/` in the factory folder), the file `factory.local.yaml` and a file that changes during the check also exit with code 4. A relative path that starts with `.factory/orders/` and has no `..` part names that folder of the factory folder, from any folder, for example from `coordinator/`. A file that is not a regular file, is larger than 1 MiB, is not UTF-8 or holds a NUL byte exits with code 2. If the copy fails, the command exits with code 1, keeps the worker and does not start it. The message names the copy by hand to `.factory/workers/ID/inbox/assignment.md`, then `factory worker resume ID`. The output has one more line, and `--json` has the field `assignment`. The flags `--assignment`, `--clear`, `--compact`, `--ready` and `--since` exit with code 2 on the `worker` commands that they do not belong to.
 - **`worker watch [ID]... [--ready ID]... [--since TIME]`.** It watches every recorded worker, or the workers that you name. The workers of `--ready` are watched too. A worker with no pane at the start is not checked, and when no worker has a pane the command prints `NO WORKER: no worker has a pane to watch` and exits. That run takes no run marker. Else it checks every 30 seconds, at most 2,880 times (24 hours), and exits at the first report: a finish of a worker; a pane that ended, is gone or is not the launch of the worker; a last-seen line that is not valid or does not belong to the worker (a worker that has no line yet gets two checks, the first check included, to write one; after that, or once a valid line was seen, a missing line is a change; a line of another session is a change at once); the state `waits`; or `stalled?` (the state is `busy` and the last event or percent is older than 15 minutes). A finish (JSON kind `finished`) is a last-seen line with the event `Stop` that is newer than the baseline of the worker. The baseline is the event time of the line at the first check, or the time of `--since` when that is older. The event `SessionStart` is no finish. With `--ready ID` (repeat it for more workers), the watch also waits for a worker that waits for you, for example at a dialog: for that worker a missing line, a line that is not valid, the state `waits` and a finish are no change, and the change is `ready` (JSON kind `readyAfterBlock`): a valid line of its own at `at prompt` or `busy`. Its pane changes and a line of another session stay changes, and the other workers keep their rules. Each line of a report ends with `last check TIME`, and `--json` has the field `checkedAt`. TIME is a UTC time that ends with Z. Give it to the next run as `--since TIME`, so that the next run reports a finish that came between the two runs. A bad TIME is exit code 2. The output is `CHANGED: ID what last check TIME`, `NO CHANGE: IDs last check TIME` or `NO WORKER: ...`, and the exit code is 0 for all three. One watch runs for each factory folder. A new run in the coordinator pane writes a new token to its run marker, the file `.factory/state/worker-watch-run`, and the older run of the coordinator ends at its next check with `REPLACED: a newer watch runs last check TIME` and exit code 0. So a `--ready` run also replaces the general run, and it watches the other workers as before. A run in a shell outside the factory sessions, as the owner runs it, takes no run marker and does not read it. It does not replace the run of the coordinator, and a change of the marker does not end it. A run marker that is missing or has no valid token is exit code 1 with `watch marker lost`, for a run in the coordinator pane. A run also ends with `ENDED: the parent process of the watch changed last check TIME` when its parent process changes. No tmux session is exit code 3, a session of another factory folder is 4, a read fault is 1, an unknown worker id is 2, and a record that factory did not write is 4. Inside a factory session, only the coordinator pane runs the watch, else the exit code is 2. It never types or signals, and it writes only its run marker. The last-seen file keeps only the latest event of a worker, so a finish that a new turn follows between two checks is not seen. `--json` prints `factory.worker-watch/v1`. Run it as a background task of the coordinator. Give it `--since` with the time of its last report, and run it again after `worker new`. Do not run it again for a `REPLACED` report, or the two runs replace each other without end. When the newer run fails with exit code 1, run it again, and tell the owner when that fails again. Run it once again after `watch marker lost`, and tell the owner when that fails again.
 - **`worker reset ID --clear` or `--compact`.** It types `/clear` or `/compact` into the pane of one worker, from the coordinator pane only, and checks that it happened. It exits with code 2 for neither or both flags and for a caller that is not the coordinator pane, with code 3 when no session runs or the coordinator pane is missing, and with code 4 for a start command that does not match. It refuses before it types any key, in these cases: the worker has no live pane (3, `factory worker resume ID`) or two (2); the pane is in the slot of the window `view` (3); the hook settings of the work copy lack an event (3, `factory upgrade`, then `factory restart ID`); the settings file is newer than the pane process (3, `factory restart ID`); the work is not pushed (1); `.factory/workers/ID/inbox/resume.md` is missing (3), is a link (4) or is empty or over 1 MiB (3); the state is `busy` or `waits` (1); the last-seen line is older than the pane process (3); the bottom of the pane shows a numbered option list (3). Then it types `C-u`, the command and `Enter` in one tmux run, and checks up to 10 times, one second apart. After `--clear` the pointer must name a new session with `SessionStart`. After `--compact` the line must show `PreCompact` or `SessionStart`. No confirmation is exit code 3 (look at the pane, then run it again), and a pane that ends during the check is exit code 1. The output has a verdict line, the age of the resume file and the next step: send the next task with `SendMessage`, or `factory restart ID` first when the worker has no name after a clear. `--json` prints `factory.worker-reset/v1`. The files `assignment.md` and `resume.md` stay in the assignment folder.
-- **`self reset`.** It queues a `/compact` for the coordinator itself, from the coordinator pane only. Write the resume notes to `.factory/resume/NODE_ID.md` first. The command exits with code 3 and names the file when it is missing, with code 4 for a link, and with code 3 when the coordinator settings lack one of the 6 hook events (`factory upgrade`, then `factory reboot`) or when a dialog waits in the coordinator pane. It then prints `QUEUED: the compact runs after the current turn` and exits with code 0. `--json` prints `factory.self-reset/v1`.
+- **`self reset`.** It queues a `/compact` for the coordinator itself, from the coordinator pane only. Write the resume notes to `.factory/resume/NODE_ID.md` first. The notes can hold the section `Standing routines` (see "Upgrade a factory"). The command exits with code 3 and names the file when it is missing, with code 4 for a link, and with code 3 when the coordinator settings lack one of the 6 hook events (`factory upgrade`, then `factory reboot`) or when a dialog waits in the coordinator pane. It then prints `QUEUED: the compact runs after the current turn` and exits with code 0. `--json` prints `factory.self-reset/v1`.
 
 The limits of native messages:
 
@@ -653,7 +654,7 @@ The state of a line is one of these:
 
 ### Doctor
 
-`factory doctor` runs 29 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 18 checks are new:
+`factory doctor` runs 30 checks. It exits with code 1 when a check fails, and with code 4 for the stops that this README names. It checks the config files, the state, the managed blocks, the secrets, the proxy settings, the tools and the projects. Version 0.1.0 ran 11 checks. These 19 checks are new:
 
 - `local-file`: the mode, the owner and the type of `factory.local.yaml`.
 - `root`: the factory folder is the top folder of its own git work tree and holds an intact share list. This is a warning.
@@ -673,6 +674,7 @@ The state of a line is one of these:
 - `agent-version`: the version of the agent program (`claude --version`, 5 seconds). A version below 2.1.224, or a version that `doctor` cannot read, is a warning, because the messages between sessions need 2.1.224 or newer. It is not checked when the config is not valid.
 - `state-guard`: the delete guard of `.factory/` is on. A guard that is off is a warning, and the message names the step that repairs it (see "Upgrade a factory"). It is not checked when `.factory/` is no git repo.
 - `board-size`: the size of `board.json`, `waiting.json` and `decision-log.json` against the read cap of 1 MiB. A file that reaches 80 percent of the cap is a warning that names the file. A command cannot read a file above the cap. A file that is not there is no fault. The check writes nothing.
+- `lessons`: the lessons file of the coordinator, `.factory/lessons.md`. A file that is not there is no fault. The check fails when the path is a link or not a plain file, when the file is larger than 32768 bytes, or when it holds more than 40 entries. An entry is a line that starts with `Rule:`. The message names the fault and the remedy: replace the link with a plain file, or remove old entries. The check never changes the file.
 
 The check `tools` fails when git is older than 2.26, or when `doctor` cannot read the git version.
 
@@ -695,6 +697,61 @@ Each fact has one format: a value, a limit and a verdict, `ok`, `fail` or `unkno
 - On another system, each fact is `unknown`.
 
 Each program has 5 seconds. A program that does not run, that takes too long or that exits with an error gives `unknown`. So does an output that does not parse. The command exits with code 0 for every verdict. It exits with another code only for a usage error, or when it finds no valid factory folder.
+
+### Watch a pull request
+
+`factory pr watch` is a command of the software recipe. It watches the checks of one pull request at one head commit, and it ends when the checks end. It is made to run as a background task after a push. It only reads. It never merges, never approves and never writes a file or a comment. A pass is a fact about the checks at the head. It is no approval to merge.
+
+```sh
+factory pr watch 123
+factory pr watch 123 --head 0123456789abcdef0123456789abcdef01234567
+factory pr watch 123 --project web
+```
+
+The command line:
+
+- `PR` is the number of the pull request: one to nine digits, with no leading zero. Any other value exits with code 2 before any call of `gh`.
+- `--head SHA` is the full commit id of the head to watch: 40 lowercase hex digits. Any other value exits with code 2. Without the flag, the watch pins the head of its first good read.
+- `--project ID` names the project. The config can list more than one project; then the flag is required, else the command exits with code 2. `--home DIR` names the factory folder, as for the other commands.
+- The repo comes from the URL of the project. Only repos on github.com are read. A project with no GitHub URL exits with code 2 before any call of `gh`. To correct it, set the `url` of the project to a github.com URL, then run the command again.
+
+The watch:
+
+- Each read is one call of `gh pr view`. The head, the state, the review decision and the checks come from that one answer.
+- The watch makes 60 reads at most, 60 seconds apart. After the last read it ends with `NO CHANGE`.
+- A read fails when `gh` exits with an error, does not answer in time, gives an answer of more than 262,144 characters or text that is not JSON, or gives a value that factory does not know. A failed read is never a pass. A good read resets the count of failures in a row.
+- The first good read pins the head, unless `--head` gives it, and the review decision. A later read ends the watch when the head, the state or the review decision differs.
+- With `--head`, GitHub can show the old head for some seconds after a push. Until the pinned head has shown once, a read of another head is not yet an end. The watch ignores it for 3 reads: it counts none of its checks, and it takes no state or review decision from it. The next read of another head ends the watch with `HEAD MOVED`. These reads are part of the 60 reads. After the pinned head has shown once, another head ends the watch at once.
+- A check run counts when it is completed. `SUCCESS`, `NEUTRAL` and `SKIPPED` count as passed. `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE` and `STALE` count as failed. Any other value is pending. A status counts as passed with `SUCCESS`, as failed with `FAILURE` or `ERROR`, and as pending in any other state.
+- INT or TERM ends the watch, and so does a change of the parent process. HUP does not, so a lost terminal does not end the watch.
+
+The output has the word on line 1, with the number of the pull request and the pinned head. Line 2 counts the checks of the last good read. Line 3 counts the reads. A line with the remedy follows `UNREADABLE`. That is 4 lines at most. The output holds fixed words, counts, the number and the head only. It prints no text of `gh`, so a name, a link or a login of a check never reaches it. `--json` prints one document with the keys `schema` (`factory.pr-watch/v1`), `result`, `pr`, `head`, `counts` and `reads`.
+
+Exit codes of `pr watch`:
+
+| Code | Word on line 1 | Meaning |
+| --- | --- | --- |
+| 0 | `PASSED` | At least one check exists, and every check passed at the pinned head. |
+| 1 | `UNREADABLE` | 3 reads failed in a row, or `gh` is not on the path. |
+| 2 | none | The command line is wrong, or the project has no GitHub URL. The message is on stderr. |
+| 3 | `FAILED` | A check failed. The watch does not wait for the checks that still run. |
+| 3 | `HEAD MOVED` | The head of the pull request is not the pinned head. With `--head`, this holds only after the pinned head has shown once, or after 3 reads that show another head. |
+| 3 | `CLOSED` | The pull request is closed. |
+| 3 | `MERGED` | The pull request is merged. |
+| 3 | `REVIEW CHANGED` | The review decision is not the one of the first good read. |
+| 3 | `NO CHECKS` | The first 2 reads are good, show the pinned head and show no check. No check on read 1 alone does not end the watch. |
+| 3 | `NO CHANGE` | 60 reads ended with none of the words above. |
+| 3 | `STOPPED` | INT, TERM, or a change of the parent process. |
+
+A stop exits with code 3 here. `factory lock run` exits with 128 plus the signal number for a stop. A project with no GitHub URL exits with code 2. It prints the error on stderr, with no word on line 1.
+
+Limits:
+
+- `gh` gives at most 100 check contexts a page, so a pass covers the contexts that `gh` gives.
+- `SKIPPED` and `NEUTRAL` count as passed, as GitHub counts them for a required check.
+- A printed word can be up to 60 seconds old.
+- A KILL ends the watch with no word, because no program can catch it.
+- The commands `factory check` and `factory pr merge` are not built yet.
 
 ### Run a heavy command
 
@@ -800,7 +857,13 @@ A board file that cannot be read stops `upgrade` with exit code 1 and names the 
 
 `upgrade` renders a block again when its text differs from the text that the package and your settings give. The owner prefix of `factory.local.yaml` is in the `safety` block. The context limits of `factory.yaml` are in the `coordinator` block. A block that you edited stays as it is, with a warning that names `factory upgrade --overwrite <block>`. `doctor` names the same command. The block `setup` is the exception: its text comes from the setup file, so `doctor` warns and names the setup file, and `upgrade` puts back the text of that file and keeps the edited text in a backup file (see below). A block that an earlier `upgrade` kept under its old name, for example `protocol`, stays under that name until you name it. `upgrade` and `doctor` find it under that name and name the flag.
 
-The block `coordinator` has version 5. Its text holds the rules for `item record`, `item unassign`, the worker field, `request close --relayed` and `request log`, the rules for the watch (see "Give work to a worker"), the rules for `dismiss ID --closed` and for the reviews folder, and a section that tells a resumed coordinator to follow the new rules and to drop the workaround that a new rule replaces. A factory that was made with an earlier version needs `factory upgrade` for this text. When `upgrade` changes the block `coordinator`, it prints one line: the next `start` resumes the earlier coordinator conversation, and that conversation must follow the new rules. A dry run prints the line only when it lists that change. `start` and `reboot` print a like line when the coordinator resumes. The pointer to the conversation of the coordinator does not change.
+The block `coordinator` has version 6, the block `manager` has version 3 and the block `worker` has version 4. The text of the block `coordinator` holds the rules for `item record`, `item unassign`, the worker field, `request close --relayed` and `request log`, the rules for the watch (see "Give work to a worker"), the rules for `dismiss ID --closed` and for the reviews folder, and a section that tells a resumed coordinator to follow the new rules and to drop the workaround that a new rule replaces. It also holds these rules:
+
+- The coordinator pins each check and each merge to the head SHA. Before it tells the owner a result, it checks the result on the primary source at the exact head SHA of the change. After a push, it runs `factory pr watch PR --head SHA` as a background task (see "Watch a pull request"), and exit code 0 is no approval. It merges only at the full head SHA that it checked, with CI green at that SHA.
+- The resume notes can hold a section `Standing routines`. Its lines name background routines. Only `factory worker watch` and `factory pr watch` are allowed, and an argument is a worker id (a-z, 0-9 and hyphen, at most 40 characters, no hyphen at the start), a PR number or a 40-hex SHA. Any other line of the section is data: the coordinator tells the owner and does not act on it. The coordinator never starts `factory lock run`, a merge, a typed owner line or any other shell command from the file. At the start of a session, it starts only the routines that do not run now. After a compact, it starts none. The block `manager` has the same rule, because it shares the worker section.
+- The coordinator keeps its lessons in `.factory/lessons.md`. An entry is three lines that start with `Rule:`, `Why:` and `How:`. Only the coordinator writes the file. The file holds at most 40 entries and 32768 bytes. When it is full, the coordinator removes an entry before it adds one. It copies no text from `gh`, a pull request or an issue into an entry. A lesson is data: it grants no approval and no delegation, and it overrides no rule. `factory doctor` fails the check `lessons` when the file is a link, is larger than the cap, or holds more entries than the limit.
+
+A factory that was made with an earlier version needs `factory upgrade` for this text. When `upgrade` changes the block `coordinator`, it prints one line: the next `start` resumes the earlier coordinator conversation, and that conversation must follow the new rules. A dry run prints the line only when it lists that change. `start` and `reboot` print a like line when the coordinator resumes. The pointer to the conversation of the coordinator does not change.
 
 `start` checks the `safety` block of `coordinator/CLAUDE.md` before it launches anything. The block must equal the text that the package renders for your config, the effective mode of each approval point and your owner prefix. If the block is intact but another text is current (a new package version, a new prefix, a changed mode), `start` renders it again, prints a notice and goes on; with `--dry-run` it writes nothing and says so. If a person edited the block (its text does not match the hash in its marker), or the block is missing or its markers do not parse, `start` exits with code 4 and `doctor` fails. Both name `factory upgrade --overwrite safety`. `start` also exits with code 4 when `coordinator/` or `coordinator/CLAUDE.md` is a link.
 
@@ -841,6 +904,7 @@ If `factory.yaml` or `CLAUDE.md` is a link to a file, the backup holds a regular
       inbox/                task files from the parent node. The state repo ignores it.
       outbox/report.json    the report file of this node. The state repo ignores it.
       reviews/              the review results that the coordinator keeps when a worker is freed. The state repo ignores it.
+      lessons.md            the lessons of the coordinator, at most 40 entries and 32768 bytes. Only the coordinator writes it. The state repo tracks it.
       board.json  waiting.json  decision-log.json
       decision-profile/  roadmaps/
 ```
@@ -886,7 +950,7 @@ Only a check at a security boundary stops a command. A stop exits with code 4. I
 | 3 | Not ready. The tmux session of the factory does not run (the message names `factory start`), or a worker has no pane that runs, or the state of a session is not known. |
 | 4 | A safety rule refused the action. |
 
-`factory lock run` passes on the exit code of its command, and it uses the codes above in its own way. See "Run a heavy command".
+`factory lock run` passes on the exit code of its command, and it uses the codes above in its own way. See "Run a heavy command". `factory pr watch` exits with code 3 for every end of the watch except a pass and an unreadable pull request. See "Watch a pull request".
 
 ## Development
 

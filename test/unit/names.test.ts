@@ -20,6 +20,7 @@ import {
   instructionFiles,
   itemCommands,
   keys,
+  lessonLimits,
   lockLine,
   lockWords,
   marker,
@@ -50,6 +51,7 @@ import {
   terms,
   tmuxNames,
   trackedFiles,
+  typing,
   values,
 } from '../../src/names.js';
 import { projectPathIssue } from '../../src/core/project-path.js';
@@ -1619,5 +1621,41 @@ describe('the names of the board records', () => {
 
   it('gives the gh time limit that init and the record check of the software recipe share', () => {
     expect(ghTimeoutMs).toBe(10_000);
+  });
+});
+
+describe('the lessons file of the coordinator (AC-7)', () => {
+  it('TP-23 has one name for the file, in the state folder, and the coordinator texts write its path from their folder', () => {
+    expect(files.lessons).toBe('lessons.md');
+    expect(templateValues['lessonsFile']).toBe(`${dirs.state}/${files.lessons}`);
+    expect(coordinatorTemplateValues['lessonsFile']).toBe(`../${dirs.state}/${files.lessons}`);
+  });
+
+  it('TP-23 gives the file a name that no other file of the state folder has', () => {
+    expect(Object.values(files).filter((name) => name === files.lessons)).toHaveLength(1);
+  });
+
+  it('TP-23 holds at most 40 entries, and the texts get that number as a value', () => {
+    expect(lessonLimits.maxEntries).toBe(40);
+    expect(templateValues['maxLessons']).toBe('40');
+    expect(coordinatorTemplateValues['maxLessons']).toBe('40');
+  });
+
+  it('TP-23 holds at most 32768 bytes, and the texts get that number as a value', () => {
+    expect(lessonLimits.maxBytes).toBe(32_768);
+    expect(templateValues['maxLessonBytes']).toBe('32768');
+    expect(coordinatorTemplateValues['maxLessonBytes']).toBe('32768');
+  });
+});
+
+describe('the typed lines of a reset (AC-7)', () => {
+  it('TP-24 keeps the two typed lines as two constant lines', () => {
+    expect(typing.lines).toEqual({ clear: '/clear', compact: '/compact' });
+  });
+
+  it('TP-24 holds no typed line in any block, so a block has no hint for a compact', () => {
+    for (const template of allBlocks) {
+      for (const line of Object.values(typing.lines)) expect(template.body, `${template.name} ${line}`).not.toContain(line);
+    }
   });
 });

@@ -10,6 +10,7 @@ import {
   checkConfig,
   checkConfigVersion,
   checkIndex,
+  checkLessons,
   checkNodeId,
   checkInstructionFiles,
   checkLocalFile,
@@ -35,7 +36,7 @@ import type { FactoryConfig } from '../../src/config/schema.js';
 import type { Deps } from '../../src/core/deps.js';
 import { instructionFileWarnings, scanInstructionFiles } from '../../src/core/instruction-files.js';
 import { ok } from '../../src/core/result.js';
-import { boardWarnPercent, checkIds, childReasons, files, instructionFiles, maxFileBytes } from '../../src/names.js';
+import { boardWarnPercent, checkIds, childReasons, dirs, files, instructionFiles, lessonLimits, maxFileBytes } from '../../src/names.js';
 import { workerPathsOf } from '../../src/state/layout.js';
 import { inspectState } from '../../src/state/load.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
@@ -1720,6 +1721,94 @@ describe('doctor: the size of the board files (TP-48, TP-87)', () => {
   });
 });
 
+describe('doctor: the lessons file of the coordinator', () => {
+  const LESSONS = `${HOME}/.factory/${files.lessons}`;
+  /** `count` entries: each has a Rule line, a Why line and a How line. */
+  const entries = (count: number): string =>
+    Array.from({ length: count }, (_unused, index) => `${lessonLimits.entryMark} rule ${index}\nWhy: a reason\nHow: a step\n`).join('\n');
+
+  it('passes when there is no lessons file yet', async () => {
+    const deps = await initialized();
+    expect(await checkLessons(deps, HOME)).toMatchObject({ id: 'lessons', level: 'ok' });
+  });
+
+  it('passes for a file with 40 entries, and counts the lines that start with Rule: only', async () => {
+    const deps = await initialized();
+    deps.files.set(LESSONS, entries(lessonLimits.maxEntries));
+    expect(await checkLessons(deps, HOME)).toMatchObject({ level: 'ok' });
+  });
+
+  it('fails for a file with 41 entries, names the limit and the remedy, and leaves the file as it was', async () => {
+    const deps = await initialized();
+    const text = entries(lessonLimits.maxEntries + 1);
+    deps.files.set(LESSONS, text);
+    const result = await checkLessons(deps, HOME);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain(`${dirs.state}/${files.lessons} holds 41 entries`);
+    expect(result.text).toContain(`more than ${lessonLimits.maxEntries}`);
+    expect(result.text).toContain('Remove old entries');
+    expect(deps.files.get(LESSONS)).toBe(text);
+  });
+
+  it('passes for a file of exactly the size cap, and fails for a file of one byte more', async () => {
+    const deps = await initialized();
+    const atCap = `${entries(1)}${'x'.repeat(lessonLimits.maxBytes - entries(1).length)}`;
+    expect(atCap.length).toBe(lessonLimits.maxBytes);
+    deps.files.set(LESSONS, atCap);
+    expect(await checkLessons(deps, HOME)).toMatchObject({ level: 'ok' });
+    deps.files.set(LESSONS, `${atCap}x`);
+    const result = await checkLessons(deps, HOME);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain(`${lessonLimits.maxBytes + 1} bytes`);
+    expect(result.text).toContain(`more than ${lessonLimits.maxBytes} bytes`);
+    expect(deps.files.get(LESSONS)).toBe(`${atCap}x`);
+  });
+
+  it('fails for a link, also when the target is a good file, and reads nothing through the link', async () => {
+    const TARGET = '/elsewhere/lessons.md';
+    const deps = await initialized({ links: { [LESSONS]: TARGET } });
+    deps.seed(TARGET, entries(1));
+    const result = await checkLessons(deps, HOME);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain(`${dirs.state}/${files.lessons} is a link`);
+    expect(result.text).toContain('Replace it with a plain file');
+    expect(deps.files.get(TARGET)).toBe(entries(1));
+  });
+
+  it('fails for a folder at the path of the file', async () => {
+    const deps = await initialized();
+    deps.seedDir(LESSONS);
+    const result = await checkLessons(deps, HOME);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('is not a plain file');
+  });
+
+  it('fails, and does not pass, when the file cannot be looked at', async () => {
+    const deps = await initialized();
+    const broken: Deps = { ...deps, fs: { ...deps.fs, lstatInfo: async () => failure('cannot look at the file: EACCES') } };
+    const result = await checkLessons(broken, HOME);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('EACCES');
+  });
+
+  it('fails, and does not pass, when the file cannot be read', async () => {
+    const deps = await initialized();
+    deps.files.set(LESSONS, entries(1));
+    const broken: Deps = { ...deps, fs: { ...deps.fs, readTextLimited: async () => failure('cannot read the file: EIO') } };
+    const result = await checkLessons(broken, HOME);
+    expect(result.level).toBe('fail');
+    expect(result.text).toContain('EIO');
+  });
+
+  it('shows as a failure in the command, and the command is failed', async () => {
+    const deps = await initialized();
+    deps.files.set(LESSONS, entries(lessonLimits.maxEntries + 1));
+    const output = await doctor(deps);
+    expect(levelOf(output.json['checks'] as CheckResult[], 'lessons')).toBe('fail');
+    expect(output.failed).toBe(true);
+  });
+});
+
 describe('doctor: projects', () => {
   const withProject = (deps: FakeDeps) => {
     writeConfig(deps, sampleConfig());
@@ -2010,10 +2099,11 @@ describe('doctor: the command', () => {
       'state-repo',
       'state-guard',
       'board-size',
+      'lessons',
       'projects',
       'project-urls',
     ]);
-    expect(output.lines.at(-1)?.text).toBe('29 ok, 0 warnings, 0 failures');
+    expect(output.lines.at(-1)?.text).toBe('30 ok, 0 warnings, 0 failures');
   });
 
   it('is failed when one check fails, and not failed for warnings only', async () => {
@@ -2036,7 +2126,7 @@ describe('doctor: the command', () => {
     const text = JSON.stringify(output);
     expect(text).not.toContain('topsecret');
     expect(text).not.toContain('ghp_zzzz');
-    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(29);
+    expect(output.lines.filter((line) => line.level !== 'text')).toHaveLength(30);
   });
 
   it('finds the node by walking up from the current folder', async () => {

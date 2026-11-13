@@ -24,7 +24,7 @@ const workerFor = (input: BlockInput): BlockTemplate => ({
 /** The manager block lives in the coordinator folder, so its paths are written from that folder. */
 const managerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.manager,
-  version: 2,
+  version: 3,
   target: 'claudeFile',
   body: fillTemplate(MANAGER_LINES, coordinatorValuesFor(input)),
 });
@@ -35,7 +35,7 @@ const managerFor = (input: BlockInput): BlockTemplate => ({
  */
 const coordinatorFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.coordinator,
-  version: 5,
+  version: 6,
   target: 'claudeFile',
   body: fillTemplate(coordinatorLines(approvalLines(softwareApprovalPoints, input.modes)), coordinatorValuesFor(input)),
 });

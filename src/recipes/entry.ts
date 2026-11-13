@@ -1,7 +1,8 @@
 import type { z } from 'zod';
 import type { CliResult } from '../cli/errors.js';
+import type { Command } from '../cli/table.js';
 import type { Deps } from '../core/deps.js';
-import { boardKeys, keys, values } from '../names.js';
+import { boardKeys, keys, values, type CommandName } from '../names.js';
 import type { BlockInput, BlockTemplate } from '../templates/types.js';
 
 /** The mode of an approval point: `owner` or `delegated`. */
@@ -136,6 +137,26 @@ export interface RecordCheck {
 }
 
 /**
+ * What the core gives to the `commands` hook of a recipe. A recipe imports no loader and no command file, so the core carries what
+ * a command of the recipe needs from them. In both calls, `command` is the command name that the remedy of a failure tells the
+ * person to run again.
+ * - `registry` is the registry that the command table is built from.
+ * - `locateNode` gives the folder of the node: the folder of the home flag, else the one that the current folder is in.
+ * - `loadProject` reads the config of the node in `home` and gives one project. The id names it. Without an id, the node must list
+ *   exactly one project. Any other case is a usage error (exit 2) that lists the projects.
+ */
+export interface RecipeHost {
+  readonly registry: RecipeRegistry;
+  readonly locateNode: (deps: Deps, home: string | undefined, command: CommandName) => Promise<CliResult<string>>;
+  readonly loadProject: (
+    deps: Deps,
+    home: string,
+    projectId: string | undefined,
+    command: CommandName,
+  ) => Promise<CliResult<RecipeProject>>;
+}
+
+/**
  * What the core needs from a recipe. The core reads no other file of a recipe: it gets the entry from the registry.
  * - `schema` parses the `recipe` block of the shared file.
  * - `approvalPoints` lists the steps that need an approval.
@@ -148,6 +169,8 @@ export interface RecordCheck {
  * - `roles` sets the role of each layer.
  * - `board` sets the queue key and the stages of the board.
  * - `recordCheck` is the check that `item record` runs. A recipe with none makes that command a usage error.
+ * - `commands` gives the rows that the recipe adds to the command table, from the host object. A row whose name a core row or an
+ *   earlier row already has is dropped, so a recipe can not replace a command.
  */
 export interface RecipeEntry {
   readonly id: string;
@@ -162,6 +185,7 @@ export interface RecipeEntry {
   readonly roles: RecipeRoles;
   readonly board: RecipeBoard;
   readonly recordCheck?: RecordCheck | undefined;
+  readonly commands?: ((host: RecipeHost) => readonly Command[]) | undefined;
 }
 
 /** The key of the queue in `board.json`: the key of the recipe, or the default of the core when the recipe gives none. */

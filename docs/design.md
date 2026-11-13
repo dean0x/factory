@@ -226,7 +226,7 @@ Costs are rough, per use, for the new tokens that enter the coordinator context.
 | Decision record and profile update (§1) | Record file, log line, principle, decision-log row, commit | 4–6 calls, 8–15k | `factory decide <D-n> <option>` records it; `--principle <id>` links a principle | 1 call, 1–2k (the principle wording stays a model job) |
 | Work copy cleanup (§4) | List, check tip on remote, search board and resume files, remove | 5–8 calls, 5–10k | `factory copies clean` (dry run by default) | 1 call, 1k |
 | Typed founder-authority input (§12) | Map, capture, Escape/C-u, type, Enter, verify | 4–6 calls, 4–6k | `factory worker relay <worker> --decision <D-n>` (FAC-M5) | 1 call, <1k |
-| CI watch (§10) | Monitor or loop on `gh pr checks`, then read | 2–4 calls, 3–8k | `factory pr watch <pr>` (exits when CI ends; for a background task) | 1 call, <1k |
+| CI watch (§10) | Monitor or loop on `gh pr checks`, then read | 2–4 calls, 3–8k | `factory pr watch <pr> [--head SHA] [--project P]` (exits when the checks end, after 60 reads at most, or on a stop; for a background task; §4.9) | 1 call, <1k |
 | Stopped-worker watch and limit recovery (§11, §12) | Loop on `lanes-stopped.txt`; capture each worker; answer the dialog; nudge | 5–15k | `factory worker watch` (exits at the first report, or after 24 hours); `factory worker recover` (FAC-M5) | <1k plus |
 | Moving an outside session into tmux (§12) | ListAgents, session file, stop, resume, rename, protocol line | ~6 calls, ~6k | `factory worker adopt <name>` | 1 call, <1k |
 | Resource check (§8) | 4 commands | 1–4 calls, 1–2k | built into `worker new`; `factory machine` | 0–1 call |
@@ -335,14 +335,14 @@ factory init --variant plain|devflow        # the setup of a project (the key `v
 factory recipe variant <plain|devflow> [--project P]   # change the setup of one project (§2.2)
 factory check <pr> [--project P]            # the merge check: READY or NOT READY at the current head
 factory pr merge <pr>                       # pinned merge, then the bookkeeping
-factory pr watch <pr>
+factory pr watch <pr> [--head SHA] [--project P] [--home DIR]   # the checks of one PR at one head: 60 reads at most, 60 s apart (§4.9)
 factory issues audit [--project P]
 factory release check|verify <project> [<version>]   # the release check before a release, and the check after it
 factory release scope <project> <version>   # the owner writes the release scope; a terminal window outside a factory session only (§6.2)
 factory copies list | status | sync <pr|branch> | clean [--apply]   # git across work copies (D-55)
 ```
 
-Another recipe adds its own check and output commands. The core commands stay the same for every recipe, and a docs check fails when a core part of the design or of the glossary holds a word of the software recipe. §7.1 maps Dean's shop-floor words to the command words `worker`, `request` and `queue`.
+A recipe adds its commands to the command table through the hook `commands` of its entry (§4.9, §4.14). The command `pr` comes this way; `check` and `pr merge` are not built yet. Another recipe adds its own check and output commands. The core commands stay the same for every recipe, and a docs check fails when a core part of the design or of the glossary holds a word of the software recipe. §7.1 maps Dean's shop-floor words to the command words `worker`, `request` and `queue`.
 
 The lifecycle verbs of the core table:
 - `start` starts the factory. After a machine restart it resumes the recorded workers.
@@ -561,6 +561,7 @@ A received factory is a trust boundary, so its checks are stops. The lighter rul
 | Error (exit 1): git is older than 2.26, the git version can not be read, or git can not list its config scopes | `start` stops before it makes or looks at a session. `reboot` outside the session stops before its first stop. A dry run of `start` shows a warning. `init`, `upgrade` and the board commit helper stop before they change the state repo. `doctor` fails the check `tools`. | Update git to 2.26 or newer, then run `factory doctor`. |
 | Error (exit 1): another writer holds the state lock `.factory/locks/state.lock` for the whole wait (20 tries, 250 ms apart). The message names the lock file. Three steps only warn, write nothing and go on (exit 0): the claim of the active machine by `start`, the clear of the mark by `shutdown`, and the clear of the mark in the end step of `reboot`. A stop must not fail on a busy lock. | `upgrade`, the board commit helper, `dismiss --closed` (the second check and the removal) and every other step that commits to the state repo | Wait until the other `factory` command ends, then run the command again. The next writer takes over a lock file that is older than 300 seconds. |
 | Warning (exit 0): `board.json`, `waiting.json` or `decision-log.json` is at 80 percent of the size cap of 1048576 bytes, or above it. The message names each file. | `doctor` (the check `board-size`) | Close items you do not need and shorten long texts, then run `factory doctor`. An archive file for the board comes in FAC-M5b. |
+| Error (exit 1): `.factory/lessons.md` is a link or not a plain file, is larger than 32768 bytes, or holds more than 40 entries. An entry is a line that starts with `Rule:`. A missing file is no fault. | `doctor` (the check `lessons`) | Replace the link with a plain file, or remove old entries, then run `factory doctor`. The check never changes the file. |
 | Error (exit 1): the new text of a board file would be larger than the size cap of 1048576 bytes, or a board file is larger than the cap when a command reads it. The message names the file and the cap. A write changes no file. | `item`, `track`, `request` and `queue` (writes); every command that reads the board | Shorten the text of the file, or restore a smaller version of it from an earlier commit of `.factory/`. Then run the command again. |
 | Error (exit 1): `board.json`, `waiting.json` or `decision-log.json` is not valid UTF-8, is not valid JSON of the right shape, or holds a repeated item id or request number. The message names the file, and the id when there is one. A write changes no file. | Every command that reads the board files | Restore the file from the last good commit of `.factory/` (`git -C .factory restore --source=<commit> --staged --worktree -- <file>`), then run the command again. |
 | Error (exit 1): `board.json` still has the old queue key `queue`. | Every command that reads the board | `factory upgrade` |
@@ -952,6 +953,32 @@ variants: [plain, devflow]   # variants/plain.yaml (default), variants/devflow.y
 - Other recipes, for example research or content, come later. They need no change to the core.
 - Cost (F-10): medium now, high later. The split is mostly in this design and in the config schema. The FAC-M1 code already keeps the software parts in a few modules.
 
+**Commands of a recipe**
+
+A recipe adds commands to the command table through the hook `commands` of its entry (§4.14). The hook gets one host object: the recipe registry, the lookup of the node folder and the load of one project. A recipe therefore imports no config loader, no command file and no command table at run time, and a test scans for such an import. The command table is the rows of the core, then the rows that each recipe adds, in the order of the registry. A name has one row, the first one, so a recipe can not replace a command of the core. A test fails when a recipe of the package names a command that the core or another recipe names.
+
+- **`pr watch <pr> [--head SHA] [--project P] [--home DIR]`.** The software recipe adds the command `pr`. It has one subcommand, `watch`. The subcommands `check` and `merge` are not built yet (FAC-M5). The command watches the checks of one PR at one head, and it only reads. It never merges, never approves and never writes. A pass is a fact about the checks at the head, and it is no approval to merge.
+- **The order of the steps is fixed.** First the command line: `<pr>` is one to nine digits with no leading zero (the rule of `item record`), and `--head` is a full commit id of 40 lowercase hex digits. A fault is exit 2 before any call of `gh`. Then the node and the project are found through the host object; `--project` is needed when the config lists more than one project (exit 2). The repo comes from the URL of the project, as for `item record`. A project with no GitHub URL is exit 2, and only repos on github.com are read. Then `gh` must be on the path; if it is not, the result is `UNREADABLE` at once. Then the watch starts.
+- **A read.** Each read is one call of `gh pr view` with a fixed list of arguments: the repo as `github.com/<owner>/<name>`, the fields `headRefOid`, `state`, `statusCheckRollup` and `reviewDecision`, and the PR number after `--`. The head, the state, the review decision and the checks come from that one answer. No argument list holds `--admin`, `--auto`, `--rebase` or the merge subcommand, and a test scans for them. A read fails when `gh` exits with a code other than 0, when it does not answer in time, when the answer is over 262,144 characters, when it is not JSON, or when it does not fit the schema (an unknown value, or more than 500 checks). A read that fails is never a pass. A good read resets the count of failures in a row. The first good read pins the head, unless `--head` gives it, and pins the review decision. With `--head`, GitHub can show the old head for some seconds after a push, so a read of another head is ignored until the pinned head has shown once, for `prWatchPoll.headLagReads` reads at most: it counts toward no verdict and it sets no baseline. The next read of another head is `HEAD MOVED`. These reads are part of the 60. After the pinned head has shown once, another head is `HEAD MOVED` at once.
+- **The bound.** The watch makes at most 60 reads (`prWatchPoll`), 60 s apart, so it ends after about one hour. The bound is a number of reads. Each read takes the time of its `gh` call on top of the wait. A stop is tested before each read, and it ends a wait at once.
+- **The checks of one read.** A check run counts when it is completed: `SUCCESS`, `NEUTRAL` and `SKIPPED` are passed, `FAILURE`, `CANCELLED`, `TIMED_OUT`, `ACTION_REQUIRED`, `STARTUP_FAILURE` and `STALE` are failed, and any other state is pending. A status is passed with `SUCCESS`, failed with `FAILURE` or `ERROR`, and pending with `PENDING` or `EXPECTED`. After each good read, the first event that applies ends the watch, in the order of the table below. If none applies, the watch waits for the next read.
+- **The output.** The text has the fixed word on line 1, with the PR number and the pinned head. Line 2 counts the checks (after a good read), and line 3 counts the reads. `UNREADABLE` adds a line with the remedy. That is 4 lines at most. The output holds fixed words, counts, the PR number and the head only. No text of `gh` is printed, so a name, a link or a login of a check never reaches the output. `--json` gives `factory.pr-watch/v1` with the keys `schema`, `result`, `pr`, `head`, `counts` and `reads`.
+
+| Word | Exit | The watch ends when |
+|---|---|---|
+| `HEAD MOVED` | 3 | the head of the PR is not the pinned head. With `--head`, only after the pinned head has shown once, or after `headLagReads` (3) reads that show another head. |
+| `MERGED` | 3 | the PR is merged |
+| `CLOSED` | 3 | the PR is closed |
+| `REVIEW CHANGED` | 3 | the review decision is not the one that the first good read gave |
+| `NO CHECKS` | 3 | the first 2 reads are good, show the pinned head and show no check (the first 60 s). No check on read 1 alone never ends the watch. |
+| `FAILED` | 3 | a check failed, also when other checks still run |
+| `PASSED` | 0 | at least one check exists and every check passed at the pinned head |
+| `NO CHANGE` | 3 | 60 reads ended with none of the words above |
+| `STOPPED` | 3 | the parent process changed, or INT or TERM came. HUP does not end the watch, so a lost terminal does not end it. |
+| `UNREADABLE` | 1 | 3 reads failed in a row, or `gh` is not on the path |
+
+A usage fault is exit 2. A stop is exit 3 for `pr watch`; a stop of `lock run` is exit 128 plus the signal number. Known limits: `gh` gives at most 100 check contexts a page, so a pass covers the contexts that `gh` gives. `SKIPPED` and `NEUTRAL` count as passed, as GitHub counts them for a required check. A printed verdict can be up to 60 s old. A KILL ends the watch with no verdict line, because no program can catch it.
+
 ### 4.10 Board connector
 
 factory does not build its own review desk. The board, the requests and the decisions live in the team's board tool. The owner chooses the tool in `tracker.kind`. The config key `tracker` stays.
@@ -1220,6 +1247,7 @@ factory has no review desk of its own, not even as an option (F-2, F-17). TB-5 c
 | `report --json` | The digest on demand, in the same format and with the same text as the report file (§5.4). | FAC-M5 (the command and the §5.4 keys); FAC-M5b (the §4.14 fields and the sample reader) |
 | Recipe registration | A recipe is registered in the recipe registry. This is a code path. A new recipe needs no change to the core (§4.9). | FAC-M6 |
 | Record check of a recipe | A recipe can give one record check: the hook `recordCheck` of its entry. The hook gives the stage that it sets, the help words of the command, a parser of the reference and the check. `item record` runs the check and writes only a result that the check made. A recipe with no hook makes `item record` exit 2. The software recipe gives a check of a merged PR on GitHub (§4.10). | FAC-M5 (M5-1b) |
+| Commands of a recipe | A recipe can add commands to the command table: the hook `commands` of its entry. The hook gets one host object, with the recipe registry, the lookup of the node folder and the load of one project, so the recipe imports no config loader, no command file and no command table. The table is the core rows, then the rows of each recipe. A name has one row, the first one, so a recipe can not replace a command, and a test fails when a recipe of the package names a command twice. A recipe with no hook adds none. The software recipe gives the command `pr` with the subcommand `watch` (§4.9). | FAC-M5 |
 | Setup files | A script and one line in the setup list. The owner accepts each file (§4.13). | FAC-M6 |
 | Owner hooks | A setup script that runs after an event, with the event on stdin (§4.13). | FAC-M6 |
 | Review page | The `artifact` connector (§4.10). A script renders the review page from the local files, and factory prints one `PUBLISH:` line. The page escapes every string, builds its links by a fixed rule and has no write path. Its data holds no password, no token and no machine path. | FAC-M11 |

@@ -5,7 +5,7 @@ import { recipes } from '../../src/recipes/index.js';
 import { softwareWordList } from '../../src/recipes/software/words.js';
 import { OLD_WORD_LIST } from '../helpers/old-words.js';
 import { softwareWordsIn } from '../helpers/software-words.js';
-import { allSourceFiles, importPathsOf, literalsOf, shellValue } from '../helpers/source-scan.js';
+import { allSourceFiles, importPathsOf, literalsOf, runtimeImportPathsOf, shellValue } from '../helpers/source-scan.js';
 
 const ROOT = join(__dirname, '..', '..');
 const SRC = join(ROOT, 'src');
@@ -162,6 +162,95 @@ describe('no import of a recipe folder from the core (TP-137)', () => {
       join('recipes', 'software', 'config'),
       join('recipes', 'other', 'recipe.js'),
       join('recipes', 'software', 'approval.js'),
+    ]);
+  });
+});
+
+/**
+ * What a file of a recipe must not import at run time, as paths under src without the extension. A recipe gets what it needs from
+ * these through the host object of its `commands` hook, so no import joins a recipe to the loader, the command table or the run
+ * module in a cycle.
+ */
+const FORBIDDEN_FROM_RECIPES: readonly string[] = [
+  join('config', 'load'),
+  join('config', 'schema'),
+  join('cli', 'table'),
+  join('cli', 'run'),
+  join('cli', 'recipe-host'),
+  join('recipes', 'index'),
+  'recipes',
+];
+const FORBIDDEN_FOLDERS_FROM_RECIPES: readonly string[] = ['commands'];
+
+/** The run-time imports of a file of a recipe that go to a module on the list above. */
+const forbiddenRecipeImports = (file: string, source: string): string[] =>
+  runtimeImportPathsOf(source)
+    .filter((path) => path.startsWith('.'))
+    .map((path) => relative(SRC, resolve(dirname(file), path)).replace(/\.(?:js|ts)$/, ''))
+    .filter(
+      (target) =>
+        FORBIDDEN_FROM_RECIPES.includes(target) ||
+        FORBIDDEN_FOLDERS_FROM_RECIPES.some((folder) => target === folder || target.startsWith(`${folder}${sep}`)),
+    );
+
+describe('no run-time import of the loader or the command table from a recipe', () => {
+  const recipeFiles = (): string[] => allSourceFiles(SRC).filter(insideRecipes);
+
+  it('scans the files of the recipes folder, also the files in a recipe folder', () => {
+    const scanned = recipeFiles().map((path) => relative(SRC, path));
+    expect(scanned).toEqual(expect.arrayContaining([join('recipes', 'entry.ts'), join('recipes', 'software', 'github-pr.ts')]));
+  });
+
+  it('finds no run-time import of the config loader, the config schema, the commands, the command table, the run module or the recipe index', () => {
+    const found = recipeFiles().flatMap((path) =>
+      forbiddenRecipeImports(path, readFileSync(path, 'utf8')).map((target) => `${relative(SRC, path)} imports ${target}`),
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('lets pr-watch.ts import at run time only the names, the CLI errors, home option and output modules, core, and the files of its recipe', () => {
+    const file = join(RECIPES, 'software', 'pr-watch.ts');
+    const targets = runtimeImportPathsOf(readFileSync(file, 'utf8'))
+      .filter((path) => path.startsWith('.'))
+      .map((path) => relative(SRC, resolve(dirname(file), path)).replace(/\.(?:js|ts)$/, ''));
+    const allowed = (target: string): boolean =>
+      ['names', join('cli', 'errors'), join('cli', 'home-option'), join('cli', 'output')].includes(target) ||
+      target.startsWith(`core${sep}`) ||
+      target.startsWith(`${join('recipes', 'software')}${sep}`);
+    expect(targets.length).toBeGreaterThan(3);
+    expect(targets.filter((target) => !allowed(target))).toEqual([]);
+  });
+
+  it('reads each form of import, and leaves out a type-only import', () => {
+    const file = join(RECIPES, 'software', 'sample.ts');
+    const source = [
+      "import { a } from '../../config/load.js';",
+      "import { b } from '../../config/schema';",
+      "export { c } from '../../commands/item.js';",
+      "const d = await import('../../cli/table.js');",
+      "import '../../cli/run.js';",
+      "import { e } from '../index.js';",
+      "import { f } from '../../cli/recipe-host.js';",
+      "import { type g } from '../../config/load.js';",
+      "import type { H } from '../../cli/table.js';",
+      'import type {',
+      '  I,',
+      "} from '../../config/schema.js';",
+      "export type { J } from '../../cli/run.js';",
+      "import { k } from '../../cli/errors.js';",
+      "import { l } from '../../core/result.js';",
+      "import { m } from '../entry.js';",
+      "import { n } from 'zod';",
+    ].join('\n');
+    expect(forbiddenRecipeImports(file, source)).toEqual([
+      join('config', 'load'),
+      join('config', 'schema'),
+      join('commands', 'item'),
+      join('cli', 'table'),
+      join('cli', 'run'),
+      join('recipes', 'index'),
+      join('cli', 'recipe-host'),
+      join('config', 'load'),
     ]);
   });
 });
