@@ -3,7 +3,7 @@
 This table maps each note from Dean to the text that answers it. It has one row for each ask of the intent check (the baseline of 2026-11-02 and its verbatim check), one row for each ask of the design v3 feedback, and one row for each later direction or decision of Dean. The intent check at each milestone merge reads the rows of that milestone. A row that is not covered blocks the merge, or moves to a named later milestone with a reason.
 
 How to read the table:
-- **Short ask, or Dean's words.** The first column gives the ask in short, or a short quote of Dean's own note. No two rows have the same text in the first column, so a row refers to another row by that text. Each part of the file has its own table, and the text above each table says where its notes come from.
+- **Short ask, or Dean's words.** The first column gives the ask in short, or a short quote of Dean's own note. No two rows have the same text in the first column, so a row refers to another row by that text. Each part of the file has its own table, and the heading of each part says where its notes come from.
 - **Design section.** A heading of `docs/design.md`. A numbered section has its mark and number. The parts "Core and setup" and "Extension points" are named, because docs check 9 accepts their headings with no number.
 - **Milestone and exit criterion.** A milestone of `docs/roadmap-v2.md` and the check that proves the ask. The word "criterion" refers to the exit criteria of that milestone. "Design v3 PR" is the label of the milestone in the roadmap that has the two checkboxes for the docs PR and the code PR.
 - **Status.** `covered` means that the design and the roadmap answer the ask. `not applicable` gives the reason.
@@ -213,7 +213,7 @@ Dean gave this direction on 2026-11-07, when the factory adoption map was shown 
 
 ## Notes of the direction about the board of each track (2026-11-08)
 
-Dean gave this direction on 2026-11-08. Design §9 quotes his words. The first seven rows hold the seven notes of the intent check. The last row holds the note about cost. The first column is a short summary of each note.
+Dean gave this direction on 2026-11-08. Design §9 holds the decision. The first seven rows hold the seven notes of the intent check. The last row holds the note about cost. The first column is a short summary of each note.
 
 | Short ask | Design section | Milestone and exit criterion | Status |
 |---|---|---|---|
