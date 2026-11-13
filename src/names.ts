@@ -110,14 +110,28 @@ export const workerCommands = {
   watch: 'watch',
 } as const;
 
-/** The subcommands of `item`. */
-export const itemCommands = { add: 'add', update: 'update', move: 'move', close: 'close', list: 'list' } as const;
+/**
+ * The subcommands of `item`. `record` runs the record check of the recipe and records its result, and `unassign` takes the worker
+ * off an item.
+ */
+export const itemCommands = {
+  add: 'add',
+  update: 'update',
+  move: 'move',
+  close: 'close',
+  list: 'list',
+  record: 'record',
+  unassign: 'unassign',
+} as const;
 
 /** The subcommands of `track`. The command has no remove subcommand. */
 export const trackCommands = { add: 'add', list: 'list' } as const;
 
-/** The subcommands of `request`. The command has no subcommand that changes the options of a request that is open. */
-export const requestCommands = { add: 'add', list: 'list', close: 'close' } as const;
+/**
+ * The subcommands of `request`. `log` records a decision that no request asked for. The command has no subcommand that changes the
+ * options of a request that is open.
+ */
+export const requestCommands = { add: 'add', list: 'list', close: 'close', log: 'log' } as const;
 
 /** The subcommands of `queue`. */
 export const queueCommands = { set: 'set', show: 'show' } as const;
@@ -146,11 +160,14 @@ export const commandLines = {
   itemMove: `${commands.item} ${itemCommands.move}`,
   itemClose: `${commands.item} ${itemCommands.close}`,
   itemList: `${commands.item} ${itemCommands.list}`,
+  itemRecord: `${commands.item} ${itemCommands.record}`,
+  itemUnassign: `${commands.item} ${itemCommands.unassign}`,
   trackAdd: `${commands.track} ${trackCommands.add}`,
   trackList: `${commands.track} ${trackCommands.list}`,
   requestAdd: `${commands.request} ${requestCommands.add}`,
   requestList: `${commands.request} ${requestCommands.list}`,
   requestClose: `${commands.request} ${requestCommands.close}`,
+  requestLog: `${commands.request} ${requestCommands.log}`,
   queueSet: `${commands.queue} ${queueCommands.set}`,
   queueShow: `${commands.queue} ${queueCommands.show}`,
   lockRun: `${commands.lock} ${lockCommands.run}`,
@@ -179,6 +196,8 @@ export const flags = {
   ready: 'ready',
   madeBy: 'made-by',
   decision: 'decision',
+  ref: 'ref',
+  relayed: 'relayed',
   file: 'file',
   field: 'field',
   title: 'title',
@@ -560,7 +579,9 @@ export const minGitVersion = '2.26';
 /**
  * The keys of `board.json`. The top keys are the queue (its key comes from the recipe), the list of items and the list of
  * tracks. `defaultQueue` is the key of the queue when the recipe gives none. The other keys belong to an item (`id`, `title`,
- * `status`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`).
+ * `status`, `track`, `stage`) or to a track (`id`, `name`, `roadmap`). `mergedPrHead` is the head sha that the record check of the
+ * recipe gave when `item record` recorded the item, and `unassignedFrom` is the list of the workers that `item unassign` took off
+ * the item. Both are reserved field names, so no owner field can take their place.
  */
 export const boardKeys = {
   items: 'items',
@@ -576,6 +597,8 @@ export const boardKeys = {
   docs: 'docs',
   note: 'note',
   defaultQueue: 'queue',
+  mergedPrHead: 'merged_pr_head',
+  unassignedFrom: 'unassigned_from',
 } as const;
 
 /** The keys of the waiting file: the top keys, and the id of a waiting item. */
@@ -596,7 +619,15 @@ export const decisionLogKeys = {
   request: 'request',
   /** Who decided a request that `request close --made-by` closed: a value of `requestDeciders`. Never the owner, never `by`. */
   decider: 'decider',
+  /**
+   * The mark of a row that `request close --relayed` writes: the coordinator passed on an answer of the owner. The value is
+   * `relayedMarker`. A row with this key holds no `by` key, so it is never an owner answer.
+   */
+  relayed: 'relayed',
 } as const;
+
+/** The fixed value of the `relayed` key of a row of the decision log. Only the owner record proves an answer of the owner. */
+export const relayedMarker = 'owner answer, relayed by the coordinator, no owner proof';
 
 /**
  * The deciders of a request that is not an approval point and that the owner did not answer: the coordinator itself, or a delegate,
@@ -768,7 +799,24 @@ export const reservedFieldNames: readonly string[] = [
   boardKeys.tracks,
   boardKeys.track,
   boardKeys.stage,
+  boardKeys.mergedPrHead,
+  boardKeys.unassignedFrom,
 ];
+
+/** The most workers that the list of former workers of one item (`boardKeys.unassignedFrom`) holds. */
+export const markLimits = { maxFormerWorkers: 30 } as const;
+
+/**
+ * The refusal of a change of the worker field of an item that already names a worker: the message names the item, and the remedy
+ * names the one command that takes a worker off an item.
+ */
+export const workerFieldGuard = {
+  message: (id: string): string => `the worker field of ${id} holds a worker`,
+  remedy: (id: string): string => `Run "${commandText(commandLines.itemUnassign)} ${id}" first.`,
+} as const;
+
+/** The time limit of one run of `gh`, in milliseconds. */
+export const ghTimeoutMs = 10_000;
 
 /**
  * The limits of the `board` block of `factory.yaml`. A name, a state and a value is a token: 1 to `maxTokenChars` letters, digits,
@@ -1874,6 +1922,16 @@ export const templateValues: Readonly<Record<string, string>> = {
   lockRunCommand: commandText(commandLines.lockRun),
   lockPriorityFlag: flagText(flags.priority),
   itemMoveCommand: `${commandText(commandLines.itemMove)} <id> ${flagText(flags.stage)} <stage>`,
+  itemRecordCommand: `${commandText(commandLines.itemRecord)} <id> ${flagText(flags.ref)} N`,
+  itemUpdateCommand: commandText(commandLines.itemUpdate),
+  itemUnassignCommand: `${commandText(commandLines.itemUnassign)} <id>`,
+  requestRelayCommand: `${commandText(commandLines.requestClose)} <id> ${flagText(flags.relayed)} ${flagText(flags.decision)} TEXT`,
+  requestLogCommand: `${commandText(commandLines.requestLog)} ${flagText(flags.madeBy)} ${Object.values(requestDeciders).join('|')} ${flagText(flags.title)} TEXT ${flagText(flags.decision)} TEXT`,
+  upgradeCommand: commandText(commands.upgrade),
+  mergedPrHeadKey: boardKeys.mergedPrHead,
+  unassignedFromKey: boardKeys.unassignedFrom,
+  madeByFlag: flagText(flags.madeBy),
+  relayedFlag: flagText(flags.relayed),
   clearFlag: flagText(flags.clear),
   compactFlag: flagText(flags.compact),
   yesFlag: flagText(flags.yes),

@@ -6,7 +6,7 @@ import { ownSettingsEntries } from '../../src/core/claude-settings.js';
 import { ok } from '../../src/core/result.js';
 import { activeMachine, env, schemaIds, stateLock, tmuxNames, type HookEvent } from '../../src/names.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
-import { writeLastSeen } from '../../src/workers/last-seen.js';
+import { writeCoordinatorSession, writeLastSeen } from '../../src/workers/last-seen.js';
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import { claudeFileText } from '../helpers/blocks.js';
 import {
@@ -51,6 +51,8 @@ const SESSION: Readonly<Record<Id, string>> = {
 };
 const PID: Readonly<Record<Id, number>> = { alpha: 4101, beta: 4102, gamma: 4103 };
 const PANE: Readonly<Record<Id, string>> = { alpha: '%10', beta: '%11', gamma: '%12' };
+/** The session id in the pointer of the coordinator. */
+const COORDINATOR_SESSION = '0b6c1f9e-2d3a-4b5c-8d7e-9f0a1b2c3d4e';
 const byResume: Readonly<Record<string, string>> = Object.fromEntries(IDS.map((id) => [SESSION[id], id]));
 
 /** The remedy of a reboot that fails after the first stop, before the session ends, and after it ends. */
@@ -79,6 +81,8 @@ interface Setup {
   readonly workers?: Readonly<Partial<Record<Id, WorkerSpec>>>;
   /** The tmux sessions. Default: the session of the node, with the home of the fixture. */
   readonly sessions?: TmuxFixture['sessions'];
+  /** True: the pointer of the coordinator holds a session id that the coordinator may resume. Default: no pointer. */
+  readonly coordinatorResumes?: boolean;
   /** Panes of other sessions of the fixture. */
   readonly otherPanes?: readonly PaneFixture[];
   /** The command runs in this pane of the session: the pane of the coordinator, the board pane, or the pane of a worker. Default: outside the session. */
@@ -260,6 +264,10 @@ const make = async (setup: Setup = {}): Promise<Made> => {
   for (const project of config.recipe.projects) deps.seedDir(`${HOME}/${project.path}`);
   registerRoot(deps, HOME, config.core.node.id);
   for (const id of worked) await seedWorker(deps, id, specs[id] ?? {});
+  if (setup.coordinatorResumes === true) {
+    must(await writeCoordinatorSession(deps, HOME, COORDINATOR_SESSION));
+    must(await writeLastSeen(deps, HOME, COORDINATOR_SESSION, { kind: 'event', event: 'Stop' }, NODE));
+  }
   if (setup.mark !== undefined) {
     deps.seed(MACHINE_ID_FILE, `${OWN_MACHINE}\n`);
     deps.seed(MARK_FILE, markText(setup.mark === 'own' ? OWN_MACHINE : OTHER_MACHINE));
@@ -918,6 +926,15 @@ describe('reboot (AC-20)', () => {
     });
     expect(textOf(output)).toContain('Started the session demo again.');
     expect(textOf(output)).toContain('Attach with: tmux attach -t demo');
+  });
+
+  it('says that the coordinator resumes its earlier conversation, and that it must follow the current rules of the block', async () => {
+    const made = await make({ coordinatorResumes: true });
+    const output = await succeeded(reboot(made));
+    expect(output.json).toMatchObject({ coordinatorResumed: true });
+    expect(output.lines.map((line) => line.text)).toContain(
+      'The coordinator resumes its earlier conversation. It must follow the current rules of the coordinator block.',
+    );
   });
 
   it('exits 4 and ends nothing for a session of the same name that belongs to another home (TP-45)', async () => {

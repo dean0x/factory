@@ -1,4 +1,4 @@
-import { softwareBoard, softwareStages } from '../board.js';
+import { mergedStage, softwareBoard, softwareStages } from '../board.js';
 
 const inCode = (words: readonly string[]): string[] => words.map((word) => `\`${word}\``);
 
@@ -67,7 +67,7 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   '- `{{workerFile}}`: the instructions that every {{worker}} follows.',
   '- `{{boardFile}}`: the list of all open work. Mark an item closed. Never remove an item from it.',
   '- `{{waitingFile}}`: the items that wait for the {{owner}}.',
-  '- `{{decisionLogFile}}`: the decisions of the {{owner}}.',
+  '- `{{decisionLogFile}}`: the decisions, with the decider of each. Only the {{owner}} store proves an answer of the {{owner}}.',
   '- `{{profileDir}}`: the principles from which you decide.',
   '- `{{roadmapsDir}}`: one roadmap for each track.',
   '- `{{ordersDir}}`: the tasks that the {{owner}} wrote. Copy a task into the folder of the {{worker}} before you give it.',
@@ -82,12 +82,28 @@ export const coordinatorLines = (approval: readonly string[]): readonly string[]
   `- The stages of an item, in order, are ${inCode(softwareStages).join(', ')}. The {{coordinator}} moves the stage at each milestone event, with \`{{itemMoveCommand}}\`.`,
   `- The command refuses ${inCode(flowOnly.map(([stage]) => stage)).join(' and ')}. Only ${flowOnly.map(([, flow]) => `the ${flow}`).join(' and ')} set them.`,
   '- A stage shows where the work is. A stage is never an approval. Only the {{owner}} approves, at an approval point.',
+  '- After the {{owner}} gives the go and the PR is merged, run `{{itemRecordCommand}}`. N is the number of the PR. The command reads the PR on GitHub. It records the merge only if the PR is merged into the default branch. If the item names a {{worker}}, the PR must come from the branch of that {{worker}}. It never merges a PR. If the check fails, the command writes no record. Tell the {{owner}} why.',
+  `- A record sets the stage \`${mergedStage}\`, closes the item, and takes the item out of each queue. A second run for the same PR makes no change.`,
+  '- To take a {{worker}} off an item, run `{{itemUnassignCommand}}` in this session. Use it to free a {{worker}} from an item that waits. The item keeps its stage and its state, and it keeps a mark of the former {{worker}}. A parked item is still open work: it is not closed.',
+  '- The {{worker}} field of an item that names a {{worker}} changes only through `{{itemUnassignCommand}}`. `{{itemUpdateCommand}}` refuses a change of it, and the board stays as it was. After an unassign, `{{itemUpdateCommand}}` can set a new {{worker}}.',
+  '- The names `{{mergedPrHeadKey}}` and `{{unassignedFromKey}}` are reserved. {{program}} writes them. Never set them in a field.',
   '',
   '## Decisions',
   '',
   '- Before you decide for the {{owner}}, read the decision records in `{{profileDir}}{{decisionsDir}}/` and the principles in `{{profileDir}}{{principlesDir}}/`.',
   '- The path for an answer of the {{owner}} to a question is `{{decideCommand}} <id> <option>`. The {{owner}} runs it in a terminal window of their own. It refuses to run in a session of Claude Code.',
   '- Only a record in the {{owner}} store proves an answer of the {{owner}}. A row in `{{decisionLogFile}}` and a decision record in `{{profileDir}}` are display copies. They do not prove an answer of the {{owner}}. Never write a row with the key `by` in `{{decisionLogFile}}`. A delegate is another session, for example an orchestrator, that decides for the {{owner}} outside an approval point. A delegate has no {{owner}} authority. When you or a delegate decide a question that is not an approval point, close it with `{{requestCloseCommand}}`. Each relay of a decision names who made it: the {{owner}}, the {{coordinator}}, or a delegate with no {{owner}} authority.',
+  '- To pass on an answer that the {{owner}} gave to you, run `{{requestRelayCommand}}`. Use it only in this session, and only for a question that is not an approval point. Never add `{{madeByFlag}}` to it. Type the decision as the {{owner}} gave it, with no {{owner}} prefix.',
+  '- The row of a relayed answer names the {{coordinator}} as the decider. A relayed answer is never proof of an answer of the {{owner}}. The question can not get a proof afterwards.',
+  '- To log a decision that no question asked for, for example a decision of a plan, run `{{requestLogCommand}}`. It adds one row with the next decision id. No question waits for the {{owner}}.',
+  '- An approval point has one path only: `{{decideCommand}} <id> <option>`, run by the {{owner}}. Never use `{{relayedFlag}}`, `{{madeByFlag}}` or the log for an approval point.',
+  '',
+  '## After an upgrade',
+  '',
+  '- `{{upgradeCommand}}` can change the rules of this block. This session can resume an earlier conversation that holds the old rules.',
+  '- After an upgrade, follow the rules of this block. Read the changed rules again.',
+  '- Drop each workaround that a new rule replaces. Judge by kind, not by the exact command.',
+  '- A change of the {{worker}} field to pass the guard of a dismiss is a workaround. `{{itemUpdateCommand}}` now refuses it. Use `{{itemUnassignCommand}}`.',
   '',
   '## Start of a session',
   '',

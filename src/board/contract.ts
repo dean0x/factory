@@ -1,5 +1,6 @@
 import type { CliResult } from '../cli/errors.js';
 import type { requestDeciders } from '../names.js';
+import type { CheckedRecord } from '../recipes/entry.js';
 import type { DecideRequest } from './decide.js';
 
 /**
@@ -138,10 +139,31 @@ export interface RequestClosed {
 /** Who decided a request that the owner did not answer: a value of `requestDeciders`. The owner answers with `decide`. */
 export type RequestDecider = (typeof requestDeciders)[keyof typeof requestDeciders];
 
-/** The decision of a request that is not an approval point, and who made it. The text is one line. */
-export interface RequestSettlement {
+/**
+ * The decision of a request that is not an approval point, and who made it. The text is one line. A relayed settlement passes on an
+ * answer of the owner: only the coordinator relays, so its decider is fixed. It is never an owner answer.
+ */
+export type RequestSettlement =
+  | { readonly decider: RequestDecider; readonly decision: string; readonly relayed?: undefined }
+  | { readonly decider: typeof requestDeciders.coordinator; readonly decision: string; readonly relayed: true };
+
+/** The input of `logDecision`: a one-line title, and the decision with its decider. The decider is never the owner. */
+export interface DecisionLogInput {
+  readonly title: string;
   readonly decider: RequestDecider;
   readonly decision: string;
+}
+
+/** What `recordChecked` did: the item after the write, and whether the board changed. A record that was made already changes nothing. */
+export interface ItemRecorded {
+  readonly item: BoardItem;
+  readonly changed: boolean;
+}
+
+/** What `unassignItem` did: the item after the write, and the worker that it took off. */
+export interface ItemUnassigned {
+  readonly item: BoardItem;
+  readonly worker: string;
 }
 
 /**
@@ -284,9 +306,27 @@ export interface LocalBoard extends BoardConnector {
    * Take a request off the waiting file and add a row for it to the decision log, in one commit. The row names no owner who answered,
    * so it is no owner answer, and the number of the request is never given again. With a settlement, the row holds the decision text
    * and the decider (the coordinator or a delegate). Without one, it says that the request closed with no answer. A request that has a
-   * record in the owner decision file is refused, and so is a decision file that can not be read.
+   * record in the owner decision file is refused, and so is a decision file that can not be read. A relayed settlement adds the fixed
+   * relayed marker to the row: the row names the coordinator as its decider and is no owner answer.
    */
   closeRequest(id: string, settlement?: RequestSettlement): Promise<CliResult<RequestClosed>>;
+  /**
+   * Add one row to the decision log, with the next decision number, and no waiting entry. The row names its decider, who is never the
+   * owner. The value is the new number. It writes no owner record and no profile record.
+   */
+  logDecision(input: DecisionLogInput): Promise<CliResult<string>>;
+  /**
+   * Record a check of the recipe that passed (`checked`), in one commit: the stage of the check, the closed state, the head of the
+   * check, and the item taken out of each queue row that lists it. `worker` is the worker that the check bound to the item (null for
+   * none). The item must still hold that worker under the lock, else the record stops with exit 1 and writes nothing. A record that
+   * is made already, with the same head, changes nothing; a record of another head is exit 1.
+   */
+  recordChecked(id: string, checked: CheckedRecord, worker: string | null): Promise<CliResult<ItemRecorded>>;
+  /**
+   * Take the worker off an item: delete the worker key, keep the state and the stage, and add the former worker to the list of
+   * former workers of the item. This is the only way to remove a worker from an item.
+   */
+  unassignItem(id: string): Promise<CliResult<ItemUnassigned>>;
   /** The rows of the queue, in file order. */
   listQueue(): Promise<CliResult<readonly QueueRow[]>>;
   /** Add a row to the queue, change a row, or move it. */

@@ -10,7 +10,17 @@ import {
 } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { commandTable, globalOptions, parseFlags } from '../../src/cli/table.js';
-import { commands, flags, itemCommands, queueCommands, requestCommands, selfCommands, trackCommands, workerCommands } from '../../src/names.js';
+import {
+  commands,
+  flags,
+  itemCommands,
+  queueCommands,
+  relayedMarker,
+  requestCommands,
+  selfCommands,
+  trackCommands,
+  workerCommands,
+} from '../../src/names.js';
 import { FACTORY_VERSION } from '../../src/version.js';
 import { boardNode, boardText, itemRecord } from '../helpers/board-node.js';
 import { createFakeDeps, registerRoot, type FakeDeps, type FakeOptions } from '../helpers/fake-deps.js';
@@ -819,6 +829,38 @@ describe('the item and track commands in the command line', () => {
     expect(result.err).toContain('--follow is not for');
   });
 
+  it('shows the record and the release of a worker in the help of item, with their flags, and the words of the recipe', async () => {
+    const result = await run(['item', '--help']);
+    expect(result.code).toBe(0);
+    expect(result.out).toContain('factory item record ID --ref REF [--project PROJECT] [--home DIR]');
+    expect(result.out).toContain('factory item unassign ID [--home DIR]');
+    expect(result.out).toContain('record a merged PR, and take the worker off an item');
+    expect(result.out).toMatch(/--ref REF\s+With record: the reference that the check of the recipe reads\./);
+    expect(result.out).toMatch(/In the software recipe: the number of the PR\./);
+    expect(result.out).toMatch(/--project PROJECT\s+With record: the id of the project of the work\./);
+  });
+
+  it('says in the help of item that the worker field changes only through unassign', async () => {
+    const result = await run(['item', '--help']);
+    expect(result.out).toMatch(/The worker field of an item that names a worker changes only through\s+unassign\./);
+  });
+
+  it('passes the reference flag and the project flag of item record to the command', async () => {
+    const repo = await boardNode({ board: boardText([itemRecord('B-1', { stage: 'review' })], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, err: sink.errors.join('') };
+    };
+    const badNumber = await runBoard(['item', 'record', 'B-1', '--ref', '012']);
+    expect(badNumber.code).toBe(2);
+    expect(badNumber.err).toContain('--ref: must be a whole number');
+    const unknownProject = await runBoard(['item', 'record', 'B-1', '--ref', '12', '--project', 'nope']);
+    expect(unknownProject.code).toBe(2);
+    expect(unknownProject.err).toContain('the project "nope" is not in the config');
+    expect(repo.commits).toEqual([]);
+  });
+
   it('shows one usage line for each subcommand of request and of queue', () => {
     for (const subcommand of Object.values(requestCommands)) {
       expect(usageOf(commands.request), subcommand).toContain(`factory ${commands.request} ${subcommand} `);
@@ -906,6 +948,34 @@ describe('the item and track commands in the command line', () => {
     const closed = await runBoard(['request', 'close', 'D-1', '--made-by', 'coordinator', '--decision', 'Use plan A']);
     expect(closed.code).toBe(0);
     expect(closed.out).toBe('Closed D-1: Pick (decided by the coordinator, no owner authority)\n');
+  });
+
+  it('shows the relayed close and the log of a decision in the help of request, with their flags, and no word of the decide command', async () => {
+    const asked = await run(['request', '--help']);
+    expect(asked.code).toBe(0);
+    expect(asked.out).toContain('factory request close ID --relayed --decision TEXT [--home DIR]');
+    expect(asked.out).toContain('factory request log --title TEXT --made-by WHO --decision TEXT [--home DIR]');
+    expect(asked.out).toMatch(/--relayed\s+With close: /);
+    expect(asked.out.replace(/\s+/g, ' ')).toContain(relayedMarker);
+    expect(asked.out.toLowerCase()).not.toContain('decide');
+  });
+
+  it('passes the relayed flag and the title of a log to the command from the command line', async () => {
+    const repo = await boardNode({ board: boardText([], []) });
+    const runBoard = async (argv: readonly string[]) => {
+      const sink = captureSink();
+      const code = await runCli([...argv, '--home', BOARD_HOME], repo.deps, sink);
+      return { code, out: sink.out.join(''), err: sink.errors.join('') };
+    };
+    await runBoard(['request', 'add', '--title', 'Pick', '--question', 'Which?', '--option', 'a=Plan A']);
+    const relayed = await runBoard(['request', 'close', 'D-1', '--relayed', '--decision', 'Use plan A']);
+    expect(relayed.code).toBe(2);
+    expect(relayed.err).toContain('TMUX_PANE');
+    expect(relayed.err).not.toContain('Use plan A');
+    const logged = await runBoard(['request', 'log', '--title', 'Naming', '--made-by', 'delegate', '--decision', 'Use short names']);
+    expect(logged.code).toBe(0);
+    expect(logged.out).toBe('Logged D-2: Naming (decided by the delegate, no owner authority)\n');
+    expect(repo.commits).toHaveLength(2);
   });
 
   it('M5-1b TP-22 prints the document of request add and of queue set for the JSON flag', async () => {

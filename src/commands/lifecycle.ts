@@ -33,7 +33,7 @@ import { recoverWorkers, type RecoveryReport } from '../workers/recovery.js';
 import { listWorkerRecords, requireRecord } from '../workers/registry.js';
 import { stopWorker, type StopOutcome } from '../workers/stop.js';
 import { prepareLaunch, prepareRoot } from './launch-checks.js';
-import { renderStartFiles, requireSessionGit, startAgain } from './start.js';
+import { coordinatorResumeLine, renderStartFiles, requireSessionGit, startAgain } from './start.js';
 
 /**
  * The lifecycle verbs (design 4.11): `shutdown` ends this factory, `restart` stops one worker and starts it again with its session
@@ -303,7 +303,7 @@ const rebootOutside = async (
     lines: [
       ...stoppedLines(ended.value.stopped),
       text(`Started the session ${session} again.`),
-      ...(coordinatorResumed ? [text(`The ${roles.coordinator} resumes its earlier conversation.`)] : []),
+      ...(coordinatorResumed ? [coordinatorResumeLine()] : []),
       ...recoveryLines(workers),
       text(`Attach with: ${attachHint(session)}`),
     ],

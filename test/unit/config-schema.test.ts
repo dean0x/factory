@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { durationMinutes, isSlug, slugify } from '../../src/config/primitives.js';
 import { CONFIG_SCHEMA_VERSION, localConfigSchema, mergeConfig, splitConfigValue } from '../../src/config/schema.js';
 import { describeIssues } from '../../src/core/zod.js';
-import { boardLimits, files, reservedFieldNames, values } from '../../src/names.js';
+import { boardKeys, boardLimits, files, reservedFieldNames, values } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { parseProxyUrl } from '../../src/safety/proxy.js';
 import { parseConfig, sharedConfigSchema } from '../helpers/package-registry.js';
@@ -813,6 +813,14 @@ describe('the board block (AC-12)', () => {
       expect(checkBoard((board) => (board.fields[1].name = name))).toContain('board.fields.1.name:');
     }
     expect(checkBoard((board) => (board.fields[1].name = 'stages'))).toBeNull();
+  });
+
+  it('refuses the keys of a merge record and of an unassign mark as the name of a field, and says to rename the field', () => {
+    for (const name of [boardKeys.mergedPrHead, boardKeys.unassignedFrom]) {
+      const message = checkBoard((board) => (board.fields[1].name = name));
+      expect(message, name).toContain('board.fields.1.name:');
+      expect(message, name).toContain('Rename the field');
+    }
   });
 
   it('M5-1b TP-27 refuses a role with no declared state', () => {

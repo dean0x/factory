@@ -3,6 +3,7 @@ import type { RecipeEntry } from '../entry.js';
 import { softwareApprovalPoints } from './approval.js';
 import { softwareBoard } from './board.js';
 import { softwareRecipeSchema } from './config.js';
+import { softwareRecordCheck } from './record.js';
 import { softwareRoles } from './recipe.js';
 import {
   mergeMethods,
@@ -12,7 +13,7 @@ import {
   softwareWordList,
 } from './words.js';
 
-/** The software recipe: its block parser, its approval points, its words, its roles and its board. */
+/** The software recipe: its block parser, its approval points, its words, its roles, its board and its record check. */
 export const softwareRecipe: RecipeEntry = {
   id: values.recipes[0],
   schema: softwareRecipeSchema,
@@ -25,4 +26,5 @@ export const softwareRecipe: RecipeEntry = {
   initProjectKeys: [keys.project.url, keys.project.repo, keys.project.defaultBranch, keys.project.gate],
   roles: softwareRoles,
   board: softwareBoard,
+  recordCheck: softwareRecordCheck,
 };

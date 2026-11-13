@@ -6,6 +6,9 @@ export const softwareStages = ['ticket', 'plan-approved', 'building', 'review', 
 
 type SoftwareStage = (typeof softwareStages)[number];
 
+/** The stage that the record check sets on an item whose PR is merged. */
+export const mergedStage = 'merged' satisfies SoftwareStage;
+
 /**
  * The stages that only a flow sets, each with the name of its flow. The merge flow and the release flow set them, and no
  * board command does. The key of each entry must be a listed stage.

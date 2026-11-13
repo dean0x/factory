@@ -1,30 +1,39 @@
-import { failure, usageError, type CliResult } from '../cli/errors.js';
+import { failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import { displayLine } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
-import { ok } from '../core/result.js';
+import { ok, type Err } from '../core/result.js';
 import {
   boardIds,
   boardKeys,
   boardLimits,
   boardTextLimits,
+  commandLines,
+  commandText,
   decisionKeys,
   decisionLogKeys,
   files,
+  flags,
+  flagText,
+  markLimits,
   maxBoardNumber,
   maxEchoChars,
   optionKeys,
   places,
   queueLimits,
+  relayedMarker,
   requestDeciders,
   requestWords,
+  roles,
   trackLimits,
   waitingKeys,
+  workerFieldGuard,
 } from '../names.js';
-import type { RecipeBoard } from '../recipes/entry.js';
+import type { CheckedRecord, RecipeBoard } from '../recipes/entry.js';
 import { isPlainPath } from '../state/board-commit.js';
 import type {
   BoardItem,
   DecisionAskInput,
+  DecisionLogInput,
   FieldValues,
   ItemAddInput,
   ItemMove,
@@ -41,7 +50,7 @@ import { declaredFields, itemTarget, resolveFields, rowTarget, type FieldInput }
 import type { BoardDoc, DecisionLogDoc, WaitingDoc } from './files.js';
 import { rowItemsOf, rowNameOf } from './queue.js';
 import { requestTitleOf } from './requests.js';
-import { firstStageOf, requireSettableStage } from './stages.js';
+import { firstStageOf, requireSettableStage, requireStage } from './stages.js';
 import { holdsBreak, lineIssue } from './text.js';
 import { trackIdIssue, trackNameIssue } from './tracks.js';
 
@@ -116,17 +125,36 @@ export interface ItemChanges {
   readonly text: string | undefined;
   readonly track: string | undefined;
   readonly fields: FieldValues;
+  /**
+   * The refusal of an empty value for the worker field, held back until the item is read under the lock. An item that holds a worker
+   * answers it with the remedy of the worker field guard, and any other item answers it with this refusal. No write holds an empty value.
+   */
+  readonly emptyWorker: Err<CliError> | undefined;
 }
 
-/** The parts of a change of an item. A part that is left out stays as it is. */
+/**
+ * The parts of a change of an item. A part that is left out stays as it is. An empty value for the worker field is not refused here:
+ * `changeItemIn` refuses it once it knows whether the item holds a worker.
+ */
 export const checkPatch = (setup: BoardSetup, patch: ItemPatch): CliResult<ItemChanges> => {
   const title = optionalLineOf('title', patch.title, boardTextLimits.maxTitleChars);
   if (!title.ok) return title;
   const text = optionalLineOf('text', patch.text, boardTextLimits.maxTextChars);
   if (!text.ok) return text;
-  const fields = resolveFields(setup.config, itemTarget, inputsOf(patch.fields), { complete: false });
+  const inputs = inputsOf(patch.fields);
+  const workerField = setup.config?.worker_field;
+  const emptied = inputs.filter((input) => input.name === workerField && input.value === '');
+  const held = emptied.length === 1 && inputs.filter((input) => input.name === workerField).length === 1;
+  const fields = resolveFields(setup.config, itemTarget, held ? inputs.filter((input) => !emptied.includes(input)) : inputs, { complete: false });
   if (!fields.ok) return fields;
-  return ok({ title: title.value, text: text.value, track: patch.track, fields: fields.value });
+  const refusal = held ? resolveFields(setup.config, itemTarget, emptied, { complete: false }) : undefined;
+  return ok({
+    title: title.value,
+    text: text.value,
+    track: patch.track,
+    fields: fields.value,
+    emptyWorker: refusal === undefined || refusal.ok ? undefined : refusal,
+  });
 };
 
 /**
@@ -329,10 +357,29 @@ export const addItemIn = (doc: BoardDoc, item: NewItem): CliResult<Edit<string>>
   return ok({ top: withItems(doc, [...doc.items.map((entry) => entry.record), Object.fromEntries(entries)]), value: id.value });
 };
 
-/** Change the title, the text, the track and the fields of an item. The value is the id. */
-export const changeItemIn = (doc: BoardDoc, id: string, changes: ItemChanges): CliResult<Edit<string>> => {
+/**
+ * Change the title, the text, the track and the fields of an item. The value is the id.
+ *
+ * The worker field guard: when the patch holds the worker field, and the stored item has the key, a new value that differs from the
+ * stored one, or an empty value, is a usage error (exit 2) that names the command that takes a worker off an item. Only `unassignIn`
+ * removes a worker. An empty value for an item with no worker key is refused as `checkPatch` held it back. An item with no worker key
+ * takes a worker, and a patch with the stored value changes nothing. The guard reads the item that was
+ * read under the lock, so a worker that arrived after the first look still stops the patch. A stored value of any kind counts, so
+ * the guard does not lower for a value that is not text.
+ */
+export const changeItemIn = (
+  doc: BoardDoc,
+  id: string,
+  changes: ItemChanges,
+  workerField: string | undefined,
+): CliResult<Edit<string>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
+  if (workerField !== undefined && Object.hasOwn(found.value.record, workerField)) {
+    const changed = Object.hasOwn(changes.fields, workerField) && changes.fields[workerField] !== found.value.record[workerField];
+    if (changed || changes.emptyWorker !== undefined) return usageError(workerFieldGuard.message(id), workerFieldGuard.remedy(id));
+  }
+  if (changes.emptyWorker !== undefined) return changes.emptyWorker;
   if (changes.track !== undefined) {
     const track = requireTrack(doc, changes.track);
     if (!track.ok) return track;
@@ -362,6 +409,154 @@ export const closeItemIn = (doc: BoardDoc, id: string, closed: string): CliResul
   if (!found.ok) return found;
   const next = withKeys(found.value.record, [[boardKeys.status, closed]]);
   return ok({ top: next.changed ? withItem(doc, id, next.record) : null, value: id });
+};
+
+/**
+ * The stage and the closed state that a record sets: the stage of the record check must be in the recipe (also one that only a flow
+ * sets), and the setup must name a closed state.
+ */
+export const checkRecordSetup = (
+  setup: BoardSetup,
+  recordStage: string,
+): CliResult<{ readonly stage: string; readonly closed: string }> => {
+  const stage = requireStage(setup.recipe, recordStage);
+  if (!stage.ok) return stage;
+  const closed = checkClose(setup);
+  return closed.ok ? ok({ stage: stage.value, closed: closed.value }) : closed;
+};
+
+/** The setup check for a record that passed, before the lock: the stage of the record must be in the recipe, and the setup must name a closed state. */
+export const checkRecorded = (setup: BoardSetup, checked: CheckedRecord): CliResult<void> => {
+  const target = checkRecordSetup(setup, checked.stage);
+  return target.ok ? ok(undefined) : target;
+};
+
+/** The message of the commit that records a passed check: the item, the stage and the summary of the check. */
+export const recordMessage = (id: string, checked: CheckedRecord): string =>
+  `chore: record item ${id} as ${checked.stage} (${checked.summary})`;
+
+/** The worker field of the setup, else a usage error (exit 2): without a worker field no item has a worker to take off. */
+export const checkWorkerField = (setup: BoardSetup): CliResult<string> => {
+  const field = setup.config?.worker_field;
+  return field === undefined ? usageError(`the setup names no ${roles.worker} field, so no item has a ${roles.worker}`) : ok(field);
+};
+
+/** The queue rows without the item. A row that lists it loses it, and a row that becomes empty goes. Every other row stays as it is. */
+const queueWithout = (doc: BoardDoc, id: string): { readonly rows: readonly Stored[]; readonly changed: boolean } => {
+  const rows: Stored[] = [];
+  let changed = false;
+  for (const row of doc.queue) {
+    const listed = rowItemsOf(row);
+    if (!listed.includes(id)) {
+      rows.push(row);
+      continue;
+    }
+    changed = true;
+    const left = listed.filter((entry) => entry !== id);
+    if (left.length > 0) rows.push({ ...row, [boardKeys.items]: left });
+  }
+  return { rows, changed };
+};
+
+/** The id of an item other than `id` that records `head`, or undefined when no other item does. */
+const headHolderIn = (doc: BoardDoc, id: string, head: string): string | undefined =>
+  doc.items.find((other) => other.id !== id && other.record[boardKeys.mergedPrHead] === head)?.id;
+
+/**
+ * Record a passed check in the item and the queue, in one top object. The item gets the stage of the check (any listed stage, also
+ * one that only a flow sets), the closed state and the head of the check (`checked.head`; the rest of the summary goes to the
+ * message of the commit only). The id leaves each queue row that lists it. The value is true when the board changes.
+ *
+ * `workerName` is the worker that the check bound to the item (null for none). The item must still hold exactly that worker in the
+ * worker field, else the check read another item than the one that is on the board now: exit 1, nothing changes. An item that
+ * records another head is exit 1 too, and so is an item whose check gives a head that another item records already: a later guard
+ * trusts the recorded head, so one head belongs to one item. This test reads the board under the lock, so it holds against a race.
+ * An item that holds the stage, the state and the head already, and that no queue row lists, is a rerun: the edit gives no top object.
+ * A rerun of an item that records the head is not tested against the other items, so it stays a success.
+ */
+export const recordCheckedIn = (
+  doc: BoardDoc,
+  setup: BoardSetup,
+  id: string,
+  checked: CheckedRecord,
+  workerName: string | null,
+): CliResult<Edit<boolean>> => {
+  const target = checkRecordSetup(setup, checked.stage);
+  if (!target.ok) return target;
+  const found = itemAt(doc, id);
+  if (!found.ok) return found;
+  const { record } = found.value;
+  const workerField = setup.config?.worker_field;
+  const holds = workerField !== undefined && Object.hasOwn(record, workerField) ? record[workerField] : null;
+  if (holds !== workerName) {
+    return failure(
+      `the ${roles.worker} field of ${id} changed after the check`,
+      `Run "${commandText(commandLines.itemRecord)} ${id} ${flagText(flags.ref)} ${displayLine(checked.ref, maxEchoChars)}" again.`,
+    );
+  }
+  if (Object.hasOwn(record, boardKeys.mergedPrHead) && record[boardKeys.mergedPrHead] !== checked.head) {
+    return failure(`${id} records another head already`);
+  }
+  const holder = record[boardKeys.mergedPrHead] === checked.head ? undefined : headHolderIn(doc, id, checked.head);
+  if (holder !== undefined) {
+    return failure(
+      `the item ${holder} records the head of this check already`,
+      `Check the item and the reference, then run "${commandText(commandLines.itemRecord)} ${id} ${flagText(flags.ref)} ${displayLine(checked.ref, maxEchoChars)}" again.`,
+    );
+  }
+  const next = withKeys(record, [
+    [boardKeys.status, target.value.closed],
+    [boardKeys.stage, target.value.stage],
+    [boardKeys.mergedPrHead, checked.head],
+  ]);
+  const queue = queueWithout(doc, id);
+  if (!next.changed && !queue.changed) return ok({ top: null, value: false });
+  const top = withItem(doc, id, next.record);
+  return ok({ top: queue.changed ? { ...top, [doc.queueKey]: queue.rows } : top, value: true });
+};
+
+/**
+ * The former workers of an item, else a failure (exit 1) when the stored value is not a list of text. The remedy of the failure
+ * names the command that the caller ran (a name from `commandLines`) and the words that follow it, so the person can run it again.
+ */
+export const formerWorkersOf = (record: Stored, id: string, command: string, rest: string): CliResult<readonly string[]> => {
+  const stored = record[boardKeys.unassignedFrom];
+  if (stored === undefined) return ok([]);
+  if (Array.isArray(stored) && stored.every((entry): entry is string => typeof entry === 'string')) return ok(stored);
+  return failure(
+    `${files.board}: the "${boardKeys.unassignedFrom}" of ${id} is not a list of text`,
+    `Check the item in ${files.board}, then run "${commandText(command)}${rest}" again.`,
+  );
+};
+
+/**
+ * Take the worker off an item: delete the worker key and add the worker to the list of former workers of the item, once. The state,
+ * the stage and every other key stay. A worker field that does not hold text is a usage error (exit 2), and so is a list of former
+ * workers that is full and does not name the worker (`markLimits.maxFormerWorkers`): the edit then stops, so the worker field
+ * stays guarded. A stored list that is not a list of text is a failure (exit 1). The value is the former worker.
+ */
+export const unassignIn = (doc: BoardDoc, id: string, workerField: string): CliResult<Edit<string>> => {
+  const found = itemAt(doc, id);
+  if (!found.ok) return found;
+  const { record } = found.value;
+  const again = `${commandText(commandLines.itemUnassign)} ${id}`;
+  if (!Object.hasOwn(record, workerField)) return usageError(`the item ${id} has no ${roles.worker} to take off`);
+  const worker = record[workerField];
+  if (typeof worker !== 'string') {
+    return usageError(`the ${roles.worker} field of ${id} does not hold text`, `Check the item in ${files.board}, then run "${again}" again.`);
+  }
+  const former = formerWorkersOf(record, id, commandLines.itemUnassign, ` ${id}`);
+  if (!former.ok) return former;
+  const named = former.value.includes(worker);
+  if (!named && former.value.length >= markLimits.maxFormerWorkers) {
+    return usageError(
+      `the item ${id} names ${markLimits.maxFormerWorkers} former ${roles.worker}s already, so it takes no more`,
+      `Take a former ${roles.worker} out of the "${boardKeys.unassignedFrom}" of the item in ${files.board}, then run "${again}" again.`,
+    );
+  }
+  const without = Object.fromEntries(Object.entries(record).filter(([key]) => key !== workerField));
+  const marked = named ? without : withKeys(without, [[boardKeys.unassignedFrom, [...former.value, worker]]]).record;
+  return ok({ top: withItem(doc, id, marked), value: worker });
 };
 
 /** Add a path to the `docs` of an item. A path that the item has stays once. The value is the id. */
@@ -441,22 +636,49 @@ const DECIDERS: readonly string[] = Object.values(requestDeciders);
 export const isDecider = (value: unknown): value is RequestDecider => typeof value === 'string' && DECIDERS.includes(value);
 
 /**
- * The settlement of a close, checked before the lock: the decider is a value of `requestDeciders`, so the owner is never one, and the
- * decision text is one line of at most `boardTextLimits.maxTextChars`. A fault is a usage error (exit 2). This is the only function
- * that makes a `CheckedSettlement`, so `closeRequestIn` takes no settlement that skipped the check.
+ * The checked form of a settlement: the decider is a value of `requestDeciders`, so the owner is never one, and the decision text is
+ * one line of at most `boardTextLimits.maxTextChars`. A relayed settlement has the coordinator as its decider. A fault is a usage
+ * error (exit 2). This is the only function that makes a `CheckedSettlement`, so `closeRequestIn` and `logDecisionIn` take no
+ * settlement that skipped the check.
  */
-export const checkSettlement = (settlement: RequestSettlement | undefined): CliResult<CheckedSettlement | undefined> => {
-  if (settlement === undefined) return ok(undefined);
+const settle = (settlement: RequestSettlement): CliResult<CheckedSettlement> => {
   if (!isDecider(settlement.decider)) return usageError(`the decider must be ${DECIDERS.join(' or ')}`);
+  if (settlement.relayed === true && settlement.decider !== requestDeciders.coordinator) {
+    return usageError(`a relayed answer names the ${requestDeciders.coordinator} as its decider`);
+  }
   const decision = lineOf(decisionLogKeys.decision, settlement.decision, boardTextLimits.maxTextChars);
-  return decision.ok ? ok({ decider: settlement.decider, decision: decision.value } as CheckedSettlement) : decision;
+  if (!decision.ok) return decision;
+  return ok({
+    decider: settlement.decider,
+    decision: decision.value,
+    ...(settlement.relayed === true ? { relayed: true } : {}),
+  } as CheckedSettlement);
+};
+
+/** The settlement of a close, checked before the lock. A close with no settlement stays with none. */
+export const checkSettlement = (settlement: RequestSettlement | undefined): CliResult<CheckedSettlement | undefined> =>
+  settlement === undefined ? ok(undefined) : settle(settlement);
+
+/** The title and the settlement of a logged decision, checked before the lock. */
+export interface CheckedLogEntry {
+  readonly title: string;
+  readonly settlement: CheckedSettlement;
+}
+
+/** A logged decision: a one-line title, and a decision with a decider that is never the owner. A fault is a usage error (exit 2). */
+export const checkLogEntry = (input: DecisionLogInput): CliResult<CheckedLogEntry> => {
+  const title = lineOf('title', input.title, boardTextLimits.maxTitleChars);
+  if (!title.ok) return title;
+  const settlement = settle({ decider: input.decider, decision: input.decision });
+  return settlement.ok ? ok({ title: title.value, settlement: settlement.value }) : settlement;
 };
 
 /**
  * Take a request off the waiting file and add a row for it to the decision log, so the number of the request stays used. The row
  * holds the id and the title in its `item` text, the decision text and the date. With a settlement, the decision text is the text of
- * the settlement and the row names its decider; without one, the text says that the request closed with no answer. The row never holds
- * the owner key `by`, so no reader counts it as an owner answer. A request that is not in the waiting file is a usage error (exit 2).
+ * the settlement and the row names its decider; without one, the text says that the request closed with no answer. A relayed
+ * settlement adds the fixed relayed marker (`relayedMarker`) to the row. The row never holds the owner key `by`, so no reader counts
+ * it as an owner answer. A request that is not in the waiting file is a usage error (exit 2).
  * A log that names the id already is a failure (exit 1), because the log would name the id twice. Every other entry of both files
  * stays as it is.
  */
@@ -476,8 +698,34 @@ export const closeRequestIn = (
     [decisionLogKeys.decision]: settlement?.decision ?? requestWords.closedDecision,
     [decisionLogKeys.date]: date,
     ...(settlement === undefined ? {} : { [decisionLogKeys.decider]: settlement.decider }),
+    ...(settlement?.relayed === true ? { [decisionLogKeys.relayed]: relayedMarker } : {}),
   };
   return ok({ ...settleRequestIn(waiting, log, id, row), closed: { id, title, decider: settlement?.decider ?? null } });
+};
+
+/**
+ * Add a row to the decision log for a decision that no request asked for. The id is the number after the highest `D-n` of the waiting
+ * file, of the decision log and of the decision records of the owner (`storeIds`), as `askIn` counts. The row holds the id and the
+ * title in its `item` text, the decision, the date and the decider. It holds no owner key, and the waiting file gets no entry. The
+ * value is the new id.
+ */
+export const logDecisionIn = (
+  waiting: WaitingDoc,
+  log: DecisionLogDoc,
+  settlement: CheckedSettlement,
+  title: string,
+  date: string,
+  storeIds: readonly string[],
+): CliResult<Edit<string> & { readonly top: Stored }> => {
+  const id = nextId('D-', [...waiting.items.map((entry) => entry.id), ...log.rows.map((row) => row.id), ...storeIds]);
+  if (!id.ok) return id;
+  const row = {
+    [decisionLogKeys.item]: `${id.value}: ${title}`,
+    [decisionLogKeys.decision]: settlement.decision,
+    [decisionLogKeys.date]: date,
+    [decisionLogKeys.decider]: settlement.decider,
+  };
+  return ok({ top: { ...log.top, [decisionLogKeys.rows]: [...listAt(log.top, decisionLogKeys.rows), row] }, value: id.value });
 };
 
 /** True when the stored value is a list that holds exactly these ids, in this order. */

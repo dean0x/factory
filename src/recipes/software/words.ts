@@ -51,6 +51,10 @@ export const softwareGlossary: readonly GlossaryEntry[] = [
     text: 'The merge check reads a pull request and says READY or NOT READY, with reasons. It is `{{program}} check <pr>`. Not built yet.',
   },
   {
+    term: 'merge record',
+    text: 'A merge record shows that the pull request of a work item is merged. `{{program}} item record` writes it after a check on GitHub.',
+  },
+  {
     term: 'release',
     text: 'A release is a version of a project that you publish. The approval point `release` guards it.',
   },

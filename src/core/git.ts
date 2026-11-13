@@ -159,11 +159,17 @@ export const hasIdentity = async (deps: Deps, dir: string): Promise<boolean> => 
 export const hasCommit = async (deps: Deps, dir: string): Promise<boolean> =>
   (await gitOutput(deps, dir, ['rev-parse', '--verify', 'HEAD'])) !== null;
 
-/** The default branch: origin/HEAD, else the current branch, else null. */
-export const defaultBranchOf = async (deps: Deps, dir: string): Promise<string | null> => {
+/** The default branch that the remote names (origin/HEAD), or null when the clone has no origin/HEAD. */
+export const remoteDefaultBranchOf = async (deps: Deps, dir: string): Promise<string | null> => {
   const remote = await gitOutput(deps, dir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
   const fromRemote = remote?.replace(/^origin\//, '') ?? '';
-  if (isBranchName(fromRemote)) return fromRemote;
+  return isBranchName(fromRemote) ? fromRemote : null;
+};
+
+/** The default branch: origin/HEAD, else the current branch, else null. */
+export const defaultBranchOf = async (deps: Deps, dir: string): Promise<string | null> => {
+  const fromRemote = await remoteDefaultBranchOf(deps, dir);
+  if (fromRemote !== null) return fromRemote;
   const current = (await gitOutput(deps, dir, ['branch', '--show-current'])) ?? '';
   return isBranchName(current) ? current : null;
 };

@@ -204,6 +204,12 @@ export const PLAIN_WORDS: readonly PlainWordRow[] = [
     note: 'glossary entry: another session that makes a decision outside an approval point, with no owner authority; it differs from the mode delegated',
   },
   {
+    term: 'relayed answer',
+    plain: 'stays',
+    scan: '-',
+    note: 'glossary entry: an answer of the owner that the coordinator passes on with `request close --relayed`; the log row says that it has no owner proof',
+  },
+  {
     term: 'approval point',
     plain: 'stays',
     scan: '-',

@@ -77,6 +77,7 @@ import {
   planStateGuard,
   refusalOf,
   settleSetupBlocks,
+  type BlockPlan,
   type BoardQueueKeyPlan,
   type FilesPlan,
   type StateGuardPlan,
@@ -120,6 +121,22 @@ const indexUpgraded = async (
     ? warn(recorded.value.warning === null ? [] : [recorded.value.warning])
     : warn([`${recorded.error} Run "${commandText(commands.init)}" in the ${places.folder} ${home} to register it.`]);
 };
+
+/**
+ * The line about the earlier conversation of the coordinator. The next start resumes that conversation, and it read the old
+ * text of the coordinator block, so it must follow the new rules. A change of another block gives no line.
+ */
+const resumeLines = (changes: readonly BlockPlan[]): readonly OutLine[] =>
+  changes.some((change) => change.template.name === blockNames.coordinator)
+    ? [
+        {
+          level: 'text',
+          text:
+            `The next ${commandText(commands.start)} resumes the earlier ${roles.coordinator} conversation. ` +
+            `That conversation must follow the new rules of the ${blockNames.coordinator} block.`,
+        },
+      ]
+    : [];
 
 /**
  * The origin that the upgrade asks for. A FAC-M1 folder that the list does not list is `own` only when it held no git
@@ -369,6 +386,7 @@ export const runUpgrade = async (
 
   const lines: OutLine[] = [
     ...planLines(config.value, local.value, state.value, files, stateGitignore.value, boardKey.value, guard.value, root.value, blocks, upgrade),
+    ...resumeLines(changes),
     ...modeNotes.value.map((text): OutLine => ({ level: 'warn', text })),
     ...setup.value.warnings.map((text): OutLine => ({ level: 'warn', text })),
   ];
