@@ -26,6 +26,7 @@ import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.j
 import { writeWorkerRecord } from '../../src/workers/registry.js';
 import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
+import { EMPTY_WAITING } from '../helpers/board-repo.js';
 import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleBoard, sampleConfigWithBoard, seedConfig } from '../helpers/sample-config.js';
 import { captureSink } from '../helpers/sink.js';
@@ -93,7 +94,7 @@ const fixtureOf = async (options: FixtureOptions = {}): Promise<Fixture> => {
   }
   deps.seedDir(LAYOUT.stateDir);
   deps.seed(BOARD_FILE, boardText(options.items ?? [], []));
-  deps.seed(WAITING_FILE, waitingText(options.requests ?? []));
+  deps.seed(WAITING_FILE, options.requests === undefined ? EMPTY_WAITING : waitingText(options.requests));
   for (const [index, worker] of workers.entries()) {
     const written = await writeWorkerRecord(deps, HOME, {
       id: worker.id,
@@ -749,6 +750,15 @@ describe('report: the command (TP-12, TP-13, TP-14)', () => {
     expect(result.out.split('\n').filter((line) => line !== '')).toHaveLength(1);
   });
 
+  it('starts the text with the CHECK line, and notes the count, when a worker record is not valid', async () => {
+    const fixture = await fixtureOf({ config: nodeConfig(), workers: [{ id: 'alpha', event: 'Stop' }] });
+    fixture.deps.seed(`${LAYOUT.workersDir}/broken/worker.json`, 'not json');
+    const result = await run(fixture);
+    expect(result.code).toBe(0);
+    expect(result.out.split('\n')[0]).toMatch(/^CHECK: mgr \(layer 2\): workers 1 \(1 not valid\), in progress 0, requests 0, children 0$/);
+    expect(result.err).toContain('broken');
+  });
+
   it('starts the text with the CHECK line, then one row for each child, when a child does not answer', async () => {
     const fixture = await fixtureOf({
       config: nodeConfig([WEB, API]),
@@ -838,6 +848,20 @@ describe('report: the command (TP-12, TP-13, TP-14)', () => {
     const lines = reportLines(withCounts, { notValid: 0, hasWarnings: false }).map((line) => line.text);
     expect(lines[0]).toMatch(/^OK: /);
     expect(lines[2]).toMatch(/^web\s+ok\s+3\s+2\s+1\s+0\s+90s\s+-$/);
+  });
+
+  it('gives the CHECK line, and notes the count, for a worker record that is not valid alone', async () => {
+    const report = await reportOf(await fixtureOf());
+    const lines = reportLines(report, { notValid: 2, hasWarnings: false }).map((line) => line.text);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^CHECK: .*: workers 0 \(2 not valid\), in progress 0, requests 0, children 0$/);
+  });
+
+  it('gives the CHECK line, with no note on the workers, for a warning of the workers alone', async () => {
+    const report = await reportOf(await fixtureOf());
+    const lines = reportLines(report, { notValid: 0, hasWarnings: true }).map((line) => line.text);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^CHECK: .*: workers 0, in progress 0, requests 0, children 0$/);
   });
 });
 
