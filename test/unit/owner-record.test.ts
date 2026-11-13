@@ -872,7 +872,7 @@ describe('the decision writer (TP-150, TP-153, TP-174, TP-175)', () => {
   it('M5-1b TP-180 counts a saved change with a left lock file as saved, with a warning that names the lock file', async () => {
     const deps = person();
     const place = await placeOf(deps);
-    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, removeFile: async () => failure('cannot remove: EBUSY') } };
     const result = await putDecision(stuck, place, decisionInput());
     expect(result).toMatchObject({ ok: true, value: { outcome: 'stored', warning: expect.stringContaining(DECISIONS_LOCK) } });
     expect(storedDecisions(deps)).toEqual([decisionRecord()]);
@@ -882,7 +882,7 @@ describe('the decision writer (TP-150, TP-153, TP-174, TP-175)', () => {
     const deps = person();
     seedDecisions(deps, [decisionRecord()]);
     const place = await placeOf(deps);
-    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, removeFile: async () => failure('cannot remove: EBUSY') } };
     expect(await putDecision(stuck, place, decisionInput())).toMatchObject({
       ok: true,
       value: { outcome: 'existing', warning: expect.stringContaining(DECISIONS_LOCK) },
@@ -1038,7 +1038,7 @@ describe('the D-n list of the decision records', () => {
 describe('the approval writer, when the lock file stays (TP-180)', () => {
   it('M5-1b TP-180 says in its error that the approval record is saved', async () => {
     const deps = person();
-    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, remove: async () => failure('cannot remove: EBUSY') } };
+    const stuck: FakeDeps = { ...deps, fs: { ...deps.fs, removeFile: async () => failure('cannot remove: EBUSY') } };
     const result = await setMode(stuck, 'merge', delegated);
     expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining('saved') } });
     expect(result).not.toMatchObject({ error: { message: expect.stringContaining('not updated') } });

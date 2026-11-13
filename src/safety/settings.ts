@@ -1,9 +1,13 @@
 import {
   acceptEditsMode,
   claudeSettingKeys,
+  commandLines,
   commandSettingKeys,
+  commandText,
   crossSessionHeldValues,
   env,
+  flags,
+  flagText,
   ownHookCommand,
   permissionSkipList,
   planMode,
@@ -35,7 +39,7 @@ export interface SettingsFacts {
   readonly movesTraffic: readonly string[];
   /** The settings of the file that run a command, except the hook and the status line that the program writes. */
   readonly runsCommands: readonly string[];
-  /** The allow rules that cover a whole tool. At most `MAX_LISTED_RULES`, each cut at `MAX_RULE_CHARS`. */
+  /** The allow rules that cover a whole tool, or every command of `lock run`. At most `MAX_LISTED_RULES`, each cut at `MAX_RULE_CHARS`. */
   readonly wholeToolRules: readonly string[];
   /** The other allow rules, with the same bounds. */
   readonly narrowRules: readonly string[];
@@ -145,6 +149,31 @@ const runsCommands = (text: string, parsed: unknown): readonly string[] =>
     isRecord(parsed) ? Object.hasOwn(parsed, key) && !(OWN_FORMS[key]?.(parsed[key]) ?? false) : keyPatternOf(key).test(text),
   );
 
+/**
+ * A `Bash` rule with a wildcard at its end (`Bash(<start>:*)`, `Bash(<start> *)` or `Bash(<start>*)`) matches every command line that
+ * begins with `<start>`. The command after the double dash of `lock run` can be any command, a shell too. So a rule allows every
+ * command when its start is the start of the `lock run` line, or that line with only the flag `--priority` and the double dash added.
+ */
+const BASH_RULE_OPEN = 'Bash(';
+const LOCK_RUN_LINE = commandText(commandLines.lockRun);
+const LOCK_RUN_WITH_FLAGS = new RegExp(`^${escapeRegExp(LOCK_RUN_LINE)}(?: ${escapeRegExp(flagText(flags.priority))})?(?: --)?$`);
+
+/** The start of a `Bash` rule with a wildcard at its end, or null for any other rule. The steps are linear in the length of the rule. */
+const wildcardStartOf = (rule: string): string | null => {
+  if (!rule.startsWith(BASH_RULE_OPEN) || !rule.endsWith(')')) return null;
+  const inner = rule.slice(BASH_RULE_OPEN.length, -1).trimEnd();
+  if (!inner.endsWith('*')) return null;
+  const start = inner.slice(0, -1);
+  return (start.endsWith(':') ? start.slice(0, -1) : start).trim();
+};
+
+const allowsAnyLockRunCommand = (rule: string): boolean => {
+  const start = wildcardStartOf(rule);
+  return start !== null && (LOCK_RUN_LINE.startsWith(start) || LOCK_RUN_WITH_FLAGS.test(start));
+};
+
+const allowsEveryUse = (rule: string): boolean => isWholeToolRule(rule) || allowsAnyLockRunCommand(rule);
+
 const shown = (rule: string): string => rule.slice(0, MAX_RULE_CHARS);
 
 const allowRules = (parsed: unknown): readonly string[] => {
@@ -175,8 +204,8 @@ export const analyzeSettings = (text: string): SettingsFacts => {
     changesFactoryEnv: envPrefixIn(text, parsed, env.factoryPrefix),
     movesTraffic: envNamesIn(text, parsed, trafficEnvNames),
     runsCommands: runsCommands(text, parsed),
-    wholeToolRules: rules.filter(isWholeToolRule).slice(0, MAX_LISTED_RULES).map(shown),
-    narrowRules: rules.filter((rule) => !isWholeToolRule(rule)).slice(0, MAX_LISTED_RULES).map(shown),
+    wholeToolRules: rules.filter(allowsEveryUse).slice(0, MAX_LISTED_RULES).map(shown),
+    narrowRules: rules.filter((rule) => !allowsEveryUse(rule)).slice(0, MAX_LISTED_RULES).map(shown),
     acceptEdits: valueAt(parsed, [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode]) === acceptEditsMode,
     planMode: valueAt(parsed, [claudeSettingKeys.permissions, claudeSettingKeys.defaultMode]) === planMode,
     crossSessionInbound: heldCrossSession(parsed),

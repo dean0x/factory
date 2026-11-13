@@ -1,7 +1,7 @@
 import type { Deps } from '../core/deps.js';
 import { runStatusline } from '../hooks/statusline.js';
 import { commands, commandText, flags, flagShorts, flagText, helpTopics, hookNames, program, schemaIds } from '../names.js';
-import { exitCodeOf, failure } from './errors.js';
+import { exitCodeFor, exitCodeOf, failure } from './errors.js';
 import { detectStyle, printable, renderError, renderJson, renderText, renderWarnings } from './output.js';
 import { recipes, type RecipeRegistry } from '../recipes/index.js';
 import {
@@ -37,6 +37,7 @@ const wordsOnly = (words: readonly string[]): Given => ({
   strings: () => [],
   bool: () => false,
   positionals: () => words,
+  afterTerminator: () => [],
 });
 
 /**
@@ -111,10 +112,11 @@ export const runCli = async (
     return EXIT_USAGE;
   }
 
-  const parsed = parseFlags(rest, { ...globalOptions, ...command.options }, command.positionals === true);
+  const parsed = parseFlags(rest, { ...globalOptions, ...command.options }, command.positionals === true, command.terminator);
   if (!parsed.ok) {
+    const message = command.usageMessage?.(parsed.error.message) ?? parsed.error.message;
     await sink.stderr(
-      renderError({ ...parsed.error, hint: `Run "${commandText(command.name)} ${flagText(flags.help)}".` }),
+      renderError({ ...parsed.error, message, hint: `Run "${commandText(command.name)} ${flagText(flags.help)}".` }),
     );
     return exitCodeOf[parsed.error.kind];
   }
@@ -129,11 +131,12 @@ export const runCli = async (
   const result = await command.run(given, deps);
 
   if (!result.ok) {
-    if (json) {
+    // A command with the double dash rule keeps stdout for its child, so a usage error with the JSON flag writes no document there.
+    if (json && command.terminator === undefined) {
       await sink.stdout(renderJson({ schema: schemaIds.error, error: result.error }));
     }
     await sink.stderr(renderError(result.error));
-    return exitCodeOf[result.error.kind];
+    return exitCodeFor(result.error);
   }
 
   if (json) {

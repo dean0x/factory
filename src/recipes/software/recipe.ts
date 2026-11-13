@@ -16,7 +16,7 @@ type RoleName = typeof blockNames.worker | typeof blockNames.coordinator | typeo
  */
 const workerFor = (input: BlockInput): BlockTemplate => ({
   name: blockNames.worker,
-  version: 2,
+  version: 3,
   target: 'workerFile',
   body: fillTemplate(WORKER_LINES, workerValuesFor(input)),
 });

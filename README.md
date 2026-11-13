@@ -50,6 +50,7 @@ You need:
 | `factory queue set\|show` | Set a row of the queue of finished work that waits for an approval point, or show the rows. See "Use the local board". |
 | `factory doctor` | Run 29 checks. See "Doctor". |
 | `factory machine` | Judge the free memory, the free disk space and the load of this machine against the `limits` of `factory.yaml`. See "Machine". |
+| `factory lock run [--priority] -- COMMAND [ARG]...` | Run one heavy command, such as a full test run, after the other heavy runs of this user have ended. The double dash is required. See "Run a heavy command". |
 | `factory upgrade` | Migrate the config and the state to this version, and refresh the managed blocks. |
 | `factory hook EVENT` | For Claude Code, not for people. It records when a session was last seen, for the events `SessionStart`, `UserPromptSubmit`, `Stop`, `PreCompact`, `PreToolUse` and `Notification`. It records `Notification` only for the types `permission_prompt` and `elicitation_dialog`. It does its work only when `FACTORY_HOME` is set. It writes the line under a lock file in the same folder, and it skips the write when it gets no lock within 300 ms. For a worker it then also records the newest session in `.factory/workers/ID/last-session`. It exits with code 0 and prints nothing to stdout on every path. |
 | `factory hook statusline` | For Claude Code, not for people. It is the status line of the coordinator. It records the context percent of the session in the last-seen record, then prints the output of the command in `session.statusline` of `factory.local.yaml` as it is (the command gets the same input, and has 2 seconds; at the limit, every process that it started stops, and a SIGTERM, SIGHUP or SIGINT of the wrapper stops them too; a SIGKILL of the wrapper leaves them running). With no command, or with a command that fails or takes too long, it prints `context N%`. When the input gives no percent, or is not whole after 2 seconds, it prints `context ?%`. It exits with code 0 on every path and prints at most one line on stderr. The field names of the input come from the devflow HUD, which reads the live payload; checked against the Claude Code status line docs. |
@@ -594,6 +595,69 @@ Each fact has one format: a value, a limit and a verdict, `ok`, `fail` or `unkno
 
 Each program has 5 seconds. A program that does not run, that takes too long or that exits with an error gives `unknown`. So does an output that does not parse. The command exits with code 0 for every verdict. It exits with another code only for a usage error, or when it finds no valid factory folder.
 
+### Run a heavy command
+
+`factory lock run` runs one heavy command, such as a full test run, while you hold the heavy-test lock. Only one heavy run of a user goes at a time. All nodes of that user on one machine share the lock. A worker runs each heavy command this way.
+
+```sh
+factory lock run -- npm test
+factory lock run --priority -- npm test
+```
+
+The command line:
+
+- The double dash is required. The words after it are the command and its arguments. No shell reads them.
+- These exit with code 2 and run nothing: no double dash, no command after it, the flag `--json`, any word before the double dash other than `run`, and `--help` together with a double dash. `factory lock run --help` alone prints the help and exits with code 0.
+- The command gets your environment and the variable `FACTORY_HEAVY_LOCK_TOKEN`. It runs in a new process group, and its stdin is ignored. stdout holds only its output.
+- factory refuses the factory program as the command. That means the name `factory`, the script path of the program that runs, and the Node program followed by that script path. The refusal exits with code 4 and runs nothing. A wrapper, such as `env`, a shell or `npx`, is not detected.
+
+The lock:
+
+- The lock file is `heavy-test.lock`, and the priority file is `heavy-test.priority`. Both are in the per-user state folder: `$XDG_STATE_HOME/factory/`, or `~/.local/state/factory/` when the variable is not set. The folder has mode 700, and the files have mode 600. No config value sets a path.
+- Each of these exits with code 4 and runs nothing: a link at either path, a folder or file of another user, and a folder or file that a group or other users can write. When no state folder is known, the command exits with code 1 and runs nothing.
+- A lock is stale when the process of its holder has ended. It is also stale when that pid now belongs to a process that started more than 3 seconds from the recorded start. The age of a lock never makes it stale while its holder runs. A lock file that holds no valid token counts as held for 60 seconds. Then it is stale, with one warning.
+- factory removes only a file at the lock path. A folder there stays with all that it holds. After 60 seconds the run exits with code 1 (`NOT STARTED`) and runs nothing.
+
+The wait and the hold:
+
+- A held lock makes the run wait. It tries every 5 seconds, up to 1,080 tries (90 minutes). The first held try writes one line on stderr: `warning: factory lock run: WAITING. ...`. At the bound the command exits with code 3 and runs nothing.
+- INT, TERM or HUP ends the wait. The run frees its own priority file, starts nothing and exits with 128 plus the signal number.
+- Waiters have no fair order. Use `--priority` for an urgent run, and only when the coordinator says so.
+- `--priority` writes the priority file. A waiter takes no free lock while a live priority file of another run exists and is younger than 90 minutes. A second live priority run exits with code 3 and runs nothing.
+- A priority file that does not parse, is over 256 bytes or cannot be read counts as no priority, with one warning, and the run waits as before. So does a priority file of a process that ended, or one older than 90 minutes. factory never signals a pid from the priority file.
+- The command can hold the lock for 3 hours at most. Then factory sends TERM to its process group, and KILL after 10 seconds, and exits with code 3.
+- factory forwards INT, TERM and HUP to the process group of the command only. It frees the lock by its token when the run ends. Two short windows have no stop handler (see the limits).
+- A `lock run` inside the command is nested when its `FACTORY_HEAVY_LOCK_TOKEN` equals the content of the lock file now. It runs its command at once, in the current process group. It takes no second lock, writes no priority file and sets no time limit.
+
+Exit codes of `lock run`:
+
+| Code | Word on stderr | Meaning |
+| --- | --- | --- |
+| any | none | The command ended with this code. The code passes through. |
+| 128 + n | none | The signal with number n ended the command. |
+| 1 | `NOT STARTED` | The command did not start. The line names the reason, for example that no state folder is known. |
+| 1 | `NOT FOUND` | The program of the command was not found. |
+| 2 | `USAGE` | The command line is wrong. |
+| 3 | `WAIT ENDED` | The run waited 90 minutes and did not get the lock. |
+| 3 | `HOLD ENDED` | The command ran for 3 hours. factory stopped it. |
+| 3 | `PRIORITY HELD` | Another live run holds the priority. |
+| 4 | `REFUSED` | A link, a file of another user, a file that others can write, or the factory program as the command. |
+| 128 + n | `STOPPED` | INT (130), TERM (143) or HUP (129) ended the wait. |
+
+The exit codes of the command and of factory overlap: the command can exit with code 3. Each outcome that factory decides writes one line on stderr. It starts with `error: factory lock run:` and holds one word of the table. This line can come after the wait line or after output of the command, so it is not always the first line. The command shares stderr and can print a line of the same form. The line is a factory outcome only when the command did not print it.
+
+Limits:
+
+- Other OS users on the machine are not covered.
+- Any program of the same user can write or remove the lock file and the priority file. The lock keeps heavy runs apart. It does not keep other programs out.
+- A KILL of `factory lock run` can leave the process group of its command alive after the lock is free. Then a second run can start.
+- Two short windows have no stop handler: after the wait ends and before the command starts, and after the command ends and before the lock is freed. A stop signal in a window ends `factory lock run` at once and leaves the lock file, and the priority file of a `--priority` run. The next waiter removes them, because their holder has ended.
+- A command can print a line of the same form as the line of a factory outcome (`error: factory lock run: ...`) on the shared stderr.
+- An allow rule for `factory lock run` in a Claude settings file allows every command, because the command after the double dash can be a shell. `doctor` and `start` warn about such a rule.
+- On macOS, the start time comes from `ps` and has 1 second resolution. On Linux, it comes from the process stat record, counts from boot and has 10 ms resolution. The tolerance is 3 seconds.
+- Two sessions with a different `XDG_STATE_HOME` use two lock files and can run at the same time.
+- The config key `heavy_test` stays in `factory.yaml`, and no command reads it.
+
 ### Upgrade a factory
 
 ```sh
@@ -700,7 +764,7 @@ The hash lets `factory` find out that a person edited a block. Text outside the 
 
 Only a check at a security boundary stops a command. A stop exits with code 4. It prints one line with the reason and one line with the command that fixes it. Every other check is a warning: the command goes on with exit code 0, and `doctor` shows the warning. A command that can not run at all exits with code 1 or 2.
 
-- The permission mode is `auto`. `doctor` fails, and `start` stops with exit code 4, when a Claude settings file skips the permission prompts, sets or clears a variable whose name starts with `FACTORY_` in `env`, or sets the proxy or the credential of the session in `env` (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_CUSTOM_HEADERS`). The checked files are the settings files in the `coordinator/` folder, in each project folder and at every path that the config repo tracks. A settings file in the `coordinator/` folder or in a project folder also stops `start` when it runs a command (a hook, a status line or a key helper). The hook and the status line that `factory` writes itself do not count, and a settings file that holds exactly those entries gives no warning that it is there. In the factory folder itself, a setting that runs a command is a warning. `doctor` fails, and `start` stops with exit code 4, when the check can not finish: git fails, a settings folder holds more than 64 settings files, or a settings file can not be read. `doctor` and `start` warn about a rule that allows a whole tool (for example `Bash` or `*`) and about a setting that approves project MCP servers. A health check goes to a proxy only when no check of the factory folder fails.
+- The permission mode is `auto`. `doctor` fails, and `start` stops with exit code 4, when a Claude settings file skips the permission prompts, sets or clears a variable whose name starts with `FACTORY_` in `env`, or sets the proxy or the credential of the session in `env` (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` or `ANTHROPIC_CUSTOM_HEADERS`). The checked files are the settings files in the `coordinator/` folder, in each project folder and at every path that the config repo tracks. A settings file in the `coordinator/` folder or in a project folder also stops `start` when it runs a command (a hook, a status line or a key helper). The hook and the status line that `factory` writes itself do not count, and a settings file that holds exactly those entries gives no warning that it is there. In the factory folder itself, a setting that runs a command is a warning. `doctor` fails, and `start` stops with exit code 4, when the check can not finish: git fails, a settings folder holds more than 64 settings files, or a settings file can not be read. `doctor` and `start` warn about a rule that allows a whole tool (for example `Bash` or `*`), about a rule that allows every command of `factory lock run` (for example `Bash(factory lock run:*)`) and about a setting that approves project MCP servers. A health check goes to a proxy only when no check of the factory folder fails.
 - The config repo must not track `factory.local.yaml`, the state folder or the `coordinator/` folder, and git must ignore the local file and the state folder. `doctor` fails, and `start` stops with exit code 4, when one of these rules is broken, or when a tracked text file holds a value that looks like a token. A received factory also needs the setup acceptance of all its tracked files: `start` stops with exit code 4 and names `factory init` in a terminal window.
 - An agent loads instruction files from its working folder and from every folder above it. `doctor` warns, under the check `instruction-files`, when the factory folder or a folder above it (at most 64 levels) holds `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.claude/CLAUDE.md`, `.claude/rules`, `.claude/settings.json`, `.claude/settings.local.json`, `.github/copilot-instructions.md` or `.cursor/rules`. `start` and `init` print the same warning before they act. The check only tests that a path exists. A folder that it cannot read gives a warning too. It never looks inside `~/.claude`, so it cannot see the instructions of the user level.
 - A proxy comes only from the config. `doctor` prints `Config: <path>` first. It checks that the proxy answers when the config passes the registration check (see "Find the factory folder"), also when it comes from a parent folder, from `FACTORY_HOME` or from the factory list. A `factory.yaml` that does not pass the check, for example one in a clone of a repo, stops `doctor` with exit code 4 before any request. A stray `ANTHROPIC_BASE_URL` in the shell is a warning.
@@ -718,6 +782,8 @@ Only a check at a security boundary stops a command. A stop exits with code 4. I
 | 2 | The command line is wrong, or the command finds no factory folder. |
 | 3 | Not ready. The tmux session of the factory does not run (the message names `factory start`), or a worker has no pane that runs, or the state of a session is not known. |
 | 4 | A safety rule refused the action. |
+
+`factory lock run` passes on the exit code of its command, and it uses the codes above in its own way. See "Run a heavy command".
 
 ## Development
 

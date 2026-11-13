@@ -675,7 +675,7 @@ describe('decide: a failure after the store write says what is saved (TP-177, TP
     const terminal = atTerminal(repo);
     const stuck: Deps = {
       ...terminal.deps,
-      fs: { ...terminal.deps.fs, remove: async (path) => (path === STORE_LOCK ? failure('cannot remove: EBUSY') : repo.deps.fs.remove(path)) },
+      fs: { ...terminal.deps.fs, removeFile: async (path) => (path === STORE_LOCK ? failure('cannot remove: EBUSY') : repo.deps.fs.removeFile(path)) },
     };
     const output = valueOf(await decide(stuck));
     expect(output.warnings).toHaveLength(1);
