@@ -9,6 +9,7 @@ import {
   type NodeReport,
   type ReportBoard,
   type ReportChild,
+  type ReportCounts,
   type ReportItem,
   type ReportRequest,
   type ReportWorker,
@@ -18,7 +19,17 @@ import type { Transport } from '../comms/transport.js';
 import type { BoardConfig, FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, places, reportKeys, reportLimits, reportWords, requestWords, schemaIds } from '../names.js';
+import {
+  childReasons,
+  commands,
+  commandText,
+  places,
+  reportKeys,
+  reportLimits,
+  reportWords,
+  requestWords,
+  schemaIds,
+} from '../names.js';
 import { FACTORY_VERSION } from '../version.js';
 import { readStatus, type StatusReport } from '../workers/status-read.js';
 import { shownStateOf, type WorkerStatus } from '../workers/status.js';
@@ -30,8 +41,8 @@ import type { WorkItem, WorkItemPort } from '../workers/work-items.js';
  * `reportDocOf` copies each field by name, and the schema check refuses any other key. Every text from a file goes through
  * `displayLine` first, so a line break or a hidden character of a stored text never reaches the document.
  *
- * This module reads files and asks the ping of the transport. It knows no recipe: the caller gives the board connector, the work
- * item port and the transport.
+ * This module reads files and asks the ping of the transport. It also reads the report file of each child that answers the ping,
+ * through the transport. It knows no recipe: the caller gives the board connector, the work item port and the transport.
  */
 
 const doc = reportKeys.doc;
@@ -44,11 +55,24 @@ const fieldKeys = reportKeys.field;
 const itemKeys = reportKeys.item;
 const requestKeys = reportKeys.request;
 const childKeys = reportKeys.child;
+const countKeys = reportKeys.counts;
+const childStates = reportWords.childStates;
 
 /** What the builder reads from the board: every item (closed ones too) and the requests that wait for the owner. */
 interface BoardFacts {
   readonly items: readonly BoardItem[];
   readonly requests: readonly BoardRequest[];
+}
+
+/**
+ * One direct child: the row of the ping, and what its report file gives. `counts` and `age` are null for a child that does not
+ * pass the ping and for a report file that cannot be read. A report file that was read and shows another id gives its age and no counts.
+ */
+export interface ChildFacts {
+  readonly row: ChildRow;
+  readonly counts: ReportCounts | null;
+  /** The age of the report file in whole seconds. */
+  readonly age: number | null;
 }
 
 /**
@@ -62,7 +86,8 @@ export interface NodeFacts {
   readonly setup: BoardConfig | undefined;
   readonly status: StatusReport;
   readonly board: CliResult<BoardFacts>;
-  readonly children: readonly ChildRow[];
+  /** The direct children, in the order of the config. A child of a child has no entry. */
+  readonly children: readonly ChildFacts[];
 }
 
 export interface FactsRequest {
@@ -83,10 +108,52 @@ const readBoardFacts = async (board: LocalBoard): Promise<CliResult<BoardFacts>>
   return requests.ok ? ok({ items: items.value, requests: requests.value }) : requests;
 };
 
+const countsOf = (report: NodeReport): ReportCounts => ({
+  [countKeys.workers]: report.workers.length,
+  [countKeys.inProgress]: report.inProgress.length,
+  [countKeys.requests]: report.requests.length,
+  [countKeys.children]: report.children.length,
+});
+
+const withoutFacts = (row: ChildRow): ChildFacts => ({ row, counts: null, age: null });
+
 /**
- * Read the facts of the node once: the workers (one call of `readStatus`, which makes the one list of the panes), the board and the
- * children. The call fails only when the facts of the workers fail, with the error of `readStatus`. A fault of the board is a value
- * of `NodeFacts.board`, and a child that does not answer is a row with the state `unknown`.
+ * Read the report file of each child that the ping found, in the order of the config. The reads run one after the other, because each
+ * read needs the part of `reportLimits.maxBuildBytes` that the reads before it left. A child that did not pass the ping gets no read.
+ * A report file with another id than the config lists gives a `mismatch`, and a file that cannot be read gives `unknown` with its
+ * fixed reason: neither shows text of the child. When nothing of the budget is left, the child is `unknown` with the reason of the
+ * byte cap, and no read happens.
+ */
+const readChildFacts = async (transport: Transport, rows: readonly ChildRow[]): Promise<readonly ChildFacts[]> => {
+  const facts: ChildFacts[] = [];
+  let left: number = reportLimits.maxBuildBytes;
+  for (const row of rows) {
+    if (row.status !== childStates.ok) {
+      facts.push(withoutFacts(row));
+    } else if (left <= 0) {
+      facts.push(withoutFacts({ ...row, layer: null, status: childStates.unknown, reason: childReasons.byteCap }));
+    } else {
+      const read = await transport.report(row.address, left);
+      left = Math.max(0, left - read.bytes);
+      if (read.state === 'unknown') {
+        facts.push({ row: { ...row, layer: null, status: childStates.unknown, reason: read.reason }, counts: null, age: read.age });
+      } else if (read.report.id !== row.id) {
+        facts.push({ row: { ...row, layer: null, status: childStates.mismatch, reason: childReasons.otherId }, counts: null, age: read.age });
+      } else {
+        facts.push({ row, counts: countsOf(read.report), age: read.age });
+      }
+    }
+  }
+  return facts;
+};
+
+/**
+ * Read the facts of the node: the workers (one call of `readStatus`, which makes the one list of the panes), the board and the
+ * children. One run reads `board.json` two times: once for the work item port, which `readStatus` calls (`readBoard`), and once for
+ * the list of the items (`listItems`, in `readBoardFacts`). Each child is pinged once, and each child that answers the ping is asked
+ * for its report file once (`readChildFacts`). The call fails only when the facts of the workers fail, with the error of
+ * `readStatus`. A fault of the board is a value of `NodeFacts.board`, and a child that does not answer is a row with the state
+ * `unknown`.
  */
 export const readNodeFacts = async (deps: Deps, request: FactsRequest): Promise<CliResult<NodeFacts>> => {
   const { home, config, board, workItems, transport } = request;
@@ -98,7 +165,7 @@ export const readNodeFacts = async (deps: Deps, request: FactsRequest): Promise<
     setup: config.core.board,
     status: status.value,
     board: await readBoardFacts(board),
-    children: await probeChildren(transport, config.core.children),
+    children: await readChildFacts(transport, await probeChildren(transport, config.core.children)),
   });
 };
 
@@ -195,13 +262,13 @@ const requestsOf = (node: string, requests: readonly BoardRequest[]): ReportRequ
     [requestKeys.origin]: lineOf(`${node}${reportWords.originSeparator}${request.id}`),
   }));
 
-const childOf = (row: ChildRow): ReportChild => ({
+const childOf = ({ row, counts, age }: ChildFacts): ReportChild => ({
   [childKeys.id]: row.id,
   [childKeys.address]: displayLine(row.address, MAX_ADDRESS_LENGTH),
   [childKeys.state]: row.status,
   [childKeys.reason]: lineOrNull(row.reason),
-  [childKeys.counts]: null,
-  [childKeys.age]: null,
+  [childKeys.counts]: counts,
+  [childKeys.age]: age,
 });
 
 /**

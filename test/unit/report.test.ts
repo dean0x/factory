@@ -9,6 +9,7 @@ import { failure, type CliError, type CliResult } from '../../src/cli/errors.js'
 import { renderJson } from '../../src/cli/output.js';
 import { runCli } from '../../src/cli/run.js';
 import { reportLines, runReport } from '../../src/commands/report.js';
+import type { ChildReportRead } from '../../src/comms/report-read.js';
 import { parseReport, type NodeReport } from '../../src/comms/report-schema.js';
 import type { PingResult, Transport } from '../../src/comms/transport.js';
 import type { FactoryConfig } from '../../src/config/schema.js';
@@ -133,10 +134,69 @@ const noChildren: Transport = {
   report: async () => ({ state: 'unknown', reason: childReasons.noReport, age: null, bytes: 0, source: null }),
 };
 
-const transportOf = (answers: Readonly<Record<string, PingResult>>): Transport => ({
+/** One call of `Transport.report`: the address that was read and the bytes that the call was allowed to read. */
+interface ReadCall {
+  readonly address: string;
+  readonly maxBytes: number;
+}
+
+/** A transport that answers the ping from `answers` and the report read from `reports`; a child with no entry has no report file. */
+const transportOf = (
+  answers: Readonly<Record<string, PingResult>>,
+  reports: Readonly<Record<string, ChildReportRead>> = {},
+  reads: ReadCall[] = [],
+): Transport => ({
   ...noChildren,
   ping: async (address) => answers[address] ?? { kind: 'unknown', reason: 'no answer' },
+  report: async (address, maxBytes) => {
+    reads.push({ address, maxBytes });
+    return reports[address] ?? noChildren.report(address, maxBytes);
+  },
 });
+
+const childReport = (id: string, parts: Partial<NodeReport> = {}): NodeReport => ({
+  schema: schemaIds.report,
+  schemaVersion: reportLimits.schemaVersion,
+  id,
+  layer: 1,
+  factoryVersion: FACTORY_VERSION,
+  cursor: null,
+  workers: [],
+  board: { states: [], statesOmitted: 0, fields: [] },
+  inProgress: [],
+  requests: [],
+  events: [],
+  children: [],
+  ...parts,
+});
+
+const readOf = (report: NodeReport, age: number, bytes = 100): ChildReportRead => ({
+  state: 'read',
+  report,
+  age,
+  bytes,
+  source: `/c/${report.id}/report.json`,
+});
+
+const STORED_WORKER: NodeReport['workers'][number] = {
+  id: 'w1',
+  project: 'web',
+  state: 'busy',
+  contextPct: null,
+  activityAt: null,
+  workItem: { state: 'unknown' },
+  idle: false,
+};
+const STORED_ITEM: NodeReport['inProgress'][number] = { id: 'B-1', title: 'Build', state: 'doing', track: null, stage: null };
+const STORED_REQUEST: NodeReport['requests'][number] = { id: 'D-1', title: null, origin: 'api#D-1' };
+const STORED_CHILD: NodeReport['children'][number] = {
+  id: 'deep',
+  address: 'file:///c/deep',
+  state: 'ok',
+  reason: null,
+  counts: null,
+  age: null,
+};
 
 const factsOf = async (
   fixture: Fixture,
@@ -314,25 +374,139 @@ describe('report builder: the document (TP-10)', () => {
     expect(item?.title.startsWith('Line one line two evil')).toBe(true);
   });
 
-  it('gives a row for each child, with the answer of the ping and a clean reason, and no counts or age yet', async () => {
+  it('gives a row for each direct child, with the answer of the ping, the counts and the age of its report, and a clean reason', async () => {
     const fixture = await fixtureOf();
     const children = [
       { id: 'api', address: 'file:///c/api' },
       { id: 'shop', address: 'file:///c/shop' },
     ];
     const config: FactoryConfig = { ...fixture.config, core: { ...fixture.config.core, children } };
-    const transport = transportOf({
-      'file:///c/api': { kind: 'known', id: 'api', layer: 1, schema: 2 },
-      'file:///c/shop': { kind: 'unknown', reason: 'it does not parse\nFAKE: a second line ‮' },
-    });
+    const reads: ReadCall[] = [];
+    const transport = transportOf(
+      {
+        'file:///c/api': { kind: 'known', id: 'api', layer: 1, schema: 2 },
+        'file:///c/shop': { kind: 'unknown', reason: 'it does not parse\nFAKE: a second line ‮' },
+      },
+      {
+        'file:///c/api': readOf(
+          childReport('api', {
+            workers: [STORED_WORKER, { ...STORED_WORKER, id: 'w2' }],
+            inProgress: [STORED_ITEM],
+            requests: [STORED_REQUEST, { ...STORED_REQUEST, id: 'D-2', origin: 'api#D-2' }, { ...STORED_REQUEST, id: 'D-3', origin: 'api#D-3' }],
+            children: [STORED_CHILD],
+          }),
+          90,
+        ),
+      },
+      reads,
+    );
     const facts = valueOf(
       await readNodeFacts(fixture.deps, { home: HOME, config, board: fixture.board, workItems: portOf({}), transport }),
     );
     const report = valueOf(reportDocOf(facts));
     expect(report.children).toEqual([
-      { id: 'api', address: 'file:///c/api', state: 'ok', reason: null, counts: null, age: null },
+      { id: 'api', address: 'file:///c/api', state: 'ok', reason: null, counts: { workers: 2, inProgress: 1, requests: 3, children: 1 }, age: 90 },
       { id: 'shop', address: 'file:///c/shop', state: 'unknown', reason: 'it does not parse FAKE: a second line ', counts: null, age: null },
     ]);
+    expect(reads.map((read) => read.address)).toEqual(['file:///c/api']);
+  });
+
+  it('holds the rows of the direct children only: the children that a child lists give no row', async () => {
+    const fixture = await fixtureOf();
+    const config: FactoryConfig = { ...fixture.config, core: { ...fixture.config.core, children: [{ id: 'api', address: 'file:///c/api' }] } };
+    const transport = transportOf(
+      { 'file:///c/api': { kind: 'known', id: 'api', layer: 1, schema: 2 } },
+      { 'file:///c/api': readOf(childReport('api', { children: [STORED_CHILD, { ...STORED_CHILD, id: 'deeper' }] }), 5) },
+    );
+    const report = valueOf(
+      reportDocOf(valueOf(await readNodeFacts(fixture.deps, { home: HOME, config, board: fixture.board, workItems: portOf({}), transport }))),
+    );
+    expect(report.children.map((child) => child.id)).toEqual(['api']);
+    expect(report.children[0]?.counts?.children).toBe(2);
+  });
+
+  describe('the report file of a child that answers the ping', () => {
+    const API = { id: 'api', address: 'file:///c/api' };
+    const SHOP = { id: 'shop', address: 'file:///c/shop' };
+    const KNOWN = (id: string): PingResult => ({ kind: 'known', id, layer: 1, schema: 2 });
+
+    const childrenOf = async (
+      links: FactoryConfig['core']['children'],
+      transport: Transport,
+    ): Promise<NodeReport['children']> => {
+      const fixture = await fixtureOf();
+      const config: FactoryConfig = { ...fixture.config, core: { ...fixture.config.core, children: links } };
+      const facts = valueOf(
+        await readNodeFacts(fixture.deps, { home: HOME, config, board: fixture.board, workItems: portOf({}), transport }),
+      );
+      return valueOf(reportDocOf(facts)).children;
+    };
+
+    it('gives a mismatch with the fixed reason, no counts and no text of the child, when the report shows another id', async () => {
+      const transport = transportOf({ [API.address]: KNOWN('api') }, { [API.address]: readOf(childReport('stranger', { workers: [STORED_WORKER] }), 7) });
+      const [row] = await childrenOf([API], transport);
+      expect(row).toEqual({ id: 'api', address: API.address, state: 'mismatch', reason: childReasons.otherId, counts: null, age: 7 });
+      expect(JSON.stringify(row)).not.toContain('stranger');
+    });
+
+    it('gives unknown with the fixed reason and the age of the file, when the report cannot be read', async () => {
+      const transport = transportOf(
+        { [API.address]: KNOWN('api'), [SHOP.address]: KNOWN('shop') },
+        {
+          [API.address]: { state: 'unknown', reason: childReasons.reportInvalid, age: 12, bytes: 40, source: '/c/api/report.json' },
+          [SHOP.address]: { state: 'unknown', reason: childReasons.noReport, age: null, bytes: 0, source: '/c/shop/report.json' },
+        },
+      );
+      expect(await childrenOf([API, SHOP], transport)).toEqual([
+        { id: 'api', address: API.address, state: 'unknown', reason: childReasons.reportInvalid, counts: null, age: 12 },
+        { id: 'shop', address: SHOP.address, state: 'unknown', reason: childReasons.noReport, counts: null, age: null },
+      ]);
+    });
+
+    it('reads no report file of a child that does not pass the ping, or that shows another id there', async () => {
+      const reads: ReadCall[] = [];
+      const transport = transportOf(
+        { [API.address]: { kind: 'unknown', reason: 'no answer' }, [SHOP.address]: KNOWN('stranger') },
+        {},
+        reads,
+      );
+      const rows = await childrenOf([API, SHOP], transport);
+      expect(rows.map((row) => [row.state, row.counts, row.age])).toEqual([
+        ['unknown', null, null],
+        ['mismatch', null, null],
+      ]);
+      expect(reads).toEqual([]);
+    });
+
+    it('gives each read the bytes that are left of the build cap, one read after the other, and subtracts the bytes that it read', async () => {
+      const reads: ReadCall[] = [];
+      const links = ['a', 'b', 'c'].map((id) => ({ id, address: `file:///c/${id}` }));
+      const sizes: Readonly<Record<string, number>> = { a: 1_000, b: reportLimits.maxBuildBytes - 1_000 - 10, c: 10 };
+      const transport = transportOf(
+        Object.fromEntries(links.map((link) => [link.address, KNOWN(link.id)])),
+        Object.fromEntries(links.map((link) => [link.address, readOf(childReport(link.id), 1, sizes[link.id])])),
+        reads,
+      );
+      await childrenOf(links, transport);
+      expect(reads).toEqual([
+        { address: 'file:///c/a', maxBytes: reportLimits.maxBuildBytes },
+        { address: 'file:///c/b', maxBytes: reportLimits.maxBuildBytes - 1_000 },
+        { address: 'file:///c/c', maxBytes: 10 },
+      ]);
+    });
+
+    it('gives unknown with the reason of the byte cap, and reads no more, when nothing of the build cap is left', async () => {
+      const reads: ReadCall[] = [];
+      const transport = transportOf(
+        { [API.address]: KNOWN('api'), [SHOP.address]: KNOWN('shop') },
+        { [API.address]: readOf(childReport('api'), 3, reportLimits.maxBuildBytes), [SHOP.address]: readOf(childReport('shop'), 3) },
+        reads,
+      );
+      const rows = await childrenOf([API, SHOP], transport);
+      expect(rows[0]).toMatchObject({ id: 'api', state: 'ok', age: 3 });
+      expect(rows[1]).toEqual({ id: 'shop', address: SHOP.address, state: 'unknown', reason: childReasons.byteCap, counts: null, age: null });
+      expect(reads.map((read) => read.address)).toEqual([API.address]);
+    });
   });
 
   it('reads the facts of the workers once', async () => {
@@ -760,19 +934,31 @@ describe('report: the command (TP-12, TP-13, TP-14)', () => {
     expect(result.err).toContain('broken');
   });
 
-  it('starts the text with the CHECK line, then one row for each child, when a child does not answer', async () => {
+  it('starts the text with the CHECK line, then one row for each child, with the counts and the age of the report of a child that answers', async () => {
     const fixture = await fixtureOf({
       config: nodeConfig([WEB, API]),
       childHomes: { '/w/web-factory': childConfig() },
     });
+    fixture.deps.seed(layoutOf('/w/web-factory').reportFile, reportTextOf(childReport('web', { workers: [STORED_WORKER] })));
     const result = await run(fixture);
     expect(result.code).toBe(0);
     const lines = result.out.split('\n').filter((line) => line !== '');
     expect(lines[0]).toMatch(/^CHECK: mgr \(layer 2\): workers 0, in progress 0, requests 0, children 2 \(1 not ok\)$/);
     expect(lines[1]).toMatch(/^ID\s+STATE\s+WORKERS\s+ITEMS\s+REQUESTS\s+CHILDREN\s+AGE\s+REASON$/);
-    expect(lines[2]).toMatch(/^web\s+ok\s+-\s+-\s+-\s+-\s+-\s+-$/);
+    expect(lines[2]).toMatch(/^web\s+ok\s+1\s+0\s+0\s+0\s+0s\s+-$/);
     expect(lines[3]).toMatch(/^api\s+unknown\s+-\s+-\s+-\s+-\s+-\s+\S/);
     expect(lines).toHaveLength(4);
+  });
+
+  it('shows a child that answers the ping but has no report file as unknown with the fixed reason, so the verdict is CHECK', async () => {
+    const fixture = await fixtureOf({
+      config: nodeConfig([WEB]),
+      childHomes: { '/w/web-factory': childConfig() },
+    });
+    const result = await run(fixture);
+    const lines = result.out.split('\n').filter((line) => line !== '');
+    expect(lines[0]).toMatch(/^CHECK: mgr \(layer 2\): .*children 1 \(1 not ok\)$/);
+    expect(lines[2]).toMatch(new RegExp(`^web\\s+unknown\\s+-\\s+-\\s+-\\s+-\\s+-\\s+${childReasons.noReport}$`));
   });
 
   it('prints with the flag --json the document that the file holds, and the file has mode 600 in a folder of mode 700', async () => {
