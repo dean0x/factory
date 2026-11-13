@@ -86,24 +86,69 @@ const unreadable = (number: string): CliResult<never> =>
     `Check that ${toolNames.gh} is installed and signed in to ${mergeCheck.host}, then run "${RECORD_COMMAND}" again.`,
   );
 
-/** The PR number of a flag: one to nine digits, no leading zero. Anything else is a usage error. */
-export const parsePrNumber = (text: string): CliResult<number> =>
+/** The PR number of an input: one to nine digits, no leading zero. Anything else is a usage error that names the input by `label`. */
+export const parsePrNumber = (text: string, label: string): CliResult<number> =>
   mergeCheck.prPattern.test(text)
     ? ok(Number(text))
-    : usageError(`${flagText(flags.ref)}: must be a whole number of one to nine digits, with no leading zero`);
+    : usageError(`${label}: must be a whole number of one to nine digits, with no leading zero`);
+
+/** Who reads a PR, for the words of a refusal. `name` says what reads. `again` is the command line that the remedy tells the person to run again. */
+export interface PrReader {
+  readonly name: string;
+  readonly again: string;
+}
+
+/** The reader of `item record`. */
+export const RECORD_READER: PrReader = { name: 'the merge check', again: RECORD_COMMAND };
 
 /**
  * `owner/name` of the repo of a project URL. Only a repo on the GitHub host passes. Any other URL is a failure, and no `gh` runs.
  * The message never repeats the URL, because a URL can hold a secret.
  */
-export const githubRepoOf = (url: string): CliResult<string> => {
+export const githubRepoOf = (url: string, reader: PrReader): CliResult<string> => {
   const repo = parseGithubRepo(url);
   return repo === null
     ? failure(
-        `the merge check reads repos on ${mergeCheck.host} only`,
-        `Check that the url of the project is a ${mergeCheck.host} URL, then run "${RECORD_COMMAND}" again.`,
+        `${reader.name} reads repos on ${mergeCheck.host} only`,
+        `Check that the url of the project is a ${mergeCheck.host} URL, then run "${reader.again}" again.`,
       )
     : ok(repo);
+};
+
+/** What `runPrView` asks of `gh pr view`: the PR `number` as text, in `repo` (`owner/name`), the field list of `--json`, and the most chars of the answer. */
+export interface PrViewRequest {
+  readonly repo: string;
+  readonly number: string;
+  readonly fields: string;
+  readonly maxOutputChars: number;
+}
+
+/**
+ * What one `gh pr view --json` call gave, before a schema reads it. `unreadable`: gh did not start, ran into its time limit, or
+ * exited with a non-zero code. `too-long`: the answer has more chars than the cap. `not-json`: the answer is not JSON. No case
+ * holds text of gh.
+ */
+export type PrViewRead =
+  | { readonly kind: 'parsed'; readonly value: unknown }
+  | { readonly kind: 'unreadable' }
+  | { readonly kind: 'too-long' }
+  | { readonly kind: 'not-json' };
+
+/**
+ * The one place that starts `gh pr view`. The repo is on `mergeCheck.host`, the arguments are fixed, the number comes after the end
+ * of options mark, and the call has the time limit `ghTimeoutMs`. The caller sets the cap of its answer and reads the schema.
+ */
+export const runPrView = async (deps: Deps, request: PrViewRequest): Promise<PrViewRead> => {
+  const words = mergeCheck.words;
+  const run = await deps.run(
+    toolNames.gh,
+    [...words.command.split(' '), words.repoFlag, `${mergeCheck.host}/${request.repo}`, words.jsonFlag, request.fields, words.endOfFlags, request.number],
+    { timeoutMs: ghTimeoutMs },
+  );
+  if (!run.ok || run.value.exitCode !== 0) return { kind: 'unreadable' };
+  if (run.value.stdout.length > request.maxOutputChars) return { kind: 'too-long' };
+  const json = parseJsonText(run.value.stdout);
+  return json.ok ? { kind: 'parsed', value: json.value } : { kind: 'not-json' };
 };
 
 const isSha = (text: string): boolean => mergeCheck.shaPattern.test(text);
@@ -117,18 +162,17 @@ const isSha = (text: string): boolean => mergeCheck.shaPattern.test(text);
  */
 export const readMergedPr = async (deps: Deps, input: MergeReadInput): Promise<CliResult<MergedRead>> => {
   const number = String(input.number);
-  const checked = parsePrNumber(number);
+  const checked = parsePrNumber(number, flagText(flags.ref));
   if (!checked.ok) return checked;
-  const words = mergeCheck.words;
-  const run = await deps.run(
-    toolNames.gh,
-    [...words.command.split(' '), words.repoFlag, `${mergeCheck.host}/${input.repo}`, words.jsonFlag, mergeCheck.fieldList, words.endOfFlags, number],
-    { timeoutMs: ghTimeoutMs },
-  );
-  if (!run.ok || run.value.exitCode !== 0) return unreadable(number);
-  if (run.value.stdout.length > mergeCheck.maxOutputChars) return mismatch(number, 'the answer of gh is too long');
-  const json = parseJsonText(run.value.stdout);
-  const parsed = json.ok ? prSchema.safeParse(json.value) : null;
+  const read = await runPrView(deps, {
+    repo: input.repo,
+    number,
+    fields: mergeCheck.fieldList,
+    maxOutputChars: mergeCheck.maxOutputChars,
+  });
+  if (read.kind === 'unreadable') return unreadable(number);
+  if (read.kind === 'too-long') return mismatch(number, 'the answer of gh is too long');
+  const parsed = read.kind === 'parsed' ? prSchema.safeParse(read.value) : null;
   if (parsed === null || !parsed.success) return mismatch(number, 'the answer of gh is not a PR record');
   const pr = parsed.data;
   const mergeCommit = pr.mergeCommit?.oid ?? '';

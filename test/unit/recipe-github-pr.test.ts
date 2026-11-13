@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { exitCodeOf, failure, type CliError, type CliResult } from '../../src/cli/errors.js';
 import type { RunOutput } from '../../src/core/deps.js';
-import { githubRepoOf, mergeCheck, parsePrNumber, readMergedPr, type MergedRead } from '../../src/recipes/software/github-pr.js';
-import { ghTimeoutMs } from '../../src/names.js';
+import {
+  githubRepoOf,
+  mergeCheck,
+  parsePrNumber,
+  readMergedPr,
+  RECORD_COMMAND,
+  RECORD_READER,
+  runPrView,
+  type MergedRead,
+} from '../../src/recipes/software/github-pr.js';
+import { flags, flagText, ghTimeoutMs } from '../../src/names.js';
 import { createFakeDeps, exited, missingProgram, type RunHandler } from '../helpers/fake-deps.js';
 
 const REPO = 'acme/web';
@@ -71,19 +80,29 @@ describe('mergeCheck', () => {
 });
 
 describe('parsePrNumber', () => {
+  const REF = flagText(flags.ref);
+
   it('reads a whole number of one to nine digits with no leading zero', async () => {
-    expect(parsePrNumber('12')).toEqual({ ok: true, value: 12 });
-    expect(parsePrNumber('999999999')).toEqual({ ok: true, value: 999999999 });
+    expect(parsePrNumber('12', REF)).toEqual({ ok: true, value: 12 });
+    expect(parsePrNumber('999999999', REF)).toEqual({ ok: true, value: 999999999 });
   });
 
   it.each(['', '0', '012', '-1', '1.5', '1e3', ' 12', '12 ', '12abc', '1234567890', '+3', '0x1f'])(
     'refuses %j as a usage error (exit 2)',
     (text) => {
-      const result = parsePrNumber(text);
+      const result = parsePrNumber(text, REF);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(exitCodeOf[result.error.kind]).toBe(2);
     },
   );
+
+  it('names the input that the caller gives in the message, and keeps the message of the reference flag', () => {
+    const own = parsePrNumber('0', 'PR number');
+    const ref = parsePrNumber('0', REF);
+
+    expect(own.ok ? '' : own.error.message).toBe('PR number: must be a whole number of one to nine digits, with no leading zero');
+    expect(ref.ok ? '' : ref.error.message).toBe('--ref: must be a whole number of one to nine digits, with no leading zero');
+  });
 });
 
 describe('githubRepoOf', () => {
@@ -92,7 +111,7 @@ describe('githubRepoOf', () => {
     ['git@github.com:acme/web.git', 'acme/web'],
     ['ssh://git@github.com/acme/web', 'acme/web'],
   ])('gives the owner and the name of %s', (url, repo) => {
-    expect(githubRepoOf(url)).toEqual({ ok: true, value: repo });
+    expect(githubRepoOf(url, RECORD_READER)).toEqual({ ok: true, value: repo });
   });
 
   it.each([
@@ -102,12 +121,87 @@ describe('githubRepoOf', () => {
     '/home/someone/web',
     'not a url',
   ])('refuses %j as a failure (exit 1)', (url) => {
-    const result = githubRepoOf(url);
+    const result = githubRepoOf(url, RECORD_READER);
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(exitCodeOf[result.error.kind]).toBe(1);
       expect(result.error.hint).toBeDefined();
     }
+  });
+
+  it('names the reader and the command to run again that the caller gives, and never repeats the URL', () => {
+    const reader = { name: 'the sample reader', again: 'sample run PR' };
+    const url = 'https://user:secret-token@gitlab.com/acme/web.git';
+
+    const result = githubRepoOf(url, reader);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toBe('the sample reader reads repos on github.com only');
+    expect(result.error.hint).toContain('"sample run PR"');
+    expect(textOf(result.error)).not.toContain('secret-token');
+  });
+
+  it('keeps the words of the merge check for the record reader', () => {
+    const result = githubRepoOf('/home/someone/web', RECORD_READER);
+
+    expect(result.ok ? '' : result.error.message).toBe('the merge check reads repos on github.com only');
+    expect(result.ok ? '' : result.error.hint).toContain(`"${RECORD_COMMAND}"`);
+  });
+});
+
+describe('runPrView', () => {
+  const request = { repo: REPO, number: '12', fields: 'alpha,beta', maxOutputChars: 50 } as const;
+  const runWith = (handler: RunHandler, input: Parameters<typeof runPrView>[1] = request) => {
+    const deps = createFakeDeps({ run: handler });
+    return { deps, result: runPrView(deps, input) };
+  };
+
+  it('makes one gh call with the repo on github.com, the fields, an end of options mark and the number', async () => {
+    const { deps, result } = runWith(() => exited(0, '{}'));
+
+    await result;
+
+    expect(deps.calls).toHaveLength(1);
+    expect(deps.calls[0]?.command).toBe('gh');
+    expect(deps.calls[0]?.args).toEqual(['pr', 'view', '--repo', 'github.com/acme/web', '--json', 'alpha,beta', '--', '12']);
+    expect(deps.calls[0]?.timeoutMs).toBe(ghTimeoutMs);
+  });
+
+  it('gives the parsed JSON of the answer', async () => {
+    const { result } = runWith(() => exited(0, '{"alpha":[1,2]}'));
+
+    expect(await result).toEqual({ kind: 'parsed', value: { alpha: [1, 2] } });
+  });
+
+  it.each([
+    ['gh is not installed', () => missingProgram('gh')],
+    ['gh runs into its time limit', () => failure('timed out')],
+    ['gh exits with a non-zero code', () => exited(1, '{}', HOSTILE)],
+  ])('gives unreadable when %s', async (_name, handler) => {
+    expect(await runWith(handler).result).toEqual({ kind: 'unreadable' });
+  });
+
+  it('accepts an answer of exactly the cap and refuses one char more', async () => {
+    const atCap = `{"a":"${'x'.repeat(request.maxOutputChars - 8)}"}`;
+    expect(atCap).toHaveLength(request.maxOutputChars);
+
+    expect((await runWith(() => exited(0, atCap)).result).kind).toBe('parsed');
+    expect(await runWith(() => exited(0, `${atCap} `)).result).toEqual({ kind: 'too-long' });
+  });
+
+  it('gives not-json for text that is not JSON, and never repeats the text', async () => {
+    const done = await runWith(() => exited(0, HOSTILE)).result;
+
+    expect(done).toEqual({ kind: 'not-json' });
+    expect(JSON.stringify(done)).not.toContain(HOSTILE);
+  });
+
+  it('applies the cap that the caller gives, so one reader can read a longer answer than another', async () => {
+    const long = `{"a":"${'x'.repeat(200)}"}`;
+
+    expect((await runWith(() => exited(0, long), { ...request, maxOutputChars: 300 }).result).kind).toBe('parsed');
+    expect((await runWith(() => exited(0, long)).result).kind).toBe('too-long');
   });
 });
 
