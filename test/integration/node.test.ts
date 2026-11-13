@@ -1,7 +1,8 @@
-import { chmod, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { MANAGER_LAYER } from '../../src/config/schema.js';
+import { childReasons } from '../../src/names.js';
 import { makeSandbox, removeOpenSandboxes, withoutHookNotice, type RunResult, type Sandbox } from './harness.js';
 
 let box: Sandbox;
@@ -388,6 +389,29 @@ describe('factory node tree (built binary)', () => {
     expect(tree.verdict).toBe('check');
     expect(tree.nodes).toHaveLength(1);
     expect(tree.nodes[0]).toMatchObject({ state: 'mismatch', report: { id: 'mid' } });
+  });
+
+  it('shows a child with a linked config as unknown with one reason in node children, report and node tree, and reads nothing below it', async () => {
+    await threeLayers();
+    await reportIn(shop);
+    await reportIn(middle);
+    const config = join(middle, 'factory.yaml');
+    const moved = join(box.root, 'moved-factory.yaml');
+    await rename(config, moved);
+    await symlink(moved, config);
+
+    const listed = await node('children', '--json');
+    expect(listed.code, listed.stderr).toBe(0);
+    const [child] = (JSON.parse(listed.stdout) as { children: { id: string; status: string; reason: string | null }[] }).children;
+    const reported = await box.run(['report', '--json', '--home', manager]);
+    expect(reported.code, reported.stderr).toBe(0);
+    const [row] = (JSON.parse(reported.stdout) as { children: { id: string; state: string; reason: string | null }[] }).children;
+    const tree = await treeJson();
+
+    expect(child).toEqual({ id: 'mid', address: `file://${middle}`, layer: null, status: 'unknown', reason: childReasons.configUnsafe });
+    expect([row?.id, row?.state, row?.reason]).toEqual(['mid', child?.status, child?.reason]);
+    expect(tree.verdict).toBe('check');
+    expect(tree.nodes.map((row) => [row.report.id, row.state, row.reason])).toEqual([['mid', child?.status, child?.reason]]);
   });
 
   it('exits 2 for an argument, and for a node with no local file', async () => {

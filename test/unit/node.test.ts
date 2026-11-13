@@ -12,7 +12,7 @@ import { reportTextOf } from '../../src/report/build.js';
 import type { TreeRow, TreeWalk } from '../../src/report/tree.js';
 import { STATE_GITIGNORE } from '../../src/state/files.js';
 import { FACTORY_VERSION } from '../../src/version.js';
-import { createFakeDeps, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
+import { createFakeDeps, registerRoot, withFsWatch, type FakeDeps } from '../helpers/fake-deps.js';
 import { FAKE_GITHUB_TOKEN } from '../helpers/fake-secret.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
 import { expectShortOutput, plainText } from '../helpers/short-output.js';
@@ -326,6 +326,28 @@ describe('node add-child', () => {
       expect(result.error.message).not.toContain('session.effort');
       expect(result.error.message).not.toContain('wild');
     }
+  });
+
+  describe('for a child config that the ping refuses as unsafe', () => {
+    const OTHER_USER = 2000;
+    const CHILD_CONFIG = '/w/web-factory/factory.yaml';
+    const cases: readonly (readonly [what: string, links: Readonly<Record<string, string>>, change: (deps: FakeDeps) => void])[] = [
+      ['a link', { [CHILD_CONFIG]: '/elsewhere/factory.yaml' }, () => undefined],
+      ['another owner', {}, (deps) => void deps.owners.set(CHILD_CONFIG, OTHER_USER)],
+      ['the mode 664', {}, (deps) => void deps.modes.set(CHILD_CONFIG, 0o664)],
+      ['the mode 646', {}, (deps) => void deps.modes.set(CHILD_CONFIG, 0o646)],
+    ];
+
+    it.each(cases)('fails with the fixed reason, writes nothing and keeps the children for a config with %s', async (_what, links, change) => {
+      const deps = make({ homes: webHome, links });
+      change(deps);
+      const before = childrenInFile(deps);
+      const result = await node(deps, 'add-child', '/w/web-factory');
+      expect(result).toMatchObject({ ok: false, error: { kind: 'failure' } });
+      if (!result.ok) expect(result.error.message).toBe(`cannot add the child: ${childReasons.configUnsafe}`);
+      expect(deps.atomicWrites).toEqual([]);
+      expect(childrenInFile(deps)).toEqual(before);
+    });
   });
 
   it('tells which side needs the upgrade when the schema of the child is not the current one', async () => {
@@ -667,6 +689,36 @@ describe('node tree', () => {
     const output = treeOutput({ home: HOME, config: configOf('mgr', 2), notes: [] }, walk);
     expect(output.lines.at(-1)).toEqual({ level: 'warn', text: `more than ${treeLimits.maxLines} lines: 7 rows are not shown` });
     expect(output.json['omitted']).toBe(7);
+  });
+
+  describe('for a child config that the ping refuses (the same answer as node children)', () => {
+    const WEB_CONFIG = `${WEB}/factory.yaml`;
+    const OTHER_USER = 2000;
+    const cases: readonly (readonly [what: string, links: Readonly<Record<string, string>>, change: (deps: FakeDeps) => void])[] = [
+      ['a link', { [WEB_CONFIG]: '/elsewhere/factory.yaml' }, () => undefined],
+      ['another owner', {}, (deps) => void deps.owners.set(WEB_CONFIG, OTHER_USER)],
+      ['the mode 664', {}, (deps) => void deps.modes.set(WEB_CONFIG, 0o664)],
+      ['the mode 646', {}, (deps) => void deps.modes.set(WEB_CONFIG, 0o646)],
+    ];
+
+    it.each(cases)('gives the state and the reason of node children for a config with %s, and reads nothing below the child', async (_what, links, change) => {
+      const base = make({ layer: 3, children: [webEntry], homes: { [WEB]: configOf('web', 2) }, links });
+      seedReport(base, WEB, reportOf('web', 2, { children: [entryOf('deep', DEEP)] }));
+      seedReport(base, DEEP, reportOf('deep', 1));
+      change(base);
+      const touched: string[] = [];
+      const deps = withFsWatch(base, (_method, path) => void touched.push(path));
+
+      const [child] = (await succeeded(deps, 'children')).json['children'] as { status: string; reason: string | null }[];
+      touched.length = 0;
+      const tree = (await succeeded(deps, 'tree')).json;
+      const rows = tree['nodes'] as { state: string; reason: string | null }[];
+
+      expect(child).toEqual(expect.objectContaining({ status: 'unknown', reason: childReasons.configUnsafe }));
+      expect(tree['verdict']).toBe('check');
+      expect(rows.map((row) => [row.state, row.reason])).toEqual([[child?.status, child?.reason]]);
+      expect(touched.filter((path) => path.startsWith(DEEP))).toEqual([]);
+    });
   });
 
   it('takes no argument', async () => {
