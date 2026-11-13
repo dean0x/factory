@@ -36,7 +36,8 @@ const document = (): Record<string, unknown> => ({
   workers: [worker],
   board: {
     states: [{ name: 'open', count: 4 }],
-    fields: [{ field: 'priority', values: [{ name: 'high', count: 1 }] }],
+    statesOmitted: 0,
+    fields: [{ field: 'priority', values: [{ name: 'high', count: 1 }], valuesOmitted: 0 }],
   },
   inProgress: [{ id: 'B-3', title: 'Build the page', state: 'open', track: 'web', stage: 'build' }],
   requests: [{ id: 'D-4', title: 'Pick a theme', origin: 'acme#D-4' }],
@@ -93,7 +94,7 @@ describe('the report document (AC-9)', () => {
       doc['inProgress'] = [];
       doc['requests'] = [];
       doc['children'] = [];
-      doc['board'] = { states: [], fields: [] };
+      doc['board'] = { states: [], statesOmitted: 0, fields: [] };
     });
     expect(result.ok).toBe(true);
   });
@@ -129,7 +130,7 @@ describe('the report allow-list (AC-10)', () => {
   it('refuses an extra key in an item, a request, a count row and a child row', () => {
     expect(parsed((doc) => (doc['inProgress'] = [{ id: 'B-3', title: 't', state: 's', track: null, stage: null, pane: '%1' }])).ok).toBe(false);
     expect(parsed((doc) => (doc['requests'] = [{ id: 'D-4', title: null, origin: 'a#D-4', approval: 'yes' }])).ok).toBe(false);
-    expect(parsed((doc) => (doc['board'] = { states: [{ name: 'open', count: 1, session: 's' }], fields: [] })).ok).toBe(false);
+    expect(parsed((doc) => (doc['board'] = { states: [{ name: 'open', count: 1, session: 's' }], statesOmitted: 0, fields: [] })).ok).toBe(false);
     expect(parsed((doc) => (doc['children'] = [{ ...child, session: 's' }])).ok).toBe(false);
   });
 
@@ -161,20 +162,47 @@ describe('the report caps (AC-12 limits)', () => {
     }
   });
 
-  it('refuses a text over the text cap, and a count row list over its cap', () => {
+  it('refuses a text over the text cap', () => {
     const long = 'x'.repeat(reportLimits.maxTextChars + 1);
     expect(parsed((doc) => (doc['requests'] = [{ id: 'D-4', title: long, origin: 'acme#D-4' }])).ok).toBe(false);
     expect(parsed((doc) => (doc['requests'] = [{ id: 'D-4', title: 'x'.repeat(reportLimits.maxTextChars), origin: 'a#D-4' }])).ok).toBe(true);
-    const rows = Array.from({ length: reportLimits.maxCountRows + 1 }, (_, at) => ({ name: `s${at}`, count: 1 }));
-    expect(parsed((doc) => (doc['board'] = { states: rows, fields: [] })).ok).toBe(false);
+  });
+
+  it('accepts a list of counts at its cap and refuses one more row, for the states and for the values of a field', () => {
+    const rows = (length: number): unknown[] => Array.from({ length }, (_, at) => ({ name: `s${at}`, count: 1 }));
+    const states = (length: number) => (doc: Record<string, unknown>): void => {
+      doc['board'] = { states: rows(length), statesOmitted: 0, fields: [] };
+    };
+    const values = (length: number) => (doc: Record<string, unknown>): void => {
+      doc['board'] = { states: [], statesOmitted: 0, fields: [{ field: 'lane', values: rows(length), valuesOmitted: 0 }] };
+    };
+    expect(parsed(states(reportLimits.maxCountRows)).ok).toBe(true);
+    expect(parsed(states(reportLimits.maxCountRows + 1)).ok).toBe(false);
+    expect(parsed(values(reportLimits.maxCountRows)).ok).toBe(true);
+    expect(parsed(values(reportLimits.maxCountRows + 1)).ok).toBe(false);
   });
 
   it('refuses a count that is negative, fractional or past the number cap', () => {
-    const board = (count: number): unknown => ({ states: [{ name: 'open', count }], fields: [] });
+    const board = (count: number): unknown => ({ states: [{ name: 'open', count }], statesOmitted: 0, fields: [] });
     expect(parsed((doc) => (doc['board'] = board(-1))).ok).toBe(false);
     expect(parsed((doc) => (doc['board'] = board(1.5))).ok).toBe(false);
     expect(parsed((doc) => (doc['board'] = board(reportLimits.maxNumber + 1))).ok).toBe(false);
     expect(parsed((doc) => (doc['board'] = board(reportLimits.maxNumber))).ok).toBe(true);
+  });
+
+  it('refuses a number of left-out rows that is missing, negative, fractional or past the number cap', () => {
+    const board = (statesOmitted: unknown, valuesOmitted: unknown): unknown => ({
+      states: [],
+      statesOmitted,
+      fields: [{ field: 'lane', values: [], valuesOmitted }],
+    });
+    expect(parsed((doc) => (doc['board'] = board(3, 4))).ok).toBe(true);
+    for (const bad of [-1, 1.5, reportLimits.maxNumber + 1, '3', null]) {
+      expect(parsed((doc) => (doc['board'] = board(bad, 0))).ok, `statesOmitted ${String(bad)}`).toBe(false);
+      expect(parsed((doc) => (doc['board'] = board(0, bad))).ok, `valuesOmitted ${String(bad)}`).toBe(false);
+    }
+    expect(parsed((doc) => (doc['board'] = { states: [], fields: [] })).ok).toBe(false);
+    expect(parsed((doc) => (doc['board'] = { states: [], statesOmitted: 0, fields: [{ field: 'lane', values: [] }] })).ok).toBe(false);
   });
 
   it('keeps a full report of small rows under the byte cap of a report file', () => {

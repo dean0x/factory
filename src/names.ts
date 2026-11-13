@@ -1326,8 +1326,10 @@ export const statusWords = {
  * The limits of the report of a node (design 5.4). `schemaVersion` is the number that a report holds in its version key: a reader
  * that finds a higher number reads no more of the file. A report file has at most `maxBytes` bytes. One build of the report reads at
  * most `maxBuildBytes` bytes from the report files of its children in all. The lists of the report have at most `maxWorkers`,
- * `maxChildren`, `maxRequests` and `maxItems` entries, and the lists of counts (the states, the owner fields and the values of one
- * field) at most `maxCountRows`, which is not less than `maxWorkers`, so the lanes of all workers fit in the values of the worker field. A text is at most `maxTextChars` characters, a version text at most `maxVersionChars`, and a
+ * `maxChildren`, `maxRequests` and `maxItems` entries, and a list of counts (the states, or the values of one owner field) at most
+ * `maxCountRows` rows, which is not less than `maxWorkers`, so the lanes of all workers fit in the values of the worker field. A list
+ * of counts is never a cause of failure: when it has more different names, it keeps the rows with the highest counts and gives the
+ * number of the other names beside it. A text is at most `maxTextChars` characters, a version text at most `maxVersionChars`, and a
  * count or an age (in whole seconds) at most `maxNumber`.
  */
 export const reportLimits = {
@@ -1374,12 +1376,15 @@ export const reportKeys = {
     workItem: 'workItem',
     idle: 'idle',
   },
-  /** The board counts: the items by state, and the items by each owner field. */
-  board: { states: 'states', fields: 'fields' },
+  /**
+   * The board counts: all the items by state, and the open items by each owner field. `statesOmitted` is the number of the states that
+   * a full list of `states` left out.
+   */
+  board: { states: 'states', statesOmitted: 'statesOmitted', fields: 'fields' },
   /** One count: a state, or a value of an owner field, with the number of items. */
   tally: { name: 'name', count: 'count' },
-  /** The counts of one owner field: the field name, and the counts of its values. */
-  field: { field: 'field', values: 'values' },
+  /** The counts of one owner field: the field name, the counts of its values, and the number of the values that a full list left out. */
+  field: { field: 'field', values: 'values', valuesOmitted: 'valuesOmitted' },
   item: { id: 'id', title: 'title', state: 'state', track: 'track', stage: 'stage' },
   /** A request that waits for the owner. The origin is `<node id>#<request id>`, with `/` between the ids of deeper nodes. */
   request: { id: 'id', title: 'title', origin: 'origin' },

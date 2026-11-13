@@ -44,10 +44,15 @@ const tallySchema = z.strictObject({ [tallyKeys.name]: name, [tallyKeys.count]: 
 
 const tallies = z.array(tallySchema).max(reportLimits.maxCountRows);
 
-const fieldSchema = z.strictObject({ [fieldKeys.field]: name, [fieldKeys.values]: tallies });
+const fieldSchema = z.strictObject({
+  [fieldKeys.field]: name,
+  [fieldKeys.values]: tallies,
+  [fieldKeys.valuesOmitted]: count,
+});
 
 const boardSchema = z.strictObject({
   [boardKeys.states]: tallies,
+  [boardKeys.statesOmitted]: count,
   [boardKeys.fields]: z.array(fieldSchema).max(reportLimits.maxCountRows),
 });
 

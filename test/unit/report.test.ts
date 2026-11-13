@@ -227,7 +227,7 @@ describe('report builder: the document (TP-10)', () => {
     ]);
   });
 
-  it('counts the board by state and by each owner field, and lists the items in progress', async () => {
+  it('counts the board by state over all items and by each owner field over the open items, and lists the items in progress', async () => {
     const report = await reportOf(await fixtureOf({ items }));
     expect(report.board).toEqual({
       states: [
@@ -235,22 +235,24 @@ describe('report builder: the document (TP-10)', () => {
         { name: 'done', count: 1 },
         { name: 'open', count: 1 },
       ],
+      statesOmitted: 0,
       fields: [
         {
           field: 'priority',
           values: [
-            { name: 'P0', count: 1 },
             { name: 'P1', count: 2 },
-            { name: 'P2', count: 1 },
+            { name: 'P0', count: 1 },
           ],
+          valuesOmitted: 0,
         },
-        { field: 'type', values: [{ name: 'bug', count: 2 }] },
+        { field: 'type', values: [{ name: 'bug', count: 1 }], valuesOmitted: 0 },
         {
           field: 'lane',
           values: [
             { name: 'alpha', count: 1 },
             { name: 'beta', count: 1 },
           ],
+          valuesOmitted: 0,
         },
       ],
     });
@@ -263,7 +265,7 @@ describe('report builder: the document (TP-10)', () => {
   it('counts by state only, and lists no item in progress, when the setup declares no owner field and no state in progress', async () => {
     const config = sampleConfigWithBoard({ states: ['open', 'done'], closed: 'done' });
     const report = await reportOf(await fixtureOf({ config, items: [itemRecord('B-1', { status: 'open' })] }));
-    expect(report.board).toEqual({ states: [{ name: 'open', count: 1 }], fields: [] });
+    expect(report.board).toEqual({ states: [{ name: 'open', count: 1 }], statesOmitted: 0, fields: [] });
     expect(report.inProgress).toEqual([]);
   });
 
@@ -322,6 +324,89 @@ describe('report builder: the document (TP-10)', () => {
   });
 });
 
+describe('report builder: the lists of counts', () => {
+  const cap = reportLimits.maxCountRows;
+  const lane = (report: NodeReport) => report.board.fields.find((field) => field.field === 'lane');
+  const named = (rows: readonly { readonly name: string }[]): string[] => rows.map((row) => row.name);
+  const distinctNames = (prefix: string, length: number): string[] =>
+    Array.from({ length }, (_, at) => `${prefix}-${String(at).padStart(4, '0')}`);
+
+  it('counts the values of an owner field over the open items only, and the states over all items', async () => {
+    const items = [
+      itemRecord('B-1', { status: 'done', lane: 'old' }),
+      itemRecord('B-2', { status: 'doing', lane: 'alpha' }),
+      itemRecord('B-3', { status: 'open', lane: 'alpha' }),
+    ];
+    const report = await reportOf(await fixtureOf({ items }));
+    expect(lane(report)).toEqual({ field: 'lane', values: [{ name: 'alpha', count: 2 }], valuesOmitted: 0 });
+    expect(report.board.states).toEqual([
+      { name: 'doing', count: 1 },
+      { name: 'done', count: 1 },
+      { name: 'open', count: 1 },
+    ]);
+  });
+
+  it('gives the report when the closed items hold more different values than the cap of a list', async () => {
+    const lanes = distinctNames('lane', cap + 1);
+    const closed = lanes.map((name, at) => itemRecord(`B-${at + 1}`, { status: 'done', lane: name }));
+    const report = await reportOf(await fixtureOf({ items: closed }));
+    expect(lane(report)).toEqual({ field: 'lane', values: [], valuesOmitted: 0 });
+    expect(report.board.states).toEqual([{ name: 'done', count: closed.length }]);
+  });
+
+  it('keeps every different value of a field at the cap of a list, as every worker can have its own lane', async () => {
+    const open = distinctNames('lane', cap).map((name, at) => itemRecord(`B-${at + 1}`, { status: 'open', lane: name }));
+    const report = await reportOf(await fixtureOf({ items: open }));
+    expect(lane(report)?.values).toHaveLength(cap);
+    expect(lane(report)?.valuesOmitted).toBe(0);
+    expect(cap).toBeGreaterThanOrEqual(reportLimits.maxWorkers);
+  });
+
+  it('keeps the values with the highest counts above the cap, and gives the exact number of the values that it left out', async () => {
+    const left = 3;
+    const singles = distinctNames('lane', cap + left - 1);
+    const lanes = [...singles, 'zzz', 'zzz'];
+    const open = lanes.map((name, at) => itemRecord(`B-${at + 1}`, { status: 'open', lane: name }));
+    const report = await reportOf(await fixtureOf({ items: open }));
+    expect(lane(report)?.valuesOmitted).toBe(left);
+    expect(named(lane(report)?.values ?? [])).toEqual(['zzz', ...singles.slice(0, cap - 1)]);
+    expect(lane(report)?.values[0]).toEqual({ name: 'zzz', count: 2 });
+  });
+
+  it('keeps every state at the cap of a list', async () => {
+    const items = distinctNames('state', cap).map((name, at) => itemRecord(`B-${at + 1}`, { status: name }));
+    const report = await reportOf(await fixtureOf({ items }));
+    expect(report.board.states).toHaveLength(cap);
+    expect(report.board.statesOmitted).toBe(0);
+  });
+
+  it('keeps the states with the highest counts above the cap, and gives the exact number of the states that it left out', async () => {
+    const left = 4;
+    const singles = distinctNames('state', cap + left - 1);
+    const items = [...singles, 'zzz', 'zzz'].map((name, at) => itemRecord(`B-${at + 1}`, { status: name }));
+    const report = await reportOf(await fixtureOf({ items }));
+    expect(report.board.statesOmitted).toBe(left);
+    expect(named(report.board.states)).toEqual(['zzz', ...singles.slice(0, cap - 1)]);
+  });
+
+  it('orders the rows by count, highest first, and then by name by code unit', async () => {
+    const items = [
+      itemRecord('B-1', { status: 'open', lane: 'b' }),
+      itemRecord('B-2', { status: 'open', lane: 'a' }),
+      itemRecord('B-3', { status: 'open', lane: 'c' }),
+      itemRecord('B-4', { status: 'open', lane: 'c' }),
+      itemRecord('B-5', { status: 'open', lane: 'B' }),
+    ];
+    const report = await reportOf(await fixtureOf({ items }));
+    expect(lane(report)?.values).toEqual([
+      { name: 'c', count: 2 },
+      { name: 'B', count: 1 },
+      { name: 'a', count: 1 },
+      { name: 'b', count: 1 },
+    ]);
+  });
+});
+
 describe('report builder: faults', () => {
   it('fails when the board cannot be read, and never gives an empty board in its place', async () => {
     const fixture = await fixtureOf();
@@ -346,28 +431,12 @@ describe('report builder: faults', () => {
     expect(facts.status.entries.map((entry) => entry.id)).toEqual(['alpha']);
   });
 
-  it('fails when a list is over its cap, and names the key', async () => {
+  it('fails when a list is over its cap, names the key, and gives a remedy that a person can do', async () => {
     const many = Array.from({ length: reportLimits.maxItems + 1 }, (_, at) => itemRecord(`B-${at + 1}`, { status: 'doing' }));
     const error = errorOf(reportDocOf(await factsOf(await fixtureOf({ items: many }))));
     expect(error.kind).toBe('failure');
     expect(error.message).toContain(doc.inProgress);
-  });
-
-  it('counts more than 50 different values of one token field, as every worker can have its own lane', async () => {
-    const lanes = reportLimits.maxWorkers;
-    const many = Array.from({ length: lanes }, (_, at) => itemRecord(`B-${at + 1}`, { status: 'done', lane: `lane-${String(at).padStart(3, '0')}` }));
-    const report = await reportOf(await fixtureOf({ items: many }));
-    const lane = report.board.fields.find((field) => field.field === 'lane');
-    expect(lane?.values).toHaveLength(lanes);
-    expect(lanes).toBeGreaterThan(50);
-  });
-
-  it('fails with a remedy that names the real step when a list of counts is over its cap', async () => {
-    const many = Array.from({ length: reportLimits.maxCountRows + 1 }, (_, at) => itemRecord(`B-${at + 1}`, { status: 'done', lane: `lane-${at}` }));
-    const error = errorOf(reportDocOf(await factsOf(await fixtureOf({ items: many }))));
-    expect(error.kind).toBe('failure');
-    expect(error.message).toContain(doc.board);
-    expect(error.hint).toContain('fewer different values');
+    expect(error.hint).toContain('state in progress');
   });
 
   it('refuses a report over the byte cap, and says how many bytes it has', async () => {

@@ -19,7 +19,7 @@ const REPORT: NodeReport = {
   factoryVersion: '1.0.0',
   cursor: null,
   workers: [],
-  board: { states: [], fields: [] },
+  board: { states: [], statesOmitted: 0, fields: [] },
   inProgress: [],
   requests: [],
   events: [],

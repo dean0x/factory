@@ -17,7 +17,7 @@ import type { Transport } from '../comms/transport.js';
 import type { BoardConfig, FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { ok } from '../core/result.js';
-import { commands, commandText, places, reportKeys, reportLimits, reportWords, schemaIds } from '../names.js';
+import { commands, commandText, places, reportKeys, reportLimits, reportWords, requestWords, schemaIds } from '../names.js';
 import { FACTORY_VERSION } from '../version.js';
 import { readStatus, type StatusReport } from '../workers/status-read.js';
 import { shownStateOf, type WorkerStatus } from '../workers/status.js';
@@ -115,15 +115,29 @@ const workerOf = (entry: WorkerStatus): ReportWorker => ({
 
 type Tally = ReportBoard[typeof boardKeys.states][number];
 
-/** The count of each name that is not empty after the clean-up, in the order of the names (by code unit), so the order never depends on the board. */
-const talliesOf = (names: readonly string[]): Tally[] => {
+/** A list of counts: at most `maxCountRows` rows, and the number of the different names that the list left out. */
+interface Tallies {
+  readonly rows: Tally[];
+  readonly omitted: number;
+}
+
+/**
+ * The count of each name that is not empty after the clean-up. The rows come with the highest count first, and equal counts in the
+ * order of the names (by code unit), so the order never depends on the board. A list keeps at most `maxCountRows` rows, the first ones
+ * of that order, and `omitted` is the exact number of the other names. A long list is never a failure.
+ */
+const talliesOf = (names: readonly string[]): Tallies => {
   const counts = new Map<string, number>();
   for (const name of names.map(lineOf)) {
     if (name !== '') counts.set(name, (counts.get(name) ?? 0) + 1);
   }
-  return [...counts]
-    .sort(([left], [right]) => Number(left > right) - Number(left < right))
-    .map(([name, count]) => ({ [tallyKeys.name]: name, [tallyKeys.count]: count }));
+  const ordered = [...counts].sort(
+    ([leftName, leftCount], [rightName, rightCount]) => rightCount - leftCount || Number(leftName > rightName) - Number(leftName < rightName),
+  );
+  return {
+    rows: ordered.slice(0, reportLimits.maxCountRows).map(([name, count]) => ({ [tallyKeys.name]: name, [tallyKeys.count]: count })),
+    omitted: Math.max(0, ordered.length - reportLimits.maxCountRows),
+  };
 };
 
 /** The value of an owner field of an item as text, or null when the item has none. A flag counts as `true` or `false`. */
@@ -133,13 +147,23 @@ const fieldValueOf = (item: BoardItem, field: string): string | null => {
   return typeof stored === 'boolean' ? String(stored) : null;
 };
 
-const boardOf = (setup: BoardConfig | undefined, items: readonly BoardItem[]): ReportBoard => ({
-  [boardKeys.states]: talliesOf(items.map((item) => item.status)),
-  [boardKeys.fields]: declaredFields(setup, itemTarget).map((field) => ({
-    [fieldKeys.field]: lineOf(field.name),
-    [fieldKeys.values]: talliesOf(items.flatMap((item) => fieldValueOf(item, field.name) ?? [])),
-  })),
-});
+/**
+ * The board counts. The states count all the items, because the setup caps the states. The values of an owner field count the open
+ * items only: a closed item keeps its values and the board never removes an item, so a count over all items would only grow.
+ */
+const boardOf = (setup: BoardConfig | undefined, items: readonly BoardItem[]): ReportBoard => {
+  const closed = setup?.closed;
+  const open = closed === undefined ? items : items.filter((item) => item.status !== closed);
+  const states = talliesOf(items.map((item) => item.status));
+  return {
+    [boardKeys.states]: states.rows,
+    [boardKeys.statesOmitted]: states.omitted,
+    [boardKeys.fields]: declaredFields(setup, itemTarget).map((field) => {
+      const values = talliesOf(open.flatMap((item) => fieldValueOf(item, field.name) ?? []));
+      return { [fieldKeys.field]: lineOf(field.name), [fieldKeys.values]: values.rows, [fieldKeys.valuesOmitted]: values.omitted };
+    }),
+  };
+};
 
 const inProgressOf = (setup: BoardConfig | undefined, items: readonly BoardItem[]): ReportItem[] => {
   const state = setup?.in_progress;
@@ -189,7 +213,7 @@ export const checkReport = (input: unknown): CliResult<NodeReport> => {
   if (!parsed.ok) {
     return failure(
       `the report is not valid: ${parsed.error}`,
-      `If a list of counts is over its cap, give the items fewer different values in one field of the board. Else run "${commandText(commands.doctor)}" to check the ${places.folder}. Then ${again}.`,
+      `If a list is over its cap, move items out of the state in progress, or answer the ${requestWords.requests} that wait. Else run "${commandText(commands.doctor)}" to check the ${places.folder}. Then ${again}.`,
     );
   }
   const bytes = Buffer.byteLength(reportTextOf(parsed.value), 'utf8');
