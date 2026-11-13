@@ -27,12 +27,14 @@ import {
   fetchClone,
   freeWorker,
   ignoredIn,
+  inboxFilesIn,
   planDismiss,
   requireEndable,
   unpushedReasons,
   type DismissPlan,
   type DismissTarget,
   type FreedWorker,
+  type InboxList,
 } from '../workers/dismiss.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import { requireOtherPane } from '../workers/lifecycle.js';
@@ -118,18 +120,28 @@ const stuckLines = (plan: DismissPlan, reasons: readonly string[]): readonly Out
 /** The ignored files that git does not hold: the removal of the work copy deletes them. */
 const NO_IGNORED: IgnoredList = { paths: [], reachedCap: false };
 
+/** The count of a list: "more than" the names that it holds when it reached the cap. */
+const countOf = ({ paths, reachedCap }: IgnoredList): string => (reachedCap ? `more than ${paths.length}` : `${paths.length}`);
+
 /**
- * The count and the first paths of the ignored files that the removal of the work copy deletes: the dry run says that it `deletes`
- * them, and the free says that it `deleted` them. A list that reached the cap says "more than" the paths it holds. No line for none.
+ * The count and the first names of the files of one kind that the removal of the work copy deletes: the dry run says that it
+ * `deletes` them, and the free says that it `deleted` them. A list that reached the cap says "more than" the names it holds. No line
+ * for none.
  */
-const ignoredLines = (ignored: IgnoredList, verb: 'deletes' | 'deleted'): readonly OutLine[] => {
-  const { paths, reachedCap } = ignored;
+const deletedLines = (list: IgnoredList, kind: string, verb: 'deletes' | 'deleted'): readonly OutLine[] => {
+  const { paths, reachedCap } = list;
   if (paths.length === 0 && !reachedCap) return [];
-  const count = reachedCap ? `more than ${paths.length}` : `${paths.length}`;
   const noun = !reachedCap && paths.length === 1 ? 'file' : 'files';
   const names = [paths.map((path) => displayLine(path)).join(', '), ...(reachedCap ? ['and more'] : [])].filter((part) => part !== '').join(' ');
-  return [text(`The removal ${verb} ${count} ignored ${noun}: ${names}.`)];
+  return [text(`The removal ${verb} ${countOf(list)} ${kind} ${noun}: ${names}.`)];
 };
+
+/** The ignored files that the removal of the work copy deletes. */
+const ignoredLines = (ignored: IgnoredList, verb: 'deletes' | 'deleted'): readonly OutLine[] =>
+  deletedLines(ignored, dismissWords.fileKinds.ignored, verb);
+
+/** The files of the inbox of the worker that the removal of its record deletes. */
+const inboxLines = (inbox: InboxList, verb: 'deletes' | 'deleted'): readonly OutLine[] => deletedLines(inbox, dismissWords.fileKinds.inbox, verb);
 
 /** What the pane of the worker is now, for the words "end" and "close": a live pane ends, and a pane that ended is closed. */
 const paneStep = (entry: WorkerStatus): 'end' | 'close' | null => {
@@ -140,7 +152,7 @@ const paneStep = (entry: WorkerStatus): 'end' | 'close' | null => {
 const keptBranchLine = (plan: DismissPlan): OutLine =>
   text(`The branch ${plan.branch} stays. To delete it too, run "git -C ${shellWord(plan.clone)} branch -D ${shellWord(plan.branch)}".`);
 
-const dryRunLines = (entry: WorkerStatus, plan: DismissPlan, ignored: IgnoredList): readonly OutLine[] => {
+const dryRunLines = (entry: WorkerStatus, plan: DismissPlan, ignored: IgnoredList, inbox: InboxList): readonly OutLine[] => {
   const step = paneStep(entry);
   return [
     ...(step === 'end' ? [text(`Would end the pane ${entry.pane} of the ${roles.worker} ${plan.id}.`)] : []),
@@ -149,6 +161,7 @@ const dryRunLines = (entry: WorkerStatus, plan: DismissPlan, ignored: IgnoredLis
     text(`Would delete the record of the ${roles.worker} ${plan.id} and its last-seen line.`),
     keptBranchLine(plan),
     ...ignoredLines(ignored, 'deletes'),
+    ...inboxLines(inbox, 'deletes'),
     text(`Nothing changed. Run "${commandText(dismissLine(plan.id))} ${flagText(flags.yes)}" to do it.`),
   ];
 };
@@ -231,9 +244,15 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
   const ignored = await ignoredIn(deps, plan);
   if (!ignored.ok) return ignored;
   if (!options.yes) {
+    const inbox = await inboxFilesIn(deps, home, id);
+    if (!inbox.ok) return inbox;
     return ok({
-      lines: dryRunLines(entry, plan, ignored.value),
-      json: { ...base, freed: false, workers: [{ id, project: plan.project, pushed: true, stuck: [], ignored: ignored.value.paths }] },
+      lines: dryRunLines(entry, plan, ignored.value, inbox.value),
+      json: {
+        ...base,
+        freed: false,
+        workers: [{ id, project: plan.project, pushed: true, stuck: [], ignored: ignored.value.paths, inbox: inbox.value.paths }],
+      },
       warnings,
       failed: false,
     });
@@ -257,6 +276,25 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
 /** True when the checks passed and found no reason that the work is not pushed. A check that failed counts as not pushed. */
 const isPushed = (inspected: CliResult<Inspected> | undefined): boolean =>
   inspected !== undefined && inspected.ok && inspected.value.reasons.length === 0;
+
+/**
+ * The ignored files that the free of each listed worker deletes, for the table. A worker whose work is not pushed is not freed, and
+ * a read that fails is no reason to stop a list: neither has an entry. The read of the pick fails the run, as before.
+ */
+const ignoredOf = async (
+  deps: Deps,
+  listed: readonly WorkerStatus[],
+  checked: ReadonlyMap<string, CliResult<Inspected>>,
+): Promise<ReadonlyMap<string, IgnoredList>> => {
+  const lists = new Map<string, IgnoredList>();
+  for (const entry of listed) {
+    const inspected = checked.get(entry.id);
+    if (inspected === undefined || !inspected.ok || inspected.value.reasons.length > 0) continue;
+    const ignored = await ignoredIn(deps, inspected.value.plan);
+    if (ignored.ok) lists.set(entry.id, ignored.value);
+  }
+  return lists;
+};
 
 const stateText = (entry: WorkerStatus): string => (entry.running ? entry.state : statusWords.stopped);
 
@@ -346,6 +384,9 @@ interface ListedWorker {
   readonly project: string;
   readonly state: string;
   readonly pushed: boolean;
+  /** The count of the ignored files that the free deletes, or null when they are not read. At the cap it is the cap, and `ignoredMore` is true. */
+  readonly ignoredCount: number | null;
+  readonly ignoredMore: boolean;
 }
 
 /** What the list step of `dismiss --idle` gives the pick step: the table, the idle workers and the JSON of the list. */
@@ -359,15 +400,18 @@ interface Listed {
  * The pick step of `dismiss --idle`, in a terminal window outside a factory session: the owner types the ids. The owner may take
  * long, so after the answer the state of the workers is read again, and every picked id is checked again (it must be listed as
  * idle with no open work, and its work must be pushed) before the first change. Then each picked worker is freed as `dismiss ID --yes`
- * frees it.
+ * frees it. The table goes to stdout before the question, so the owner sees the state, the pushed test and the ignored files that
+ * each free deletes when the owner picks; the output of the run does not repeat it.
  */
 const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkItemPort, facts: Facts, listed: Listed): Promise<CliResult<CommandOutput>> => {
   const { table, workers, json } = listed;
   const { warnings } = facts;
+  const shown = await deps.writeStdout(`${table.map((line) => printable(line.text)).join('\n')}\n`);
+  if (!shown.ok) return shown;
   const answer = await deps.prompt(printable(`Dismiss which ${roles.worker}s? Type their ids with spaces, or press Enter to end nothing: `));
   if (!answer.ok) return answer;
   const ids = idsOf(answer.value);
-  if (ids.length === 0) return ok({ lines: [...table, text('Nothing picked. Nothing changed.')], json, warnings, failed: false });
+  if (ids.length === 0) return ok({ lines: [text('Nothing picked. Nothing changed.')], json, warnings, failed: false });
   const now = await factsOf(deps, options, workItems, facts.home, facts.config);
   if (!now.ok) return now;
   const idleNow = listableOf(now.value.entries);
@@ -388,7 +432,7 @@ const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkI
     return paths === undefined ? worker : { ...worker, ignored: paths };
   });
   return ok({
-    lines: [...table, ...lines],
+    lines,
     json: { ...json, freed: freed.length > 0, workers: withIgnored, picked: ids, stuck },
     warnings,
     failed: stuck.length > 0,
@@ -397,9 +441,10 @@ const pickAndFree = async (deps: Deps, options: DismissOptions, workItems: WorkI
 };
 
 /**
- * `dismiss --idle`: lists the idle workers that have no open work, with their state and whether their work is pushed, and changes nothing. Inside a factory
- * session the pick step stops (exit 4). With no terminal window the list is all. In a terminal window the owner types the ids to
- * dismiss: every id is checked before the first change, and then each picked worker is freed as `dismiss ID --yes` frees it.
+ * `dismiss --idle`: lists the idle workers that have no open work, with their state, whether their work is pushed and the count of the
+ * ignored files that their free deletes, and changes nothing. Inside a factory session the pick step stops (exit 4). With no terminal
+ * window the list is all. In a terminal window the owner types the ids to dismiss: every id is checked before the first change, and
+ * then each picked worker is freed as `dismiss ID --yes` frees it.
  */
 const dismissIdle = async (deps: Deps, options: DismissOptions, registry: RecipeRegistry, workItems: WorkItemPort): Promise<CliResult<CommandOutput>> => {
   const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
@@ -415,19 +460,28 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
   const inspect = inspectorOf(deps, home, loaded.value);
   const checked = new Map<string, CliResult<Inspected>>();
   for (const entry of idle) checked.set(entry.id, await inspect({ id: entry.id, project: entry.project }));
+  const ignored = await ignoredOf(deps, idle, checked);
   const pushedWord = (id: string): string => (isPushed(checked.get(id)) ? dismissWords.pushed.yes : dismissWords.pushed.no);
+  const ignoredCell = (id: string): string => {
+    const list = ignored.get(id);
+    return list === undefined ? dismissWords.noCount : countOf(list);
+  };
   const table =
     idle.length === 0
       ? [text(`No idle ${roles.worker}s.`)]
       : tableLines(
           Object.values(dismissWords.columns),
-          idle.map((entry) => [entry.id, entry.project, stateText(entry), pushedWord(entry.id)].map((cell) => displayLine(cell))),
+          idle.map((entry) =>
+            [entry.id, entry.project, stateText(entry), pushedWord(entry.id), ignoredCell(entry.id)].map((cell) => displayLine(cell)),
+          ),
         );
   const listed: readonly ListedWorker[] = idle.map((entry) => ({
     id: entry.id,
     project: entry.project,
     state: stateText(entry),
     pushed: isPushed(checked.get(entry.id)),
+    ignoredCount: ignored.get(entry.id)?.paths.length ?? null,
+    ignoredMore: ignored.get(entry.id)?.reachedCap ?? false,
   }));
   const json = { ...base, freed: false, workers: listed, picked: [] };
   if (inFactorySession(deps)) {
@@ -461,7 +515,8 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
  * the work copy (exit 4), the state of the session (exit 1 for a busy worker or one that is not known), and the pushed test. Work
  * that is not pushed prints `STUCK:` lines, frees nothing and exits 1. Freeing ends the pane, removes the work copy with the plain
  * git command (no force) and deletes the record with its last-seen line. The removal also deletes the ignored files of the work
- * copy, so the dry run and each free name them (read before the removal). The branch stays.
+ * copy, so the dry run and each free name them (read before the removal), and the dry run names the inbox files that the removal of the
+ * record deletes. The branch stays.
  */
 export const runDismiss = async (
   deps: Deps,

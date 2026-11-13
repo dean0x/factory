@@ -10,7 +10,9 @@ import { ok } from '../../src/core/result.js';
 import { dismissWords, files, schemaIds, type HookEvent } from '../../src/names.js';
 import { recipes } from '../../src/recipes/index.js';
 import { layoutOf, workerPathsOf } from '../../src/state/layout.js';
+import { fetchClone, freeWorker, inboxFilesIn, planDismiss, unpushedReasons, type DismissPlan, type FreeRequest } from '../../src/workers/dismiss.js';
 import { writeLastSeen, writeWorkerSession } from '../../src/workers/last-seen.js';
+import { readPanes } from '../../src/workers/panes.js';
 import { readWorkerRecord, writeWorkerRecord } from '../../src/workers/registry.js';
 import type { WorkItem, WorkItemPort } from '../../src/workers/work-items.js';
 import { boardText, itemRecord } from '../helpers/board-node.js';
@@ -318,6 +320,105 @@ describe('dismiss ID: the dry run', () => {
     const output = await outputOf(made, { words: ['alpha'] });
     expect(output.failed).toBe(false);
     await expectNothingChanged(made, ['alpha']);
+  });
+
+  describe('the inbox files that the free deletes (TP-29)', () => {
+    const inboxOf = (id: string): string => workerPathsOf(HOME, id).inboxDir;
+
+    it('names them, carries them in the json, and keeps them', async () => {
+      const made = await make({ workers: [{ id: 'alpha' }] });
+      made.deps.seed(`${inboxOf('alpha')}/assignment.md`, 'Build the page.\n');
+      made.deps.seed(`${inboxOf('alpha')}/review.md`, 'Looks fine.\n');
+      const output = await outputOf(made, { words: ['alpha'] });
+      expect(textOf(output)).toContain('The removal deletes 2 inbox files: assignment.md, review.md.');
+      expect(output.json).toMatchObject({ workers: [expect.objectContaining({ inbox: ['assignment.md', 'review.md'] })] });
+      expect(made.deps.files.has(`${inboxOf('alpha')}/review.md`)).toBe(true);
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('says one file in the singular, and says nothing for an empty inbox', async () => {
+      const made = await make({ workers: [{ id: 'alpha' }, { id: 'beta' }] });
+      made.deps.seed(`${inboxOf('alpha')}/assignment.md`, 'x');
+      expect(textOf(await outputOf(made, { words: ['alpha'] }))).toContain('The removal deletes 1 inbox file: assignment.md.');
+      expect(textOf(await outputOf(made, { words: ['beta'] }))).not.toContain('inbox');
+    });
+
+    it('names at most the cap, and says that there are more', async () => {
+      const made = await make({ workers: [{ id: 'alpha' }] });
+      for (let index = 0; index < dismissWords.maxInboxShown + 3; index += 1) made.deps.seed(`${inboxOf('alpha')}/note-${String(index).padStart(2, '0')}.md`, 'x');
+      const text = textOf(await outputOf(made, { words: ['alpha'] }));
+      expect(text).toContain(`The removal deletes more than ${dismissWords.maxInboxShown} inbox files`);
+      expect(text).toContain('and more');
+      expect(text).toContain('note-00.md');
+      expect(text).not.toContain(`note-${String(dismissWords.maxInboxShown).padStart(2, '0')}.md`);
+    });
+
+    it('is a failure when the inbox cannot be read, before any free', async () => {
+      const made = await make({ workers: [{ id: 'alpha' }] });
+      const broken: Made = {
+        ...made,
+        deps: { ...made.deps, fs: { ...made.deps.fs, listLimited: async () => failure('cannot list the inbox: EIO') } },
+      };
+      const error = await errorOf(broken, { words: ['alpha'] });
+      expect(exitCodeOf[error.kind]).toBe(1);
+      expect(error.message).toContain('EIO');
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('is a security stop when another user owns the inbox folder', async () => {
+      const made = await make({ workers: [{ id: 'alpha' }] });
+      made.deps.owners.set(inboxOf('alpha'), (made.deps.uid ?? 0) + 1);
+      const error = await errorOf(made, { words: ['alpha'] });
+      expect(exitCodeOf[error.kind]).toBe(4);
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('is a security stop when the inbox is a link, so the files of another folder are never named', async () => {
+      const links: Record<string, string> = {};
+      const made = await make({ workers: [{ id: 'alpha' }], links });
+      links[inboxOf('alpha')] = '/elsewhere';
+      const error = await errorOf(made, { words: ['alpha'] });
+      expect(exitCodeOf[error.kind]).toBe(4);
+      await expectNothingChanged(made, ['alpha']);
+    });
+
+    it('is no fault when the worker has no inbox folder: there is nothing to delete', async () => {
+      const made = await make({ workers: [{ id: 'alpha' }] });
+      await made.deps.fs.remove(inboxOf('alpha'));
+      const output = await outputOf(made, { words: ['alpha'] });
+      expect(output.failed).toBe(false);
+      expect(textOf(output)).not.toContain('inbox');
+    });
+
+    it('leaves the yes path as it was: it reads no inbox and names none', async () => {
+      const made = await make({ workers: [{ id: 'alpha' }] });
+      made.deps.seed(`${inboxOf('alpha')}/assignment.md`, 'x');
+      const listed: string[] = [];
+      const spy: Made = {
+        ...made,
+        deps: { ...made.deps, fs: { ...made.deps.fs, listLimited: async (path, limit) => (listed.push(path), made.deps.fs.listLimited(path, limit)) } },
+      };
+      const output = await outputOf(spy, { words: ['alpha'], yes: true });
+      expect(output.failed).toBe(false);
+      expect(textOf(output)).not.toContain('inbox');
+      expect(listed).toEqual([]);
+    });
+  });
+});
+
+describe('inboxFilesIn', () => {
+  it('lists the names of the files of the inbox of a worker, cut at the cap', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    made.deps.seed(`${workerPathsOf(HOME, 'alpha').inboxDir}/a.md`, 'x');
+    expect(await inboxFilesIn(made.deps, HOME, 'alpha')).toEqual({ ok: true, value: { paths: ['a.md'], reachedCap: false } });
+  });
+
+  it('reads one name more than the cap, to know that there are more', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const limits: number[] = [];
+    const spy = { ...made.deps, fs: { ...made.deps.fs, listLimited: async (path: string, limit: number) => (limits.push(limit), made.deps.fs.listLimited(path, limit)) } };
+    await inboxFilesIn(spy, HOME, 'alpha');
+    expect(limits).toEqual([dismissWords.maxInboxShown + 1]);
   });
 });
 
@@ -939,13 +1040,75 @@ describe('dismiss --idle', () => {
     const rows = rowsOf(output, 3);
     expect(rows[0]).toEqual(Object.values(dismissWords.columns));
     expect(rows.slice(1)).toEqual([
-      ['alpha', 'web', 'at prompt', 'yes'],
-      ['beta', 'web', 'at prompt', 'no'],
-      ['gamma', 'api', 'at prompt', 'yes'],
+      ['alpha', 'web', 'at prompt', 'yes', '0'],
+      ['beta', 'web', 'at prompt', 'no', '-'],
+      ['gamma', 'api', 'at prompt', 'yes', '0'],
     ]);
     expect(output.failed).toBe(false);
     await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
     expect(made.deps.prompts).toEqual([]);
+  });
+
+  describe('the ignored files in the table (TP-29)', () => {
+    const FILES = ['cache/run.log', 'dist/'];
+    const MANY = Array.from({ length: dismissWords.maxIgnoredShown + 4 }, (_, index) => `cache/file-${String(index).padStart(2, '0')}.log`);
+
+    it('shows the count of the ignored files that the free of each worker deletes', async () => {
+      const made = await idleFleet({ git: { ignoredFiles: { [copyOf('alpha')]: FILES } } });
+      const output = await outputOf(made, { idle: true }, portOf(items));
+      expect(rowsOf(output, 3)[0]).toEqual(['ID', 'PROJECT', 'STATE', 'PUSHED', 'IGNORED']);
+      expect(rowsOf(output, 3).slice(1).map((row) => [row[0], row[4]])).toEqual([
+        ['alpha', '2'],
+        ['beta', '0'],
+        ['gamma', '0'],
+      ]);
+      expect(output.json).toMatchObject({
+        workers: expect.arrayContaining([
+          expect.objectContaining({ id: 'alpha', ignoredCount: 2, ignoredMore: false }),
+          expect.objectContaining({ id: 'beta', ignoredCount: 0, ignoredMore: false }),
+        ]),
+      });
+      await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
+    });
+
+    it('says "more than" the cap for a list that reached the cap', async () => {
+      const made = await idleFleet({ git: { ignoredFiles: { [copyOf('alpha')]: MANY } } });
+      const output = await outputOf(made, { idle: true }, portOf(items));
+      expect(rowsOf(output, 3)[1]).toEqual(['alpha', 'web', 'at prompt', 'yes', `more than ${dismissWords.maxIgnoredShown}`]);
+      expect(output.json).toMatchObject({
+        workers: expect.arrayContaining([expect.objectContaining({ id: 'alpha', ignoredCount: dismissWords.maxIgnoredShown, ignoredMore: true })]),
+      });
+    });
+
+    it('shows no count for a worker whose work is not pushed, and reads no ignored files of it', async () => {
+      const made = await idleFleet({ git: { status: { [copyOf('beta')]: ' M b.ts\0' }, ignoredFiles: { [copyOf('beta')]: FILES } } });
+      const output = await outputOf(made, { idle: true }, portOf(items));
+      expect(rowsOf(output, 3)[2]).toEqual(['beta', 'web', 'at prompt', 'no', '-']);
+      expect(output.json).toMatchObject({ workers: expect.arrayContaining([expect.objectContaining({ id: 'beta', ignoredCount: null, ignoredMore: false })]) });
+    });
+
+    it('writes the table before it asks which workers to dismiss', async () => {
+      let shown = '';
+      const made = await idleFleet({
+        terminal: { answer: '' },
+        git: { ignoredFiles: { [copyOf('alpha')]: FILES } },
+        atPrompt: (typing) => {
+          shown = typing.deps.written.join('');
+        },
+      });
+      const output = await outputOf(made, { idle: true }, portOf(items));
+      expect(shown).toContain('IGNORED');
+      expect(shown.split('\n').find((line) => line.startsWith('alpha'))).toMatch(/yes\s+2$/);
+      expect(textOf(output)).toContain('Nothing picked');
+      expect(textOf(output)).not.toContain('IGNORED');
+    });
+
+    it('shows the table once also after a pick: the free lines follow it', async () => {
+      const made = await idleFleet({ terminal: { answer: 'alpha' }, git: { ignoredFiles: { [copyOf('alpha')]: FILES } } });
+      const output = await outputOf(made, { idle: true }, portOf(items));
+      expect(made.deps.written.join('').match(/IGNORED/g)).toHaveLength(1);
+      expect(textOf(output)).toContain('The removal deleted 2 ignored files: cache/run.log, dist/.');
+    });
   });
 
   it('says so when no worker is idle', async () => {
@@ -1099,7 +1262,7 @@ describe('dismiss --idle', () => {
     it('lists no worker with open work and no worker with an unknown work item, though each is idle', async () => {
       const made = await make({ workers: [...TWO, { id: 'gamma' }] });
       const output = await outputOf(made, { idle: true }, portOf({ alpha: NONE, beta: busyWith('item 3') }));
-      expect(rowsOf(output, 1).slice(1)).toEqual([['alpha', 'web', 'at prompt', 'yes']]);
+      expect(rowsOf(output, 1).slice(1)).toEqual([['alpha', 'web', 'at prompt', 'yes', '0']]);
       expect(output.json).toMatchObject({ workers: [{ id: 'alpha' }] });
     });
 
@@ -1253,5 +1416,110 @@ describe('dismiss --idle: the work items come from the board (TP-44, TP-64)', ()
     expect(exitCodeOf[error.kind]).toBe(1);
     expect(error.message).toContain('alpha');
     await expectNothingChanged(made, ['alpha', 'beta', 'gamma']);
+  });
+});
+
+describe('the accepted heads of the pushed test (TP-38)', () => {
+  const alpha = copyOf('alpha');
+  /** The merge commit of a squash merge: a commit that the work copy never held. */
+  const MERGE = 'c'.repeat(40);
+  /** The remote dropped the branch of the worker after the squash merge, and its head is not below the default branch. */
+  const squashed: GitFixture = {
+    repos: { [cloneOf('web')]: { originHead: 'origin/main' } },
+    remotes: { [cloneOf('web')]: { copies: { main: MERGE } } },
+  };
+
+  const planOf = async (made: Made): Promise<DismissPlan> => {
+    const plan = await planDismiss(made.deps, HOME, sampleConfig(), { id: 'alpha', project: 'web' });
+    if (!plan.ok) throw new Error(plan.error.message);
+    const fetched = await fetchClone(made.deps, plan.value);
+    if (!fetched.ok) throw new Error(fetched.error.message);
+    return plan.value;
+  };
+
+  const reasonsOf = async (made: Made, accepted?: readonly string[]): Promise<readonly string[]> => {
+    const reasons = await unpushedReasons(made.deps, await planOf(made), accepted);
+    if (!reasons.ok) throw new Error(reasons.error.message);
+    return reasons.value;
+  };
+
+  it('stops a head that is on no remote branch when no head is accepted, as the owner path does', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], git: squashed });
+    expect(await reasonsOf(made)).toEqual([expect.stringContaining('is not on the remote')]);
+    const output = await outputOf(made, { words: ['alpha'], yes: true });
+    expect(output.exitCode).toBe(1);
+    expect(output.lines.some((line) => line.text.startsWith(dismissWords.stuck))).toBe(true);
+    await expectNothingChanged(made, ['alpha']);
+  });
+
+  it('passes a head that equals an accepted head', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], git: squashed });
+    expect(await reasonsOf(made, [OLDER, HEAD])).toEqual([]);
+  });
+
+  it('stops a head that is not an accepted head, the merge commit included', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], git: squashed });
+    expect(await reasonsOf(made, [MERGE])).toEqual([expect.stringContaining('is not on the remote')]);
+    expect(await reasonsOf(made, [])).toEqual([expect.stringContaining('is not on the remote')]);
+  });
+
+  it('does not clear the clean test: an accepted head with a changed file or a stash entry is still stuck', async () => {
+    const dirty = await make({ workers: [{ id: 'alpha' }], git: { ...squashed, status: { [alpha]: ' M src/changed.ts\0' } } });
+    expect(await reasonsOf(dirty, [HEAD])).toEqual([expect.stringContaining('src/changed.ts')]);
+    const stashed = await make({ workers: [{ id: 'alpha' }], git: { ...squashed, stashes: { [cloneOf('web')]: 1 } } });
+    expect(await reasonsOf(stashed, [HEAD])).toEqual([expect.stringContaining('stash')]);
+  });
+
+  it('does not clear a work copy with no commit', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }], git: { ...squashed, heads: {} } });
+    expect(await reasonsOf(made, [HEAD])).toEqual(['the work copy has no commit']);
+  });
+});
+
+describe('freeWorker: the check before the removal', () => {
+  const requestOf = async (made: Made, beforeRemoval?: NonNullable<FreeRequest['beforeRemoval']>): Promise<FreeRequest> => {
+    const plan = await planDismiss(made.deps, HOME, sampleConfig(), { id: 'alpha', project: 'web' });
+    if (!plan.ok) throw new Error(plan.error.message);
+    const panes = await readPanes(made.deps, NODE, HOME);
+    if (!panes.ok) throw new Error(panes.error.message);
+    return { home: HOME, session: NODE, plan: plan.value, panes: panes.value, lineSession: made.sessions.get('alpha') ?? null, ...(beforeRemoval === undefined ? {} : { beforeRemoval }) };
+  };
+
+  it('runs after the pane ends and before the work copy is removed', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const seen: string[][] = [];
+    const freed = await freeWorker(made.deps, await requestOf(made, async () => (seen.push([...made.events]), ok(undefined))));
+    expect(freed.ok).toBe(true);
+    expect(seen).toEqual([['terminate']]);
+    expect(made.events).toEqual(['terminate', 'worktree-remove']);
+    expect(await recordState(made, 'alpha')).toBe('absent');
+  });
+
+  it('keeps the work copy and the record when the check fails, and names what ended before', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const freed = await freeWorker(made.deps, await requestOf(made, async () => failure('the board changed')));
+    expect(freed.ok).toBe(false);
+    if (freed.ok) return;
+    expect(freed.error.kind).toBe('failure');
+    expect(exitCodeOf[freed.error.kind]).toBe(1);
+    expect(freed.error.message).toContain('the board changed');
+    expect(freed.error.message).toContain('Done before this fault: ended the pane');
+    expect(freed.error.hint).toContain('dismiss alpha');
+    expect(made.events).toEqual(['terminate']);
+    expect(removals(made)).toEqual([]);
+    expect(await recordState(made, 'alpha')).toBe('valid');
+    expect(lineExists(made, 'alpha')).toBe(true);
+  });
+
+  it('keeps the remedy that the check gives', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    const freed = await freeWorker(made.deps, await requestOf(made, async () => failure('the board changed', 'Ask the owner.')));
+    expect(!freed.ok && freed.error.hint).toBe('Ask the owner.');
+  });
+
+  it('runs no check when none is given, so the owner path frees as before', async () => {
+    const made = await make({ workers: [{ id: 'alpha' }] });
+    expect((await freeWorker(made.deps, await requestOf(made))).ok).toBe(true);
+    expect(made.events).toEqual(['terminate', 'worktree-remove']);
   });
 });

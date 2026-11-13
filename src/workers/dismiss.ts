@@ -1,6 +1,8 @@
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { failure, safetyRefusal, type CliError, type CliResult } from '../cli/errors.js';
+import { isSlug } from '../config/primitives.js';
 import type { FactoryConfig } from '../config/schema.js';
+import { accessFaultOf } from '../core/access.js';
 import type { Deps } from '../core/deps.js';
 import {
   commonDirOf,
@@ -21,6 +23,7 @@ import {
 } from '../core/git.js';
 import { err, ok } from '../core/result.js';
 import { requireNoLinks } from '../core/root-paths.js';
+import { LINK_REMEDY } from '../core/safe-write.js';
 import { shellWord } from '../core/shell-word.js';
 import type { PaneRow } from '../launch/tmux.js';
 import { commands, commandText, dirs, dismissStopCases, dismissWords, roles, workCopyGit, workerListWords } from '../names.js';
@@ -285,15 +288,23 @@ const missingCommits = async (deps: Deps, plan: DismissPlan, head: string): Prom
  * (`fetchClone`). The work is pushed when the head of the branch is on the remote branch of the worker or on the default branch of
  * the clone (the head is that commit or below it), and the work copy has no changed file, no untracked file and no stash entry. A git
  * command that fails is a failure, never a reason.
+ *
+ * A head that equals one of `acceptedHeads` passes the test of the remote too: the caller names the commits that it has proof for,
+ * for example the head that the board recorded for a closed item. The owner path names none. An accepted head never clears the
+ * test of the work copy and of the stash.
  */
-export const unpushedReasons = async (deps: Deps, plan: DismissPlan): Promise<CliResult<readonly string[]>> => {
+export const unpushedReasons = async (
+  deps: Deps,
+  plan: DismissPlan,
+  acceptedHeads: readonly string[] = [],
+): Promise<CliResult<readonly string[]>> => {
   const { workCopy, gitDir } = plan;
   const reasons: string[] = [];
   const head = await headOf(deps, workCopy, gitDir);
   if (!head.ok) return head;
   if (head.value === null) {
     reasons.push('the work copy has no commit');
-  } else {
+  } else if (!acceptedHeads.includes(head.value)) {
     const missing = await missingCommits(deps, plan, head.value);
     if (!missing.ok) return missing;
     if (missing.value !== null) reasons.push(missing.value);
@@ -316,6 +327,39 @@ export const unpushedReasons = async (deps: Deps, plan: DismissPlan): Promise<Cl
 export const ignoredIn = (deps: Deps, plan: DismissPlan): Promise<CliResult<IgnoredList>> =>
   ignoredFilesOf(deps, plan.workCopy, dismissWords.maxIgnoredShown, plan.gitDir);
 
+/** The names of the files of the inbox of a worker, cut at the cap: the shape of the ignored list. */
+export type InboxList = IgnoredList;
+
+const NO_INBOX_FILES: InboxList = { paths: [], reachedCap: false };
+
+/**
+ * The files in the inbox of the worker: the free deletes them with the record of the worker, and no commit holds them. At most
+ * `dismissWords.maxInboxShown` names are listed, and the list says when there are more (the read takes one name more than the cap).
+ * A worker with no inbox folder has no file. The folder must be a real folder that this user owns and that no group or other users
+ * can write: a link, or a folder of another user, is a security stop (exit 4). A read that fails is a failure. It changes nothing.
+ */
+export const inboxFilesIn = async (deps: Deps, home: string, id: string): Promise<CliResult<InboxList>> => {
+  if (!isSlug(id)) return failure(`cannot read the inbox of the ${roles.worker}: the id is not a slug`);
+  const folder = workerPathsOf(home, id).inboxDir;
+  const found = await deps.fs.lstat(folder);
+  if (!found.ok) return found;
+  if (found.value === null) return ok(NO_INBOX_FILES);
+  if (found.value === 'link') return safetyRefusal(`cannot read ${folder}: it is a link`, LINK_REMEDY);
+  if (found.value !== 'dir') return failure(`cannot read ${folder}: it is not a folder`);
+  const info = await deps.fs.statInfo(folder);
+  if (!info.ok) return info;
+  const fault = info.value === null ? null : accessFaultOf(deps, info.value);
+  if (fault !== null) {
+    return safetyRefusal(
+      `cannot read ${folder}: ${fault === 'otherOwner' ? 'it belongs to another user' : 'a group or other users can write it'}`,
+      `Check who holds the folder and its mode. ${runAgain(dismissLine(id))}`,
+    );
+  }
+  const names = await deps.fs.listLimited(folder, dismissWords.maxInboxShown + 1);
+  if (!names.ok) return names;
+  return ok({ paths: names.value.slice(0, dismissWords.maxInboxShown), reachedCap: names.value.length > dismissWords.maxInboxShown });
+};
+
 export interface FreeRequest {
   readonly home: string;
   /** The tmux session of the node: the id of the node. */
@@ -325,6 +369,11 @@ export interface FreeRequest {
   readonly panes: readonly PaneRow[] | null;
   /** The session whose last-seen line this worker owns, or null when no line is known to be its own. */
   readonly lineSession: string | null;
+  /**
+   * A check that runs after the pane ended and before the work copy is removed. An error stops the free with the work copy and the
+   * record kept, and the error says what ended before it. The owner path gives none.
+   */
+  readonly beforeRemoval?: () => Promise<CliResult<void>>;
 }
 
 export interface FreedWorker {
@@ -378,13 +427,14 @@ const stoppedStep = (stopped: StopOutcome): readonly string[] => {
 
 /**
  * Frees a worker after every check passed. In order: the pane ends (`stopWorker`, which sends TERM and never KILL, and refuses a
- * session that works now, also when it turned busy after the checks read its state); the work copy
- * is removed with the plain git command, which refuses a changed or untracked file and has no force; the last-seen line and the
- * record folder are deleted together. The branch stays. A fault names what was done before it. Up to the removal of the work
- * copy, `dismiss` run again does the steps that are left. A fault after it names the paths to delete by hand (`afterSteps`).
+ * session that works now, also when it turned busy after the checks read its state); the check of the request, when it has one
+ * (`beforeRemoval`); the work copy is removed with the plain git command, which refuses a changed or untracked file and has no
+ * force; the last-seen line and the record folder are deleted together. The branch stays. A fault names what was done before it. Up
+ * to the removal of the work copy, `dismiss` run again does the steps that are left. A fault after it names the paths to delete by
+ * hand (`afterSteps`).
  */
 export const freeWorker = async (deps: Deps, request: FreeRequest): Promise<CliResult<FreedWorker>> => {
-  const { home, session, plan, panes, lineSession } = request;
+  const { home, session, plan, panes, lineSession, beforeRemoval } = request;
   const done: string[] = [];
   const stopped: CliResult<StopOutcome> =
     panes === null
@@ -392,6 +442,10 @@ export const freeWorker = async (deps: Deps, request: FreeRequest): Promise<CliR
       : await stopWorker(deps, { home, session, workerId: plan.id, panes, allowed: dismissStopCases, again: dismissLine(plan.id) });
   if (!stopped.ok) return err(afterSteps(stopped.error, plan.id, done));
   done.push(...stoppedStep(stopped.value));
+  if (beforeRemoval !== undefined) {
+    const checked = await beforeRemoval();
+    if (!checked.ok) return err(afterSteps(checked.error, plan.id, done));
+  }
   const removed = await removeWorkTree(deps, plan.clone, plan.workCopy);
   if (!removed.ok) {
     return err(afterSteps({ ...removed.error, hint: removed.error.hint ?? removalHint(home, plan, lineSession) }, plan.id, done));
