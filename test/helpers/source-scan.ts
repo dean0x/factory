@@ -155,3 +155,10 @@ export const importPathsOf = (source: string): string[] =>
 /** The value of a shell variable that a line of a script sets with double quotes: `name="value"`. */
 export const shellValue = (script: string, name: string): string | undefined =>
   new RegExp(`^${name}="([^"\\n]*)"$`, 'm').exec(script)?.[1];
+
+/**
+ * Like `importPathsOf`, and a type-only import or re-export (`import type`, `export type ... from`) is left out: the compiler
+ * erases it, so it leaves no import at run time.
+ */
+export const runtimeImportPathsOf = (source: string): string[] =>
+  importPathsOf(source.replace(/\b(?:import|export)\s+type\b[^;]*?\bfrom\s*['"][^'"]+['"]/g, ''));
