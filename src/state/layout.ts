@@ -46,7 +46,7 @@ export interface Layout {
   readonly workCopiesDir: string;
   readonly stateDir: string;
   readonly nodeJson: string;
-  /** The `.gitignore` of the state repo: it keeps the run-time folders, the backups, the workers and the inbox out of the repo. */
+  /** The `.gitignore` of the state repo: it keeps the run-time folders, the backups, the workers, the inbox and the outbox out of the repo. */
   readonly stateGitignoreFile: string;
   readonly workerMd: string;
   readonly backupsDir: string;
