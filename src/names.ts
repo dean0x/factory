@@ -98,7 +98,13 @@ export const terms = [
 export const layers = { worker: 0, coordinator: 1, manager: 2, max: 16 } as const;
 
 /** The subcommands of `node`. */
-export const nodeCommands = { children: 'children', addChild: 'add-child', removeChild: 'remove-child', send: 'send' } as const;
+export const nodeCommands = {
+  children: 'children',
+  addChild: 'add-child',
+  removeChild: 'remove-child',
+  send: 'send',
+  tree: 'tree',
+} as const;
 
 /** The subcommands of `worker`. */
 export const workerCommands = {
@@ -1451,6 +1457,78 @@ export const reportWords = {
 } as const;
 
 /**
+ * The limits of a walk over the report files of the child nodes. The walk goes at most `maxDepth` layers down, reads at most
+ * `maxNodes` report files, and reads at most `maxWalkBytes` bytes of them in all: that is 64 report files of the full size
+ * `reportLimits.maxBytes`. The output has at most `maxLines` lines. One report file has at most `reportLimits.maxBytes` bytes, and
+ * one build of a report reads at most `reportLimits.maxBuildBytes` bytes of its children.
+ */
+export const treeLimits = {
+  maxDepth: layers.max,
+  maxNodes: 1_000,
+  maxLines: 2_000,
+  maxWalkBytes: 16 * 1_048_576,
+} as const;
+
+/**
+ * The reasons of a child row that is not `ok`. Each one is fixed text: no reason holds text of a child, a path, an id or the message of
+ * a check, so child text can not reach the output through a reason. Each one fits in the `reason` of a child row of a report, which has
+ * at most `reportLimits.maxTextChars` characters.
+ */
+export const childReasons = {
+  noReport: 'the child has no report file',
+  reportLink: 'a path of the report file is a link',
+  reportWrongKind: 'a path of the report file is not of the kind that it must be',
+  reportOtherOwner: 'the report file belongs to another account',
+  reportWritable: 'a group or other users can write a path of the report file',
+  reportTooLarge: 'the report file is larger than the byte cap',
+  reportNotJson: 'the report file is not valid JSON',
+  reportNewer: 'the report file has a newer schema version than this program reads',
+  reportInvalid: 'the report file does not pass the schema of the report',
+  reportUnreadable: 'the report file could not be read, or it is not valid UTF-8 text',
+  addressInvalid: 'the address of the child is not valid',
+  otherId: 'the child shows another id than the config lists',
+  configUnsafe: 'the config of the child is a link, belongs to another account, or can be written by a group or by other users',
+  configInvalid: `the config of the child is not valid: run "${program} ${commands.doctor}" in that ${places.folder}`,
+  cycle: 'the walk saw this folder before',
+  duplicateId: 'another folder has the same id',
+  depthCap: 'the walk is at the depth cap',
+  nodeCap: 'the walk is at the cap of nodes',
+  byteCap: 'the walk is at the cap of bytes that it may read',
+} as const;
+
+/**
+ * The words of the tree of the child nodes: the state of a row that tells of the walk and not of a node (a duplicate id, or requests
+ * that were dropped), the mark of a row below a direct child (the id of the node that gave the address follows it), the line that
+ * says the line cap cut the list, the words of the verdict line, and the reason of the row of dropped requests (a count follows it).
+ * The states `ok`, `unknown` and `mismatch` are those of `reportWords.childStates`.
+ */
+export const treeWords = {
+  warning: 'warning',
+  reportedBy: 'reported by',
+  moreThan: 'more than',
+  summary: { nodes: 'nodes', warnings: 'warnings' },
+  requestsDropped: `${requestWords.requests} were dropped: the origin does not name the node that reports them`,
+} as const;
+
+/**
+ * The keys of the document `factory.node-tree/v1`. Every string that comes from the file of a child is under the one field
+ * `node.report`, with the path of that file in `report.source`. All other fields hold text of this program only.
+ */
+export const treeKeys = {
+  doc: { schema: 'schema', home: 'home', id: 'id', layer: 'layer', verdict: 'verdict', nodes: 'nodes' },
+  node: { depth: 'depth', state: 'state', reason: 'reason', report: 'report' },
+  report: {
+    source: 'source',
+    id: 'id',
+    address: 'address',
+    layer: 'layer',
+    counts: 'counts',
+    age: 'age',
+    reportedBy: 'reportedBy',
+  },
+} as const;
+
+/**
  * The rules and the words of `dismiss` (design 4.11). The work of a worker is pushed when, after a fetch of `remote`, the head of its
  * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run and the free
  * name at most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
@@ -1877,6 +1955,7 @@ export const schemaIds = {
   dismiss: `${program}.dismiss/v1`,
   nodeChildren: `${program}.node-children/v1`,
   nodeSend: `${program}.node-send/v1`,
+  nodeTree: `${program}.node-tree/v1`,
   words: `${program}.words/v1`,
   doctor: `${program}.doctor/v1`,
   machine: `${program}.machine/v1`,
