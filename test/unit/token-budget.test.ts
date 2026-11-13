@@ -42,17 +42,18 @@ describe('parseBudgetRows', () => {
   });
 });
 
-describe('the token budget of FAC-M4 (TP-64, TP-39)', () => {
+describe('the token budget of the built jobs (TP-64, TP-39)', () => {
   /**
-   * The jobs that FAC-M4 builds: the status round, the restart of all workers, the worker creation, the session reset, the
-   * watch, the resource check and the self reset. The typed owner input moves to FAC-M5 and the move of an outside session
-   * to FAC-M7.
+   * The jobs that are built: the status round, the restart of all workers, the worker creation, the session reset, the CI
+   * watch, the worker watch, the resource check and the self reset. The typed owner input is built later (FAC-M5) and the
+   * move of an outside session later still (FAC-M7).
    */
-  const FAC_M4_JOBS = [
+  const BUILT_JOBS = [
     [2, 'factory status'],
     [3, 'factory reboot'],
     [4, 'factory worker new'],
     [7, 'factory worker reset'],
+    [13, 'factory pr watch'],
     [14, 'factory worker watch'],
     [16, 'factory machine'],
     [17, 'factory self reset'],
@@ -70,7 +71,7 @@ describe('the token budget of FAC-M4 (TP-64, TP-39)', () => {
     expect(budgetRow(job).measured).toBeNull();
   });
 
-  it.each(FAC_M4_JOBS)('has a measured size within the budget for the job %i (%s)', (job, command) => {
+  it.each(BUILT_JOBS)('has a measured size within the budget for the job %i (%s)', (job, command) => {
     const row = budgetRow(job);
     expect(row.command).toContain(command);
     expect(row.measured, `the row ${job} has no measured size`).not.toBeNull();

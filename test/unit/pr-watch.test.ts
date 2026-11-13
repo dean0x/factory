@@ -9,8 +9,10 @@ import { commands, ghTimeoutMs, lockWords } from '../../src/names.js';
 import { prWatchPoll } from '../../src/recipes/software/words.js';
 import { createFakeDeps, exited, registerRoot, type FakeDeps } from '../helpers/fake-deps.js';
 import { sampleConfig, seedConfig } from '../helpers/sample-config.js';
+import { expectShortOutput } from '../helpers/short-output.js';
 import { captureSink } from '../helpers/sink.js';
 import { HOME, NODE } from '../helpers/slot-fixture.js';
+import { budgetRow, tokensOf } from '../helpers/token-budget.js';
 
 const SRC = join(__dirname, '..', '..', 'src');
 const SHA = 'a'.repeat(40);
@@ -571,6 +573,25 @@ describe('pr watch: the schema reads an answer of gh as gh gives it', () => {
     const result = await watch(['12'], () => exited(0, open));
     expect(result.code).toBe(0);
     expect(verdictOf(result.lines)).toBe(`PASSED 12 ${fixtureHead}`);
+  });
+});
+
+describe('pr watch: the token budget', () => {
+  /** The fixture of the job: an open PR with two passed checks, read once. */
+  const open = JSON.stringify({ ...JSON.parse(readFileSync(join(__dirname, '..', 'fixtures', 'gh', 'pr-view-checks.json'), 'utf8')), state: 'OPEN' });
+
+  it('has a short output on the fixture: the verdict on line 1 and a few lines', async () => {
+    const result = await watch(['12'], () => exited(0, open));
+    expectShortOutput(result.out);
+    expect(result.lines).toHaveLength(3);
+  });
+
+  it('has the size of its output on the fixture in the token budget, row 13', async () => {
+    const result = await watch(['12'], () => exited(0, open));
+    const row = budgetRow(13);
+    expect(row.command).toBe('`factory pr watch`');
+    expect(row.measured).toBe(tokensOf(result.out));
+    expect(tokensOf(result.out)).toBeLessThanOrEqual(row.budget);
   });
 });
 
