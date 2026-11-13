@@ -1,5 +1,6 @@
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import { boardWorkItems } from '../board/work-items.js';
+import { boardDecisionLog } from '../commands/board-open.js';
 import { runDecide } from '../commands/decide.js';
 import { runDismiss } from '../commands/dismiss.js';
 import { runDoctor } from '../commands/doctor.js';
@@ -295,9 +296,11 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
     name: commands.dismiss,
     summary:
       `End a ${roles.worker} and free its work copy, when its work is pushed. It changes nothing until ${flagText(flags.yes)}. ` +
-      `With ${flagText(flags.idle)}, list the idle ${roles.worker}s and pick which to dismiss.`,
+      `With ${flagText(flags.idle)}, list the idle ${roles.worker}s and pick which to dismiss. ` +
+      `With ${flagText(flags.closed)}, the ${roles.coordinator} frees a finished ${roles.worker} in its ${places.session}.`,
     usage: [
       `${commandText(commands.dismiss)} ID [${flagText(flags.home)} DIR] [${flagText(flags.yes)}]`,
+      `${commandText(commands.dismiss)} ID ${flagText(flags.closed)} [${flagText(flags.home)} DIR]`,
       `${commandText(commands.dismiss)} ${flagText(flags.idle)} [${flagText(flags.home)} DIR]`,
     ].join(`\n${' '.repeat('Usage: '.length)}`),
     positionals: true,
@@ -311,12 +314,25 @@ export const commandTableFor = (registry: RecipeRegistry): readonly Command[] =>
         type: 'boolean',
         description: `Free the ${roles.worker}: end its pane, remove its work copy, and delete its record. Not allowed inside a ${places.session}.`,
       },
+      [flags.closed]: {
+        type: 'boolean',
+        description:
+          `Free the ${roles.worker} in the pane of the ${roles.coordinator}, only when an item of the ${roles.worker} is closed, no other item names it, ` +
+          `its branch is pushed and its work copy is clean. It logs one decision first. Every other case is a step of the ${roles.owner}.`,
+      },
     },
     run: (given, deps) =>
       runDismiss(
         deps,
-        { home: given.string(flags.home), words: given.positionals(), idle: given.bool(flags.idle), yes: given.bool(flags.yes) },
+        {
+          home: given.string(flags.home),
+          words: given.positionals(),
+          idle: given.bool(flags.idle),
+          yes: given.bool(flags.yes),
+          closed: given.bool(flags.closed),
+        },
         registry,
+        boardDecisionLog,
         boardWorkItems(registry),
       ),
   },

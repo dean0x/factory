@@ -1,11 +1,12 @@
+import type { DecisionLogInput } from '../board/contract.js';
 import { failure, safetyRefusal, usageError, type CliResult } from '../cli/errors.js';
-import { err, ok } from '../core/result.js';
+import { err, ok, type Result } from '../core/result.js';
 import { displayLine, printable, tableLines, type CommandOutput, type JsonDoc, type OutLine } from '../cli/output.js';
 import { loadConfig, readNodeIdentity } from '../config/load.js';
 import type { FactoryConfig } from '../config/schema.js';
 import type { Deps } from '../core/deps.js';
 import { inFactorySession } from '../core/factory-session.js';
-import type { IgnoredList } from '../core/git.js';
+import { headOf, type IgnoredList } from '../core/git.js';
 import { locateHomeFolder } from '../core/home.js';
 import { shellWord } from '../core/shell-word.js';
 import type { PaneRow } from '../launch/tmux.js';
@@ -17,6 +18,7 @@ import {
   flagText,
   lastSeen,
   places,
+  requestDeciders,
   roles,
   schemaIds,
   statusWords,
@@ -38,11 +40,12 @@ import {
 } from '../workers/dismiss.js';
 import { readOwnLastSeen } from '../workers/last-seen.js';
 import { requireOtherPane } from '../workers/lifecycle.js';
-import { readPanes } from '../workers/panes.js';
+import { readPanes, requireCoordinatorCaller } from '../workers/panes.js';
 import { requireRecord } from '../workers/registry.js';
 import { readStatus } from '../workers/status-read.js';
 import type { WorkerStatus } from '../workers/status.js';
-import type { WorkItemPort } from '../workers/work-items.js';
+import type { KnownWorkItem, WorkItemPort } from '../workers/work-items.js';
+import type { DecisionLogPort } from './board-open.js';
 
 export interface DismissOptions {
   readonly home: string | undefined;
@@ -52,6 +55,8 @@ export interface DismissOptions {
   readonly idle: boolean;
   /** True when the person gave the yes flag. It is the consent to the change. */
   readonly yes: boolean;
+  /** True for `--closed`: the coordinator frees a finished worker in its session. It takes no `--yes` and no `--idle`. */
+  readonly closed: boolean;
 }
 
 const text = (line: string): OutLine => ({ level: 'text', text: line });
@@ -62,8 +67,11 @@ const IDLE_LINE = `${commands.dismiss} ${flagText(flags.idle)}`;
 const usage = (what: string): CliResult<never> =>
   usageError(what, `Run "${commandText(commands.dismiss)} ${flagText(flags.help)}".`);
 
-/** The words of the command line: one id, or `--idle` with no id and no yes flag. */
+/** The words of the command line: one id, or `--idle` with no id and no yes flag. `--closed` takes one id and no other mode flag. */
 const checkWords = (options: DismissOptions): CliResult<void> => {
+  if (options.closed && (options.idle || options.yes)) {
+    return usage(`${flagText(flags.closed)} takes no ${flagText(options.idle ? flags.idle : flags.yes)}: it is a mode of its own`);
+  }
   if (options.idle) {
     if (options.words.length > 0) return usage(`${flagText(flags.idle)} takes no ${roles.worker} id`);
     return options.yes ? usage(`${flagText(flags.idle)} takes no ${flagText(flags.yes)}: the pick is the consent`) : ok(undefined);
@@ -90,7 +98,12 @@ interface Inspected {
  * The checks of the path and of the pushed test for the workers of one run. Each clone is fetched once for the run: a later call for
  * a worker of the same clone uses the answer of the first fetch, so every worker of a clone is judged by one state of the remote.
  */
-const inspectorOf = (deps: Deps, home: string, config: FactoryConfig): ((target: DismissTarget) => Promise<CliResult<Inspected>>) => {
+const inspectorOf = (
+  deps: Deps,
+  home: string,
+  config: FactoryConfig,
+  acceptedHeads: readonly string[] = [],
+): ((target: DismissTarget) => Promise<CliResult<Inspected>>) => {
   const fetched = new Map<string, CliResult<void>>();
   return async (target) => {
     const plan = await planDismiss(deps, home, config, target);
@@ -99,7 +112,7 @@ const inspectorOf = (deps: Deps, home: string, config: FactoryConfig): ((target:
     const fetch = known ?? (await fetchClone(deps, plan.value));
     fetched.set(plan.value.clone, fetch);
     if (!fetch.ok) return fetch;
-    const reasons = await unpushedReasons(deps, plan.value);
+    const reasons = await unpushedReasons(deps, plan.value, acceptedHeads);
     return reasons.ok ? ok({ plan: plan.value, reasons: reasons.value }) : reasons;
   };
 };
@@ -111,10 +124,10 @@ const lineSessionOf = async (deps: Deps, home: string, id: string): Promise<CliR
   return ok(seen.value.state === 'valid' ? seen.value.line[lastSeen.keys.sessionId] : null);
 };
 
-/** One STUCK line for each reason, then the remedy line. */
-const stuckLines = (plan: DismissPlan, reasons: readonly string[]): readonly OutLine[] => [
+/** One STUCK line for each reason, then the remedy line. `again` is the command that a person runs after the push. */
+const stuckLines = (plan: DismissPlan, reasons: readonly string[], again: string = dismissLine(plan.id)): readonly OutLine[] => [
   ...reasons.map((reason) => fail(`${dismissWords.stuck} ${reason}.`)),
-  text(`Push the work of the ${roles.worker} ${plan.id}. Then run "${commandText(dismissLine(plan.id))}" again.`),
+  text(`Push the work of the ${roles.worker} ${plan.id}. Then run "${commandText(again)}" again.`),
 ];
 
 /** The ignored files that git does not hold: the removal of the work copy deletes them. */
@@ -166,13 +179,14 @@ const dryRunLines = (entry: WorkerStatus, plan: DismissPlan, ignored: IgnoredLis
   ];
 };
 
-const freedLines = (plan: DismissPlan, freed: FreedWorker, ignored: IgnoredList): readonly OutLine[] => {
+const freedLines = (plan: DismissPlan, freed: FreedWorker, ignored: IgnoredList, inbox: InboxList = NO_IGNORED): readonly OutLine[] => {
   const { stopped } = freed;
   return [
     ...(stopped.kind === 'stopped' ? [text(`Ended the pane ${stopped.paneId} of the ${roles.worker} ${plan.id}.`)] : []),
     ...(stopped.kind === 'closed-dead' ? [text(`Closed the ended pane ${stopped.paneIds.join(', ')} of the ${roles.worker} ${plan.id}.`)] : []),
     text(`Removed the work copy ${plan.workCopy}.`),
     ...ignoredLines(ignored, 'deleted'),
+    ...inboxLines(inbox, 'deleted'),
     text(`Deleted the record of the ${roles.worker} ${plan.id}.`),
     keptBranchLine(plan),
   ];
@@ -189,6 +203,13 @@ interface Facts {
   readonly warnings: readonly string[];
 }
 
+/** The command that a person runs again for these options, without the program name. */
+const againOf = (options: DismissOptions): string => {
+  if (options.idle) return IDLE_LINE;
+  const line = `${commands.dismiss} ${options.words.join(' ')}`;
+  return options.closed ? `${line} ${flagText(flags.closed)}` : line;
+};
+
 const factsOf = async (
   deps: Deps,
   options: DismissOptions,
@@ -197,8 +218,7 @@ const factsOf = async (
   config: FactoryConfig,
 ): Promise<CliResult<Facts>> => {
   const session = config.core.node.id;
-  const again = options.idle ? IDLE_LINE : `${commands.dismiss} ${options.words.join(' ')}`;
-  const panes = await readPanes(deps, session, home, commandText(again));
+  const panes = await readPanes(deps, session, home, commandText(againOf(options)));
   if (!panes.ok) return panes;
   const read = await readStatus(deps, { home, config, workItems, panes: panes.value });
   if (!read.ok) return read;
@@ -267,6 +287,146 @@ const dismissOne = async (deps: Deps, options: DismissOptions, registry: RecipeR
       ...base,
       freed: true,
       workers: [{ id, project: plan.project, pushed: true, stuck: [], ended: freed.value.stopped.kind !== 'no-pane', ignored: ignored.value.paths }],
+    },
+    warnings,
+    failed: false,
+  });
+};
+
+/** The command of the closed path for a worker: `dismiss ID --closed`. */
+const closedLine = (id: string): string => `${dismissLine(id)} ${flagText(flags.closed)}`;
+
+/** The ids of items, at most `maxItemsNamed` of them, with the count of the rest. */
+const namedItems = (ids: readonly string[]): string => {
+  const { maxItemsNamed } = dismissWords;
+  return ids.length > maxItemsNamed ? `${ids.slice(0, maxItemsNamed).join(', ')} and ${ids.length - maxItemsNamed} more` : ids.join(', ');
+};
+
+/**
+ * What the board proves for the free of a worker with `--closed`, read now: a work item that the board knows, with no open item, no
+ * item that is not closed and carries the unassign mark of the worker, and at least one closed item that names the worker. The value is
+ * the work item, or the reason that it fails. The absence of an open item is no proof: only a closed item that names the worker is.
+ */
+const closedWorkOf = async (deps: Deps, workItems: WorkItemPort, home: string, id: string): Promise<Result<KnownWorkItem, string>> => {
+  const read = await workItems.itemsOf(deps, home, [id]);
+  if (!read.ok) return err(`cannot read the board: ${read.error.message}`);
+  const work = read.value.get(id);
+  if (work === undefined || work.state !== 'known') return err(`the board does not say what work the ${roles.worker} ${id} has`);
+  if (work.item !== null) return err(`the ${roles.worker} ${id} has open work: ${work.item}`);
+  if (work.parked.length > 0) return err(`the open items ${namedItems(work.parked)} carry the unassign mark of the ${roles.worker} ${id}`);
+  if (work.closed.length === 0) return err(`no closed item names the ${roles.worker} ${id}`);
+  return ok(work);
+};
+
+/** The refusal of the closed path: nothing is freed, and the owner frees the worker with the yes flag in a terminal window. */
+const refuseClosed = (reason: string, id: string): CliResult<never> =>
+  safetyRefusal(
+    `${commands.dismiss} ${flagText(flags.closed)} frees nothing: ${reason}`,
+    `The ${roles.owner} runs "${commandText(`${dismissLine(id)} ${flagText(flags.yes)}`)}" in a terminal window outside a ${places.session}.`,
+  );
+
+/** The decision row of a free: the worker, the closed items, the pushed head and the counts of the files that the removal deletes. */
+const freeDecisionOf = (plan: DismissPlan, closed: readonly string[], head: string, ignored: IgnoredList, inbox: InboxList): DecisionLogInput => ({
+  title: `Free the ${roles.worker} ${plan.id}`,
+  decider: requestDeciders.coordinator,
+  decision:
+    `Free the ${roles.worker} ${plan.id}. Closed items: ${namedItems(closed)}. Pushed head: ${head}. ` +
+    `Ignored files: ${countOf(ignored)}. Inbox files: ${countOf(inbox)}.`,
+});
+
+/**
+ * The check of the closed path right before the removal: the evidence of the board and the pushed test, read again. A change since the
+ * first check stops the free with a failure (exit 1) that says the worker was not freed.
+ */
+const recheckClosed = async (deps: Deps, workItems: WorkItemPort, home: string, plan: DismissPlan): Promise<CliResult<void>> => {
+  const stopped = (reason: string): CliResult<never> =>
+    failure(`${reason}, so the ${roles.worker} ${plan.id} was not freed`, `Check the cause. Then run "${commandText(closedLine(plan.id))}" again.`);
+  const work = await closedWorkOf(deps, workItems, home, plan.id);
+  if (!work.ok) return stopped(work.error);
+  const reasons = await unpushedReasons(deps, plan, work.value.mergedPrHeads);
+  if (!reasons.ok) return stopped(reasons.error.message);
+  return reasons.value.length === 0 ? ok(undefined) : stopped(reasons.value.join('; '));
+};
+
+/**
+ * `dismiss ID --closed`: the coordinator frees a finished worker in its own session, when every guard passes. The guards are the
+ * caller rule (a mistake guard, no proof), a work item that the board knows with a closed item that names the worker and no item that
+ * is not closed that names it or carries its unassign mark, and the pushed and clean test (a head equal to the recorded head of a
+ * closed item of the worker counts as pushed). Every other case is an owner step: the command refuses with exit 4 and names the owner
+ * command. One decision row names the free before it, and the board and the work copy are checked again right before the removal.
+ * A fault of the second check keeps the work copy and the record and says that the row stays. It never uses the yes flag.
+ */
+const dismissClosed = async (
+  deps: Deps,
+  options: DismissOptions,
+  registry: RecipeRegistry,
+  decisions: DecisionLogPort,
+  workItems: WorkItemPort,
+): Promise<CliResult<CommandOutput>> => {
+  const [id = ''] = options.words;
+  const again = closedLine(id);
+  const located = await locateHomeFolder(deps, options.home, (readDeps, folder) => readNodeIdentity(readDeps, folder, registry), commands.dismiss);
+  if (!located.ok) return located;
+  const home = located.value.home;
+  const loaded = await loadConfig(deps, home, registry);
+  if (!loaded.ok) return loaded;
+  const config = loaded.value;
+  const caller = await requireCoordinatorCaller(deps, home, config, again);
+  if (!caller.ok) return caller;
+  const record = await requireRecord(deps, home, id, commandText(commands.dismiss));
+  if (!record.ok) return record;
+  const facts = await factsOf(deps, options, workItems, home, config);
+  if (!facts.ok) return facts;
+  const entry = facts.value.entries.find((candidate) => candidate.id === id);
+  if (entry === undefined) return failure(`cannot read the state of the ${roles.worker} ${id}`, `Run "${commandText(again)}" again.`);
+  const endable = requireEndable(entry, again);
+  if (!endable.ok) return endable;
+  const work = await closedWorkOf(deps, workItems, home, id);
+  if (!work.ok) return refuseClosed(work.error, id);
+  const inspected = await inspectorOf(deps, home, config, work.value.mergedPrHeads)({ id, project: record.value.project });
+  if (!inspected.ok) return inspected;
+  const { plan, reasons } = inspected.value;
+  const warnings = facts.value.warnings;
+  const base = { schema: schemaIds.dismiss, home, idle: false, yes: false, closed: true };
+  if (reasons.length > 0) {
+    return ok({
+      lines: stuckLines(plan, reasons, again),
+      json: { ...base, freed: false, workers: [{ id, project: plan.project, pushed: false, stuck: reasons }] },
+      warnings,
+      failed: true,
+      exitCode: 1,
+    });
+  }
+  const head = await headOf(deps, plan.workCopy, plan.gitDir);
+  if (!head.ok) return head;
+  if (head.value === null) return failure(`the work copy of the ${roles.worker} ${id} has no commit`, `Run "${commandText(again)}" again.`);
+  const ignored = await ignoredIn(deps, plan);
+  if (!ignored.ok) return ignored;
+  const inbox = await inboxFilesIn(deps, home, id);
+  if (!inbox.ok) return inbox;
+  const lineSession = await lineSessionOf(deps, home, id);
+  if (!lineSession.ok) return lineSession;
+  const logged = await decisions.log(deps, home, config, freeDecisionOf(plan, work.value.closed, head.value, ignored.value, inbox.value));
+  if (!logged.ok) return logged;
+  const row = logged.value;
+  const freed = await freeWorker(deps, {
+    home,
+    session: facts.value.session,
+    plan,
+    panes: facts.value.panes,
+    lineSession: lineSession.value,
+    beforeRemoval: () => recheckClosed(deps, workItems, home, plan),
+  });
+  if (!freed.ok) return err({ ...freed.error, message: `${freed.error.message}. The decision ${row} stays in the log` });
+  return ok({
+    lines: [text(`Logged the decision ${row} to free the ${roles.worker} ${id}.`), ...freedLines(plan, freed.value, ignored.value, inbox.value)],
+    json: {
+      ...base,
+      freed: true,
+      decision: row,
+      workers: [
+        { id, project: plan.project, pushed: true, stuck: [], ended: freed.value.stopped.kind !== 'no-pane', ignored: ignored.value.paths, inbox: inbox.value.paths },
+      ],
     },
     warnings,
     failed: false,
@@ -516,15 +676,18 @@ const dismissIdle = async (deps: Deps, options: DismissOptions, registry: Recipe
  * that is not pushed prints `STUCK:` lines, frees nothing and exits 1. Freeing ends the pane, removes the work copy with the plain
  * git command (no force) and deletes the record with its last-seen line. The removal also deletes the ignored files of the work
  * copy, so the dry run and each free name them (read before the removal), and the dry run names the inbox files that the removal of the
- * record deletes. The branch stays.
+ * record deletes. The branch stays. `dismiss ID --closed` is the one free that the coordinator may run in its own session
+ * (`dismissClosed`); every other free stays an owner step.
  */
 export const runDismiss = async (
   deps: Deps,
   options: DismissOptions,
   registry: RecipeRegistry,
+  decisions: DecisionLogPort,
   workItems: WorkItemPort,
 ): Promise<CliResult<CommandOutput>> => {
   const checked = checkWords(options);
   if (!checked.ok) return checked;
+  if (options.closed) return dismissClosed(deps, options, registry, decisions, workItems);
   return options.idle ? dismissIdle(deps, options, registry, workItems) : dismissOne(deps, options, registry, workItems);
 };

@@ -189,6 +189,7 @@ export const flags = {
   approval: 'approval',
   yes: 'yes',
   idle: 'idle',
+  closed: 'closed',
   for: 'for',
   clear: 'clear',
   compact: 'compact',
@@ -1355,7 +1356,7 @@ export const statusWords = {
  * branch is on the branch of the same name of that remote. A line that says that it is not starts with `stuck`. The dry run and the free
  * name at most `maxIgnoredShown` of the ignored files that the removal of a work copy deletes, and a reason names at most `maxFilesNamed` changed
  * files. The dry run also names at most `maxInboxShown` of the inbox files that the removal deletes. The table of `--idle` has the
- * columns `columns`.
+ * columns `columns`. A refusal and the decision row of `--closed` name at most `maxItemsNamed` item ids.
  */
 export const dismissWords = {
   remote: 'origin',
@@ -1364,6 +1365,8 @@ export const dismissWords = {
   maxFilesNamed: 5,
   /** The most inbox files that the dry run names. The read takes one name more, to know that the inbox holds more. */
   maxInboxShown: 20,
+  /** The most item ids that a line of the closed path names. The decision text of a board write is at most 500 characters. */
+  maxItemsNamed: 10,
   columns: { id: 'ID', project: 'PROJECT', state: 'STATE', pushed: 'PUSHED', ignored: 'IGNORED' },
   /** What the removal deletes, as the line about a list of files names it. */
   fileKinds: { ignored: 'ignored', inbox: dirs.inbox },
