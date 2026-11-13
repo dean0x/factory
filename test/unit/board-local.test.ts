@@ -2193,6 +2193,25 @@ describe('the local connector: the worker field of an item that has a worker', (
     expectUntouched(repo, board);
   });
 
+  it('refuses an update that clears the worker with exit 2 and the remedy that frees the worker, and writes nothing', async () => {
+    const board = boardWith([workItem()]);
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).updateItem('B-1', { fields: { lane: '' } }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toBe(workerFieldGuard.message('B-1'));
+    expect(error.hint).toBe(workerFieldGuard.remedy('B-1'));
+    expectUntouched(repo, board);
+  });
+
+  it('keeps the refusal of an empty worker value for an item that has no worker, and writes nothing', async () => {
+    const board = boardWith([item('B-1')]);
+    const repo = await repoWith(board);
+    const error = errorOf(await connectorOf(repo).updateItem('B-1', { fields: { lane: '' } }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('the field lane takes a token');
+    expectUntouched(repo, board);
+  });
+
   it('refuses a patch that changes the worker together with the title, and changes nothing of the title', async () => {
     const board = boardWith([workItem()]);
     const repo = await repoWith(board);

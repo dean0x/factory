@@ -631,6 +631,22 @@ describe('item update: the worker field of an item that has a worker (AC-4)', ()
     expectUntouched(repo, BOARD);
   });
 
+  it('refuses a clear of the worker field with exit 2 and the remedy, and changes nothing', async () => {
+    const repo = await boardNode({ board: BOARD });
+    const error = errorOf(await run(repo, { words: ['update', 'B-1'], fields: ['lane='] }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.hint).toContain(`${commandText(commands.item)} unassign B-1`);
+    expectUntouched(repo, BOARD);
+  });
+
+  it('still refuses a clear of the worker field of an item with no worker value, and changes nothing', async () => {
+    const repo = await boardNode({ board: BOARD });
+    const error = errorOf(await run(repo, { words: ['update', 'B-2'], fields: ['lane='] }));
+    expect(exitCodeOf[error.kind]).toBe(2);
+    expect(error.message).toContain('the field lane takes a token');
+    expectUntouched(repo, BOARD);
+  });
+
   it('makes no change, and no commit, for a patch with the same worker value', async () => {
     const repo = await boardNode({ board: BOARD });
     expect((await run(repo, { words: ['update', 'B-1'], fields: [`lane=${WORKER}`] })).ok).toBe(true);

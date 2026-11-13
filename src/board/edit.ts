@@ -1,7 +1,7 @@
-import { failure, usageError, type CliResult } from '../cli/errors.js';
+import { failure, usageError, type CliError, type CliResult } from '../cli/errors.js';
 import { displayLine } from '../cli/output.js';
 import type { BoardConfig } from '../config/schema.js';
-import { ok } from '../core/result.js';
+import { ok, type Err } from '../core/result.js';
 import {
   boardIds,
   boardKeys,
@@ -125,17 +125,36 @@ export interface ItemChanges {
   readonly text: string | undefined;
   readonly track: string | undefined;
   readonly fields: FieldValues;
+  /**
+   * The refusal of an empty value for the worker field, held back until the item is read under the lock. An item that holds a worker
+   * answers it with the remedy of the worker field guard, and any other item answers it with this refusal. No write holds an empty value.
+   */
+  readonly emptyWorker: Err<CliError> | undefined;
 }
 
-/** The parts of a change of an item. A part that is left out stays as it is. */
+/**
+ * The parts of a change of an item. A part that is left out stays as it is. An empty value for the worker field is not refused here:
+ * `changeItemIn` refuses it once it knows whether the item holds a worker.
+ */
 export const checkPatch = (setup: BoardSetup, patch: ItemPatch): CliResult<ItemChanges> => {
   const title = optionalLineOf('title', patch.title, boardTextLimits.maxTitleChars);
   if (!title.ok) return title;
   const text = optionalLineOf('text', patch.text, boardTextLimits.maxTextChars);
   if (!text.ok) return text;
-  const fields = resolveFields(setup.config, itemTarget, inputsOf(patch.fields), { complete: false });
+  const inputs = inputsOf(patch.fields);
+  const workerField = setup.config?.worker_field;
+  const emptied = inputs.filter((input) => input.name === workerField && input.value === '');
+  const held = emptied.length === 1 && inputs.filter((input) => input.name === workerField).length === 1;
+  const fields = resolveFields(setup.config, itemTarget, held ? inputs.filter((input) => !emptied.includes(input)) : inputs, { complete: false });
   if (!fields.ok) return fields;
-  return ok({ title: title.value, text: text.value, track: patch.track, fields: fields.value });
+  const refusal = held ? resolveFields(setup.config, itemTarget, emptied, { complete: false }) : undefined;
+  return ok({
+    title: title.value,
+    text: text.value,
+    track: patch.track,
+    fields: fields.value,
+    emptyWorker: refusal === undefined || refusal.ok ? undefined : refusal,
+  });
 };
 
 /**
@@ -342,8 +361,9 @@ export const addItemIn = (doc: BoardDoc, item: NewItem): CliResult<Edit<string>>
  * Change the title, the text, the track and the fields of an item. The value is the id.
  *
  * The worker field guard: when the patch holds the worker field, and the stored item has the key, a new value that differs from the
- * stored one is a usage error (exit 2) that names the command that takes a worker off an item. Only `unassignIn` removes a worker.
- * An item with no worker key takes a worker, and a patch with the stored value changes nothing. The guard reads the item that was
+ * stored one, or an empty value, is a usage error (exit 2) that names the command that takes a worker off an item. Only `unassignIn`
+ * removes a worker. An empty value for an item with no worker key is refused as `checkPatch` held it back. An item with no worker key
+ * takes a worker, and a patch with the stored value changes nothing. The guard reads the item that was
  * read under the lock, so a worker that arrived after the first look still stops the patch. A stored value of any kind counts, so
  * the guard does not lower for a value that is not text.
  */
@@ -355,14 +375,11 @@ export const changeItemIn = (
 ): CliResult<Edit<string>> => {
   const found = itemAt(doc, id);
   if (!found.ok) return found;
-  if (
-    workerField !== undefined &&
-    Object.hasOwn(changes.fields, workerField) &&
-    Object.hasOwn(found.value.record, workerField) &&
-    changes.fields[workerField] !== found.value.record[workerField]
-  ) {
-    return usageError(workerFieldGuard.message(id), workerFieldGuard.remedy(id));
+  if (workerField !== undefined && Object.hasOwn(found.value.record, workerField)) {
+    const changed = Object.hasOwn(changes.fields, workerField) && changes.fields[workerField] !== found.value.record[workerField];
+    if (changed || changes.emptyWorker !== undefined) return usageError(workerFieldGuard.message(id), workerFieldGuard.remedy(id));
   }
+  if (changes.emptyWorker !== undefined) return changes.emptyWorker;
   if (changes.track !== undefined) {
     const track = requireTrack(doc, changes.track);
     if (!track.ok) return track;
