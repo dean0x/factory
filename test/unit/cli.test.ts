@@ -1085,7 +1085,7 @@ describe('the command seam of a recipe', () => {
 
   it('has no row of a recipe when the recipe has no commands hook', () => {
     expect(coreNames).not.toContain(commands.pr);
-    expect(namesOf(commandTableFor(publishRegistry))).toEqual(coreNames);
+    expect(namesOf(commandTableFor(publishRegistry))).toEqual(namesOf(commandTableFor(registryWith(() => []))));
   });
 
   it('has a name for each row of the core and each row of a recipe of the package, and the pr row comes from the software recipe only', () => {
